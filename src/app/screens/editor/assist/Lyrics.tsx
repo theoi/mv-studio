@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Info, RotateCcw } from 'lucide-react'
+import { AlertTriangle, Check, Info, RotateCcw } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Segmented, Select, TextArea } from '../../../ds/Fields.tsx'
@@ -78,7 +78,17 @@ function LyricsResult({ onPaste }: { onPaste: () => void }) {
   const unreliable = kind === 'draft' && toCheck > 0 && draftLooksUnreliable(doc)
   return (
     <div className={styles.draftResult}>
-      <div className={styles.draftSummary}>{summary}</div>
+      {/* A draft that is probably wrong gets the warning below instead of a success card. */}
+      {unreliable ? (
+        <div className={styles.draftSummary}>{summary}</div>
+      ) : (
+        <div className={styles.success}>
+          <span className={styles.successIcon}>
+            <Check />
+          </span>
+          <div className={styles.successTitle}>{summary}</div>
+        </div>
+      )}
       {toCheck > 0 && (
         <div className={styles.linkRow}>
           <Button size="sm" variant="ghost" onClick={showFirstToCheck}>

@@ -289,6 +289,7 @@
 
 /* Tool view */
 .view {
+  container: toolview / size;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -335,9 +336,60 @@
   padding: var(--space-2) var(--space-4) var(--space-4);
 }
 
+/* The body and the footer scroll together, so a short panel can give its whole height to the body. */
+.viewScroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.viewScroll > .viewBody {
+  flex: 1 0 auto;
+}
+
 .viewFooter {
+  position: sticky;
+  bottom: 0;
   padding: var(--space-3) var(--space-4) var(--space-4);
   border-top: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+}
+
+/*
+ * Pinned, the footer would leave a 720 px window about 180 px for the body: there it ends the scroll instead, and a
+ * fade at the bottom says more is below until the end is in view. With nothing to scroll the timeline is inactive and
+ * the fade keeps opacity 0.
+ */
+@container toolview (max-height: 480px) {
+  .viewFooter {
+    position: static;
+  }
+
+  .viewScroll::after {
+    content: '';
+    position: sticky;
+    bottom: 0;
+    flex: none;
+    height: 32px;
+    margin-top: -32px;
+    background: linear-gradient(to bottom, transparent, var(--bg-panel));
+    pointer-events: none;
+    opacity: 0;
+    animation: moreBelow linear both;
+    animation-timeline: scroll(nearest block);
+    animation-range: calc(100% - 24px) 100%;
+  }
+}
+
+@keyframes moreBelow {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
 /* When a narrow panel can't fit the buttons side by side they wrap, each onto a full-width line. On one line the
@@ -745,6 +797,18 @@
   gap: var(--space-2);
 }
 
+/* Solo is a toggle: filled at rest, and in the timeline's solo color while on. */
+.stemRow > button[aria-pressed] {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.stemRow > button[aria-pressed='true'],
+.stemRow > button[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .stemName {
   width: 52px;
   font-size: var(--text-sm);
@@ -804,6 +868,22 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* Text actions in a panel's content take the accent, like a toast's action, so they don't read as captions. */
+.linkRow > button,
+.rowActions > button,
+button.calloutBtn,
+button.footerAlt {
+  color: var(--accent-text);
+}
+
+.linkRow > button:hover:not(:disabled),
+.rowActions > button:hover:not(:disabled),
+button.calloutBtn:hover:not(:disabled),
+button.footerAlt:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .suitRow {

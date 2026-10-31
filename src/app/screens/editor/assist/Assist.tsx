@@ -15,7 +15,7 @@ import {
 import { EmptyState, ProgressBar, Spinner } from '../../../ds/Feedback.tsx'
 import { Kbd } from '../../../ds/Kbd.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
-import { jobTarget, openJob, runningJobs, useJobs } from '../../../state/jobs.ts'
+import { JOB_KINDS, jobTarget, openJob, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { bpmOf, hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
 import { SONG_STATE_TEXT } from '../../../state/songAnalysis.ts'
 import { openAssist, useUi, type AssistView } from '../../../state/ui.ts'
@@ -46,13 +46,17 @@ interface ToolDef {
 }
 
 /** Whether a tool view other than this home follows jobs of `kind`, so the Running list can link to it. */
+/** The jobs whose progress the song card shows (AnalysisBadge). */
+const SONG_CARD_JOBS = [JOB_KINDS.analysis, JOB_KINDS.tempo]
+
 function hasToolView(kind: string): boolean {
   const target = jobTarget(kind)
   return target.type === 'assist' && target.view !== 'home'
 }
 
-function Running() {
-  const items = runningJobs(useJobs()).filter((j) => hasToolView(j.kind))
+/** `except`: kinds another row of the home already shows with their progress. */
+function Running({ except }: { except: readonly string[] }) {
+  const items = runningJobs(useJobs()).filter((j) => hasToolView(j.kind) && !except.includes(j.kind))
   if (!items.length) return null
   return (
     <div className={styles.group}>
@@ -220,7 +224,7 @@ function AssistHome() {
           description="Smart tools use the song’s beats, sections and vocals. Drop a song anywhere to begin."
         />
       )}
-      <Running />
+      <Running except={empty ? [] : SONG_CARD_JOBS} />
       {!empty && (
         <div className={styles.group}>
           <SongStatus />

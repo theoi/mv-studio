@@ -118,8 +118,8 @@ export function SectionInspector({ id }: { id: string }) {
             aria-label="Section name"
           />
         </FieldRow>
-        <FieldRow label="Color">
-          {/* Swatches that wrap: the inspector is too narrow at 1280 px for Auto and six colors in one row. */}
+        {/* Stacked: beside the label, Auto and six colors don't fit one line in the 280 px inspector at 1280. */}
+        <FieldRow label="Color" stacked>
           <ToggleGroup.Root
             type="single"
             value={picked}

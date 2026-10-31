@@ -627,12 +627,10 @@ function ExportingView({ onClose }: { onClose: () => void }) {
                   label={`${r.title} progress`}
                 />
               </div>
-              {saved ? (
+              {saved && (
                 <Button size="sm" variant="ghost" icon={<FolderDown />} onClick={() => downloadAgain(r.id)}>
                   Download
                 </Button>
-              ) : (
-                <span className={styles.jobSpacer} />
               )}
             </div>
           )
