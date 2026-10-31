@@ -45,6 +45,13 @@ export const VISION_MODELS = {
     6_227_884,
     `${MP_CARD}/interactive_segmenter`,
   ),
+  personDetector: mediapipe(
+    'mediapipe-efficientdet-lite0',
+    'MediaPipe EfficientDet-Lite0 object detector (int8)',
+    `${MP}/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite`,
+    4_602_795,
+    `${MP_CARD}/object_detector`,
+  ),
   faceShortRange: mediapipe(
     'mediapipe-blazeface-short',
     'MediaPipe BlazeFace short range',

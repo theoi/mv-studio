@@ -1,4 +1,4 @@
-import type { Mask, SuitabilityReason, SuitabilityReport, TimeRange } from '../types.ts'
+import type { Mask, Rect, SuitabilityReason, SuitabilityReport, TimeRange } from '../types.ts'
 import { components, coverage } from './ops.ts'
 
 export interface SuitabilityOptions {
@@ -54,7 +54,42 @@ export function assessFrame(t: number, mask: Mask, options: SuitabilityOptions =
 }
 
 /** Bumped whenever the verdict for the same masks changes, so stored reports are judged again. */
-export const SUITABILITY_VERSION = 2
+export const SUITABILITY_VERSION = 3
+
+/**
+ * The person segmenter also cuts out animals and some vehicles, so the verdict counts only the mask inside boxes an
+ * object detector labels "person". These were chosen on the 65-clip dev set (see src/vision/README.md).
+ */
+export const PERSON_MIN_SCORE = 0.3
+/** A frame uses the people found within this many seconds of it, so a person the detector misses for a frame or two stays. */
+export const PERSON_HOLD_SECONDS = 0.4
+/** Each side of a person box grows by this share of its size, for hair, raised arms and loose clothes. */
+export const PERSON_BOX_MARGIN = 0.15
+
+/** People found in one frame (boxes normalized to the frame). */
+export interface PeopleAt {
+  t: number
+  boxes: Rect[]
+}
+
+/** Boxes of the people found within `hold` seconds of `t`. */
+export function peopleNear(people: ReadonlyArray<PeopleAt>, t: number, hold = PERSON_HOLD_SECONDS): Rect[] {
+  return people.filter((p) => Math.abs(p.t - t) <= hold + 1e-6).flatMap((p) => p.boxes)
+}
+
+/** The mask with everything outside the (grown) boxes cleared. */
+export function keepPeople(mask: Mask, boxes: ReadonlyArray<Rect>, margin = PERSON_BOX_MARGIN): Mask {
+  const { width: w, height: h } = mask
+  const data = new Uint8Array(w * h)
+  for (const b of boxes) {
+    const x0 = Math.max(0, Math.floor((b.x - b.width * margin) * w))
+    const x1 = Math.min(w, Math.ceil((b.x + b.width * (1 + margin)) * w))
+    const y0 = Math.max(0, Math.floor((b.y - b.height * margin) * h))
+    const y1 = Math.min(h, Math.ceil((b.y + b.height * (1 + margin)) * h))
+    for (let y = y0; y < y1; y++) data.set(mask.data.subarray(y * w + x0, y * w + x1), y * w + x0)
+  }
+  return { width: w, height: h, data }
+}
 
 /** A sampled mask, optionally with the frames just before and after it (needed to measure flicker). */
 export interface SuitabilitySample {
@@ -86,15 +121,20 @@ export function flicker(prev: Mask, cur: Mask, next: Mask, threshold = 128): num
  * Decides whether "text behind the subject" works for a shot, from masks sampled across it (ascending times). The
  * quick check and the stored person track both judge with this, so they agree on the same masks. `spacing` is the
  * nominal time between samples, used to turn usable samples into time ranges. Stability is measured on the samples
- * that come with their neighbouring frames (the person track), and is null without them (the quick check).
+ * that come with their neighbouring frames (the person track), and is null without them (the quick check). With
+ * `people`, each frame is judged only on its mask inside the people found near it (`peopleNear`); flicker is still
+ * measured on the whole mask, since the export cuts out all of it.
  */
 export function assessSuitability(
   samples: ReadonlyArray<SuitabilitySample>,
   spacing: number,
   options: SuitabilityOptions = {},
+  people?: ReadonlyArray<PeopleAt>,
 ): SuitabilityReport {
   const o = { ...DEFAULTS, ...options }
-  const frames = samples.map((s) => assessFrame(s.t, s.mask, o))
+  const frames = samples.map((s) =>
+    assessFrame(s.t, people ? keepPeople(s.mask, peopleNear(people, s.t)) : s.mask, o),
+  )
   const n = frames.length
   if (n === 0) {
     return {

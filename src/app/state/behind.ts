@@ -259,7 +259,12 @@ const MEDIAPIPE_RUNTIME_BYTES = 14_800_000
 
 /** Bytes finding and cutting out people still has to download (models and runtime, once), 0 when cached. */
 export async function personDownloadBytes(): Promise<number> {
-  const needed = [VISION_MODELS.selfieLandscape, VISION_MODELS.selfie, VISION_MODELS.faceShortRange]
+  const needed = [
+    VISION_MODELS.selfieLandscape,
+    VISION_MODELS.selfie,
+    VISION_MODELS.faceShortRange,
+    VISION_MODELS.personDetector,
+  ]
   const mediapipe = [...needed, VISION_MODELS.magicTouch, VISION_MODELS.selfieMulticlass]
   const fileOf = (m: (typeof mediapipe)[number]) => Object.values(m.files)[0]
   const cached = await Promise.all(

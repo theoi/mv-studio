@@ -1,8 +1,8 @@
 import type { SegmentationBackend } from '../backends.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
-import { assessSuitability, type SuitabilityOptions } from '../mask/suitability.ts'
-import { iterateFrames, prefetch, sampleTimes, type FrameSource } from '../runtime/frames.ts'
+import { assessSuitability, type PeopleAt, type SuitabilityOptions } from '../mask/suitability.ts'
+import { fitSize, iterateFrames, prefetch, sampleTimes, type FrameSource } from '../runtime/frames.ts'
 import { createProgress, type TaskOptions } from '../runtime/tasks.ts'
 import type { Mask, SuitabilityReport, TimeRange } from '../types.ts'
 
@@ -11,11 +11,16 @@ export interface SuitabilityCheckOptions extends TaskOptions {
   /** Upper bound on analysed frames, default 90 (~2–3 s on a laptop CPU). */
   maxSamples?: number
   criteria?: SuitabilityOptions
+  /** Look for people in every nth sampled frame (default `PEOPLE_EVERY`); `PERSON_HOLD_SECONDS` covers the rest. */
+  peopleEvery?: number
 }
 
 /** The person track judges at the same rate, so both see the same moments. */
 const STABILITY_FPS = 5
 const ANALYSIS_SIDE = 256
+/** The person detector scales frames to 320 px, so it gets 512 px frames; masks are still made at 256 px. */
+export const PEOPLE_SIDE = 512
+const PEOPLE_EVERY = 1
 
 /**
  * Quick check whether "text behind the subject" will work for a shot, before any export analysis: the same judgement
@@ -44,19 +49,24 @@ export async function checkSuitability(
     )
     await segmentation.resetStream(null, { signal })
     const samples: Array<{ t: number; mask: Mask }> = []
-    const frames = prefetch(iterateFrames(source, times, { maxSide: ANALYSIS_SIDE, signal }), 2, (f) =>
+    const people: PeopleAt[] = []
+    const every = Math.max(1, Math.round(options.peopleEvery ?? PEOPLE_EVERY))
+    const maskSize = fitSize(source, ANALYSIS_SIDE)
+    const frames = prefetch(iterateFrames(source, times, { maxSide: PEOPLE_SIDE, signal }), 2, (f) =>
       f.bitmap.close(),
     )
     for await (const { t, bitmap } of frames) {
+      const findPeople = samples.length % every === 0
       const res = await segmentation.analyze(
-        { bitmap, timestampMs: Math.round(t * 1000), mask: true },
+        { bitmap, timestampMs: Math.round(t * 1000), mask: true, maskSize, people: findPeople },
         { signal, transfer: [bitmap] },
       )
+      if (findPeople) people.push({ t, boxes: (res.people ?? []).map((p) => p.box) })
       if (res.mask) samples.push({ t, mask: res.mask })
       progress(samples.length / times.length, 'analyzing')
     }
     if (signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
-    return assessSuitability(samples, 1 / fps, options.criteria)
+    return assessSuitability(samples, 1 / fps, options.criteria, people)
   } catch (err) {
     throw visionError(err, 'internal')
   }

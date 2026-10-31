@@ -23,9 +23,10 @@ import { decodeContainer, encodeContainer } from './runtime/container.ts'
 import type { FrameSource } from './runtime/frames.ts'
 import { createSharedRunner } from './runtime/shared.ts'
 import type { TaskOptions } from './runtime/tasks.ts'
-import { SUITABILITY_VERSION } from './mask/suitability.ts'
+import { SUITABILITY_VERSION, type PeopleAt } from './mask/suitability.ts'
 import {
   buildPersonTrack,
+  findTrackPeople,
   personTrackParams,
   PERSON_TRACK_VERSION,
   trackSuitability,
@@ -74,7 +75,10 @@ export interface VisionService {
   checkSuitability(source: FrameSource, options?: SuitabilityCheckOptions): Promise<SuitabilityReport>
   /** Export-quality person mask track (cached), with suitability and subject observations. */
   personTrack(source: FrameSource, options?: PersonTrackOptions): Promise<PersonTrackResult>
-  /** The cached person track for these options, without computing. */
+  /**
+   * The cached person track for these options, without segmenting. A track stored before people detection gets a
+   * detection-only pass for its report.
+   */
   cachedPersonTrack(source: FrameSource, options?: PersonTrackOptions): Promise<PersonTrackResult | null>
   /**
    * Mask track of an object the user clicked, followed through the clip (cached), with per-frame states for the
@@ -106,15 +110,21 @@ interface SelectionFileMeta {
   confidence: number[]
 }
 
-type StoredPersonTrack = Omit<PersonTrackResult, 'suitability'> & { suitability: SuitabilityReport | null }
+/** A stored person track; the report is null when older criteria judged it, `people` null when it predates them. */
+type StoredPersonTrack = Omit<PersonTrackResult, 'suitability' | 'people'> & {
+  suitability: SuitabilityReport | null
+  people: PeopleAt[] | null
+}
 
 interface PersonTrackFileMeta {
   track: MaskTrackMeta
-  suitability: SuitabilityReport
+  suitability: SuitabilityReport | null
   /** `SUITABILITY_VERSION` the report was judged with; missing in files written before it existed. */
   suitabilityVersion?: number
   observations: FrameObservation[]
   hqFrames: number
+  /** Missing in files written before people were detected. */
+  people?: PeopleAt[]
 }
 
 function defaultToGray(bitmap: ImageBitmap, size: Size): GrayImage {
@@ -169,49 +179,74 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
       JSON.stringify([p, o.hqRanges ?? [], o.hqShortSide ?? 256, o.delegate ?? 'CPU']),
     )
   }
-  /** A stored person track; `suitability` is null when it was judged by older criteria. */
   const decodeStoredPerson = async (bytes: Uint8Array): Promise<StoredPersonTrack> => {
     const { meta, chunks } = await decodeContainer<PersonTrackFileMeta>(bytes)
     if (meta.track.frameCount !== chunks.length) throw new Error('inconsistent person track')
+    const people = meta.people ?? null
     return {
       track: { meta: meta.track, packed: chunks.map((c) => c.slice()) },
-      suitability: meta.suitabilityVersion === SUITABILITY_VERSION ? meta.suitability : null,
+      suitability: meta.suitabilityVersion === SUITABILITY_VERSION && people ? meta.suitability : null,
       observations: meta.observations,
       hqFrames: meta.hqFrames,
+      people,
     }
   }
-  /**
-   * Decoder for reads that need the verdict. A report judged by older criteria is judged again from the stored masks
-   * (no segmenting) and written back, since judging a long track takes about a second on the main thread.
-   */
-  const decodePerson =
-    (key: string, o: PersonTrackOptions) =>
-    async (bytes: Uint8Array): Promise<PersonTrackResult> => {
-      const stored = await decodeStoredPerson(bytes)
-      if (stored.suitability) return { ...stored, suitability: stored.suitability }
-      const result = { ...stored, suitability: trackSuitability(stored.track, o.suitability) }
-      await store(key, await encodePerson(result))
-      return result
-    }
-  const encodePerson = (r: PersonTrackResult) =>
+  const encodePerson = (r: StoredPersonTrack) =>
     encodeContainer<PersonTrackFileMeta>(
       {
         track: r.track.meta,
         suitability: r.suitability,
-        suitabilityVersion: SUITABILITY_VERSION,
+        ...(r.suitability && r.people ? { suitabilityVersion: SUITABILITY_VERSION } : {}),
         observations: r.observations,
         hqFrames: r.hqFrames,
+        ...(r.people ? { people: r.people } : {}),
       },
       r.track.packed,
     )
+  /**
+   * The stored track with a current report. A report from older criteria is judged again from the stored masks, after
+   * a detection-only pass when the track predates people detection, and written back, so this runs once per entry
+   * (judging a long track takes about a second on the main thread). It runs outside the cache read, so a failed model
+   * download does not discard the stored masks.
+   */
+  const currentPerson = (
+    key: string,
+    source: FrameSource,
+    stored: StoredPersonTrack,
+    o: PersonTrackOptions,
+  ): Promise<PersonTrackResult> => {
+    const { suitability, people } = stored
+    if (suitability && people) return Promise.resolve({ ...stored, suitability, people })
+    const { signal, onProgress } = o
+    return shared(
+      `${key}:judge`,
+      async (task) => {
+        const found =
+          people ??
+          (await findTrackPeople(backends.segmentation('background'), source, stored.track.meta, {
+            ...task,
+            ...(o.peopleFps ? { peopleFps: o.peopleFps } : {}),
+          }))
+        const result = {
+          ...stored,
+          people: found,
+          suitability: trackSuitability(stored.track, found, o.suitability),
+        }
+        await store(key, await encodePerson(result))
+        return result
+      },
+      { ...(signal ? { signal } : {}), ...(onProgress ? { onProgress } : {}) },
+    )
+  }
   const json = {
     encode: <T>(v: T) => encodeContainer(v, []),
     decode: async <T>(b: Uint8Array) => (await decodeContainer<T>(b)).meta,
   }
 
-  const cachedPersonTrack = (source: FrameSource, o: PersonTrackOptions = {}) => {
+  const cachedPersonTrack = async (source: FrameSource, o: PersonTrackOptions = {}) => {
     const key = personKey(source, o)
-    return cached(key, decodePerson(key, o))
+    const stored = await cached(key, decodeStoredPerson)
+    return stored ? currentPerson(key, source, stored, o) : null
   }
 
   return {
@@ -221,12 +256,12 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
     checkSuitability(source, o = {}) {
       return checkSuitability(backends.segmentation('interactive'), source, o)
     },
-    personTrack(source, o = {}) {
+    async personTrack(source, o = {}) {
       const { signal, onProgress, ...rest } = o
       const key = personKey(source, o)
-      return memo(
+      const stored = await memo<StoredPersonTrack>(
         key,
-        decodePerson(key, o),
+        decodeStoredPerson,
         encodePerson,
         (task) =>
           buildPersonTrack(
@@ -236,6 +271,7 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
           ),
         { ...(signal ? { signal } : {}), ...(onProgress ? { onProgress } : {}) },
       )
+      return currentPerson(key, source, stored, o)
     },
     cachedPersonTrack,
     selectionTrack(source, click, o = {}) {

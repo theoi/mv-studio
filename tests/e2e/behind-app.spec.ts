@@ -123,6 +123,21 @@ test('a clip with no one in it says why it cannot be cut out', async ({ page }) 
   expect(await cutouts(page)).toEqual([])
 })
 
+test('Assist › Behind the subject does not offer a shot of an animal, which the person segmenter cuts out', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await open(page, '#/editor?t=10')
+  await importAndSelect(page, path.resolve('tests/fixtures/animal-horse.webm'), 'animal-horse')
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const row = assist.getByText('animal-horse', { exact: true }).locator('..').locator('..')
+  await expect(row.getByText('No one in this shot is large enough to cut out · 1 clip')).toBeVisible({
+    timeout: 90_000,
+  })
+  await expect(row.getByText('Not suitable')).toBeVisible()
+})
+
 test('while clips are being checked, the top bar opens Behind the subject, not Export', async ({ page }) => {
   await open(page, '#/editor?t=10')
   await page.evaluate(() => {

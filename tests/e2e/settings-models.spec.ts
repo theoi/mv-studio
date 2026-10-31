@@ -92,3 +92,32 @@ test('a partly downloaded model says so and can be removed on its own', async ({
   await expect(row.getByText('Downloads when used')).toBeVisible()
   expect(await page.evaluate((url) => caches.match(url).then(Boolean), model.urls[0]!)).toBe(false)
 })
+
+test('Settings › This device counts the person detector in Person cutout and removes it with the rest', async ({
+  page,
+}) => {
+  await openHarness(page)
+  const urls: string[] = await page.evaluate(
+    () => window.mvStudio.app.models.LOCAL_MODELS.find((m: { id: string }) => m.id === 'cutout').urls,
+  )
+  expect(urls.some((u) => u.endsWith('/efficientdet_lite0.tflite'))).toBe(true)
+  await page.evaluate(async (list) => {
+    const cache = await caches.open('mv-studio-models-v1')
+    for (const url of list) await cache.put(url, new Response(new Uint8Array(1000)))
+  }, urls)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?dialog=settings&page=local'
+  })
+  const cutout = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'Person cutout' })
+  await expect(cutout.getByText('On this device')).toBeVisible()
+  await expect(cutout.getByText('5 MB')).toBeVisible()
+  await cutout.getByRole('button', { name: 'Remove Person cutout' }).click()
+  await expect(page.getByText('Person cutout removed (5 MB). It downloads again when needed.')).toBeVisible()
+  await expect(cutout.getByText('Downloads when used')).toBeVisible()
+  const left = await page.evaluate(
+    (list) => Promise.all(list.map((u) => caches.match(u).then(Boolean))),
+    urls,
+  )
+  expect(left).toEqual(urls.map(() => false))
+})

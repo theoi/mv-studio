@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SUITABILITY_VERSION } from '../../../../src/vision/mask/suitability.ts'
+import { JobError } from '../../../../src/shared/jobs.ts'
 import { createMemoryCache, type BlobCache } from '../../../../src/vision/runtime/cache.ts'
 import { decodeContainer, encodeContainer } from '../../../../src/vision/runtime/container.ts'
 import { createVisionService } from '../../../../src/vision/service.ts'
@@ -100,8 +101,11 @@ describe('vision service', () => {
       sampledFrames: 1,
       suitableRanges: [],
     }
-    /** A cache holding one person track whose report is replaced by `stale`, without a version or with `version`. */
-    const storedWithReport = async (version?: number) => {
+    /**
+     * A cache holding one person track whose report is replaced by `stale`, without a version or with `version`, and
+     * without detected people when `withPeople` is false (a file written before people detection).
+     */
+    const storedWithReport = async (version?: number, withPeople = true) => {
       const cache = createMemoryCache()
       const { source } = fakeSource({ duration: 2, frameRate: 10 })
       let key = ''
@@ -115,17 +119,23 @@ describe('vision service', () => {
       }
       await setup(spy).service.personTrack(source)
       const { meta, chunks } = await decodeContainer<Record<string, unknown>>((await cache.get(key))!)
-      const { suitabilityVersion: _, ...rest } = meta
+      const { suitabilityVersion: _, people, ...rest } = meta
       await cache.put(
         key,
         await encodeContainer(
-          { ...rest, suitability: stale, ...(version ? { suitabilityVersion: version } : {}) },
+          {
+            ...rest,
+            suitability: stale,
+            ...(version ? { suitabilityVersion: version } : {}),
+            ...(withPeople ? { people } : {}),
+          },
           chunks,
         ),
       )
-      const storedVersion = async () =>
-        (await decodeContainer<Record<string, unknown>>((await cache.get(key))!)).meta.suitabilityVersion
-      return { cache, source, storedVersion }
+      const storedMeta = async () =>
+        (await decodeContainer<Record<string, unknown>>((await cache.get(key))!)).meta
+      const storedVersion = async () => (await storedMeta()).suitabilityVersion
+      return { cache, source, storedVersion, storedMeta }
     }
 
     it('is judged again from the stored masks when older criteria judged it, and written back', async () => {
@@ -133,10 +143,40 @@ describe('vision service', () => {
       const old = setup(cache)
       const judged = await old.service.personTrack(source)
       expect(count(old.seg.calls, 'beginTrack')).toBe(0)
+      expect(count(old.seg.calls, 'analyze')).toBe(0)
       expect(judged.suitability.verdict).toBe('good')
       expect(await storedVersion()).toBe(SUITABILITY_VERSION)
       const current = await storedWithReport(SUITABILITY_VERSION)
       expect((await setup(current.cache).service.personTrack(current.source)).suitability).toEqual(stale)
+    })
+
+    it('finds the people in a track stored before people detection, without segmenting, and writes them back', async () => {
+      const { cache, source, storedMeta } = await storedWithReport(undefined, false)
+      const old = setup(cache)
+      const judged = await old.service.personTrack(source)
+      expect(count(old.seg.calls, 'beginTrack')).toBe(0)
+      expect(old.seg.analyzed.length).toBe(10)
+      expect(old.seg.analyzed.every((a) => a.people && !a.mask)).toBe(true)
+      expect(judged.suitability.verdict).toBe('good')
+      const meta = await storedMeta()
+      expect(meta.suitabilityVersion).toBe(SUITABILITY_VERSION)
+      expect(meta.people).toEqual(judged.people)
+      const later = setup(cache)
+      expect((await later.service.personTrack(source)).suitability).toEqual(judged.suitability)
+      expect(later.seg.calls).toEqual([])
+    })
+
+    it('keeps the stored masks when finding the people fails', async () => {
+      const { cache, source } = await storedWithReport(undefined, false)
+      const offline = setup(cache)
+      offline.seg.analyze = async (req) => {
+        req.bitmap.close()
+        throw new JobError('model-load', 'offline')
+      }
+      await expect(offline.service.personTrack(source)).rejects.toMatchObject({ code: 'model-load' })
+      const online = setup(cache)
+      expect((await online.service.personTrack(source)).suitability.verdict).toBe('good')
+      expect(count(online.seg.calls, 'beginTrack')).toBe(0)
     })
 
     it('is judged again with the caller’s criteria', async () => {

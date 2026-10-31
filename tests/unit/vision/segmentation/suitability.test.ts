@@ -24,6 +24,39 @@ describe('checkSuitability', () => {
     expect(report.stability).toBeNull()
     expect(report).toMatchObject({ verdict: 'unsuitable', reasons: ['subject-too-small'] })
   })
+
+  it('counts only the mask the person detector sees as a person', async () => {
+    // A large subject the segmenter cuts out but the detector does not call a person: an animal, say.
+    const seg = fakeSegmentation(
+      (_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 3),
+      () => [],
+    )
+    const { source } = fakeSource({ duration: 2 })
+    const report = await checkSuitability(seg, source)
+    expect(report).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+  })
+
+  it('looks for people on 512 px frames, makes masks at 256 px, and can skip frames for people', async () => {
+    const seg = fakeSegmentation()
+    const { source } = fakeSource({ duration: 2 })
+    const report = await checkSuitability(seg, source, { peopleEvery: 2 })
+    expect(report.verdict).toBe('good')
+    expect(seg.analyzed).toHaveLength(10)
+    expect(seg.analyzed.map((a) => !!a.people)).toEqual([
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+    ])
+    expect(seg.analyzed[0]!.size).toEqual({ width: 512, height: 288 })
+    expect(seg.analyzed[0]!.maskSize).toEqual({ width: 256, height: 144 })
+  })
 })
 
 describe('analyzeSubjects', () => {

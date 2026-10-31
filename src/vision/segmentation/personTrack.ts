@@ -2,7 +2,12 @@ import type { Delegate, OnnxBackend, PersonModel, SegmentationBackend } from '..
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
 import { createTrackReader } from '../mask/track.ts'
-import { assessSuitability, type SuitabilityOptions, type SuitabilitySample } from '../mask/suitability.ts'
+import {
+  assessSuitability,
+  type PeopleAt,
+  type SuitabilityOptions,
+  type SuitabilitySample,
+} from '../mask/suitability.ts'
 import { fitSize, iterateFrames, prefetch, sampleTimes, type FrameSource } from '../runtime/frames.ts'
 import { createProgress, type TaskOptions } from '../runtime/tasks.ts'
 import type { FrameObservation } from '../reframe/track.ts'
@@ -26,6 +31,8 @@ export interface PersonTrackOptions extends TaskOptions {
   hqShortSide?: number
   /** Face detection rate for subject tracking, default 5; 0 disables it. */
   faceFps?: number
+  /** Rate of the person detection the report relies on, default `PEOPLE_FPS`. */
+  peopleFps?: number
   /**
    * Criteria for the report. The cache key leaves them out, so a cached track keeps the report it was stored with;
    * only a report from older criteria (`SUITABILITY_VERSION`) is judged again with these.
@@ -40,12 +47,15 @@ export interface PersonTrackResult {
   observations: FrameObservation[]
   /** Frames where the high-quality matte replaced the standard mask. */
   hqFrames: number
+  /** People the object detector found, at `peopleFps`; the report counts only the mask near them. */
+  people: PeopleAt[]
 }
 
 /** Bumped whenever the processing changes in a way that invalidates cached tracks. */
 export const PERSON_TRACK_VERSION = 1
 const DEFAULT_MAX_SIDE = 512
 const MODEL_OUTPUT_SIDE = 256
+export const PEOPLE_FPS = 5
 
 export function personTrackParams(
   source: Pick<FrameSource, 'width' | 'height' | 'frameRate' | 'duration'>,
@@ -79,6 +89,7 @@ export async function buildPersonTrack(
   if (!times.length) throw new JobError('invalid-input', 'The clip range is empty.')
   const progress = createProgress(options.onProgress)
   const faceEvery = options.faceFps === 0 ? 0 : Math.max(1, Math.round(fps / (options.faceFps ?? 5)))
+  const peopleEvery = Math.max(1, Math.round(fps / (options.peopleFps ?? PEOPLE_FPS)))
 
   progress(0, 'loading-model')
   await seg.configure({ model, delegate: options.delegate ?? 'CPU' }, { signal })
@@ -102,6 +113,7 @@ export async function buildPersonTrack(
   )
 
   const observations: FrameObservation[] = []
+  const people: PeopleAt[] = []
   let hqFrames = 0
   try {
     let i = 0
@@ -120,10 +132,19 @@ export async function buildPersonTrack(
         )
       }
       const withFaces = faceEvery > 0 && i % faceEvery === 0
+      const withPeople = i % peopleEvery === 0
       const res = await seg.pushTrackFrame(
-        { id, bitmap, timestampMs: Math.round(t * 1000), ...(hq ? { hq } : {}), faces: withFaces },
+        {
+          id,
+          bitmap,
+          timestampMs: Math.round(t * 1000),
+          ...(hq ? { hq } : {}),
+          faces: withFaces,
+          people: withPeople,
+        },
         { signal, transfer: hq ? [bitmap, hq.data.buffer] : [bitmap] },
       )
+      if (withPeople) people.push({ t, boxes: (res.people ?? []).map((p) => p.box) })
       if (res.usedHq) hqFrames++
       if (withFaces)
         observations.push({ t, faces: res.faces ?? [], personBox: res.box, personCoverage: res.coverage })
@@ -135,7 +156,13 @@ export async function buildPersonTrack(
       throw new JobError('decode', `Only ${i} of ${times.length} frames could be decoded.`)
     const track = await seg.endTrack({ id }, { signal })
     progress(1, 'done')
-    return { track, suitability: trackSuitability(track, options.suitability), observations, hqFrames }
+    return {
+      track,
+      suitability: trackSuitability(track, people, options.suitability),
+      observations,
+      hqFrames,
+      people,
+    }
   } catch (err) {
     await seg.cancelTrack({ id }).catch(() => undefined)
     throw visionError(err, 'internal')
@@ -143,10 +170,49 @@ export async function buildPersonTrack(
 }
 
 /**
- * Suitability of a stored track, judged on frames about 0.2 s apart, each with the frames just before and after it
- * for the flicker measure.
+ * Finds the people in the frames of a stored track at `peopleFps`, for a track stored before it kept them. Needs only
+ * the person detector, not the segmenter.
  */
-export function trackSuitability(track: PackedMaskTrack, options?: SuitabilityOptions): SuitabilityReport {
+export async function findTrackPeople(
+  segmentation: SegmentationBackend,
+  source: FrameSource,
+  meta: Pick<PackedMaskTrack['meta'], 'start' | 'fps' | 'frameCount'>,
+  options: TaskOptions & { peopleFps?: number } = {},
+): Promise<PeopleAt[]> {
+  const { signal } = options
+  const every = Math.max(1, Math.round(meta.fps / (options.peopleFps ?? PEOPLE_FPS)))
+  const times: number[] = []
+  for (let i = 0; i < meta.frameCount; i += every) times.push(meta.start + i / meta.fps)
+  const progress = createProgress(options.onProgress)
+  const people: PeopleAt[] = []
+  try {
+    const frames = prefetch(iterateFrames(source, times, { maxSide: DEFAULT_MAX_SIDE, signal }), 2, (f) =>
+      f.bitmap.close(),
+    )
+    for await (const { t, bitmap } of frames) {
+      const res = await segmentation.analyze(
+        { bitmap, timestampMs: Math.round(t * 1000), people: true },
+        { signal, transfer: [bitmap] },
+      )
+      people.push({ t, boxes: (res.people ?? []).map((p) => p.box) })
+      progress(people.length / times.length, 'analyzing')
+    }
+    if (signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
+    return people
+  } catch (err) {
+    throw visionError(err, 'internal')
+  }
+}
+
+/**
+ * Suitability of a stored track, judged on frames about 0.2 s apart, each with the frames just before and after it
+ * for the flicker measure, and counting only the mask near the `people` found.
+ */
+export function trackSuitability(
+  track: PackedMaskTrack,
+  people: ReadonlyArray<PeopleAt>,
+  options?: SuitabilityOptions,
+): SuitabilityReport {
   const { meta } = track
   const step = Math.max(1, Math.round(meta.fps * 0.2))
   const reader = createTrackReader(track, 3)
@@ -157,5 +223,5 @@ export function trackSuitability(track: PackedMaskTrack, options?: SuitabilityOp
     const next = prev ? reader.frame(i + 1) : undefined
     samples.push({ t: meta.start + i / meta.fps, mask, ...(prev && next ? { prev, next } : {}) })
   }
-  return assessSuitability(samples, step / meta.fps, options)
+  return assessSuitability(samples, step / meta.fps, options, people)
 }
