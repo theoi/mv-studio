@@ -50,6 +50,7 @@ import {
   MenuTrigger,
 } from '../../../ds/Menu.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
+import { TransitionMarks } from './Transitions.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import {
@@ -63,6 +64,7 @@ import {
   type WordEdge,
 } from '../../../state/lyricEdits.ts'
 import { lineTiming } from '../../../state/lyricTiming.ts'
+import { addTransitionAtCut, bareCuts } from '../../../state/transitions.ts'
 import {
   copySelection,
   cutSelection,
@@ -780,8 +782,19 @@ const ClipBlock = memo(
     sameView(a.clip, b.clip),
 )
 
+/** The cut without a transition at either end of a clip, the one nearer `time`; `clipId` is the clip after it. */
+function cutNear(clip: ClipView, time: number): { clipId: string; time: number } | null {
+  const cuts = bareCuts(editor.getProject(), clip.trackId).filter(
+    (c) => Math.abs(c.time - clip.start) < 1e-3 || Math.abs(c.time - clip.end) < 1e-3,
+  )
+  cuts.sort((a, b) => Math.abs(a.time - time) - Math.abs(b.time - time))
+  return cuts[0] ?? null
+}
+
 function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockProps) {
   const [canPaste, setCanPaste] = useState(false)
+  const [cut, setCut] = useState<{ clipId: string; time: number } | null>(null)
+  const menuTime = useRef(clip.start)
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
@@ -798,6 +811,7 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
           // The menu acts on the selection, so a clip outside it becomes the selection.
           if (!selectedClipIds(get().selection).includes(clip.id)) select({ type: 'clip', id: clip.id })
           setCanPaste(hasClipboard())
+          setCut(cutNear(clip, menuTime.current))
         }}
       >
         <ContextMenuTrigger asChild>
@@ -820,6 +834,14 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
             // with the clip focused from the keyboard.
             data-space-plays
             onPointerDown={(e) => onPointerDown(e, clip, 'move')}
+            onContextMenu={(e) => {
+              const box = e.currentTarget.getBoundingClientRect()
+              // From the keyboard (Shift F10) the menu opens with no pointer over the clip: use its start.
+              menuTime.current =
+                e.clientX >= box.left && e.clientX <= box.right
+                  ? clip.start + (e.clientX - box.left) / pps
+                  : clip.start
+            }}
             onKeyDown={(e) => {
               if (e.key !== 'Enter') return
               e.preventDefault()
@@ -866,6 +888,17 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
           <ContextMenuItem shortcut="Mod V" disabled={!canPaste} onSelect={paste}>
             Paste
           </ContextMenuItem>
+          {cut && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                description={`At the cut at ${formatTime(cut.time, true)}`}
+                onSelect={() => addTransitionAtCut(cut.clipId)}
+              >
+                Add transition
+              </ContextMenuItem>
+            </>
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
           <ContextMenuItem onSelect={() => openAssist('match')}>Find similar clips…</ContextMenuItem>
@@ -2146,6 +2179,9 @@ export function Timeline() {
                           />
                         )
                       })}
+                    {(kind === 'video' || kind === 'overlay') && (
+                      <TransitionMarks trackId={track.id} pps={pps} />
+                    )}
                     {suggestTiming && track.id === lyricsTrackId && (
                       <div
                         className={[styles.untimedLayer, suggestLeft === null && styles.untimedPinned]

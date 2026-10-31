@@ -9,6 +9,8 @@ import { MediaInspector } from './inspector/Media.tsx'
 import { ProjectInspector } from './inspector/Project.tsx'
 import { SectionInspector } from './inspector/Section.tsx'
 import { TextInspector } from './inspector/Text.tsx'
+import { TransitionInspector } from './inspector/Transition.tsx'
+import { transitionOf } from '../../state/transitions.ts'
 import styles from './Inspector.module.css'
 
 /*
@@ -32,11 +34,21 @@ export function Inspector() {
     else content = <ProjectInspector />
   } else if (selection.type === 'lyric') content = <LyricInspector id={selection.id} />
   else if (selection.type === 'section') content = <SectionInspector id={selection.id} />
+  else if (selection.type === 'transition' && transitionOf(project.clips[selection.id], selection.edge))
+    content = <TransitionInspector clipId={selection.id} edge={selection.edge} />
   else content = <ProjectInspector />
   return (
     <div
       className={`${styles.root} scroll`}
-      key={clipIds.length > 1 ? 'clips' : selection.type === 'none' ? 'none' : selection.id}
+      key={
+        clipIds.length > 1
+          ? 'clips'
+          : selection.type === 'none'
+            ? 'none'
+            : selection.type === 'transition'
+              ? `${selection.id}:${selection.edge}`
+              : selection.id
+      }
     >
       {content}
     </div>
