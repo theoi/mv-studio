@@ -92,6 +92,22 @@ describe('text styles', () => {
     ])
     expect(() => textStyleCommands(p, [lyric.id], 'nope')).toThrow(/Unknown text style/)
   })
+
+  it('replace an imported font with their own', () => {
+    const p = createProject()
+    const clip = createTextClip({ trackId: p.tracks[0]!.id, text: 'Hello', start: 0, duration: 4 })
+    clip.style = {
+      ...clip.style,
+      fontAssetId: 'font-1',
+      fontFamily: '"Arcade", Inter, system-ui, sans-serif',
+    }
+    p.clips[clip.id] = clip
+    const editor = new ProjectEditor(p)
+    applyTextStyle(editor, [clip.id], 'caption')
+    const style = (editor.getProject().clips[clip.id] as TextClip).style
+    expect(style.fontAssetId).toBeUndefined()
+    expect(style.fontFamily).toMatch(/^Inter,/)
+  })
 })
 
 describe('kinetic exits', () => {

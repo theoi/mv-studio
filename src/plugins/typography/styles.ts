@@ -384,6 +384,9 @@ export function textStyleCommands(
     const clip = project.clips[id]
     if (clip?.type !== 'text' || locked.has(clip.trackId)) continue
     const style: Record<string, unknown> = { ...clip.style, ...preset.style }
+    // A style's font replaces an imported one too: the imported face would otherwise keep drawing, ahead of the
+    // style's family, with the style's weight and slant faked on it.
+    if (preset.style.fontFamily !== undefined) delete style.fontAssetId
     for (const key of Object.keys(style)) if (style[key] === undefined) delete style[key]
     commands.push({ type: 'clip.set', clipId: id, path: ['style'], value: style })
     if (preset.animation && options.animation !== false)
