@@ -1,0 +1,144 @@
+/**
+ * ProjectEditor: holds the current immutable project, applies edit commands, and keeps undo/redo history as immer
+ * patches (cheap for large projects). Works with React's useSyncExternalStore:
+ *   const project = useSyncExternalStore(editor.subscribe, editor.getProject)
+ */
+import { applyPatches, enablePatches, produceWithPatches, type Patch } from 'immer'
+import { applyCommand, describeCommand, type EditCommand } from './commands.ts'
+import type { Project } from './types.ts'
+
+enablePatches()
+
+export interface DispatchOptions {
+  /** Undo menu label; defaults to a description of the first command. */
+  label?: string
+  /**
+   * Consecutive dispatches with the same key merge into one undo step (e.g. a slider drag or clip drag sending many
+   * updates). Use a key unique to the gesture, such as `drag:${pointerId}:${clipId}`.
+   */
+  coalesceKey?: string
+}
+
+export interface EditChange {
+  source: 'edit' | 'undo' | 'redo' | 'load'
+  /** Commands applied (empty for undo/redo/load). */
+  commands: EditCommand[]
+  patches: Patch[]
+}
+
+interface HistoryEntry {
+  label: string
+  commands: EditCommand[]
+  patches: Patch[]
+  inversePatches: Patch[]
+  coalesceKey?: string
+}
+
+type Listener = (project: Project, change: EditChange) => void
+
+export class ProjectEditor {
+  private project: Project
+  private undoStack: HistoryEntry[] = []
+  private redoStack: HistoryEntry[] = []
+  private readonly listeners = new Set<Listener>()
+  private readonly historyLimit: number
+  private readonly now: () => Date
+
+  constructor(project: Project, options: { historyLimit?: number; now?: () => Date } = {}) {
+    this.project = project
+    this.historyLimit = options.historyLimit ?? 500
+    this.now = options.now ?? (() => new Date())
+  }
+
+  /** Current project (immutable; a new object after every change). Bound for useSyncExternalStore. */
+  getProject = (): Project => this.project
+
+  subscribe = (listener: Listener): (() => void) => {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  /** Applies one or more commands as a single undo step. Throws EditError (and changes nothing) if any is invalid. */
+  dispatch(commands: EditCommand | EditCommand[], options: DispatchOptions = {}): void {
+    const list = Array.isArray(commands) ? commands : [commands]
+    if (list.length === 0) return
+    const stamp = this.now().toISOString()
+    const [next, patches, inversePatches] = produceWithPatches(this.project, (draft) => {
+      for (const cmd of list) applyCommand(draft, cmd)
+      draft.updatedAt = stamp
+    })
+    if (patches.length === 0) return
+
+    const last = this.undoStack[this.undoStack.length - 1]
+    if (options.coalesceKey && last?.coalesceKey === options.coalesceKey && this.redoStack.length === 0) {
+      last.commands.push(...list)
+      last.patches.push(...patches)
+      last.inversePatches = [...inversePatches, ...last.inversePatches]
+    } else {
+      this.undoStack.push({
+        label: options.label ?? describeCommand(list[0] as EditCommand),
+        commands: [...list],
+        patches,
+        inversePatches,
+        coalesceKey: options.coalesceKey,
+      })
+      if (this.undoStack.length > this.historyLimit) this.undoStack.shift()
+    }
+    this.redoStack = []
+    this.project = next
+    this.emit({ source: 'edit', commands: list, patches })
+  }
+
+  /** Ends coalescing so the next dispatch with the same key starts a new undo step (call on pointerup). */
+  endGesture(): void {
+    const last = this.undoStack[this.undoStack.length - 1]
+    if (last) delete last.coalesceKey
+  }
+
+  canUndo(): boolean {
+    return this.undoStack.length > 0
+  }
+
+  canRedo(): boolean {
+    return this.redoStack.length > 0
+  }
+
+  undoLabel(): string | undefined {
+    return this.undoStack[this.undoStack.length - 1]?.label
+  }
+
+  redoLabel(): string | undefined {
+    return this.redoStack[this.redoStack.length - 1]?.label
+  }
+
+  undo(): boolean {
+    const entry = this.undoStack.pop()
+    if (!entry) return false
+    delete entry.coalesceKey
+    this.project = applyPatches(this.project, entry.inversePatches)
+    this.redoStack.push(entry)
+    this.emit({ source: 'undo', commands: [], patches: entry.inversePatches })
+    return true
+  }
+
+  redo(): boolean {
+    const entry = this.redoStack.pop()
+    if (!entry) return false
+    this.project = applyPatches(this.project, entry.patches)
+    this.undoStack.push(entry)
+    this.emit({ source: 'redo', commands: [], patches: entry.patches })
+    return true
+  }
+
+  /** Replaces the whole project (open/new) and clears history. */
+  load(project: Project): void {
+    this.project = project
+    this.undoStack = []
+    this.redoStack = []
+    this.emit({ source: 'load', commands: [], patches: [] })
+  }
+
+  private emit(change: EditChange) {
+    for (const listener of this.listeners) listener(this.project, change)
+  }
+}
