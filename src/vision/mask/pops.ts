@@ -25,6 +25,8 @@ export interface PopMeter {
 }
 
 interface HalfFrame {
+  width: number
+  height: number
   on: Uint8Array
   luma: Uint8Array
 }
@@ -43,17 +45,52 @@ function halve(mask: Mask, gray: GrayImage): HalfFrame {
       luma[y * w + x] =
         (gray.data[g]! + gray.data[g + 1]! + gray.data[g + gw]! + gray.data[g + gw + 1]! + 2) >> 2
     }
-  return { on, luma }
+  return { width: w, height: h, on, luma }
+}
+
+/**
+ * Pixels left in `map` (0 or 1, w × h) after a 3 × 3 opening, which keeps only flips inside a 3 × 3 block of flips. The
+ * outline moving out by a pixel or two and back is a thin band that drops out; a limb or a blob stays. `a` and `b`
+ * are scratch buffers of the same size.
+ */
+function openedCount(map: Uint8Array, w: number, h: number, a: Uint8Array, b: Uint8Array): number {
+  // Erode across, then down; dilate across, then down. Outside the frame counts as off.
+  for (let y = 0; y < h; y++)
+    for (let x = 0, i = y * w; x < w; x++, i++)
+      a[i] = x > 0 && x < w - 1 ? map[i - 1]! & map[i]! & map[i + 1]! : 0
+  for (let y = 0; y < h; y++)
+    for (let x = 0, i = y * w; x < w; x++, i++) b[i] = y > 0 && y < h - 1 ? a[i - w]! & a[i]! & a[i + w]! : 0
+  for (let y = 0; y < h; y++)
+    for (let x = 0, i = y * w; x < w; x++, i++)
+      a[i] = b[i]! | (x > 0 ? b[i - 1]! : 0) | (x < w - 1 ? b[i + 1]! : 0)
+  let n = 0
+  for (let y = 0; y < h; y++)
+    for (let x = 0, i = y * w; x < w; x++, i++)
+      n += a[i]! | (y > 0 ? a[i - w]! : 0) | (y < h - 1 ? a[i + w]! : 0)
+  return n
+}
+
+interface Scratch {
+  map: Uint8Array
+  a: Uint8Array
+  b: Uint8Array
 }
 
 /**
  * Share of the subject (the pixels on in any of the frames compared) that pops at `center`, the largest over gaps of
  * 1 to `gaps` frames: on in the frames `k` before and after and off in between, or the reverse, where the luma stays
- * within `tolerance` across those frames.
+ * within `tolerance` across those frames, counting only flips that survive a 3 × 3 opening.
  */
-function popShare(frames: ReadonlyArray<HalfFrame>, center: number, gaps: number, tolerance: number): number {
+function popShare(
+  frames: ReadonlyArray<HalfFrame>,
+  center: number,
+  gaps: number,
+  tolerance: number,
+  s: Scratch,
+): number {
   let best = 0
   const mid = frames[center]!
+  const { width: w, height: h } = mid
   for (let k = 1; k <= gaps; k++) {
     const a = frames[center - k]!
     const c = frames[center + k]!
@@ -64,12 +101,15 @@ function popShare(frames: ReadonlyArray<HalfFrame>, center: number, gaps: number
       const y = mid.on[i]!
       const z = c.on[i]!
       if (x | y | z) area++
+      let flip = 0
       if (x === z && x !== y) {
         const g = mid.luma[i]!
-        if (Math.abs(g - a.luma[i]!) < tolerance && Math.abs(g - c.luma[i]!) < tolerance) flips++
+        if (Math.abs(g - a.luma[i]!) < tolerance && Math.abs(g - c.luma[i]!) < tolerance) flip = 1
       }
+      s.map[i] = flip
+      flips += flip
     }
-    if (area) best = Math.max(best, flips / area)
+    if (area && flips) best = Math.max(best, openedCount(s.map, w, h, s.a, s.b) / area)
   }
   return best
 }
@@ -80,11 +120,16 @@ export function createPopMeter(fps: number, tolerance = POP_LUMA_TOLERANCE): Pop
   const window: HalfFrame[] = []
   let first = 0
   let next = 0
+  let scratch: Scratch | null = null
   return {
     push(mask, gray) {
       if (gray.width !== mask.width || gray.height !== mask.height)
         throw new Error('pop meter: mask and luma sizes differ')
-      window.push(halve(mask, gray))
+      const half = halve(mask, gray)
+      const n = half.on.length
+      if (scratch?.map.length !== n)
+        scratch = { map: new Uint8Array(n), a: new Uint8Array(n), b: new Uint8Array(n) }
+      window.push(half)
       if (window.length > 2 * gap + 1) {
         window.shift()
         first++
@@ -92,16 +137,17 @@ export function createPopMeter(fps: number, tolerance = POP_LUMA_TOLERANCE): Pop
       const total = first + window.length
       // Frame `next` is ready once `gap` frames follow it (or fewer near the start, where fewer precede it).
       if (total - 1 - next < gap) return null
-      const share = popShare(window, next - first, Math.min(gap, next), tolerance)
+      const share = popShare(window, next - first, Math.min(gap, next), tolerance, scratch)
       next++
       return share
     },
     flush() {
       const out: number[] = []
+      if (!scratch) return out
       const total = first + window.length
       for (; next < total; next++) {
         const gaps = Math.min(gap, next, total - 1 - next)
-        out.push(popShare(window, next - first, gaps, tolerance))
+        out.push(popShare(window, next - first, gaps, tolerance, scratch))
       }
       window.length = 0
       return out

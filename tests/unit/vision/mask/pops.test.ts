@@ -46,6 +46,27 @@ describe('pop meter', () => {
     expect(pops.filter((p, i) => i !== 8 && i !== 9 && p > 0)).toEqual([])
   })
 
+  it('does not count the outline of a small subject moving out by a pixel and back', () => {
+    const w = 96
+    const h = 64
+    const square = (grow: number): Mask => {
+      const data = new Uint8Array(w * h)
+      for (let y = 10 - grow; y < 50 + grow; y++)
+        for (let x = 20 - grow; x < 60 + grow; x++) data[y * w + x] = 255
+      return { width: w, height: h, data }
+    }
+    // 2 px in the mask is 1 px at the meter's half size; the picture stays the same.
+    const masks = Array.from({ length: 16 }, (_, i) => square(i % 2 ? 2 : 0))
+    const gray = { width: w, height: h, data: square(0).data.map((v) => (v ? 200 : 40)) }
+    const pops = measure(
+      24,
+      masks,
+      masks.map(() => gray),
+    )
+    expect(pops).toHaveLength(16)
+    expect(Math.max(...pops)).toBe(0)
+  })
+
   it('does not count an arm that really swings up and back, which the picture shows too', () => {
     const masks = [10, 10, 10, 8, 4, 0, 4, 8, 10, 10, 10, 10].map((y) => figure(y))
     expect(measure(24, masks, masks.map(lumaOf)).every((p) => p === 0)).toBe(true)

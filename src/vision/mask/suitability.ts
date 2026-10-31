@@ -151,11 +151,11 @@ export interface SuitabilitySample {
 }
 
 /**
- * A frame pops visibly when at least this share of the subject switches off and back on, or on and off (`mask/pops.ts`).
- * On the dev set's person tracks, smaller pops were mostly the outline shifting by a pixel and back; from about 8 % they
- * are a limb, a leg or a blob beside the person blinking.
+ * A frame pops visibly when at least this share of the subject switches off and back on, or on and off, in blocks the
+ * pop meter keeps (`mask/pops.ts`, which drops thin outline shimmer). On the dev set's person tracks, such pops of 5 %
+ * or more are a leg, a patch of floor or wall, or a bystander blinking.
  */
-export const POP_MIN_SHARE = 0.08
+export const POP_MIN_SHARE = 0.05
 
 /**
  * Decides whether "text behind the subject" works for a shot, from masks sampled across it (ascending times). The
