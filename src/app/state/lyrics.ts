@@ -5,7 +5,7 @@ import type {
   LyricsService,
 } from '../../analysis/lyrics/client.ts'
 import { retimeDirectorLyricCommands } from '../../director/retime.ts'
-import { createTrack, type EditCommand, type LyricsDoc, type Project } from '../../model/index.ts'
+import { createTrack, type EditCommand, type Id, type LyricsDoc, type Project } from '../../model/index.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { lyricClipCommands } from '../../plugins/lyricClips.ts'
 import { starterTemplate, templateState } from '../../plugins/templates.ts'
@@ -131,4 +131,25 @@ function busiestLyricTrack(project: Project): string | undefined {
   for (const c of Object.values(project.clips))
     if (c.type === 'text' && c.lyricLineId) counts.set(c.trackId, (counts.get(c.trackId) ?? 0) + 1)
   return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0]
+}
+
+/**
+ * Edits that remove lyric lines: from the lyrics, with their clips on every track (so a locked track refuses the
+ * edit, as for any clip) and the director's emphasized words and previews of those lines. The other lines' clips keep
+ * their ids and timing. Empty when none of the lines is in the lyrics.
+ */
+export function removeLyricLinesCommands(project: Project, lineIds: readonly Id[]): EditCommand[] {
+  const doc = project.lyrics
+  const gone = new Set(lineIds)
+  if (!doc?.lines.some((l) => gone.has(l.id))) return []
+  const next: LyricsDoc = { ...doc, lines: doc.lines.filter((l) => !gone.has(l.id)) }
+  const clipIds = Object.values(project.clips)
+    .filter((c) => c.type === 'text' && !!c.lyricLineId && gone.has(c.lyricLineId))
+    .map((c) => c.id)
+  return [
+    // Read against the lyrics being replaced, so it runs before `lyrics.set` is applied.
+    ...retimeDirectorLyricCommands(project, next),
+    { type: 'lyrics.set', lyrics: next },
+    ...(clipIds.length ? [{ type: 'clip.remove' as const, clipIds }] : []),
+  ]
 }

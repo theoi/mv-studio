@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   createProject,
   createTextClip,
@@ -8,7 +8,7 @@ import {
   type Project,
   type TextClip,
 } from '../../../src/model/index.ts'
-import { lyricsCommands, lyricsCost } from '../../../src/app/state/lyrics.ts'
+import { lyricsCommands, lyricsCost, removeLyricLinesCommands } from '../../../src/app/state/lyrics.ts'
 
 const doc: LyricsDoc = {
   source: 'pasted',
@@ -90,4 +90,54 @@ it('a locked lyric track is left alone and the new clips go on a new track', () 
 it('rounds the time of timing that separates the vocals up, like the stems estimate it includes', () => {
   const cost = lyricsCost({ separatesStems: true, downloads: [], downloadBytes: 0, seconds: 389 })
   expect(cost.text).toBe('Separates the vocals first · about 7 min on this device')
+})
+
+describe('removeLyricLinesCommands', () => {
+  /** Lines n1 and n2 with their clips on a Lyrics track, and a director's emphasized word for each line. */
+  function withLines(locked = false) {
+    const project = createProject({ name: 'p' })
+    const track = { ...createTrack('visual', 'Lyrics'), locked }
+    const words = createTrack('visual', 'Words')
+    project.tracks.unshift(track, words)
+    project.lyrics = doc
+    const lineClip = (lineId: string, text: string, start: number) => ({
+      ...createTextClip({ trackId: track.id, text, start, duration: 2 }),
+      lyricLineId: lineId,
+    })
+    const emphasis = (lineId: string, text: string, start: number) => ({
+      ...createTextClip({ trackId: words.id, text, start, duration: 1 }),
+      meta: { director: { planId: 'plan', role: 'text', textRole: 'emphasis', lyricLineId: lineId } },
+    })
+    const clips = {
+      n1: lineClip('n1', 'Under the neon skyline', 2),
+      n2: lineClip('n2', 'We come alive tonight', 5),
+      e1: emphasis('n1', 'skyline', 3.4),
+      e2: emphasis('n2', 'tonight', 7),
+    }
+    for (const c of Object.values(clips)) project.clips[c.id] = c
+    return { project, clips }
+  }
+
+  it('takes the lines out of the lyrics with their clips and emphasized words, in one undo step', () => {
+    const { project, clips } = withLines()
+    const editor = new ProjectEditor(project)
+    editor.dispatch(removeLyricLinesCommands(project, ['n1']), { label: 'Delete 1 lyric line' })
+    const after = editor.getProject()
+    expect(after.lyrics?.lines.map((l) => l.id)).toEqual(['n2'])
+    expect(Object.keys(after.clips).sort()).toEqual([clips.n2.id, clips.e2.id].sort())
+    // The other line's clip is the same clip, where it was.
+    expect(after.clips[clips.n2.id]).toEqual(clips.n2)
+    editor.undo()
+    expect(editor.getProject().lyrics?.lines.map((l) => l.id)).toEqual(['n1', 'n2'])
+    expect(Object.keys(editor.getProject().clips)).toHaveLength(4)
+  })
+
+  it('changes nothing for lines that are not in the lyrics, and a locked track refuses the edit', () => {
+    const { project } = withLines()
+    expect(removeLyricLinesCommands(project, ['gone'])).toEqual([])
+    const locked = withLines(true).project
+    const editor = new ProjectEditor(locked)
+    expect(() => editor.dispatch(removeLyricLinesCommands(locked, ['n1']))).toThrow('Track is locked')
+    expect(editor.getProject().lyrics?.lines).toHaveLength(2)
+  })
 })

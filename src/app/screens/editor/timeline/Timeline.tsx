@@ -82,8 +82,11 @@ import {
   deleteSelection,
   duplicateSelection,
   hasClipboard,
+  isLyricClip,
   isSelectableClip,
   paste,
+  selectTimelineClips,
+  timelineSelectionIds,
 } from '../../../state/clipboard.ts'
 import {
   bpmOf,
@@ -776,10 +779,14 @@ const sameView = (a: ClipView, b: ClipView) =>
   (Object.keys(a) as (keyof ClipView)[]).every((k) => a[k] === b[k]) &&
   Object.keys(a).length === Object.keys(b).length
 
-/** Shift or Mod click (or Enter or Space): adds the clip to the selection or takes it out. */
+/**
+ * Shift or Mod click (or Enter or Space): adds the clip, or a lyric line's chip, to the selection or takes it out. A
+ * selected lyric line counts as its chip, so clips and lyric lines can be selected together.
+ */
 function toggleInSelection(clipId: string) {
-  const picked = selectedClipIds(get().selection)
-  selectClips(picked.includes(clipId) ? picked.filter((id) => id !== clipId) : [...picked, clipId])
+  const p = editor.getProject()
+  const picked = timelineSelectionIds(p, get().selection, p.clips[clipId]?.trackId)
+  selectTimelineClips(p, picked.includes(clipId) ? picked.filter((id) => id !== clipId) : [...picked, clipId])
 }
 
 /** Re-renders only when its clip, zoom or selection changes: an edit to one clip leaves the others alone. */
@@ -1582,9 +1589,10 @@ export function Timeline() {
       const p = editor.getProject()
       const self = p.clips[clip.id]
       if (!self) return
+      // Lyric chips in the selection stay with their sung lines; the other clips move.
       const moving = (group ? picked : [clip.id]).flatMap((id) => {
         const c = p.clips[id]
-        return c ? [c] : []
+        return c && !isLyricClip(c) ? [c] : []
       })
       const locked = p.tracks.find((t) => t.locked && moving.some((c) => c.trackId === t.id))
       if (locked) {
@@ -1736,8 +1744,8 @@ export function Timeline() {
     const y0 = e.clientY - origin.top
     const additive = e.shiftKey || e.metaKey || e.ctrlKey
     const before = get().selection
-    const base = additive ? selectedClipIds(before) : []
     const p = editor.getProject()
+    const base = additive ? timelineSelectionIds(p, before) : []
     const rows = trackRows(p, empty)
     let pointer = { x: e.clientX, y: e.clientY }
     let moved = false
@@ -1765,7 +1773,11 @@ export function Timeline() {
       )
       const hits = Object.values(p.clips)
         .filter(
-          (c) => tracks.has(c.trackId) && isSelectableClip(c) && c.start < t1 && c.start + c.duration > t0,
+          (c) =>
+            tracks.has(c.trackId) &&
+            (isSelectableClip(c) || isLyricClip(c)) &&
+            c.start < t1 &&
+            c.start + c.duration > t0,
         )
         .sort((a, b) => a.start - b.start)
         .map((c) => c.id)
@@ -1773,7 +1785,7 @@ export function Timeline() {
       const key = ids.join(',')
       if (key === shown) return
       shown = key
-      selectClips(ids)
+      selectTimelineClips(p, ids)
     }
     const move = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return
@@ -2205,9 +2217,16 @@ export function Timeline() {
                           const lineId = c.lyricLineId
                           const line = lines.find((l) => l.id === lineId)
                           const w = (c.end - c.start) * pps
-                          const sel = selId === lineId
+                          // The line alone, or its chip among several selected clips.
+                          const only = selId === lineId
+                          const sel = only || selIds.has(c.id)
                           const drag = (e: React.PointerEvent, d: LyricDrag) => {
-                            if (lineId) onLyricPointerDown(e, lineId, track.id, d)
+                            const body = d.type === 'line' && d.edge === 'move'
+                            if (body && e.button === 0 && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+                              e.stopPropagation()
+                              e.preventDefault()
+                              toggleInSelection(c.id)
+                            } else if (lineId) onLyricPointerDown(e, lineId, track.id, d)
                             else e.stopPropagation()
                           }
                           return (
@@ -2219,14 +2238,15 @@ export function Timeline() {
                               tabIndex={0}
                               aria-label={`Lyric: ${c.name}${line?.check ? CHECK_NAMES[line.check] : ''}`}
                               aria-pressed={sel}
-                              aria-keyshortcuts="Enter"
+                              aria-keyshortcuts="Enter Shift+Enter"
                               data-space-plays
                               data-lyric-line={lineId}
                               onPointerDown={(e) => drag(e, { type: 'line', edge: 'move' })}
                               onKeyDown={(e) => {
                                 if (e.key !== 'Enter' || !lineId) return
                                 e.preventDefault()
-                                select({ type: 'lyric', id: lineId })
+                                if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(c.id)
+                                else select({ type: 'lyric', id: lineId })
                               }}
                             >
                               {line?.check && <span className={styles.draftDot} aria-hidden />}
@@ -2236,7 +2256,7 @@ export function Timeline() {
                                 start={c.start}
                                 width={w}
                                 pps={pps}
-                                selected={sel}
+                                selected={only}
                                 onWordEdge={(e, index, edge) => drag(e, { type: 'word', index, edge })}
                               />
                               {w >= 16 && (
@@ -2251,7 +2271,7 @@ export function Timeline() {
                                   />
                                 </>
                               )}
-                              {sel && lineId && <LineMatches lineId={lineId} />}
+                              {only && lineId && <LineMatches lineId={lineId} />}
                             </div>
                           )
                         }

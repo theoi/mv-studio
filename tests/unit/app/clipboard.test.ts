@@ -7,6 +7,7 @@ import {
   createVideoClip,
   type Asset,
   type Project,
+  type TextClip,
 } from '../../../src/model/index.ts'
 import {
   copySelection,
@@ -17,6 +18,8 @@ import {
   pasteAt,
   pasteHereOutcome,
   selectAll,
+  selectTimelineClips,
+  timelineSelectionIds,
 } from '../../../src/app/state/clipboard.ts'
 import { editor, splitAtPlayhead } from '../../../src/app/state/project.ts'
 import { get, selectClips, selectedClipIds, set } from '../../../src/app/state/ui.ts'
@@ -256,5 +259,110 @@ describe('selection', () => {
       [9, 2],
       [14, 4],
     ])
+  })
+})
+
+describe('lyric lines among several clips', () => {
+  let line2: TextClip
+  let lyricsTrack: string
+
+  beforeEach(() => {
+    const p = structuredClone(s.p)
+    lyricsTrack = s.line.trackId
+    p.lyrics = {
+      source: 'pasted',
+      lines: [
+        { id: 'l1', text: 'Hello', start: 0, end: 4, words: [] },
+        { id: 'l2', text: 'World', start: 5, end: 8, words: [] },
+      ],
+    }
+    line2 = {
+      ...createTextClip({ trackId: lyricsTrack, text: 'World', start: 5, duration: 3 }),
+      lyricLineId: 'l2',
+      style: { ...s.line.style, color: '#ff00aa' },
+    }
+    p.clips[line2.id] = line2
+    editor.load(p)
+    set({ selection: { type: 'none' }, playhead: 0, toasts: [] })
+  })
+
+  const lineIds = () => project().lyrics?.lines.map((l) => l.id)
+  const lastToast = () => get().toasts.at(-1)?.message
+
+  it('Delete takes the selected lines out of the lyrics with their clips, in the same undo step as the other clips', () => {
+    // A director's emphasized word of the deleted line, selected too: removed once, with the line.
+    const word = {
+      ...createTextClip({ trackId: s.footage.id, text: 'Hello', start: 20, duration: 1 }),
+      meta: { director: { planId: 'plan', role: 'text', textRole: 'emphasis', lyricLineId: 'l1' } },
+    }
+    editor.dispatch({ type: 'clip.add', clip: word }, { history: 'skip' })
+    selectClips([s.a.id, s.line.id, word.id])
+    expect(deleteSelection()).toBe(true)
+    expect(project().clips[s.a.id]).toBeUndefined()
+    expect(project().clips[s.line.id]).toBeUndefined()
+    expect(project().clips[word.id]).toBeUndefined()
+    expect(lineIds()).toEqual(['l2'])
+    expect(project().clips[line2.id]).toEqual(line2)
+    expect(editor.undoLabel()).toBe('Delete 2 clips and 1 lyric line')
+    editor.undo()
+    expect(lineIds()).toEqual(['l1', 'l2'])
+    expect(project().clips[s.line.id]).toBeDefined()
+    expect(project().clips[s.a.id]).toBeDefined()
+  })
+
+  it('a locked Lyrics track rejects the whole delete or cut', () => {
+    editor.dispatch(
+      { type: 'track.update', trackId: lyricsTrack, patch: { locked: true } },
+      { history: 'skip' },
+    )
+    selectClips([s.a.id, s.line.id])
+    deleteSelection()
+    expect(cutSelection()).toBe(true)
+    expect(project().clips[s.a.id]).toBeDefined()
+    expect(project().clips[s.line.id]).toBeDefined()
+    expect(lineIds()).toEqual(['l1', 'l2'])
+    expect(lastToast()).toBe('That track is locked. Unlock it to edit.')
+  })
+
+  it('pastes copied lyric lines as text clips with their look, on a new Text track, never on the lyrics lane', () => {
+    selectClips([s.line.id, line2.id])
+    copySelection()
+    expect(lastToast()).toBe('Copied 2 lyric lines')
+    set({ playhead: 20 })
+    paste()
+    const text = project().tracks.find((t) => t.name === 'Text')!
+    expect(text.kind).toBe('visual')
+    const copies = selected()
+    expect(copies.map((c) => [c?.trackId, c?.start])).toEqual([
+      [text.id, 20],
+      [text.id, 25],
+    ])
+    expect(copies.every((c) => c?.type === 'text' && c.lyricLineId === undefined)).toBe(true)
+    expect(copies[1]).toMatchObject({ text: 'World', style: { color: '#ff00aa' } })
+    expect(lineIds()).toEqual(['l1', 'l2'])
+    expect(lastToast()).toBe('Pasted 2 lyric lines as text')
+
+    // With other clips, those go back on their own track.
+    selectClips([s.a.id, s.line.id])
+    copySelection()
+    expect(lastToast()).toBe('Copied 1 clip and 1 lyric line')
+    set({ playhead: 40 })
+    paste()
+    expect(onTrack(s.footage.id)).toContainEqual([40, 4])
+    expect(lastToast()).toBe('Pasted 2 clips, with 1 lyric line as text')
+    expect(Object.values(project().clips).filter((c) => c.trackId === lyricsTrack)).toHaveLength(2)
+  })
+
+  it('duplicates a lyric line as text, and a lone lyric chip selects its line', () => {
+    selectClips([s.a.id, line2.id])
+    duplicateSelection()
+    expect(lastToast()).toBe('Duplicated 2 clips, with 1 lyric line as text')
+    expect(Object.values(project().clips).filter((c) => c.trackId === lyricsTrack)).toHaveLength(2)
+
+    selectTimelineClips(project(), [line2.id])
+    expect(get().selection).toEqual({ type: 'lyric', id: 'l2' })
+    expect(timelineSelectionIds(project(), get().selection)).toEqual([line2.id])
+    selectTimelineClips(project(), [s.a.id, line2.id])
+    expect(selectedClipIds(get().selection)).toEqual([s.a.id, line2.id])
   })
 })
