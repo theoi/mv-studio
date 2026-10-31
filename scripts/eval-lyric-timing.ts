@@ -8,19 +8,24 @@
  * (`mp3/<file>.mp3`, decoded with ffmpeg to `<file>.mix16k.f32` in --cache on the first run).
  *
  *   node scripts/eval-lyric-timing.ts --cache ~/devdata/cache [--baseline | --no-mix] [--songs a,b]
- *     [--gap 40 [--gap-at end] [--gap-leak=-25]] [--unlisted 30 [--unlisted-at end]] [--extra-repeat]
- *     [--lines one|stanza] [--unvoiced-cost n] [--line-pause n] [--unlisted-cost n] [--unlisted-entry n]
+ *     [--gap 40 [--gap-at end] [--gap-leak=-25 [--gap-leak-jitter 6]]] [--unlisted 30 [--unlisted-at end]] [--extra-repeat]
+ *     [--lines one|stanza] [--unvoiced-cost n] [--line-pause n] [--unlisted-cost n] [--unlisted-entry n] [--mix-window s]
  *     [--data dir] [--vocab vocab.json] [--verbose]
  *
  * --baseline   times without voice activity, line pauses and unlisted singing, as before they were added
  * --no-mix     finds where someone sings from the vocals alone, as before the song was used
  * --unvoiced-cost, --line-pause   override the aligner's defaults (0 turns either off)
+ * --mix-window s   overrides how many seconds of loud frames voice activity's test against the song looks at (0: each
+ *              frame on its own, as before)
  * --unlisted-cost, --unlisted-entry   override the aligner's costs of unlisted singing (an unlisted cost of Infinity
  *              turns it off)
  * --gap s      inserts s seconds of the song's own longest instrumental stretch (looped) at the line boundary nearest
- *              the middle, or after the last line with --gap-at end, and shifts the reference after it
+ *              the middle, or after the last line with --gap-at end, shifts the reference after it, and counts the
+ *              words placed in it
  * --gap-leak dB   fills the inserted stretch of the vocals with the song's own, dB lower, like the band leaking into
  *              the stem during a loud instrumental
+ * --gap-leak-jitter dB   moves the leak's level up or down by up to dB in each 20 ms frame (uniformly, with a fixed
+ *              seed), as separation leak wavers around its typical level
  * --lines      pastes the lyrics as one line, or one line per stanza, instead of the published lines
  * --unlisted s    inserts s seconds of singing that the lyrics do not list (the next song's, from its first word: its
  *              vocals, song and emissions) at the line boundary nearest the middle, or after the last line with
@@ -51,6 +56,8 @@ const { values: args } = parseArgs({
     gap: { type: 'string' },
     'gap-at': { type: 'string', default: 'middle' },
     'gap-leak': { type: 'string' },
+    'gap-leak-jitter': { type: 'string' },
+    'mix-window': { type: 'string' },
     lines: { type: 'string', default: 'published' },
     'unvoiced-cost': { type: 'string' },
     'line-pause': { type: 'string' },
@@ -162,6 +169,7 @@ interface Errors {
 }
 const total: Errors = { all: [], afterGap: [] }
 let placedInUnlisted = 0
+let placedInGap = 0
 const byLanguage = new Map<string, number[]>()
 const rows: string[] = []
 for (const name of names) {
@@ -187,6 +195,7 @@ for (const name of names) {
   let logProbs: Float32Array = f32(emFile(name)!)
   let pcm: Float32Array = f32(path.join(cache, `${name}.vocals16k.f32`))
   let mix = args['no-mix'] || args.baseline ? undefined : mix16k(name)
+  let gap: { start: number; end: number } | undefined
   if (args.gap) {
     const seconds = Number(args.gap)
     let quiet = { a: 0, b: reference[0]!.start }
@@ -214,10 +223,20 @@ for (const name of names) {
     }
     const frames = Math.round(seconds * FPS)
     const af = Math.round(at * FPS)
+    gap = { start: af / FPS, end: (af + frames) / FPS }
     logProbs = splice(logProbs, af * TOKENS, loop(logProbs, TOKENS, fa, fb, frames))
     const leak = args['gap-leak'] === undefined ? undefined : 10 ** (Number(args['gap-leak']) / 20)
+    const jitter = Number(args['gap-leak-jitter'] ?? 0)
+    let seed = 7
+    const gains = Float32Array.from({ length: frames }, () => {
+      seed = (seed * 16807) % 2147483647
+      return 10 ** ((((seed / 2147483647) * 2 - 1) * jitter) / 20)
+    })
     const songGap = mix || leak !== undefined ? loop(mix ?? mix16k(name), HOP, fa, fb, frames) : undefined
-    const vocalsGap = leak === undefined ? loop(pcm, HOP, fa, fb, frames) : songGap!.map((v) => v * leak)
+    const vocalsGap =
+      leak === undefined
+        ? loop(pcm, HOP, fa, fb, frames)
+        : songGap!.map((v, i) => v * leak * gains[Math.floor(i / HOP)]!)
     pcm = splice(pcm, af * HOP, vocalsGap)
     if (mix) mix = splice(mix, af * HOP, songGap!)
     for (const r of reference)
@@ -302,7 +321,10 @@ for (const name of names) {
     args.baseline
       ? { linePause: 0, unlistedCost: Infinity }
       : {
-          voiced: voiceActivity(pcm, RATE, { mix }),
+          voiced: voiceActivity(pcm, RATE, {
+            mix,
+            mixWindow: args['mix-window'] === undefined ? undefined : Number(args['mix-window']),
+          }),
           unvoicedCost: args['unvoiced-cost'] === undefined ? undefined : Number(args['unvoiced-cost']),
           linePause: args['line-pause'] === undefined ? undefined : Number(args['line-pause']),
           unlistedCost: args['unlisted-cost'] === undefined ? undefined : Number(args['unlisted-cost']),
@@ -311,6 +333,7 @@ for (const name of names) {
   )
   const placed = aligned.flatMap((l) => l.words)
   placedInUnlisted += placed.filter((w) => unlisted.some((u) => w.start >= u.start && w.start < u.end)).length
+  if (gap) placedInGap += placed.filter((w) => w.start >= gap.start && w.start < gap.end).length
   const errors = placed.map((w, i) =>
     Math.min(Math.abs(w.start - reference[i]!.start), Math.abs(w.start - (secondCopy.get(i) ?? Infinity))),
   )
@@ -330,6 +353,7 @@ if (args.verbose) console.log(rows.join('\n'))
 for (const [lang, e] of [...byLanguage].sort()) console.log(`${lang.padEnd(8)} ${stat(e)}`)
 console.log(`${'after 8 s+ gaps'.padEnd(16)} ${stat(total.afterGap)}`)
 if (args.unlisted) console.log(`words placed in the unlisted singing: ${placedInUnlisted}`)
+if (args.gap) console.log(`words placed in the inserted instrumental: ${placedInGap}`)
 console.log(
   `all ${rows.length} songs (${args.baseline ? 'baseline' : `voice activity${args['no-mix'] ? ' without the song' : ''} + line pauses`}): ${stat(total.all)}`,
 )
