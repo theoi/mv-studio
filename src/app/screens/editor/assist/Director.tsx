@@ -131,12 +131,11 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
     >
       <div className={styles.viewBody}>
         <ul className={styles.tips}>
-          {paid.items.slice(0, 6).map((item, i) => (
-            <li key={i}>
-              {item.label} · {formatEstimate(item.estimate)}
+          {paid.byModel.map((m) => (
+            <li key={m.modelId}>
+              {plural(m.count, m.kind)} with {m.name} · {formatEstimate(m)}
             </li>
           ))}
-          {paid.items.length > 6 && <li>and {plural(paid.items.length - 6, 'more shot')}</li>}
         </ul>
         <p className={styles.muted}>
           Estimates from fal.ai’s prices on {paid.pricesCheckedOn}. Shots already made are kept if you cancel.

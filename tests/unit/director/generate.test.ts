@@ -20,6 +20,33 @@ async function aiPlan(mode: 'images' | 'video' = 'images', maxShots?: number) {
   return { provider, project, plan }
 }
 
+describe('estimatePlanCost by model', () => {
+  it('groups draft images under the provider’s name for their model', async () => {
+    const { provider, project, plan } = await aiPlan('images')
+    const cost = estimatePlanCost(plan, provider, project)
+    expect(cost.count).toBeGreaterThan(1)
+    expect(cost.byModel).toEqual([
+      {
+        modelId: cost.requests[0]!.request.modelId,
+        name: provider.getModel(cost.requests[0]!.request.modelId)!.name,
+        kind: 'image',
+        count: cost.count,
+        usd: cost.usd,
+      },
+    ])
+    expect(cost.byModel[0]!.name).not.toBe(cost.byModel[0]!.modelId)
+  })
+
+  it('counts clips apart from images, the most expensive model first, adding up to the whole cost', async () => {
+    const { provider, project, plan } = await aiPlan('video')
+    const cost = estimatePlanCost(plan, provider, project)
+    expect(cost.byModel.some((m) => m.kind === 'clip')).toBe(true)
+    expect(cost.byModel.reduce((n, m) => n + m.count, 0)).toBe(cost.count)
+    expect(cost.byModel.reduce((usd, m) => usd + m.usd, 0)).toBeCloseTo(cost.usd, 4)
+    expect(cost.byModel.map((m) => m.usd)).toEqual(cost.byModel.map((m) => m.usd).sort((a, b) => b - a))
+  })
+})
+
 describe('generatePlanShots', () => {
   it('generates each paid shot once, never the reused ones, and reports every result', async () => {
     const { provider, project, plan } = await aiPlan()
