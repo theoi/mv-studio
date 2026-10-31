@@ -215,6 +215,8 @@ precision highp float;
 in vec2 v_uv;
 out vec4 outColor;
 uniform sampler2D u_input;
+uniform mat3 u_canvasToLayer;
+uniform mat3 u_layerToCanvas;
 ${PLUGIN_COMMON}
 ${paramUniforms(params)}
 ${passUniforms}

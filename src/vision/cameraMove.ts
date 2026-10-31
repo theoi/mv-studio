@@ -126,7 +126,7 @@ export function findDepthAsset(project: Pick<Project, 'assets'>, stillId: Id): A
 
 /** Effect instance for a camera move across the whole clip (progress keyframed 0 -> 1; the move eases itself). */
 export function cameraMoveEffect(
-  clip: Pick<ImageClip, 'duration' | 'fit'>,
+  clip: Pick<ImageClip, 'duration'>,
   depthAssetId: Id,
   options: { focus: number; preset?: CameraPreset | undefined; intensity?: number | undefined },
 ): EffectInstance {
@@ -139,7 +139,6 @@ export function cameraMoveEffect(
       preset: { value: options.preset ?? DEFAULT_CAMERA_PRESET },
       intensity: { value: options.intensity ?? DEFAULT_INTENSITY },
       focus: { value: Math.round(Math.min(1, Math.max(0, options.focus)) * 1000) / 1000 },
-      fit: { value: clip.fit },
       progress: {
         value: 0,
         keyframes: [

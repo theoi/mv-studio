@@ -33,7 +33,7 @@ import {
   type Program,
   type RenderTarget,
 } from './gl.ts'
-import { fitSize, layerMatrix, planFrame, type LayerPlan, type Mat2D } from './layout.ts'
+import { fitSize, layerMatrix, layerUniforms, planFrame, type LayerPlan, type Mat2D } from './layout.ts'
 import { pluginRegistry, resolveParams, resolveStaticParams } from './registry.ts'
 import {
   BLEND_FS,
@@ -55,6 +55,7 @@ import type {
   EffectDefinition,
   EffectFrameContext,
   EffectPass,
+  EffectUniformValue,
   FrameProvider,
   FrameRef,
   MediaFileSource,
@@ -105,6 +106,8 @@ export function bundledImageUrl(ref: string): string | null {
 const imageParamKey = (ref: string) => `param:${ref}`
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+const NO_FRAME_UNIFORMS: Readonly<Record<string, EffectUniformValue>> = {}
 
 /** Passes an effect's final shader samples. */
 const finalInputs = (def: EffectDefinition): readonly string[] =>
@@ -465,8 +468,8 @@ export class WebGLCompositor implements Compositor {
   private renderClip(gpu: GpuState, clip: VisualClip, s: FrameState): RenderTarget {
     const target = gpu.pool.acquire()
     this.clear(target, [0, 0, 0, 0])
-    this.drawContent(gpu, clip, target, s, 1)
-    return this.process(gpu, clip, target, true, s)
+    const layer = this.drawContent(gpu, clip, target, s, 1)
+    return this.process(gpu, clip, target, true, s, layer)
   }
 
   /** Effect passes, then adjustments, matte and opacity. Returns a target owned by the caller. */
@@ -476,11 +479,13 @@ export class WebGLCompositor implements Compositor {
     input: RenderTarget,
     ownsInput: boolean,
     s: FrameState,
+    layer: Mat2D | null = null,
   ): RenderTarget {
     const gl = this.gl
     const local = s.time - clip.start
     let current = input
     let owned = ownsInput
+    const mapping = layerUniforms(layer, s.width, s.height)
     for (const instance of clip.effects) {
       if (!instance.enabled) continue
       const def = this.registry.get(instance.effectId)
@@ -489,6 +494,15 @@ export class WebGLCompositor implements Compositor {
       const passes = (def.passes ?? []).map((pass) => this.passProgram(gpu, def, pass))
       if (!program || passes.some((p) => !p)) continue
       const params = resolveParams(def.params, instance.params, local, s.time, s.audio)
+      const values =
+        def.frameUniforms?.({
+          time: s.time,
+          localTime: local,
+          width: s.width,
+          height: s.height,
+          params,
+          audio: s.audioFrame,
+        }) ?? NO_FRAME_UNIFORMS
       const outputs = new Map<string, RenderTarget>()
       ;(def.passes ?? []).forEach((pass, i) => {
         const scale = pass.scale ?? 1
@@ -506,6 +520,8 @@ export class WebGLCompositor implements Compositor {
           pass.inputs ?? [],
           outputs,
           out,
+          mapping,
+          values,
           local,
           s,
         )
@@ -513,7 +529,20 @@ export class WebGLCompositor implements Compositor {
       })
       gl.viewport(0, 0, s.width, s.height)
       const out = gpu.pool.acquire()
-      this.effectPass(gpu, program, def, params, current, finalInputs(def), outputs, out, local, s)
+      this.effectPass(
+        gpu,
+        program,
+        def,
+        params,
+        current,
+        finalInputs(def),
+        outputs,
+        out,
+        mapping,
+        values,
+        local,
+        s,
+      )
       for (const target of outputs.values()) gpu.pool.release(target)
       if (owned) gpu.pool.release(current)
       current = out
@@ -553,6 +582,8 @@ export class WebGLCompositor implements Compositor {
     inputs: readonly string[],
     outputs: ReadonlyMap<string, RenderTarget>,
     out: RenderTarget,
+    mapping: ReturnType<typeof layerUniforms>,
+    values: Readonly<Record<string, EffectUniformValue>>,
     local: Seconds,
     s: FrameState,
   ): void {
@@ -561,6 +592,9 @@ export class WebGLCompositor implements Compositor {
     gl.disable(gl.BLEND)
     gl.useProgram(program.program)
     this.setCommonUniforms(program, local, s)
+    gl.uniformMatrix3fv(program.uniform('u_canvasToLayer'), false, mapping.canvasToLayer)
+    gl.uniformMatrix3fv(program.uniform('u_layerToCanvas'), false, mapping.layerToCanvas)
+    this.setFrameUniforms(program, values)
     this.setParamUniforms(program, def.params, params)
     this.bindImageParams(gpu, program, def.params, params, s)
     this.bindTexture(program, 'u_input', 0, input.texture)
@@ -686,14 +720,14 @@ export class WebGLCompositor implements Compositor {
   // -------------------------------------------------------------------------------------------------------------
   // Content
 
-  /** Draws a clip's own pixels, transformed, into `target`. Returns false when there was nothing to draw. */
+  /** Draws a clip's own pixels, transformed, into `target`. Returns its layer matrix, or null when nothing was drawn. */
   private drawContent(
     gpu: GpuState,
     clip: VisualClip,
     target: RenderTarget,
     s: FrameState,
     opacity: number,
-  ): boolean {
+  ): Mat2D | null {
     const local = s.time - clip.start
     const matrix = (bw: number, bh: number) =>
       layerMatrix(clip, local, s.time, bw, bh, s.width, s.height, s.audio)
@@ -701,29 +735,34 @@ export class WebGLCompositor implements Compositor {
       case 'video':
       case 'image': {
         const frame = s.sources.get(clip.id)
-        if (!frame || frame.width === 0 || frame.height === 0) return false
+        if (!frame || frame.width === 0 || frame.height === 0) return null
         const key = clip.type === 'image' ? `image:${clip.assetId}` : `video:${clip.id}`
         const texture = this.texture(gpu, key, frame.source, clip.type === 'image' ? frame.source : undefined)
         const [bw, bh] = fitSize(clip.fit, frame.width, frame.height, s.width, s.height)
-        this.drawQuad(gpu, target, matrix(bw, bh), { texture, flipY: false }, opacity, s)
-        return true
+        const m = matrix(bw, bh)
+        this.drawQuad(gpu, target, m, { texture, flipY: false }, opacity, s)
+        return m
       }
       case 'solid': {
         const color = parseColor(evaluate(clip.color, local))
-        this.drawQuad(gpu, target, matrix(s.width, s.height), { color }, opacity, s)
-        return true
+        const m = matrix(s.width, s.height)
+        this.drawQuad(gpu, target, m, { color }, opacity, s)
+        return m
       }
       case 'text': {
-        if (!clip.text.trim()) return false
+        if (!clip.text.trim()) return null
         const raster = this.text.draw(clip, s.project, s.time, s.width, s.height, s.audioFrame)
         const texture = this.texture(gpu, `text:${clip.id}`, raster.canvas, raster.version)
-        this.drawQuad(gpu, target, matrix(raster.width, raster.height), { texture, flipY: false }, opacity, s)
-        return true
+        const m = matrix(raster.width, raster.height)
+        this.drawQuad(gpu, target, m, { texture, flipY: false }, opacity, s)
+        return m
       }
-      case 'generator':
-        return this.drawGenerator(gpu, clip, target, s, opacity, matrix(s.width, s.height))
+      case 'generator': {
+        const m = matrix(s.width, s.height)
+        return this.drawGenerator(gpu, clip, target, s, opacity, m) ? m : null
+      }
       case 'adjustment':
-        return false
+        return null
     }
   }
 
@@ -930,6 +969,19 @@ export class WebGLCompositor implements Compositor {
       this.bindTexture(p, `u_${spec.key}`, unit++, texture)
       const size = texture === gpu.transparent || !frame ? [0, 0] : [frame.width, frame.height]
       gl.uniform2f(p.uniform(`u_${spec.key}Size`), size[0] as number, size[1] as number)
+    }
+  }
+
+  private setFrameUniforms(p: Program, values: Readonly<Record<string, EffectUniformValue>>): void {
+    const gl = this.gl
+    for (const key in values) {
+      const loc = p.uniform(`u_${key}`)
+      const v = values[key]
+      if (!loc || v === undefined) continue
+      if (typeof v === 'number') gl.uniform1f(loc, v)
+      else if (v.length === 2) gl.uniform2f(loc, v[0] ?? 0, v[1] ?? 0)
+      else if (v.length === 3) gl.uniform3f(loc, v[0] ?? 0, v[1] ?? 0, v[2] ?? 0)
+      else if (v.length === 4) gl.uniform4f(loc, v[0] ?? 0, v[1] ?? 0, v[2] ?? 0, v[3] ?? 0)
     }
   }
 

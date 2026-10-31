@@ -1,9 +1,10 @@
-import { CAMERA_PRESETS, MAX_OFFSET, OVERSCAN_MARGIN, OVERSCAN_SAMPLES } from './camera.ts'
+import type { EffectUniformValue, ResolvedParams } from '../../engine/types.ts'
+import { CAMERA_PRESETS, cameraPoseAt } from './camera.ts'
 import type { CameraPreset } from '../types.ts'
 
 /**
  * GLSL for the 3D camera move effect (`src/plugins/parallax.ts`) and the standalone parallax renderer. This module
- * has no runtime dependencies so the plugin registry, which also loads in workers, can import it on its own.
+ * depends only on camera.ts so the plugin registry, which also loads in workers, can import it on its own.
  */
 
 /** Stable plugin id, stored in projects. */
@@ -11,13 +12,8 @@ export const CAMERA_EFFECT_ID = 'camera-3d'
 
 export const DEFAULT_CAMERA_PRESET: CameraPreset = 'dolly-in'
 
-/** Option order of the effect's `fit` select; matches the clip's MediaFit so depth lines up with the layer. */
-export const CAMERA_EFFECT_FITS = ['cover', 'contain', 'stretch'] as const
-
 export const PARALLAX_MIN_STEPS = 16
 export const PARALLAX_MAX_STEPS = 48
-
-const float = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v))
 
 /**
  * `parallaxMarch` returns the image point to sample for image point `p` whose parallax direction at depth 1 is `v`.
@@ -58,106 +54,56 @@ vec2 parallaxMarch(sampler2D depthMap, vec2 depthScale, vec2 depthOffset, vec2 d
 }
 `
 
-/** GLSL port of `cameraPoseAt` (camera.ts); presets are indices into CAMERA_PRESETS. */
-export const CAMERA_POSE_GLSL = `
-const float CAMERA_PI = 3.141592653589793;
-const int CAMERA_OVERSCAN_SAMPLES = ${OVERSCAN_SAMPLES};
-
-struct CameraPose {
-  vec2 offset;
-  vec2 pan;
-  float zoom;
-  float dolly;
-};
-
-CameraPose cameraRawPose(int preset, float progress, float intensity) {
-  float e = 0.5 - 0.5 * cos(CAMERA_PI * clamp(progress, 0.0, 1.0));
-  float s = 2.0 * e - 1.0;
-  float a = ${float(MAX_OFFSET)} * intensity;
-  CameraPose c = CameraPose(vec2(0.0), vec2(0.0), 1.0, 0.0);
-  if (preset <= ${CAMERA_PRESETS.indexOf('dolly-out')}) {
-    float k = preset == ${CAMERA_PRESETS.indexOf('dolly-in')} ? e : 1.0 - e;
-    c.zoom = 1.0 + 0.12 * intensity * k;
-    c.dolly = 0.22 * intensity * k;
-  } else if (preset <= ${CAMERA_PRESETS.indexOf('pan-right')}) {
-    float dir = preset == ${CAMERA_PRESETS.indexOf('pan-left')} ? 1.0 : -1.0;
-    c.offset.x = dir * a * s;
-    c.pan.x = dir * 0.5 * a * s;
-  } else if (preset <= ${CAMERA_PRESETS.indexOf('tilt-down')}) {
-    float dir = preset == ${CAMERA_PRESETS.indexOf('tilt-up')} ? 1.0 : -1.0;
-    c.pan.y = dir * 0.8 * a * s;
-    c.offset.y = dir * 0.35 * a * s;
-  } else if (preset <= ${CAMERA_PRESETS.indexOf('orbit-right')}) {
-    float dir = preset == ${CAMERA_PRESETS.indexOf('orbit-left')} ? 1.0 : -1.0;
-    c.offset.x = dir * 1.3 * a * s;
-    c.offset.y = -0.15 * a * sin(CAMERA_PI * e);
-    c.zoom = 1.0 + 0.04 * intensity * sin(CAMERA_PI * e);
-  } else if (preset == ${CAMERA_PRESETS.indexOf('crane-up')}) {
-    c.offset.y = a * s;
-    c.pan.y = 0.4 * a * s;
-    c.zoom = 1.0 + 0.05 * intensity * e;
-  } else {
-    c.zoom = 1.0 + 0.18 * intensity * e;
-    c.dolly = 0.1 * intensity * e;
-    c.offset = vec2(0.5, 0.25) * a * s;
-    c.pan = vec2(-0.3, -0.15) * a * s;
+/** Per-frame uniforms of the camera effect: the pose, computed once per frame instead of in every pixel. */
+export function cameraEffectUniforms(params: ResolvedParams): Record<string, EffectUniformValue> {
+  const num = (v: unknown) => (typeof v === 'number' ? v : 0)
+  const preset = CAMERA_PRESETS.find((p) => p === params.preset) ?? DEFAULT_CAMERA_PRESET
+  const pose = cameraPoseAt(
+    { preset, intensity: num(params.intensity), focus: num(params.focus) },
+    num(params.progress),
+  )
+  return {
+    cameraOffset: [pose.offsetX, pose.offsetY],
+    cameraPan: [pose.panX ?? 0, pose.panY ?? 0],
+    cameraZoom: pose.zoom,
+    cameraDolly: pose.dolly ?? 0,
+    cameraFocus: pose.focus,
   }
-  return c;
 }
-
-float cameraAxisZoom(float offset, float pan, float dolly, float focus) {
-  float zoom = 1.0;
-  for (int i = 0; i < 2; i++) {
-    float k = i == 0 ? -focus : 1.0 - focus;
-    float c = 1.0 - dolly * k;
-    float room = 0.5 - abs(pan * c + offset * k);
-    if (c <= 0.0 || room <= 0.0) return 1e4;
-    zoom = max(zoom, 0.5 * c / room);
-  }
-  return zoom;
-}
-
-float cameraRequiredZoom(CameraPose c, float focus) {
-  return max(cameraAxisZoom(c.offset.x, c.pan.x, c.dolly, focus), cameraAxisZoom(c.offset.y, c.pan.y, c.dolly, focus));
-}
-
-CameraPose cameraPoseAt(int preset, float progress, float intensity, float focus) {
-  float factor = 1.0;
-  for (int i = 0; i <= CAMERA_OVERSCAN_SAMPLES; i++) {
-    CameraPose c = cameraRawPose(preset, float(i) / float(CAMERA_OVERSCAN_SAMPLES), intensity);
-    factor = max(factor, cameraRequiredZoom(c, focus) / c.zoom);
-  }
-  CameraPose pose = cameraRawPose(preset, progress, intensity);
-  pose.zoom *= factor * ${float(OVERSCAN_MARGIN)};
-  return pose;
-}
-`
 
 /**
- * Effect body. The layer arrives fitted into the canvas, so the canvas stands in for the image: the camera works in
- * top-left canvas coordinates and depth is read through the clip's fit (the depth image has the still's aspect).
- * Without a depth map the move still pans and zooms, with no parallax.
+ * Effect body. It works in the layer's own coordinates (u_canvasToLayer, top-left 0..1 over the still), so it follows
+ * the clip's fit and transform: the camera frames the part of the still visible on the canvas, depth is read directly
+ * in image coordinates, and colour is sampled back from the transformed layer. The pose comes from
+ * cameraEffectUniforms. Without a depth map the move still pans and zooms, with no parallax.
  */
 export const CAMERA_EFFECT_GLSL = `${PARALLAX_MARCH_GLSL}
-${CAMERA_POSE_GLSL}
+uniform vec2 u_cameraOffset;
+uniform vec2 u_cameraPan;
+uniform float u_cameraZoom;
+uniform float u_cameraDolly;
+uniform float u_cameraFocus;
+
+vec2 cameraToLayer(vec2 canvasUv) {
+  return (u_canvasToLayer * vec3(canvasUv, 1.0)).xy;
+}
+
 vec4 mainImage(vec2 uv) {
-  vec2 t = vec2(uv.x, 1.0 - uv.y);
+  vec2 i = cameraToLayer(uv);
+  if (any(lessThan(i, vec2(0.0))) || any(greaterThan(i, vec2(1.0)))) return texture(u_input, uv);
+  // The visible part of the still; the move's overscan keeps every sample inside it.
+  vec2 c0 = cameraToLayer(vec2(0.0, 0.0));
+  vec2 c1 = cameraToLayer(vec2(1.0, 0.0));
+  vec2 c2 = cameraToLayer(vec2(0.0, 1.0));
+  vec2 c3 = cameraToLayer(vec2(1.0, 1.0));
+  vec2 lo = clamp(min(min(c0, c1), min(c2, c3)), 0.0, 1.0);
+  vec2 size = max(clamp(max(max(c0, c1), max(c2, c3)), 0.0, 1.0) - lo, vec2(1e-6));
+  vec2 t = (i - lo) / size;
+  vec2 p = 0.5 + (t - 0.5) / u_cameraZoom - u_cameraPan;
+  vec2 v = u_cameraOffset + (p - 0.5) * u_cameraDolly;
   bool hasDepth = u_depthSize.x > 0.0 && u_depthSize.y > 0.0;
-  vec2 size = vec2(1.0);
-  int fit = int(u_fit + 0.5);
-  if (hasDepth && fit != 2) {
-    float r = (u_depthSize.x / u_depthSize.y) / (u_resolution.x / u_resolution.y);
-    size = ((fit == 0) == (r > 1.0)) ? vec2(r, 1.0) : vec2(1.0, 1.0 / r);
-  }
-  vec2 lo = max(vec2(0.0), 0.5 - 0.5 * size);
-  vec2 hi = min(vec2(1.0), 0.5 + 0.5 * size);
-  if (any(lessThan(t, lo)) || any(greaterThan(t, hi))) return texture(u_input, uv);
-  float focus = clamp(u_focus, 0.0, 1.0);
-  CameraPose c = cameraPoseAt(int(u_preset + 0.5), u_progress, clamp(u_intensity, 0.0, 1.0), focus);
-  vec2 p = 0.5 + (t - 0.5) / c.zoom - c.pan;
-  vec2 v = c.offset + (p - 0.5) * c.dolly;
-  vec2 q = hasDepth ? parallaxMarch(u_depth, 1.0 / size, 0.5 - 0.5 / size, u_depthSize, p, v, focus) : p;
-  q = clamp(q, lo, hi);
-  return texture(u_input, vec2(q.x, 1.0 - q.y));
+  vec2 q = hasDepth ? parallaxMarch(u_depth, size, lo, u_depthSize, p, v, u_cameraFocus) : p;
+  vec2 source = lo + clamp(q, 0.0, 1.0) * size;
+  return texture(u_input, (u_layerToCanvas * vec3(source, 1.0)).xy);
 }
 `
