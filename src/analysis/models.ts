@@ -18,3 +18,21 @@ export const BEAT_THIS_MODEL: ModelDescriptor = {
     },
   },
 }
+
+/**
+ * HTDemucs (facebookresearch/demucs, MIT weights) as a single FP32 ONNX graph with STFT and iSTFT outside the
+ * graph, converted by timcsy/demucs-web (MIT). Output parity with PyTorch demucs apply_model: 75-88 dB SDR.
+ */
+export const DEMUCS_MODEL: ModelDescriptor = {
+  id: 'htdemucs',
+  name: 'HTDemucs stem separator',
+  license: 'MIT',
+  homepage: 'https://huggingface.co/timcsy/demucs-web-onnx',
+  files: {
+    model: {
+      url: 'https://huggingface.co/timcsy/demucs-web-onnx/resolve/92e33df61cfc9eb820272aaa62d2ef6dcf4d950d/htdemucs_embedded.onnx',
+      sha256: 'e5e425c17683f163a472462eb5f5a4ffcd11c31858d57fbd0833b012d8b88077',
+      bytes: 180534758,
+    },
+  },
+}
