@@ -4,17 +4,23 @@
  * runs here). For each song in `--cache`, it needs `<file>.vocals16k.f32` (the vocals stem, 16 kHz mono float32) and
  * `<file>.vocals.model_quantized.em.f32` or `<file>.em.f32` (log-probabilities, 50 frames per second × 32 tokens), and
  * the dataset from scripts/fetch-analysis-fixtures.sh. It times `lyrics/<file>.txt` with the app's aligner and compares
- * each word's start with `words/<file>.csv`.
+ * each word's start with `words/<file>.csv`. Like the app, it finds where someone sings from the vocals and the song
+ * (`mp3/<file>.mp3`, decoded with ffmpeg to `<file>.mix16k.f32` in --cache on the first run).
  *
- *   node scripts/eval-lyric-timing.ts --cache ~/devdata/cache [--baseline] [--songs a,b] [--gap 40 [--gap-at end]]
- *     [--lines one|stanza] [--unvoiced-cost n] [--line-pause n] [--data dir] [--vocab vocab.json] [--verbose]
+ *   node scripts/eval-lyric-timing.ts --cache ~/devdata/cache [--baseline | --no-mix] [--songs a,b]
+ *     [--gap 40 [--gap-at end] [--gap-leak=-25]] [--lines one|stanza] [--unvoiced-cost n] [--line-pause n]
+ *     [--data dir] [--vocab vocab.json] [--verbose]
  *
  * --baseline   times without voice activity and line pauses, as before they were added
+ * --no-mix     finds where someone sings from the vocals alone, as before the song was used
  * --unvoiced-cost, --line-pause   override the aligner's defaults (0 turns either off)
  * --gap s      inserts s seconds of the song's own longest instrumental stretch (looped) at the line boundary nearest
  *              the middle, or after the last line with --gap-at end, and shifts the reference after it
+ * --gap-leak dB   fills the inserted stretch of the vocals with the song's own, dB lower, like the band leaking into
+ *              the stem during a loud instrumental
  * --lines      pastes the lyrics as one line, or one line per stanza, instead of the published lines
  */
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
@@ -33,8 +39,10 @@ const { values: args } = parseArgs({
     vocab: { type: 'string' },
     songs: { type: 'string' },
     baseline: { type: 'boolean', default: false },
+    'no-mix': { type: 'boolean', default: false },
     gap: { type: 'string' },
     'gap-at': { type: 'string', default: 'middle' },
+    'gap-leak': { type: 'string' },
     lines: { type: 'string', default: 'published' },
     'unvoiced-cost': { type: 'string' },
     'line-pause': { type: 'string' },
@@ -57,6 +65,22 @@ const vocab = ctcVocabulary(JSON.parse(vocabJson) as Record<string, number>)
 const f32 = (file: string): Float32Array => {
   const b = fs.readFileSync(file)
   return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength))
+}
+/** The song at 16 kHz mono, as the app decodes it for the aligner. */
+function mix16k(name: string): Float32Array {
+  const file = path.join(cache, `${name}.mix16k.f32`)
+  if (!fs.existsSync(file)) {
+    const mp3 = path.join(data, 'mp3', `${name}.mp3`)
+    const pcm = execFileSync(
+      'ffmpeg',
+      ['-v', 'error', '-i', mp3, '-ac', '1', '-ar', String(RATE), '-f', 'f32le', '-'],
+      {
+        maxBuffer: 2 ** 31,
+      },
+    )
+    fs.writeFileSync(file, pcm)
+  }
+  return f32(file)
 }
 const emFile = (name: string) =>
   [`${name}.vocals.model_quantized.em.f32`, `${name}.em.f32`]
@@ -133,6 +157,7 @@ for (const name of names) {
   }
   let logProbs: Float32Array = f32(emFile(name)!)
   let pcm: Float32Array = f32(path.join(cache, `${name}.vocals16k.f32`))
+  let mix = args['no-mix'] || args.baseline ? undefined : mix16k(name)
   if (args.gap) {
     const seconds = Number(args.gap)
     let quiet = { a: 0, b: reference[0]!.start }
@@ -161,7 +186,11 @@ for (const name of names) {
     const frames = Math.round(seconds * FPS)
     const af = Math.round(at * FPS)
     logProbs = splice(logProbs, af * TOKENS, loop(logProbs, TOKENS, fa, fb, frames))
-    pcm = splice(pcm, af * HOP, loop(pcm, HOP, fa, fb, frames))
+    const leak = args['gap-leak'] === undefined ? undefined : 10 ** (Number(args['gap-leak']) / 20)
+    const songGap = mix || leak !== undefined ? loop(mix ?? mix16k(name), HOP, fa, fb, frames) : undefined
+    const vocalsGap = leak === undefined ? loop(pcm, HOP, fa, fb, frames) : songGap!.map((v) => v * leak)
+    pcm = splice(pcm, af * HOP, vocalsGap)
+    if (mix) mix = splice(mix, af * HOP, songGap!)
     for (const r of reference)
       if (r.start >= at) {
         r.start += frames / FPS
@@ -176,7 +205,7 @@ for (const name of names) {
     args.baseline
       ? { linePause: 0 }
       : {
-          voiced: voiceActivity(pcm, RATE),
+          voiced: voiceActivity(pcm, RATE, { mix }),
           unvoicedCost: args['unvoiced-cost'] === undefined ? undefined : Number(args['unvoiced-cost']),
           linePause: args['line-pause'] === undefined ? undefined : Number(args['line-pause']),
         },
@@ -198,5 +227,5 @@ if (args.verbose) console.log(rows.join('\n'))
 for (const [lang, e] of [...byLanguage].sort()) console.log(`${lang.padEnd(8)} ${stat(e)}`)
 console.log(`${'after 8 s+ gaps'.padEnd(16)} ${stat(total.afterGap)}`)
 console.log(
-  `all ${rows.length} songs (${args.baseline ? 'baseline' : 'voice activity + line pauses'}): ${stat(total.all)}`,
+  `all ${rows.length} songs (${args.baseline ? 'baseline' : `voice activity${args['no-mix'] ? ' without the song' : ''} + line pauses`}): ${stat(total.all)}`,
 )

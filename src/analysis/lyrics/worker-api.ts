@@ -22,6 +22,8 @@ export interface LyricsWorkerDeps {
 export interface AlignTextArgs {
   /** The song's vocals stem. Any sample rate; 16 kHz mono avoids resampling. */
   vocals: DecodedAudio
+  /** The song itself, so separation bleed in the vocals does not count as singing (see `voiceActivity`). */
+  mix?: DecodedAudio
   lines: { id?: string; text: string }[]
   /** Emissions from an earlier call for the same audio; skips the model. */
   emissions?: CtcEmissions
@@ -30,6 +32,7 @@ export interface AlignTextArgs {
 export interface TranscribeArgs {
   /** The song's vocals stem: transcribed, and used to find where someone sings. */
   vocals: DecodedAudio
+  mix?: DecodedAudio
   language?: string
   size: WhisperSize
 }
@@ -51,6 +54,9 @@ function mono16k(audio: DecodedAudio): Float32Array {
   const mono = audio.channels.length === 1 ? (audio.channels[0] as Float32Array) : mixToMono(audio.channels)
   return audio.sampleRate === CTC_SAMPLE_RATE ? mono : resample(mono, audio.sampleRate, CTC_SAMPLE_RATE)
 }
+
+const sung = (vocals: Float32Array, mix: DecodedAudio | undefined) =>
+  voiceActivity(vocals, CTC_SAMPLE_RATE, { mix: mix && mono16k(mix) })
 
 /** Worker methods for lyrics. Kept free of worker globals so tests can drive them over a MessageChannel. */
 export function createLyricsApi(deps: LyricsWorkerDeps) {
@@ -76,7 +82,7 @@ export function createLyricsApi(deps: LyricsWorkerDeps) {
       const { em, vocab } = args.emissions
         ? { em: args.emissions, vocab: (await deps.ctcModel(ctx)).vocab }
         : await emissionsFor(pcm, ctx, 0, 0.95)
-      const voiced = voiceActivity(pcm, CTC_SAMPLE_RATE)
+      const voiced = sung(pcm, args.mix)
       const lines: LyricLine[] = alignLines(em, vocab, args.lines, { voiced })
       return transfer({ lines, emissions: em, vocab, voiced }, [em.logProbs.buffer])
     },
@@ -85,11 +91,11 @@ export function createLyricsApi(deps: LyricsWorkerDeps) {
      * The aligner's per-frame output for the vocals and where someone sings in them, so words can be re-aligned later
      * without the model.
      */
-    async emissions(args: { vocals: DecodedAudio }, ctx: WorkerCallContext) {
+    async emissions(args: { vocals: DecodedAudio; mix?: DecodedAudio }, ctx: WorkerCallContext) {
       if (!args.vocals.channels[0]?.length) throw new JobError('invalid-input', 'The song has no audio')
       const pcm = mono16k(args.vocals)
       const { em, vocab } = await emissionsFor(pcm, ctx, 0, 1)
-      const voiced = voiceActivity(pcm, CTC_SAMPLE_RATE)
+      const voiced = sung(pcm, args.mix)
       return transfer({ emissions: em, vocab, voiced }, [em.logProbs.buffer])
     },
 
@@ -127,7 +133,9 @@ export function createLyricsApi(deps: LyricsWorkerDeps) {
         device,
         emissions: em,
         vocab,
-        voiced: regions,
+        // Whisper hears every region the stem's level finds (draft quality was measured that way); the mix only
+        // narrows where re-aligned words may go.
+        voiced: args.mix ? sung(pcm, args.mix) : regions,
       }
       return transfer(result, [em.logProbs.buffer])
     },

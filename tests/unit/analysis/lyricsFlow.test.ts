@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { LyricsService, type LyricsDeps } from '../../../src/analysis/lyrics/client.ts'
+import type { DecodedAudio } from '../../../src/analysis/beats/fast.ts'
 import type { CtcVocabulary } from '../../../src/analysis/lyrics/align.ts'
 import type { CtcEmissions } from '../../../src/analysis/lyrics/ctc.ts'
 import { alignmentKey } from '../../../src/analysis/lyrics/text.ts'
@@ -45,6 +46,8 @@ const vocab = { ids: { A: 1 }, blank: 0 }
 interface Call {
   method: string
   seconds: number
+  /** Length of the song passed with the vocals. */
+  mixSeconds?: number
   sampleRate: number
   reusedEmissions: boolean
 }
@@ -58,10 +61,11 @@ interface Heard {
 
 function setup(options: { storedVocals?: boolean; alignFails?: boolean; heard?: Heard } = {}) {
   const calls: Call[] = []
-  const record = (method: string, args: { vocals: { sampleRate: number; channels: Float32Array[] } }) =>
+  const record = (method: string, args: { vocals: DecodedAudio; mix?: DecodedAudio }) =>
     calls.push({
       method,
       seconds: (args.vocals.channels[0]?.length ?? 0) / args.vocals.sampleRate,
+      mixSeconds: args.mix && (args.mix.channels[0]?.length ?? 0) / args.mix.sampleRate,
       sampleRate: args.vocals.sampleRate,
       reusedEmissions: 'emissions' in args && args.emissions !== undefined,
     })
@@ -79,7 +83,7 @@ function setup(options: { storedVocals?: boolean; alignFails?: boolean; heard?: 
       }))
       return { lines, emissions: emissions(), vocab }
     },
-    async emissions(args: { vocals: { sampleRate: number; channels: Float32Array[] } }) {
+    async emissions(args: { vocals: DecodedAudio; mix?: DecodedAudio }) {
       record('emissions', args)
       return options.heard ?? { emissions: emissions(), vocab, voiced: [] }
     },
@@ -175,7 +179,9 @@ describe('LyricsService.run', () => {
     expect(doc.source).toBe('pasted')
     expect(doc.audioAssetId).toBe(song.id)
     expect(doc.lines.map((l) => l.text)).toEqual(['We were young', 'Hold on tight'])
-    expect(calls).toEqual([{ method: 'align', seconds: 3, sampleRate: 16000, reusedEmissions: false }])
+    expect(calls).toEqual([
+      { method: 'align', seconds: 3, mixSeconds: 8, sampleRate: 16000, reusedEmissions: false },
+    ])
     const project = editor.getProject()
     const stems = project.analysis.audio[song.id]?.stems ?? {}
     expect(Object.keys(stems).sort()).toEqual(['drums', 'vocals'])
@@ -208,7 +214,9 @@ describe('LyricsService.run', () => {
   it('drafts on the vocals and returns the detected language', async () => {
     const { service, song, deps, calls } = setup({ storedVocals: true })
     const result = await service.run(song.id, { kind: 'draft' }, deps).promise
-    expect(calls).toEqual([{ method: 'transcribe', seconds: 5, sampleRate: 16000, reusedEmissions: false }])
+    expect(calls).toEqual([
+      { method: 'transcribe', seconds: 5, mixSeconds: 8, sampleRate: 16000, reusedEmissions: false },
+    ])
     expect(result.language).toBe('fr')
     expect(result.languageProbability).toBe(0.9)
     expect(result.doc.source).toBe('transcribed')
@@ -296,7 +304,9 @@ describe('LyricsService.prepareRealign', () => {
     await handle.promise
     await service.prepareRealign(song.id, deps).promise
     expect(service.canRealign(song.id)).toBe(true)
-    expect(calls.map((c) => [c.method, c.seconds, c.sampleRate])).toEqual([['emissions', 5, 16000]])
+    expect(calls.map((c) => [c.method, c.seconds, c.mixSeconds, c.sampleRate])).toEqual([
+      ['emissions', 5, 8, 16000],
+    ])
     expect(separations()).toBe(0)
   })
 

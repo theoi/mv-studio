@@ -9,6 +9,8 @@ import {
 import { type CtcEmissions, forcedAlign } from '../../../src/analysis/lyrics/ctc.ts'
 import { alignmentKey, parseLyricsText } from '../../../src/analysis/lyrics/text.ts'
 import { ctcEmissions, type CtcModel } from '../../../src/analysis/lyrics/wav2vec2.ts'
+import { createLyricsApi } from '../../../src/analysis/lyrics/worker-api.ts'
+import type { DecodedAudio } from '../../../src/analysis/beats/fast.ts'
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ'"
 const vocab: CtcVocabulary = {
@@ -154,6 +156,53 @@ describe('alignLines across instrumental stretches', () => {
     spell(quiet, 'no', 50, 0.9)
     spell(quiet, 'go', 1500, 0.6)
     expect(alignLines(quiet, vocab, lines, { voiced: voiced.slice(0, 1) })[1]?.start).toBe(30)
+  })
+
+  it('does not take bleed of a loud instrumental in the vocals stem for singing when the mix is given', async () => {
+    const em = () => {
+      const e = blank(1600)
+      spell(e, 'no', 50, 0.9)
+      spell(e, 'go', 500, 0.9)
+      spell(e, 'go', 1500, 0.6)
+      return e
+    }
+    /** 32 s of noise at the given amplitude over time. */
+    const audio = (amplitude: (t: number) => number): DecodedAudio => {
+      const pcm = new Float32Array(32 * 16000)
+      let seed = 1
+      for (let i = 0; i < pcm.length; i++) {
+        seed = (seed * 16807) % 2147483647
+        pcm[i] = ((seed / 2147483647) * 2 - 1) * amplitude(i / 16000)
+      }
+      return { sampleRate: 16000, channels: [pcm] }
+    }
+    // "no" and "go" are sung at 1 s and 30 s, 6 dB below the mix. From 5 to 20 s the band leaks into the stem 30 dB
+    // below the mix (24 dB below the singing), and at 10 s the bleed sounds even more like "go".
+    const vocals = audio((t) =>
+      (t >= 0.5 && t < 2) || (t >= 29.5 && t < 31) ? 0.15 : t >= 5 && t < 20 ? 0.0095 : 0.0003,
+    )
+    const mix = audio(() => 0.3)
+    const model: CtcModel = {
+      async run(input) {
+        const frames = Math.floor(input.length / 320)
+        return { logits: new Float32Array(frames * V), frames, vocab: V }
+      },
+    }
+    const api = createLyricsApi({
+      ctcModel: async () => ({ model, vocab }),
+      transcriber: async () => {
+        throw new Error('not used')
+      },
+    })
+    const ctx = { signal: new AbortController().signal, progress: () => {} }
+    const lines = [{ text: 'no' }, { text: 'go' }]
+    const bleeding = (await api.align({ vocals, lines, emissions: em() }, ctx)).value
+    expect(bleeding.lines[1]?.start).toBe(10)
+    const gated = (await api.align({ vocals, mix, lines, emissions: em() }, ctx)).value
+    expect(gated.lines[1]?.start).toBe(30)
+    expect(gated.voiced.filter((r) => r.end > 5 && r.start < 20)).toEqual([])
+    // Re-aligning after the project is reopened uses the same regions.
+    expect((await api.emissions({ vocals, mix }, ctx)).value.voiced).toEqual(gated.voiced)
   })
 
   it('keeps the words of a line together instead of starting it in an instrumental', () => {
