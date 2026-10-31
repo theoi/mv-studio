@@ -639,10 +639,47 @@ function snapTime(t: number, pps: number, grid: BeatGrid | null, edges: number[]
 }
 
 /**
+ * The part of the timeline around what is in view, in px from `ref`'s left edge: half a view either side, moved in
+ * half-view steps, so scrolling re-renders only every half view. Null until measured.
+ */
+function useVisibleSpan(ref: React.RefObject<HTMLElement | null>, pps: number, width: number) {
+  const [span, setSpan] = useState<[number, number] | null>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    const scroller = el?.closest<HTMLElement>('[data-timeline-scroller]')
+    if (!el || !scroller) return
+    let frame = 0
+    const measure = () => {
+      const view = scroller.getBoundingClientRect()
+      const left = el.getBoundingClientRect().left
+      const step = Math.max(200, view.width / 2)
+      const from = (Math.floor((view.left - left) / step) - 1) * step
+      const to = (Math.ceil((view.right - left) / step) + 1) * step
+      setSpan((s) => (s && s[0] === from && s[1] === to ? s : [from, to]))
+    }
+    const schedule = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(measure)
+    }
+    measure()
+    scroller.addEventListener('scroll', schedule, { passive: true })
+    const ro = new ResizeObserver(schedule)
+    ro.observe(scroller)
+    return () => {
+      scroller.removeEventListener('scroll', schedule)
+      ro.disconnect()
+      cancelAnimationFrame(frame)
+    }
+  }, [ref, pps, width])
+  return span
+}
+
+/**
  * The selected clip's keyframes, one Tab stop: Left and Right (Home, End) move between them, Enter or a click moves
  * the playhead to one and opens its easing menu, Delete removes it. After a removal, focus goes to the neighboring
  * mark, or to the clip when none is left. Keyframes whose diamonds would touch share one mark at the first of them,
- * with their count and a line to the last; its menu sets the easing of all of them or removes them.
+ * with their count and a line to the last; its menu sets the easing of all of them or removes them. Only the marks
+ * near the view are drawn (and the Tab stop): a long take zoomed in has hundreds, each with its own menu.
  */
 function KeyframeMarks({
   clip,
@@ -659,6 +696,10 @@ function KeyframeMarks({
   const buttons = useRef(new Map<number, HTMLButtonElement>())
   /** Where focus goes once a removal's menu has closed: a mark's first time, or the clip. */
   const after = useRef<{ remove: number; focus: number | 'clip' } | null>(null)
+  /** The first time of a mark to focus once it is drawn: one out of view is not drawn until it is the Tab stop. */
+  const [focusRequest, setFocusRequest] = useState<number | null>(null)
+  const root = useRef<HTMLSpanElement>(null)
+  const span = useVisibleSpan(root, pps, width)
   const groups = groupMarks(
     marks,
     marks.map((m) => Math.min(width - 8, Math.max(8, m.time * pps))),
@@ -668,15 +709,28 @@ function KeyframeMarks({
     width,
   )
   const firstTime = (i: number) => groups[i]?.marks[0]?.time
-  const current = Math.min(active, groups.length - 1)
-  const focusGroup = (i: number) => buttons.current.get(firstTime(i)!)?.focus()
+  const requested = focusRequest === null ? -1 : groups.findIndex((g) => g.marks[0]?.time === focusRequest)
+  if (focusRequest !== null && requested < 0) setFocusRequest(null)
+  const current = requested >= 0 ? requested : Math.min(active, groups.length - 1)
+  const near = (from: number, to: number) => span !== null && to >= span[0] && from <= span[1]
+  const drawn = (i: number) => i === current || near(targets[i]!.left, targets[i]!.left + targets[i]!.width)
+  const focusTime = (time: number) => {
+    const button = buttons.current.get(time)
+    if (button) button.focus()
+    else setFocusRequest(time)
+  }
+  useLayoutEffect(() => {
+    if (focusRequest !== null) buttons.current.get(focusRequest)?.focus()
+  }, [focusRequest])
+  const focusGroup = (i: number) => focusTime(firstTime(i)!)
   const focusAfterRemoving = (i: number): number | 'clip' => firstTime(i + 1) ?? firstTime(i - 1) ?? 'clip'
   const moveFocus = (target: number | 'clip') => {
     if (target === 'clip') document.querySelector<HTMLElement>(`[data-clip-id="${clip.id}"]`)?.focus()
-    else buttons.current.get(target)?.focus()
+    else focusTime(target)
   }
   return (
     <span
+      ref={root}
       className={[styles.keyframes, clip.kind === 'look' && styles['keyframes-look']]
         .filter(Boolean)
         .join(' ')}
@@ -684,7 +738,8 @@ function KeyframeMarks({
     >
       {groups.map(
         (group) =>
-          group.end > group.at && (
+          group.end > group.at &&
+          near(group.at, group.end) && (
             <span
               key={`run-${group.marks[0]!.time}`}
               className={styles.keyframeRun}
@@ -693,6 +748,7 @@ function KeyframeMarks({
           ),
       )}
       {groups.map((group, i) => {
+        if (!drawn(i)) return null
         const first = group.marks[0]!
         const last = group.marks.at(-1)!
         const times = group.marks.map((m) => m.time)
@@ -721,7 +777,10 @@ function KeyframeMarks({
                     ? `${count} keyframes, ${formatTime(at, true)} to ${formatTime(clip.start + last.time, true)}`
                     : `Keyframe at ${formatTime(at, true)}`
                 }
-                onFocus={() => setActive(i)}
+                onFocus={() => {
+                  setActive(i)
+                  setFocusRequest(null)
+                }}
                 onPointerDown={(e) => {
                   e.stopPropagation()
                   set({ playhead: at })
