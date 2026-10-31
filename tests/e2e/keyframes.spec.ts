@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import type { Project } from '../../src/model/types.ts'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
@@ -10,6 +10,20 @@ function rotationKeys(page: Page) {
     if (!clip || clip.type === 'audio') return null
     return (clip.transform.rotation.keyframes ?? []).map((k) => [Math.round(k.time * 100) / 100, k.easing])
   })
+}
+
+/** Each keyframe mark's diamond (its center, px) and count (its left and right edges), as drawn. */
+function diamonds(marks: Locator) {
+  return marks.evaluateAll((els) =>
+    els.map((el) => {
+      const box = el.getBoundingClientRect()
+      const count = el.querySelector('span')?.getBoundingClientRect()
+      return {
+        x: box.left + parseFloat(getComputedStyle(el).getPropertyValue('--diamond-x')),
+        count: count ? [count.left, count.right] : null,
+      }
+    }),
+  )
 }
 
 const at = (page: Page, t: number) =>
@@ -127,15 +141,16 @@ test('a lone keyframe mark is 24 px wide, and a click beside a diamond opens tha
   const lone = (await marks.first().boundingBox())!
   expect([lone.width, lone.height]).toEqual([24, 16])
 
-  // Two keyframes 0.8 s apart, close at the default zoom.
-  await at(page, 3.8)
-  await page.getByRole('button', { name: 'Add keyframe: Rotation' }).click()
-  await expect(marks).toHaveCount(2)
   const clip = (await page
     .getByRole('button', { name: 'Title, 0:01.0 to 0:09.0', exact: true })
     .boundingBox())!
-  // The title runs 8 s, from 1 s, so the 3 s keyframe's diamond is 2 s into it.
-  const first = clip.x + (2 * clip.width) / 8
+  // The title runs 8 s, from 1 s.
+  const pps = clip.width / 8
+  // A second keyframe 16 px later: far enough for its own mark, close enough that the two marks' 24 px targets meet.
+  await at(page, 3 + 16 / pps)
+  await page.getByRole('button', { name: 'Add keyframe: Rotation' }).click()
+  await expect(marks).toHaveCount(2)
+  const first = clip.x + 2 * pps
   await page.mouse.click(first + 3, clip.y + clip.height)
   await expect(page.getByRole('menu')).toBeVisible()
   // The open menu hides the rest of the page from role queries.
@@ -143,4 +158,149 @@ test('a lone keyframe mark is 24 px wide, and a click beside a diamond opens tha
   await expect(expanded.nth(0)).toHaveAttribute('aria-expanded', 'true')
   await expect(expanded.nth(1)).toHaveAttribute('aria-expanded', 'false')
   await expect(page.getByText(/^00:03\.00/)).toBeVisible()
+})
+
+test('a VJ take’s strobe keys share one mark with their count, which removes them all at once', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  // A take that holds the Strobe pad from 10 s to 14 s: its clip's opacity flashes on the beat grid, many keys a
+  // second, as recorded in VJ mode.
+  const clipId: string = await page.evaluate(() => {
+    const { vj, app, engine } = window.mvStudio
+    const editor = app.project.editor
+    const project = editor.getProject()
+    const catalog = engine.pluginRegistry.catalog()
+    const strobe = vj
+      .layoutPads(vj.defaultLayout(project, catalog))
+      .find((p: { label: string }) => p.label === 'Strobe')
+    const take = {
+      id: 'e2e-take',
+      start: 10,
+      end: 15,
+      pads: { [strobe.id]: strobe },
+      events: [
+        { t: 10, type: 'press', pad: strobe.id, velocity: 1 },
+        { t: 14, type: 'release', pad: strobe.id },
+      ],
+      amounts: {},
+      cursors: {},
+    }
+    editor.dispatch(vj.takeToCommands(project, take, { catalog, grid: vj.beatGridOf(project) }).commands, {
+      label: 'VJ take',
+    })
+    const after: Project = editor.getProject()
+    return Object.values(after.clips).find((c) => vj.laneOfClip(c) === `fx:${strobe.id}`)?.id ?? ''
+  })
+  const keyCount = () =>
+    page.evaluate((id) => {
+      const project: Project = window.mvStudio.app.project.editor.getProject()
+      const clip = project.clips[id]
+      return clip && clip.type !== 'audio' ? (clip.opacity.keyframes ?? []).length : -1
+    }, clipId)
+  const keys = await keyCount()
+  expect(keys).toBeGreaterThan(8)
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?sel=clip:${id}&t=10`
+  }, clipId)
+
+  const marks = page.locator('button[aria-label^="Keyframe at "], button[aria-label*=" keyframes, "]')
+  await expect(marks).toHaveCount(1)
+  const group = page.getByRole('button', { name: new RegExp(`^${keys} keyframes, 0:10\\.0 to 0:13\\.9`) })
+  await expect(group).toBeVisible()
+  await expect(group).toHaveText(String(keys))
+  // The mark sits at the take's first key, with a line along the clip to its last, so the run's length shows.
+  const take = await page.evaluate((id) => {
+    const project: Project = window.mvStudio.app.project.editor.getProject()
+    const clip = project.clips[id]!
+    const times = clip.type === 'audio' ? [] : (clip.opacity.keyframes ?? []).map((k) => k.time)
+    return { duration: clip.duration, first: Math.min(...times), last: Math.max(...times) }
+  }, clipId)
+  const box = (await page.locator(`[data-clip-id="${clipId}"]`).boundingBox())!
+  const drawnAt = (t: number) => box.x + Math.min(box.width - 8, Math.max(8, (t * box.width) / take.duration))
+  const run = page.locator('[class*="keyframeRun"]')
+  await expect(run).toHaveCount(1)
+  const runBox = (await run.boundingBox())!
+  expect(Math.abs(runBox.x - drawnAt(take.first))).toBeLessThan(2)
+  expect(Math.abs(runBox.x + runBox.width - drawnAt(take.last))).toBeLessThan(2)
+  expect(Math.abs((await diamonds(marks))[0]!.x - drawnAt(take.first))).toBeLessThan(2)
+
+  // A click moves the playhead to the first key, where the diamond is.
+  await group.click()
+  await expect(page.getByText(/^00:10\.00/)).toBeVisible()
+  await page.getByRole('menuitem', { name: `Remove ${keys} keyframes` }).click()
+  await expect(
+    page.getByRole('status').getByText(new RegExp(`^${keys} keyframes removed, 0:10\\.0 to 0:13\\.9`)),
+  ).toBeVisible()
+  expect(await keyCount()).toBe(0)
+  await expect(marks).toHaveCount(0)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+  await expect.poll(keyCount).toBe(keys)
+  await expect(marks).toHaveCount(1)
+})
+
+test('keyframes close together share one mark until zooming in splits them, and fitting the song groups them again', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  for (const t of [3, 3.3, 3.6]) {
+    await at(page, t)
+    await page.getByRole('button', { name: 'Add keyframe: Rotation' }).click()
+  }
+  const marks = page.locator('button[aria-label^="Keyframe at "], button[aria-label*=" keyframes, "]')
+  const group = page.getByRole('button', { name: /^3 keyframes, 0:03\.0 to 0:03\.6/ })
+  await expect(group).toHaveText('3')
+  await expect(marks).toHaveCount(1)
+
+  await page.locator('body').click({ position: { x: 1, y: 1 } })
+  await page.evaluate(() => window.mvStudio.app.ui.selectClips(['o-title']))
+  for (let i = 0; i < 16 && (await marks.count()) < 3; i++) await page.keyboard.press('ControlOrMeta+=')
+  await expect(page.getByRole('button', { name: /^Keyframe at / })).toHaveCount(3)
+  await page.keyboard.press('Shift+Z')
+  await expect(group).toBeVisible()
+  await expect(marks).toHaveCount(1)
+})
+
+test('no diamond covers a mark’s count, and the diamonds of separate marks never touch', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  const clip = (await page
+    .getByRole('button', { name: 'Title, 0:01.0 to 0:09.0', exact: true })
+    .boundingBox())!
+  const pps = clip.width / 8
+  const marks = page.locator('button[aria-label^="Keyframe at "], button[aria-label*=" keyframes, "]')
+  // Three keyframes 5 px apart, then one 9, 12 or 30 px after the last.
+  for (const [after, count] of [
+    [9, 1],
+    [12, 1],
+    [30, 2],
+  ] as const) {
+    const times = [0, 5, 10, 10 + after].map((px) => 2 + px / pps)
+    await page.evaluate((times) => {
+      window.mvStudio.app.project.editor.dispatch({
+        type: 'clip.set',
+        clipId: 'o-title',
+        path: ['transform', 'rotation', 'keyframes'],
+        value: times.map((time) => ({ time, value: 0, easing: 'ease-in-out' })),
+      })
+    }, times)
+    await expect(marks).toHaveCount(count)
+    const drawn = await diamonds(marks)
+    for (const [i, mark] of drawn.entries()) {
+      const next = drawn[i + 1]
+      // A diamond with its outline is 13 px wide.
+      if (next) expect(next.x - mark.x).toBeGreaterThanOrEqual(11.5)
+      for (const other of drawn)
+        if (mark.count && other !== mark)
+          expect(other.x + 6.5 <= mark.count[0] || other.x - 6.5 >= mark.count[1]).toBe(true)
+    }
+  }
 })

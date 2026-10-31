@@ -1,18 +1,22 @@
 import type { ParamSpec } from '../engine/types.ts'
 
 export function formatTime(t: number, withTenths = false): string {
-  const m = Math.floor(t / 60)
-  const s = t - m * 60
-  const whole = Math.floor(s)
+  // Times land a hair under the tenth they were set at (3.4 - 3 is 0.3999…, 1 + 2.8 is 3.7999…), so count tenths
+  // with a little slack instead of flooring the fraction.
+  const tenths = Math.floor(t * 10 + 1e-6)
+  const m = Math.floor(tenths / 600)
+  const whole = Math.floor((tenths - m * 600) / 10)
   const base = `${m}:${String(whole).padStart(2, '0')}`
-  return withTenths ? `${base}.${Math.floor((s - whole) * 10)}` : base
+  return withTenths ? `${base}.${tenths % 10}` : base
 }
 
 export function formatTimecode(t: number): string {
-  const m = Math.floor(t / 60)
-  const s = Math.floor(t % 60)
-  const cs = Math.floor((t % 1) * 100)
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+  // Hundredths with the same slack as formatTime's tenths: 3.8 is 379.999… hundredths.
+  const hundredths = Math.floor(t * 100 + 1e-6)
+  const m = Math.floor(hundredths / 6000)
+  const s = Math.floor((hundredths - m * 6000) / 100)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(m)}:${pad(s)}.${pad(hundredths % 100)}`
 }
 
 /** Analyzed tempos are fractional (119.46); people read whole beats per minute. */

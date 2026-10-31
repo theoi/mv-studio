@@ -573,6 +573,33 @@
   background: var(--accent-line);
 }
 
+/* A group's extent along the clip's bottom edge, from its first keyframe to its last, under its diamond and count.
+   It takes no clicks, so dragging the clip there still works. */
+.keyframeRun {
+  position: absolute;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgb(255 255 255 / 0.55);
+}
+
+/* How many keyframes a mark stands for, just right of its diamond. It takes no clicks, so it never blocks a
+   neighboring mark. Its offset and size are counted in countEnd() (state/keyframes.ts), so no diamond lands on it. */
+.keyframeCount {
+  position: absolute;
+  top: 2px;
+  left: calc(var(--diamond-x) + 7px);
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-overlay);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  color: var(--text-1);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 12px;
+  pointer-events: none;
+}
+
 /* Lyrics */
 .lyric {
   position: absolute;
