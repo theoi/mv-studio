@@ -2,7 +2,7 @@ import { produce } from 'immer'
 import { useSyncExternalStore } from 'react'
 import { DEFAULT_FAL_MODELS, FAL_MODELS, snapDuration, type FalModel } from '../../cloud/fal/catalog.ts'
 import { storeGeneratedMedia } from '../../cloud/media.ts'
-import { formatUsd, needsSpendConfirmation, roundUsd } from '../../cloud/pricing.ts'
+import { formatEstimate, needsSpendConfirmation, roundUsd } from '../../cloud/pricing.ts'
 import type { GenerationRequest, GenerationTask } from '../../cloud/types.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import { applyCommand, type Asset, type EditCommand, type Project } from '../../model/index.ts'
@@ -133,11 +133,6 @@ export function estimateOf(f: GenerateForm, project: Project): GenerateEstimate 
   }
 }
 
-/** "about $0.20", or "under $0.01" for fractions of a cent. */
-export function costLabel(usd: number): string {
-  return usd > 0 && usd < 0.01 ? 'under $0.01' : `about ${formatUsd(usd)}`
-}
-
 /** Why the user must confirm before spending `usd`, or null when no confirmation is needed. */
 export function spendCheck(usd: number): { monthTotal: number; reminderUsd: number } | null {
   const settings = cloudSettings.get()
@@ -253,7 +248,7 @@ export async function startGenerate(at?: number): Promise<void> {
   let jobId = ''
   const handle = jobs.run({
     kind: JOB_KINDS.generate,
-    title: `Generating ${what} · ${costLabel(estimate.usd)}`,
+    title: `Generating ${what} · ${formatEstimate(estimate)}`,
     run: async (ctx) => {
       const image = imageId ? editor.getProject().assets[imageId] : undefined
       const blob = image ? await appMedia.getFile(image) : undefined
