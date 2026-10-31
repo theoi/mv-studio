@@ -110,11 +110,18 @@ interface FrameRenderer {
   readonly inWorker: boolean
   /**
    * A still on the main thread finishes only once the GPU has drawn it, not when it is queued; the worker waits for its
-   * first frame and for stills outside a scrub. Resolves with how long a frame that waited took, else undefined: the
-   * worker counts from when its video frames were ready (and not for its first frame, which also starts the worker),
-   * the main thread includes media waits, which its compositor makes itself.
+   * first frame only. `onDrawn` gets how long a still took to draw, once known: on the main thread as it finishes,
+   * media waits included (its compositor makes them itself); on the worker some time after, timed there from the start
+   * of its rendering to the GPU finishing, for stills outside a scrub other than the first frame (which also starts the
+   * worker).
    */
-  draw(project: Project, time: Seconds, size: Size, kind?: FrameKind): Promise<number | undefined>
+  draw(
+    project: Project,
+    time: Seconds,
+    size: Size,
+    kind?: FrameKind,
+    onDrawn?: (ms: number) => void,
+  ): Promise<void>
   /** The GPU is still drawing the last frame, so drawing another now would block the main thread. */
   busy(): boolean
   /** Draws a frame and returns it. */
@@ -139,15 +146,16 @@ class MainRenderer implements FrameRenderer {
     time: Seconds,
     size: Size,
     kind: FrameKind = 'playback',
-  ): Promise<number | undefined> {
+    onDrawn?: (ms: number) => void,
+  ): Promise<void> {
     const started = performance.now()
     await this.compositor.render(project, time, { size })
     // More GL calls while the GPU is busy would block this thread until it caught up. A still finishes only when it
     // is drawn, so stills that arrive meanwhile wait and coalesce, and its draw time is the frame's real cost.
     // Playback frames don't wait: polling the fence is coarser than a display frame, and the loop checks busy().
-    if (kind === 'playback') return undefined
+    if (kind === 'playback') return
     await this.compositor.gpuIdle()
-    return performance.now() - started
+    onDrawn?.(performance.now() - started)
   }
 
   busy(): boolean {
@@ -209,19 +217,23 @@ class WorkerRenderer implements FrameRenderer {
     time: Seconds,
     size: Size,
     kind: FrameKind = 'playback',
-  ): Promise<number | undefined> {
-    // Until the first still is drawn the page canvas is blank. Later stills wait for the GPU outside a scrub only, for
-    // their draw time (a scrub starts from it): waiting during a drag would slow it, as the next request would no
-    // longer overlap the GPU work.
+    onDrawn?: (ms: number) => void,
+  ): Promise<void> {
+    // Only the first still waits for the GPU: until it is drawn the page canvas is blank, while later stills replace
+    // a frame already on screen, and waiting for each would slow drags (the next request would no longer overlap the
+    // GPU work). A still outside a scrub is timed in the worker instead, and its time fetched once known.
     const first = !this.drawn
-    const untilDrawn = kind === 'still' || (kind === 'scrub' && first)
-    const { ms } = await this.request(project, time, size, false, untilDrawn)
+    const measure = onDrawn !== undefined && kind === 'still' && !first
+    await this.request(project, time, size, false, kind !== 'playback' && first, measure)
     this.drawn = true
-    return untilDrawn && !first ? ms : undefined
+    if (measure)
+      void this.worker.drawnMs().then((ms) => {
+        if (ms !== null) onDrawn(ms)
+      })
   }
 
   async snapshot(project: Project, time: Seconds, size: Size): Promise<ImageBitmap> {
-    const { bitmap } = await this.request(project, time, size, true)
+    const bitmap = await this.request(project, time, size, true)
     if (!bitmap) throw new Error('The preview worker returned no frame')
     return bitmap
   }
@@ -273,7 +285,8 @@ class WorkerRenderer implements FrameRenderer {
     size: Size,
     capture: boolean,
     untilDrawn = false,
-  ): Promise<{ bitmap: ImageBitmap | null; ms: number }> {
+    measure = false,
+  ): Promise<ImageBitmap | null> {
     const plan = visibleLayers(planFrame(project, time), project, time, size, this.sampler(project))
     const requests = videoRequests(project, plan, time)
     this.frames.beginFrame(requests.map((r) => r.key))
@@ -309,13 +322,11 @@ class WorkerRenderer implements FrameRenderer {
     })
     for (const key of this.sentVersions.keys()) if (!keys.has(key)) this.sentVersions.delete(key)
     this.frames.endFrame()
-    const ready = performance.now()
     try {
-      const bitmap = await this.worker.render(
-        { time, size, ...this.projectChanges(project), videos, capture, untilDrawn },
+      return await this.worker.render(
+        { time, size, ...this.projectChanges(project), videos, capture, untilDrawn, measure },
         transfer,
       )
-      return { bitmap, ms: performance.now() - ready }
     } catch (error) {
       // A stopped worker rejects without taking the frames; close them (a no-op for frames it took).
       for (const frame of transfer) frame.close()
@@ -361,10 +372,10 @@ export class PreviewController {
   /** Paused edits or seeks arrived faster than frames rendered; settles at full resolution afterwards. */
   private scrubbing = false
   /**
-   * When the last still finished drawing, and how long the last two full-size ones took to draw (FrameRenderer.draw).
-   * The faster counts: the other may have paid a one-off cost, a shader compiled on first use or an image loaded. On
-   * the main thread that time includes media waits (a seek), so a drag right after one can draw smaller than needed;
-   * the drag's settle frame measures again.
+   * When the last still finished drawing, and how long the last two full-size ones took to draw (FrameRenderer.draw),
+   * for the current project and frame size. The faster counts: the other may have paid a one-off cost, a shader
+   * compiled on first use or an image loaded. On the main thread that time includes media waits (a seek), so a drag
+   * right after one can draw smaller than needed; the drag's settle frame measures again.
    */
   private lastStillEnd = -Infinity
   private fullStills: number[] = []
@@ -792,21 +803,25 @@ export class PreviewController {
     const scale = this.scale
     const renderer = this.renderer
     const kind: FrameKind = !still ? 'playback' : this.scrubbing ? 'scrub' : 'still'
+    const basis = this.autoBasis
+    // The worker's time arrives after the frame: one for another project or frame size no longer counts.
+    const onDrawn =
+      still && scale === 1
+        ? (ms: number) => {
+            if (this.autoBasis === basis) this.fullStills = [...this.fullStills.slice(-1), ms]
+          }
+        : undefined
     const run = (
       renderer
-        ? renderer.draw(project, time, size, kind)
-        : this.rendererReady.then((r) => r.draw(project, time, size, kind))
+        ? renderer.draw(project, time, size, kind, onDrawn)
+        : this.rendererReady.then((r) => r.draw(project, time, size, kind, onDrawn))
     )
       .then(
-        (drawnMs) => {
+        () => {
           this.lastSize = size
           const now = performance.now()
           this.frameLog.push({ at: now, ms: now - started })
-          if (still) {
-            this.lastStillEnd = now
-            if (scale === 1 && drawnMs !== undefined)
-              this.fullStills = [...this.fullStills.slice(-1), drawnMs]
-          }
+          if (still) this.lastStillEnd = now
           while (this.frameLog.length > 0 && now - (this.frameLog[0] as { at: number }).at > 1000)
             this.frameLog.shift()
           for (const listener of this.frameListeners) listener(time)

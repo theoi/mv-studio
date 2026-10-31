@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as Compositor from '../../../src/engine/compositor.ts'
 import type * as Frames from '../../../src/engine/frames.ts'
 import type * as RenderHost from '../../../src/engine/renderHost.ts'
@@ -19,13 +19,36 @@ const frames = vi.hoisted(() => ({
   beginFrame: vi.fn(),
   endFrame: vi.fn(),
 }))
-const worker = vi.hoisted(() => ({ ms: (_size: { width: number; height: number }): number => 0 }))
+/**
+ * The stub render worker. Like the real one, it draws a frame once the GPU has finished the frame before, and replies
+ * when the frame is queued, or drawn with `untilDrawn`. `ms` is a frame's GPU time.
+ */
+const worker = vi.hoisted(() => ({
+  ms: (_size: { width: number; height: number }): number => 0,
+  gpuFreeAt: 0,
+  drawn: Promise.resolve<number | null>(null),
+  requests: [] as { at: number; width: number; untilDrawn?: boolean; measure?: boolean }[],
+}))
 
 vi.mock('../../../src/engine/renderHost.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof RenderHost>()),
   startPreviewWorker: vi.fn(async () => ({
-    render: (request: { size: { width: number; height: number } }) =>
-      new Promise((resolve) => setTimeout(() => resolve(null), worker.ms(request.size))),
+    render: (request: {
+      size: { width: number; height: number }
+      untilDrawn?: boolean
+      measure?: boolean
+    }) => {
+      const now = performance.now()
+      const { untilDrawn, measure } = request
+      worker.requests.push({ at: now, width: request.size.width, untilDrawn, measure })
+      const start = Math.max(now, worker.gpuFreeAt)
+      const ms = worker.ms(request.size)
+      worker.gpuFreeAt = start + ms
+      const at = (time: number) => new Promise<void>((resolve) => setTimeout(resolve, time - now))
+      if (measure && !untilDrawn) worker.drawn = at(start + ms).then(() => ms)
+      return at(untilDrawn ? start + ms : start).then(() => null)
+    },
+    drawnMs: () => worker.drawn,
     capture: vi.fn(),
     failure: () => null,
     dispose: vi.fn(),
@@ -103,6 +126,11 @@ describe('closing a preview', () => {
 })
 
 describe('scrubbing on the render worker', () => {
+  beforeEach(() => {
+    worker.gpuFreeAt = 0
+    worker.drawn = Promise.resolve(null)
+    worker.requests = []
+  })
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
@@ -203,13 +231,39 @@ describe('scrubbing on the render worker', () => {
     preview.seek(1)
     await vi.advanceTimersByTimeAsync(1000)
     expect(preview.stats()).toMatchObject({ scale: 1, width: 1280 })
-    // The drag's second step finds its first still drawing: the scrub starts, at the lowest level.
-    expect(await dragFrom(preview, 2, 32)).toBe(0.33)
-    await vi.advanceTimersByTimeAsync(500)
-    expect(preview.stats().width).toBe(Math.round(1280 * 0.33))
+    // The drag's third step finds the second still waiting for the GPU: the scrub starts, at the lowest level.
+    const sent = worker.requests.length
+    expect(await dragFrom(preview, 2, 48)).toBe(0.33)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(worker.requests.slice(sent).map((r) => r.width)).toContain(Math.round(1280 * 0.33))
     // Released: the frame settles at full size.
-    await vi.advanceTimersByTimeAsync(1000)
     expect(preview.stats()).toMatchObject({ scale: 1, width: 1280 })
+    preview.dispose()
+  })
+
+  it('sends the next step of a drag while the full-size still before it is drawing, as without timing it', async () => {
+    worker.ms = ({ width, height }) => (450 * width * height) / (1280 * 720)
+    const preview = await openWorker()
+    const sent = worker.requests.length
+    const start = performance.now()
+    await dragFrom(preview, 2, 32)
+    const steps = worker.requests.slice(sent)
+    expect(steps.map((r) => r.at - start)).toEqual([0, 16])
+    expect(steps[0]).toMatchObject({ width: 1280, measure: true })
+    expect(steps[0]?.untilDrawn).toBeFalsy()
+    preview.dispose()
+  })
+
+  it('drops a still’s time that arrives after the preview changed size', async () => {
+    worker.ms = ({ width, height }) => (450 * width * height) / (1280 * 720)
+    const preview = await openWorker()
+    preview.seek(1)
+    await vi.advanceTimersByTimeAsync(100)
+    // Shrinks while that still draws (until 450 ms). The still at the new size is drawn by 562 ms.
+    preview.setViewport(640, 360, 1)
+    await vi.advanceTimersByTimeAsync(360)
+    // A drag starts in between: nothing measured at 640 × 360 yet, so it starts at the level it had.
+    expect(await dragFrom(preview, 2, 32)).toBe(1)
     preview.dispose()
   })
 
@@ -223,27 +277,29 @@ describe('scrubbing on the render worker', () => {
     preview.setViewport(1280, 720, 1)
     await vi.advanceTimersByTimeAsync(1000)
     expect(preview.stats()).toMatchObject({ scale: 1, width: 1280 })
-    expect(await dragFrom(preview, 2, 32)).toBe(0.33)
+    expect(await dragFrom(preview, 2, 48)).toBe(0.33)
     preview.dispose()
   })
 
-  it('takes neither the first frame nor a one-off slow still for how fast stills draw', async () => {
-    // 20 ms per full-size still, but the first frame starts the worker and one still compiles a shader on first use.
-    let next = 1500
+  it('does not take a one-off slow still for how fast stills draw', async () => {
+    // 20 ms per full-size still, but one still compiles a shader on first use.
+    let next = 20
     worker.ms = ({ width, height }) => {
       const ms = next
       next = 20
       return (ms * width * height) / (1280 * 720)
     }
     const preview = await openWorker()
-    expect(await dragFrom(preview, 1, 300, 10)).toBe(1)
-    await vi.advanceTimersByTimeAsync(1000)
     preview.seek(3)
     await vi.advanceTimersByTimeAsync(500)
     next = 400
     preview.seek(4)
     await vi.advanceTimersByTimeAsync(1000)
-    expect(await dragFrom(preview, 5, 300, 10)).toBe(1)
+    // A capture keeps the GPU busy, so the drag's first step is still waiting for it when the scrub starts.
+    next = 300
+    preview.captureFrame().catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await dragFrom(preview, 5, 48)).toBe(1)
     preview.dispose()
   })
 })

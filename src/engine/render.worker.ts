@@ -48,6 +48,8 @@ const api = {
     const bitmap = await (await activePreview()).render(request)
     return transfer({ bitmap }, bitmap ? [bitmap] : [])
   },
+  /** Not queued behind the frames still to draw: the page asks right after a measured frame's reply. */
+  previewDrawnMs: async () => (await activePreview()).drawnMs(),
   previewCapture: async () => {
     const bitmap = await (await activePreview()).capture()
     return transfer({ bitmap }, [bitmap])

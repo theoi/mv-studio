@@ -40,6 +40,8 @@ export interface PreviewWorker {
   render(request: PreviewRenderRequest, transfer: Transferable[]): Promise<ImageBitmap | null>
   /** The frame drawn last; needs preserveDrawingBuffer. */
   capture(): Promise<ImageBitmap>
+  /** How long the last frame rendered with `measure` took to draw, once the GPU has drawn it; null when unknown. */
+  drawnMs(): Promise<number | null>
   /**
    * Why the worker can no longer draw, or null: it died ('worker-crashed', 'out-of-memory'), failed to start, or did
    * not answer in time while starting ('timeout'). The canvas went with it.
@@ -145,6 +147,8 @@ export async function startPreviewWorker(
       if (error) return Promise.reject(error)
       return client.call('previewCapture', undefined).then((r) => r.bitmap)
     },
+    drawnMs: () =>
+      dead() ? Promise.resolve(null) : client.call('previewDrawnMs', undefined).catch(() => null),
     failure: dead,
     dispose: () => {
       if (dead()) {

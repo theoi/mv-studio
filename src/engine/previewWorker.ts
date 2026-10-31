@@ -20,6 +20,8 @@ export interface PreviewRenderRequest {
   capture?: boolean
   /** Reply only once the GPU has drawn the frame (a still), not when it is queued. */
   untilDrawn?: boolean
+  /** Time the frame's drawing, for drawnMs(), without holding up the reply. */
+  measure?: boolean
 }
 
 /** A change below the project's analysis: the new value at `path`, or its removal. */
@@ -127,6 +129,8 @@ export class WorkerPreview {
   private readonly frames: BridgedFrameProvider
   private project: Project | null = null
   private queue: Promise<unknown> = Promise.resolve()
+  /** The time of the last frame drawn with `measure`, from the start of its rendering until the GPU finished it. */
+  private drawn: Promise<number | null> = Promise.resolve(null)
 
   constructor(canvas: OffscreenCanvas, media: MediaFileSource, preserveDrawingBuffer: boolean) {
     this.frames = new BridgedFrameProvider(media)
@@ -151,14 +155,27 @@ export class WorkerPreview {
     const project = this.project
     if (!project) return null
     // More GL work on a GPU still busy with the last frame would stall this thread and show frames late.
+    await this.drawn
     await this.compositor.gpuIdle()
+    const started = performance.now()
     await this.compositor.render(project, request.time, { size: request.size })
     // In the drawing's task: without preserveDrawingBuffer, the frame is gone once the task ends.
     const bitmap = request.capture ? createImageBitmap(this.compositor.canvas) : null
     // The canvas shows the frame only once the GPU has drawn it: replying earlier would tell the page a still is on
     // screen while the canvas is still blank.
     if (request.untilDrawn) await this.compositor.gpuIdle(UNTIL_DRAWN_WAIT_MS)
+    // Only this wait polls the frame's fence, and the next frame waits for it above: otherwise the poll could find the
+    // next frame's fence and count that frame too.
+    else if (request.measure)
+      this.drawn = this.compositor
+        .gpuIdle(UNTIL_DRAWN_WAIT_MS)
+        .then(() => (this.compositor.gpuBusy() ? null : performance.now() - started))
     return bitmap
+  }
+
+  /** How long the last frame drawn with `measure` took to draw, once the GPU has drawn it; null when unknown. */
+  drawnMs(): Promise<number | null> {
+    return this.drawn
   }
 
   /** The frame drawn last; needs preserveDrawingBuffer. */
