@@ -55,6 +55,55 @@ test('wheel notches within one frame zoom once, around the pointer, and the clip
   expect(box.width).toBeCloseTo(32 * r.after, 0)
 })
 
+test('in every frame of a wheel zoom, the time under the pointer stays under it', async ({ page }) => {
+  await openEditor(page, '#/editor?t=67')
+  await expect(page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' })).toBeVisible()
+  const frames = await page.evaluate(async () => {
+    const el = document.querySelector<HTMLElement>('[data-timeline-scroller]')!
+    const box = el.getBoundingClientRect()
+    const x = box.left + box.width * 0.6
+    // As laid out, from the clip's box: it runs from 64 s to 96 s.
+    const sample = () => {
+      const clip = el
+        .querySelector<HTMLElement>('[aria-label="Spectrum bars, 1:04.0 to 1:36.0"]')!
+        .getBoundingClientRect()
+      const scale = clip.width / 32
+      return { scale, time: 64 + (x - clip.left) / scale }
+    }
+    // Ten notches in, ten out, then larger ones in until the zoom stops at its limit, one notch a frame.
+    const notches = [...Array(10).fill(-40), ...Array(10).fill(40), ...Array(10).fill(-120)]
+    const frames: { scale: number; time: number }[] = []
+    await new Promise<void>((resolve) => {
+      let i = 0
+      const after = () => {
+        frames.push(sample())
+        if (i === notches.length) return requestAnimationFrame(() => resolve(void frames.push(sample())))
+        // Next frame: a sample ahead of the wheel's step (what this frame left, and whatever ran between frames),
+        // the step, then a sample after it (what the step paints).
+        requestAnimationFrame(() => frames.push(sample()))
+        el.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY: notches[i++],
+            ctrlKey: true,
+            clientX: x,
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
+        requestAnimationFrame(after)
+      }
+      requestAnimationFrame(after)
+    })
+    return frames
+  })
+  const steps = frames.filter((f, i) => i > 0 && f.scale !== frames[i - 1]!.scale).length
+  expect(steps).toBeGreaterThan(20)
+  // Against the frame before, not the first: rounding of each step's scroll position adds up over 30 steps and
+  // grows with the zoom, but no frame moves the time under the pointer by more than that rounding.
+  const worst = Math.max(...frames.slice(1).map((f, i) => Math.abs(f.time - frames[i]!.time) * f.scale))
+  expect(worst).toBeLessThan(1.5)
+})
+
 test('a short clip shows its name once a zoom makes it wide enough, and hides it again zooming out', async ({
   page,
 }) => {

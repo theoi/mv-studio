@@ -852,6 +852,7 @@ function KeyframeMarks({
               setActive(i)
               setFocusRequest(null)
             }}
+            onContextMenu={(e) => e.preventDefault()}
             onPointerDown={(e) => {
               e.stopPropagation()
               set({ playhead: at })
@@ -906,7 +907,10 @@ function KeyframeMarks({
             aria-hidden
             aria-label={menuGroup ? label(menuTimes.length, menuAt, menuLast) : undefined}
             tabIndex={-1}
-            onFocus={() => menu && buttons.current.get(menu.at)?.focus()}
+            onFocus={() => {
+              // A mark opened by pointer is drawn only while its menu is open, and a zoom can merge it into another.
+              if (menu) moveFocus(menuIndex >= 0 ? menu.at : (firstTime(current) ?? 'clip'))
+            }}
           />
         </MenuTrigger>
         {menuGroup && (
