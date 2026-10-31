@@ -44,6 +44,7 @@ import {
   Menu,
   MenuCheckItem,
   MenuContent,
+  MenuItem,
   MenuLabel,
   MenuSeparator,
   MenuTrigger,
@@ -111,6 +112,14 @@ import {
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
 import { addMarkerAtPlayhead } from '../../../state/markers.ts'
+import {
+  EASINGS,
+  keyframeMarks,
+  markTargets,
+  removeKeyframes,
+  setKeyframeEasing,
+  type KeyframeMark,
+} from '../../../state/keyframes.ts'
 import { registerReveal } from '../../../state/reveal.ts'
 import {
   separatedStems,
@@ -528,10 +537,141 @@ function snapTime(t: number, pps: number, edges: number[], beat: number | null, 
   return { t: best, snapped }
 }
 
+/**
+ * The selected clip's keyframes, one Tab stop: Left and Right (Home, End) move between them, Enter or a click moves
+ * the playhead to one and opens its easing menu, Delete removes it. After a removal, focus goes to the neighboring
+ * mark, or to the clip when none is left.
+ */
+function KeyframeMarks({
+  clip,
+  marks,
+  pps,
+  width,
+}: {
+  clip: ClipView
+  marks: KeyframeMark[]
+  pps: number
+  width: number
+}) {
+  const [active, setActive] = useState(0)
+  const buttons = useRef(new Map<number, HTMLButtonElement>())
+  /** Where focus goes once a removal's menu has closed: a mark's time, or the clip. */
+  const after = useRef<{ remove: number; focus: number | 'clip' } | null>(null)
+  const current = Math.min(active, marks.length - 1)
+  const focusMark = (i: number) => buttons.current.get(marks[i]!.time)?.focus()
+  const focusAfterRemoving = (i: number): number | 'clip' =>
+    marks[i + 1]?.time ?? marks[i - 1]?.time ?? 'clip'
+  const moveFocus = (target: number | 'clip') => {
+    if (target === 'clip') document.querySelector<HTMLElement>(`[data-clip-id="${clip.id}"]`)?.focus()
+    else buttons.current.get(target)?.focus()
+  }
+  const diamonds = marks.map((m) => Math.min(width - 8, Math.max(8, m.time * pps)))
+  const targets = markTargets(diamonds, width)
+  return (
+    <span
+      className={[styles.keyframes, clip.kind === 'look' && styles['keyframes-look']]
+        .filter(Boolean)
+        .join(' ')}
+      style={{ left: clip.start * pps, width }}
+    >
+      {marks.map((mark, i) => {
+        const at = clip.start + mark.time
+        return (
+          <Menu key={mark.time}>
+            <MenuTrigger asChild>
+              <button
+                ref={(el) => {
+                  if (el) buttons.current.set(mark.time, el)
+                  else buttons.current.delete(mark.time)
+                }}
+                className={styles.keyframe}
+                style={{
+                  left: targets[i]!.left,
+                  width: targets[i]!.width,
+                  ['--diamond-x' as string]: `${diamonds[i]! - targets[i]!.left}px`,
+                }}
+                tabIndex={i === current ? 0 : -1}
+                aria-label={`Keyframe at ${formatTime(at, true)}`}
+                onFocus={() => setActive(i)}
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  set({ playhead: at })
+                }}
+                onKeyDown={(e) => {
+                  const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key]
+                  const to = step
+                    ? i + step
+                    : e.key === 'Home'
+                      ? 0
+                      : e.key === 'End'
+                        ? marks.length - 1
+                        : null
+                  if (to !== null) {
+                    // The global Left and Right move the playhead; here they move between the marks.
+                    e.preventDefault()
+                    e.stopPropagation()
+                    focusMark(Math.max(0, Math.min(marks.length - 1, to)))
+                  } else if (e.key === 'Enter' || e.key === ' ') {
+                    e.stopPropagation()
+                    set({ playhead: at })
+                  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                    // Without this, the global Delete would remove the whole clip.
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const target = focusAfterRemoving(i)
+                    removeKeyframes(clip.id, mark.time)
+                    requestAnimationFrame(() => moveFocus(target))
+                  }
+                }}
+              />
+            </MenuTrigger>
+            <MenuContent
+              side="top"
+              align="center"
+              onCloseAutoFocus={(e) => {
+                const pending = after.current
+                if (!pending || pending.remove !== mark.time) return
+                // Remove once the menu has closed, so its trigger is still there to close against.
+                e.preventDefault()
+                after.current = null
+                removeKeyframes(clip.id, mark.time)
+                requestAnimationFrame(() => moveFocus(pending.focus))
+              }}
+            >
+              <MenuLabel>{mark.hasNext ? 'Easing to the next keyframe' : 'No next keyframe'}</MenuLabel>
+              {EASINGS.map((easing) => (
+                <MenuCheckItem
+                  key={easing.value}
+                  checked={mark.easing === easing.value}
+                  disabled={!mark.hasNext}
+                  onCheckedChange={() => setKeyframeEasing(clip.id, mark.time, easing.value)}
+                >
+                  {easing.label}
+                </MenuCheckItem>
+              ))}
+              <MenuSeparator />
+              <MenuItem
+                danger
+                onSelect={() => {
+                  after.current = { remove: mark.time, focus: focusAfterRemoving(i) }
+                }}
+              >
+                Remove keyframe
+              </MenuItem>
+            </MenuContent>
+          </Menu>
+        )
+      })}
+    </span>
+  )
+}
+
 interface ClipBlockProps {
   clip: ClipView
   pps: number
   selected: boolean
+  /** Keyframes of the clip, shown while it is the only selected clip. */
+  marks?: KeyframeMark[]
   onPointerDown: (e: React.PointerEvent, clip: ClipView, mode: DragMode) => void
 }
 
@@ -550,12 +690,13 @@ const ClipBlock = memo(
   ClipBlockView,
   (a, b) =>
     a.selected === b.selected &&
+    a.marks === b.marks &&
     a.pps === b.pps &&
     a.onPointerDown === b.onPointerDown &&
     sameView(a.clip, b.clip),
 )
 
-function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
+function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockProps) {
   const [canPaste, setCanPaste] = useState(false)
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
@@ -566,94 +707,95 @@ function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
       ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
       : clip.name
   return (
-    <ContextMenu
-      onOpenChange={(open) => {
-        if (!open) return
-        // The menu acts on the selection, so a clip outside it becomes the selection.
-        if (!selectedClipIds(get().selection).includes(clip.id)) select({ type: 'clip', id: clip.id })
-        setCanPaste(hasClipboard())
-      }}
-    >
-      <ContextMenuTrigger asChild>
-        <div
-          className={[styles.clip, styles[`clip-${clip.kind}`], selected && styles.selected]
-            .filter(Boolean)
-            .join(' ')}
-          style={{
-            left: clip.start * pps,
-            width,
-            backgroundImage: thumb ? `url(${thumb})` : undefined,
-          }}
-          role="button"
-          tabIndex={0}
-          aria-label={`${label}, ${formatTime(clip.start, true)} to ${formatTime(clip.end, true)}`}
-          aria-pressed={selected}
-          aria-keyshortcuts="Enter Shift+Enter"
-          // Enter selects and Shift Enter adds to the selection; Space plays or pauses, as in other editors, even
-          // with the clip focused from the keyboard.
-          data-space-plays
-          onPointerDown={(e) => onPointerDown(e, clip, 'move')}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter') return
-            e.preventDefault()
-            if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(clip.id)
-            else select({ type: 'clip', id: clip.id })
-          }}
-        >
-          {!isMedia && (
-            <span className={styles.clipLabel}>
-              {clip.kind === 'text' ? <Type /> : clip.kind === 'look' ? <Palette /> : <AudioWaveform />}
-              {showLabel && label}
-            </span>
-          )}
-          {isMedia && showLabel && <span className={styles.mediaLabel}>{clip.name}</span>}
-          {selected && isMedia && width > 40 && (
-            <span className={styles.keyframes} aria-hidden>
-              <i style={{ left: 6 }} />
-              <i style={{ left: width - 14 }} />
-            </span>
-          )}
-          <span
-            className={[styles.handle, styles.handleL].join(' ')}
-            onPointerDown={(e) => {
-              e.stopPropagation()
-              onPointerDown(e, clip, 'start')
+    <>
+      <ContextMenu
+        onOpenChange={(open) => {
+          if (!open) return
+          // The menu acts on the selection, so a clip outside it becomes the selection.
+          if (!selectedClipIds(get().selection).includes(clip.id)) select({ type: 'clip', id: clip.id })
+          setCanPaste(hasClipboard())
+        }}
+      >
+        <ContextMenuTrigger asChild>
+          <div
+            className={[styles.clip, styles[`clip-${clip.kind}`], selected && styles.selected]
+              .filter(Boolean)
+              .join(' ')}
+            style={{
+              left: clip.start * pps,
+              width,
+              backgroundImage: thumb ? `url(${thumb})` : undefined,
             }}
-          />
-          <span
-            className={[styles.handle, styles.handleR].join(' ')}
-            onPointerDown={(e) => {
-              e.stopPropagation()
-              onPointerDown(e, clip, 'end')
+            role="button"
+            tabIndex={0}
+            data-clip-id={clip.id}
+            aria-label={`${label}, ${formatTime(clip.start, true)} to ${formatTime(clip.end, true)}`}
+            aria-pressed={selected}
+            aria-keyshortcuts="Enter Shift+Enter"
+            // Enter selects and Shift Enter adds to the selection; Space plays or pauses, as in other editors, even
+            // with the clip focused from the keyboard.
+            data-space-plays
+            onPointerDown={(e) => onPointerDown(e, clip, 'move')}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(clip.id)
+              else select({ type: 'clip', id: clip.id })
             }}
-          />
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem shortcut="S" onSelect={() => splitAtPlayhead(clip.id)}>
-          Split at playhead
-        </ContextMenuItem>
-        <ContextMenuItem shortcut="Mod D" onSelect={duplicateSelection}>
-          Duplicate
-        </ContextMenuItem>
-        <ContextMenuItem shortcut="Mod C" onSelect={copySelection}>
-          Copy
-        </ContextMenuItem>
-        <ContextMenuItem shortcut="Mod X" onSelect={cutSelection}>
-          Cut
-        </ContextMenuItem>
-        <ContextMenuItem shortcut="Mod V" disabled={!canPaste} onSelect={paste}>
-          Paste
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
-        <ContextMenuItem onSelect={() => openAssist('match')}>Find similar clips…</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem danger shortcut="Delete" onSelect={deleteSelection}>
-          Delete
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+          >
+            {!isMedia && (
+              <span className={styles.clipLabel}>
+                {clip.kind === 'text' ? <Type /> : clip.kind === 'look' ? <Palette /> : <AudioWaveform />}
+                {showLabel && label}
+              </span>
+            )}
+            {isMedia && showLabel && <span className={styles.mediaLabel}>{clip.name}</span>}
+            <span
+              className={[styles.handle, styles.handleL].join(' ')}
+              onPointerDown={(e) => {
+                e.stopPropagation()
+                onPointerDown(e, clip, 'start')
+              }}
+            />
+            <span
+              className={[styles.handle, styles.handleR].join(' ')}
+              onPointerDown={(e) => {
+                e.stopPropagation()
+                onPointerDown(e, clip, 'end')
+              }}
+            />
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem shortcut="S" onSelect={() => splitAtPlayhead(clip.id)}>
+            Split at playhead
+          </ContextMenuItem>
+          <ContextMenuItem shortcut="Mod D" onSelect={duplicateSelection}>
+            Duplicate
+          </ContextMenuItem>
+          <ContextMenuItem shortcut="Mod C" onSelect={copySelection}>
+            Copy
+          </ContextMenuItem>
+          <ContextMenuItem shortcut="Mod X" onSelect={cutSelection}>
+            Cut
+          </ContextMenuItem>
+          <ContextMenuItem shortcut="Mod V" disabled={!canPaste} onSelect={paste}>
+            Paste
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
+          <ContextMenuItem onSelect={() => openAssist('match')}>Find similar clips…</ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem danger shortcut="Delete" onSelect={deleteSelection}>
+            Delete
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+      {/* Beside the clip, not inside it: events from the easing menu's portal would bubble to the clip's drag. */}
+      {selected && marks && marks.length > 0 && width > 16 && (
+        <KeyframeMarks clip={clip} marks={marks} pps={pps} width={width} />
+      )}
+    </>
   )
 }
 
@@ -1491,6 +1633,12 @@ export function Timeline() {
   }, [])
 
   const selId = selection.type === 'none' ? null : selection.id
+  // Keyframe marks show on the clip only while it is the one selected clip.
+  const markedClip =
+    selection.type === 'clip' && selectedClipIds(selection).length === 1
+      ? project.clips[selection.id]
+      : undefined
+  const selectedMarks = useMemo(() => (markedClip ? keyframeMarks(markedClip) : undefined), [markedClip])
   const gridStyle = beatSnap && beat ? { backgroundSize: `${beat * 4 * pps}px 100%` } : undefined
   const inView = (start: number, end: number) => end >= view.t0 - 4 && start <= view.t1 + 4
 
@@ -1765,6 +1913,7 @@ export function Timeline() {
                             clip={c}
                             pps={pps}
                             selected={selIds.has(c.id)}
+                            marks={markedClip?.id === c.id ? selectedMarks : undefined}
                             onPointerDown={onClipPointerDown}
                           />
                         )

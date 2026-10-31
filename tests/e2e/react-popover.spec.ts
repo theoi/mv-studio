@@ -81,10 +81,7 @@ test('each color adjustment can be keyframed and react to the music', async ({ p
 
   await page.getByRole('button', { name: 'Add keyframe: Exposure' }).click()
   expect((await adjustment(page, 'exposure')).keyframes).toBe(1)
-  await expect(page.getByRole('button', { name: 'Add keyframe: Exposure' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
+  await expect(page.getByRole('button', { name: 'Remove keyframe: Exposure' })).toBeVisible()
 
   await page.getByRole('button', { name: 'React to music: Contrast' }).click()
   const panel = page.getByRole('dialog', { name: 'React to music: Contrast' })

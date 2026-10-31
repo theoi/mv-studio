@@ -491,14 +491,50 @@
   right: 2px;
 }
 
-.keyframes i {
+/* Over the selected clip (the same span, above its z-index 2 and below the playhead), letting the pointer through to
+   it except on the diamonds. */
+.keyframes {
   position: absolute;
-  bottom: 4px;
+  top: 2px;
+  bottom: 2px;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.keyframes-look {
+  top: 3px;
+  bottom: 3px;
+}
+
+/* A 16 px tall target centered on the clip's bottom edge, clear of the clip's label. Its left and width (up to 24 px,
+   split with a close neighbor) and the diamond's place in it (--diamond-x) come from markTargets(). */
+.keyframe {
+  pointer-events: auto;
+  position: absolute;
+  bottom: -8px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.keyframe::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: calc(var(--diamond-x) - 4px);
   width: 8px;
   height: 8px;
   background: #fff;
   transform: rotate(45deg);
   box-shadow: 0 0 0 1px rgb(0 0 0 / 0.6);
+}
+
+.keyframe:hover::before,
+.keyframe:focus-visible::before,
+.keyframe[data-state='open']::before {
+  background: var(--accent-line);
 }
 
 /* Lyrics */
