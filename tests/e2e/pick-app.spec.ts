@@ -62,7 +62,7 @@ async function clickAt(page: Page, name: string, x: number, y: number) {
   await layer.click({ position: { x: box.width * x, y: box.height * y } })
 }
 
-test('pick mode: Esc cancels without clearing the selection, and pressing Play cancels it', async ({
+test('pick mode: Esc cancels without clearing the selection, Play cancels it, and leaving the clip is announced', async ({
   page,
 }) => {
   const inspector = await openWithInterview(page)
@@ -84,6 +84,26 @@ test('pick mode: Esc cancels without clearing the selection, and pressing Play c
   await page.getByRole('button', { name: 'Play', exact: true }).click()
   await expect(layer).toBeHidden()
   expect(await cutouts(page)).toEqual([])
+
+  // Shrunk to half size, the clip leaves the corners empty: screen readers hear when the aim leaves it.
+  await page.evaluate(() => {
+    const { editor, dispatch } = window.mvStudio.app.project
+    const clip = Object.values(editor.getProject().clips as Record<string, Untyped>).find(
+      (c) => c.assetId && editor.getProject().assets[c.assetId]?.name.startsWith('people-interview'),
+    )
+    for (const key of ['scaleX', 'scaleY'])
+      dispatch({ type: 'clip.set', clipId: clip.id, path: ['transform', key], value: { value: 0.5 } })
+  })
+  await start.click()
+  const box = await layer.boundingBox()
+  if (!box) throw new Error('The pick layer is not on screen')
+  const status = page.getByRole('status').filter({ hasText: /^(Over|Outside) / })
+  await layer.hover({ position: { x: box.width * 0.05, y: box.height * 0.05 } })
+  await expect(status).toHaveText('Outside people-interview')
+  await layer.hover({ position: { x: box.width * 0.5, y: box.height * 0.5 } })
+  await expect(status).toHaveText('Over people-interview')
+  await page.keyboard.press('Escape')
+  await expect(layer).toBeHidden()
 })
 
 test('clicking an object in the preview cuts out that object with a mask that follows it', async ({
