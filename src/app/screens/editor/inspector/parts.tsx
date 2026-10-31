@@ -71,8 +71,11 @@ function NumberProp({
 export function TransformSection({ clip }: { clip: VisualClip }) {
   const project = useProject()
   const { width, height } = project.settings
-  const x = useAnimatable(clip, ['transform', 'x'])
-  const scale = useAnimatable(clip, ['transform', 'scaleX'])
+  const position = useAnimatable(clip, ['transform', 'x'], undefined, { linked: [['transform', 'y']] })
+  const scale = useAnimatable(clip, ['transform', 'scaleX'], undefined, {
+    label: 'Scale',
+    linked: [['transform', 'scaleY']],
+  })
   const rot = useAnimatable(clip, ['transform', 'rotation'])
   const reset = () =>
     dispatch(
@@ -94,7 +97,7 @@ export function TransformSection({ clip }: { clip: VisualClip }) {
         </IconButton>
       }
     >
-      <FieldRow label="Position" trailing={<AnimateButtons property="Position" {...x.buttons} />}>
+      <FieldRow label="Position" trailing={<AnimateButtons property="Position" {...position.buttons} />}>
         <NumberProp
           clip={clip}
           path={['transform', 'x']}
@@ -115,15 +118,7 @@ export function TransformSection({ clip }: { clip: VisualClip }) {
       <FieldRow label="Scale" trailing={<AnimateButtons property="Scale" {...scale.buttons} />}>
         <NumberField
           value={Math.round(Number(scale.value ?? 1) * 100)}
-          onChange={(v) =>
-            dispatch(
-              [
-                { type: 'clip.set', clipId: clip.id, path: ['transform', 'scaleX', 'value'], value: v / 100 },
-                { type: 'clip.set', clipId: clip.id, path: ['transform', 'scaleY', 'value'], value: v / 100 },
-              ],
-              { coalesceKey: `inspector:${clip.id}:scale`, label: 'Change scale' },
-            )
-          }
+          onChange={(v) => scale.set(v / 100)}
           onCommit={scale.commit}
           unit="%"
           min={1}
