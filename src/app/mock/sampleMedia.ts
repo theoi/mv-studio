@@ -109,9 +109,13 @@ async function generate(asset: Asset): Promise<Blob> {
 
 const cache = new Map<string, Promise<Blob>>()
 
+function fileKey(asset: Asset): string {
+  return `${asset.kind}:${asset.storageKey}:${asset.duration ?? ''}`
+}
+
 /** The generated file for a sample asset, made once per storage key and kind. */
 export function sampleFile(asset: Asset): Promise<Blob> {
-  const key = `${asset.kind}:${asset.storageKey}:${asset.duration ?? ''}`
+  const key = fileKey(asset)
   let file = cache.get(key)
   if (!file) {
     file = generate(asset)
@@ -119,4 +123,43 @@ export function sampleFile(asset: Asset): Promise<Blob> {
     cache.set(key, file)
   }
   return file
+}
+
+const queued = new Set<string>()
+const toPrepare: Asset[] = []
+
+/**
+ * Makes the sample videos among `assets` ahead of their first use, one at a time while the page is idle. Encoding one
+ * takes a few hundred milliseconds, which the first jump to one of its clips would otherwise wait for.
+ */
+export function prepareSampleVideos(assets: Iterable<Asset>): void {
+  const idle = toPrepare.length === 0
+  for (const asset of assets) {
+    if (asset.kind !== 'video' || !isSampleAsset(asset)) continue
+    const key = fileKey(asset)
+    if (queued.has(key) || cache.has(key)) continue
+    queued.add(key)
+    toPrepare.push(asset)
+  }
+  if (idle && toPrepare.length > 0) whenIdle(prepareNext)
+}
+
+function prepareNext(): void {
+  const asset = toPrepare[0]
+  if (!asset) return
+  // Drawing the scene and starting its encoder each take tens of milliseconds: separate tasks, each at idle.
+  sceneLayers(asset.storageKey.slice(SCENE_PREFIX.length) as SceneId, WIDTH, HEIGHT)
+  whenIdle(() => {
+    void sampleFile(asset)
+      .catch(() => undefined)
+      .finally(() => {
+        toPrepare.shift()
+        if (toPrepare.length > 0) whenIdle(prepareNext)
+      })
+  })
+}
+
+function whenIdle(run: () => void): void {
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 5000 })
+  else setTimeout(run, 200)
 }
