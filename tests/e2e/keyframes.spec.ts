@@ -361,3 +361,115 @@ test('no diamond covers a mark’s count, and the diamonds of separate marks nev
     }
   }
 })
+
+test('a keyframe mark’s menu is named for its mark, opens from Arrow Down on its first easing and gives focus back on Esc, and a right-click on a mark only moves the playhead', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  for (const t of [3, 6]) {
+    await at(page, t)
+    await page.getByRole('button', { name: 'Add keyframe: Rotation' }).click()
+  }
+  // Not by role: an open menu hides the rest of the page from role queries.
+  const first = page.locator('button[aria-label="Keyframe at 0:03.0"]')
+  const second = page.locator('button[aria-label="Keyframe at 0:06.0"]')
+  await expect(first).toBeVisible()
+  await expect(second).toBeVisible()
+
+  await page.evaluate(() =>
+    window.addEventListener(
+      'contextmenu',
+      (e) => (document.body.dataset.contextMenu = `${e.defaultPrevented}`),
+      {
+        once: true,
+      },
+    ),
+  )
+  await first.click({ button: 'right' })
+  await expect(page.getByText(/^00:03\.00/)).toBeVisible()
+  // The browser's own menu stays shut too.
+  expect(await page.evaluate(() => document.body.dataset.contextMenu)).toBe('true')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(first).toHaveAttribute('aria-expanded', 'false')
+
+  await first.focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByRole('menu', { name: 'Keyframe at 0:03.0' })).toBeVisible()
+  await expect(first).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Linear' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(first).toBeFocused()
+  await expect(first).toHaveAttribute('aria-expanded', 'false')
+
+  await second.click()
+  await expect(page.getByRole('menu', { name: 'Keyframe at 0:06.0' })).toBeVisible()
+  await expect(second).toHaveAttribute('aria-expanded', 'true')
+  await expect(first).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByText(/^00:06\.00/)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(second).toBeFocused()
+})
+
+test('a keyframe menu that closes after its mark scrolled out of view or merged into another gives focus to a drawn mark', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  // A 200 s clip keyed every 0.25 s.
+  await page.evaluate(() => {
+    const { app, model } = window.mvStudio
+    const track = model.createTrack('visual', 'Take')
+    const clip = model.createSolidClip({ trackId: track.id, color: '#101010', start: 0, duration: 200 })
+    clip.opacity = {
+      value: 1,
+      keyframes: Array.from({ length: 800 }, (_, i) => ({ time: i * 0.25, value: i % 2, easing: 'hold' })),
+    }
+    app.project.editor.dispatch([
+      { type: 'track.add', track, index: 0 },
+      { type: 'clip.add', clip },
+    ])
+    app.ui.set({ playhead: 100 })
+    app.ui.selectClips([clip.id])
+  })
+  const marks = page.locator('button[aria-label^="Keyframe at "], button[aria-label*=" keyframes, "]')
+  const groups = page.locator('button[aria-label*=" keyframes, "]')
+  await expect(marks.first()).toBeVisible()
+  for (let i = 0; i < 16 && (await groups.count()) > 0; i++) await page.keyboard.press('ControlOrMeta+=')
+  await expect(groups).toHaveCount(0)
+
+  // Opened by pointer, a mark that is not the Tab stop is drawn only while its menu is open.
+  const scroller = page.locator('[data-timeline-scroller]')
+  const view = (await scroller.boundingBox())!
+  const middle = await marks.evaluateAll(
+    (els, mid) =>
+      els
+        .filter((el) => el.tabIndex < 0)
+        .map((el) => ({ label: el.getAttribute('aria-label')!, x: el.getBoundingClientRect().left }))
+        .sort((a, b) => Math.abs(a.x - mid) - Math.abs(b.x - mid))[0]!.label,
+    view.x + view.width / 2,
+  )
+  const opened = page.locator(`button[aria-label="${middle}"]`)
+  await opened.click()
+  await expect(page.getByRole('menu', { name: middle })).toBeVisible()
+  await scroller.evaluate((el) => (el.scrollLeft = el.scrollWidth))
+  await expect(page.locator('button[aria-label="Keyframe at 3:19.7"]')).toBeAttached()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(opened).toBeFocused()
+
+  // A zoom that merges the open mark into another closes its menu, and focus goes to the Tab stop.
+  // Not the first key: it stays the first of the merged mark, whose menu then stays open.
+  const next = page.locator(`button[aria-label^="Keyframe at "][tabindex="-1"]`).last()
+  const nextLabel = (await next.getAttribute('aria-label'))!
+  await next.click()
+  await expect(page.getByRole('menu', { name: nextLabel })).toBeVisible()
+  await page.evaluate(() => window.mvStudio.app.ui.set({ pxPerSec: 2 }))
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(page.locator('button[aria-label*=" keyframes, "][tabindex="0"]')).toBeFocused()
+})

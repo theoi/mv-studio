@@ -12,18 +12,22 @@ export function MenuContent({
   align = 'start',
   side = 'bottom',
   width,
+  id,
   onCloseAutoFocus,
 }: {
   children: ReactNode
   align?: 'start' | 'center' | 'end'
   side?: 'top' | 'bottom' | 'left' | 'right'
   width?: number
+  /** For a trigger of its own that points at the menu with aria-controls. */
+  id?: string
   /** Call event.preventDefault() when an item moved focus elsewhere (e.g. into a rename field). */
   onCloseAutoFocus?: (event: Event) => void
 }) {
   return (
     <RMenu.Portal>
       <RMenu.Content
+        id={id}
         className={styles.content}
         align={align}
         side={side}

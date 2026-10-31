@@ -4,11 +4,13 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
+import { flushSync } from 'react-dom'
 import {
   ArrowDown,
   ArrowUp,
@@ -227,9 +229,20 @@ function trackRows(p: Project, empty: boolean, kinds?: ReadonlyMap<string, LaneK
 
 type DrawFn = (ctx: CanvasRenderingContext2D, t0: number, pps: number, w: number, h: number) => void
 
+/** A wheel zoom step's scroll position, set once the step's new widths are in the DOM (see the wheel handler). */
+let zoomScroll: { el: HTMLElement; left: number } | null = null
+
+function applyZoomScroll() {
+  if (!zoomScroll) return
+  const { el, left } = zoomScroll
+  zoomScroll = null
+  el.scrollLeft = left
+}
+
 function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const pps = useUi((s) => s.pxPerSec)
+  const repaint = useRef<() => void>(() => {})
   useLayoutEffect(() => {
     const canvas = ref.current
     // Looked up through the DOM: a child's layout effect runs before the parent's ref is attached on mount.
@@ -237,9 +250,18 @@ function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
     const ctx = canvas?.getContext('2d')
     if (!canvas || !scroller || !ctx) return
     let frame = 0
+    let painted = ''
     const paint = () => {
+      // During a zoom step this canvas paints before the timeline scrolls to keep the pointer's time in place.
+      applyZoomScroll()
       const w = Math.max(1, scroller.clientWidth - HEADER_W)
       const dpr = Math.min(2, window.devicePixelRatio || 1)
+      const pps = get().pxPerSec
+      const t0 = scroller.scrollLeft / pps
+      // A zoom step paints from its layout effect, then the scroll it sets and the resize observer ask again.
+      const key = `${t0} ${pps} ${w} ${dpr}`
+      if (key === painted) return
+      painted = key
       if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(height * dpr)) {
         canvas.width = Math.round(w * dpr)
         canvas.height = Math.round(height * dpr)
@@ -248,12 +270,13 @@ function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, w, height)
-      draw(ctx, scroller.scrollLeft / pps, pps, w, height)
+      draw(ctx, t0, pps, w, height)
     }
     const schedule = () => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(paint)
     }
+    repaint.current = paint
     paint()
     scroller.addEventListener('scroll', schedule, { passive: true })
     const ro = new ResizeObserver(schedule)
@@ -263,7 +286,9 @@ function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
       ro.disconnect()
       cancelAnimationFrame(frame)
     }
-  }, [pps, height, draw])
+  }, [height, draw])
+  // In the same commit as the clips, so the canvas never shows a frame at the old zoom under them.
+  useLayoutEffect(() => repaint.current(), [pps])
   return <canvas ref={ref} className={styles.vcanvas} aria-hidden />
 }
 
@@ -661,29 +686,39 @@ function snapTime(t: number, pps: number, grid: BeatGrid | null, edges: number[]
 }
 
 /**
- * The part of the timeline around what is in view, in px from `ref`'s left edge: half a view either side, moved in
- * half-view steps, so scrolling re-renders only every half view. Null until measured.
+ * The part of the timeline around what is in view, in px from `ref`'s left edge: three quarters of a view either
+ * side, kept while it still reaches a quarter view past both edges and spans at most four views. It is kept in
+ * seconds, so a zoom step draws the same keyframes as before it and re-renders again only when they no longer cover
+ * the view; scrolling re-renders about every half view. Null until measured.
  */
 function useVisibleSpan(ref: React.RefObject<HTMLElement | null>, pps: number, width: number) {
   const [span, setSpan] = useState<[number, number] | null>(null)
+  const measure = useRef(() => {})
   useLayoutEffect(() => {
     const el = ref.current
     const scroller = el?.closest<HTMLElement>('[data-timeline-scroller]')
     if (!el || !scroller) return
     let frame = 0
-    const measure = () => {
+    measure.current = () => {
+      // A zoom step's scroll may still be pending when no canvas painted before this.
+      applyZoomScroll()
       const view = scroller.getBoundingClientRect()
       const left = el.getBoundingClientRect().left
-      const step = Math.max(200, view.width / 2)
-      const from = (Math.floor((view.left - left) / step) - 1) * step
-      const to = (Math.ceil((view.right - left) / step) + 1) * step
-      setSpan((s) => (s && s[0] === from && s[1] === to ? s : [from, to]))
+      const scale = get().pxPerSec
+      const t0 = (view.left - left) / scale
+      const t1 = (view.right - left) / scale
+      const d = t1 - t0
+      setSpan((s) =>
+        s && s[0] <= t0 - d / 4 && s[1] >= t1 + d / 4 && s[1] - s[0] <= 4 * d
+          ? s
+          : [t0 - 0.75 * d, t1 + 0.75 * d],
+      )
     }
     const schedule = () => {
       cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(measure)
+      frame = requestAnimationFrame(() => measure.current())
     }
-    measure()
+    measure.current()
     scroller.addEventListener('scroll', schedule, { passive: true })
     const ro = new ResizeObserver(schedule)
     ro.observe(scroller)
@@ -692,10 +727,11 @@ function useVisibleSpan(ref: React.RefObject<HTMLElement | null>, pps: number, w
       ro.disconnect()
       cancelAnimationFrame(frame)
     }
-  }, [ref, pps, width])
-  return span
+  }, [ref])
+  // After the zoom step's scroll (see the wheel handler), in the same commit.
+  useLayoutEffect(() => measure.current(), [pps, width])
+  return span && ([span[0] * pps, span[1] * pps] as const)
 }
-
 /**
  * The selected clip's keyframes, one Tab stop: Left and Right (Home, End) move between them, Enter or a click moves
  * the playhead to one and opens its easing menu, Delete removes it. After a removal, focus goes to the neighboring
@@ -720,6 +756,9 @@ function KeyframeMarks({
   const after = useRef<{ remove: number; focus: number | 'clip' } | null>(null)
   /** The first time of a mark to focus once it is drawn: one out of view is not drawn until it is the Tab stop. */
   const [focusRequest, setFocusRequest] = useState<number | null>(null)
+  /** The mark whose easing menu is open, by its first time. Kept once closed: the menu's anchor stays on it. */
+  const [menu, setMenu] = useState<{ at: number; open: boolean } | null>(null)
+  const menuId = useId()
   const root = useRef<HTMLSpanElement>(null)
   const span = useVisibleSpan(root, pps, width)
   const groups = groupMarks(
@@ -734,8 +773,12 @@ function KeyframeMarks({
   const requested = focusRequest === null ? -1 : groups.findIndex((g) => g.marks[0]?.time === focusRequest)
   if (focusRequest !== null && requested < 0) setFocusRequest(null)
   const current = requested >= 0 ? requested : Math.min(active, groups.length - 1)
+  const menuIndex = menu === null ? -1 : groups.findIndex((g) => g.marks[0]?.time === menu.at)
+  if (menu?.open && menuIndex < 0) setMenu({ ...menu, open: false })
+  const openIndex = menu?.open ? menuIndex : -1
   const near = (from: number, to: number) => span !== null && to >= span[0] && from <= span[1]
-  const drawn = (i: number) => i === current || near(targets[i]!.left, targets[i]!.left + targets[i]!.width)
+  const drawn = (i: number) =>
+    i === current || i === openIndex || near(targets[i]!.left, targets[i]!.left + targets[i]!.width)
   const focusTime = (time: number) => {
     const button = buttons.current.get(time)
     if (button) button.focus()
@@ -750,6 +793,17 @@ function KeyframeMarks({
     if (target === 'clip') document.querySelector<HTMLElement>(`[data-clip-id="${clip.id}"]`)?.focus()
     else focusTime(target)
   }
+  // Each mark acts as the trigger of one shared menu: a menu per mark made a zoom step over hundreds of marks slow.
+  const toggleMenu = (i: number) => setMenu({ at: firstTime(i)!, open: i !== openIndex })
+  const menuGroup = groups[menuIndex]
+  const menuTarget = targets[menuIndex]
+  const menuAt = menuGroup ? clip.start + menuGroup.marks[0]!.time : 0
+  const menuLast = menuGroup ? clip.start + menuGroup.marks.at(-1)!.time : 0
+  const menuTimes = menuGroup?.marks.map((m) => m.time) ?? []
+  const label = (count: number, at: number, last: number) =>
+    count > 1
+      ? `${count} keyframes, ${formatTime(at, true)} to ${formatTime(last, true)}`
+      : `Keyframe at ${formatTime(at, true)}`
   return (
     <span
       ref={root}
@@ -776,112 +830,136 @@ function KeyframeMarks({
         const times = group.marks.map((m) => m.time)
         const count = times.length
         const at = clip.start + first.time
-        const easing = group.marks.every((m) => m.easing === first.easing) ? first.easing : null
-        const hasNext = group.marks.some((m) => m.hasNext)
         const target = targets[i]!
+        const open = i === openIndex
         return (
-          <Menu key={first.time}>
-            <MenuTrigger asChild>
-              <button
-                ref={(el) => {
-                  if (el) buttons.current.set(first.time, el)
-                  else buttons.current.delete(first.time)
-                }}
-                className={styles.keyframe}
-                style={{
-                  left: target.left,
-                  width: target.width,
-                  ['--diamond-x' as string]: `${group.at - target.left}px`,
-                }}
-                tabIndex={i === current ? 0 : -1}
-                aria-label={
-                  count > 1
-                    ? `${count} keyframes, ${formatTime(at, true)} to ${formatTime(clip.start + last.time, true)}`
-                    : `Keyframe at ${formatTime(at, true)}`
-                }
-                onFocus={() => {
-                  setActive(i)
-                  setFocusRequest(null)
-                }}
-                onPointerDown={(e) => {
-                  e.stopPropagation()
-                  set({ playhead: at })
-                }}
-                onKeyDown={(e) => {
-                  const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key]
-                  const to = step
-                    ? i + step
-                    : e.key === 'Home'
-                      ? 0
-                      : e.key === 'End'
-                        ? groups.length - 1
-                        : null
-                  if (to !== null) {
-                    // The global Left and Right move the playhead; here they move between the marks.
-                    e.preventDefault()
-                    e.stopPropagation()
-                    focusGroup(Math.max(0, Math.min(groups.length - 1, to)))
-                  } else if (e.key === 'Enter' || e.key === ' ') {
-                    e.stopPropagation()
-                    set({ playhead: at })
-                  } else if (e.key === 'Delete' || e.key === 'Backspace') {
-                    // Without this, the global Delete would remove the whole clip.
-                    e.preventDefault()
-                    e.stopPropagation()
-                    const next = focusAfterRemoving(i)
-                    removeKeyframes(clip.id, times)
-                    requestAnimationFrame(() => moveFocus(next))
-                  }
-                }}
-              >
-                {count > 1 && (
-                  <span className={`${styles.keyframeCount} tnum`} aria-hidden>
-                    {count}
-                  </span>
-                )}
-              </button>
-            </MenuTrigger>
-            <MenuContent
-              side="top"
-              align="center"
-              onCloseAutoFocus={(e) => {
-                const pending = after.current
-                if (!pending || pending.remove !== first.time) return
-                // Remove once the menu has closed, so its trigger is still there to close against.
+          <button
+            key={first.time}
+            ref={(el) => {
+              if (el) buttons.current.set(first.time, el)
+              else buttons.current.delete(first.time)
+            }}
+            type="button"
+            className={styles.keyframe}
+            style={{
+              left: target.left,
+              width: target.width,
+              ['--diamond-x' as string]: `${group.at - target.left}px`,
+            }}
+            tabIndex={i === current ? 0 : -1}
+            aria-label={label(count, at, clip.start + last.time)}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-controls={open ? menuId : undefined}
+            data-state={open ? 'open' : 'closed'}
+            onFocus={() => {
+              setActive(i)
+              setFocusRequest(null)
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              set({ playhead: at })
+              // As a menu button: it opens on press, and keeping focus off the mark lets the menu take it.
+              if (e.button !== 0 || e.ctrlKey) return
+              if (!open) e.preventDefault()
+              toggleMenu(i)
+            }}
+            onKeyDown={(e) => {
+              const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key]
+              const to = step ? i + step : e.key === 'Home' ? 0 : e.key === 'End' ? groups.length - 1 : null
+              if (to !== null) {
+                // The global Left and Right move the playhead; here they move between the marks.
                 e.preventDefault()
-                after.current = null
+                e.stopPropagation()
+                focusGroup(Math.max(0, Math.min(groups.length - 1, to)))
+              } else if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                e.stopPropagation()
+                set({ playhead: at })
+                toggleMenu(i)
+              } else if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setMenu({ at: first.time, open: true })
+              } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                // Without this, the global Delete would remove the whole clip.
+                e.preventDefault()
+                e.stopPropagation()
+                const next = focusAfterRemoving(i)
                 removeKeyframes(clip.id, times)
-                requestAnimationFrame(() => moveFocus(pending.focus))
-              }}
-            >
-              <MenuLabel>{hasNext ? 'Easing to the next keyframe' : 'No next keyframe'}</MenuLabel>
-              {EASINGS.map((option) => (
-                <MenuCheckItem
-                  key={option.value}
-                  checked={easing === option.value}
-                  disabled={!hasNext}
-                  onCheckedChange={() => setKeyframeEasing(clip.id, times, option.value)}
-                >
-                  {option.label}
-                </MenuCheckItem>
-              ))}
-              <MenuSeparator />
-              <MenuItem
-                danger
-                onSelect={() => {
-                  after.current = { remove: first.time, focus: focusAfterRemoving(i) }
-                }}
-              >
-                {count > 1 ? `Remove ${count} keyframes` : 'Remove keyframe'}
-              </MenuItem>
-            </MenuContent>
-          </Menu>
+                requestAnimationFrame(() => moveFocus(next))
+              }
+            }}
+          >
+            {count > 1 && (
+              <span className={`${styles.keyframeCount} tnum`} aria-hidden>
+                {count}
+              </span>
+            )}
+          </button>
         )
       })}
+      <Menu
+        open={openIndex >= 0}
+        onOpenChange={(open) => !open && setMenu((m) => m && { ...m, open: false })}
+      >
+        <MenuTrigger asChild>
+          {/* The menu's anchor over its mark, and its name. Focus that returns to it on close goes on to the mark. */}
+          <span
+            className={styles.keyframeAnchor}
+            style={menuTarget && { left: menuTarget.left, width: menuTarget.width }}
+            aria-hidden
+            aria-label={menuGroup ? label(menuTimes.length, menuAt, menuLast) : undefined}
+            tabIndex={-1}
+            onFocus={() => {
+              // A mark opened by pointer is drawn only while its menu is open, and a zoom can merge it into another.
+              if (menu) moveFocus(menuIndex >= 0 ? menu.at : (firstTime(current) ?? 'clip'))
+            }}
+          />
+        </MenuTrigger>
+        {menuGroup && (
+          <MenuContent
+            id={menuId}
+            side="top"
+            align="center"
+            onCloseAutoFocus={(e) => {
+              const pending = after.current
+              if (!pending || pending.remove !== menuGroup.marks[0]!.time) return
+              // Remove once the menu has closed, so its trigger is still there to close against.
+              e.preventDefault()
+              after.current = null
+              removeKeyframes(clip.id, menuTimes)
+              requestAnimationFrame(() => moveFocus(pending.focus))
+            }}
+          >
+            <MenuLabel>
+              {menuGroup.marks.some((m) => m.hasNext) ? 'Easing to the next keyframe' : 'No next keyframe'}
+            </MenuLabel>
+            {EASINGS.map((option) => (
+              <MenuCheckItem
+                key={option.value}
+                checked={menuGroup.marks.every((m) => m.easing === option.value)}
+                disabled={!menuGroup.marks.some((m) => m.hasNext)}
+                onCheckedChange={() => setKeyframeEasing(clip.id, menuTimes, option.value)}
+              >
+                {option.label}
+              </MenuCheckItem>
+            ))}
+            <MenuSeparator />
+            <MenuItem
+              danger
+              onSelect={() => {
+                after.current = { remove: menuGroup.marks[0]!.time, focus: focusAfterRemoving(menuIndex) }
+              }}
+            >
+              {menuTimes.length > 1 ? `Remove ${menuTimes.length} keyframes` : 'Remove keyframe'}
+            </MenuItem>
+          </MenuContent>
+        )}
+      </Menu>
     </span>
   )
 }
-
 /** How close to the timeline's left or right edge a drag scrolls it, and how fast at the edge (px per second). */
 const EDGE_ZONE = 40
 const EDGE_SPEED = 1000
@@ -975,8 +1053,8 @@ function zoomedLook(clip: ClipView, pps: number) {
 
 /**
  * Re-renders only when its clip or selection changes, so an edit to one clip leaves the others alone. Its position
- * and width are percentages of the clip layer, so a zoom step re-renders only the clips whose label appears or goes,
- * those with transition marks and the one showing keyframes: hundreds of clips each with a menu would take too long.
+ * and width are percentages of the clip layer and its name hides by container query, so a zoom step re-renders only
+ * the clips with transition marks and the one showing keyframes: hundreds of clips each with a menu would take too long.
  */
 const ClipBlock = memo(
   ClipBlockView,
@@ -987,11 +1065,7 @@ const ClipBlock = memo(
     a.onPointerDown === b.onPointerDown &&
     a.unit === b.unit &&
     sameView(a.clip, b.clip) &&
-    (a.pps === b.pps ||
-      (!b.marks &&
-        !b.clip.transitionIn &&
-        !b.clip.transitionOut &&
-        zoomedLook(a.clip, a.pps).showLabel === zoomedLook(b.clip, b.pps).showLabel)),
+    (a.pps === b.pps || (!b.marks && !b.clip.transitionIn && !b.clip.transitionOut)),
 )
 
 /** The cut without a transition at either end of a clip, the one nearer `time`; `clipId` is the clip after it. */
@@ -1069,10 +1143,10 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
             {!isMedia && (
               <span className={styles.clipLabel}>
                 {clip.kind === 'text' ? <Type /> : clip.kind === 'look' ? <Palette /> : <AudioWaveform />}
-                {showLabel && label}
+                <span className={styles.clipName}>{label}</span>
               </span>
             )}
-            {isMedia && showLabel && (
+            {isMedia && (showLabel || !(inW || outW)) && (
               <span
                 className={styles.mediaLabel}
                 style={inW || outW ? { left: inW + 3, maxWidth: width - inW - outW - 6 } : undefined}
@@ -1647,18 +1721,18 @@ export function Timeline() {
     let zoomDelta = 0
     let zoomPx = 0
     let zoomFrame = 0
-    let scrollFrame = 0
     const zoom = () => {
       zoomFrame = 0
       const { pxPerSec } = get()
       const tAt = (el.scrollLeft + zoomPx) / pxPerSec
       const next = Math.min(MAX_PPS, Math.max(MIN_PPS, pxPerSec * Math.exp(-zoomDelta * 0.0025)))
-      const px = zoomPx
       zoomDelta = 0
-      set({ pxPerSec: next })
-      scrollFrame = requestAnimationFrame(() => {
-        el.scrollLeft = tAt * next - px
-      })
+      if (next === pxPerSec) return
+      // The new zoom and its scroll position land in the same frame: a scroll a frame later would draw the step
+      // twice, the first time around the wrong point.
+      zoomScroll = { el, left: tAt * next - zoomPx }
+      flushSync(() => set({ pxPerSec: next }))
+      applyZoomScroll()
     }
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
@@ -1675,7 +1749,6 @@ export function Timeline() {
     return () => {
       el.removeEventListener('wheel', onWheel)
       cancelAnimationFrame(zoomFrame)
-      cancelAnimationFrame(scrollFrame)
     }
   }, [])
 
