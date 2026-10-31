@@ -1,0 +1,205 @@
+import type { Page, Route } from '@playwright/test'
+import { expect, openApp, test } from './fixtures.ts'
+
+/*
+ * Settings › AI and cloud with the real cloud clients. No keys or local model servers exist on CI, so the provider
+ * endpoints are answered at the network level, as fal.ai, OpenAI and Ollama answer (CORS headers included).
+ */
+
+const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-headers': '*',
+  'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
+}
+
+type Reply = { status: number; body?: unknown } | 'refused'
+
+/** Answers requests to `url`, recording each one. */
+async function serve(page: Page, url: string, reply: Reply): Promise<string[]> {
+  const seen: string[] = []
+  await page.context().route(url, (route: Route) => {
+    const request = route.request()
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    seen.push(`${request.method()} ${request.url()}`)
+    if (reply === 'refused') return route.abort('connectionrefused')
+    return route.fulfill({
+      status: reply.status,
+      headers: CORS,
+      contentType: 'application/json',
+      body: JSON.stringify(reply.body ?? {}),
+    })
+  })
+  return seen
+}
+
+async function openAiSettings(page: Page) {
+  await openApp(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?dialog=settings&page=ai'
+  })
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  await expect(dialog.getByRole('heading', { name: 'AI and cloud' })).toBeVisible()
+  return dialog
+}
+
+const saved = (page: Page) =>
+  page.evaluate(() => JSON.parse(localStorage.getItem('mv-studio.cloud.v1') ?? '{}'))
+
+const card = (page: Page, title: string) =>
+  page.getByRole('dialog', { name: 'Settings' }).locator('section').filter({ hasText: title })
+
+test('connects a model on this computer, saves it, and keeps it after a reload', async ({
+  page,
+}, testInfo) => {
+  await serve(page, 'http://localhost:11434/v1/models', {
+    status: 200,
+    body: { data: [{ id: 'llama3.2:3b' }, { id: 'qwen2.5:3b' }, { id: 'qwen2.5:7b' }] },
+  })
+  const dialog = await openAiSettings(page)
+  const llm = card(page, 'Language model')
+  await expect(llm.getByText('Not connected')).toBeVisible()
+  await llm.getByRole('radio', { name: 'Ollama' }).click()
+  await expect(llm.getByRole('textbox', { name: 'Endpoint URL' })).toHaveValue('http://localhost:11434/v1')
+  await expect(llm.getByText('OLLAMA_ORIGINS=')).toBeVisible()
+
+  await llm.getByRole('button', { name: 'Test connection' }).click()
+  await expect(llm.getByText('3 models found')).toBeVisible()
+  await expect(llm.getByText('Connected', { exact: true })).toBeVisible()
+  // The recommended local model is preselected and saved.
+  await expect(llm.getByRole('combobox', { name: 'Model' })).toHaveText('qwen2.5:7b')
+  await expect(llm.getByText('Recommended: qwen2.5:7b.')).toBeVisible()
+  // Once it works, the setup hint for local runners goes away.
+  await expect(llm.getByText('OLLAMA_ORIGINS=')).toBeHidden()
+  expect((await saved(page)).llm).toMatchObject({
+    preset: 'ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'qwen2.5:7b',
+  })
+
+  // A small model is saved too, with a hint that it may misplace edits.
+  await llm.getByRole('combobox', { name: 'Model' }).click()
+  await page.getByRole('option', { name: 'qwen2.5:3b' }).click()
+  await expect(llm.getByText('This is a small model (3B).', { exact: false })).toBeVisible()
+  expect((await saved(page)).llm.model).toBe('qwen2.5:3b')
+
+  await llm.getByRole('combobox', { name: 'Answer time limit' }).click()
+  await expect(page.getByRole('option', { name: 'Default · 5 min' })).toBeVisible()
+  await page.getByRole('option', { name: '2 min' }).click()
+  expect((await saved(page)).llm.timeoutSeconds).toBe(120)
+  await llm.evaluate((el) => el.scrollIntoView({ block: 'start' }))
+  await dialog.screenshot({ path: testInfo.outputPath('settings-ai-connected.png') })
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await dialog.screenshot({ path: testInfo.outputPath('settings-ai-connected-1280.png') })
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  await page.reload()
+  await expect(llm.getByText('Connected', { exact: true })).toBeVisible()
+  await expect(llm.getByRole('combobox', { name: 'Model' })).toHaveText('qwen2.5:3b')
+  await expect(llm.getByRole('combobox', { name: 'Answer time limit' })).toHaveText('2 min')
+
+  // Looking at another provider's untested fields doesn't claim they are connected.
+  await llm.getByRole('radio', { name: 'OpenAI' }).click()
+  await expect(llm.getByText('Ollama connected')).toBeVisible()
+  await llm.getByRole('radio', { name: 'Ollama' }).click()
+  await expect(llm.getByText('Connected', { exact: true })).toBeVisible()
+
+  await llm.getByRole('button', { name: 'Remove this connection' }).click()
+  await expect(llm.getByText('Not connected')).toBeVisible()
+  expect((await saved(page)).llm).toBeNull()
+})
+
+test('says how to let this site reach LM Studio when it does not answer, and saves nothing', async ({
+  page,
+}, testInfo) => {
+  const seen = await serve(page, 'http://localhost:1234/v1/models', 'refused')
+  const dialog = await openAiSettings(page)
+  const llm = card(page, 'Language model')
+  await llm.getByRole('radio', { name: 'LM Studio' }).click()
+  await llm.getByRole('button', { name: 'Test connection' }).click()
+  const alert = llm.getByRole('alert')
+  await expect(alert).toContainText('Couldn’t connect to LM Studio on this computer'.replace('’', "'"))
+  await expect(alert).toContainText('turn on "Enable CORS"')
+  expect(seen).toEqual(['GET http://localhost:1234/v1/models'])
+  expect((await saved(page)).llm ?? null).toBeNull()
+  await expect(llm.getByText('Not connected')).toBeVisible()
+  await alert.scrollIntoViewIfNeeded()
+  await dialog.screenshot({ path: testInfo.outputPath('settings-ai-lmstudio-unreachable.png') })
+})
+
+test('asks for an OpenAI key and reports a rejected one', async ({ page }) => {
+  const seen = await serve(page, 'https://api.openai.com/v1/models', {
+    status: 401,
+    body: { error: { message: 'Incorrect API key provided: sk-test.', code: 'invalid_api_key' } },
+  })
+  await openAiSettings(page)
+  const llm = card(page, 'Language model')
+  await llm.getByRole('radio', { name: 'OpenAI' }).click()
+  await expect(llm.getByRole('textbox', { name: 'Endpoint URL' })).toHaveValue('https://api.openai.com/v1')
+  await expect(llm.getByText('Recommended: gpt-4.1-mini.')).toBeVisible()
+  await llm.getByRole('button', { name: 'Test connection' }).click()
+  await expect(llm.getByRole('alert')).toContainText('Add your OpenAI key')
+  expect(seen).toEqual([])
+
+  await llm.getByLabel('LLM API key').fill('sk-test')
+  await llm.getByRole('button', { name: 'Test connection' }).click()
+  await expect(llm.getByRole('alert')).toContainText('OpenAI rejected the key')
+  expect(seen).toEqual(['GET https://api.openai.com/v1/models'])
+  expect((await saved(page)).llm ?? null).toBeNull()
+})
+
+test('checks a fal.ai key for free before saving it, and removes it', async ({ page }, testInfo) => {
+  let accept = false
+  const seen: string[] = []
+  await page.context().route('https://queue.fal.run/**', (route) => {
+    const request = route.request()
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    seen.push(`${request.method()} ${new URL(request.url()).pathname}`)
+    // fal.ai checks the key first: a good key gets "not found" for a request id that doesn't exist.
+    return route.fulfill({
+      status: accept ? 404 : 401,
+      headers: CORS,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: accept ? 'Request not found' : 'Invalid key' }),
+    })
+  })
+  const dialog = await openAiSettings(page)
+  const fal = card(page, 'fal.ai')
+  const key = fal.getByLabel('fal.ai key')
+
+  await key.fill('not-a-key')
+  await fal.getByRole('button', { name: 'Connect' }).click()
+  await expect(fal.getByRole('alert')).toContainText('That doesn’t look like a fal.ai key'.replace('’', "'"))
+  expect(seen).toEqual([])
+
+  await key.fill('key-id:wrong-secret')
+  await fal.getByRole('button', { name: 'Connect' }).click()
+  await expect(fal.getByRole('alert')).toContainText('fal.ai rejected the key')
+  expect((await saved(page)).falKey ?? '').toBe('')
+
+  accept = true
+  await key.fill('key-id:key-secret')
+  await fal.getByRole('button', { name: 'Connect' }).click()
+  await expect(fal.getByText('Connected', { exact: true })).toBeVisible()
+  await expect(fal.getByLabel('fal.ai key')).toHaveValue('•••• cret')
+  expect((await saved(page)).falKey).toBe('key-id:key-secret')
+  // Only free status checks reached fal.ai: nothing was submitted.
+  expect(seen.length).toBe(2)
+  for (const s of seen) expect(s).toMatch(/^GET \/fal-ai\/flux\/requests\/[^/]+\/status$/)
+  await dialog.screenshot({ path: testInfo.outputPath('settings-ai-fal-connected.png') })
+
+  await fal.getByRole('button', { name: 'Remove' }).click()
+  await expect(fal.getByText('Not connected')).toBeVisible()
+  expect((await saved(page)).falKey).toBe('')
+})
+
+test('saves the spending settings', async ({ page }) => {
+  await openAiSettings(page)
+  const spending = card(page, 'Spending')
+  await expect(spending.getByText('Otherwise only batches over $1.00 ask first.')).toBeVisible()
+  await spending.getByRole('switch', { name: 'Ask before every paid generation' }).click()
+  expect((await saved(page)).alwaysConfirmPaid).toBe(true)
+  await spending.getByRole('combobox', { name: 'Spending reminder' }).click()
+  await page.getByRole('option', { name: '$5', exact: true }).click()
+  expect((await saved(page)).monthlyReminderUsd).toBe(5)
+})

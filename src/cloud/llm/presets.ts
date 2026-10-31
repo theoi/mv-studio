@@ -75,13 +75,16 @@ export function llmPreset(id: LlmPresetId): LlmPreset {
   return LLM_PRESETS.find((p) => p.id === id) ?? (LLM_PRESETS[LLM_PRESETS.length - 1] as LlmPreset)
 }
 
-/** Picks the model to preselect after the list loads: the first preferred match, else the first model. */
+/**
+ * Picks the model to preselect after the list loads: the recommended one when it is there, else the first preferred
+ * match that isn't a small model (below SMALL_MODEL_BILLIONS), else the first preferred match, else the first model.
+ */
 export function pickDefaultModel(models: string[], presetId: LlmPresetId): string | undefined {
-  for (const pattern of llmPreset(presetId).preferredModels) {
-    const match = models.find((m) => pattern.test(m))
-    if (match) return match
-  }
-  return models[0]
+  const recommended = RECOMMENDED_MODELS.find((r) => r.preset === presetId)?.model
+  if (recommended && models.includes(recommended)) return recommended
+  const big = (m: string) => (modelSizeBillions(m) ?? SMALL_MODEL_BILLIONS) >= SMALL_MODEL_BILLIONS
+  const ranked = llmPreset(presetId).preferredModels.flatMap((p) => models.filter((m) => p.test(m)))
+  return ranked.find(big) ?? ranked[0] ?? models.find(big) ?? models[0]
 }
 
 /** The page origin local runners must allow, e.g. https://theoi.github.io. */
