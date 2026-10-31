@@ -192,4 +192,69 @@ describe('WebAudioPlaybackClock', () => {
     clock.dispose()
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('never evicts what another clock on the same cache plays, even when its own project or stem flags differ', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        decodeAudioData() {
+          return Promise.resolve({ duration: 10 })
+        }
+      },
+    )
+    const media = { getFile: async (asset: Asset) => new Blob([asset.id]) }
+    // The editor's preview, and a preview still holding a copy of the project from before the vocals were soloed.
+    const editorClock = new WebAudioPlaybackClock(media)
+    const otherClock = new WebAudioPlaybackClock(media)
+    const cache = audioBufferCache(media)
+    const song = songProject('song')
+    otherClock.setProject(withStems(song))
+    editorClock.setProject(withStems(song, { vocals: { solo: true } }))
+    await vi.waitFor(() => expect(cache.loaded.has('stem-vocals')).toBe(true))
+    vi.advanceTimersByTime(STEM_RELEASE_MS)
+    expect(cache.loaded.has('stem-vocals')).toBe(true)
+    // Once no clock hears them, the vocals go a minute later.
+    editorClock.setProject(withStems(song))
+    vi.advanceTimersByTime(STEM_RELEASE_MS)
+    expect(cache.loaded.has('stem-vocals')).toBe(false)
+
+    // A clock switching to another project keeps the song another clock plays.
+    otherClock.setProject(songProject('other'))
+    expect(cache.loaded.has('song')).toBe(true)
+    // Once that clock is gone, the next change trims it.
+    editorClock.dispose()
+    otherClock.setProject(songProject('third'))
+    expect(cache.loaded.has('song')).toBe(false)
+    otherClock.dispose()
+  })
+
+  it('keeps a failure another clock reports for a stem it still wants', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        decodeAudioData(data: ArrayBuffer) {
+          return new TextDecoder().decode(data) === 'stem-bass'
+            ? Promise.reject(new Error('unreadable'))
+            : Promise.resolve({ duration: 10 })
+        }
+      },
+    )
+    const media = { getFile: async (asset: Asset) => new Blob([asset.id]) }
+    const editorClock = new WebAudioPlaybackClock(media)
+    const otherClock = new WebAudioPlaybackClock(media)
+    const cache = audioBufferCache(media)
+    const song = songProject('song')
+    editorClock.setProject(withStems(song, { bass: { solo: true } }))
+    await vi.waitFor(() => expect(cache.error('stem-bass')).toBeDefined())
+    // A clock that hears no stem doesn't forget it, so the editor isn't sent to decode the bass again...
+    otherClock.setProject(withStems(song))
+    expect(cache.error('stem-bass')).toBeDefined()
+    // ...until the editor stops wanting it.
+    editorClock.setProject(withStems(song))
+    expect(cache.error('stem-bass')).toBeUndefined()
+    editorClock.dispose()
+    otherClock.dispose()
+  })
 })
