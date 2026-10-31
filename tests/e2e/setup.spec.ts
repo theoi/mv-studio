@@ -331,3 +331,16 @@ test('Blank project opens an empty timeline with a video and a song track', asyn
   await expect(page.getByText('Start with a song')).toBeVisible()
   expect((await opened(page)).tracks).toEqual(['Video 1', 'Song'])
 })
+
+test('the Start cards are named by their title and description, not by their preview art', async ({
+  page,
+}) => {
+  await openHarness(page)
+  for (const name of [
+    'Lyric video Words timed to the vocals, with karaoke and kinetic type.',
+    'Visualizer Visuals that move with the beat, bass and vocals.',
+    'Beat-cut footage Your clips, cut to the beat and the song’s sections.',
+    'AI music video A complete, editable draft from your song and an idea.',
+  ])
+    await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+})
