@@ -13,14 +13,15 @@ export interface SuitabilityCheckOptions extends TaskOptions {
   criteria?: SuitabilityOptions
 }
 
-/** Dense enough for the stability measure in `assessSuitability`. */
+/** The person track judges at the same rate, so both see the same moments. */
 const STABILITY_FPS = 5
 const ANALYSIS_SIDE = 256
 
 /**
- * Quick check whether "text behind the subject" will work for a shot, before any export
- * analysis. Short shots are sampled densely (which also measures mask stability); long
- * shots are spread out to stay within `maxSamples`.
+ * Quick check whether "text behind the subject" will work for a shot, before any export analysis: the same judgement
+ * as the stored person track (`trackSuitability`), on raw masks. Short shots are sampled at 5 per second; long shots
+ * are spread out to stay within `maxSamples`. Flicker needs consecutive frames, so this check leaves `stability`
+ * null and only the person track can report an unstable mask.
  */
 export async function checkSuitability(
   segmentation: SegmentationBackend,
