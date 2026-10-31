@@ -1,44 +1,179 @@
-import { useState } from 'react'
-import { Info, KeyRound } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import {
+  AlertTriangle,
+  Check,
+  ExternalLink,
+  Info,
+  KeyRound,
+  RotateCcw,
+  Settings,
+  Sparkles,
+  Undo2,
+} from 'lucide-react'
+import { cloudErrorInfo } from '../../../../cloud/errors.ts'
+import { formatUsd, PRICES_CHECKED_ON } from '../../../../cloud/pricing.ts'
+import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { Button } from '../../../ds/Button.tsx'
+import { Dialog } from '../../../ds/Dialog.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Segmented, Select, TextArea } from '../../../ds/Fields.tsx'
-import { set } from '../../../state/ui.ts'
-import { Field, ToolView } from './ToolView.tsx'
+import { formatTime, plural } from '../../../format.ts'
+import { useCloud } from '../../../state/cloud.ts'
+import {
+  costLabel,
+  durationOf,
+  estimateOf,
+  generateCancelNotice,
+  generateOutcome,
+  generateRun,
+  IMAGE_COUNTS,
+  lengthsFor,
+  modelOf,
+  modelsFor,
+  setGenerateForm,
+  spendCheck,
+  startGenerate,
+  startImages,
+  taskOf,
+  undoOutcome,
+  useGenerateForm,
+  type GenerateKind,
+} from '../../../state/generate.ts'
+import { JOB_KINDS } from '../../../state/jobs.ts'
+import { useProject } from '../../../state/project.ts'
+import { set, toast } from '../../../state/ui.ts'
+import { dismiss, pct, useJob } from './jobState.ts'
+import { CancelButton, Field, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
 /** Status on the Generate row of Assist's tool list. */
 export function GenerateBadge() {
-  return <Badge icon={<KeyRound />}>fal.ai</Badge>
+  const cloud = useCloud()
+  const { job, phase } = useJob(JOB_KINDS.generate)
+  if (phase === 'running') return <Badge tone="accent">{pct(job)}%</Badge>
+  if (phase === 'failed') return <Badge tone="danger">Failed</Badge>
+  if (!cloud.falKey) return <Badge icon={<KeyRound />}>fal.ai</Badge>
+  return null
 }
 
 export function GenerateView() {
-  const [type, setType] = useState('video')
+  const { job, phase } = useJob(JOB_KINDS.generate)
+  if (phase === 'running') return <Running job={job} />
+  if (phase === 'done') return <Done job={job} />
+  if (phase === 'failed') return <Failed job={job} />
+  return <Setup />
+}
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+const openSettings = () => set({ dialog: 'settings', settingsPage: 'ai' })
+
+/** Starts a generation, asking first when the spend policy says so. Render `dialog` wherever this is used. */
+function useStartGenerate(): { start: (at?: number) => void; starting: boolean; dialog: ReactNode } {
+  const project = useProject()
+  const f = useGenerateForm()
+  const [check, setCheck] = useState<{
+    spend: NonNullable<ReturnType<typeof spendCheck>>
+    at?: number
+  } | null>(null)
+  const [starting, setStarting] = useState(false)
+  const estimate = estimateOf(f, project)
+  const what = modelOf(f).output === 'video' ? 'a video' : f.count > 1 ? `${f.count} images` : 'an image'
+  const run = (at?: number) => {
+    setCheck(null)
+    setStarting(true)
+    void startGenerate(at).finally(() => setStarting(false))
+  }
+  const start = (at?: number) => {
+    const spend = spendCheck(estimate.usd)
+    if (spend) setCheck({ spend, at })
+    else run(at)
+  }
+  const dialog = (
+    <Dialog
+      open={check !== null}
+      onOpenChange={(open) => !open && setCheck(null)}
+      title={`Generate ${what} for ${costLabel(estimate.usd)}?`}
+      width={440}
+      footer={
+        <>
+          <Button variant="secondary" onClick={() => setCheck(null)}>
+            Cancel
+          </Button>
+          <Button variant="primary" icon={<Sparkles />} onClick={() => run(check?.at)}>
+            Generate · {costLabel(estimate.usd)}
+          </Button>
+        </>
+      }
+    >
+      <div className={styles.dialogBody}>
+        <p className={styles.lede}>
+          {estimate.breakdown}, charged by fal.ai to your key. Prices checked {PRICES_CHECKED_ON}.
+        </p>
+        {check && check.spend.reminderUsd > 0 && (
+          <p className={styles.lede}>
+            This takes your estimated fal.ai spend this month past your {formatUsd(check.spend.reminderUsd)}{' '}
+            reminder ({costLabel(check.spend.monthTotal)} so far).
+          </p>
+        )}
+        <p className={styles.muted}>Choose when to be asked in Settings › AI and cloud.</p>
+      </div>
+    </Dialog>
+  )
+  return { start, starting, dialog }
+}
+
+function Setup() {
+  const cloud = useCloud()
+  const project = useProject()
+  const f = useGenerateForm()
+  const { start, starting, dialog } = useStartGenerate()
+  const task = taskOf(f)
+  const model = modelOf(f)
+  const estimate = estimateOf(f, project)
+  const images = startImages(project)
+  const video = f.kind === 'video'
+  const connected = cloud.falKey.length > 0
+  const ready = f.prompt.trim().length > 0 || task === 'image-to-video'
+  const duration = durationOf(f, model)
+  const each = video ? estimate.usd : estimate.usd / f.count
   return (
     <ToolView
       title="Generate"
       subtitle="AI images and clips with fal.ai"
       footer={
-        <>
-          <Button
-            variant="primary"
-            block
-            icon={<KeyRound />}
-            onClick={() => set({ dialog: 'settings', settingsPage: 'ai' })}
-          >
-            Connect fal.ai to generate
-          </Button>
-          <div className={styles.costLine}>
-            <Info /> {type === 'video' ? 'About $0.35 per 5 s clip' : 'About $0.01 per image'}, charged by
-            fal.ai to your key
-          </div>
-        </>
+        connected ? (
+          <>
+            <Button
+              variant="primary"
+              block
+              icon={<Sparkles />}
+              disabled={!ready || starting}
+              onClick={() => start()}
+            >
+              Generate · {costLabel(estimate.usd)}
+            </Button>
+            <div className={styles.costLine}>
+              <Info /> {estimate.breakdown}, charged by fal.ai to your key
+            </div>
+            {dialog}
+          </>
+        ) : (
+          <>
+            <Button variant="primary" block icon={<KeyRound />} onClick={openSettings}>
+              Connect fal.ai to generate
+            </Button>
+            <div className={styles.costLine}>
+              <Info /> {capitalize(costLabel(each))} per {video ? `${duration} s clip` : 'image'}, charged by
+              fal.ai to your key
+            </div>
+          </>
+        )
       }
     >
       <Segmented
         block
-        value={type}
-        onChange={setType}
+        value={f.kind}
+        onChange={(kind: GenerateKind) => setGenerateForm({ kind })}
         ariaLabel="What to generate"
         options={[
           { value: 'image', label: 'Image' },
@@ -48,19 +183,21 @@ export function GenerateView() {
       <Field label="Describe the shot">
         <TextArea
           rows={3}
-          defaultValue="Slow aerial over a neon city at night, light rain, cinematic"
+          value={f.prompt}
+          onChange={(e) => setGenerateForm({ prompt: e.target.value })}
+          placeholder="For example: slow aerial over a neon city at night, light rain, cinematic"
           aria-label="Describe the shot"
         />
       </Field>
-      {type === 'video' && (
+      {video && (
         <Field label="Start from" hint="Optional. Animate one of your images.">
           <Select
-            value="none"
-            onChange={() => undefined}
+            value={f.startImageId ?? 'none'}
+            onChange={(v) => setGenerateForm({ startImageId: v === 'none' ? null : v })}
             ariaLabel="Start image"
             options={[
               { value: 'none', label: 'Text only' },
-              { value: 'sunset', label: 'Rooftop sunset (image)' },
+              ...images.map((a) => ({ value: a.id, label: `${a.name.replace(/\.[^.]+$/, '')} (image)` })),
             ]}
           />
         </Field>
@@ -68,25 +205,212 @@ export function GenerateView() {
       <div className={styles.twoCol}>
         <Field label="Model">
           <Select
-            value="fast"
-            onChange={() => undefined}
+            value={model.id}
+            onChange={(id) => setGenerateForm({ models: { ...f.models, [task]: id } })}
             ariaLabel="Model"
-            options={[
-              { value: 'fast', label: type === 'video' ? 'Video · fast' : 'Image · fast' },
-              { value: 'hq', label: type === 'video' ? 'Video · high quality' : 'Image · high quality' },
-            ]}
+            options={modelsFor(task).map((m) => ({
+              value: m.id,
+              label: `${m.name} · ${m.tier === 'draft' ? 'fast' : 'high quality'}`,
+              description: `${m.description} ${m.priceLabel}.`,
+            }))}
           />
         </Field>
-        <Field label={type === 'video' ? 'Length' : 'Count'}>
-          <Select
-            value="5"
-            onChange={() => undefined}
-            ariaLabel={type === 'video' ? 'Length' : 'Count'}
-            options={[{ value: '5', label: type === 'video' ? '5 s' : '4 images' }]}
-          />
+        <Field label={video ? 'Length' : 'Count'}>
+          {video ? (
+            <Select
+              value={String(duration)}
+              onChange={(v) => setGenerateForm({ duration: Number(v) })}
+              ariaLabel="Length"
+              options={lengthsFor(model).map((s) => ({ value: String(s), label: `${s} s` }))}
+            />
+          ) : (
+            <Select
+              value={String(f.count)}
+              onChange={(v) => setGenerateForm({ count: Number(v) })}
+              ariaLabel="Count"
+              options={IMAGE_COUNTS.map((n) => ({ value: String(n), label: plural(n, 'image') }))}
+            />
+          )}
         </Field>
       </div>
       <p className={styles.muted}>Results land in Media › Generated and at the playhead as normal clips.</p>
+    </ToolView>
+  )
+}
+
+const STEP_OF_STAGE: Record<string, number> = {
+  upload: 0,
+  submit: 1,
+  queue: 1,
+  generate: 2,
+  download: 3,
+  store: 3,
+}
+
+function Running({ job }: { job?: JobSnapshot }) {
+  const run = generateRun(job?.id)
+  const upload = run?.task === 'image-to-video'
+  const steps = [
+    ...(upload ? ['Upload the image'] : []),
+    'Wait in line at fal.ai',
+    run?.task === 'text-to-image' ? 'Generate the image' : 'Generate the clip',
+    'Download and save to Media',
+  ]
+  const stepOf = STEP_OF_STAGE[job?.progress.stage ?? 'submit'] ?? 1
+  const active = upload ? stepOf : Math.max(0, stepOf - 1)
+  return (
+    <ToolView
+      title="Generate"
+      subtitle={job?.title.split(' · ')[0] ?? 'Generating'}
+      footer={
+        <>
+          <CancelButton job={job} />
+          {generateCancelNotice() && (
+            <div className={styles.costLine}>
+              <Info /> {generateCancelNotice()}
+            </div>
+          )}
+        </>
+      }
+    >
+      <RunCard job={job} label="Generation progress" />
+      <Steps steps={steps} active={active} />
+      <p className={styles.muted}>
+        Keep editing. The result lands at {formatTime(run?.start ?? 0)} on the timeline when it’s ready.
+      </p>
+    </ToolView>
+  )
+}
+
+function Done({ job }: { job?: JobSnapshot }) {
+  const outcome = generateOutcome(job?.id)
+  const assets = outcome?.assets ?? []
+  const name = assets.length === 1 ? (assets[0]?.name ?? 'the result') : plural(assets.length, 'image')
+  return (
+    <ToolView
+      title="Generate"
+      subtitle="Added to your project"
+      footer={
+        <div className={styles.footerRow}>
+          <Button
+            variant="secondary"
+            icon={<Undo2 />}
+            onClick={() => {
+              if (outcome && undoOutcome(outcome)) toast('Removed from the timeline and Media')
+              else toast('The project changed since. Delete the clip on the timeline instead.')
+              dismiss(job)
+            }}
+          >
+            Undo
+          </Button>
+          <Button variant="primary" icon={<Sparkles />} className={styles.grow} onClick={() => dismiss(job)}>
+            Generate another
+          </Button>
+        </div>
+      }
+    >
+      <div className={styles.success}>
+        <span className={styles.successIcon}>
+          <Check />
+        </span>
+        <div>
+          <div className={styles.successTitle}>Added {name}</div>
+          <div className={styles.muted}>
+            In Media › Generated and at {formatTime(outcome?.start ?? 0)} on the timeline, as{' '}
+            {assets.length === 1 ? 'a normal clip' : 'normal clips'}.{' '}
+            {capitalize(costLabel(outcome?.usd ?? 0))}, charged by fal.ai.
+          </div>
+        </div>
+      </div>
+    </ToolView>
+  )
+}
+
+function Failed({ job }: { job?: JobSnapshot }) {
+  const { start, starting, dialog } = useStartGenerate()
+  const info = cloudErrorInfo(job?.error)
+  const kind = info?.kind
+  const keyProblem = kind === 'missing-key' || kind === 'bad-key'
+  const canRetry = keyProblem ? false : (job?.error?.retryable ?? false) || kind === 'insufficient-credit'
+  const title = info?.title ?? job?.error?.message ?? 'Generation failed'
+  const message = job?.error?.message && job.error.message !== title ? job.error.message : ''
+  const back = (
+    <Button variant="secondary" onClick={() => dismiss(job)}>
+      Back
+    </Button>
+  )
+  return (
+    <ToolView
+      title="Generate"
+      subtitle="Generation stopped"
+      footer={
+        keyProblem ? (
+          <div className={styles.footerRow}>
+            {back}
+            <Button
+              variant="primary"
+              icon={<Settings />}
+              className={styles.grow}
+              onClick={() => {
+                dismiss(job)
+                openSettings()
+              }}
+            >
+              Open Settings
+            </Button>
+          </div>
+        ) : canRetry ? (
+          <div className={styles.footerRow}>
+            {back}
+            <Button
+              variant="primary"
+              icon={<RotateCcw />}
+              className={styles.grow}
+              disabled={starting}
+              onClick={() => start(generateRun(job?.id)?.start)}
+            >
+              Try again
+            </Button>
+            {dialog}
+          </div>
+        ) : (
+          <Button variant="primary" block onClick={() => dismiss(job)}>
+            Change and try again
+          </Button>
+        )
+      }
+    >
+      <div className={styles.failure} role="alert">
+        <span className={styles.failureIcon}>
+          <AlertTriangle />
+        </span>
+        <div>
+          <div className={styles.successTitle}>{title}</div>
+          <div className={styles.muted}>{message} Your project is unchanged.</div>
+        </div>
+      </div>
+      {info && info.steps.length > 0 && (
+        <>
+          <div className={styles.groupLabelInset}>What to do</div>
+          <ol className={styles.tips}>
+            {info.steps.map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ol>
+        </>
+      )}
+      {info?.helpUrl && (
+        <div className={styles.linkRow}>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<ExternalLink />}
+            onClick={() => window.open(info.helpUrl, '_blank', 'noopener,noreferrer')}
+          >
+            {kind === 'insufficient-credit' ? 'fal.ai billing' : 'fal.ai keys'}
+          </Button>
+        </div>
+      )}
     </ToolView>
   )
 }
