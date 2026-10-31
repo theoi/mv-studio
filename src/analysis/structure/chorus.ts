@@ -36,8 +36,8 @@ const SEPARATION_SECONDS = 4
 const ADJACENT_WEIGHT = 0.25
 /**
  * An occurrence with a line left out or rewritten still counts when, in order, it matches more than this share of the
- * passage's words, in pieces of at least PARTIAL_PIECE words in a row. A single piece must also reach into the first
- * and last quarter of the passage: one run of a chorus's words alone (a verse singing its hook) is not the chorus.
+ * passage's words, in pieces of at least PARTIAL_PIECE words in a row, from its first to its last quarter. A verse that
+ * sings the chorus's hook or its first lines is not the chorus.
  */
 const PARTIAL_SHARE = 0.5
 const PARTIAL_PIECE = 3
@@ -233,7 +233,6 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
     first: piece.q,
     last: piece.q + piece.r - 1,
     matched: piece.r,
-    pieces: 1,
     from: piece.p,
     to: piece.p + piece.r,
   }))
@@ -250,7 +249,6 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
           ...before,
           last: to.q + to.r - 1,
           matched: before.matched + to.r,
-          pieces: before.pieces + 1,
           to: to.p + to.r,
         }
     }
@@ -258,7 +256,7 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
   const quarter = k / 4
   for (const c of chains.sort((x, y) => y.matched - x.matched)) {
     if (c.matched <= PARTIAL_SHARE * k || c.matched < MIN_PASSAGE_WORDS || !free(c.first, c.last)) continue
-    if (c.pieces === 1 && (c.from - best.from > quarter || best.from + k - c.to > quarter)) continue
+    if (c.from - best.from > quarter || best.from + k - c.to > quarter) continue
     spans.push({ first: c.first, last: Math.min(n - 1, c.last), full: false })
   }
   spans.sort((a, b) => a.first - b.first)

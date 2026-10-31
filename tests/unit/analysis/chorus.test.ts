@@ -197,6 +197,22 @@ describe('findLyricChorus', () => {
     ]
     expect(ranges(lines)?.map((r) => r.start)).toEqual([10, 45])
   })
+
+  it('does not count a verse that sings the chorus’s first two lines, with its own lines between, as a chorus', () => {
+    const chorus = [
+      'We are the fire tonight baby',
+      'nobody can ever stop us now',
+      'dancing on the roof until dawn',
+      'hold on to me',
+    ]
+    const lines = [
+      ...sing(['Woke up late on a Sunday', 'coffee cold and the radio on'], 0),
+      ...sing(chorus, 10),
+      ...sing([chorus[0]!, 'Streets are empty after rain', chorus[1]!, 'shoes in my hand and a taxi'], 25),
+      ...sing(chorus, 40),
+    ]
+    expect(ranges(lines)?.map((r) => r.start)).toEqual([10, 40])
+  })
 })
 
 const section = (
