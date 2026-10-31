@@ -3,11 +3,10 @@ import type { AspectPreset } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { ColorField, FieldRow, Section, Segmented, Select } from '../../../ds/Fields.tsx'
 import { formatBpm, plural } from '../../../format.ts'
-import { JOB_KINDS } from '../../../state/jobs.ts'
-import { dispatch, editor, hasSong, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
+import { bpmOf, dispatch, editor, hasSong, sectionsOf, useProject } from '../../../state/project.ts'
 import { changeAspect } from '../../../state/reframe.ts'
-import { useSongPending } from '../../../state/songAnalysis.ts'
-import { useJob } from '../assist/jobState.ts'
+import { SONG_STATE_TEXT } from '../../../state/songAnalysis.ts'
+import { useSongState } from '../assist/jobState.ts'
 import { openAssist } from '../../../state/ui.ts'
 import { LookSection } from './Look.tsx'
 import { Header } from './parts.tsx'
@@ -16,14 +15,11 @@ import styles from '../Inspector.module.css'
 /** What Inspector › Song says about the song: the facts analysis found, or where analysis stands. */
 function useSongFacts(): string {
   const project = useProject()
-  const analysis = useJob(JOB_KINDS.analysis).phase
-  const pending = useSongPending(project.songAssetId)
-  const tempo = songAnalysis(project)?.tempo
-  if (tempo && tempo.bpm > 0)
-    return `${formatBpm(tempo.bpm)} · 4/4 · ${plural(sectionsOf(project).length, 'section')}`
-  if (analysis === 'running' || pending) return 'Analyzing the song…'
-  if (analysis === 'failed') return 'Couldn’t analyze the song'
-  return songAnalysis(project) ? 'No beat found' : 'Not analyzed yet'
+  const state = useSongState()
+  const bpm = bpmOf(project)
+  if (state === 'analyzed' && bpm)
+    return `${formatBpm(bpm)} · 4/4 · ${plural(sectionsOf(project).length, 'section')}`
+  return SONG_STATE_TEXT[state]
 }
 
 export function ProjectInspector() {

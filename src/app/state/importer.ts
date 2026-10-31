@@ -19,7 +19,7 @@ import { JOB_KINDS } from './jobs.ts'
 import { formatTime } from '../format.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
-import { analysisService, findBars, markSongPending } from './songAnalysis.ts'
+import { analysisService, findBars, foundText, markSongPending } from './songAnalysis.ts'
 import { get, select, set, toast } from './ui.ts'
 
 /*
@@ -98,9 +98,7 @@ async function analyze(song: Asset): Promise<boolean> {
     const analysis = await (await analysisService()).analyze(song.id, audio).promise
     if (!editor.getProject().assets[song.id]) return true
     dispatch(client.setAnalysisCommand(analysis), { history: 'skip' })
-    const bpm = analysis.tempo ? `${Math.round(analysis.tempo.bpm)} BPM` : 'the beat'
-    const sections = analysis.sections?.length ?? 0
-    say(`Found ${bpm} and ${sections} ${sections === 1 ? 'section' : 'sections'}`)
+    say(foundText(analysis))
     // Bars and steadier beats from Beat This! (a model downloaded on first use), shown in the activity list while
     // it runs. Beats or sections the user corrected meanwhile are kept. If it fails, the fast analysis stays.
     if (backgroundAnalysisOn()) void findBars(song.id, { baseline: analysis, sections: true })

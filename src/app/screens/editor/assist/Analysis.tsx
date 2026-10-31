@@ -7,17 +7,18 @@ import { Badge } from '../../../ds/Feedback.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm } from '../../../format.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
-import { hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
+import { bpmOf, hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
 import {
   analyzeAgain,
   applyTappedTempo,
   setFirstBeat,
   setTempoLevel,
+  SONG_STATE_TEXT,
   TEMPO_LEVEL_RANGE,
   useBars,
 } from '../../../state/songAnalysis.ts'
 import { get } from '../../../state/ui.ts'
-import { dismiss, pct, useJob } from './jobState.ts'
+import { dismiss, pct, useJob, useSongState } from './jobState.ts'
 import { CancelButton, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -107,6 +108,7 @@ export function AnalysisView() {
   const bars = useBars()
   const tapped = tapTempo(taps)
   const busy = phase === 'running' || tempo.phase === 'running'
+  const state = useSongState()
 
   if (phase === 'failed') {
     return (
@@ -142,7 +144,29 @@ export function AnalysisView() {
     )
   }
 
-  let tempoText = analysis?.tempo ? `${formatBpm(analysis.tempo.bpm)} · 4/4` : 'Not found'
+  if (state === 'not-analyzed')
+    return (
+      <ToolView
+        title="Song analysis"
+        subtitle={name}
+        footer={
+          <Button variant="primary" block disabled={!hasSong(project)} onClick={() => void analyzeAgain()}>
+            Analyze
+          </Button>
+        }
+      >
+        <div className={styles.facts}>
+          <div>
+            <span>Song</span>
+            <span>{SONG_STATE_TEXT[state]}</span>
+          </div>
+        </div>
+        <p className={styles.muted}>Finds the beats, bars, sections and energy, on this device.</p>
+      </ToolView>
+    )
+
+  const bpm = bpmOf(project)
+  let tempoText = bpm ? `${formatBpm(bpm)} · 4/4` : state === 'analyzing' ? 'Finding…' : 'No beat found'
   if (taps.length)
     tempoText = tapped ? `Tapping · ${formatBpm(tapped)}` : `Tapping… ${taps.length} of ${MIN_TAPS}`
   else if (tempo.phase === 'running') tempoText = `Following your tempo… ${pct(tempo.job)}%`
@@ -160,10 +184,10 @@ export function AnalysisView() {
           <span>Tempo</span>
           <span className={styles.tempoValue}>
             <span className="tnum">{tempoText}</span>
-            {analysis?.tempo && analysis.beats?.length && !taps.length && tempo.phase !== 'running' ? (
+            {bpm && analysis?.beats?.length && !taps.length && tempo.phase !== 'running' ? (
               <span className={styles.tempoLevel}>
-                <TempoLevelButton factor={0.5} bpm={analysis.tempo.bpm} disabled={busy} />
-                <TempoLevelButton factor={2} bpm={analysis.tempo.bpm} disabled={busy} />
+                <TempoLevelButton factor={0.5} bpm={bpm} disabled={busy} />
+                <TempoLevelButton factor={2} bpm={bpm} disabled={busy} />
               </span>
             ) : null}
           </span>

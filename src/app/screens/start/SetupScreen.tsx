@@ -108,10 +108,12 @@ function SongStatus({ song, analysis }: { song: SetupSong; analysis: AudioAnalys
     const chorus = sections.find((s) => /^chorus\b/i.test(s.label ?? ''))
     return (
       <>
-        {analysis.tempo && (
+        {analysis.tempo && analysis.tempo.bpm > 0 ? (
           <Badge tone="success" icon={<Check />}>
             {formatBpm(analysis.tempo.bpm)}
           </Badge>
+        ) : (
+          <Badge>No beat found</Badge>
         )}
         {sections.length > 0 && (
           <Badge tone="success" icon={<Check />}>

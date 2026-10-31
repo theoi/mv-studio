@@ -17,7 +17,7 @@ import { JobError, type JobHandle } from '../../shared/jobs.ts'
 import { formatBpm, formatTime, plural } from '../format.ts'
 import { backgroundAnalysisOn } from './footage.ts'
 import { isRunning, JOB_KINDS } from './jobs.ts'
-import { dispatch, editor, songAnalysis, useProject } from './project.ts'
+import { bpmOf, dispatch, editor, songAnalysis, useProject } from './project.ts'
 import { toast } from './ui.ts'
 
 /*
@@ -51,6 +51,41 @@ export function markSongPending(songId: Id, pending: boolean): void {
 
 export function useSongPending(songId: Id | undefined): boolean {
   return usePendingSongs((s) => !!songId && s.ids.includes(songId))
+}
+
+/**
+ * Where the song's analysis stands, said the same way in Inspector › Song, the Library song card and Assist:
+ * 'analyzed' (a beat was found), 'no-beat' (analyzed, but silent or without a beat), 'analyzing', 'failed', or
+ * 'not-analyzed' (never analyzed, or the analysis was cancelled). `job` is the phase of the latest analysis job.
+ */
+export type SongState = 'analyzed' | 'no-beat' | 'analyzing' | 'failed' | 'not-analyzed'
+
+/** How each surface names a song state other than its facts. */
+export const SONG_STATE_TEXT: Record<SongState, string> = {
+  analyzed: 'Analyzed',
+  'no-beat': 'No beat found',
+  analyzing: 'Analyzing the song…',
+  failed: 'Couldn’t analyze the song',
+  'not-analyzed': 'Not analyzed yet',
+}
+
+export function songState(
+  project: Project,
+  job: 'idle' | 'running' | 'done' | 'failed',
+  pending: boolean,
+): SongState {
+  if (bpmOf(project) !== undefined) return 'analyzed'
+  if (job === 'running' || pending) return 'analyzing'
+  if (job === 'failed') return 'failed'
+  return songAnalysis(project) ? 'no-beat' : 'not-analyzed'
+}
+
+/** What an analysis found, for its toast: "Found 120 BPM and 7 sections", or that it found no beat. */
+export function foundText(analysis: Pick<AudioAnalysis, 'tempo' | 'sections'>): string {
+  const sections = analysis.sections?.length ?? 0
+  const bpm = analysis.tempo?.bpm ?? 0
+  if (bpm > 0) return `Found ${formatBpm(bpm)} and ${plural(sections, 'section')}`
+  return sections ? `No beat found. The song has ${plural(sections, 'section')}` : 'No beat found'
 }
 
 /** For end-to-end tests: a stand-in for song analysis. */
@@ -187,9 +222,7 @@ export async function analyzeAgain(): Promise<void> {
       ? { ...analysis, sections: keepUserSections(analysis.sections ?? [], previous) }
       : analysis
     const chorus = project.lyrics ? lyricChorusCommand(merged, project.lyrics) : null
-    const sections = merged.sections?.length ?? 0
-    const bpm = merged.tempo ? formatBpm(merged.tempo.bpm) : 'the beat'
-    const found = `Found ${bpm} and ${plural(sections, 'section')}`
+    const found = foundText(merged)
     undoable('Analyze again', kept ? `${found}. Kept ${plural(kept, 'section')} you named.` : found, [
       setAnalysisCommand(merged),
       ...(chorus ? [chorus] : []),

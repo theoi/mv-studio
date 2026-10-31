@@ -70,7 +70,7 @@ export interface WhisperModelSpec {
   revision: string
   /** Transformers.js dtype per graph. */
   dtype: Record<string, 'fp32' | 'q8' | 'q4'>
-  /** Approximate download size. */
+  /** Approximate download size: both graphs plus the tokenizer and config files (about 2.8 MB). */
   bytes: number
 }
 
@@ -84,7 +84,7 @@ export const WHISPER_MODELS = {
     repo: 'onnx-community/whisper-base',
     revision: '1846881b6b3a3024392c1eea3ad983695bc23925',
     dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' },
-    bytes: 77_000_000,
+    bytes: 80_000_000,
   },
   small: {
     id: 'whisper-small',
@@ -94,7 +94,7 @@ export const WHISPER_MODELS = {
     repo: 'onnx-community/whisper-small',
     revision: '36050c46d777d46dc4b5f43f6d90574fc38f8732',
     dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' },
-    bytes: 249_000_000,
+    bytes: 252_000_000,
   },
 } satisfies Record<string, WhisperModelSpec>
 

@@ -1,5 +1,7 @@
 import type { JobSnapshot } from '../../../../shared/jobs.ts'
-import { latestJob, useJobs } from '../../../state/jobs.ts'
+import { JOB_KINDS, latestJob, useJobs } from '../../../state/jobs.ts'
+import { useProject } from '../../../state/project.ts'
+import { songState, useSongPending, type SongState } from '../../../state/songAnalysis.ts'
 import { set, useUi } from '../../../state/ui.ts'
 
 export type Phase = 'idle' | 'running' | 'done' | 'failed'
@@ -13,6 +15,13 @@ export function useJob(kind: string): { job?: JobSnapshot; phase: Phase } {
   if (job.status === 'succeeded') return { job, phase: 'done' }
   if (job.status === 'failed') return { job, phase: 'failed' }
   return { phase: 'idle' }
+}
+
+/** Where the song's analysis stands (`songState`), from the latest analysis job. */
+export function useSongState(): SongState {
+  const project = useProject()
+  const { phase } = useJob(JOB_KINDS.analysis)
+  return songState(project, phase, useSongPending(project.songAssetId))
 }
 
 /** Returns a finished or failed tool view to idle. */
