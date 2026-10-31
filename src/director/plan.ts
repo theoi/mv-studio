@@ -170,8 +170,23 @@ export const textItemSchema = z
     reactive: z.array(audioBindingSchema).optional(),
     transitionIn: transitionSpecSchema.optional(),
     transitionOut: transitionSpecSchema.optional(),
-    /** 'emphasis': the stressed word of a lyric line, shown bigger below the rest of the line as it is sung. */
-    role: z.enum(['lyric', 'title', 'emphasis']).optional(),
+    /**
+     * 'emphasis': the stressed word of a lyric line, shown bigger below the rest of the line as it is sung.
+     * 'preview': the next lyric line, waiting smaller and dimmer below the current one in fast passages.
+     * Neither is linked to the line for karaoke; `lyricLineId` still names it.
+     */
+    role: z.enum(['lyric', 'title', 'emphasis', 'preview']).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+    scale: z.number().min(0.1).max(4).optional(),
+    /** Enters from this position, scale and opacity over `duration` (a preview line rolling up into place). */
+    enter: z
+      .object({
+        y: z.number().optional(),
+        scale: z.number().min(0.1).max(4).optional(),
+        opacity: z.number().min(0).max(1).optional(),
+        duration: z.number().min(0.02).max(2),
+      })
+      .optional(),
     /** Lyrics behind the subject: the text shows only outside this subject mask of the footage under it. */
     behind: z.object({ maskAssetId: z.string().min(1), sourceAssetId: z.string().min(1) }).optional(),
   })

@@ -515,6 +515,8 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx): TextClip | undefined {
     planId: ctx.plan.id,
     role: 'text',
     ...(t.sectionId ? { sectionId: t.sectionId } : {}),
+    ...(t.role ? { textRole: t.role } : {}),
+    ...(t.lyricLineId ? { lyricLineId: t.lyricLineId } : {}),
   }
   const clip: TextClip = {
     ...visualBase(trackId, t.start, duration, meta),
@@ -522,11 +524,26 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx): TextClip | undefined {
     text: t.text,
     style: textStyle(t),
   }
+  const enter = t.enter
+  const settle = (from: number | undefined, to: number): Animatable =>
+    !enter || from === undefined || Math.abs(from - to) < 1e-6
+      ? { value: to }
+      : {
+          value: from,
+          keyframes: [
+            { time: 0, value: from, easing: 'ease-out' },
+            { time: round3(Math.min(enter.duration, duration / 2)), value: to, easing: 'linear' },
+          ],
+        }
   clip.transform.x = { value: t.position.x }
-  clip.transform.y = { value: t.position.y }
+  clip.transform.y = settle(enter?.y, t.position.y)
+  clip.transform.scaleX = settle(enter?.scale, t.scale ?? 1)
+  clip.transform.scaleY = settle(enter?.scale, t.scale ?? 1)
+  clip.opacity = settle(enter?.opacity, t.opacity ?? 1)
   // An emphasized word is timed by its own start; linked to the whole line, the renderer would look for its timing
-  // among the line's first words only.
-  if (t.role !== 'emphasis' && t.lyricLineId && ctx.project.lyrics?.lines.some((l) => l.id === t.lyricLineId))
+  // among the line's first words only. A preview shows the line before it is sung, so it has no karaoke.
+  const linked = t.role !== 'emphasis' && t.role !== 'preview'
+  if (linked && t.lyricLineId && ctx.project.lyrics?.lines.some((l) => l.id === t.lyricLineId))
     clip.lyricLineId = t.lyricLineId
   if (t.behind && ctx.project.assets[t.behind.maskAssetId])
     clip.matte = behindSubjectMatte(t.behind.maskAssetId, t.behind.sourceAssetId)

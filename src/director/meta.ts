@@ -15,6 +15,10 @@ export interface DirectorClipMeta {
   role: DirectorClipRole
   shotId?: string
   sectionId?: string
+  /** Text clips: a lyric line, a title, a line's emphasized word, or the next line shown in advance. */
+  textRole?: 'lyric' | 'title' | 'emphasis' | 'preview'
+  /** Text clips from a lyric line, including emphasis and preview clips, which are not linked to it. */
+  lyricLineId?: string
   /** Set on placeholders for AI shots that have not been generated yet. */
   pending?: { task: GenerateSource['task']; prompt: string; modelId: string; duration?: number }
 }

@@ -1,5 +1,5 @@
 /** Beat-grid math for planners: grids with fallbacks, section coverage, and beat- or bar-aligned cut points. */
-import type { Seconds } from '../model/types.ts'
+import type { LyricLine, Seconds } from '../model/types.ts'
 import { meanOver, type EnergyAt, type SectionInfo, type SongInfo } from './inputs.ts'
 import type { Pace } from './plan.ts'
 
@@ -71,6 +71,21 @@ export function sectionsFor(song: SongInfo, grid: BeatGrid): SectionInfo[] {
   const max = Math.max(...values)
   if (max - min > 1e-6) for (const p of parts) p.energy = (p.energy - min) / (max - min)
   return parts
+}
+
+/**
+ * When word `index` of a line (split into `words`) is sung, the line sung from `start` to `end`: the word's own
+ * timing, else in proportion to the letters before it.
+ */
+export function wordTime(
+  item: { line: LyricLine; start: Seconds; end: Seconds },
+  words: string[],
+  index: number,
+): Seconds {
+  const timed = item.line.words[index]
+  if (item.line.words.length === words.length && timed && timed.end > timed.start) return timed.start
+  const before = words.slice(0, index).join(' ').length + (index > 0 ? 1 : 0)
+  return item.start + ((item.end - item.start) * before) / Math.max(1, item.line.text.length)
 }
 
 const BEATS_PER_CUT: Record<Pace, number> = { 'very-fast': 1, fast: 2, medium: 4, slow: 8, 'very-slow': 16 }

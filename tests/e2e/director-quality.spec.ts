@@ -16,7 +16,7 @@ import { expect, openHarness, test } from './fixtures.ts'
  *     [DIRECTOR_QUALITY_PROMPT="neon city at night"] [DIRECTOR_QUALITY_INDEX=1] \
  *     npx playwright test tests/e2e/director-quality.spec.ts
  *
- * Output: test-results/director-quality/<song>/<kind>-{sheet,opening,timeline}.jpg and metrics.json. Lyric text
+ * Output: test-results/director-quality/<song>/<kind>-{sheet,opening,timeline,lyrics,fast}.jpg and metrics.json. Lyric text
  * comes from lyrics/<song>.txt, one word per timed word in words/<song>.csv. DIRECTOR_QUALITY_INDEX=1 first runs
  * src/vision's background analysis with the real models (clip matching and subject tracks), as the app does on import.
  */
@@ -455,6 +455,28 @@ test('director drafts on real songs', async ({ page }) => {
               }
             },
           )
+          // Reading speed of each line over all the time it is on screen (as the current line, an emphasized word or
+          // the next line waiting below), so two-line passages count the time a line is read in advance.
+          const spansByLine = new Map<string, [number, number][]>()
+          for (const t of plan.texts as { lyricLineId?: string; role?: string; start: number; end: number }[])
+            if (t.lyricLineId && t.role !== 'title')
+              spansByLine.set(t.lyricLineId, [...(spansByLine.get(t.lyricLineId) ?? []), [t.start, t.end]])
+          const onScreen = (spans: [number, number][]) => {
+            const sorted = [...spans].sort((a, b) => a[0] - b[0])
+            let total = 0
+            let [s, e] = sorted[0]!
+            for (const [a, b] of sorted.slice(1)) {
+              if (a > e) {
+                total += e - s
+                ;[s, e] = [a, b]
+              } else e = Math.max(e, b)
+            }
+            return total + e - s
+          }
+          const cpsOnScreen = (base.lyrics.lines as { id: string; text: string }[])
+            .filter((l) => spansByLine.has(l.id))
+            .map((l) => l.text.length / Math.max(0.1, onScreen(spansByLine.get(l.id)!)))
+            .sort((a, b) => a - b)
           const lengths = main.map((m: { start: number; end: number }) => m.end - m.start)
           const midLine = (t: number) =>
             base.lyrics.lines.some(
@@ -540,6 +562,14 @@ test('director drafts on real songs', async ({ page }) => {
             linesOffCenter: lyricTexts.filter(
               (t: { position: { y: number } }) => Math.abs(t.position.y - 0.5) > 0.15,
             ).length,
+            cpsOnScreen: cpsOnScreen.length
+              ? {
+                  max: cpsOnScreen[cpsOnScreen.length - 1],
+                  p90: cpsOnScreen[Math.floor(0.9 * (cpsOnScreen.length - 1))],
+                  over15: cpsOnScreen.filter((c) => c > 15).length,
+                }
+              : null,
+            nextLinePreviews: plan.texts.filter((t: { role: string }) => t.role === 'preview').length,
             maxCps: lyricStats.length ? Math.max(...lyricStats.map((s: { cps: number }) => s.cps)) : null,
             minShown: lyricStats.length
               ? Math.min(...lyricStats.map((s: { shown: number }) => s.shown))
@@ -614,9 +644,33 @@ test('director drafts on real songs', async ({ page }) => {
             }
             lyricSheet = await toDataUrl(canvas)
           }
+          // Frames in fast passages, two lines at a time.
+          const previews = plan.texts.filter((t: { role: string }) => t.role === 'preview')
+          const fastMoments = previews
+            .filter((_: unknown, i: number) => i % Math.max(1, Math.floor(previews.length / 8)) === 0)
+            .slice(0, 8)
+            .map((t: { start: number; end: number }) => (t.start + t.end) / 2)
+          let fastSheet: string | undefined
+          if (fastMoments.length) {
+            const canvas = new OffscreenCanvas(4 * LW, Math.ceil(fastMoments.length / 4) * (LH + 18))
+            const fc = canvas.getContext('2d')!
+            fc.fillStyle = '#111'
+            fc.fillRect(0, 0, canvas.width, canvas.height)
+            for (const [i, t] of fastMoments.entries()) {
+              await big.render(project, t)
+              const x = (i % 4) * LW
+              const y = Math.floor(i / 4) * (LH + 18)
+              fc.drawImage(big.canvas, x, y, LW, LH)
+              fc.fillStyle = '#ddd'
+              fc.font = '13px sans-serif'
+              fc.fillText(label(t), x + 4, y + LH + 14)
+            }
+            fastSheet = await toDataUrl(canvas)
+          }
           out[kind] = {
             metrics,
             ...(lyricSheet ? { lyrics: lyricSheet } : {}),
+            ...(fastSheet ? { fast: fastSheet } : {}),
             sheet: await sheet(project, grid, 6, label),
             opening: await sheet(project, [...opening, ...ending], 6, label),
             timeline: await toDataUrl(tl),
@@ -631,7 +685,7 @@ test('director drafts on real songs', async ({ page }) => {
     const metrics: Record<string, unknown> = {}
     for (const [kind, value] of Object.entries(result) as [string, Record<string, unknown>][]) {
       metrics[kind] = value.metrics ?? value
-      for (const name of ['sheet', 'opening', 'timeline', 'lyrics']) {
+      for (const name of ['sheet', 'opening', 'timeline', 'lyrics', 'fast']) {
         const url = value[name] as string | undefined
         if (url)
           writeFileSync(path.join(dir, `${kind}-${name}.jpg`), Buffer.from(url.split(',')[1]!, 'base64'))
