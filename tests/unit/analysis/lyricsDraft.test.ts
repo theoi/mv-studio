@@ -213,4 +213,24 @@ describe('alignTranscript', () => {
     expect(words.map((w) => w.start)).toEqual([3, 7])
     expect(segmentStarts).toEqual([3, 7])
   })
+
+  it('leaves a word the aligner hears poorly where it is sung, with no unlisted singing in a draft', () => {
+    // "yeah" is sung from 1 to 6 s, where the aligner mostly hears a Q, and "la" clearly at 8 s.
+    const em = sung([['la', 400]], 500)
+    for (let f = 50; f < 300; f++) {
+      const row = f * V
+      em.logProbs.fill(Math.log(0.45 / (V - 3)), row, row + V)
+      em.logProbs[row + vocab.blank] = Math.log(0.001)
+      em.logProbs[row + (vocab.ids.Q as number)] = Math.log(0.5)
+      em.logProbs[row + (vocab.ids.Y as number)] = Math.log(0.05)
+    }
+    const { words } = alignTranscript(
+      em,
+      vocab,
+      [{ start: 0, end: 10, text: 'yeah la', chunk: 0 }],
+      [{ start: 0, end: 10 }],
+    )
+    // Unlisted singing would take nearly all of 1 to 6 s and push "yeah" to its end.
+    expect(words.map((w) => w.start)).toEqual([1, 8])
+  })
 })
