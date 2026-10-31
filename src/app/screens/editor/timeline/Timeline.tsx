@@ -20,7 +20,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import type { FeatureSeries, Project, Track } from '../../../../model/index.ts'
+import type { FeatureSeries, LyricWord, Project, Track } from '../../../../model/index.ts'
 import { clipsOnTrack } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
@@ -194,6 +194,65 @@ function makeEnergy(series: FeatureSeries | undefined): DrawFn {
 
 const songWave = makeWave('#7f91b3')
 const stemWaves = [0, 1, 2, 3].map((i) => makeWave('#56658a', i * 997 + 31, 0.9))
+
+/* ---------- lyric chips ---------- */
+
+const LABEL_PAD = 12
+const WORD_GAP = 1
+const labelWidths = new Map<string, number>()
+let measureCtx: CanvasRenderingContext2D | null | undefined
+
+/** Width of a label in the 11 px chip font, cached; falls back to an average glyph width before fonts load. */
+function labelWidth(text: string): number {
+  const hit = labelWidths.get(text)
+  if (hit !== undefined) return hit
+  measureCtx ??= document.createElement('canvas').getContext('2d')
+  if (!measureCtx) return text.length * 6.2
+  measureCtx.font = '400 11px "Inter Variable", Inter, sans-serif'
+  const w = measureCtx.measureText(text).width
+  labelWidths.set(text, w)
+  return w
+}
+
+/**
+ * A lyric line shows its words only where they fit whole. Zoomed in, each word sits at its sung time; otherwise the
+ * whole line shows if it fits, and a too-narrow chip shows the rhythm of its words as marks instead of cut-off text.
+ */
+function LyricChipContent({
+  text,
+  words,
+  start,
+  width,
+  pps,
+}: {
+  text: string
+  words: LyricWord[]
+  start: number
+  width: number
+  pps: number
+}) {
+  const spans = words.map((wd) => ({
+    text: wd.text,
+    left: (wd.start - start) * pps,
+    width: Math.max(2, (wd.end - wd.start) * pps - WORD_GAP),
+  }))
+  const wordsFit = spans.length > 0 && spans.every((s) => labelWidth(s.text) + 6 <= s.width)
+  if (wordsFit)
+    return spans.map((s, i) => (
+      <span key={i} className={styles.word} style={{ left: s.left, width: s.width }}>
+        {s.text}
+      </span>
+    ))
+  if (labelWidth(text) + LABEL_PAD <= width) return <span className={styles.lyricText}>{text}</span>
+  if (width < 8 || !spans.length) return null
+  return (
+    <span className={styles.lyricMarks} aria-hidden>
+      {spans.map((s, i) => (
+        <i key={i} style={{ left: s.left, width: s.width }} />
+      ))}
+    </span>
+  )
+}
 
 /* ---------- toolbar ---------- */
 
@@ -849,22 +908,13 @@ export function Timeline() {
                               if (c.lyricLineId) select({ type: 'lyric', id: c.lyricLineId })
                             }}
                           >
-                            {pps >= 36 && line?.words.length ? (
-                              line.words.map((wd, i) => (
-                                <span
-                                  key={i}
-                                  className={styles.word}
-                                  style={{
-                                    left: (wd.start - c.start) * pps,
-                                    width: (wd.end - wd.start) * pps,
-                                  }}
-                                >
-                                  {wd.text}
-                                </span>
-                              ))
-                            ) : (
-                              <span className={styles.lyricText}>{w > 28 ? (line?.text ?? c.name) : ''}</span>
-                            )}
+                            <LyricChipContent
+                              text={line?.text ?? c.name}
+                              words={line?.words ?? []}
+                              start={c.start}
+                              width={w}
+                              pps={pps}
+                            />
                             {sel && (
                               <div className={styles.lyricSuggest}>
                                 <InlineSuggestion

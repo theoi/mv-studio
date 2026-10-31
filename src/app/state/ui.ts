@@ -62,6 +62,16 @@ export interface UiState {
   toasts: Toast[]
 }
 
+const LIBRARY_OPEN_KEY = 'mv-studio.library-open'
+
+function storedLibraryOpen(): boolean {
+  try {
+    return localStorage.getItem(LIBRARY_OPEN_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
 export const initialUi: UiState = {
   screen: 'start',
   kind: 'lyric',
@@ -75,7 +85,7 @@ export const initialUi: UiState = {
   paletteOpen: false,
   guideStep: null,
   libraryTab: 'media',
-  libraryOpen: true,
+  libraryOpen: storedLibraryOpen(),
   playhead: 73.6,
   playing: false,
   pxPerSec: 12,
@@ -92,6 +102,15 @@ export const useUi = create<UiState>(() => initialUi)
 
 export const set = useUi.setState
 export const get = useUi.getState
+
+useUi.subscribe((s, prev) => {
+  if (s.libraryOpen === prev.libraryOpen) return
+  try {
+    localStorage.setItem(LIBRARY_OPEN_KEY, s.libraryOpen ? '1' : '0')
+  } catch {
+    // Storage can be unavailable (private mode); the panel then just isn't remembered.
+  }
+})
 
 let toastId = 1
 export function toast(message: string, action?: Toast['action']) {

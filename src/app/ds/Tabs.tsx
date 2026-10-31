@@ -9,14 +9,18 @@ export function TabsList({
   children,
   variant = 'underline',
   ariaLabel,
+  trailing,
 }: {
   children: ReactNode
   variant?: 'underline' | 'pill'
   ariaLabel: string
+  /** Controls at the end of the tab row, such as a collapse button. */
+  trailing?: ReactNode
 }) {
   return (
     <RTabs.List className={[styles.list, styles[variant]].join(' ')} aria-label={ariaLabel}>
       {children}
+      {trailing && <span className={styles.trailing}>{trailing}</span>}
     </RTabs.List>
   )
 }
