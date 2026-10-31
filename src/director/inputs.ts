@@ -7,12 +7,14 @@ import type { AspectPreset, FeatureSeries, Id, LyricsDoc, Project, Seconds } fro
 import { projectDuration } from '../model/queries.ts'
 import type { CostEstimate } from '../cloud/pricing.ts'
 import type { GenerationRequest, GenerationTier } from '../cloud/types.ts'
+import type { MediaFileSource } from '../engine/types.ts'
 import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
+import { createBrightnessProbe, type BrightnessProbe } from './contrast.ts'
 import type { Pace } from './plan.ts'
 import type { DirectorFootageMatch, DirectorFootageMatcher, FootageInfo } from '../vision/director.ts'
-import { readClipIndex } from '../vision/analysisData.ts'
+import { readClipIndex, readSubjectTrack } from '../vision/analysisData.ts'
 import type { FootageMatcher as ClipMatcher } from '../vision/matching/matcher.ts'
-import type { ClipVisionIndex, MatchQuery, Mood } from '../vision/types.ts'
+import type { ClipVisionIndex, MatchQuery, Mood, SubjectTrack } from '../vision/types.ts'
 
 export type { FootageInfo, MatchQuery }
 export type FootageMood = Mood
@@ -59,6 +61,10 @@ export interface MediaItem {
   info?: FootageInfo
   /** The clip's vision index (embeddings and motion), when src/vision has analyzed it. */
   index?: ClipVisionIndex
+  /** Where the people are over time (faces first), when src/vision has tracked them. */
+  subjects?: SubjectTrack
+  /** A subject mask video made for the clip by src/vision, for lyrics behind the subject. */
+  subjectMask?: Id
 }
 
 export interface GenerationOptions {
@@ -91,6 +97,8 @@ export interface PlannerInput {
   seed: number
   /** Use the user's clips and images (default true). */
   useMedia: boolean
+  /** Measures footage brightness under text boxes, for scrims behind lyrics over bright frames. */
+  brightness?: BrightnessProbe
 }
 
 function clamp01(v: number): number {
@@ -198,9 +206,20 @@ export function songInfoFromProject(project: Project): SongInfo {
   }
 }
 
+/** Subject masks src/vision stored for a clip (maskAssetInfo): derived videos named "<clip> (subject mask).webm". */
+function subjectMasks(project: Project): Map<Id, Id> {
+  const masks = new Map<Id, Id>()
+  for (const a of Object.values(project.assets)) {
+    const parent = a.origin.type === 'derived' ? a.origin.parentAssetId : undefined
+    if (parent && a.kind === 'video' && /\(subject mask\)\.[a-z0-9]+$/i.test(a.name)) masks.set(parent, a.id)
+  }
+  return masks
+}
+
 /** The user's clips and images (imported or generated), excluding stems, masks and proxies. */
 export function mediaFromProject(project: Project, info: FootageInfo[] = []): MediaItem[] {
   const byId = new Map(info.map((i) => [i.assetId, i]))
+  const masks = subjectMasks(project)
   return Object.values(project.assets)
     .filter(
       (a): a is typeof a & { kind: 'video' | 'image' } =>
@@ -210,6 +229,8 @@ export function mediaFromProject(project: Project, info: FootageInfo[] = []): Me
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name))
     .map((a) => {
       const index = readClipIndex(project.analysis.visual[a.id])
+      const subjects = readSubjectTrack(project.analysis.visual[a.id])
+      const mask = masks.get(a.id)
       return {
         assetId: a.id,
         kind: a.kind,
@@ -220,6 +241,8 @@ export function mediaFromProject(project: Project, info: FootageInfo[] = []): Me
         generated: a.origin.type === 'generated',
         info: byId.get(a.id),
         ...(index ? { index } : {}),
+        ...(subjects ? { subjects } : {}),
+        ...(mask ? { subjectMask: mask } : {}),
       }
     })
 }
@@ -234,6 +257,10 @@ export interface BuildInputOptions {
   pace?: Pace
   seed?: number
   useMedia?: boolean
+  /** Reads stored media (the app's media store), so text over bright footage can be measured and given a scrim. */
+  media?: MediaFileSource
+  /** Overrides the probe made from `media`. */
+  brightness?: BrightnessProbe
 }
 
 /** Gathers planner input from a project. Footage tags are fetched from the matcher when one is available. */
@@ -265,5 +292,10 @@ export async function buildPlannerInput(project: Project, options: BuildInputOpt
     pace: options.pace,
     seed: options.seed ?? 1,
     useMedia: options.useMedia ?? true,
+    ...(options.brightness
+      ? { brightness: options.brightness }
+      : options.media
+        ? { brightness: createBrightnessProbe(project, options.media) }
+        : {}),
   }
 }

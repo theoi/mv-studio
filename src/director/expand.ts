@@ -8,7 +8,8 @@ import type { LyricLine, Seconds } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
 import { chooseClips, type ChooseSpan, type PoolItem } from '../vision/index.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
-import { bestByTags, findItem, type LookPreset } from './catalog.ts'
+import { bestByTags, findItem, type CatalogItem, type LookPreset } from './catalog.ts'
+import type { BrightnessRequest } from './contrast.ts'
 import {
   energyScale,
   musicEnd,
@@ -31,6 +32,8 @@ import {
   type PlanSection,
   type PlanShot,
   type PlanText,
+  type ReactionSpec,
+  type ShotSource,
   type TextStyleSpec,
   type TransitionSpec,
 } from './plan.ts'
@@ -42,8 +45,14 @@ import {
   linesIn,
   moodFor,
   normalizedLabel,
+  overlayPool,
+  PARTICLES_ID,
   pickLook,
+  scenePool,
   sectionPrompts,
+  sectionTier,
+  visualizerPalette,
+  type SectionTier,
 } from './rules.ts'
 import {
   beatGrid,
@@ -57,6 +66,18 @@ import {
   spans,
   type BeatGrid,
 } from './timing.ts'
+import {
+  emphasisStart,
+  emphasisStyle,
+  frameWidth,
+  hookWords,
+  layoutLine,
+  lyricTypography,
+  peakStyle,
+  textWidth,
+  titleStyle,
+  type LyricTypography,
+} from './typography.ts'
 
 export type DirectorErrorReason =
   'no-song' | 'invalid-plan' | 'needs-confirmation' | 'no-plan' | 'no-provider'
@@ -98,8 +119,11 @@ interface Ctx {
   motionOffset: number
   promptOffset: number
   energyAt?: EnergyAt
-  /** When each timed lyric line is sung. */
-  sung: { start: Seconds; end: Seconds }[]
+  /** Lyric lines to show, with when they are sung and shown. */
+  lines: PlacedLine[]
+  /** Visualizer videos: a scene and an overlay visualizer per kind of section. */
+  backgrounds: Map<string, string>
+  overlays: Map<string, string>
 }
 
 function warn(ctx: Pick<Ctx, 'warnings'>, message: string) {
@@ -254,30 +278,39 @@ function nextMotion(sb: BriefSection, ctx: Ctx): Motion {
 
 const paceIndex = (pace: Pace) => PACES.indexOf(pace)
 
+const nearest = (list: Seconds[], t: Seconds): Seconds | undefined =>
+  list.reduce<Seconds | undefined>(
+    (b, x) => (b === undefined || Math.abs(x - t) < Math.abs(b - t) ? x : b),
+    undefined,
+  )
+
 /**
- * Moves cuts that would land in the middle of a sung line to the nearest beat where a line starts or between lines,
- * within half a shot either way, so the background changes with the words instead of under them.
+ * Keeps each lyric line on one shot: a cut that would land while a line is on screen moves to the nearest beat at a
+ * line change (within most of a shot either way), else to the line change itself, off the beat. When neither is in
+ * reach, the cut is dropped as long as the longer shot stays within about two planned shots; only past that does a
+ * line change background under the words.
  */
 function cutsBetweenLines(cuts: Seconds[], end: Seconds, k: number, ctx: Ctx): Seconds[] {
-  if (ctx.sung.length === 0) return cuts
-  const reach = (k * ctx.grid.beatLength) / 2
-  const gap = Math.max(MIN_SHOT, ctx.grid.beatLength * 2)
-  const free = (t: Seconds) => !ctx.sung.some((l) => t > l.start + 0.2 && t < l.end - 0.1)
+  if (ctx.lines.length === 0) return cuts
+  const beat = ctx.grid.beatLength
+  const reach = Math.max(k * beat * 0.75, beat * 2)
+  const gap = Math.max(MIN_SHOT, beat * 2)
+  const longest = k * beat * 2.2
+  const onScreen = (t: Seconds) => ctx.lines.some((l) => t > l.shownStart + 0.12 && t < l.shownEnd - 0.12)
+  const changes = ctx.lines.map((l) => l.shownStart)
   const out = [cuts[0] as number]
   for (let i = 1; i < cuts.length; i++) {
     const t = cuts[i] as number
     const prev = out[out.length - 1] as number
     const next = cuts[i + 1] ?? end
-    if (free(t)) {
+    if (!onScreen(t)) {
       out.push(t)
       continue
     }
-    let best: Seconds | undefined
-    for (const b of ctx.grid.beats) {
-      if (Math.abs(b - t) > reach || b - prev < gap || next - b < gap || !free(b)) continue
-      if (best === undefined || Math.abs(b - t) < Math.abs(best - t)) best = b
-    }
-    out.push(best ?? t)
+    const ok = (b: Seconds) => Math.abs(b - t) <= reach && b - prev >= gap && next - b >= gap && !onScreen(b)
+    const best = nearest(ctx.grid.beats.filter(ok), t) ?? nearest(changes.filter(ok), t)
+    if (best !== undefined) out.push(best)
+    else if (next - prev > longest) out.push(t)
   }
   return out
 }
@@ -317,6 +350,126 @@ function generatedSource(
     modelId: video ? g.videoModelId : g.imageModelId,
     ...(video ? { duration: round3(length) } : {}),
   }
+}
+
+/** How hard scenes react to the music (their `reactivity`) by kind of section, so loud sections hit hardest. */
+const REACTIVITY: Record<SectionTier, number> = { peak: 1.6, mid: 1, calm: 0.6 }
+/** Behind lyrics, scenes stay calmer so the words lead. */
+const LYRIC_REACTIVITY: Record<SectionTier, number> = { peak: 1, mid: 0.7, calm: 0.5 }
+/** "Pulse with kick" on overlay visualizers. */
+const KICK: Record<SectionTier, number> = { peak: 0.3, mid: 0.15, calm: 0 }
+
+/** A color darkened toward black. */
+function shade(hex: string, factor: number): string {
+  const v = /^#([0-9a-f]{6})/i.exec(hex)?.[1]
+  if (!v) return hex
+  const channel = (i: number) =>
+    Math.round(parseInt(v.slice(i, i + 2), 16) * factor)
+      .toString(16)
+      .padStart(2, '0')
+  return `#${channel(0)}${channel(2)}${channel(4)}`
+}
+
+/** A generator colored by the look (darker behind lyrics), reacting by kind of section. */
+function generatorSource(
+  item: CatalogItem,
+  tier: SectionTier,
+  sb: BriefSection,
+  ctx: Ctx,
+  extra: Record<string, number> = {},
+): ShotSource {
+  const lyric = ctx.input.kind === 'lyric'
+  const color = (c: string) => (lyric ? shade(c, 0.55) : c)
+  const has = (key: string) => item.params?.some((p) => p.key === key)
+  const palette = ctx.look?.palette
+  const params: Record<string, string | number | boolean> = {}
+  if (has('color')) {
+    params.color = color(
+      palette?.primary ??
+        (sb.intensity >= 0.7 ? (ctx.look?.accentColor ?? '#22d3ee') : (ctx.look?.textColor ?? '#ffffff')),
+    )
+  }
+  if (palette && has('color2')) params.color2 = color(palette.secondary)
+  if (ctx.look && has('color3')) params.color3 = color(ctx.look.accentColor)
+  if (has('reactivity')) params.reactivity = (lyric ? LYRIC_REACTIVITY : REACTIVITY)[tier]
+  for (const [key, value] of Object.entries(extra)) if (has(key)) params[key] = value
+  return { type: 'generator', generatorId: item.id, params }
+}
+
+const isScene = (g: CatalogItem | undefined) => !!g && g.id.startsWith('generator.')
+
+/**
+ * A visualizer section in layers: a scene colored by the look that slowly pushes in or pulls out, a visualizer over
+ * it that pulses with the kick (visualizer videos only), and particles on peaks. Over the user's images, the images
+ * take the scene's place. The section's effects and beat pulse go on the top visual.
+ */
+function visualizerLayers(
+  section: SectionInfo,
+  sb: BriefSection,
+  ctx: Ctx,
+  withBackdrop: boolean,
+  o: { effects: EffectSpec[]; reactive?: AudioBinding[] },
+): PlanShot[] {
+  const gens = ctx.input.catalog.generators
+  const tier = sectionTier(section)
+  const lyric = ctx.input.kind === 'lyric'
+  const chosen = findItem(gens, sb.generatorId)
+  const picked = (map: Map<string, string>) => findItem(gens, map.get(section.id))
+  const background = withBackdrop
+    ? undefined
+    : chosen && (isScene(chosen) || !gens.some(isScene))
+      ? chosen
+      : (picked(ctx.backgrounds) ?? chosen)
+  let overlay =
+    ctx.input.kind === 'visualizer' || withBackdrop
+      ? chosen && !isScene(chosen)
+        ? chosen
+        : picked(ctx.overlays)
+      : undefined
+  if (withBackdrop) overlay ??= chosen
+  if (overlay === background) overlay = undefined
+  const span = { sectionId: section.id, start: section.start, end: section.end }
+  const top = overlay ?? background
+  const shots: PlanShot[] = []
+  if (background) {
+    shots.push({
+      ...span,
+      id: newId(),
+      layer: 'main',
+      source: generatorSource(background, tier, sb, ctx),
+      motion: ctx.shotIndex % 2 === 0 ? 'push-in' : 'pull-out',
+      ...(top === background && o.effects.length ? { effects: o.effects } : {}),
+      ...(top === background && o.reactive && !lyric ? { reactive: o.reactive } : {}),
+    })
+  }
+  if (overlay) {
+    const kick: ReactionSpec[] =
+      KICK[tier] > 0 ? [{ reaction: 'kick', target: { property: 'scale' }, amount: KICK[tier] }] : []
+    shots.push({
+      ...span,
+      id: newId(),
+      layer: 'overlay',
+      source: generatorSource(overlay, tier, sb, ctx),
+      blendMode: 'screen',
+      ...(o.effects.length ? { effects: o.effects } : {}),
+      ...(kick.length ? { reactions: kick } : o.reactive ? { reactive: o.reactive } : {}),
+    })
+  }
+  const particles = findItem(gens, PARTICLES_ID)
+  if (tier === 'peak' && particles && particles !== overlay && particles !== background) {
+    shots.push({
+      ...span,
+      id: newId(),
+      layer: 'accent',
+      source: generatorSource(particles, tier, sb, ctx, {
+        reactivity: lyric ? 1.2 : 2,
+        density: lyric ? 0.35 : 0.6,
+      }),
+      blendMode: 'screen',
+      ...(lyric ? { opacity: 0.7 } : {}),
+    })
+  }
+  return shots
 }
 
 async function shotsForSection(
@@ -371,27 +524,7 @@ async function shotsForSection(
         }),
       )
     } else {
-      const generator = findItem(ctx.input.catalog.generators, sb.generatorId)
-      const params: Record<string, string | number | boolean> = {}
-      const has = (key: string) => generator?.params?.some((p) => p.key === key)
-      const palette = ctx.look?.palette
-      if (has('color')) {
-        params.color =
-          palette?.primary ??
-          (sb.intensity >= 0.7 ? (ctx.look?.accentColor ?? '#22d3ee') : (ctx.look?.textColor ?? '#ffffff'))
-      }
-      if (palette && has('color2')) params.color2 = palette.secondary
-      shots.push({
-        ...base,
-        layer: withBackdrop ? 'overlay' : 'main',
-        id: newId(),
-        start: section.start,
-        end: section.end,
-        source: { type: 'generator', generatorId: generator?.id ?? (sb.generatorId as string), params },
-        ...(withBackdrop ? { blendMode: 'screen' as const } : {}),
-        ...(reactive ? { reactive } : {}),
-        ...(effects.length ? { effects } : {}),
-      })
+      shots.push(...visualizerLayers(section, sb, ctx, withBackdrop, { effects, reactive }))
     }
     ctx.shotIndex++
     return shots
@@ -538,13 +671,6 @@ async function chooseFootage(shots: PlanShot[], ctx: Ctx): Promise<PlanShot[]> {
   })
   return unfilled.size ? shots.filter((s) => !unfilled.has(s)) : shots
 }
-function sungSpans(input: PlannerInput): { start: Seconds; end: Seconds }[] {
-  return (input.lyrics?.lines ?? []).flatMap((l) => {
-    const start = l.start ?? l.words[0]?.start
-    const end = l.end ?? l.words[l.words.length - 1]?.end
-    return start !== undefined && end !== undefined && end > start ? [{ start, end }] : []
-  })
-}
 
 /**
  * A designed opening and ending: the first shot fades in from black and the last fades out, ending when the music
@@ -636,9 +762,312 @@ function displayTimes(timed: TimedLine[], duration: Seconds): { start: Seconds; 
   return out
 }
 
+interface PlacedLine extends TimedLine {
+  shownStart: Seconds
+  shownEnd: Seconds
+}
+
+/** Lyric lines the draft shows, with when each is sung and when it is on screen. */
+function placeLines(sections: SectionInfo[], ctx: Ctx): PlacedLine[] {
+  const show = ctx.brief.text?.show ?? ctx.input.kind === 'lyric'
+  const lines = ctx.input.lyrics?.lines.filter((l) => l.text.trim()) ?? []
+  if (!show || lines.length === 0) return []
+  const duration = ctx.input.song.duration
+  const timed = timedLines(lines, sections, duration, ctx)
+  const shown = displayTimes(timed, duration)
+  return timed.flatMap((item, i) => {
+    const s = shown[i] as { start: Seconds; end: Seconds }
+    return s.end > s.start ? [{ ...item, shownStart: round3(s.start), shownEnd: round3(s.end) }] : []
+  })
+}
+
+interface Box {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** The main shot playing at `t`, with its media. */
+function mediaShotAt(t: Seconds, shots: PlanShot[], ctx: Ctx) {
+  const shot = shots.find((s) => s.layer === 'main' && s.start <= t && s.end > t)
+  if (shot?.source.type !== 'media') return undefined
+  const { assetId } = shot.source
+  const media = ctx.input.media.find((m) => m.assetId === assetId)
+  return media ? { shot, source: shot.source, media } : undefined
+}
+
+/** Subject samples of a shot's media while [start, end) of the timeline plays, in source time. */
+function subjectsDuring(at: NonNullable<ReturnType<typeof mediaShotAt>>, start: Seconds, end: Seconds) {
+  const track = at.media.subjects
+  if (!track) return []
+  const rate = at.source.playbackRate ?? 1
+  const from = (at.source.sourceStart ?? 0) + (Math.max(start, at.shot.start) - at.shot.start) * rate
+  const to = (at.source.sourceStart ?? 0) + (Math.min(end, at.shot.end) - at.shot.start) * rate
+  const still = at.media.kind === 'image'
+  return track.samples.filter(
+    (s) => (still || (s.t >= from - 0.1 && s.t <= to + 0.1)) && s.source !== 'none' && s.confidence >= 0.3,
+  )
+}
+
+/** Faces (or upper bodies) on screen while a line shows, as frame boxes (top-left origin, cropped to fill). */
+/** The part of a source (normalized, top-left origin) a frame shows when the source is cropped to fill it. */
+function visiblePart(source: { width: number; height: number }, ctx: Ctx): Box {
+  const frame = ctx.input.settings.width / Math.max(1, ctx.input.settings.height)
+  const aspect = source.width / Math.max(1, source.height)
+  if (aspect > frame) return { x: (1 - frame / aspect) / 2, y: 0, width: frame / aspect, height: 1 }
+  return { x: 0, y: (1 - aspect / frame) / 2, width: 1, height: aspect / frame }
+}
+
+function facesDuring(start: Seconds, end: Seconds, shots: PlanShot[], ctx: Ctx): Box[] {
+  const at = mediaShotAt((start + end) / 2, shots, ctx)
+  const track = at?.media.subjects
+  if (!at || !track) return []
+  const v = visiblePart(track.sourceSize, ctx)
+  const toFrame = (x: number, y: number) => ({ x: (x - v.x) / v.width, y: (y - v.y) / v.height })
+  return subjectsDuring(at, start, end).map((s) => {
+    const c = toFrame(s.focus.x, s.focus.y)
+    const r = s.source === 'face' ? { w: 0.08, h: 0.12 } : { w: 0.1, h: 0.16 }
+    return { x: c.x - r.w, y: c.y - r.h, width: r.w * 2, height: r.h * 2 }
+  })
+}
+
+/**
+ * Where to center a block of text `height` tall and `width` wide (fractions of the frame): `preferred` unless a face
+ * would be under it, then the lower or upper third, whichever covers the fewest faces. Always inside the title-safe
+ * area.
+ */
+function clearOfFaces(preferred: number, height: number, width: number, faces: Box[]): number {
+  const safe = (y: number) => Math.min(0.92 - height / 2, Math.max(0.08 + height / 2, y))
+  const options = [...new Set([preferred, 0.76, 0.26].map((y) => round3(safe(y))))]
+  const hits = (y: number) =>
+    faces.filter(
+      (f) =>
+        f.x < 0.5 + width / 2 &&
+        f.x + f.width > 0.5 - width / 2 &&
+        f.y < y + height / 2 &&
+        f.y + f.height > y - height / 2,
+    ).length
+  let best = options[0] as number
+  let fewest = hits(best)
+  for (const y of options.slice(1)) {
+    const n = hits(y)
+    if (n < fewest) {
+      best = y
+      fewest = n
+    }
+  }
+  return best
+}
+
+/**
+ * Lyrics behind the subject for one chorus: lines of the first peak section that each stay on one shot of a clip with
+ * a subject mask, and (when its people are tracked) a person tall enough to hide part of the words. Four lines at most.
+ */
+function behindLines(lines: PlacedLine[], sections: SectionInfo[], shots: PlanShot[], ctx: Ctx) {
+  const out = new Map<PlacedLine, NonNullable<PlanText['behind']>>()
+  for (const section of sections.filter(isPeak)) {
+    for (const line of lines.filter((l) => l.start >= section.start && l.start < section.end)) {
+      const at = mediaShotAt(line.shownStart + 1e-3, shots, ctx)
+      if (!at?.media.subjectMask || at.shot.end < line.shownEnd - 1e-3) continue
+      const tall = subjectsDuring(at, line.shownStart, line.shownEnd).some(
+        (s) => (s.box?.height ?? 0) >= 0.35,
+      )
+      if (at.media.subjects && !tall) continue
+      out.set(line, { maskAssetId: at.media.subjectMask, sourceAssetId: at.media.assetId })
+      if (out.size >= 4) return out
+    }
+    if (out.size) return out
+  }
+  return out
+}
+
+/** When a word of a line is sung: its own timing, else in proportion to the letters before it. */
+function wordTime(item: TimedLine, words: string[], index: number): Seconds {
+  const timed = item.line.words[index]
+  if (item.line.words.length === words.length && timed && timed.end > timed.start) return timed.start
+  const before = words.slice(0, index).join(' ').length + (index > 0 ? 1 : 0)
+  return item.start + ((item.end - item.start) * before) / Math.max(1, item.line.text.length)
+}
+
+/** Height of laid-out text as a fraction of the frame. */
+const blockHeight = (rows: number, style: TextStyleSpec) =>
+  (rows * (style.lineHeight ?? 1.15) * (style.fontSize ?? 80)) / 1080
+
+/** Width of the widest row as a fraction of the frame. */
+function blockWidth(text: string, style: TextStyleSpec, aspect: EditPlan['aspect']): number {
+  return Math.max(...text.split('\n').map((row) => textWidth(row, style))) / frameWidth(aspect)
+}
+
+/**
+ * The text clips of one lyric line. Long enough lines with a stressed last word (every chorus line, other lines when
+ * the word is long or a hook) split in two: the line without it, linked to the lyrics for karaoke, and the word itself
+ * below it, bigger and in the accent color, entering as it is sung. Lines behind the subject stay whole and big.
+ */
+function lineTexts(
+  item: PlacedLine,
+  o: {
+    section?: SectionInfo
+    sb?: BriefSection
+    type: LyricTypography
+    anchor: number
+    hooks: ReadonlySet<string>
+    behind?: NonNullable<PlanText['behind']>
+    shots: PlanShot[]
+    fade?: TransitionSpec
+    ctx: Ctx
+  },
+): PlanText[] {
+  const { type, sb, section, ctx } = o
+  const aspect = type.aspect
+  const peak = !!section && isPeak(section) && (sb?.intensity ?? section.energy) >= 0.6
+  const lineStyle = peak ? peakStyle(type, ctx.brief.text) : type.style
+  const words = item.line.text.split(/\s+/).filter(Boolean)
+  const timedWords = item.line.words.length > 0 && item.line.words.every((w) => w.end > w.start)
+  const animation = sb?.textPresetId ?? type.lineAnimation
+  const pulse =
+    peak && (sb?.reactive ?? 0) >= 0.5
+      ? { reactive: [{ target: 'scale' as const, source: 'beat' as const, amount: 0.03, smoothing: 0.3 }] }
+      : {}
+  const line = (text: string, style: TextStyleSpec, y: number): PlanText => ({
+    id: newId(),
+    sectionId: section?.id,
+    start: item.shownStart,
+    end: item.shownEnd,
+    text,
+    lyricLineId: item.line.id,
+    style,
+    position: { x: 0.5, y: round3(y) },
+    ...(animation
+      ? { animationPresetId: animation }
+      : o.fade
+        ? { transitionIn: o.fade, transitionOut: o.fade }
+        : {}),
+    ...(type.karaoke && timedWords
+      ? { karaoke: { highlightColor: type.accent, mode: 'word' as const } }
+      : {}),
+    role: 'lyric',
+  })
+  const faces = facesDuring(item.shownStart, item.shownEnd, o.shots, ctx)
+
+  if (o.behind) {
+    const big = { ...lineStyle, fontSize: Math.round(type.lineSize * 1.35) }
+    const laid = layoutLine(item.line.text, big, aspect)
+    return [{ ...line(laid.text, { ...big, fontSize: laid.fontSize }, 0.5), behind: o.behind, ...pulse }]
+  }
+
+  const split = emphasisStart(words, { peak, hooks: o.hooks })
+  const tailAt =
+    split === undefined
+      ? undefined
+      : round3(Math.max(item.shownStart + 0.1, wordTime(item, words, split) - 0.06))
+  if (split !== undefined && tailAt !== undefined && item.shownEnd - tailAt >= 0.5) {
+    const head = layoutLine(words.slice(0, split).join(' '), lineStyle, aspect)
+    const headStyle = { ...lineStyle, fontSize: head.fontSize }
+    const tailText = words.slice(split).join(' ')
+    const tailStyle = emphasisStyle(type, lineStyle, tailText)
+    const headH = blockHeight(head.rows, headStyle)
+    const tailH = blockHeight(1, tailStyle)
+    const total = headH + 0.012 + tailH
+    const width = Math.max(blockWidth(head.text, headStyle, aspect), blockWidth(tailText, tailStyle, aspect))
+    const top = clearOfFaces(o.anchor, total, width, faces) - total / 2
+    const emphasis = type.emphasisAnimation
+    return [
+      line(head.text, headStyle, top + headH / 2),
+      {
+        id: newId(),
+        sectionId: section?.id,
+        start: tailAt,
+        end: item.shownEnd,
+        text: tailText,
+        lyricLineId: item.line.id,
+        style: tailStyle,
+        position: { x: 0.5, y: round3(top + total - tailH / 2) },
+        ...(emphasis
+          ? { animationPresetId: emphasis }
+          : o.fade
+            ? { transitionIn: o.fade, transitionOut: o.fade }
+            : {}),
+        ...pulse,
+        role: 'emphasis',
+      },
+    ]
+  }
+
+  const laid = layoutLine(item.line.text, lineStyle, aspect)
+  const style = { ...lineStyle, fontSize: laid.fontSize }
+  const y = clearOfFaces(o.anchor, blockHeight(laid.rows, style), blockWidth(laid.text, style, aspect), faces)
+  return [{ ...line(laid.text, style, y), ...pulse }]
+}
+
+/** Mean luma under a text box from which the text gets a scrim. */
+const BRIGHT = 0.5
+
+/**
+ * Soft dark scrims behind text over bright footage, whatever the look: the frames under each text box are measured
+ * as it appears and midway, and text whose brighter sample passes BRIGHT gets a rounded dark box behind each row
+ * (an emphasized word, a dark halo).
+ */
+async function scrimBrightText(texts: PlanText[], shots: PlanShot[], ctx: Ctx): Promise<void> {
+  const probe = ctx.input.brightness
+  if (!probe || (ctx.visual !== 'footage' && ctx.visual !== 'stills')) return
+  const aspect = ctx.input.settings.aspect
+  const requests: BrightnessRequest[] = []
+  const owners: PlanText[] = []
+  for (const t of texts) {
+    const width = Math.min(1, blockWidth(t.text, t.style, aspect) + 0.04)
+    const height = blockHeight(t.text.split('\n').length, t.style) + 0.03
+    const box = { x: t.position.x - width / 2, y: t.position.y - height / 2, width, height }
+    for (const time of [t.start + Math.min(0.3, (t.end - t.start) / 4), (t.start + t.end) / 2]) {
+      const at = mediaShotAt(time, shots, ctx)
+      if (!at) continue
+      const v = visiblePart({ width: at.media.width ?? 16, height: at.media.height ?? 9 }, ctx)
+      const rate = at.source.playbackRate ?? 1
+      requests.push({
+        assetId: at.media.assetId,
+        time: (at.source.sourceStart ?? 0) + (time - at.shot.start) * rate,
+        box: {
+          x: v.x + box.x * v.width,
+          y: v.y + box.y * v.height,
+          width: box.width * v.width,
+          height: box.height * v.height,
+        },
+      })
+      owners.push(t)
+    }
+  }
+  if (requests.length === 0) return
+  const lumas = await probe(requests).catch(() => [] as (number | undefined)[])
+  const brightest = new Map<PlanText, number>()
+  lumas.forEach((luma, i) => {
+    const owner = owners[i] as PlanText
+    if (luma !== undefined) brightest.set(owner, Math.max(brightest.get(owner) ?? 0, luma))
+  })
+  for (const [t, luma] of brightest) {
+    if (luma < BRIGHT || t.style.background) continue
+    const size = t.style.fontSize ?? 80
+    // An emphasized word zooms or drops in; a box would show at full size before it, so it gets a dark halo instead.
+    t.style =
+      t.role === 'emphasis'
+        ? {
+            ...t.style,
+            shadow: { color: '#000000cc', blur: Math.round(size * 0.25), offsetX: 0, offsetY: 2 },
+          }
+        : {
+            ...t.style,
+            background: {
+              color: '#00000080',
+              padding: Math.round(size * 0.2),
+              radius: Math.round(size * 0.16),
+            },
+          }
+  }
+}
+
 function buildTexts(
   sections: SectionInfo[],
   briefs: Map<string, BriefSection>,
+  shots: PlanShot[],
   ctx: Ctx,
   titleText: string,
 ): PlanText[] {
@@ -646,77 +1075,39 @@ function buildTexts(
   const texts: PlanText[] = []
   const aspect = input.settings.aspect
   const textBrief = brief.text
-  const show = textBrief?.show ?? input.kind === 'lyric'
-  const accent = textBrief?.accentColor ?? ctx.look?.accentColor ?? '#facc15'
-  const baseSize = aspect === '16:9' ? 84 : aspect === '9:16' ? 76 : 80
-  const lookStyle = ctx.look?.text?.style
-  const lookUppercase =
-    lookStyle?.textTransform === undefined ? undefined : lookStyle.textTransform === 'uppercase'
-  const weight = lookStyle?.fontWeight ?? 700
-  const backgroundBusy = ctx.visual === 'footage' || ctx.visual === 'stills' || ctx.visual === 'generated'
-  // Footage can be as bright as the text; a thin dark outline keeps every word readable over white skies and walls.
-  const stroke = lookStyle?.stroke ?? (backgroundBusy ? { color: '#000000b3', width: 4 } : undefined)
-  const base: TextStyleSpec = {
-    fontFamily: textBrief?.fontFamily ?? lookStyle?.fontFamily ?? 'Inter, system-ui, sans-serif',
-    fontSize: baseSize,
-    fontWeight: weight,
-    ...(lookStyle?.letterSpacing !== undefined ? { letterSpacing: lookStyle.letterSpacing } : {}),
-    color: textBrief?.color ?? ctx.look?.textColor ?? '#ffffff',
-    align: 'center',
-    maxWidth: aspect === '16:9' ? 0.8 : 0.86,
-    shadow: lookStyle?.shadow ?? { color: '#000000b3', blur: 14, offsetX: 0, offsetY: 3 },
-    ...(stroke ? { stroke } : {}),
-  }
-  const position = textBrief?.position ?? (backgroundBusy && input.kind !== 'lyric' ? 'lower' : 'center')
-  const y = position === 'lower' ? 0.8 : position === 'upper' ? 0.2 : 0.5
+  const busy = ctx.visual === 'footage' || ctx.visual === 'stills' || ctx.visual === 'generated'
+  const type = lyricTypography({ look: ctx.look, aspect, busy, brief: textBrief, catalog: input.catalog })
+  const position = textBrief?.position ?? (busy && input.kind !== 'lyric' ? 'lower' : 'center')
+  const anchor = position === 'lower' ? 0.8 : position === 'upper' ? 0.2 : 0.5
   const sectionAt = (t: number) =>
     sections.find((s) => t >= s.start && t < s.end) ?? sections[sections.length - 1]
-  const presetOf = (sb?: BriefSection) =>
-    sb?.textPresetId ??
-    findItem(input.catalog.textPresets, textBrief?.presetId)?.id ??
-    findItem(input.catalog.textPresets, ctx.look?.text?.animation?.presetId)?.id
   const fade = transitionOf(ctx, 'fade', 0.15)
 
-  const lines = input.lyrics?.lines.filter((l) => l.text.trim()) ?? []
-  if (show && lines.length > 0) {
-    const timed = timedLines(lines, sections, input.song.duration, ctx)
-    const shown = displayTimes(timed, input.song.duration)
-    for (const [i, item] of timed.entries()) {
-      const { start, end } = shown[i] as { start: Seconds; end: Seconds }
-      if (end <= start) continue
+  if (ctx.lines.length > 0) {
+    const chorusLines = ctx.lines.filter((l) => {
+      const s = sectionAt(l.start)
+      return !!s && isPeak(s)
+    })
+    const hooks = hookWords(
+      input.song.title,
+      chorusLines.map((l) => l.line.text),
+    )
+    const behind = behindLines(ctx.lines, sections, shots, ctx)
+    for (const item of ctx.lines) {
       const section = sectionAt(item.start)
-      const sb = section ? briefs.get(section.id) : undefined
-      const peak = !!section && isPeak(section) && (sb?.intensity ?? section.energy) >= 0.6
-      const style: TextStyleSpec = peak
-        ? {
-            ...base,
-            fontSize: Math.round(baseSize * 1.18),
-            fontWeight: Math.min(900, weight + 100),
-            uppercase: textBrief?.uppercase ?? lookUppercase ?? true,
-          }
-        : { ...base, uppercase: textBrief?.uppercase ?? lookUppercase ?? false }
-      const timedWords = item.line.words.length > 0 && item.line.words.every((w) => w.end > w.start)
-      const preset = presetOf(sb)
-      texts.push({
-        id: newId(),
-        sectionId: section?.id,
-        start: round3(start),
-        end: round3(end),
-        text: item.line.text,
-        lyricLineId: item.line.id,
-        style,
-        position: { x: 0.5, y },
-        ...(preset ? { animationPresetId: preset } : fade ? { transitionIn: fade, transitionOut: fade } : {}),
-        ...(timedWords && textBrief?.karaoke !== false
-          ? { karaoke: { highlightColor: accent, mode: 'word' as const } }
-          : {}),
-        ...(peak && (sb?.reactive ?? 0) >= 0.5
-          ? {
-              reactive: [{ target: 'scale' as const, source: 'beat' as const, amount: 0.03, smoothing: 0.3 }],
-            }
-          : {}),
-        role: 'lyric',
-      })
+      texts.push(
+        ...lineTexts(item, {
+          section,
+          sb: section ? briefs.get(section.id) : undefined,
+          type,
+          anchor,
+          hooks,
+          behind: behind.get(item),
+          shots,
+          fade,
+          ctx,
+        }),
+      )
     }
   } else if (input.kind === 'lyric') {
     warn(ctx, 'Add lyrics in Assist › Lyrics, then run the director again to place them.')
@@ -731,21 +1122,21 @@ function buildTexts(
       ? { transitionIn: { kind: 'fade', duration: 0.6 }, transitionOut: { kind: 'fade', duration: 0.6 } }
       : {}
     const artist = input.song.title && titleText === input.song.title ? input.song.artist : undefined
+    const titleLaid = layoutLine(titleText, titleStyle(type, 1.3, 800, 0.12), aspect)
+    const bigStyle = { ...titleStyle(type, 1.3, 800, 0.12), fontSize: titleLaid.fontSize }
+    const smallStyle = titleStyle(type, 0.56, type.style.fontWeight ?? 700, 0.3)
+    const titleH = blockHeight(titleLaid.rows, bigStyle)
+    const artistH = artist ? 0.02 + blockHeight(1, smallStyle) : 0
+    const top = 0.5 - (titleH + artistH) / 2
     const card: PlanText[] = [
       {
         id: newId(),
         sectionId: first.id,
         start: 0.5,
         end: round3(titleEnd),
-        text: titleText,
-        style: {
-          ...base,
-          fontSize: Math.round(baseSize * 1.3),
-          fontWeight: Math.max(800, weight),
-          letterSpacing: 0.12,
-          uppercase: true,
-        },
-        position: { x: 0.5, y: artist ? 0.46 : 0.5 },
+        text: titleLaid.text,
+        style: bigStyle,
+        position: { x: 0.5, y: round3(top + titleH / 2) },
         ...fades,
         role: 'title',
       },
@@ -757,14 +1148,8 @@ function buildTexts(
         start: 0.8,
         end: round3(titleEnd),
         text: artist,
-        style: {
-          ...base,
-          fontSize: Math.round(baseSize * 0.56),
-          fontWeight: weight,
-          letterSpacing: 0.3,
-          uppercase: true,
-        },
-        position: { x: 0.5, y: 0.58 },
+        style: smallStyle,
+        position: { x: 0.5, y: round3(top + titleH + artistH - (artistH - 0.02) / 2) },
         ...fades,
         role: 'title',
       })
@@ -834,8 +1219,11 @@ export async function expandBrief(
     motionOffset: Math.floor(rng() * IMAGE_MOTIONS.length),
     promptOffset: Math.floor(rng() * 6),
     energyAt: energyScale(input.song),
-    sung: sungSpans(input),
+    lines: [],
+    backgrounds: visualizerPalette(sections, input, scenePool(input)),
+    overlays: visualizerPalette(sections, input, overlayPool(input)),
   }
+  ctx.lines = placeLines(sections, ctx)
   const given = new Map(brief.sections.map((s) => [s.sectionId, s]))
   const briefs = new Map<string, BriefSection>()
   const planSections: PlanSection[] = []
@@ -867,7 +1255,8 @@ export async function expandBrief(
   }
   shots = openAndClose(await chooseFootage(shots, ctx), ctx)
   const titleText = input.song.title ?? (meta.planner === 'llm' ? brief.title.trim() : '')
-  const texts = buildTexts(sections, briefs, ctx, titleText)
+  const texts = buildTexts(sections, briefs, shots, ctx, titleText)
+  await scrimBrightText(texts, shots, ctx)
   const draft: Omit<EditPlan, 'summary'> = {
     version: 1,
     id: newId(),

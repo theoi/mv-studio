@@ -7,6 +7,7 @@ import { cloudErrorInfo } from '../cloud/errors.ts'
 import type { GeneratedMediaStore } from '../cloud/media.ts'
 import { formatUsd } from '../cloud/pricing.ts'
 import type { MediaGenerationProvider } from '../cloud/types.ts'
+import type { MediaFileSource } from '../engine/types.ts'
 import type { ProjectEditor } from '../model/editor.ts'
 import type { Asset, Id } from '../model/types.ts'
 import {
@@ -68,6 +69,8 @@ export interface DirectorDeps {
   /** When the planning state turns slow (default 8000 ms). */
   slowAfterMs?: number
   readAsset?: (assetId: Id) => Promise<Blob>
+  /** Reads stored media (`appMedia`), so the director can measure footage brightness under lyrics. */
+  media?: MediaFileSource
 }
 
 export interface PlanPreview {
@@ -203,6 +206,7 @@ export class DirectorSession {
           catalog: this.catalog(),
           matcher: this.deps.matcher?.(),
           footage: this.deps.footage?.(),
+          ...(this.deps.media ? { media: this.deps.media } : {}),
           generation:
             provider && request.generate ? generationOptionsFor(provider, request.generate) : undefined,
         })

@@ -26,12 +26,12 @@ draft. Everything it makes is ordinary project content created through `EditComm
 
 The four kinds:
 
-| Kind         | Main visual                                     | Text                     | Pacing                                    |
-| ------------ | ----------------------------------------------- | ------------------------ | ----------------------------------------- |
-| `lyric`      | User footage or stills, dimmed; else visualizer | Title card, timed lyrics | Choruses every bar, verses every 2 bars   |
-| `visualizer` | One visualizer per kind of section, over images | Title card               | Section-long, beat pulses                 |
-| `beat-cut`   | User footage cut on beats and bars              | Lyrics if asked          | Choruses every 2 beats, verses every bar  |
-| `ai`         | Generated stills (camera moves) or clips        | Title card               | Slower still; one request-length per shot |
+| Kind         | Main visual                                       | Text                     | Pacing                                    |
+| ------------ | ------------------------------------------------- | ------------------------ | ----------------------------------------- |
+| `lyric`      | User footage or stills, dimmed; else visualizer   | Title card, timed lyrics | Choruses every bar, verses every 2 bars   |
+| `visualizer` | Scene + visualizer + chorus particles, by section | Title card               | Section-long, kick pulses                 |
+| `beat-cut`   | User footage cut on beats and bars                | Lyrics if asked          | Choruses every 2 beats, verses every bar  |
+| `ai`         | Generated stills (camera moves) or clips          | Title card               | Slower still; one request-length per shot |
 
 Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real songs with
 `tests/e2e/director-quality.spec.ts`:
@@ -42,9 +42,21 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   slower. A preferred pace shifts every section by the same steps, so the contrast stays.
 - **Phrasing inside a section** (`phrasedCutTimes`): bars clearly louder than the rest of their section cut twice as
   often, clearly quieter bars half as often, and the last bar before a faster section speeds up into it.
-- **Lyrics**: background cuts move out of sung lines to the nearest beat between lines. A line shows up to 0.3 s
-  before it is sung and holds up to 1 s after (longer for long lines, aiming at 17 characters per second), never
-  overlapping the next. Text over footage gets a thin dark outline unless the look styles its own.
+- **Lyric timing**: a line shows up to 0.3 s before it is sung and holds up to 1 s after (longer for long lines,
+  aiming at 17 characters per second), never overlapping the next. Each line stays on one shot: background cuts move
+  to the nearest beat at a line change, else to the line change itself, else are dropped while the shot stays within
+  about two planned shots.
+- **Lyric typography** (`typography.ts`): lines use the text style (`src/plugins/typography` TEXT_STYLES) the look
+  pairs with (`LOOK_TEXT_STYLE`: Clean → Karaoke, Neon night → Neon sign, Cinematic → Poster, ...; other looks match
+  by tags), with its kinetic preset and karaoke, and the look's colors. Lines are about 9% of the frame height in
+  landscape (capitals 6–7%), broken into balanced rows. Chorus lines are a little bigger and heavier. The stressed
+  last word of chorus lines (and of other lines when it is long or a hook from the title or chorus) is shown 1.6×
+  bigger in the accent color below the rest of the line, entering as it is sung (`role: 'emphasis'`).
+- **Contrast and placement**: over footage every line has a dark outline, plus a dark halo unless the style has its
+  own glow. With `media` the director measures the frames under each text box and gives text over bright footage
+  (mean luma ≥ 0.5) a soft dark scrim. Lines move to the lower or upper third when a tracked face would be under
+  them (src/vision subject tracks), inside the title-safe area. When the clips of a chorus have a subject mask video
+  from src/vision, up to four of its lines go behind the subject (`behind` → a matte outside the mask).
 - **Title card** over the intro (not for beat cuts): the song's title and artist from its file name
   (`songTitleFromName`), never the prompt or the kind of video.
 - **Opening and ending**: the first shot fades in from black and the last fades out, ending when the music does
@@ -54,8 +66,11 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   sung during each shot, the section's media query (the prompt, or the LLM brief's) and mood, and the music's energy,
   and prefers the brief's `assetIds`. Without it clips are picked for variety. Either way a clip never plays twice in
   a row and repeats avoid showing the same frames.
-- **Visualizers** (`visualizerPalette`): one for peaks, one for verses and one for quiet parts, kept for the whole
-  video and matched to prompt words; the seed varies them.
+- **Visualizers** (`visualizerPalette`, `visualizerLayers`): a full-frame scene (`generator.*`) colored by the look
+  that slowly pushes in or pulls out, a visualizer (`visualizer.*`) over it that pulses with the kick ("Pulse with
+  kick", a music reaction the inspector shows by name), and particles on peaks on their own track. Scenes, overlays
+  and their reactivity differ for peaks, verses and quiet parts, kept for the whole video and matched to prompt words;
+  the seed varies them. Lyric videos without media get a calm, darker scene and chorus particles only.
 
 ## Using it from the app
 
@@ -67,6 +82,7 @@ const director = new DirectorSession({
   store: mediaStore,
   matcher: () => footageMatcher, // createDirectorFootageMatcher() from src/vision: footage tags for the LLM brief
   footage: () => vision.matcher, // src/vision's FootageMatcher: clip choice shot by shot
+  media: appMedia, // reads stored media, to measure footage brightness under lyrics
   catalog: () => catalogFromPlugins(registry.catalog()),
   spendPolicy: () => cloud.settings.get(),
   ledger: spendLedger,

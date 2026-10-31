@@ -20,7 +20,7 @@ import {
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import type { Project, TextClip } from '../../../src/model/types.ts'
 import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
-import { makeProject, testCtx } from './fixtures.ts'
+import { LYRICS, makeProject, testCtx } from './fixtures.ts'
 
 type Reply = { name: string; args: unknown } | { text: string }
 
@@ -59,8 +59,9 @@ function scriptedClient(...replies: Reply[]): LlmToolClient & { requests: ToolCa
   }
 }
 
+/** A lyric draft with fewer text clips than a large edit has, so editing every text applies without review. */
 async function draft(): Promise<Project> {
-  const base = makeProject()
+  const base = makeProject({ lyrics: LYRICS.slice(0, 4) })
   const plan = await planLocally(await buildPlannerInput(base, { kind: 'lyric', seed: 1 }))
   const editor = new ProjectEditor(base)
   editor.dispatch(compilePlan(plan, base).commands)
@@ -72,7 +73,7 @@ const bigger = {
   name: 'edit_project',
   args: {
     summary: 'Made the lyrics bigger',
-    operations: [{ op: 'set', clips: { type: 'text' }, property: 'fontSize', value: 130 }],
+    operations: [{ op: 'set', clips: { type: 'text' }, property: 'fontSize', value: 150 }],
   },
 }
 
@@ -89,7 +90,7 @@ describe('interpretRequest', () => {
     if (turn.outcome.kind !== 'changes') throw new Error(turn.outcome.kind)
     expect(turn.outcome.summary).toBe('Made the lyrics bigger')
     expect(turn.outcome.changes).toBe(`Changes ${texts(project).length} clips.`)
-    expect(turn.outcome.items.flatMap((i) => i.details)).toContain('text size 130 (was 84)')
+    expect(turn.outcome.items.flatMap((i) => i.details)).toContain('text size 150 (was 100)')
     const sent = client.requests[0]!.messages[1]!.content as string
     expect(sent).toContain('Request: make the lyrics bigger')
     for (const id of Object.keys(project.clips)) expect(sent).not.toContain(id)
@@ -97,7 +98,7 @@ describe('interpretRequest', () => {
     expect(client.requests[0]!.toolChoice).toBe('required')
     const editor = new ProjectEditor(project)
     editor.dispatch(turn.outcome.commands)
-    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 130)).toBe(true)
+    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 150)).toBe(true)
   })
 
   it('sends validation errors back to the model and uses the corrected answer', async () => {
@@ -203,7 +204,7 @@ describe('AskSession', () => {
     const state = await ask.ask('make the lyrics bigger')
     expect(state.status).toBe('applied')
     expect(editor.undoLabel()).toBe('Ask: Made the lyrics bigger')
-    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 130)).toBe(true)
+    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 150)).toBe(true)
     expect(ask.undo()).toBe(true)
     expect(editor.getProject()).toEqual(project)
   })
@@ -239,7 +240,7 @@ describe('AskSession', () => {
     editor.dispatch({ type: 'project.rename', name: 'Changed' })
     expect(ask.accept().status).toBe('applied')
     expect(editor.getProject().name).toBe('Changed')
-    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 130)).toBe(true)
+    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 150)).toBe(true)
   })
 
   it('refuses a reviewed edit whose clips were deleted meanwhile', async () => {
@@ -323,7 +324,7 @@ describe('Ask against OpenAI-compatible endpoints', () => {
     )
     const { editor, ask } = session(client, await draft())
     expect((await ask.ask('make the lyrics bigger')).status).toBe('applied')
-    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 130)).toBe(true)
+    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 150)).toBe(true)
     expect(server.chatBodies[0]!.tool_choice).toBe('required')
   })
 
@@ -343,7 +344,7 @@ describe('Ask against OpenAI-compatible endpoints', () => {
     )
     const { editor, ask } = session(client, await draft())
     expect((await ask.ask('make the lyrics bigger')).status).toBe('applied')
-    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 130)).toBe(true)
+    expect(texts(editor.getProject()).every((t) => t.style.fontSize === 150)).toBe(true)
   })
 })
 

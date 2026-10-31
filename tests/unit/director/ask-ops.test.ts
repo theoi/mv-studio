@@ -76,7 +76,7 @@ describe('compileOperations', () => {
       texts(after)
         .filter((t) => t.style.color === '#00ff00')
         .map((t) => t.text),
-    ).toEqual(['Hold on hold on tonight'])
+    ).toEqual(['Hold on hold on', 'tonight'])
     expect(() =>
       run(project, [{ op: 'set', clips: { section: 'x9' }, property: 'opacity', value: 0.5 }], summary.ids),
     ).toThrow(/section x9 doesn't exist; the song sections are s\d+, s\d+/)

@@ -3,7 +3,7 @@
  * leaves out): moods, pacing, looks, prompts and text styling, derived from the song and the user's prompt.
  */
 import type { LyricLine, LyricsDoc } from '../model/types.ts'
-import { bestByTags, type DirectorCatalog, type LookPreset } from './catalog.ts'
+import { bestByTags, type CatalogItem, type DirectorCatalog, type LookPreset } from './catalog.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
 import type { FootageMood, PlannerInput, SectionInfo, VideoKind } from './inputs.ts'
 import type { Pace } from './plan.ts'
@@ -143,13 +143,45 @@ const TIER_TAGS = {
   calm: ['calm', 'soft', 'falling'],
 }
 
+export type SectionTier = keyof typeof TIER_TAGS
+
+/** Peaks, quiet parts (intro, bridge, outro, quiet sections) and everything in between. */
+export function sectionTier(section: Pick<SectionInfo, 'label' | 'energy'>): SectionTier {
+  if (isPeak(section)) return 'peak'
+  const label = normalizedLabel(section.label)
+  const quiet = label === 'intro' || label === 'bridge' || label === 'outro' || section.energy < 0.4
+  return quiet ? 'calm' : 'mid'
+}
+
+export const PARTICLES_ID = 'visualizer.particles'
+const isScene = (g: CatalogItem) => g.id.startsWith('generator.')
+const LYRIC_SCENE_TAGS = ['calm', 'soft', 'dreamy', 'ambient', 'background']
+
+/** Full-frame scenes (`generator.*`) to lay visualizers or lyrics over; lyric videos use only the calm ones. */
+export function scenePool(input: Pick<PlannerInput, 'catalog' | 'kind'>): CatalogItem[] {
+  const scenes = input.catalog.generators.filter(isScene)
+  if (input.kind !== 'lyric') return scenes
+  const calm = scenes.filter((g) => g.tags.some((t) => LYRIC_SCENE_TAGS.includes(t)))
+  return calm.length ? calm : scenes
+}
+
+/** Visualizers drawn over a scene or footage (`visualizer.*`). Particles are kept for choruses. */
+export function overlayPool(input: Pick<PlannerInput, 'catalog'>): CatalogItem[] {
+  return input.catalog.generators.filter((g) => !isScene(g) && g.id !== PARTICLES_ID)
+}
+
 /**
- * One visualizer per kind of section, kept for the whole video: peaks, verses and quiet parts (intro, bridge,
+ * One visual per kind of section, kept for the whole video: peaks, verses and quiet parts (intro, bridge,
  * outro) each get their own, so the visuals change with the song and stay consistent. Prompt words (space,
- * synthwave...) count double; the seed breaks ties, so "Try another version" varies them.
+ * synthwave...) count double; the seed breaks ties, so "Try another version" varies them. Picks from `pool` when it
+ * has anything, else from every generator.
  */
-export function visualizerPalette(sections: SectionInfo[], input: PlannerInput): Map<string, string> {
-  const generators = input.catalog.generators
+export function visualizerPalette(
+  sections: SectionInfo[],
+  input: PlannerInput,
+  pool: CatalogItem[] = input.catalog.generators,
+): Map<string, string> {
+  const generators = pool.length ? pool : input.catalog.generators
   const words = promptWords(input.prompt)
   const rng = createRng(input.seed)
   const used = new Set<string>()
@@ -174,10 +206,9 @@ export function visualizerPalette(sections: SectionInfo[], input: PlannerInput):
   const mid = pick(TIER_TAGS.mid)
   const calm = pick(TIER_TAGS.calm)
   const out = new Map<string, string>()
+  const byTier: Record<SectionTier, string | undefined> = { peak, mid, calm }
   for (const s of sections) {
-    const label = normalizedLabel(s.label)
-    const quiet = label === 'intro' || label === 'bridge' || label === 'outro' || s.energy < 0.4
-    const id = isPeak(s) ? peak : quiet ? calm : mid
+    const id = byTier[sectionTier(s)]
     if (id) out.set(s.id, id)
   }
   return out
@@ -267,7 +298,6 @@ export function defaultSectionBrief(
     reactive: intensity >= 0.6 ? Math.min(1, 0.3 + intensity * 0.6) : 0,
     mediaQuery: [input.prompt, mood].filter(Boolean).join(', '),
     generatorId: bestByTags(catalog.generators, tags)?.id ?? catalog.generators[0]?.id,
-    textPresetId: bestByTags(catalog.textPresets, tags)?.id,
     motion: label === 'outro' ? 'pull-out' : undefined,
   }
 }
