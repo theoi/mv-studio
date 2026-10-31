@@ -8,13 +8,13 @@ import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBytes, formatTime, plural } from '../../../format.ts'
 import {
   MOTION_PRESETS,
-  cameraMoveOf,
   cameraTargets,
   chosenIntensity,
   hasCameraMove,
   resetStrength,
-  smearNote,
-  smearingMoves,
+  riskFacts,
+  riskNote,
+  riskyMoves,
   startCameraMoves,
   stillClips,
   undoCameraMoves,
@@ -125,12 +125,15 @@ export function CameraView() {
       .filter((c) => !!c)
       .sort((a, b) => a.start - b.start)[0]
     const canUndo = editor.undoLabel() === result.label
-    const smearing = smearingMoves(project, result, preset)
-    const smear = smearNote(result.moves.length, smearing.length)
-    const smearRows = smearing.flatMap((m) => {
-      const clip = project.clips[m.clipId]
+    const risky = riskyMoves(project, result, preset)
+    const note = riskNote(
+      result.moves.length,
+      risky.map((r) => r.risks),
+    )
+    const riskRows = risky.flatMap((r) => {
+      const clip = project.clips[r.move.clipId]
       const asset = clip?.type === 'image' ? project.assets[clip.assetId] : undefined
-      return clip?.type === 'image' && asset ? [{ m, clip, asset, name: clip.name ?? asset.name }] : []
+      return clip?.type === 'image' && asset ? [{ ...r, clip, asset, name: clip.name ?? asset.name }] : []
     })
     const undoButton = (
       <Button
@@ -192,30 +195,29 @@ export function CameraView() {
             </div>
           </div>
         </div>
-        {smear && (
+        {note && (
           <div className={[styles.callout, styles.calloutWarning].join(' ')}>
             <AlertTriangle />
-            <div>{smear}</div>
+            <div>{note}</div>
           </div>
         )}
-        {smearRows.map(({ m, clip, asset, name }) => {
+        {riskRows.map(({ move, strength, risks, clip, asset, name }) => {
           const at = `${name} at ${formatTime(clip.start)}`
-          const strength = Math.round((cameraMoveOf(clip)?.intensity ?? m.intensity) * 100)
-          const safe = Math.round(m.safeIntensity * 100)
+          // No-break spaces keep each fact whole, so a narrow panel breaks the line only after the dot or an "and".
+          const facts = riskFacts(risks, 'short').map((f) => f.replaceAll(' ', '\u00a0'))
           return (
             <StillRow
-              key={m.clipId}
+              key={move.clipId}
               clip={clip}
               asset={asset}
-              {...(smearRows.filter((r) => r.name === name).length > 1 ? { title: at } : {})}
-              // No-break spaces keep each fact whole, so a narrow panel breaks the line only after the dot.
-              detail={`Strength\u00a0${strength}%\u00a0· may\u00a0smear\u00a0above\u00a0${safe}%`}
+              {...(riskRows.filter((r) => r.name === name).length > 1 ? { title: at } : {})}
+              detail={`Strength\u00a0${strength}%\u00a0· may\u00a0${facts.join('\u00a0and ')}`}
               action={
                 <Button
                   size="sm"
                   variant="secondary"
                   aria-label={`Show ${at}`}
-                  onClick={() => showClips([m.clipId])}
+                  onClick={() => showClips([move.clipId])}
                 >
                   Show
                 </Button>
@@ -275,7 +277,10 @@ export function CameraView() {
                 </IconButton>
               ),
             }
-          : { hint: 'Each image gets as much as it can take without smearing.', hintId: strengthHint })}
+          : {
+              hint: 'Each image gets as much as it can take without smearing or bending straight lines.',
+              hintId: strengthHint,
+            })}
       >
         <div className={styles.sliderRow} ref={slider}>
           <Slider

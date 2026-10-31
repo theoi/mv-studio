@@ -6,14 +6,20 @@ import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 type Untyped = any
 
 /**
- * Opens the sample with a model-free depth backend (a left-to-right ramp) in place of Depth Anything. With `gated`,
- * each estimate waits for `window.depthGate.release()` or `.fail(message)`, and stops when its job is cancelled.
- * With `fence`, the depth is thin near posts over a far background instead, which smears on a detailed still.
+ * Opens the sample with a model-free depth backend in place of Depth Anything: by default a left-to-right ramp. With
+ * `gated`, each estimate waits for `window.depthGate.release()` or `.fail(message)`, and stops when its job is
+ * cancelled. With `fence`, the depth is thin near posts over a far background, which smears on a detailed still;
+ * with `facade`, it rises and falls from row to row, like the windows of a tower, which bends upright lines.
  */
-async function openWithFakeDepth(page: Page, hash: string, gated = false, fence = false) {
+async function openWithFakeDepth(
+  page: Page,
+  hash: string,
+  gated = false,
+  depth: 'ramp' | 'fence' | 'facade' = 'ramp',
+) {
   await openHarness(page)
   await page.evaluate(
-    ([h, g, posts]) => {
+    ([h, g, kind]) => {
       localStorage.setItem('mv-studio.guide-seen', '1')
       const calls: number[] = []
       const w = window as Untyped
@@ -28,11 +34,17 @@ async function openWithFakeDepth(page: Page, hash: string, gated = false, fence 
                 w.depthGate = { release: resolve, fail: (message: string) => reject(new Error(message)) }
                 options?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
               })
-            const width = posts ? 96 : 32
-            const height = posts ? 54 : 18
-            const data = new Uint8Array(width * height).map((_, i) =>
-              posts ? ((i % width) % 12 < 2 ? 240 : 20) : Math.round(((i % width) / (width - 1)) * 255),
-            )
+            const width = kind === 'ramp' ? 32 : 384
+            const height = kind === 'ramp' ? 18 : 216
+            const data = new Uint8Array(width * height).map((_, i) => {
+              const x = i % width
+              const y = Math.floor(i / width)
+              if (kind === 'fence') return x % 48 < 8 ? 240 : 20
+              const ramp = (x / (width - 1)) * 255
+              return Math.round(
+                kind === 'facade' ? 20 + ramp * 0.8 + 6 * Math.sin((2 * Math.PI * y) / 24) : ramp,
+              )
+            })
             return { width, height, data }
           },
         }),
@@ -42,50 +54,56 @@ async function openWithFakeDepth(page: Page, hash: string, gated = false, fence 
       })
       window.location.hash = h as string
     },
-    [hash, gated, fence] as const,
+    [hash, gated, depth] as const,
   )
   await waitForPreview(page)
 }
-/** Imports a detailed still (a checkerboard that stays detailed at the depth map's size), adds it at the playhead and
- * selects it. Returns its clip id. */
-async function addChecker(page: Page): Promise<string> {
-  const png = await page.evaluate(async () => {
+/**
+ * Imports a still, adds it at the playhead and selects it. Returns its clip id. `checker` is detailed everywhere
+ * (a checkerboard that stays detailed at the depth map's size); `bars` is upright bars with long straight edges.
+ */
+async function addStill(page: Page, name: 'checker' | 'bars' = 'checker'): Promise<string> {
+  const png = await page.evaluate(async (bars) => {
     const c = new OffscreenCanvas(960, 540)
     const ctx = c.getContext('2d')!
     for (let y = 0; y < 540; y += 20)
       for (let x = 0; x < 960; x += 20) {
-        ctx.fillStyle = (x + y) % 40 ? '#c8c8c8' : '#3c3c3c'
+        ctx.fillStyle = (bars ? x % 160 >= 80 : (x + y) % 40) ? '#c8c8c8' : '#3c3c3c'
         ctx.fillRect(x, y, 20, 20)
       }
     const bytes = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer())
     return Array.from(bytes)
-  })
+  }, name === 'bars')
   await page
     .getByLabel('Import media files')
-    .setInputFiles({ name: 'checker.png', mimeType: 'image/png', buffer: Buffer.from(png) })
-  const card = page.getByRole('tabpanel', { name: 'Media' }).getByLabel('checker, image')
+    .setInputFiles({ name: `${name}.png`, mimeType: 'image/png', buffer: Buffer.from(png) })
+  const card = page.getByRole('tabpanel', { name: 'Media' }).getByLabel(`${name}, image`)
   await card.hover()
   await card.getByRole('button', { name: 'Add at playhead' }).click()
-  const block = page.getByRole('button', { name: /^checker, \d/ })
+  const block = page.getByRole('button', { name: new RegExp(`^${name}, \\d`) })
   await expect(block).toHaveCount(1)
   await block.focus()
   await page.keyboard.press('Enter')
   return page.evaluate(
-    () =>
+    (n) =>
       Object.values(window.mvStudio.app.project.editor.getProject().clips as Record<string, Untyped>).find(
         (c) =>
           c.type === 'image' &&
-          window.mvStudio.app.project.editor.getProject().assets[c.assetId]?.name.startsWith('checker'),
+          window.mvStudio.app.project.editor.getProject().assets[c.assetId]?.name.startsWith(n),
       ).id as string,
+    name,
   )
 }
 
-/** The still's safe amount in percent for its current move, as vision predicts it from the stored depth image. */
-function safePercent(page: Page, clipId: string): Promise<number> {
+/**
+ * The still's safe amounts in percent for its current move, as vision predicts them from the stored depth image:
+ * the largest strength that does not smear, and the largest that does not bend straight lines.
+ */
+function safePercents(page: Page, clipId: string): Promise<{ smear: number; bend: number }> {
   return page.evaluate(async (id) => {
     const { media, vision, app } = window.mvStudio
-    const safe = await vision.safeCameraIntensity(media.mediaStore, app.project.editor.getProject(), id)
-    return Math.round(safe * 100)
+    const safe = await vision.safeCameraAmounts(media.mediaStore, app.project.editor.getProject(), id)
+    return { smear: Math.round(safe.smear * 100), bend: Math.round(safe.bend * 100) }
   }, clipId)
 }
 
@@ -142,14 +160,16 @@ test('Assist › 3D camera adds a depth camera move to every still in one undo s
   await assist.getByRole('radio', { name: 'Orbit' }).click()
   // Strength starts automatic: each image gets as much as it can take, up to 50%.
   const strength = assist.getByRole('slider', { name: 'Strength' })
-  const autoHint = assist.getByText('Each image gets as much as it can take without smearing.')
+  const autoHint = assist.getByText(
+    'Each image gets as much as it can take without smearing or bending straight lines.',
+  )
   const reset = assist.getByRole('button', { name: 'Back to automatic strength' })
   await expect(assist.getByText('Auto', { exact: true })).toBeVisible()
   await expect(strength).toHaveAttribute('aria-valuetext', 'Automatic, 50% or less for each image')
   await expect(strength).toHaveAttribute('aria-valuenow', '50')
   await expect(autoHint).toBeVisible()
   await expect(strength).toHaveAccessibleDescription(
-    'Each image gets as much as it can take without smearing.',
+    'Each image gets as much as it can take without smearing or bending straight lines.',
   )
   await expect(reset).toHaveCount(0)
   // A strength the user sets shows as a percent and goes on every image as it is.
@@ -162,8 +182,8 @@ test('Assist › 3D camera adds a depth camera move to every still in one undo s
   await expect(reset).toBeVisible()
   await apply.click()
   await expect(assist.getByText(`Added a 3D camera move to ${before.clips.length} images`)).toBeVisible()
-  // The smooth depth smears nowhere, even at 60%.
-  await expect(assist.getByText(/may smear behind foreground objects/)).toHaveCount(0)
+  // The smooth depth smears and bends nowhere, even at 60%.
+  await expect(assist.getByText(/may smear behind foreground objects|may bend straight lines/)).toHaveCount(0)
 
   const after = await stills(page)
   expect(after.depthAssets).toHaveLength(1)
@@ -379,8 +399,8 @@ test('Inspector › Motion shows the chosen move while depth is estimated, cance
 test('Inspector › Motion adds a smear-safe amount until Strength is set, and notes when the strength may smear', async ({
   page,
 }) => {
-  await openWithFakeDepth(page, '#/editor?t=28', false, true)
-  const clipId = await addChecker(page)
+  await openWithFakeDepth(page, '#/editor?t=28', false, 'fence')
+  const clipId = await addStill(page)
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   await inspector.getByRole('button', { name: 'Motion', exact: true }).click()
   const select = inspector.getByRole('combobox', { name: '3D camera move' })
@@ -400,7 +420,10 @@ test('Inspector › Motion adds a smear-safe amount until Strength is set, and n
 
   const strength = inspector.getByRole('slider', { name: '3D camera strength' })
   const note = inspector.getByText(/^May smear behind foreground objects above \d+%\.$/)
-  const push = await safePercent(page, clipId)
+  const safe = await safePercents(page, clipId)
+  // The posts smear the still behind them, and it has no straight lines to bend.
+  expect(safe.bend).toBe(100)
+  const push = safe.smear
   expect(push).toBeLessThan(100)
 
   // Above the safe amount the note shows, tied to the slider; the strength is kept as set.
@@ -426,7 +449,7 @@ test('Inspector › Motion adds a smear-safe amount until Strength is set, and n
         ),
     )
     .toBe('orbit-right')
-  const orbit = await safePercent(page, clipId)
+  const orbit = (await safePercents(page, clipId)).smear
   await strength.focus()
   await page.keyboard.press('End')
   if (orbit < 100) await expect(note).toHaveText(`May smear behind foreground objects above ${orbit}%.`)
@@ -436,8 +459,8 @@ test('Inspector › Motion adds a smear-safe amount until Strength is set, and n
 test('a move added at a strength that may smear says so where it lands: in Assist with the image to show, in the suggestion’s toast', async ({
   page,
 }) => {
-  await openWithFakeDepth(page, '#/editor?t=28', false, true)
-  const clipId = await addChecker(page)
+  await openWithFakeDepth(page, '#/editor?t=28', false, 'fence')
+  const clipId = await addStill(page)
   await page.evaluate((id) => {
     window.location.hash = `#/editor?tab=assist&assist=camera&sel=clip:${id}&t=28`
   }, clipId)
@@ -448,7 +471,7 @@ test('a move added at a strength that may smear says so where it lands: in Assis
   await expect(assist.getByText('100%', { exact: true })).toBeVisible()
   await assist.getByRole('button', { name: 'Apply to 1 image' }).click()
   await expect(assist.getByText('Added a 3D camera move to 1 image')).toBeVisible()
-  const safe = await safePercent(page, clipId)
+  const safe = (await safePercents(page, clipId)).smear
   expect(safe).toBeLessThan(100)
   await expect(assist.getByText(advice)).toBeVisible()
   await expect(assist.getByText(`Strength 100% · may smear above ${safe}%`)).toBeVisible()
@@ -475,6 +498,50 @@ test('a move added at a strength that may smear says so where it lands: in Assis
   await page.getByRole('option', { name: 'None' }).click()
   await inspector.getByRole('button', { name: 'Add 3D camera' }).click()
   await expect(page.getByRole('status').getByText(`3D camera move added. ${advice}`)).toBeVisible()
+})
+
+test('a still whose straight lines a move may bend gets a lower automatic amount, and a stronger move says it may bend them', async ({
+  page,
+}) => {
+  await openWithFakeDepth(page, '#/editor?t=28', false, 'facade')
+  const clipId = await addStill(page, 'bars')
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?tab=assist&assist=camera&sel=clip:${id}&t=28`
+  }, clipId)
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const intensity = () =>
+    page.evaluate(
+      (id) => window.mvStudio.app.project.editor.getProject().clips[id]?.effects[0]?.params.intensity.value,
+      clipId,
+    )
+  const warning = assist.getByText(/may bend straight lines|may smear behind foreground objects/)
+
+  // The bars' edges would wave at 50%, so the automatic amount is the largest that keeps them straight; nothing smears.
+  await assist.getByRole('button', { name: 'Apply to 1 image' }).click()
+  await expect(assist.getByText('Added a 3D camera move to 1 image')).toBeVisible()
+  await expect.poll(intensity).toBeLessThan(0.5)
+  const safe = await safePercents(page, clipId)
+  expect(safe.smear).toBe(100)
+  expect(Math.round(((await intensity()) as number) * 100)).toBe(Math.max(25, safe.bend))
+  await expect(warning).toHaveCount(0)
+
+  // At full strength, the result and the image's row name the bend, and so does Inspector › Motion.
+  await assist.getByRole('button', { name: 'Undo' }).click()
+  await assist.getByRole('slider', { name: 'Strength' }).focus()
+  await page.keyboard.press('End')
+  await assist.getByRole('button', { name: 'Apply to 1 image' }).click()
+  await expect(assist.getByText('Added a 3D camera move to 1 image')).toBeVisible()
+  await expect(warning).toHaveText(
+    'This image may bend straight lines at this strength. Try a lower Strength.',
+  )
+  await expect(assist.getByText(`Strength 100% · may bend lines above ${safe.bend}%`)).toBeVisible()
+  await assist.getByRole('button', { name: /^Show bars at \d+:\d\d$/ }).click()
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  const advice = `May bend straight lines above ${safe.bend}%.`
+  await expect(inspector.getByText(advice)).toBeVisible()
+  await expect(inspector.getByRole('slider', { name: '3D camera strength' })).toHaveAccessibleDescription(
+    advice,
+  )
 })
 
 test('one inline suggestion at a time: a selected still’s suggestion takes the lyrics hint’s place, which comes back after', async ({

@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { ImageClip } from '../../../src/model/index.ts'
 import {
+  addedRiskNote,
   cameraMoveOf,
+  cameraRisks,
   cameraTargets,
   motionOf,
   removeCameraMove,
+  riskFacts,
+  riskNote,
+  riskyMoves,
   setCameraMove,
-  smearNote,
-  smearingMoves,
   stillClips,
   undoCameraMoves,
 } from '../../../src/app/state/camera.ts'
@@ -57,20 +60,79 @@ const fullMove = (id: string) => ({
   },
 })
 
-it('says how many of the stills just given a move may smear', () => {
-  expect(smearNote(1, 0)).toBeNull()
-  expect(smearNote(4, 0)).toBeNull()
-  expect(smearNote(1, 1)).toBe(
+const smear = [{ risk: 'smear' as const, above: 30 }]
+const bend = [{ risk: 'bend' as const, above: 20 }]
+
+it('says how many of the stills just given a move may smear or bend, and what they may do', () => {
+  expect(riskNote(1, [])).toBeNull()
+  expect(riskNote(4, [[], []])).toBeNull()
+  expect(riskNote(1, [smear])).toBe(
     'This image may smear behind foreground objects at this strength. Try a lower Strength.',
   )
-  expect(smearNote(4, 1)).toBe(
+  expect(riskNote(4, [[], smear])).toBe(
     '1 of 4 images may smear behind foreground objects at this strength. Try a lower Strength.',
   )
-  expect(smearNote(4, 3)).toBe(
+  expect(riskNote(4, [smear, smear, smear])).toBe(
     '3 of 4 images may smear behind foreground objects at this strength. Try a lower Strength.',
   )
-  expect(smearNote(3, 3)).toBe(
+  expect(riskNote(3, [smear, smear, smear])).toBe(
     'All 3 images may smear behind foreground objects at this strength. Try a lower Strength.',
+  )
+  expect(riskNote(1, [bend])).toBe(
+    'This image may bend straight lines at this strength. Try a lower Strength.',
+  )
+  expect(riskNote(3, [bend, smear])).toBe(
+    '2 of 3 images may smear behind foreground objects or bend straight lines at this strength. Try a lower Strength.',
+  )
+  // Bending at any strength: only another motion helps.
+  const always = [{ risk: 'bend' as const, above: 0 }]
+  expect(riskNote(1, [always])).toBe(
+    'This image may bend straight lines at this strength. Try another motion.',
+  )
+  expect(riskNote(2, [always, smear])).toBe(
+    'All 2 images may smear behind foreground objects or bend straight lines at this strength. Try a lower Strength.',
+  )
+})
+
+it('lists what a move may do above which strength, the lowest first, from the safe amounts', () => {
+  const safe = { smear: 0.4, bend: 0.15 }
+  expect(cameraRisks(safe, 15)).toEqual([])
+  expect(cameraRisks(safe, 30)).toEqual([{ risk: 'bend', above: 15 }])
+  expect(cameraRisks(safe, 50)).toEqual([
+    { risk: 'bend', above: 15 },
+    { risk: 'smear', above: 40 },
+  ])
+  expect(riskFacts(cameraRisks(safe, 50), 'long')).toEqual([
+    'bend straight lines above 15%',
+    'smear behind foreground objects above 40%',
+  ])
+  expect(riskFacts(cameraRisks(safe, 50), 'short')).toEqual(['bend lines above 15%', 'smear above 40%'])
+  // Both from the same strength: one fact.
+  expect(riskFacts(cameraRisks({ smear: 0.35, bend: 0.35 }, 50), 'short')).toEqual([
+    'smear or bend lines above 35%',
+  ])
+  expect(riskFacts(cameraRisks({ smear: 0.4, bend: 0 }, 25), 'long')).toEqual([
+    'bend straight lines at any strength',
+  ])
+  expect(riskFacts(cameraRisks({ smear: 0, bend: 0 }, 25), 'short')).toEqual([
+    'smear or bend lines at any strength',
+  ])
+})
+
+it('tells what moves may do at the strength they were added with', () => {
+  const move = (intensity: number, safe: { smear: number; bend: number }) => ({
+    clipId: 'c',
+    effectInstanceId: 'fx',
+    depthAssetId: 'd',
+    intensity,
+    safeIntensity: Math.min(safe.smear, safe.bend),
+    safe,
+    smearRisk: intensity > safe.smear,
+    bendRisk: intensity > safe.bend,
+  })
+  expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.25 })] })).toBeNull()
+  expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.1 })] })).toBe(
+    'This image may bend straight lines at this strength. Try a lower Strength.',
   )
 })
 
@@ -121,35 +183,47 @@ describe('editing a move in Inspector › Motion', () => {
     expect(move(clipId)?.intensity).toBe(0.4)
   })
 
-  it('keeps a predicted smear only while the move keeps its preset and a strength above the safe amount', () => {
+  it('keeps a predicted risk only while the move keeps its preset and a strength above a safe amount', () => {
     const clipId = withMove()
     const other = stillClips(editor.getProject())[1]!.id
-    const at = (intensity: number) => ({
+    const at = (intensity: number, safe: { smear: number; bend: number }) => ({
       clipId,
       effectInstanceId: 'move',
       depthAssetId: 'depth-1',
       intensity,
+      safeIntensity: Math.min(safe.smear, safe.bend),
+      safe,
+      smearRisk: intensity > safe.smear,
+      bendRisk: intensity > safe.bend,
     })
     const result = {
-      moves: [
-        { ...at(0.4), safeIntensity: 0.15, smearRisk: true },
-        { ...at(0.4), clipId: other, safeIntensity: 0.15, smearRisk: true },
-      ],
+      moves: [at(0.4, { smear: 0.3, bend: 0.15 }), { ...at(0.4, { smear: 0.3, bend: 0.15 }), clipId: other }],
     }
-    const smearing = () => smearingMoves(editor.getProject(), result, 'dolly-in').map((m) => m.clipId)
+    const risky = () =>
+      riskyMoves(editor.getProject(), result, 'dolly-in').map((r) => [r.move.clipId, r.strength, r.risks])
     // The second clip has no move, so it is left out.
-    expect(smearing()).toEqual([clipId])
-    expect(smearingMoves(editor.getProject(), result, 'orbit-right')).toEqual([])
-    setCameraMove(clipId, { intensity: 0.15 })
-    expect(smearing()).toEqual([])
+    expect(risky()).toEqual([
+      [
+        clipId,
+        40,
+        [
+          { risk: 'bend', above: 15 },
+          { risk: 'smear', above: 30 },
+        ],
+      ],
+    ])
+    expect(riskyMoves(editor.getProject(), result, 'orbit-right')).toEqual([])
     setCameraMove(clipId, { intensity: 0.2 })
-    expect(smearing()).toEqual([clipId])
+    expect(risky()).toEqual([[clipId, 20, [{ risk: 'bend', above: 15 }]]])
+    setCameraMove(clipId, { intensity: 0.15 })
+    expect(risky()).toEqual([])
+    setCameraMove(clipId, { intensity: 0.2 })
     setCameraMove(clipId, { preset: 'orbit-right' })
-    expect(smearing()).toEqual([])
+    expect(risky()).toEqual([])
     // Raised above the safe amount after it was added: the inspector's note covers that, not the result.
-    const safe = { moves: [{ ...at(0.3), safeIntensity: 0.3, smearRisk: false }] }
+    const safe = { moves: [at(0.3, { smear: 0.3, bend: 0.3 })] }
     setCameraMove(clipId, { preset: 'dolly-in', intensity: 0.4 })
-    expect(smearingMoves(editor.getProject(), safe, 'dolly-in')).toEqual([])
+    expect(riskyMoves(editor.getProject(), safe, 'dolly-in')).toEqual([])
   })
 
   it('removes only the camera move', () => {

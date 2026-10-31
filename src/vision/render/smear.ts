@@ -1,4 +1,5 @@
 import type { CameraMove, CameraPose, CameraPreset, GrayImage } from '../types.ts'
+import { BEND_LIMIT, bendOf, type LineMap } from './bend.ts'
 import { cameraPoseAt } from './camera.ts'
 import { PARALLAX_MAX_STEPS, PARALLAX_MIN_STEPS } from './cameraEffect.ts'
 
@@ -23,10 +24,14 @@ export interface ContrastMap {
   data: Float32Array
 }
 
-/** A still as the smear prediction sees it: the depth the effect uses, and the still's contrast. */
+/**
+ * A still as the prediction sees it: the depth the effect uses, the still's contrast and its straight lines
+ * (`straightLines` in bend.ts). Without lines only smear is predicted.
+ */
 export interface SmearScene {
   depth: DepthField
   contrast: ContrastMap
+  lines?: LineMap
 }
 
 /**
@@ -196,21 +201,59 @@ export function smearOf(scene: SmearScene, move: CameraMove, columns = GRID_COLU
   return worst
 }
 
+/** The largest amounts at which a move neither smears (`smear`) nor bends straight lines (`bend`). */
+export interface SafeAmounts {
+  smear: number
+  bend: number
+}
+
 /**
- * Largest amount (0.05 to 1 in steps of 0.05) at which `preset` stays under `limit` on this still, or 0 when even
- * 0.05 smears. Smear grows with the amount, so this is a binary search.
+ * Largest amounts (0.05 to 1 in steps of 0.05) at which `preset` stays under the smear limit and under the bend
+ * limit (`BEND_LIMIT` in bend.ts) on this still, 0 when even 0.05 does not. Smear grows with the amount, so its amount
+ * is a binary search. Bend mostly does, but a line that something in front crosses at one amount and not at the next
+ * can drop out, so its amount is the last of the steps up from 0.05 that all stay under the limit (cheap: no ray
+ * march). Without lines in the scene, `bend` is 1.
  */
+export function safeAmounts(
+  scene: SmearScene,
+  preset: CameraPreset,
+  focus: number,
+  limit = SMEAR_LIMIT,
+): SafeAmounts {
+  const { lines } = scene
+  return {
+    smear: largest((intensity) => smearOf(scene, { preset, intensity, focus }) <= limit),
+    bend: lines
+      ? lastOf(
+          (intensity) => bendOf({ depth: scene.depth, lines }, { preset, intensity, focus }) <= BEND_LIMIT,
+        )
+      : 1,
+  }
+}
+
+/** Largest amount at which `preset` neither smears nor bends this still: the smaller of `safeAmounts`. */
 export function safeIntensity(
   scene: SmearScene,
   preset: CameraPreset,
   focus: number,
   limit = SMEAR_LIMIT,
 ): number {
+  const safe = safeAmounts(scene, preset, focus, limit)
+  return Math.min(safe.smear, safe.bend)
+}
+
+function lastOf(ok: (intensity: number) => boolean): number {
+  let step = 0
+  while (step < 20 && ok((step + 1) / 20)) step++
+  return step / 20
+}
+
+function largest(ok: (intensity: number) => boolean): number {
   let lo = 0
   let hi = 20
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2)
-    if (smearOf(scene, { preset, intensity: mid / 20, focus }) <= limit) lo = mid
+    if (ok(mid / 20)) lo = mid
     else hi = mid - 1
   }
   return lo / 20

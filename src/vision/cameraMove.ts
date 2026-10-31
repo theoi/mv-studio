@@ -8,7 +8,8 @@ import type { DepthService } from './depth/service.ts'
 import { throwIfAborted, visionError } from './errors.ts'
 import { CAMERA_PRESETS } from './render/camera.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from './render/cameraEffect.ts'
-import { localContrast, safeIntensity, type SmearScene } from './render/smear.ts'
+import { straightLines } from './render/bend.ts'
+import { localContrast, safeAmounts, type SafeAmounts, type SmearScene } from './render/smear.ts'
 import { rgbaToGrayFast, toRgba } from './runtime/canvas.ts'
 import { fitSize } from './runtime/frames.ts'
 import { VISION_MODELS } from './runtime/models.ts'
@@ -41,7 +42,8 @@ export interface CameraMoveOptions extends TaskOptions {
   preset?: CameraPreset
   /**
    * 0..1. A value set here is used as given, because the user chose it. Left out, each still gets 0.5, or less where
-   * 0.5 is predicted to smear the background (`safeIntensity` in render/smear.ts), but not below 0.25.
+   * 0.5 is predicted to smear the background or bend straight lines (`safeAmounts` in render/smear.ts), but not
+   * below 0.25.
    */
   intensity?: number
 }
@@ -52,10 +54,14 @@ export interface CameraMoveResult {
   depthAssetId: Id
   /** The amount the move was added with. */
   intensity: number
-  /** Largest amount predicted not to smear this still with this preset (0 to 1 in steps of 0.05). */
+  /** Largest amount predicted neither to smear nor to bend this still with this preset (0 to 1 in steps of 0.05). */
   safeIntensity: number
-  /** `intensity` is above `safeIntensity`: the background next to foreground objects may smear. */
+  /** The largest amounts predicted not to smear and not to bend, each on its own; `safeIntensity` is the smaller. */
+  safe: SafeAmounts
+  /** At `intensity`, the background next to foreground objects may smear. */
   smearRisk: boolean
+  /** At `intensity`, straight lines (a tower's edges, window rows) may bend. */
+  bendRisk: boolean
 }
 
 export interface CameraMovesResult {
@@ -98,7 +104,7 @@ export async function addCameraMoves(
     const preset = options.preset ?? DEFAULT_CAMERA_PRESET
     const stills = new Map<
       Id,
-      { depthAsset: Asset; newAsset: Asset | null; focus: number; safeIntensity: number }
+      { depthAsset: Asset; newAsset: Asset | null; focus: number; safe: SafeAmounts }
     >()
     for (const [i, clipId] of ids.entries()) {
       const still = stillOf(deps.editor.getProject(), clipId).asset
@@ -116,7 +122,7 @@ export async function addCameraMoves(
       } else {
         const { depth, gray } = await estimateDepth(deps, still, signal, step)
         const prepared = prepareDepthForParallax(depth)
-        scene = { depth: prepared, contrast: localContrast(gray) }
+        scene = { depth: prepared, contrast: localContrast(gray), lines: straightLines(gray) }
         newAsset = await storeDepth(deps, still, prepared, step)
         depthAsset = newAsset
       }
@@ -125,7 +131,7 @@ export async function addCameraMoves(
         depthAsset,
         newAsset,
         focus,
-        safeIntensity: safeIntensity(scene, preset, focus),
+        safe: safeAmounts(scene, preset, focus),
       })
       throwIfAborted(signal)
     }
@@ -137,8 +143,9 @@ export async function addCameraMoves(
       const { clip, asset } = stillOf(project, clipId)
       const still = stills.get(asset.id)
       if (!still) continue
+      const safeIntensity = Math.min(still.safe.smear, still.safe.bend)
       const intensity =
-        options.intensity ?? Math.max(MIN_AUTO_INTENSITY, Math.min(DEFAULT_INTENSITY, still.safeIntensity))
+        options.intensity ?? Math.max(MIN_AUTO_INTENSITY, Math.min(DEFAULT_INTENSITY, safeIntensity))
       const effect = cameraMoveEffect(clip, still.depthAsset.id, { focus: still.focus, preset, intensity })
       commands.push(...cameraMoveCommands(clip, effect, added.has(asset.id) ? null : still.newAsset))
       added.add(asset.id)
@@ -147,8 +154,10 @@ export async function addCameraMoves(
         effectInstanceId: effect.id,
         depthAssetId: still.depthAsset.id,
         intensity,
-        safeIntensity: still.safeIntensity,
-        smearRisk: intensity > still.safeIntensity,
+        safeIntensity,
+        safe: still.safe,
+        smearRisk: intensity > still.safe.smear,
+        bendRisk: intensity > still.safe.bend,
       })
     }
     // Depth images of these stills from older preparations go once no effect uses them.
@@ -247,9 +256,9 @@ const scenes = new Map<Id, Promise<SmearScene>>()
 const SCENE_CACHE_SIZE = 4
 
 /**
- * Largest amount predicted not to smear the background of a clip's still with `preset` (default: the clip's current
- * move), from its stored depth image; null when the clip has no 3D camera move. For a hint when the user sets a
- * stronger move than this. Same scale and steps as `CameraMoveResult.safeIntensity`.
+ * Largest amount predicted neither to smear nor to bend a clip's still with `preset` (default: the clip's current
+ * move), from its stored depth image; null when the clip has no 3D camera move. Same scale and steps as
+ * `CameraMoveResult.safeIntensity`.
  */
 export async function safeCameraIntensity(
   media: Pick<CameraMoveDeps['media'], 'getFile'>,
@@ -257,6 +266,21 @@ export async function safeCameraIntensity(
   clipId: Id,
   preset?: CameraPreset,
 ): Promise<number | null> {
+  const safe = await safeCameraAmounts(media, project, clipId, preset)
+  return safe && Math.min(safe.smear, safe.bend)
+}
+
+/**
+ * The largest amounts at which a clip's still neither smears nor bends with `preset` (default: the clip's current
+ * move), from its stored depth image; null when the clip has no 3D camera move. For a hint when the user sets a
+ * stronger move than these, which can say what the move may do.
+ */
+export async function safeCameraAmounts(
+  media: Pick<CameraMoveDeps['media'], 'getFile'>,
+  project: Pick<Project, 'assets' | 'clips'>,
+  clipId: Id,
+  preset?: CameraPreset,
+): Promise<SafeAmounts | null> {
   const clip = project.clips[clipId]
   if (clip?.type !== 'image') return null
   const effect = clip.effects.find((e) => e.effectId === CAMERA_EFFECT_ID)
@@ -267,7 +291,7 @@ export async function safeCameraIntensity(
   const focus = effect.params.focus?.value
   const current = effect.params.preset?.value
   const move = preset ?? CAMERA_PRESETS.find((p) => p === current) ?? DEFAULT_CAMERA_PRESET
-  return safeIntensity(
+  return safeAmounts(
     await storedScene(media, still, depthAsset),
     move,
     typeof focus === 'number' ? focus : 0.5,
@@ -304,7 +328,8 @@ async function loadScene(
     const rgba = toRgba(depthImage, size)
     const data = new Uint8Array(size.width * size.height)
     for (let i = 0; i < data.length; i++) data[i] = rgba.data[i * 4]!
-    return { depth: { ...size, data }, contrast: localContrast(rgbaToGrayFast(toRgba(image, size))) }
+    const gray = rgbaToGrayFast(toRgba(image, size))
+    return { depth: { ...size, data }, contrast: localContrast(gray), lines: straightLines(gray) }
   } finally {
     depthImage.close()
     image.close()

@@ -113,6 +113,7 @@ export {
   cameraMoveEffect,
   encodeDepthImage,
   findDepthAsset,
+  safeCameraAmounts,
   safeCameraIntensity,
   type CameraMoveDeps,
   type CameraMoveOptions,
@@ -122,7 +123,10 @@ export {
 export {
   SMEAR_LIMIT,
   createParallaxSampler,
+  safeAmounts,
   safeIntensity,
   smearOf,
+  type SafeAmounts,
   type SmearScene,
 } from './render/smear.ts'
+export { BEND_LIMIT, bendOf, straightLines, type LineMap } from './render/bend.ts'

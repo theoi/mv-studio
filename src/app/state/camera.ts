@@ -4,7 +4,7 @@ import type { Clip, EditCommand, Id, ImageClip, Project } from '../../model/inde
 import { mediaStore } from '../../media/mediaStore.ts'
 import { jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
-import type { CameraMoveResult, CameraMovesResult, CameraPreset } from '../../vision/index.ts'
+import type { CameraMoveResult, CameraMovesResult, CameraPreset, SafeAmounts } from '../../vision/index.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from '../../vision/render/cameraEffect.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { visionService } from './footage.ts'
@@ -34,7 +34,7 @@ export const useCamera = create<{
   motion: CameraMotion
   /** 0..100, the move's intensity in percent. */
   strength: number
-  /** The user moved Strength. Until then each still gets vision's automatic amount: 0.5, or less where it smears. */
+  /** The user moved Strength. Until then each still gets vision's automatic amount: 0.5, or less where it smears or bends. */
   strengthSet: boolean
   results: Record<string, CameraMovesResult>
   /** The clips each job was asked for, so the inspector shows progress and failures next to them. */
@@ -149,29 +149,80 @@ export function startCameraMoves(
   return handle
 }
 
+/** What a 3D camera move may do to its still when it is too strong. */
+export type CameraRisk = 'smear' | 'bend'
+
+export interface CameraRiskAt {
+  risk: CameraRisk
+  /** The strength (percent) above which it may. */
+  above: number
+}
+
+/** What a move at `strength` (percent) may do to its still, from vision's safe amounts, the lowest strength first. */
+export function cameraRisks(safe: SafeAmounts, strength: number): CameraRiskAt[] {
+  return (['smear', 'bend'] as const)
+    .map((risk) => ({ risk, above: Math.round(safe[risk] * 100) }))
+    .filter((r) => strength > r.above)
+    .sort((a, b) => a.above - b.above)
+}
+
+const RISK_WORDS = {
+  long: { smear: 'smear behind foreground objects', bend: 'bend straight lines' },
+  short: { smear: 'smear', bend: 'bend lines' },
+} satisfies Record<string, Record<CameraRisk, string>>
+
+/** The risks as facts ("bend lines above 15%", "smear above 40%"), one fact when both start at the same strength. */
+export function riskFacts(risks: readonly CameraRiskAt[], words: keyof typeof RISK_WORDS): string[] {
+  const w = RISK_WORDS[words]
+  const from = (above: number) => (above > 0 ? `above ${above}%` : 'at any strength')
+  const [first, second] = risks
+  if (first && second && first.above === second.above) return [`${w.smear} or ${w.bend} ${from(first.above)}`]
+  return risks.map((r) => `${w[r.risk]} ${from(r.above)}`)
+}
+
 /**
- * The moves of a result that may still smear: vision predicted it (`smearRisk`) and the clip still has the move
- * with `preset` at a strength above the still's safe amount. A move changed to another preset is left out, since its
- * safe amount is for the preset it was added with.
+ * The moves of a result that may still smear or bend: vision predicted it when they were added, and the clip still
+ * has the move with `preset` at a strength above the still's safe amount. A move changed to another preset is left
+ * out, since its safe amounts are for the preset it was added with.
  */
-export function smearingMoves(
+export function riskyMoves(
   project: Pick<Project, 'clips'>,
   result: Pick<CameraMovesResult, 'moves'>,
   preset: CameraPreset | undefined,
-): CameraMoveResult[] {
-  return result.moves.filter((m) => {
+): { move: CameraMoveResult; strength: number; risks: CameraRiskAt[] }[] {
+  return result.moves.flatMap((m) => {
     const clip = project.clips[m.clipId]
     const move = clip && cameraMoveOf(clip)
-    return m.smearRisk && !!move && move.preset === preset && move.intensity > m.safeIntensity
+    if (!(m.smearRisk || m.bendRisk) || !move || move.preset !== preset) return []
+    const strength = Math.round(move.intensity * 100)
+    const risks = cameraRisks(m.safe, strength)
+    return risks.length ? [{ move: m, strength, risks }] : []
   })
 }
 
-/** What to tell the user when `smearing` of the `total` stills just given a move may smear; null when none may. */
-export function smearNote(total: number, smearing: number): string | null {
-  if (!smearing) return null
-  const rest = 'may smear behind foreground objects at this strength. Try a lower Strength.'
+/**
+ * What to tell the user when some of the `total` stills just given a move may smear or bend (`risks` lists what
+ * each move may do); null when none may.
+ */
+export function riskNote(total: number, risks: readonly (readonly CameraRiskAt[])[]): string | null {
+  const risky = risks.filter((r) => r.length)
+  if (!risky.length) return null
+  const has = (risk: CameraRisk) => risky.some((r) => r.some((x) => x.risk === risk))
+  const { smear, bend } = RISK_WORDS.long
+  const what = has('smear') && has('bend') ? `${smear} or ${bend}` : has('smear') ? smear : bend
+  // A still that may do it at any strength is helped only by another motion.
+  const lower = risky.some((r) => r[0]!.above > 0)
+  const rest = `may ${what} at this strength. ${lower ? 'Try a lower Strength.' : 'Try another motion.'}`
   if (total === 1) return `This image ${rest}`
-  return `${smearing === total ? `All ${total}` : `${smearing} of ${total}`} images ${rest}`
+  return `${risky.length === total ? `All ${total}` : `${risky.length} of ${total}`} images ${rest}`
+}
+
+/** `riskNote` for a result as it was added. */
+export function addedRiskNote(result: Pick<CameraMovesResult, 'moves'>): string | null {
+  return riskNote(
+    result.moves.length,
+    result.moves.map((m) => cameraRisks(m.safe, Math.round(m.intensity * 100))),
+  )
 }
 
 /** Undoes the camera moves while they are still the latest edit. Returns whether it did. */
@@ -197,25 +248,25 @@ export function cameraMoveOf(
   }
 }
 
-const safeAmounts = new Map<string, Promise<number | null>>()
+const safeAmounts = new Map<string, Promise<SafeAmounts | null>>()
 
 /**
- * The largest strength (0..1) predicted not to smear the background of the clip's still with its current move, from
- * its stored depth image (vision's safeCameraIntensity); null without a move and until it is known.
+ * The largest strengths (0..1) predicted not to smear and not to bend the clip's still with its current move, from
+ * its stored depth image (vision's safeCameraAmounts); null without a move and until they are known.
  */
-export function useSafeIntensity(clip: Clip): number | null {
+export function useSafeAmounts(clip: Clip): SafeAmounts | null {
   const move = cameraMoveOf(clip)
   const depth = move && 'effects' in clip ? clip.effects[move.index]?.params.depth?.value : undefined
   const key = move && typeof depth === 'string' ? `${depth}:${move.preset}` : null
   const preset = move?.preset
-  const [known, setKnown] = useState<{ key: string; value: number | null } | null>(null)
+  const [known, setKnown] = useState<{ key: string; value: SafeAmounts | null } | null>(null)
   useEffect(() => {
     if (!key || !preset) return
     let live = true
     let amount = safeAmounts.get(key)
     if (!amount) {
       amount = import('../../vision/index.ts')
-        .then((v) => v.safeCameraIntensity(appMedia, editor.getProject(), clip.id, preset))
+        .then((v) => v.safeCameraAmounts(appMedia, editor.getProject(), clip.id, preset))
         .catch(() => null)
       safeAmounts.set(key, amount)
     }
