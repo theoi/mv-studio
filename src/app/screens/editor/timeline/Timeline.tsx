@@ -2572,12 +2572,17 @@ export function Timeline() {
               key={i}
               className={styles.refusedDrop}
               style={{
-                transform: `translate(${HEADER_W + b.start * pps}px, ${b.top + 3}px)`,
+                left: HEADER_W + b.start * pps,
+                top: b.top + 3,
                 width: b.duration * pps,
                 height: b.height - 6,
               }}
             >
-              {i === refusedDrop.labelAt && <span className={styles.refusedLabel}>{refusedDrop.label}</span>}
+              {i === refusedDrop.labelAt && (
+                <span className={styles.refusedLabel} style={{ left: HEADER_W + 3 }}>
+                  {refusedDrop.label}
+                </span>
+              )}
             </div>
           ))}
           <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />

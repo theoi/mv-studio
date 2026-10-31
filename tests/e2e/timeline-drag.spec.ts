@@ -241,3 +241,36 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   expect(await undoLabel(page)).toBe(startLabel)
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().selection)).toEqual({ type: 'clip', id })
 })
+
+test('a refusal label stays in view at the left of the lanes when its outline starts off screen', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openEditor(page)
+  const look = page.getByRole('button', { name: /^Neon night\b.*, 0:00\.0 to / })
+  const spectrum = page.getByRole('button', { name: /^Spectrum bars, 1:04\.0 to / })
+  const scroller = (await page.locator('[data-timeline-scroller]').boundingBox())!
+  // Where the lanes start, right of the track headers (HEADER_W).
+  const lanesLeft = scroller.x + 148
+  // The look spans the whole song: in this view it starts well left of the lanes, under the track headers.
+  const lookBox = (await look.boundingBox())!
+  expect(lookBox.x).toBeLessThan(lanesLeft - 100)
+  const from = { x: lanesLeft + 300, y: lookBox.y + lookBox.height / 2 }
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x, (await center(spectrum)).y, { steps: 8 })
+  const label = page.getByText('No looks here', { exact: true })
+  await expect(label).toBeVisible()
+  const pill = (await label.boundingBox())!
+  const outline = (await label.locator('..').boundingBox())!
+  expect(outline.x).toBeLessThan(lanesLeft)
+  expect(pill.x).toBeGreaterThanOrEqual(lanesLeft)
+  expect(pill.x + pill.width).toBeLessThanOrEqual(
+    Math.min(scroller.x + scroller.width, outline.x + outline.width),
+  )
+  // Across the lane's top edge, as before.
+  expect(pill.y).toBeLessThan(outline.y)
+  expect(pill.y + pill.height).toBeGreaterThan(outline.y)
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+})
