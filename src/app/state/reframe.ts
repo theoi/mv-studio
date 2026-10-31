@@ -1,20 +1,27 @@
 import {
+  aspectCommands,
   framingOverrides,
+  layoutFrameOf,
+  projectReframe,
   reframeCommands,
   reframedFrom,
   reframeModeOf,
+  reframeOffer,
   setReframeModeCommand,
-  type FrameSize,
   type ProjectReframe,
   type ReframeMode,
 } from '../../export/index.ts'
-import type { AspectPreset, Id, Project, VisualClip } from '../../model/index.ts'
+import {
+  settingsForAspect,
+  type AspectPreset,
+  type Id,
+  type Project,
+  type VisualClip,
+} from '../../model/index.ts'
 import { readSubjectTrack } from '../../vision/analysisData.ts'
 import { plural } from '../format.ts'
 import { dispatch, editor } from './project.ts'
-import { toast } from './ui.ts'
-
-const REFRAME_LABEL = 'Reframe automatically'
+import { set, toast } from './ui.ts'
 
 function message(aspect: AspectPreset, reframe: ProjectReframe): string {
   const kinds = Object.values(reframe.changed)
@@ -38,29 +45,62 @@ function message(aspect: AspectPreset, reframe: ProjectReframe): string {
   return parts.length ? `Reframed for ${aspect}: ${parts.join(', ')}.` : `Everything already fits ${aspect}.`
 }
 
+const OFFERS = { reframe: 'Reframe automatically', restore: 'Restore layout' } as const
+
+/** Removes an earlier offer that no longer applies (a newer frame change replaces it). */
+function withdrawOffers(): void {
+  const labels: string[] = Object.values(OFFERS)
+  set((s) => ({ toasts: s.toasts.filter((t) => !t.action || !labels.includes(t.action.label)) }))
+}
+
 /**
- * Lays the clips out for the project's new aspect ratio (Preview › aspect ratio › Reframe automatically), from the
- * frame they had before: footage follows its subject, text and overlays move into the safe area. One undo step.
+ * Lays the clips out for the project's frame from the frame they are laid out for (the offer after an aspect
+ * change): footage follows its subject, text and overlays move into the safe area, and clips back in the frame they
+ * were made for get their layout back. One undo step.
  */
-export function reframeProject(from: FrameSize): void {
+export function reframeProject(): void {
   const project = editor.getProject()
   const { aspect } = project.settings
-  if (aspect === from.aspect) {
-    toast(`The frame is ${aspect} again, so nothing was reframed.`)
+  const offer = reframeOffer(project)
+  if (!offer) {
+    toast(`The clips already fit ${aspect}.`)
     return
   }
-  const reframe = reframeCommands(project, from, { overrides: framingOverrides(project, aspect) })
-  if (reframe.commands.length === 0) {
-    toast(message(aspect, reframe))
-    return
-  }
-  if (!dispatch(reframe.commands, { label: REFRAME_LABEL })) return
-  toast(message(aspect, reframe), {
-    label: 'Undo',
-    run: () => {
-      if (editor.undoLabel() === REFRAME_LABEL) editor.undo()
+  const reframe = projectReframe(project, { overrides: framingOverrides(project, aspect) })
+  const label = OFFERS[offer]
+  if (!dispatch(reframe.commands, { label })) return
+  const restored = Object.keys(reframe.changed).length
+  toast(
+    offer === 'restore'
+      ? `Restored the ${aspect} layout of ${plural(restored, 'clip')}.`
+      : message(aspect, reframe),
+    {
+      label: 'Undo',
+      run: () => {
+        if (editor.undoLabel() === label) editor.undo()
+      },
     },
-  })
+  )
+}
+
+/**
+ * Changes the project's aspect ratio (Preview, Inspector › Project, the palette), then offers to reframe the clips
+ * for it, or to restore the layout they had in it. The clips are not touched until the offer is taken.
+ */
+export function changeAspect(aspect: AspectPreset): void {
+  const project = editor.getProject()
+  if (aspect === project.settings.aspect) return
+  const settings = settingsForAspect(aspect, project.settings.fps)
+  if (!dispatch(aspectCommands(project, settings), { label: 'Change aspect ratio' })) return
+  withdrawOffers()
+  const offer = reframeOffer(editor.getProject())
+  if (offer === 'restore')
+    toast(`Switched to ${aspect}. Bring back the clips' ${aspect} layout?`, {
+      label: OFFERS.restore,
+      run: reframeProject,
+    })
+  else if (offer === 'reframe')
+    toast(`Switched to ${aspect}. Keep subjects in frame?`, { label: OFFERS.reframe, run: reframeProject })
 }
 
 /** The clip and the cutouts that put text behind its subject, which are framed like it. */
@@ -88,7 +128,7 @@ export function setClipReframe(clipId: Id, mode: ReframeMode): void {
   const { aspect } = project.settings
   const overrides = { ...framingOverrides(project, aspect) }
   for (const id of ids) overrides[id] = { ...overrides[id], mode }
-  const reframe = reframeCommands(project, project.settings, { overrides, clipIds: ids })
+  const reframe = reframeCommands(project, layoutFrameOf(project), { overrides, clipIds: ids })
   dispatch([setReframeModeCommand(project, ids, mode), ...reframe.commands], { label: 'Change framing' })
 }
 

@@ -31,13 +31,21 @@ function scaleOf(page: Page, clipId: string): Promise<number> {
   }, clipId)
 }
 
-async function switchFrame(page: Page, from: string, to: string) {
+/** Picks a frame in Preview's aspect ratio menu. */
+async function pickFrame(page: Page, from: string, to: string) {
   await page.getByRole('button', { name: from, exact: true }).click()
   await page.getByRole('menuitem', { name: new RegExp(`^${to}`) }).click()
+}
+
+async function switchFrame(page: Page, from: string, to: string) {
+  await pickFrame(page, from, to)
   const toasts = page.getByRole('status')
   await expect(toasts.getByText(`Switched to ${to}. Keep subjects in frame?`)).toBeVisible()
   await toasts.getByRole('button', { name: 'Reframe automatically' }).click()
 }
+
+const offers = (page: Page) =>
+  page.getByRole('status').getByRole('button', { name: /^(Reframe automatically|Restore layout)$/ })
 
 test('switching the frame offers to reframe the clips, as one undoable edit', async ({ page }) => {
   await openEditor(page, '#/editor?t=20')
@@ -64,12 +72,12 @@ test('Inspector › Framing sets how a clip fills other frames, in Export and wh
   await openEditor(page, '#/editor?sel=clip:c-s-c1-1&t=67.2')
   await page.getByRole('button', { name: 'Framing', exact: true }).click()
   const reframe = page.getByRole('combobox', { name: 'Reframe' })
-  await expect(reframe).toHaveText('Follow the subject')
+  await expect(reframe).toHaveText('Auto')
   await expect(
     page.getByText('Other aspect ratios use its center, as it has no subject analysis yet.'),
   ).toBeVisible()
   await reframe.click()
-  await page.getByRole('option', { name: 'Fit' }).click()
+  await page.getByRole('option', { name: /^Fit/ }).click()
   await expect(
     page.getByText('How this clip fills other aspect ratios: in Export, and when you switch the frame.'),
   ).toBeVisible()
@@ -92,9 +100,58 @@ test('Inspector › Framing sets how a clip fills other frames, in Export and wh
   await expect(page.getByText('Reframed from 16:9.')).toBeVisible()
   expect(await scaleOf(page, 'c-s-c1-1')).toBeLessThan(0.9)
   await reframe.click()
-  await page.getByRole('option', { name: 'Follow the subject' }).click()
+  await page.getByRole('option', { name: /^Auto/ }).click()
   await expect(
     page.getByText('Reframed from 16:9 on its center, as it has no subject analysis yet.'),
   ).toBeVisible()
   await expect.poll(() => scaleOf(page, 'c-s-c1-1')).toBeCloseTo(1, 2)
+})
+
+test('an ignored offer leaves the clips as they are, and switching back restores a reframe', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67.2')
+  const before = await layouts(page)
+  const toasts = page.getByRole('status')
+
+  // Ignored, then back to the frame the clips are laid out for: nothing to offer, nothing changed.
+  await pickFrame(page, '16:9', '9:16')
+  await expect(offers(page)).toHaveCount(1)
+  await pickFrame(page, '9:16', '16:9')
+  await expect(offers(page)).toHaveCount(0)
+  expect(await layouts(page)).toEqual(before)
+
+  // Ignored, then another frame: one offer (the new one replaces the old), and the footage is reframed from the
+  // 16:9 layout it still has, not from 9:16.
+  await pickFrame(page, '16:9', '9:16')
+  await pickFrame(page, '9:16', '1:1')
+  await expect(offers(page)).toHaveCount(1)
+  await toasts.getByRole('button', { name: 'Reframe automatically' }).click()
+  await expect(toasts.getByText(/^Reframed for 1:1: /)).toBeVisible()
+  expect(await scaleOf(page, 'c-s-c1-1')).toBeCloseTo(1, 2)
+
+  // Back in 16:9, the clips remember their layout there.
+  await pickFrame(page, '1:1', '16:9')
+  await expect(toasts.getByText("Switched to 16:9. Bring back the clips' 16:9 layout?")).toBeVisible()
+  await toasts.getByRole('button', { name: 'Restore layout' }).click()
+  await expect(toasts.getByText(/^Restored the 16:9 layout of \d+ clips\.$/)).toBeVisible()
+  expect(await layouts(page)).toEqual(before)
+})
+
+test('every way of changing the frame offers to reframe', async ({ page }) => {
+  await openEditor(page, '#/editor?t=20')
+  const toasts = page.getByRole('status')
+  // Inspector › Project › Aspect.
+  await page.getByRole('radiogroup', { name: 'Aspect ratio' }).getByRole('radio', { name: '9:16' }).click()
+  await expect(toasts.getByText('Switched to 9:16. Keep subjects in frame?')).toBeVisible()
+  await page.getByRole('radiogroup', { name: 'Aspect ratio' }).getByRole('radio', { name: '16:9' }).click()
+  await expect(offers(page)).toHaveCount(0)
+  // The command palette.
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k')
+  const palette = page.getByRole('dialog')
+  await palette.getByRole('combobox').fill('vertical')
+  await palette.getByRole('option', { name: 'Switch to vertical 9:16' }).click()
+  await expect(toasts.getByText('Switched to 9:16. Keep subjects in frame?')).toBeVisible()
+  await toasts.getByRole('button', { name: 'Reframe automatically' }).click()
+  await expect(toasts.getByText(/^Reframed for 9:16: /)).toBeVisible()
 })

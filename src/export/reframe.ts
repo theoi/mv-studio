@@ -1,11 +1,13 @@
 /**
- * Reframing the project itself after its aspect ratio changes (Preview › aspect ratio › "Reframe automatically",
- * and Inspector › Framing on a reframed clip): clips are laid out for the new frame as an export to that format
- * would lay them out (see ./formats.ts), through edit commands.
+ * Reframing the project itself after its aspect ratio changes (the offer after an aspect change, and Inspector ›
+ * Framing on a reframed clip): clips are laid out for the new frame as an export to that format would lay them out
+ * (see ./formats.ts), through edit commands.
  *
- * A reframed clip remembers the layout it had before (meta.reframe), so reframing again starts from that layout
- * instead of from the last crop: 16:9 to 9:16 and back gives the original clip, not a zoomed-in one. A clip edited
- * by hand since its last reframe starts from its new layout.
+ * Changing the aspect ratio leaves the clips as they are, so the project remembers the frame they are still laid out
+ * for (extension "reframe"); reframing starts from that frame, not from the last aspect ratio. A reframed clip
+ * remembers the layout it had before (meta.reframe), so reframing again starts from that layout instead of from
+ * the last crop: 16:9 to 9:16 and back gives the original clip, not a zoomed-in one. A clip edited by hand since its
+ * last reframe starts from its new layout.
  */
 import { z } from 'zod'
 import type { EditCommand } from '../model/commands.ts'
@@ -135,5 +137,60 @@ export function reframeCommands(
       if (!same) result.changed[id] = conversion.clips[id] ?? 'unchanged'
     }
   }
+  return result
+}
+
+export const REFRAME_EXTENSION_KEY = 'reframe'
+
+const frameSchema = z.object({
+  aspect: z.enum(['16:9', '9:16', '1:1', '4:5']),
+  width: z.number().positive(),
+  height: z.number().positive(),
+})
+
+const sameFrame = (a: FrameSize, b: FrameSize) =>
+  a.aspect === b.aspect && a.width === b.width && a.height === b.height
+
+/** The frame the clips that remember no reframe are laid out for: the project's own, unless it changed since. */
+export function layoutFrameOf(project: Project): FrameSize {
+  const parsed = frameSchema.safeParse(project.extensions?.[REFRAME_EXTENSION_KEY])
+  const { aspect, width, height } = parsed.success ? parsed.data : project.settings
+  return { aspect, width, height }
+}
+
+/** Changes the project's frame, remembering the frame its clips stay laid out for until they are reframed. */
+export function aspectCommands(project: Project, settings: ProjectSettings): EditCommand[] {
+  const layout = layoutFrameOf(project)
+  return [
+    { type: 'project.updateSettings', settings },
+    {
+      type: 'project.setExtension',
+      key: REFRAME_EXTENSION_KEY,
+      value: sameFrame(layout, settings) ? null : { ...layout },
+    },
+  ]
+}
+
+/**
+ * What to offer after the frame changed: 'restore' when clips remember a layout made for this frame, 'reframe' when
+ * clips are laid out for another frame, nothing when they already fit it.
+ */
+export function reframeOffer(project: Project): 'reframe' | 'restore' | null {
+  const { aspect } = project.settings
+  const remembered = Object.values(project.clips).some(
+    (c) => c.type !== 'audio' && memoryOf(c)?.aspect === aspect,
+  )
+  if (remembered) return 'restore'
+  return sameFrame(layoutFrameOf(project), project.settings) ? null : 'reframe'
+}
+
+/**
+ * The offer's edit: every clip laid out for the project's frame from the frame it is laid out for (or the layout it
+ * remembers), after which the clips fit the project's frame.
+ */
+export function projectReframe(project: Project, options: FormatOptions = {}): ProjectReframe {
+  const result = reframeCommands(project, layoutFrameOf(project), options)
+  if (project.extensions?.[REFRAME_EXTENSION_KEY] !== undefined)
+    result.commands.push({ type: 'project.setExtension', key: REFRAME_EXTENSION_KEY, value: null })
   return result
 }

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  aspectCommands,
   framingOverrides,
+  layoutFrameOf,
+  projectReframe,
   reframeCommands,
   reframedFrom,
   reframeModeOf,
+  reframeOffer,
   setFramingCommand,
   setReframeModeCommand,
-  type FrameSize,
 } from '../../../src/export/index.ts'
 import {
   ProjectEditor,
@@ -73,13 +76,17 @@ function project(o: { subject?: boolean } = {}) {
   return { editor: new ProjectEditor(p), shot, line }
 }
 
-/** Switches the frame as Preview › aspect ratio does and reframes, returning the frame it came from. */
+/** Switches the frame as Preview › aspect ratio does, leaving the clips as they are (the offer ignored). */
+function switchFrame(editor: ProjectEditor, aspect: AspectPreset) {
+  editor.dispatch(aspectCommands(editor.getProject(), settingsForAspect(aspect)))
+}
+
+/** Switches the frame and takes the offer to reframe. */
 function switchAndReframe(editor: ProjectEditor, aspect: AspectPreset) {
-  const from: FrameSize = editor.getProject().settings
-  editor.dispatch({ type: 'project.updateSettings', settings: settingsForAspect(aspect) })
+  switchFrame(editor, aspect)
   const project = editor.getProject()
-  const reframe = reframeCommands(project, from, { measure, overrides: framingOverrides(project, aspect) })
-  if (reframe.commands.length) editor.dispatch(reframe.commands)
+  const reframe = projectReframe(project, { measure, overrides: framingOverrides(project, aspect) })
+  editor.dispatch(reframe.commands)
   return reframe
 }
 
@@ -141,6 +148,48 @@ describe('reframeCommands', () => {
     expect(reframe.locked).toEqual([line.id])
     expect(reframe.centred).toEqual([shot.id])
     expect(editor.getProject().clips[line.id]).toEqual(line)
+  })
+})
+
+describe('the offer after a frame change', () => {
+  it('reframes from the frame the clips are still laid out for when an earlier offer was ignored', () => {
+    const { editor, shot } = project()
+    switchFrame(editor, '9:16')
+    expect(layoutFrameOf(editor.getProject()).aspect).toBe('16:9')
+    switchAndReframe(editor, '1:1')
+    const direct = project()
+    switchAndReframe(direct.editor, '1:1')
+    const viaVertical = editor.getProject().clips[shot.id] as VideoClip
+    const fromWide = direct.editor.getProject().clips[direct.shot.id] as VideoClip
+    expect(viaVertical.transform).toEqual(fromWide.transform)
+    expect(reframedFrom(viaVertical)?.aspect).toBe('16:9')
+    expect(layoutFrameOf(editor.getProject()).aspect).toBe('1:1')
+    expect(editor.getProject().extensions).toBeUndefined()
+  })
+
+  it('offers nothing back in the frame the clips are laid out for, and leaves them untouched', () => {
+    const { editor } = project()
+    const original = editor.getProject()
+    switchFrame(editor, '9:16')
+    expect(reframeOffer(editor.getProject())).toBe('reframe')
+    switchFrame(editor, '16:9')
+    expect(reframeOffer(editor.getProject())).toBeNull()
+    const { updatedAt: _now, ...now } = editor.getProject()
+    const { updatedAt: _then, ...then } = original
+    expect(now).toEqual(then)
+  })
+
+  it('offers to restore the layout clips remember for the frame, and restores it', () => {
+    const { editor, shot } = project()
+    const original = editor.getProject().clips[shot.id]
+    switchAndReframe(editor, '9:16')
+    expect(reframeOffer(editor.getProject())).toBeNull()
+    switchFrame(editor, '16:9')
+    expect(reframeOffer(editor.getProject())).toBe('restore')
+    switchAndReframe(editor, '16:9')
+    const { meta: _meta, ...restored } = editor.getProject().clips[shot.id]!
+    const { meta: _before, ...before } = original!
+    expect(restored).toEqual(before)
   })
 })
 
