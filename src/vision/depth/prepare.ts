@@ -18,8 +18,8 @@ export interface PrepareDepthOptions {
 const DEFAULTS: Required<PrepareDepthOptions> = {
   sharpen: 0.008,
   edgeThreshold: 0.12,
-  dilate: 0.007,
-  blur: 0.0025,
+  dilate: 0.015,
+  blur: 0.01,
   low: 0.02,
   high: 0.98,
 }
@@ -35,7 +35,12 @@ const MIN_RANGE = 24
  * 3. Foreground dilation: near regions grow past the object silhouette. Model depth edges are soft and sit
  *    inside the object, so without this the renderer stretches the object's own edge pixels across the
  *    revealed background ("rubber sheet" tearing); with it, the stretched pixels are background.
- * 4. A small blur so the dilated step becomes a short ramp the ray march can intersect without stair steps.
+ * 4. A blur that turns the dilated step into a ramp. The background the camera reveals beside a near object is
+ *    filled from the ramp, so a ramp a few pixels wide stretches a few background pixels into streaks; behind
+ *    thin occluders (branches, fences) over a detailed background those streaks cover much of the frame. A ramp
+ *    about 2 % of the width wide (with the dilation keeping it outside the object) spreads the fill over enough
+ *    background to stay below twice the move's zoom on the dev stills, at the cost of slightly more bending of
+ *    straight background lines right next to the subject on strong moves.
  */
 export function prepareDepthForParallax(depth: DepthMap, opts: PrepareDepthOptions = {}): DepthMap {
   const o = { ...DEFAULTS, ...opts }

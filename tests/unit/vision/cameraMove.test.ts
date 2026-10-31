@@ -9,7 +9,24 @@ import {
   findDepthAsset,
 } from '../../../src/vision/cameraMove.ts'
 import { CAMERA_EFFECT_ID } from '../../../src/vision/render/cameraEffect.ts'
+import type * as Canvas from '../../../src/vision/runtime/canvas.ts'
 import { VISION_MODELS } from '../../../src/vision/runtime/models.ts'
+
+// No canvas in unit tests: every still reads as a fine checkerboard, a detailed background everywhere.
+vi.mock('../../../src/vision/runtime/canvas.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof Canvas>()),
+  toRgba: (_source: unknown, size: { width: number; height: number }) => {
+    const data = new Uint8ClampedArray(size.width * size.height * 4)
+    for (let y = 0; y < size.height; y++)
+      for (let x = 0; x < size.width; x++)
+        data.fill(
+          ((x >> 1) + (y >> 1)) % 2 ? 200 : 60,
+          (y * size.width + x) * 4,
+          (y * size.width + x) * 4 + 4,
+        )
+    return { ...size, data }
+  },
+}))
 
 const DEPTH_MODEL = VISION_MODELS.depthAnythingSmall.id
 
@@ -153,6 +170,8 @@ describe('3D camera moves on several stills', () => {
     expect(result.label).toBe('Add 3D camera moves to 3 images')
     expect(result.moves.map((m) => m.depthAssetId)).toEqual(['depth', 'depth', 'otherDepth'])
     const after = editor.getProject()
+    expect(result.moves.map((m) => m.intensity)).toEqual([0.3, 0.3, 0.3])
+    expect(result.moves.every((m) => m.smearRisk === m.intensity > m.safeIntensity)).toBe(true)
     for (const id of [clipId, again.id, second.id]) {
       const camera = imageClip(after, id).effects[0]!
       expect(camera.effectId).toBe(CAMERA_EFFECT_ID)
@@ -167,5 +186,69 @@ describe('3D camera moves on several stills', () => {
         false,
       )
     vi.unstubAllGlobals()
+  })
+})
+
+describe('the amount of an automatic move', () => {
+  const still =
+    (depth: (x: number) => number) => async (req: { sourceSize: { width: number; height: number } }) => {
+      const data = new Uint8Array(96 * 54)
+      for (let i = 0; i < data.length; i++) data[i] = depth(i % 96)
+      return {
+        version: 1 as const,
+        width: 96,
+        height: 54,
+        data,
+        sourceSize: req.sourceSize,
+        model: DEPTH_MODEL,
+        quality: 'full' as const,
+      }
+    }
+  const media = {
+    getFile: async () => new Blob(),
+    storeBlob: async (): Promise<Asset> => {
+      throw new Error('the depth image is already stored')
+    },
+  }
+  const run = async (depth: (x: number) => number, intensity?: number) => {
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 960, height: 540, close: () => undefined }))
+    const { project, clipId } = setup()
+    project.assets.depth = depthAsset
+    const editor = new ProjectEditor(project)
+    const result = await addCameraMoves(
+      { editor, media, depth: { get: still(depth), peek: async () => null } },
+      [clipId],
+      {
+        preset: 'orbit-left',
+        ...(intensity === undefined ? {} : { intensity }),
+      },
+    )
+    vi.unstubAllGlobals()
+    const move = result.moves[0]!
+    const effect = imageClip(editor.getProject(), clipId).effects[0]!
+    return { move, stored: effect.params.intensity!.value }
+  }
+  // Thin near posts over a far, detailed background (the canvas mock returns a fine checkerboard).
+  const fence = (x: number) => (x % 12 < 2 ? 240 : 20)
+
+  it('is 0.5 when nothing is predicted to smear', async () => {
+    const { move, stored } = await run(() => 100)
+    expect(move).toMatchObject({ intensity: 0.5, safeIntensity: 1, smearRisk: false })
+    expect(stored).toBe(0.5)
+  })
+
+  it('drops to the predicted safe amount behind thin foreground objects, but not below 0.25', async () => {
+    const { move, stored } = await run(fence)
+    expect(move.safeIntensity).toBeLessThan(0.5)
+    expect(move.intensity).toBe(Math.max(0.25, move.safeIntensity))
+    expect(stored).toBe(move.intensity)
+    expect(move.smearRisk).toBe(move.intensity > move.safeIntensity)
+  })
+
+  it('keeps an amount the user chose and flags the risk', async () => {
+    const { move, stored } = await run(fence, 0.8)
+    expect(stored).toBe(0.8)
+    expect(move).toMatchObject({ intensity: 0.8, smearRisk: true })
+    expect(move.safeIntensity).toBeLessThan(0.8)
   })
 })
