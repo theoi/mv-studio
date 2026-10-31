@@ -397,8 +397,9 @@ class DecodeCursor {
 
 /**
  * Chrome's <video> treats video without color tags as BT.601 below 720 lines and BT.709 otherwise, while mediabunny
- * tags every untagged frame BT.709. Returns the color space that makes export decode like preview, or null when the
- * frames are already tagged correctly.
+ * tags every untagged frame BT.709. Returns the color space that makes frames decoded through mediabunny (the export
+ * decoder, thumbnail frames) look as the preview's <video> shows them, or null when the frames are already tagged
+ * correctly.
  */
 export async function previewColorSpace(track: InputVideoTrack): Promise<VideoColorSpaceInit | null> {
   const declared = await track.getColorSpace()
@@ -411,7 +412,10 @@ export async function previewColorSpace(track: InputVideoTrack): Promise<VideoCo
   }
 }
 
-/** Copies a frame's pixels into a new frame with a different color space tag (VideoFrameInit cannot re-tag). */
+/**
+ * Copies a frame's pixels into a new frame with a different color space tag (VideoFrameInit cannot re-tag). On success
+ * the input frame is closed and the new one returned; if the copy fails, the input frame is returned, still open.
+ */
 export async function retag(frame: VideoFrame, colorSpace: VideoColorSpaceInit): Promise<VideoFrame> {
   const rect = frame.visibleRect
   if (!frame.format || !rect) return frame
