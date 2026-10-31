@@ -503,7 +503,8 @@
   color: var(--text-1);
 }
 
-.segment[data-state='on'] {
+/* A Tooltip around an item replaces Radix's data-state with its own, so the choice is read from aria-checked. */
+.segment[aria-checked='true'] {
   background: #26272d;
   color: var(--text-1);
   box-shadow:
@@ -608,6 +609,11 @@
 
 .selectItem[data-highlighted] {
   background: var(--bg-active);
+}
+
+/* The list's viewport clips anything outside an item, so the keyboard ring goes inside it. */
+.selectItem:focus-visible {
+  outline-offset: -2px;
 }
 
 .selectItem[data-disabled] {

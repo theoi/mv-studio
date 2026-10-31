@@ -369,14 +369,15 @@
   height: 16px;
 }
 
+/* aria-expanded, not data-state: a Tooltip around a menu trigger replaces Radix's data-state with its own. */
 .recentItem:hover .recentMore,
 .recentItem:focus-within .recentMore,
-.recentMore[data-state='open'] {
+.recentMore[aria-expanded='true'] {
   opacity: 1;
 }
 
 .recentMore:hover,
-.recentMore[data-state='open'] {
+.recentMore[aria-expanded='true'] {
   background: var(--bg-hover);
   color: var(--text-1);
 }
@@ -604,12 +605,23 @@
 }
 
 .songName {
+  display: flex;
   font-weight: var(--weight-medium);
+  white-space: nowrap;
 }
 
+.songTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* pre keeps the space before the leading " · ", which a flex item would drop. */
 .songMeta {
+  flex: none;
   color: var(--text-3);
   font-weight: var(--weight-regular);
+  white-space: pre;
 }
 
 .songStatus {

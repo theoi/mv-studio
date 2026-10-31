@@ -20,8 +20,9 @@
   transition: background-color var(--dur-fast);
 }
 
+/* aria-expanded, not data-state: a Tooltip around a menu trigger replaces Radix's data-state with its own. */
 .aspect:hover,
-.aspect[data-state='open'] {
+.aspect[aria-expanded='true'] {
   background: var(--bg-hover);
 }
 
@@ -52,7 +53,7 @@
 }
 
 .zoom:hover:not(:disabled),
-.zoom[data-state='open'] {
+.zoom[aria-expanded='true'] {
   background: var(--bg-hover);
   color: var(--text-2);
 }

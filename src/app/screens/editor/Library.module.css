@@ -229,6 +229,7 @@
 }
 
 .songRow {
+  container: songrow / inline-size;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -264,7 +265,7 @@ button.songRow:hover {
 .songText {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -281,15 +282,25 @@ button.songRow:hover {
   font-size: var(--text-xs);
   line-height: var(--lh-xs);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .songWave {
   display: flex;
   align-items: center;
   gap: 1px;
+  flex: none;
   width: 64px;
   height: 22px;
-  flex: none;
+}
+
+/* The waveform is decoration: a row too narrow for it beside a long summary (about 168 px) drops it instead of
+   cutting the summary or squeezing the bars. */
+@container songrow (width < 290px) {
+  .songWave {
+    display: none;
+  }
 }
 
 .songWave i {

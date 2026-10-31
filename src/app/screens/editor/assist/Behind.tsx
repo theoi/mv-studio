@@ -37,7 +37,8 @@ export function BehindBadge() {
 function SuitRow({ asset, suitability, clips }: Omit<FootageRow, 'key'>) {
   const thumb = useThumbnail(asset)
   const text = suitabilityText(suitability)
-  const detail = `${(text.brief ?? text.why ?? text.status).replace(/\.$/, '')} · ${plural(clips, 'clip')}`
+  const detail = `${(text.brief ?? text.why ?? text.status).replace(/\.$/, '')}\u00a0· ${plural(clips, 'clip')}`
+
   const checked = suitability.status === 'checked'
   return (
     <div className={styles.suitRow}>
@@ -217,10 +218,10 @@ export function BehindView() {
             {label}
           </Button>
           <div className={styles.costLine}>
-            <Lock /> Runs on this device · free
-            {download ? ` · ${formatBytes(download)} download, once` : ''}
-            {behindCount ? ` · ${plural(behindCount, 'clip')} already behind` : ''}
-            {noneSuitable ? ' · no clip has a person to cut out' : ''}
+            <Lock /> Runs on this device&nbsp;·&nbsp;free
+            {download ? `\u00a0· ${formatBytes(download)} download, once` : ''}
+            {behindCount ? `\u00a0· ${plural(behindCount, 'clip')} already behind` : ''}
+            {noneSuitable ? '\u00a0· no clip has a person to cut out' : ''}
           </div>
         </>
       }

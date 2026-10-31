@@ -1,9 +1,10 @@
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
-import { expect, openApp, test, waitForPreview } from './fixtures.ts'
+import { expect, openApp, openHarness, test, waitForPreview } from './fixtures.ts'
 
 const FIXTURE_DIR = path.resolve(import.meta.dirname, '../fixtures/.cache')
+const FONT_DIR = path.resolve(import.meta.dirname, '../../node_modules/@fontsource/anton/files')
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
 
 async function openEmptyEditor(page: Page) {
@@ -63,6 +64,50 @@ test('importing a song into an empty project makes it the song and analyzes it',
   // Undo removes the import; the analysis has no undo step of its own.
   await page.keyboard.press(`${mod}+z`)
   await expect(page.getByText('Start with a song')).toBeVisible()
+})
+
+test('the Import picker offers font files, and a picked font lands where a dropped one does', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?project=empty&kind=blank'
+  })
+  await expect(page.getByText('Start with a song')).toBeVisible()
+  const chooser = page.waitForEvent('filechooser')
+  await page.keyboard.press(`${mod}+i`)
+  const picker = await chooser
+  const accept = ((await picker.element().getAttribute('accept')) ?? '').split(',')
+  expect(accept).toEqual(expect.arrayContaining(['.ttf', '.otf', '.woff', '.woff2']))
+  await picker.setFiles(path.join(FONT_DIR, 'anton-latin-400-normal.woff2'))
+  await expect(page.getByText('Imported anton-latin-400-normal.woff2', { exact: true })).toBeVisible()
+
+  const woff = readFileSync(path.join(FONT_DIR, 'anton-latin-400-normal.woff')).toString('base64')
+  await page.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+    const data = new DataTransfer()
+    data.items.add(new File([bytes], 'anton-latin-400-normal.woff', { type: 'font/woff' }))
+    window.dispatchEvent(new DragEvent('dragover', { dataTransfer: data, cancelable: true }))
+    window.dispatchEvent(new DragEvent('drop', { dataTransfer: data, cancelable: true }))
+  }, woff)
+  await expect(page.getByText('Imported anton-latin-400-normal.woff', { exact: true })).toBeVisible()
+
+  // Both are font assets of the project, with no clip and no Media card.
+  const project = await page.evaluate(() => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    return {
+      assets: (Object.values(p.assets) as { name: string; kind: string }[])
+        .map((a) => `${a.name} ${a.kind}`)
+        .sort(),
+      clips: Object.keys(p.clips).length,
+    }
+  })
+  expect(project).toEqual({
+    assets: ['anton-latin-400-normal.woff font', 'anton-latin-400-normal.woff2 font'],
+    clips: 0,
+  })
+  await expect(page.getByRole('tabpanel', { name: 'Media' }).getByText(/anton/)).toHaveCount(0)
 })
 
 test('imported clips and images appear in the library and can be added at the playhead', async ({ page }) => {

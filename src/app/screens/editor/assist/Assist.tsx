@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { PointerEvent, ReactNode } from 'react'
 import {
   AudioLines,
   Box,
@@ -75,6 +75,12 @@ function Running() {
   )
 }
 
+/** Text cut off by the narrow panel gets its full text as a tooltip. */
+function titleIfCut(e: PointerEvent<HTMLElement>) {
+  const el = e.currentTarget
+  el.title = el.scrollWidth > el.clientWidth ? (el.textContent ?? '') : ''
+}
+
 function SongStatus() {
   const project = useProject()
   const list = sectionsOf(project)
@@ -89,8 +95,10 @@ function SongStatus() {
         <AudioLines />
       </span>
       <span className={styles.songText}>
-        <span className={styles.songTitle}>{analyzed ? 'Song analyzed' : SONG_STATE_TEXT[state]}</span>
-        <span className={`${styles.songMeta} tnum`}>
+        <span className={styles.songTitle} onPointerEnter={titleIfCut}>
+          {analyzed ? 'Song analyzed' : SONG_STATE_TEXT[state]}
+        </span>
+        <span className={`${styles.songMeta} tnum`} onPointerEnter={titleIfCut}>
           {analyzed ? (
             <>
               {bpm ? formatBpm(bpm) : SONG_STATE_TEXT['no-beat']} · {plural(list.length, 'section')}
@@ -113,8 +121,12 @@ function ToolRow({ tool, disabled }: { tool: ToolDef; disabled?: boolean }) {
     <button className={styles.tool} onClick={() => openAssist(tool.id)} disabled={disabled}>
       <span className={styles.toolIcon}>{tool.icon}</span>
       <span className={styles.toolText}>
-        <span className={styles.toolTitle}>{tool.title}</span>
-        <span className={styles.toolDesc}>{tool.desc}</span>
+        <span className={styles.toolTitle} onPointerEnter={titleIfCut}>
+          {tool.title}
+        </span>
+        <span className={styles.toolDesc} onPointerEnter={titleIfCut}>
+          {tool.desc}
+        </span>
       </span>
       {tool.status}
       <ChevronRight className={styles.chev} />

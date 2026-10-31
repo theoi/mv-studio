@@ -55,7 +55,7 @@ test('Assist › Behind the subject explains each shot and cuts the people out o
   await open(page, '#/editor?tab=assist&assist=behind&t=66.9')
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   const crowd = assist.getByText('Concert crowd', { exact: true }).locator('..').locator('..')
-  await expect(crowd.getByText(/^People are too small in this wide shot · \d+ clips?$/)).toBeVisible()
+  await expect(crowd.getByText(/^People are too small in this wide shot\s· \d+ clips?$/)).toBeVisible()
   await expect(crowd.getByText('Not suitable')).toBeVisible()
   const singer = assist.getByText('Singer close-up', { exact: true }).locator('..').locator('..')
   await expect(singer.getByText('Suitable', { exact: true })).toBeVisible()
@@ -170,7 +170,7 @@ test('a clip is cut out when the person and face detectors cannot download, and 
   await page.context().setOffline(true)
   await page.context().setOffline(false)
   await page.getByRole('tab', { name: 'Assist' }).click()
-  await expect(row.getByText(/^(Person found|Works in parts of this shot\. .+) · 1 clip$/)).toBeVisible({
+  await expect(row.getByText(/^(Person found|Works in parts of this shot\. .+)\s· 1 clip$/)).toBeVisible({
     timeout: 90_000,
   })
 })

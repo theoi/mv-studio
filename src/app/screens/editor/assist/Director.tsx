@@ -171,13 +171,13 @@ function IdleView() {
   else if (local)
     costLine = (
       <>
-        <Lock /> Runs on this device with your clips · free
+        <Lock /> Runs on this device with your clips&nbsp;·&nbsp;free
       </>
     )
   else
     costLine = (
       <>
-        <Info /> Your clips · the plan is written by {planner}, billed to your key
+        <Info /> Your clips&nbsp;· the plan is written by {planner}, billed to your key
       </>
     )
   return (
@@ -323,7 +323,7 @@ function ReadyView({ state }: { state: StateOf<'ready'> }) {
           )}
           {cost && (
             <div className={styles.costLine}>
-              <Info /> Charged by fal.ai to your key · prices checked {cost.pricesCheckedOn}
+              <Info /> Charged by fal.ai to your key&nbsp;· prices checked {cost.pricesCheckedOn}
             </div>
           )}
         </>

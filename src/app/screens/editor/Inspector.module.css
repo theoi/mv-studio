@@ -187,8 +187,9 @@
   color: var(--text-1);
 }
 
-.swatchItem[data-state='on'],
-.swatchAuto[data-state='on'] {
+/* Read from aria-checked: the Tooltip around each swatch replaces Radix's data-state. */
+.swatchItem[aria-checked='true'],
+.swatchAuto[aria-checked='true'] {
   background: var(--bg-input);
   color: var(--text-1);
   box-shadow: 0 0 0 1px var(--border-strong) inset;

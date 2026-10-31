@@ -51,6 +51,7 @@
 }
 
 .toastAction {
+  flex: none;
   height: 24px;
   padding: 0 8px;
   border-radius: var(--radius-sm);
@@ -63,6 +64,7 @@
 }
 
 .toastClose {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;

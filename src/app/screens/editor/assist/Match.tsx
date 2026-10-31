@@ -207,7 +207,8 @@ export function MatchView() {
           {analyzed || unreadable.length ? `Analyze ${plural(waiting, 'more clip')}` : 'Analyze footage'}
         </Button>
         <div className={styles.costLine}>
-          <Lock /> Runs on this device · free{download ? ` · ${formatBytes(download)} download, once` : ''}
+          <Lock /> Runs on this device&nbsp;·&nbsp;free
+          {download ? `\u00a0· ${formatBytes(download)} download, once` : ''}
         </div>
       </>
     ) : undefined
