@@ -19,8 +19,8 @@ export interface TokenSpan {
 /**
  * Most likely CTC path that emits exactly `tokens` within frames [from, to): blanks are optional between tokens and
  * required between equal neighbours. `blankCost[k]` (log-probability per frame) is charged for every frame spent in
- * the blank before token k (k = tokens.length: after the last). Returns one span per token, or null when the frames
- * cannot fit the tokens.
+ * the blank before token k (k = tokens.length: after the last), and `tokenCost[t]` for a token emitted in frame t
+ * (absolute). Returns one span per token, or null when the frames cannot fit the tokens.
  */
 export function forcedAlign(
   em: CtcEmissions,
@@ -29,6 +29,7 @@ export function forcedAlign(
   from = 0,
   to = em.frames,
   blankCost?: ArrayLike<number>,
+  tokenCost?: ArrayLike<number>,
 ): TokenSpan[] | null {
   const L = tokens.length
   const T = to - from
@@ -46,9 +47,10 @@ export function forcedAlign(
   let prev = new Float64Array(S).fill(-Infinity)
   let cur = new Float64Array(S)
   prev[0] = (lp[from * V + blank] as number) - costOf(0)
-  prev[1] = lp[from * V + (tokens[0] as number)] as number
+  prev[1] = (lp[from * V + (tokens[0] as number)] as number) - (tokenCost?.[from] ?? 0)
   for (let t = 1; t < T; t++) {
     const row = (from + t) * V
+    const emitCost = tokenCost?.[from + t] ?? 0
     // States that cannot be reached yet, or can no longer finish in time, stay at -Infinity.
     const sMin = Math.max(0, S - 2 * (T - t))
     const sMax = Math.min(S - 1, 2 * t + 1)
@@ -65,7 +67,7 @@ export function forcedAlign(
         arg = 2
       }
       if (best === -Infinity) continue
-      cur[s] = best + (lp[row + tokenOf(s)] as number) - costOf(s)
+      cur[s] = best + (lp[row + tokenOf(s)] as number) - (s % 2 === 1 ? emitCost : costOf(s))
       const k = t * S + s
       back[k >> 2] |= arg << ((k & 3) * 2)
     }
