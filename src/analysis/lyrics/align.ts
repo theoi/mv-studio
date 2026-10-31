@@ -34,10 +34,10 @@ export interface AlignOptions {
    */
   intraWordPause?: number
   /**
-   * Where someone sings (`voiceActivity` on the vocals stem). A letter placed outside costs `unvoicedCost`
-   * (log-probability per frame): separation leaves faint bleed in instrumental stretches, which otherwise draws lines
-   * into a long instrumental ending or gap. A cost rather than a ban, so a quiet line the detector misses can still be
-   * placed there.
+   * Where someone sings (`voiceActivity` on the vocals stem). A token (a letter or the word delimiter) placed outside
+   * costs `unvoicedCost` (log-probability per frame); blanks stay free. Separation leaves faint bleed in instrumental
+   * stretches, which otherwise draws lines into a long instrumental ending or gap. A cost rather than a ban, so a quiet
+   * line the detector misses can still be placed there.
    */
   voiced?: readonly TimeRange[]
   unvoicedCost?: number
@@ -54,9 +54,10 @@ const DEFAULT_INTRA_WORD_PAUSE = 0.05
 /*
  * With both on 21 dev songs: word onsets within 0.3 s 92.9% -> 94.5%, mean error 0.33 -> 0.11 s, words off by more
  * than 5 s 72 -> 7, and the same with a 40 s instrumental inserted mid-song or after the last line (without them:
- * 0.40 and 0.51 s). The unvoiced cost alone gives 0.22 s; 2 to 8 and voice thresholds of 20 to 30 dB do the same.
+ * 0.40 and 0.51 s). The line pause does most of it. An unvoiced cost of 2 to 8 does the same there; on the 24 songs
+ * behind the README figures, 4 put one song's last lines 2 to 14 s early and 2 did not.
  */
-const DEFAULT_UNVOICED_COST = 4
+const DEFAULT_UNVOICED_COST = 2
 const DEFAULT_LINE_PAUSE = 0.1
 /** Longer "lines" are lyrics pasted without line breaks, where a pause between two words says nothing. */
 const MAX_PAUSED_LINE_WORDS = 24

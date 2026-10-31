@@ -7,9 +7,10 @@
  * each word's start with `words/<file>.csv`.
  *
  *   node scripts/eval-lyric-timing.ts --cache ~/devdata/cache [--baseline] [--songs a,b] [--gap 40 [--gap-at end]]
- *     [--lines one|stanza] [--data dir] [--vocab vocab.json] [--verbose]
+ *     [--lines one|stanza] [--unvoiced-cost n] [--line-pause n] [--data dir] [--vocab vocab.json] [--verbose]
  *
  * --baseline   times without voice activity and line pauses, as before they were added
+ * --unvoiced-cost, --line-pause   override the aligner's defaults (0 turns either off)
  * --gap s      inserts s seconds of the song's own longest instrumental stretch (looped) at the line boundary nearest
  *              the middle, or after the last line with --gap-at end, and shifts the reference after it
  * --lines      pastes the lyrics as one line, or one line per stanza, instead of the published lines
@@ -35,6 +36,8 @@ const { values: args } = parseArgs({
     gap: { type: 'string' },
     'gap-at': { type: 'string', default: 'middle' },
     lines: { type: 'string', default: 'published' },
+    'unvoiced-cost': { type: 'string' },
+    'line-pause': { type: 'string' },
     verbose: { type: 'boolean', default: false },
   },
 })
@@ -170,7 +173,13 @@ for (const name of names) {
     em,
     vocab,
     lines,
-    args.baseline ? { linePause: 0 } : { voiced: voiceActivity(pcm, RATE) },
+    args.baseline
+      ? { linePause: 0 }
+      : {
+          voiced: voiceActivity(pcm, RATE),
+          unvoicedCost: args['unvoiced-cost'] === undefined ? undefined : Number(args['unvoiced-cost']),
+          linePause: args['line-pause'] === undefined ? undefined : Number(args['line-pause']),
+        },
   )
   const errors = aligned.flatMap((l) => l.words).map((w, i) => Math.abs(w.start - reference[i]!.start))
   total.all.push(...errors)

@@ -179,6 +179,7 @@ describe('alignLines across instrumental stretches', () => {
     expect(startOfSecond([{ text: `${first} ${second}` }])).toBe(40)
   })
 })
+
 describe('lyrics text', () => {
   it('drops section markers and blank lines', () => {
     expect(parseLyricsText('[Chorus]\nHold on\n\n(x2)\n  tight  now ')).toEqual([
