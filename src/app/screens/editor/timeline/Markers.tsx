@@ -1,4 +1,12 @@
-import { memo, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
+import {
+  memo,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react'
 import type { Marker } from '../../../../model/index.ts'
 import {
   ContextMenu,
@@ -7,8 +15,15 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '../../../ds/Menu.tsx'
+import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatTime } from '../../../format.ts'
-import { moveMarker, removeMarker, renameMarker } from '../../../state/markers.ts'
+import {
+  moveMarker,
+  nudgeMarker,
+  removeMarker,
+  renameMarker,
+  snapMarkerTime,
+} from '../../../state/markers.ts'
 import { editor } from '../../../state/project.ts'
 import { get, set } from '../../../state/ui.ts'
 import styles from './Markers.module.css'
@@ -22,8 +37,11 @@ const MIN_LABEL_PX = 24
  */
 export const Markers = memo(function Markers({ markers, pps }: { markers: readonly Marker[]; pps: number }) {
   const [renaming, setRenaming] = useState<string | null>(null)
-  return markers.map((m, i) => {
-    const next = markers[i + 1]
+  // The marker to focus when it next renders: after a rename ends with Enter or Esc, or a neighbor is deleted.
+  const focusNextRef = useRef<string | null>(null)
+  const sorted = useMemo(() => [...markers].sort((a, b) => a.time - b.time), [markers])
+  return sorted.map((m, i) => {
+    const next = sorted[i + 1]
     return (
       <MarkerFlag
         key={m.id}
@@ -32,6 +50,8 @@ export const Markers = memo(function Markers({ markers, pps }: { markers: readon
         labelWidth={Math.min(160, next ? (next.time - m.time) * pps - 12 : 160)}
         renaming={renaming === m.id}
         setRenaming={setRenaming}
+        focusNextRef={focusNextRef}
+        neighbor={(next ?? sorted[i - 1])?.id ?? null}
       />
     )
   })
@@ -43,14 +63,23 @@ function MarkerFlag({
   labelWidth,
   renaming,
   setRenaming,
+  focusNextRef,
+  neighbor,
 }: {
   marker: Marker
   pps: number
   labelWidth: number
   renaming: boolean
   setRenaming: (id: string | null) => void
+  focusNextRef: { current: string | null }
+  neighbor: string | null
 }) {
   const goTo = () => set({ playhead: marker.time, playing: false })
+  const time = formatTime(marker.time, true)
+  const remove = () => {
+    focusNextRef.current = neighbor
+    removeMarker(marker.id)
+  }
 
   const startDrag = (e: PointerEvent<HTMLButtonElement>) => {
     // The ruler under it would move the playhead, and for a right-click capture the pointer so the menu never opens.
@@ -64,7 +93,7 @@ function MarkerFlag({
     const move = (ev: globalThis.PointerEvent) => {
       if (!moved && Math.abs(ev.clientX - x0) < 3) return
       moved = true
-      moveMarker(marker.id, t0 + (ev.clientX - x0) / get().pxPerSec, true)
+      moveMarker(marker.id, snapMarkerTime(t0 + (ev.clientX - x0) / get().pxPerSec), true)
     }
     const up = () => {
       el.removeEventListener('pointermove', move)
@@ -81,9 +110,9 @@ function MarkerFlag({
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === 'Enter') goTo()
     else if (e.key === 'F2') setRenaming(marker.id)
-    else if (e.key === 'Delete' || e.key === 'Backspace') removeMarker(marker.id)
+    else if (e.key === 'Delete' || e.key === 'Backspace') remove()
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
-      moveMarker(marker.id, marker.time + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 0.1))
+      nudgeMarker(marker.id, (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 0.1))
     else return
     // Handled here: not the playhead, split or delete-clip shortcuts.
     e.preventDefault()
@@ -108,7 +137,10 @@ function MarkerFlag({
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') e.currentTarget.value = marker.label
-          if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
+          if (e.key === 'Enter' || e.key === 'Escape') {
+            focusNextRef.current = marker.id
+            e.currentTarget.blur()
+          }
           e.stopPropagation()
         }}
       />
@@ -116,23 +148,31 @@ function MarkerFlag({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <button
-          className={styles.marker}
-          style={style}
-          aria-label={`${marker.label}, marker at ${formatTime(marker.time, true)}`}
-          onPointerDown={startDrag}
-          onDoubleClick={() => setRenaming(marker.id)}
-          onKeyDown={onKeyDown}
-        >
-          <span className={styles.flag} aria-hidden />
-          {labelWidth >= MIN_LABEL_PX && (
-            <span className={styles.label} style={{ maxWidth: labelWidth }}>
-              {marker.label}
-            </span>
-          )}
-        </button>
-      </ContextMenuTrigger>
+      <Tooltip label={`${marker.label} · ${time}`} description="Drag to move · Double-click to rename">
+        <ContextMenuTrigger asChild>
+          <button
+            ref={(el) => {
+              if (el && focusNextRef.current === marker.id) {
+                focusNextRef.current = null
+                el.focus()
+              }
+            }}
+            className={styles.marker}
+            style={style}
+            aria-label={`${marker.label}, marker at ${time}`}
+            onPointerDown={startDrag}
+            onDoubleClick={() => setRenaming(marker.id)}
+            onKeyDown={onKeyDown}
+          >
+            <span className={styles.flag} aria-hidden />
+            {labelWidth >= MIN_LABEL_PX && (
+              <span className={styles.label} style={{ maxWidth: labelWidth }}>
+                {marker.label}
+              </span>
+            )}
+          </button>
+        </ContextMenuTrigger>
+      </Tooltip>
       <ContextMenuContent>
         <ContextMenuItem shortcut="Enter" onSelect={goTo}>
           Go to marker
@@ -141,7 +181,7 @@ function MarkerFlag({
           Rename…
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem danger shortcut="Delete" onSelect={() => removeMarker(marker.id)}>
+        <ContextMenuItem danger shortcut="Delete" onSelect={remove}>
           Remove marker
         </ContextMenuItem>
       </ContextMenuContent>

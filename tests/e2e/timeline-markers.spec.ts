@@ -53,6 +53,10 @@ test('markers are added at the playhead, drawn on the ruler, and go to, move, re
   await expect(first).toContainText('Marker 1')
   await page.screenshot({ path: testInfo.outputPath('timeline-markers.png') })
 
+  await first.hover()
+  await expect(page.getByRole('tooltip')).toContainText('Marker 1 · 1:07.0')
+  await expect(page.getByRole('tooltip')).toContainText('Drag to move · Double-click to rename')
+
   // A click goes to the marker.
   await first.click()
   expect(await playhead(page)).toBe(67)
@@ -76,16 +80,17 @@ test('markers are added at the playhead, drawn on the ruler, and go to, move, re
   const name = page.getByRole('textbox', { name: 'Rename marker' })
   await name.fill('Drop')
   await name.press('Enter')
+  // Focus goes back to the marker, so the keys below act on it.
   const drop = page.getByRole('button', { name: 'Drop, marker at 1:07.0' })
-  await expect(drop).toBeVisible()
+  await expect(drop).toBeFocused()
 
-  // The arrows nudge a focused marker without moving the playhead; Delete removes it.
-  await drop.focus()
+  // The arrows nudge a focused marker without moving the playhead; Delete removes it and focuses the next one.
   await page.keyboard.press('ArrowRight')
   expect((await markers(page))[0]).toEqual(['Drop', 67.1])
   expect(await playhead(page)).toBe(67)
   await page.keyboard.press('Delete')
   expect(await markers(page)).toEqual([['Marker 2', 75]])
+  await expect(page.getByRole('button', { name: 'Marker 2, marker at 1:15.0' })).toBeFocused()
   await page.keyboard.press(`${mod}+z`)
   expect(await markers(page)).toEqual([
     ['Drop', 67.1],
@@ -101,5 +106,6 @@ test('markers are added at the playhead, drawn on the ruler, and go to, move, re
     .click()
   await expect(second).toBeHidden()
   expect(await markers(page)).toEqual([['Drop', 67.1]])
+  await expect(page.getByRole('button', { name: /^Drop, marker at/ })).toBeFocused()
   expect(await playhead(page)).toBe(67)
 })

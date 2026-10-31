@@ -9,6 +9,9 @@ import { get, toast } from './ui.ts'
 
 /** Markers closer than this are at the same place, so M twice does not stack two flags. */
 const SAME_PLACE = 0.05
+/** Nudges closer together than this are one undo step. */
+const NUDGE_PAUSE_MS = 800
+const SNAP_PX = 8
 
 /** "Marker 1", "Marker 2": the lowest number no marker is named with. */
 export function nextMarkerName(markers: readonly Marker[]): string {
@@ -55,4 +58,21 @@ export function renameMarker(id: string, label: string): void {
 
 export function removeMarker(id: string): void {
   dispatch({ type: 'marker.remove', markerId: id }, { label: 'Remove marker' })
+}
+
+let nudgeEnd = 0
+
+/** Arrow-key nudges: a run of them, until a pause, is one undo step. */
+export function nudgeMarker(id: string, delta: number): void {
+  const marker = editor.getProject().markers.find((m) => m.id === id)
+  if (!marker) return
+  moveMarker(id, marker.time + delta, true)
+  window.clearTimeout(nudgeEnd)
+  nudgeEnd = window.setTimeout(() => editor.endGesture(), NUDGE_PAUSE_MS)
+}
+
+/** Where a dragged marker lands: on the playhead when snapping is on and it is within a few pixels. */
+export function snapMarkerTime(time: number): number {
+  const { snap, playhead, pxPerSec } = get()
+  return snap && Math.abs(time - playhead) * pxPerSec < SNAP_PX ? playhead : time
 }

@@ -4,8 +4,10 @@ import {
   addMarkerAtPlayhead,
   moveMarker,
   nextMarkerName,
+  nudgeMarker,
   removeMarker,
   renameMarker,
+  snapMarkerTime,
 } from '../../../src/app/state/markers.ts'
 import { editor } from '../../../src/app/state/project.ts'
 import { get, set } from '../../../src/app/state/ui.ts'
@@ -94,5 +96,35 @@ describe('markers', () => {
     expect(markers()).toEqual([])
     editor.undo()
     expect(markers()).toEqual([['Drop', 20]])
+  })
+
+  it('a run of arrow nudges is one undo step, until a pause', () => {
+    vi.useFakeTimers()
+    try {
+      set({ playhead: 5 })
+      const id = addMarkerAtPlayhead()!
+      const time = () => editor.getProject().markers[0]!.time
+      nudgeMarker(id, 0.1)
+      vi.advanceTimersByTime(500)
+      nudgeMarker(id, 1)
+      vi.advanceTimersByTime(800)
+      nudgeMarker(id, -0.1)
+      expect(time()).toBeCloseTo(6)
+      editor.undo()
+      expect(time()).toBeCloseTo(6.1)
+      editor.undo()
+      expect(time()).toBe(5)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a dragged marker lands on the playhead within a few pixels, when snapping is on', () => {
+    set({ playhead: 10, pxPerSec: 100, snap: true })
+    expect(snapMarkerTime(10.05)).toBe(10)
+    expect(snapMarkerTime(9.95)).toBe(10)
+    expect(snapMarkerTime(10.1)).toBe(10.1)
+    set({ snap: false })
+    expect(snapMarkerTime(10.05)).toBe(10.05)
   })
 })
