@@ -11,6 +11,7 @@ import {
   type VjSession,
   type VjSettings,
 } from '../../vj/index.ts'
+import { loadVjMode } from '../preload.ts'
 import { stagePreview } from '../screens/editor/stage.ts'
 import { get, set } from './ui.ts'
 
@@ -24,6 +25,8 @@ export function setActiveVjSession(session: VjSession | null) {
 let entryFrame: ImageBitmap | null = null
 const entryListeners = new Set<() => void>()
 let focusVjButton = false
+/** Set while VJ mode's code loads (see enterVj), so another press does not start a second entry. */
+let entering = false
 
 function setEntryFrame(frame: ImageBitmap | null) {
   if (frame === entryFrame) return
@@ -33,21 +36,29 @@ function setEntryFrame(frame: ImageBitmap | null) {
 }
 
 /**
- * Opens VJ mode at once, and captures the editor's frame at the playhead on the way (its preview finishes the capture
- * as it closes), for the VJ stage to show while its own preview starts, which takes a second or two.
+ * Opens VJ mode, capturing the editor's frame at the playhead on the way (its preview finishes the capture as it
+ * closes) for the VJ stage to show while its own preview starts, which takes a second or two. The editor stays on
+ * screen until VJ mode's code has loaded: until then the screen's loading fallback would blank the whole window.
  */
 export function enterVj() {
-  if (get().screen === 'vj') return
+  if (get().screen === 'vj' || entering) return
+  entering = true
   setEntryFrame(null)
   const capture = stagePreview()?.captureFrame()
-  set({ screen: 'vj' })
   capture?.then(
     (frame) => {
-      if (get().screen === 'vj') setEntryFrame(frame)
+      if (entering || get().screen === 'vj') setEntryFrame(frame)
       else frame.close()
     },
     () => undefined,
   )
+  void loadVjMode()
+    .catch(() => undefined)
+    .then(() => {
+      entering = false
+      if (get().screen === 'editor') set({ screen: 'vj' })
+      else clearVjEntryFrame()
+    })
 }
 
 export function subscribeVjEntryFrame(listener: () => void): () => void {

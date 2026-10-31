@@ -470,14 +470,61 @@ test('opened from the editor, VJ mode shows the frame at the playhead at once; l
   await page.keyboard.press('Escape')
   await expect(live).toBeHidden()
   await expect(vjButton).toBeFocused()
+  // Focus from the keyboard shows the button's ring and tooltip.
+  const tooltip = page.getByRole('tooltip').filter({ hasText: 'VJ mode' })
+  await expect(tooltip).toHaveCount(1)
 
   await page.keyboard.press('Shift+KeyV')
   await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
   await page.getByRole('button', { name: 'Back to editor' }).click()
   await expect(live).toBeHidden()
   await expect(vjButton).toBeFocused()
+  // After a click, the focus draws no ring, and no tooltip opens over the panels below.
+  await page.waitForTimeout(700)
+  await expect(tooltip).toHaveCount(0)
   await waitForPreview(page)
+
+  // Each preview closed on the way (the editor's twice, VJ mode's twice) closed its video frames. The browser reports
+  // a frame collected unclosed about 10 s after the collection.
+  const cdp = await page.context().newCDPSession(page)
+  for (let i = 0; i < 12; i++) {
+    await cdp.send('HeapProfiler.collectGarbage')
+    await page.waitForTimeout(1000)
+  }
   expect(problems).toEqual([])
+})
+
+test('the first VJ entry keeps the editor on screen until VJ mode has loaded', async ({ page }) => {
+  // VJ mode's code arrives late, as on a first visit over a slow connection.
+  let delayed = 0
+  await page.context().route(/\/assets\/VjMode-[^/]+\.js$/, async (route) => {
+    delayed++
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await route.continue()
+  })
+  await openApp(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=60'
+  })
+  await waitForPreview(page)
+  // Before each paint: whether the screen's loading placeholder is up instead of a screen.
+  await page.evaluate(() => {
+    const w = window as unknown as { blankFrames: number }
+    w.blankFrames = 0
+    const tick = () => {
+      if (document.querySelector('.screen-loading')) w.blankFrames++
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+  await page.getByRole('button', { name: 'VJ', exact: true }).click()
+  await expect(page.getByRole('img', { name: 'Live output' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('img', { name: 'Live output' })).toHaveAttribute('aria-busy', 'false', {
+    timeout: 30_000,
+  })
+  expect(delayed).toBeGreaterThan(0)
+  expect(await page.evaluate(() => (window as unknown as { blankFrames: number }).blankFrames)).toBe(0)
 })
 
 test('opened directly, the VJ stage says it is preparing until the live output draws', async ({ page }) => {

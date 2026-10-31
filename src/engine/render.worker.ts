@@ -52,6 +52,16 @@ const api = {
     const bitmap = await (await activePreview()).capture()
     return transfer({ bitmap }, [bitmap])
   },
+  /**
+   * Closes the preview's video frames and GL objects once its queued frames are drawn. The main thread calls it before
+   * terminating this worker: the browser reports frames a terminated worker still holds as never closed.
+   */
+  previewStop: async () => {
+    const current = preview
+    preview = null
+    if (current) await (await current).stop()
+    return true
+  },
 }
 
 export type RenderWorkerApi = typeof api
