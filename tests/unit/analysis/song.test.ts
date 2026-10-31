@@ -103,10 +103,10 @@ describe('sectionFields', () => {
       },
       [0, 10, 20, 30, 40, 50],
     )
-    expect(fields.map((s) => [s.start, s.end, s.label])).toEqual([
-      [0, 20, 'verse'],
-      [20, 30, 'chorus'],
-      [30, 60, 'verse'],
+    expect(fields.map((s) => [s.start, s.end, s.label, s.confidence])).toEqual([
+      [0, 20, 'verse', undefined],
+      [20, 30, 'chorus', 0.4],
+      [30, 60, 'verse', undefined],
     ])
   })
 })

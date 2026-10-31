@@ -14,6 +14,12 @@ const MAX_STRETCH = 1.25
 const SNAP = 2
 /** Labels the section analysis assigns; any other label was entered by the user and is kept. */
 const DETECTED = new Set(['intro', 'verse', 'chorus', 'bridge', 'outro'])
+/** `SongSection.confidence` of a chorus found from the audio alone. A label the user typed has confidence 1. */
+export const AUDIO_CHORUS_CONFIDENCE = 0.4
+/** `SongSection.confidence` of a chorus found from repeated lyric lines. */
+export const LYRIC_CHORUS_CONFIDENCE = 0.8
+/** `SongSection.confidence` of an audio chorus that drafted (transcribed) lyrics repeat as well. */
+export const DRAFT_CONFIRMED_CHORUS_CONFIDENCE = 0.6
 
 /**
  * The chorus from timed lyrics: the repeated run of at least two lines that covers the most of the song
@@ -62,15 +68,18 @@ function sameLine(a: Set<string>, b: Set<string>): boolean {
 
 /**
  * The sections with `chorus` as their choruses: sections are cut at the chorus edges (moved to the nearest downbeat
- * within 2 s), the pieces inside become one repeat group labeled chorus, and detected choruses outside become verses.
- * Labels the user entered are kept. Neighbours with the same label merge, as in the section analysis. The chorus
- * keeps the repeat group it mostly came from when no section outside it shares that group.
+ * within 2 s), the pieces inside become one repeat group labeled chorus with `confidence`, and detected choruses
+ * outside become verses. Labels the user entered (any label with confidence 1, or one the analysis never assigns) are
+ * kept. Neighbours with the same label merge, as in the section analysis. The chorus keeps the repeat group it mostly
+ * came from when no section outside it shares that group.
  */
 export function withChorus(
   sections: readonly SongSection[],
   chorus: readonly TimeRange[],
   downbeats: readonly number[],
+  confidence: number,
 ): SongSection[] {
+  const detected = (s: SongSection) => DETECTED.has(s.label) && s.confidence !== 1
   const snap = (t: number) => {
     let best = t
     let distance = SNAP
@@ -101,7 +110,7 @@ export function withChorus(
         start: cuts[k]!,
         end: cuts[k + 1]!,
       }
-      cut.push({ piece, inside: DETECTED.has(s.label) && inChorus((piece.start + piece.end) / 2) })
+      cut.push({ piece, inside: detected(s) && inChorus((piece.start + piece.end) / 2) })
     }
   }
   const weight = new Map<number, number>()
@@ -119,10 +128,16 @@ export function withChorus(
     if (inside) {
       piece.label = 'chorus'
       piece.repeatGroup = group
-    } else if (piece.label === 'chorus') piece.label = 'verse'
+      piece.confidence = confidence
+    } else if (piece.label === 'chorus' && detected(piece)) {
+      piece.label = 'verse'
+      delete piece.confidence
+    }
     const last = pieces.at(-1)
     const sameKind =
-      last?.label === piece.label && (last.repeatGroup === piece.repeatGroup || piece.label !== 'chorus')
+      last?.label === piece.label &&
+      last.confidence === piece.confidence &&
+      (last.repeatGroup === piece.repeatGroup || piece.label !== 'chorus')
     if (last && (piece.end - piece.start < 1 || sameKind)) last.end = piece.end
     else pieces.push(piece)
   }
@@ -130,17 +145,40 @@ export function withChorus(
 }
 
 /**
- * The edit that relabels the song's sections so the lyrics' chorus is the chorus. Null when the lyrics have no
- * repeated run of lines or the song has no sections. A background result: dispatch with `{ history: 'skip' }`; it
- * applies only if the sections are still the ones it was computed from.
+ * The edit that relabels the song's sections so the lyrics' chorus is the chorus. Lyrics that are not pasted (drafts,
+ * edited or not) do not move the chorus: they mishear too many words, so their repeated runs come out short and
+ * partial. When their chorus mostly lies inside the detected chorus they confirm it instead, raising its confidence.
+ * Null when there is nothing to change. A background result: dispatch with \`{ history: 'skip' }\`; it applies only if
+ * the sections are still the ones it was computed from.
  */
 export function lyricChorusCommand(analysis: AudioAnalysis, lyrics: LyricsDoc): EditCommand | null {
   const chorus = findLyricChorus(lyrics.lines)
-  if (!chorus || !analysis.sections?.length) return null
+  const sections = analysis.sections
+  if (!chorus || !sections?.length) return null
+  const refined =
+    lyrics.source === 'pasted'
+      ? withChorus(sections, chorus, analysis.downbeats ?? [], LYRIC_CHORUS_CONFIDENCE)
+      : confirmed(sections, chorus)
+  if (!refined) return null
   return {
     type: 'analysis.setRefined',
     assetId: analysis.assetId,
-    refined: { sections: withChorus(analysis.sections, chorus, analysis.downbeats ?? []) },
-    baseline: { sections: analysis.sections },
+    refined: { sections: refined },
+    baseline: { sections },
   }
+}
+
+/** The sections with their detected chorus confirmed, or null when \`chorus\` mostly lies outside it. */
+function confirmed(sections: readonly SongSection[], chorus: readonly TimeRange[]): SongSection[] | null {
+  const unsure = (s: SongSection) =>
+    s.label === 'chorus' && (s.confidence ?? 0) < DRAFT_CONFIRMED_CHORUS_CONFIDENCE
+  let inside = 0
+  let total = 0
+  for (const r of chorus) {
+    total += r.end - r.start
+    for (const s of sections)
+      if (unsure(s)) inside += Math.max(0, Math.min(r.end, s.end) - Math.max(r.start, s.start))
+  }
+  if (inside <= total / 2) return null
+  return sections.map((s) => (unsure(s) ? { ...s, confidence: DRAFT_CONFIRMED_CHORUS_CONFIDENCE } : s))
 }

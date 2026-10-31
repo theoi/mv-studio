@@ -15,7 +15,7 @@ import {
   type SongSections,
 } from './structure/sections.ts'
 import { computeAudioFeatures } from './features/features.ts'
-import { withChorus } from './structure/chorus.ts'
+import { AUDIO_CHORUS_CONFIDENCE, withChorus } from './structure/chorus.ts'
 
 /** Stored with results; bump when algorithms change so older analyses can be recomputed. */
 export const ANALYZER_VERSION = 'mvs-audio-2'
@@ -60,7 +60,7 @@ export function sectionFields(sections: SongSections, downbeats: readonly number
     repeatGroup: s.group.charCodeAt(0) - 65,
     energy: s.energy,
   }))
-  return withChorus(fields, sections.chorus, downbeats)
+  return withChorus(fields, sections.chorus, downbeats, AUDIO_CHORUS_CONFIDENCE)
 }
 
 /** Fast path: tempo, beat grid, provisional downbeats, sections, energy and features in a few seconds. */
