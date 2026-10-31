@@ -2580,7 +2580,7 @@ export function Timeline() {
             >
               {i === refusedDrop.labelAt && (
                 <span className={styles.refusedLabel} style={{ left: HEADER_W + 3 }}>
-                  {refusedDrop.label}
+                  <span className={styles.refusedText}>{refusedDrop.label}</span>
                 </span>
               )}
             </div>

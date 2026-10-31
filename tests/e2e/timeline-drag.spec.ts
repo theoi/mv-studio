@@ -215,9 +215,13 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   await page.mouse.move(from.x, overlayY, { steps: 8 })
   const label = page.getByText('Looks only', { exact: true })
   await expect(label).toBeVisible()
-  const outline = (await label.locator('..').boundingBox())!
+  const outline = (await label.locator('../..').boundingBox())!
   const bars = (await spectrum.boundingBox())!
   expect(Math.abs(outline.x - bars.x)).toBeLessThan(2)
+  // Its outline starts in view, so the label crosses the lane's top edge.
+  const across = (await label.boundingBox())!
+  expect(across.y).toBeLessThan(outline.y)
+  expect(across.y + across.height).toBeGreaterThan(outline.y)
   await page.keyboard.press('Escape')
   await expect(label).toBeHidden()
   await expect(content).not.toHaveAttribute('data-refused')
@@ -242,7 +246,7 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().selection)).toEqual({ type: 'clip', id })
 })
 
-test('a refusal label stays in view at the left of the lanes when its outline starts off screen', async ({
+test('a refusal label stays in view at the left of the lanes, inside its outline, when the outline starts off screen', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
@@ -262,15 +266,15 @@ test('a refusal label stays in view at the left of the lanes when its outline st
   const label = page.getByText('No looks here', { exact: true })
   await expect(label).toBeVisible()
   const pill = (await label.boundingBox())!
-  const outline = (await label.locator('..').boundingBox())!
+  const outline = (await label.locator('../..').boundingBox())!
   expect(outline.x).toBeLessThan(lanesLeft)
   expect(pill.x).toBeGreaterThanOrEqual(lanesLeft)
   expect(pill.x + pill.width).toBeLessThanOrEqual(
     Math.min(scroller.x + scroller.width, outline.x + outline.width),
   )
-  // Across the lane's top edge, as before.
-  expect(pill.y).toBeLessThan(outline.y)
-  expect(pill.y + pill.height).toBeGreaterThan(outline.y)
+  // Inside the outline, off the Look lane above, where the look's own name sticks to the same edge.
+  expect(pill.y).toBeGreaterThanOrEqual(outline.y)
+  expect(pill.y + pill.height).toBeLessThanOrEqual(outline.y + outline.height)
   await page.keyboard.press('Escape')
   await page.mouse.up()
 })

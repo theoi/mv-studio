@@ -1082,16 +1082,23 @@
   pointer-events: none;
 }
 
-/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Across
-   the lane's top edge, between the clip rows, so it covers no clip names. Sticks to the left edge of the lanes (its left
-   is set inline) within the outline, so an outline that starts off screen (a look over the whole song) keeps its reason
-   in view, as clip names do. */
+/* Sticks to the left edge of the lanes (its left is set inline) within the outline, so an outline that starts off
+   screen (a look over the whole song) keeps its reason in view, as clip names do. */
 .refusedLabel {
   position: sticky;
   z-index: 1;
   display: block;
   width: max-content;
+  height: 100%;
   margin: 0 3px;
+  container-type: scroll-state;
+}
+
+/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Across
+   the lane's top edge, between the clip rows, so it covers no clip names. */
+.refusedText {
+  position: relative;
+  display: block;
   padding: 1px var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--bg-overlay);
@@ -1100,6 +1107,17 @@
   font-size: var(--text-xs);
   white-space: nowrap;
   transform: translateY(calc(-50% - 3px));
+}
+
+/* Stuck at the left edge, where the lane above may have a name stuck too: inside the outline instead, short enough for
+   the outline of a look lane. */
+@container scroll-state(stuck: left) {
+  .refusedText {
+    top: 50%;
+    padding-block: 0;
+    line-height: 14px;
+    transform: translateY(-50%);
+  }
 }
 
 .content[data-refused],
