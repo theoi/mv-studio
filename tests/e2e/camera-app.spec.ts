@@ -615,7 +615,7 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
   await expect(note).toHaveText('This image may bend straight lines at this strength. Try another Motion.')
   await setSafe(1, 0.1, true)
   await expect(note).toHaveText(
-    'Straight lines in this image bend with any Motion; a lower Strength makes it less visible.',
+    'Straight lines in this image may bend with any Motion. A lower Strength bends them less.',
   )
   await expect(detail).toHaveText('Strength 100% · may bend lines above 10%')
 })

@@ -212,10 +212,10 @@ export function riskNote(
 ): string | null {
   const risky = moves.filter((m) => m.risks.length)
   if (!risky.length) return null
-  const count = risky.length === total ? `all ${total}` : `${risky.length} of ${total}`
+  const count = risky.length < total ? `${risky.length} of ${total}` : total === 2 ? 'both' : `all ${total}`
   // Neither another motion nor a strength that still shows keeps such lines straight.
   if (risky.every((m) => m.alwaysBends && m.risks.every((r) => r.risk === 'bend')))
-    return `Straight lines in ${total === 1 ? 'this image' : `${count} images`} bend with any Motion; a lower Strength makes it less visible.`
+    return `Straight lines in ${total === 1 ? 'this image' : `${count} images`} may bend with any Motion. A lower Strength bends them less.`
   const has = (risk: CameraRisk) => risky.some((m) => m.risks.some((x) => x.risk === risk))
   const { smear, bend } = RISK_WORDS.long
   const what = has('smear') && has('bend') ? `${smear} or ${bend}` : has('smear') ? smear : bend
