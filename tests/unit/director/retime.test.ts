@@ -3,6 +3,7 @@ import {
   buildPlannerInput,
   compilePlan,
   directorMeta,
+  lyricTextCommands,
   planLocally,
   retimeDirectorLyricCommands,
 } from '../../../src/director/index.ts'
@@ -122,5 +123,71 @@ describe('retimeDirectorLyricCommands', () => {
   it('changes nothing when the timing is the same', async () => {
     const p = await drafted()
     expect(retimeDirectorLyricCommands(p, p.lyrics!)).toEqual([])
+  })
+})
+
+describe('lyricTextCommands', () => {
+  const retype = (p: Project, lineId: string, text: string) => {
+    const editor = new ProjectEditor(p)
+    editor.dispatch([
+      ...lyricTextCommands(p, lineId, text),
+      { type: 'lyrics.updateLine', lineId, patch: { text } },
+    ])
+    return editor.getProject()
+  }
+  const lineClips = (p: Project, lineId: string) =>
+    Object.values(p.clips).filter((c): c is TextClip => c.type === 'text' && c.lyricLineId === lineId)
+
+  it('keeps an emphasized ending while the line still ends with it, and retypes the words before it', async () => {
+    const p = await drafted()
+    const [word] = director(p, 'emphasis', 'l3')
+    const [head] = lineClips(p, 'l3')
+    expect(head?.text).toBe('Hold on hold on')
+    const after = retype(p, 'l3', 'Hold me close tonight')
+    expect((after.clips[head!.id] as TextClip).text).toBe('Hold me close')
+    expect(after.clips[word!.id]).toEqual(word)
+    // Timing is the line's, not the text's.
+    expect(after.clips[head!.id]).toMatchObject({ start: head!.start, duration: head!.duration })
+  })
+
+  it('removes an emphasized ending the line no longer has, and shows the whole line instead', async () => {
+    const p = await drafted()
+    const [word] = director(p, 'emphasis', 'l4')
+    const [head] = lineClips(p, 'l4')
+    expect(word?.text).toBe('bright')
+    const after = retype(p, 'l4', 'We are burning slow')
+    expect(after.clips[word!.id]).toBeUndefined()
+    expect((after.clips[head!.id] as TextClip).text).toBe('We are burning slow')
+  })
+
+  it('retypes whole-line clips and next-line previews, keeping their rows, and leaves hand-edited and locked clips', async () => {
+    const drafted_ = await drafted()
+    const [preview] = director(drafted_, 'preview', 'f2')
+    const [line] = lineClips(drafted_, 'f2')
+    const [first] = lineClips(drafted_, 'f1')
+    const editor = new ProjectEditor(drafted_)
+    editor.dispatch([
+      // The same words in two rows, as the director lays out long lines.
+      { type: 'clip.set', clipId: line!.id, path: ['text'], value: 'Every light is\nflashing by so fast' },
+      { type: 'clip.set', clipId: first!.id, path: ['text'], value: 'Running down the road' },
+    ])
+    const p = editor.getProject()
+    const after = retype(p, 'f2', 'Every light is racing by so fast')
+    expect((after.clips[line!.id] as TextClip).text).toBe('Every light is\nracing by so fast')
+    const retyped = (after.clips[preview!.id] as TextClip).text
+    expect(retyped.split(/\s+/).join(' ')).toBe('Every light is racing by so fast')
+    expect(retyped.split('\n')).toHaveLength(preview!.text.split('\n').length)
+    expect(retype(p, 'f1', 'Running down the open road tonight').clips[first!.id]).toEqual(p.clips[first!.id])
+
+    const locked = new ProjectEditor(p)
+    locked.dispatch({ type: 'track.update', trackId: preview!.trackId, patch: { locked: true } })
+    const kept = retype(locked.getProject(), 'f2', 'Every light is racing by so fast')
+    expect(kept.clips[preview!.id]).toEqual(p.clips[preview!.id])
+  })
+
+  it('changes nothing for the same text or a line that is not in the lyrics', async () => {
+    const p = await drafted()
+    expect(lyricTextCommands(p, 'l3', p.lyrics!.lines.find((l) => l.id === 'l3')!.text)).toEqual([])
+    expect(lyricTextCommands(p, 'nope', 'Anything')).toEqual([])
   })
 })

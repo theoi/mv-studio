@@ -30,6 +30,7 @@ import {
 } from './compile.ts'
 import { AUDIO_SOURCES, COLOR_KEYS } from './plan.ts'
 import type { IdMap } from './project-summary.ts'
+import { lyricTextCommands } from './retime.ts'
 
 export const PROPERTIES = [
   'opacity',
@@ -879,7 +880,10 @@ function runOperation(ctx: OpCtx): EditCommand[] {
       const lineId = realId(ctx, op.line)
       if (!lineId || !project(ctx).lyrics?.lines.some((l) => l.id === lineId))
         fail(ctx, `lyric line ${op.line} doesn't exist`)
-      return apply(ctx, [{ type: 'lyrics.updateLine', lineId, patch: { text: op.text } }])
+      return apply(ctx, [
+        ...lyricTextCommands(project(ctx), lineId, op.text),
+        { type: 'lyrics.updateLine', lineId, patch: { text: op.text } },
+      ])
     }
   }
 }

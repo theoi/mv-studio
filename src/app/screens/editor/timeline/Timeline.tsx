@@ -924,6 +924,8 @@ interface ClipBlockProps {
   selected: boolean
   /** Keyframes of the clip, shown while it is the only selected clip. */
   marks?: KeyframeMark[]
+  /** Over a lyric chip on its track (a director's emphasized word): drawn in the lower half, the chip's upper half takes clicks. */
+  overChip?: boolean
   onPointerDown: (e: React.PointerEvent, clip: ClipView, mode: DragMode) => void
 }
 
@@ -947,6 +949,7 @@ const ClipBlock = memo(
   (a, b) =>
     a.selected === b.selected &&
     a.marks === b.marks &&
+    a.overChip === b.overChip &&
     a.pps === b.pps &&
     a.onPointerDown === b.onPointerDown &&
     sameView(a.clip, b.clip),
@@ -961,7 +964,7 @@ function cutNear(clip: ClipView, time: number): { clipId: string; time: number }
   return cuts[0] ?? null
 }
 
-function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockProps) {
+function ClipBlockView({ clip, pps, selected, marks, overChip, onPointerDown }: ClipBlockProps) {
   const [canPaste, setCanPaste] = useState(false)
   const [cut, setCut] = useState<{ clipId: string; time: number } | null>(null)
   const [transitions, setTransitions] = useState<TransitionSpot[]>([])
@@ -991,7 +994,12 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
       >
         <ContextMenuTrigger asChild>
           <div
-            className={[styles.clip, styles[`clip-${clip.kind}`], selected && styles.selected]
+            className={[
+              styles.clip,
+              styles[`clip-${clip.kind}`],
+              overChip && styles.overChip,
+              selected && styles.selected,
+            ]
               .filter(Boolean)
               .join(' ')}
             style={{
@@ -2334,6 +2342,9 @@ export function Timeline() {
               kind === 'video' || kind === 'overlay'
                 ? placeTransitionMarks(project, track.id, pps, selection)
                 : undefined
+            const chips = clips.filter((c) => c.kind === 'lyric')
+            const overChip = (c: ClipView) =>
+              chips.some((l) => l.start < c.end - 1e-3 && l.end > c.start + 1e-3)
             return (
               <Fragment key={track.id}>
                 <div
@@ -2513,6 +2524,7 @@ export function Timeline() {
                               pps={pps}
                               selected={selIds.has(c.id)}
                               marks={markedClip?.id === c.id ? selectedMarks : undefined}
+                              overChip={chips.length > 0 && overChip(c)}
                               onPointerDown={onClipPointerDown}
                             />
                             {transitionMarks?.get(c.id)?.map((m) => (

@@ -96,14 +96,26 @@ test('every drafted line is marked to check; editing it or Mark all as checked c
   await page.getByRole('button', { name: 'Lyric: We run until the morning, draft, check the words' }).click()
   await expect(page.getByText('Drafted from the vocals. Check the words.', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Lyric: Neon lights are calling, draft, check the words' }).click()
+  const shown = () =>
+    page.evaluate(() => {
+      const clips = Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+        text?: string
+        lyricLineId?: string
+        start: number
+        duration: number
+      }[]
+      const c = clips.find((c) => c.lyricLineId && c.text?.startsWith('Neon'))
+      return c && { text: c.text, start: c.start, duration: c.duration }
+    })
+  const before = await shown()
 
-  // Correcting the words is checking the line.
+  // Correcting the words is checking the line, and the video shows them, timed as before.
   await page.getByRole('textbox', { name: 'Lyric text' }).fill('Neon nights are calling')
   await page.getByRole('textbox', { name: 'Lyric text' }).blur()
-  // The chip keeps its clip's name; what matters is that it is no longer a draft.
   await expect(
-    page.getByRole('button', { name: 'Lyric: Neon lights are calling', exact: true }),
+    page.getByRole('button', { name: 'Lyric: Neon nights are calling', exact: true }),
   ).toBeVisible()
+  expect(await shown()).toEqual({ ...before, text: 'Neon nights are calling' })
   await expect(
     page.getByText('Drafted from the vocals. Check the words. Uncertain ones are underlined.'),
   ).toHaveCount(0)

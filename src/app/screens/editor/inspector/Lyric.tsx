@@ -8,10 +8,9 @@ import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { aboutMinutes, formatBytes, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { isUncertain, markLineChecked } from '../../../state/lyricChecks.ts'
-import { nudgeLine, setLineEdge } from '../../../state/lyricEdits.ts'
+import { finishLineText, nudgeLine, setLineEdge, typeLineText } from '../../../state/lyricEdits.ts'
 import { lineTiming, retimeCost, retimeLine } from '../../../state/lyricTiming.ts'
 import {
-  dispatch,
   editor,
   lyricLines,
   sectionName,
@@ -176,11 +175,7 @@ function WordsSection({ line }: { line: LyricLine }) {
       Re-time line
     </Button>
   )
-  const updateText = (text: string) =>
-    dispatch(
-      { type: 'lyrics.updateLine', lineId: line.id, patch: { text } },
-      { coalesceKey: `inspector:${line.id}:text` },
-    )
+  const textKey = `inspector:${line.id}:text`
   const setEdge = (edge: 'start' | 'end', value: number) =>
     setLineEdge(line.id, edge, value, `inspector:${line.id}:${edge}`)
   const timed = line.words.length > 0
@@ -189,8 +184,8 @@ function WordsSection({ line }: { line: LyricLine }) {
       <div className={styles.padded}>
         <Input
           value={line.text}
-          onChange={(e) => updateText(e.target.value)}
-          onBlur={() => editor.endGesture()}
+          onChange={(e) => typeLineText(line.id, e.target.value, textKey)}
+          onBlur={() => finishLineText(line.id, textKey)}
           aria-label="Lyric text"
         />
         <div className={styles.timedRow}>

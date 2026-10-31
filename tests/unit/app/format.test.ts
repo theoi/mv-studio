@@ -6,6 +6,7 @@ import {
   formatTime,
   formatTimecode,
   shortFileName,
+  undoAction,
 } from '../../../src/app/format.ts'
 
 const now = new Date(2026, 9, 31, 15, 0).getTime()
@@ -68,4 +69,14 @@ it('shows the hundredth the playhead was set at in the transport', () => {
   expect(formatTimecode(62.3)).toBe('01:02.30')
   expect(formatTimecode(59.999)).toBe('00:59.99')
   expect(formatTimecode(125.04)).toBe('02:05.04')
+})
+
+it('words undo labels for the tooltips: a leading verb lowered, names and features naming their step as they are', () => {
+  expect(undoAction('Remove Night city')).toBe('remove Night city')
+  expect(undoAction('Delete 1 clip and 1 lyric line')).toBe('delete 1 clip and 1 lyric line')
+  expect(undoAction('Remove transition: Flash')).toBe('remove transition: Flash')
+  expect(undoAction('Director: a rainy city at dawn')).toBe('Director: a rainy city at dawn')
+  expect(undoAction('Ask: Added a title at the start')).toBe('Ask: Added a title at the start')
+  expect(undoAction('Auto-cut: 12 cuts')).toBe('Auto-cut: 12 cuts')
+  expect(undoAction('VJ take 2')).toBe('VJ take 2')
 })

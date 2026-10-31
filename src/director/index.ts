@@ -16,5 +16,5 @@ export { DirectorError, expandBrief, type DirectorErrorReason, type ExpandMeta }
 export { planLocally, ruleBrief } from './local-planner.ts'
 export { beatGrid, sectionsFor, type BeatGrid } from './timing.ts'
 export { createBrightnessProbe, type BrightnessProbe, type BrightnessRequest } from './contrast.ts'
-export { retimeDirectorLyricCommands } from './retime.ts'
+export { lyricTextCommands, retimeDirectorLyricCommands } from './retime.ts'
 export { describePlan, type PlanDescription } from './describe.ts'

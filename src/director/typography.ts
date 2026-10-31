@@ -322,6 +322,12 @@ function bestSplit(words: string[], rows: number, width: (s: string) => number) 
   return best
 }
 
+/** `words` in `rows` rows of about equal length (one row per line of text), or on one row when there are fewer words. */
+export function balancedRows(words: string[], rows: number): string {
+  const split = rows > 1 ? bestSplit(words, rows, (s) => s.length) : undefined
+  return split ? split.rows.join('\n') : words.join(' ')
+}
+
 /**
  * A lyric line laid out in balanced rows (explicit line breaks, so wrapping never leaves one word alone on a row):
  * as few rows as fit, shrinking the type (to 70% at most) when even the most rows allowed do not.

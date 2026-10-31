@@ -310,6 +310,24 @@ describe('lyric lines among several clips', () => {
     expect(project().clips[s.a.id]).toBeDefined()
   })
 
+  it('Delete with a lone lyric line selected takes it out with its clips, as with several', () => {
+    const word = {
+      ...createTextClip({ trackId: s.footage.id, text: 'World', start: 20, duration: 1 }),
+      meta: { director: { planId: 'plan', role: 'text', textRole: 'emphasis', lyricLineId: 'l2' } },
+    }
+    editor.dispatch({ type: 'clip.add', clip: word }, { history: 'skip' })
+    set({ selection: { type: 'lyric', id: 'l2' } })
+    expect(deleteSelection()).toBe(true)
+    expect(lineIds()).toEqual(['l1'])
+    expect(project().clips[line2.id]).toBeUndefined()
+    expect(project().clips[word.id]).toBeUndefined()
+    expect(project().clips[s.line.id]).toBeDefined()
+    expect(editor.undoLabel()).toBe('Delete lyric line')
+    expect(get().selection).toEqual({ type: 'none' })
+    editor.undo()
+    expect(lineIds()).toEqual(['l1', 'l2'])
+    expect(project().clips[line2.id]).toEqual(line2)
+  })
   it('a locked Lyrics track rejects the whole delete or cut', () => {
     editor.dispatch(
       { type: 'track.update', trackId: lyricsTrack, patch: { locked: true } },

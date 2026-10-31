@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { lineDeltaRange, lineTimingCommands, wordEdgeCommands } from '../../../src/app/state/lyricEdits.ts'
+import {
+  finishLineText,
+  lineDeltaRange,
+  lineTimingCommands,
+  typeLineText,
+  wordEdgeCommands,
+} from '../../../src/app/state/lyricEdits.ts'
+import { editor } from '../../../src/app/state/project.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import { createAudioClip, createProject, createTextClip } from '../../../src/model/factory.ts'
 import type { EditCommand } from '../../../src/model/commands.ts'
@@ -152,5 +159,44 @@ describe('wordEdgeCommands', () => {
     expect(r.words[0]).toEqual([9.8, 10.5])
     expect(r.line.start).toBeCloseTo(9.8, 6)
     expect(r.clip.start).toBe(9.8)
+  })
+})
+
+describe('retyping a line in the inspector', () => {
+  const KEY = 'inspector:mid:text'
+  const now = () => editor.getProject()
+  const shown = (id: string) => (now().clips[id] as TextClip | undefined)?.text
+
+  it('shows the new words in the line’s clips when typing ends, keeping the timing, as one undo step', () => {
+    const { project, clip } = setup()
+    clip.text = 'hold on tight'
+    editor.load(project)
+    typeLineText('mid', 'hold on tigh', KEY)
+    typeLineText('mid', 'hold on tight now', KEY)
+    finishLineText('mid', KEY)
+    expect(shown(clip.id)).toBe('hold on tight now')
+    expect(now().clips[clip.id]).toMatchObject({ start: clip.start, duration: clip.duration })
+    expect(now().lyrics!.lines[0]).toMatchObject({
+      text: 'hold on tight now',
+      words: project.lyrics!.lines[0]!.words,
+    })
+    expect(editor.undo()).toBe(true)
+    expect(now().lyrics!.lines[0]!.text).toBe('hold on tight')
+    expect(shown(clip.id)).toBe('hold on tight')
+    expect(editor.undoLabel()).toBeUndefined()
+  })
+
+  it('keeps the director’s emphasized word when only a word on the way to the final text dropped it', () => {
+    const { project, clip } = setup()
+    clip.text = 'hold on'
+    const word = createTextClip({ trackId: clip.trackId, text: 'tight', start: 11.1, duration: 1 })
+    word.meta = { director: { planId: 'p', role: 'text', textRole: 'emphasis', lyricLineId: 'mid' } }
+    project.clips[word.id] = word
+    editor.load(project)
+    typeLineText('mid', 'hold on tigh', KEY)
+    typeLineText('mid', 'hold me tight', KEY)
+    finishLineText('mid', KEY)
+    expect(shown(clip.id)).toBe('hold me')
+    expect(shown(word.id)).toBe('tight')
   })
 })

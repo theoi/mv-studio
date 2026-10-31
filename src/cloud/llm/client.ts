@@ -484,14 +484,18 @@ export class OpenAICompatibleClient {
         if (error instanceof CloudError && error.kind !== 'network') return error
       }
     }
+    // A hosted provider's base URL comes with its preset, and its CORS is not the user's to change.
+    const hosted = this.endpoint.preset === 'openai' || this.endpoint.preset === 'openrouter'
     return this.error('network', {
       title: `Couldn't reach ${this.providerName()}`,
       message: `The request to ${base.host} did not get through.`,
-      steps: [
-        'Check your internet connection and the base URL.',
-        `If you run this server yourself, allow requests from ${this.origin} (CORS).`,
-        'Allow the endpoint in any ad or content blocker.',
-      ],
+      steps: hosted
+        ? ['Check your internet connection.', 'Allow the endpoint in any ad or content blocker.']
+        : [
+            'Check your internet connection and the base URL.',
+            `If you run this server yourself, allow requests from ${this.origin} (CORS).`,
+            'Allow the endpoint in any ad or content blocker.',
+          ],
       cause,
     })
   }
@@ -629,7 +633,11 @@ export class OpenAICompatibleClient {
         status,
         title: `${name} had a problem`,
         message: message || `Server error ${status}.`,
-        steps: ['Try again in a moment. For local models, check that there is enough memory for the model.'],
+        steps: [
+          guessLocalRunner(this.baseUrl, this.endpoint.preset) !== 'other' || this.isLoopback()
+            ? 'Try again in a moment. For local models, check that there is enough memory for the model.'
+            : 'Try again in a moment.',
+        ],
       })
     }
     return this.error('bad-response', {
