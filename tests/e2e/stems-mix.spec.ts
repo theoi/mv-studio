@@ -279,9 +279,17 @@ test('the song header and Assist › Stems say the full song plays while a heard
   await expectBadge(badge, 'Vocals solo', 'Stems: vocals solo')
   await expect(note).toHaveText('Only the vocals play, in the preview and the export.')
 
-  // An export decodes a failed stem again in the same audio cache. Once the preview plays it, the texts say so.
+  // The decoded vocals stay for a minute after they were last heard, so soloing them again right away plays them
+  // without decoding the file again (now unplayable); a minute later they are released, and the next solo decodes it.
+  await page.clock.install()
   await row('Vocals').getByRole('button', { name: 'Unsolo' }).click()
   await setVocalsFile(page, false)
+  await row('Vocals').getByRole('button', { name: 'Solo' }).click()
+  await expect.poll(scheduled).toBe('vocals')
+  await expectBadge(badge, 'Vocals solo', 'Stems: vocals solo')
+  await row('Vocals').getByRole('button', { name: 'Unsolo' }).click()
+  await page.clock.fastForward(60_000)
+  // An export decodes a failed stem again in the same audio cache. Once the preview plays it, the texts say so.
   await row('Vocals').getByRole('button', { name: 'Solo' }).click()
   await expectBadge(badge, 'Full song plays', `Stems: full song plays · vocals solo. ${WHY}`)
   await setVocalsFile(page, true)

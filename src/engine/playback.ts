@@ -3,7 +3,7 @@
  * the time of the sample currently leaving the speakers, so the picture follows what the user hears.
  */
 import { projectDuration } from '../model/queries.ts'
-import type { Project, Seconds } from '../model/types.ts'
+import type { Id, Project, Seconds } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
 import {
   audibleClips,
@@ -18,6 +18,11 @@ import type { MediaFileSource, PlaybackClock, PlaybackState } from './types.ts'
 /** Audio is scheduled this far ahead so every source starts exactly on time. */
 const LOOKAHEAD = 0.06
 const TICK_MS = 25
+/**
+ * A stem nobody hears stays decoded this long, so switching back to it soon after (A/B between solos) is instant, while
+ * a long session gets the memory back (a separated stem of a 5-minute song is about 115 MB decoded).
+ */
+export const STEM_RELEASE_MS = 60_000
 
 /** Identifies what playback depends on, so unrelated edits do not restart audio. */
 function audioSignature(clips: readonly AudibleClip[]): string {
@@ -58,6 +63,8 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   private ticker: ReturnType<typeof setInterval> | null = null
   private playRequest = 0
   private readonly listeners = new Set<(state: PlaybackState, time: Seconds) => void>()
+  /** Release timers of the stems no clip hears (STEM_RELEASE_MS). */
+  private readonly releases = new Map<Id, ReturnType<typeof setTimeout>>()
 
   constructor(media: MediaFileSource) {
     this.buffers = audioBufferCache(media)
@@ -95,11 +102,16 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     this.wantedSignature = signature
     // The cache is shared by every clock and export on this media source, so it is never cleared, only trimmed to
     // what this project can play. That assumes every preview on the source shows the current project or a copy of it:
-    // a clock holding an unrelated project would evict the audio the others play.
+    // a clock holding an unrelated project would evict the audio the others play. A stem that could not be decoded is
+    // forgotten once no stem is heard, so it is decoded again the next time (the app's stem failures follow this);
+    // decoded stems go STEM_RELEASE_MS after they were last heard.
     const used = new Set(wanted.map((c) => c.assetId))
     this.buffers.evict(
-      (asset) => !project.assets[asset.id] || (!stems && asset.origin.type === 'stem' && !used.has(asset.id)),
+      (asset) =>
+        !project.assets[asset.id] ||
+        (!stems && asset.origin.type === 'stem' && !used.has(asset.id) && !!this.buffers.error(asset.id)),
     )
+    this.timeReleases(project, used)
     const request = ++this.loadRequest
     for (const id of new Set([...wanted, ...plain].map((c) => c.assetId))) {
       const asset = project.assets[id]
@@ -109,6 +121,42 @@ export class WebAudioPlaybackClock implements PlaybackClock {
       })
     }
     this.refresh()
+  }
+
+  /** Starts the release timer of each stem no clip hears, and stops it for the stems heard again. */
+  private timeReleases(project: Project, used: ReadonlySet<Id>): void {
+    for (const [id, timer] of this.releases) {
+      if (!used.has(id) && project.assets[id]) continue
+      clearTimeout(timer)
+      this.releases.delete(id)
+    }
+    for (const asset of Object.values(project.assets))
+      if (asset.origin.type === 'stem' && !used.has(asset.id) && !this.releases.has(asset.id))
+        this.timeRelease(asset.id)
+  }
+
+  private timeRelease(id: Id): void {
+    this.releases.set(
+      id,
+      setTimeout(() => this.release(id), STEM_RELEASE_MS),
+    )
+  }
+
+  /**
+   * Drops a stem's decoded audio, unless it still plays (the mix that plays while newly heard stems decode). This clock
+   * decides alone although the cache is shared: that relies on every clock on the media source showing the current
+   * project's stem flags (the stills and VJ previews do). A clock that heard other stems would evict one another
+   * clock plays.
+   */
+  private release(id: Id): void {
+    this.releases.delete(id)
+    if (this.wanted.some((c) => c.assetId === id)) return
+    if (this.clips.some((c) => c.assetId === id)) {
+      this.timeRelease(id)
+      return
+    }
+    // A failure stays: it holds no memory, and the app keeps showing it while some stem is heard.
+    if (!this.buffers.error(id)) this.buffers.evict((asset) => asset.id === id)
   }
 
   /**
@@ -356,6 +404,8 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   }
 
   dispose(): void {
+    for (const timer of this.releases.values()) clearTimeout(timer)
+    this.releases.clear()
     this.stopAudio()
     this.playState = 'stopped'
     void this.ctx?.close()
