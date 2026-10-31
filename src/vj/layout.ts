@@ -258,11 +258,13 @@ export function padAt(layout: VjLayout, row: PadRow, index: number, bank = 0): P
 /** How an effect pad's amount reaches the picture. */
 export type FxTarget = { kind: 'param'; key: string; off: number; on: number } | { kind: 'opacity' }
 
-/** Ranges that read well when performing, for the built-in effects. */
+/** Ranges that read well when performing, for the effects on the default row. */
 const KNOWN_AMOUNT: Record<string, [string, number, number]> = {
   glow: ['intensity', 0, 2],
   blur: ['radius', 0, 24],
   'rgb-split': ['amount', 0, 28],
+  'zoom-pulse': ['zoom', 0, 0.2],
+  shake: ['amount', 0, 40],
   vignette: ['amount', 0, 0.85],
   'film-grain': ['amount', 0, 0.45],
 }
