@@ -16,6 +16,8 @@ export interface PreviewRenderRequest {
   videos: BridgedVideo[]
   /** Return the drawn frame as an image. */
   capture?: boolean
+  /** Reply only once the GPU has drawn the frame (a still), not when it is queued. */
+  untilDrawn?: boolean
 }
 
 /** Media port messages: the worker asks for an asset's file, the main thread answers. */
@@ -62,6 +64,13 @@ export function serveMedia(port: MessagePort, media: MediaFileSource): void {
   }
 }
 
+/**
+ * How long a reply waits for the GPU to draw an `untilDrawn` frame. Longer than `gpuIdle()`'s 1 s default because the
+ * page asks for it only for its first still, whose first-use shader compiles can take seconds on a slow GPU, and replying
+ * early shows a black canvas.
+ */
+const UNTIL_DRAWN_WAIT_MS = 5000
+
 export class WorkerPreview {
   private readonly compositor: WebGLCompositor
   private readonly frames: BridgedFrameProvider
@@ -89,7 +98,11 @@ export class WorkerPreview {
     await this.compositor.gpuIdle()
     await this.compositor.render(project, request.time, { size: request.size })
     // In the drawing's task: without preserveDrawingBuffer, the frame is gone once the task ends.
-    return request.capture ? createImageBitmap(this.compositor.canvas) : null
+    const bitmap = request.capture ? createImageBitmap(this.compositor.canvas) : null
+    // The canvas shows the frame only once the GPU has drawn it: replying earlier would tell the page a still is on
+    // screen while the canvas is still blank.
+    if (request.untilDrawn) await this.compositor.gpuIdle(UNTIL_DRAWN_WAIT_MS)
+    return bitmap
   }
 
   /** The frame drawn last; needs preserveDrawingBuffer. */
