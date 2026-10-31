@@ -11,6 +11,7 @@ import {
 import { BAND_EDGES_HZ } from '../../../src/analysis/features/features.ts'
 import { planFrame } from '../../../src/engine/layout.ts'
 import { describeReaction } from '../../../src/plugins/reactions.ts'
+import { createFromTemplate, templateState } from '../../../src/plugins/templates.ts'
 import { createTextClip, createTrack } from '../../../src/model/factory.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import type { Asset, Clip, ImageClip, Project, TextClip, VideoClip } from '../../../src/model/types.ts'
@@ -37,11 +38,11 @@ describe('compilePlan', () => {
     // Shots, lyric lines, the look layer, and the song placed on the timeline.
     expect(clips(after)).toHaveLength(shots + texts + 1 + 1)
     expect(editor.undoLabel()).toBe(`Director: ${plan.title}`)
-    expect(after.tracks.slice(0, 3).map((t) => t.name)).toEqual([
-      'Director · Text',
-      'Director · Look',
-      'Director · Shots',
-    ])
+    // The title card has a track of its own, above the lyrics.
+    expect(after.tracks.slice(0, 4).map((t) => t.name)).toEqual(['Titles', 'Text', 'Look', 'Shots'])
+    const titles = plan.texts.filter((t) => t.role === 'title')
+    expect(titles.length).toBeGreaterThan(0)
+    expect(clips(after).filter((c) => c.trackId === after.tracks[0]!.id)).toHaveLength(titles.length)
     editor.undo()
     expect(editor.getProject()).toEqual(project)
     expect(editor.canUndo()).toBe(false)
@@ -115,8 +116,8 @@ describe('compilePlan', () => {
     expect(active).toMatchObject({ kind: 'reaction', reaction: { id: 'kick' }, exact: true })
     expect(active?.kind === 'reaction' && active.amount).toBeCloseTo(shot.reactions![0]!.amount, 5)
     const names = after.tracks.map((t) => t.name)
-    expect(names.indexOf('Director · Accents')).toBeGreaterThan(names.indexOf('Director · Look'))
-    expect(names.indexOf('Director · Accents')).toBeLessThan(names.indexOf('Director · Overlay'))
+    expect(names.indexOf('Accents')).toBeGreaterThan(names.indexOf('Look'))
+    expect(names.indexOf('Accents')).toBeLessThan(names.indexOf('Overlay'))
   })
 
   it('links lyric text to lyric lines and keeps it above the look layer', async () => {
@@ -186,15 +187,15 @@ describe('compilePlan', () => {
     expect(beatCut.texts).toHaveLength(0)
     editor.dispatch(compilePlan(beatCut, first).commands)
     const names = editor.getProject().tracks.map((t) => t.name)
-    expect(names).not.toContain('Director · Text')
-    expect(names.filter((n) => n === 'Director · Shots')).toHaveLength(1)
+    expect(names).not.toContain('Text')
+    expect(names.filter((n) => n === 'Shots')).toHaveLength(1)
   })
 
   it('keeps earlier director clips on locked tracks and says so', async () => {
     const { project, editor, plan } = await setup('beat-cut')
     editor.dispatch(compilePlan(plan, project).commands)
     const first = editor.getProject()
-    const shotsTrack = first.tracks.find((t) => t.name === 'Director · Shots')!
+    const shotsTrack = first.tracks.find((t) => t.name === 'Shots')!
     editor.dispatch({ type: 'track.update', trackId: shotsTrack.id, patch: { locked: true } })
     const compiled = compilePlan(plan, editor.getProject())
     editor.dispatch(compiled.commands)
@@ -315,5 +316,88 @@ describe('compilePlan', () => {
     expect(mod.source).toEqual({ kind: 'band', band: 1 })
     // Amount scales with the parameter range (glow intensity is 0..4).
     expect(mod.amount).toBeCloseTo(2, 6)
+  })
+})
+
+describe('compilePlan in a project made from a starter template', () => {
+  /** The AI starter template with the fixture's song, analysis, footage and lyrics, before anything is placed. */
+  function templateProject(): Project {
+    const base = makeProject()
+    const template = createFromTemplate('ai', {
+      song: base.assets[SONG_ID]!,
+      analysis: base.analysis.audio[SONG_ID]!,
+    })
+    return {
+      ...template,
+      assets: { ...base.assets, ...template.assets },
+      analysis: { ...template.analysis, visual: base.analysis.visual },
+      ...(base.lyrics ? { lyrics: base.lyrics } : {}),
+    }
+  }
+  const looks = (p: Project) => clips(p).filter((c) => c.type === 'adjustment')
+
+  it('puts the draft on the template’s tracks and replaces its look, in one undo step and again on a redraft', async () => {
+    const project = templateProject()
+    const template = templateState(project)!
+    const editor = new ProjectEditor(project)
+    expect(looks(project)).toHaveLength(1)
+    const lookTrack = looks(project)[0]!.trackId
+
+    const plan = await planLocally(await buildPlannerInput(project, { kind: 'lyric', seed: 5 }))
+    const compiled = compilePlan(plan, project)
+    editor.dispatch(compiled.commands, { label: compiled.label })
+    const after = editor.getProject()
+    const onTrack = (id: string | undefined) => clips(after).filter((c) => c.trackId === id)
+    const lyricTexts = (p: typeof plan) => p.texts.filter((t) => t.role !== 'title').length
+    expect(onTrack(template.tracks.lyrics).length).toBe(lyricTexts(plan))
+    expect(onTrack(template.tracks.lyrics).every((c) => directorMeta(c)?.role === 'text')).toBe(true)
+    // The AI template has no Titles track, so the title card gets one above the lyrics instead of joining them.
+    const titles = after.tracks[0]!
+    expect(titles.name).toBe('Titles')
+    expect(onTrack(titles.id).map((c) => directorMeta(c)?.textRole)).toEqual(
+      plan.texts.filter((t) => t.role === 'title').map(() => 'title'),
+    )
+    expect(onTrack(titles.id).length).toBeGreaterThan(0)
+    expect(onTrack(template.tracks.video).length).toBe(plan.shots.filter((s) => s.layer === 'main').length)
+    expect(looks(after)).toHaveLength(1)
+    expect(directorMeta(looks(after)[0]!)?.role).toBe('look')
+    expect(looks(after)[0]!.trackId).toBe(lookTrack)
+    // No director track stands in for a template one, and no template track is left empty.
+    expect(after.tracks.slice(1).map((t) => t.id)).toEqual(project.tracks.map((t) => t.id))
+    for (const id of Object.values(template.tracks)) expect(onTrack(id).length).toBeGreaterThan(0)
+    expect(editor.undoLabel()).toBe(`Director: ${plan.title}`)
+    editor.undo()
+    expect(editor.getProject()).toEqual(project)
+    editor.redo()
+
+    const again = await planLocally(await buildPlannerInput(after, { kind: 'lyric', seed: 9 }))
+    editor.dispatch(compilePlan(again, after).commands)
+    const redrafted = editor.getProject()
+    expect(redrafted.tracks.map((t) => t.id)).toEqual(after.tracks.map((t) => t.id))
+    expect(looks(redrafted)).toHaveLength(1)
+    expect(clips(redrafted).filter((c) => c.trackId === template.tracks.lyrics)).toHaveLength(
+      lyricTexts(again),
+    )
+  })
+
+  it('leaves template tracks with the user’s clips alone and never removes template tracks', async () => {
+    const project = templateProject()
+    const template = templateState(project)!
+    const editor = new ProjectEditor(project)
+    const mine = createTextClip({ trackId: template.tracks.video!, text: 'Mine', start: 1, duration: 2 })
+    editor.dispatch({ type: 'clip.add', clip: mine })
+    const plan = await planLocally(await buildPlannerInput(editor.getProject(), { kind: 'lyric', seed: 5 }))
+    editor.dispatch(compilePlan(plan, editor.getProject()).commands)
+    const first = editor.getProject()
+    expect(first.tracks.map((t) => t.name)).toContain('Shots')
+    expect(clips(first).filter((c) => c.trackId === template.tracks.video)).toEqual([mine])
+
+    // A beat-cut draft has no text: the template's Lyrics track loses the draft's lines but stays.
+    const beatCut = await planLocally(await buildPlannerInput(first, { kind: 'beat-cut', seed: 1 }))
+    expect(beatCut.texts).toHaveLength(0)
+    editor.dispatch(compilePlan(beatCut, first).commands)
+    const after = editor.getProject()
+    expect(after.tracks.some((t) => t.id === template.tracks.lyrics)).toBe(true)
+    expect(clips(after).filter((c) => c.trackId === template.tracks.lyrics)).toHaveLength(0)
   })
 })

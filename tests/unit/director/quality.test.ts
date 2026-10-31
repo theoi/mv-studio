@@ -167,7 +167,10 @@ describe('songTitleFromName', () => {
     ['Rxbyn_-_Bad_Side.mp3', { artist: 'Rxbyn', title: 'Bad Side' }],
     ['Lower Loveday – Is It Right.flac', { artist: 'Lower Loveday', title: 'Is It Right' }],
     ['03 - Night Drive.wav', { title: 'Night Drive' }],
-    ['demo.mp3', { title: 'demo' }],
+    ['demo.mp3', { title: 'Demo' }],
+    ['neon-skyline.wav', { title: 'Neon Skyline' }],
+    ['NEON_SKYLINE - NIGHT DRIVE.mp3', { artist: 'Neon Skyline', title: 'Night Drive' }],
+    ['Jay-Z - Empire State of Mind.mp3', { artist: 'Jay-Z', title: 'Empire State of Mind' }],
   ])('%s', (name, expected) => {
     expect(songTitleFromName(name)).toEqual(expected)
   })

@@ -120,6 +120,57 @@ test('drafts from the setup screen with the idea typed there', async ({ page }) 
   await expect(placed(page)).toBeVisible({ timeout: 30_000 })
 })
 
+test('a draft from the setup screen goes on the template’s tracks, with one look and no empty tracks', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('textbox', { name: 'Describe your video' }).fill('neon night drive')
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+
+  const layout = () =>
+    page.evaluate(() => {
+      const project = window.mvStudio.app.project.editor.getProject()
+      const clips = Object.values(project.clips) as { trackId: string; type: string }[]
+      return (project.tracks as { id: string; name: string }[]).map((t) => {
+        const on = clips.filter((c) => c.trackId === t.id)
+        return { name: t.name, clips: on.length, looks: on.filter((c) => c.type === 'adjustment').length }
+      })
+    })
+  const first = await layout()
+  // The song has no lyrics yet: the template's Lyrics track waits for them, and the title card is not on it.
+  const empty = (tracks: { name: string; clips: number }[]) =>
+    tracks.filter((t) => t.clips === 0).map((t) => t.name)
+  expect(empty(first)).toEqual(['Lyrics'])
+  expect(first.filter((t) => t.looks > 0)).toHaveLength(1)
+  // The timeline shows the template's Lyrics, Look and Video tracks holding the draft, and no stand-ins for them.
+  const headers = page.locator('span[class*="trackName"]')
+  for (const name of ['Lyrics', 'Look', 'Video'])
+    await expect(headers.filter({ hasText: name })).toHaveCount(1)
+  await expect(headers.filter({ hasText: /^(Text|Shots)$/ })).toHaveCount(0)
+  // The title card has a Titles track of its own above the lyrics, says the song's title rather than its file name,
+  // and the editor opens where it is faded in, not on the black first frame.
+  const titles = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const track = (project.tracks as { id: string; name: string }[]).find((t) => t.name === 'Titles')
+    return (Object.values(project.clips) as { trackId: string; text?: string }[])
+      .filter((c) => c.trackId === track?.id)
+      .map((c) => c.text)
+  })
+  expect(titles).toEqual(['Neon Skyline'])
+  expect(first.map((t) => t.name).indexOf('Titles')).toBeLessThan(first.map((t) => t.name).indexOf('Lyrics'))
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().playhead)).toBeGreaterThanOrEqual(1)
+
+  await page.getByRole('button', { name: 'Try another version' }).click()
+  await expect
+    .poll(async () => (await layout()).map((t) => t.name).join())
+    .toBe(first.map((t) => t.name).join())
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  expect(empty(await layout())).toEqual(['Lyrics'])
+})
 test('uses the language model’s creative plan when it answers', async ({ page }) => {
   const sections = 9
   const brief = {

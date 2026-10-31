@@ -47,6 +47,23 @@ test('the Media and Assist empty states say what to do next, before and after a 
   await expect(media.getByText('Clips and images 1')).toBeVisible()
 })
 
+test('a Lyric video made on the start screen with a song says how to add clips, not "No matches"', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await page.getByRole('button', { name: /Lyric video/ }).click()
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.getByRole('button', { name: 'Open the editor' }).click()
+  await waitForPreview(page)
+  await page.getByRole('tab', { name: 'Media' }).click()
+  const media = page.getByRole('tabpanel', { name: 'Media' })
+  await expect(media.getByText('neon-skyline.wav')).toBeVisible()
+  await expect(media.getByText('No clips or images yet')).toBeVisible()
+  await expect(media.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
+  await expect(media.getByText('No matches')).toHaveCount(0)
+})
+
 test('an empty Lyrics track offers Add lyrics, which opens Assist › Lyrics', async ({ page }) => {
   await openEditor(page, '#/editor?kind=blank&t=73')
   await waitForPreview(page)

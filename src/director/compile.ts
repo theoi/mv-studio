@@ -28,7 +28,9 @@ import type {
   Transition,
   VisualClip,
 } from '../model/types.ts'
+import { currentLook } from '../plugins/looks.ts'
 import { reactionCommands, type ReactionTarget } from '../plugins/reactions.ts'
+import { templateState, type TemplateState } from '../plugins/templates.ts'
 import { behindSubjectMatte } from '../vision/index.ts'
 import { DEFAULT_CATALOG, findItem, type DirectorCatalog } from './catalog.ts'
 import { DIRECTOR_META_KEY, directorMeta, type DirectorClipMeta, type DirectorTrackRole } from './meta.ts'
@@ -46,21 +48,32 @@ import type {
   TransitionSpec,
 } from './plan.ts'
 
-/** Top to bottom. Text stays above the look layer so lyrics are not color graded. */
-const TRACK_ORDER: DirectorTrackRole[] = ['text', 'look', 'accent', 'overlay', 'shots']
+/**
+ * Top to bottom. Text stays above the look layer so lyrics are not color graded. Title cards have a track of their
+ * own, so lyrics timed after the draft never land on the same row as the title.
+ */
+const TRACK_ORDER: DirectorTrackRole[] = ['title', 'text', 'look', 'accent', 'overlay', 'shots']
 
 const TRACK_NAMES: Record<DirectorTrackRole, string> = {
-  text: 'Director · Text',
-  look: 'Director · Look',
-  accent: 'Director · Accents',
-  overlay: 'Director · Overlay',
-  shots: 'Director · Shots',
+  title: 'Titles',
+  text: 'Text',
+  look: 'Look',
+  accent: 'Accents',
+  overlay: 'Overlay',
+  shots: 'Shots',
 }
 
 const LAYER_ROLE: Record<ShotLayer, DirectorTrackRole> = {
   main: 'shots',
   overlay: 'overlay',
   accent: 'accent',
+}
+
+/** A starter template's tracks that take a director role, best first. */
+const TEMPLATE_TRACKS: Partial<Record<DirectorTrackRole, readonly (keyof TemplateState['tracks'])[]>> = {
+  title: ['titles'],
+  text: ['lyrics'],
+  shots: ['video'],
 }
 
 const PLACEHOLDER_COLOR = '#1c1c28'
@@ -511,13 +524,15 @@ function textStyle(t: PlanText): TextStyle {
   }
 }
 
+const textTrackRole = (t: PlanText): DirectorTrackRole => (t.role === 'title' ? 'title' : 'text')
+
 function textClip(t: PlanText, trackId: Id, ctx: Ctx): TextClip | undefined {
   const end = Math.min(t.end, ctx.plan.duration)
   const duration = end - t.start
   if (duration <= 0.01) return undefined
   const meta: DirectorClipMeta = {
     planId: ctx.plan.id,
-    role: 'text',
+    role: textTrackRole(t),
     ...(t.sectionId ? { sectionId: t.sectionId } : {}),
     ...(t.role ? { textRole: t.role } : {}),
     ...(t.lyricLineId ? { lyricLineId: t.lyricLineId } : {}),
@@ -588,13 +603,18 @@ interface Cleanup {
   reused: Map<DirectorTrackRole, Id>
   removedTracks: Set<Id>
   removedClips: number
+  removedIds: Set<Id>
 }
 
-/** Removes earlier director clips, reusing tracks that held only one director role. Locked tracks are left alone. */
-function cleanupPrevious(project: Project, ctx: Ctx): Cleanup {
+/**
+ * Removes earlier director clips, reusing tracks that held only one director role. Locked tracks are left alone, and
+ * the `keep` tracks (a starter template's) lose the draft's clips but are never removed.
+ */
+function cleanupPrevious(project: Project, ctx: Ctx, keep: ReadonlySet<Id>): Cleanup {
   const commands: EditCommand[] = []
   const reused = new Map<DirectorTrackRole, Id>()
   const removedTracks = new Set<Id>()
+  const removedIds = new Set<Id>()
   let removedClips = 0
   let keptLocked = false
   for (const track of project.tracks) {
@@ -611,10 +631,11 @@ function cleanupPrevious(project: Project, ctx: Ctx): Cleanup {
     const roles = new Set(ours.map((c) => directorMeta(c)?.role))
     const onlyOurs = ours.length === clips.length
     const role = roles.size === 1 ? ([...roles][0] as DirectorTrackRole) : undefined
+    for (const c of ours) removedIds.add(c.id)
     if (onlyOurs && role && track.kind === 'visual' && !reused.has(role)) {
       reused.set(role, track.id)
       commands.push({ type: 'clip.remove', clipIds: ours.map((c) => c.id) })
-    } else if (onlyOurs) {
+    } else if (onlyOurs && !keep.has(track.id)) {
       removedTracks.add(track.id)
       commands.push({ type: 'track.remove', trackId: track.id })
     } else {
@@ -624,23 +645,81 @@ function cleanupPrevious(project: Project, ctx: Ctx): Cleanup {
   }
   if (keptLocked)
     warn(ctx, 'Clips from an earlier draft on locked tracks were kept. Unlock those tracks to replace them.')
-  return { commands, reused, removedTracks, removedClips }
+  return { commands, reused, removedTracks, removedClips, removedIds }
 }
 
-function placeTracks(project: Project, needed: Set<DirectorTrackRole>, cleanup: Cleanup) {
+/**
+ * In a project made from a starter template, the draft goes on the template's own tracks (its titles track for title
+ * cards, its lyrics track for other text, its video track for shots) while they are empty, unlocked and shown, or
+ * hold only earlier drafts. Its look takes the place of the project's look on the same track. A new project then has
+ * no empty template tracks under the draft's and one look.
+ */
+function takeTemplateTracks(
+  project: Project,
+  template: TemplateState,
+  needed: ReadonlySet<DirectorTrackRole>,
+  cleanup: Cleanup,
+) {
+  const emptyOnceCleaned = (id: Id, except?: Id) => {
+    const track = project.tracks.find((t) => t.id === id)
+    return (
+      !!track &&
+      track.kind === 'visual' &&
+      !track.locked &&
+      !track.hidden &&
+      !cleanup.removedTracks.has(id) &&
+      clipsOnTrack(project, id).every((c) => c.id === except || cleanup.removedIds.has(c.id))
+    )
+  }
+  const taken = () => new Set(cleanup.reused.values())
+  for (const [role, roles] of Object.entries(TEMPLATE_TRACKS) as [
+    DirectorTrackRole,
+    typeof TEMPLATE_TRACKS.text,
+  ][]) {
+    if (!needed.has(role) || cleanup.reused.has(role)) continue
+    const id = roles
+      ?.map((r) => template.tracks[r])
+      .find((t): t is Id => !!t && !taken().has(t) && emptyOnceCleaned(t))
+    if (id) cleanup.reused.set(role, id)
+  }
+
+  if (!needed.has('look')) return
+  const look = currentLook(project)
+  const clip = look ? project.clips[look.clipId] : undefined
+  const track = clip && project.tracks.find((t) => t.id === clip.trackId)
+  if (!clip || !track || directorMeta(clip) || track.locked || cleanup.removedTracks.has(track.id)) return
+  cleanup.commands.push({ type: 'clip.remove', clipIds: [clip.id] })
+  if (!emptyOnceCleaned(track.id, clip.id) || taken().has(track.id)) return
+  if (!cleanup.reused.has('look')) cleanup.reused.set('look', track.id)
+  else {
+    cleanup.removedTracks.add(track.id)
+    cleanup.commands.push({ type: 'track.remove', trackId: track.id })
+  }
+}
+
+function placeTracks(
+  project: Project,
+  needed: Set<DirectorTrackRole>,
+  cleanup: Cleanup,
+  template: TemplateState | null,
+) {
   const commands: EditCommand[] = []
   const trackFor = new Map(cleanup.reused)
   const order = project.tracks.map((t) => t.id).filter((id) => !cleanup.removedTracks.has(id))
+  // A template track the draft doesn't use still marks where its role sits (titles above the waiting Lyrics track).
+  const at = (role: DirectorTrackRole) =>
+    trackFor.get(role) ??
+    TEMPLATE_TRACKS[role]?.map((r) => template?.tracks[r]).find((id) => !!id && order.includes(id))
   let added = 0
   for (const [i, role] of TRACK_ORDER.entries()) {
     if (!needed.has(role) || trackFor.has(role)) continue
     const track: Track = createTrack('visual', TRACK_NAMES[role])
     const below = TRACK_ORDER.slice(i + 1)
-      .map((r) => trackFor.get(r))
+      .map(at)
       .find((id) => id !== undefined)
     const above = TRACK_ORDER.slice(0, i)
       .reverse()
-      .map((r) => trackFor.get(r))
+      .map(at)
       .find((id) => id !== undefined)
     const index = below ? order.indexOf(below) : above ? order.indexOf(above) + 1 : 0
     order.splice(index, 0, track.id)
@@ -711,6 +790,20 @@ function songCommands(project: Project, plan: EditPlan, removedTracks: Set<Id>):
   return commands
 }
 
+/**
+ * When the draft's opening is fully in: its first shot and title card faded in. The editor moves the playhead there
+ * after a draft, so it doesn't open on the black first frame of a fade from black.
+ */
+export function openingFrame(plan: EditPlan): Seconds {
+  const opening = [
+    ...plan.shots.filter((s) => s.layer === 'main'),
+    ...plan.texts.filter((t) => t.role === 'title'),
+  ]
+    .filter((x) => x.start < 2)
+    .map((x) => x.start + (x.transitionIn?.duration ?? 0))
+  return round3(Math.max(0, ...opening))
+}
+
 export function compilePlan(plan: EditPlan, project: Project, options: CompileOptions = {}): CompiledPlan {
   const generated = options.generated ?? new Map<string, Asset>()
   const ctx: Ctx = {
@@ -728,15 +821,17 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     addedTracks: 0,
     hiddenTracks: [],
   }
+  const template = templateState(project)
+  const keep = new Set(Object.values(template?.tracks ?? {}))
   const cleanup: Cleanup =
     options.replacePrevious === false
-      ? { commands: [], reused: new Map(), removedTracks: new Set(), removedClips: 0 }
-      : cleanupPrevious(project, ctx)
+      ? { commands: [], reused: new Map(), removedTracks: new Set(), removedClips: 0, removedIds: new Set() }
+      : cleanupPrevious(project, ctx, keep)
   stats.removedClips = cleanup.removedClips
 
   const needed = new Set<DirectorTrackRole>()
   for (const s of plan.shots) needed.add(LAYER_ROLE[s.layer])
-  if (plan.texts.length) needed.add('text')
+  for (const t of plan.texts) needed.add(textTrackRole(t))
   if (
     plan.look &&
     (adjustmentsFrom(plan.look.adjustments) ||
@@ -747,10 +842,12 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
   for (const [role, trackId] of cleanup.reused) {
     if (needed.has(role)) continue
     cleanup.reused.delete(role)
+    if (keep.has(trackId)) continue
     cleanup.removedTracks.add(trackId)
     cleanup.commands.push({ type: 'track.remove', trackId })
   }
-  const placed = placeTracks(project, needed, cleanup)
+  if (template) takeTemplateTracks(project, template, needed, cleanup)
+  const placed = placeTracks(project, needed, cleanup, template)
   stats.addedTracks = placed.added
 
   const assetCommands: EditCommand[] = []
@@ -770,9 +867,9 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     clips.push(clip)
     stats.shots++
   }
-  const textTrack = placed.trackFor.get('text')
-  for (const t of textTrack ? plan.texts : []) {
-    const clip = textClip(t, textTrack as Id, ctx)
+  for (const t of plan.texts) {
+    const trackId = placed.trackFor.get(textTrackRole(t))
+    const clip = trackId && textClip(t, trackId, ctx)
     if (!clip) continue
     clips.push(clip)
     stats.texts++

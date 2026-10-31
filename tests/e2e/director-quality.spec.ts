@@ -242,7 +242,7 @@ test('director drafts on real songs', async ({ page }) => {
           const hidden = {
             ...project,
             tracks: project.tracks.map((tr: { name: string }) =>
-              tr.name === 'Director · Text' ? { ...tr, hidden: true } : tr,
+              tr.name === 'Text' || tr.name === 'Titles' ? { ...tr, hidden: true } : tr,
             ),
           }
           const fg = await pixels(project, t)
