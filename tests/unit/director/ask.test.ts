@@ -209,6 +209,28 @@ describe('AskSession', () => {
     expect(editor.getProject()).toEqual(project)
   })
 
+  it('undoes the last edit from its toast after the result was dismissed', async () => {
+    const project = await draft()
+    const { editor, ask } = session(scriptedClient(bigger), project)
+    await ask.ask('make the lyrics bigger')
+    ask.reset()
+    expect(ask.undo()).toBe(true)
+    expect(editor.getProject()).toEqual(project)
+    expect(ask.undo()).toBe(false)
+  })
+
+  it('tells the model which song section is selected', async () => {
+    const project = await draft()
+    const client = scriptedClient(bigger)
+    const { ask } = session(client, project)
+    const section = project.analysis.audio[project.songAssetId!]!.sections![2]!
+    await ask.ask('make this section brighter', { section: section.id })
+    const sent = JSON.parse(String(client.requests[0]!.messages[1]!.content).split('\n\nRequest:')[0]!) as {
+      selectedSection?: string
+    }
+    expect(sent.selectedSection).toBe(summarizeProject(project).ids.toShort.get(section.id))
+  })
+
   it('waits for Apply or Discard when review comes first', async () => {
     const project = await draft()
     const { editor, ask } = session(scriptedClient(bigger, bigger), project, true)

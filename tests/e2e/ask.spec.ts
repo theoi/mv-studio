@@ -147,7 +147,7 @@ test('asks a clarifying question and continues with the answer', async ({ page }
   ])
   await openAsk(page)
   await send(page, 'add a marker called Drop')
-  await expect(page.getByText('Where should the marker go?')).toBeVisible()
+  await expect(page.getByText('Where should the marker go?', { exact: true })).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Answer Assist’s question' })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('ask-question.png') })
 
@@ -171,7 +171,12 @@ test('holds a large edit for review: Discard keeps the project, Apply changes it
   await model(page, [dim, dim])
   await openAsk(page)
   await send(page, 'dim all the footage')
+  await expect(page.getByText(/Ready to apply · Changes \d+ clips\.$/)).toBeVisible()
   await expect(page.getByText('This changes a lot at once, so it waits for you to apply it.')).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask Assist for a change' })).toHaveAttribute(
+    'placeholder',
+    'Apply or discard the change above, or ask for something else',
+  )
   expect((await projectState(page)).dimmed).toBe(0)
   await page.screenshot({ path: testInfo.outputPath('ask-review.png') })
 
@@ -203,7 +208,7 @@ test('without a model, says so and opens Settings', async ({ page }) => {
   await openAsk(page, null)
   await expect(page.getByText('No AI model yet')).toBeVisible()
   await send(page, 'make the chorus more intense')
-  await expect(page.getByText('Ask needs an AI model')).toBeVisible()
+  await expect(page.getByText('Ask needs an AI model', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Open Settings' }).click()
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
 })

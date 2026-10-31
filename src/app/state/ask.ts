@@ -33,16 +33,18 @@ function askSession(): Promise<AskSession> {
 
 function toastApplied(state: AskState) {
   if (state.status !== 'applied') return
-  toast(state.summary, { label: 'Undo', run: () => void undoAsk() })
+  const summary = state.summary.length > 60 ? `${state.summary.slice(0, 59)}…` : state.summary
+  toast(summary, { label: 'Undo', run: () => void undoAsk() })
 }
 
-/** Sends a request with the selected clip and the playhead as context. */
+/** Sends a request with the selected clip or song section and the playhead as context. */
 export async function ask(request: string): Promise<void> {
   const s = await askSession()
   const { selection, playhead } = getUi()
   toastApplied(
     await s.ask(request, {
       ...(selection.type === 'clip' ? { selection: [selection.id] } : {}),
+      ...(selection.type === 'section' ? { section: selection.id } : {}),
       playhead,
     }),
   )
@@ -66,8 +68,7 @@ export function rejectAsk(): void {
 export async function undoAsk(): Promise<void> {
   const s = await askSession()
   if (s.undo()) toast('Change undone')
-  else if (s.getState().status === 'applied')
-    toast('The project has changed since. Use Undo in the top bar to step back.')
+  else toast('The project has changed since. Use Undo in the top bar to step back.')
 }
 
 export function cancelAsk(): void {

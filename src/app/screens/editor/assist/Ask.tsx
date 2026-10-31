@@ -140,13 +140,13 @@ function Review({ state }: { state: StateOf<'review'> }) {
   const note = REVIEW_NOTE[state.reason]
   return (
     <>
-      <div className={styles.changed}>
-        <Eye /> {state.summary}
+      <div className={`${styles.changed} ${styles.askPending}`}>
+        <Eye /> Ready to apply · {state.changes}
       </div>
-      <div className={styles.muted}>{state.changes}</div>
+      <div className={styles.lede}>{state.summary}</div>
+      {note && <div className={styles.muted}>{note}</div>}
       <Changes items={state.items} />
       <Notes notes={state.warnings} />
-      {note && <div className={styles.muted}>{note}</div>}
       <div className={styles.rowActions}>
         <Button size="sm" variant="primary" icon={<Check />} onClick={() => void acceptAsk()}>
           Apply
@@ -185,7 +185,7 @@ function Applied({ state }: { state: StateOf<'applied'> }) {
 function Failed({ state }: { state: StateOf<'error'> }) {
   return (
     <>
-      <div className={styles.thinking} role="alert">
+      <div className={`${styles.thinking} ${styles.askFailed}`}>
         <AlertTriangle size={14} />
         <span>{state.title}</span>
       </div>
@@ -209,10 +209,30 @@ function Failed({ state }: { state: StateOf<'error'> }) {
   )
 }
 
+/** A short line for screen readers; the result itself holds a ticking timer and would be read out every second. */
+function statusText(state: AskState): string {
+  switch (state.status) {
+    case 'thinking':
+      return 'Thinking'
+    case 'question':
+      return `Assist has a question: ${state.question}`
+    case 'review':
+      return 'Waiting for you to apply the change'
+    case 'applied':
+      return `Applied: ${state.summary}`
+    case 'reply':
+      return 'Assist answered'
+    case 'error':
+      return `Failed: ${state.title}`
+    default:
+      return ''
+  }
+}
+
 function Result({ state }: { state: AskState }) {
   if (state.status === 'idle') return null
   return (
-    <div className={styles.askResult} aria-live="polite">
+    <div className={styles.askResult}>
       <div className={styles.askQ}>“{state.request}”</div>
       {state.status === 'thinking' && <Thinking state={state} />}
       {state.status === 'question' && <Question state={state} />}
@@ -237,6 +257,7 @@ export function AskBox() {
   const [value, setValue] = useState('')
   const state = useAsk((s) => s.state)
   const answering = state.status === 'question'
+  const noModel = !llmLabel(useCloud().llm)
   const submit = () => {
     const text = value.trim()
     if (!text) return
@@ -253,12 +274,16 @@ export function AskBox() {
           placeholder={
             answering
               ? 'Type your answer, or pick one below'
-              : 'Ask for a change, like “make the chorus more intense”'
+              : state.status === 'review'
+                ? 'Apply or discard the change above, or ask for something else'
+                : noModel
+                  ? 'Set up an AI model in Settings to ask for changes'
+                  : 'Ask for a change, like “make the chorus more intense”'
           }
           aria-label={answering ? 'Answer Assist’s question' : 'Ask Assist for a change'}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
               submit()
             }
@@ -277,6 +302,9 @@ export function AskBox() {
             <ArrowUp />
           </IconButton>
         </div>
+      </div>
+      <div className="sr-only" aria-live="polite">
+        {statusText(state)}
       </div>
       <Result state={state} />
     </div>
