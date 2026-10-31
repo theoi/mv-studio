@@ -9,7 +9,7 @@
  */
 import { directorMeta } from '../director/meta.ts'
 import { pluginRegistry } from '../engine/registry.ts'
-import type { PluginRegistry } from '../engine/types.ts'
+import type { PluginDefinition, PluginRegistry } from '../engine/types.ts'
 import type { EditCommand } from '../model/commands.ts'
 import type { ProjectEditor } from '../model/editor.ts'
 import { createSolidClip, createTrack } from '../model/factory.ts'
@@ -234,13 +234,9 @@ export function applyLookCommands(
         })
     }
     if (clip.type === 'generator' && options.visualizers !== false) {
-      const def = registry.get(clip.generatorId)
-      const colors: Record<string, string> = { color: look.palette.primary, color2: look.palette.secondary }
-      for (const spec of def?.params ?? []) {
-        const value = colors[spec.key]
-        if (spec.type === 'color' && value)
-          commands.push({ type: 'clip.set', clipId: clip.id, path: ['params', spec.key], value: { value } })
-      }
+      const colors = lookPaletteParams(look, registry.get(clip.generatorId))
+      for (const [key, value] of Object.entries(colors))
+        commands.push({ type: 'clip.set', clipId: clip.id, path: ['params', key], value: { value } })
     }
     if (
       options.transitions !== false &&
@@ -261,6 +257,20 @@ export function applyLookCommands(
     }
   }
   return commands
+}
+
+/** A look's visualizer colors for a generator's color params: `color` gets the primary, `color2` the secondary. */
+export function lookPaletteParams(
+  look: LookDefinition,
+  def: PluginDefinition | undefined,
+): Record<string, string> {
+  const colors: Record<string, string> = { color: look.palette.primary, color2: look.palette.secondary }
+  const params: Record<string, string> = {}
+  for (const spec of def?.params ?? []) {
+    const value = colors[spec.key]
+    if (spec.type === 'color' && value) params[spec.key] = value
+  }
+  return params
 }
 
 /** Applies a look as one undo step labeled with its name. */

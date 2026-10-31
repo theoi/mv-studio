@@ -1,20 +1,29 @@
 /**
- * Library items and what adding one does: the looks, effects and transitions the Library tabs list, where a clicked
- * item lands, the one undoable edit it makes, and the toast that says so.
+ * Library items and what adding one does: the looks, effects, transitions and visuals the Library tabs list, where a
+ * clicked item lands, the one undoable edit it makes, and the toast that says so.
  */
 import { pluginRegistry } from '../../engine/registry.ts'
 import type { PluginCatalogEntry } from '../../engine/types.ts'
-import type { Clip, Project, Seconds, VisualClip } from '../../model/index.ts'
-import { createEffectInstance, createTransition } from '../../plugins/library.ts'
+import {
+  createTrack,
+  type Clip,
+  type EditCommand,
+  type Id,
+  type Project,
+  type Seconds,
+  type VisualClip,
+} from '../../model/index.ts'
+import { createEffectInstance, createGeneratorClip, createTransition } from '../../plugins/library.ts'
 import {
   applyLookCommands,
   currentLook,
+  lookPaletteParams,
   lookRegistry,
   ORIGINAL_LOOK,
   removeLookCommands,
 } from '../../plugins/looks.ts'
 import { formatTime } from '../format.ts'
-import { dispatch, editor, viewOf } from './project.ts'
+import { dispatch, editor, sectionAt, timelineDuration, viewOf } from './project.ts'
 import { get, select, set, toast, type Selection } from './ui.ts'
 
 /** Anything the library search can match: names, categories, descriptions and tags. */
@@ -355,4 +364,86 @@ export function dropLibraryItem(item: LibraryItem, at: { trackId: string; time: 
     if (target) putTransition(project, target, effectNamed(def))
     else toast(`Drop “${def.name}” on a cut between two clips`)
   }
+}
+
+/** Visualizers (bars, waveforms, particles) and shader visuals (scenes and backgrounds). */
+export function visualItems(group: 'visualizers' | 'shaders'): PluginCatalogEntry[] {
+  return pluginRegistry
+    .catalog('generator')
+    .filter((g) => (g.category === 'Visualizer') === (group === 'visualizers'))
+}
+
+/** Items that move with the music out of the box get the "reacts to the music" badge. */
+export function isReactive(entry: PluginCatalogEntry): boolean {
+  return !!entry.tags?.includes('reactive') || !!entry.defaultModulation
+}
+
+/** A visual added at the playhead lasts to the end of the song section there, or this long without sections. */
+const VISUAL_SECONDS = 8
+
+/**
+ * Where a visual added at `time` goes: from `time` to the end of the song section there (at least 2 s, else 8 s), on
+ * the first free unlocked track above the footage that holds neither lyrics nor the look, or a new Visuals track
+ * right above the footage.
+ */
+export function visualPlacement(
+  project: Project,
+  time: Seconds,
+):
+  | { start: Seconds; duration: Seconds; trackId: Id }
+  | { start: Seconds; duration: Seconds; newTrackIndex: number } {
+  const section = sectionAt(project, time)
+  const end = section && section.end - time >= 2 ? section.end : time + VISUAL_SECONDS
+  const duration = Math.max(1, Math.min(end, Math.max(timelineDuration(project), time + 1)) - time)
+  const clips = Object.values(project.clips)
+  const onTrack = (trackId: Id) => clips.filter((c) => c.trackId === trackId)
+  const footage = project.tracks.findIndex(
+    (t) => t.kind === 'visual' && onTrack(t.id).some((c) => c.type === 'video' || c.type === 'image'),
+  )
+  const firstAudio = project.tracks.findIndex((t) => t.kind === 'audio')
+  const below = footage >= 0 ? footage : firstAudio >= 0 ? firstAudio : project.tracks.length
+  for (const [index, track] of project.tracks.entries()) {
+    if (index >= below) break
+    if (track.kind !== 'visual' || track.locked) continue
+    const here = onTrack(track.id)
+    const special =
+      here.length > 0 &&
+      (here.every((c) => c.type === 'text' && c.lyricLineId) || here.every((c) => c.type === 'adjustment'))
+    const busy = here.some((c) => c.start < time + duration && c.start + c.duration > time)
+    if (!special && !busy) return { start: time, duration, trackId: track.id }
+  }
+  return { start: time, duration, newTrackIndex: below }
+}
+
+/** Adds a visualizer or shader visual at the playhead in the colors of the video's look, as one undo step. */
+export function addVisual(generatorId: string): void {
+  const def = pluginRegistry.get(generatorId)
+  if (def?.kind !== 'generator') return
+  const project = editor.getProject()
+  const place = visualPlacement(project, get().playhead)
+  const commands: EditCommand[] = []
+  let trackId: Id
+  if ('trackId' in place) trackId = place.trackId
+  else {
+    const track = createTrack('visual', 'Visuals')
+    commands.push({ type: 'track.add', track, index: place.newTrackIndex })
+    trackId = track.id
+  }
+  const clip = {
+    ...createGeneratorClip({ trackId, generatorId, start: place.start, duration: place.duration }),
+    name: def.name,
+  }
+  const look = chosenLookId(project)
+  const palette = look ? lookRegistry.get(look) : undefined
+  if (palette)
+    for (const [key, value] of Object.entries(lookPaletteParams(palette, def)))
+      clip.params[key] = { ...clip.params[key], value }
+  commands.push({ type: 'clip.add', clip })
+  const label = `Add visual: ${def.name}`
+  if (!dispatch(commands, { label })) return
+  select({ type: 'clip', id: clip.id })
+  toast(
+    `“${def.name}” added from ${formatTime(place.start)} to ${formatTime(place.start + place.duration)}`,
+    undoAction(label),
+  )
 }
