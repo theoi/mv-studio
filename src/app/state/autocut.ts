@@ -2,7 +2,13 @@ import { create } from 'zustand'
 import type { Id, Project } from '../../model/index.ts'
 import { jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
-import type { AutoCutOn, AutoCutOptions, AutoCutPace, AutoCutResult } from '../../vision/index.ts'
+import type {
+  AutoCutOn,
+  AutoCutOptions,
+  AutoCutPace,
+  AutoCutResult,
+  IndexingState,
+} from '../../vision/index.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
@@ -65,12 +71,29 @@ export function autoCutClipCount(project: Project): number {
   return poolAssets(project).length
 }
 
-/** Clips footage analysis has not indexed for matching yet; auto-cut picks them for variety only. */
-export function unanalyzedClipCount(project: Project): number {
-  return poolAssets(project).filter((a) => {
+const unanalyzed = (project: Project) =>
+  poolAssets(project).filter((a) => {
     const data = project.analysis.visual[a.id]?.data
     return !(data && typeof data === 'object' && !Array.isArray(data) && data.embedding)
-  }).length
+  })
+
+/** Clips footage analysis has not indexed for matching yet; auto-cut picks them for variety only. */
+export function unanalyzedClipCount(project: Project): number {
+  return unanalyzed(project).length
+}
+
+/**
+ * The clips not analyzed yet, split into those analysis will still pick up (`waiting`) and those it failed to read
+ * (`unreadable`, in the order they failed), which only a retry of failed clips analyzes again.
+ */
+export function analysisBacklog(
+  project: Project,
+  indexing: IndexingState | null,
+): { waiting: number; unreadable: IndexingState['failed'] } {
+  const left = unanalyzed(project)
+  const ids = new Set(left.map((a) => a.id))
+  const unreadable = (indexing?.failed ?? []).filter((f) => ids.has(f.assetId))
+  return { waiting: left.length - unreadable.length, unreadable }
 }
 
 /** Bytes footage analysis still has to download to match clips (the matching model, once), 0 when cached. */

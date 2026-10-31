@@ -620,7 +620,8 @@ function SectionSuggestion({ section }: { section: SongSection }) {
   const cutId = `cut-${section.id}`
   const quiet = useUi((s) => s.dismissed.includes(matchId) || s.dismissed.includes(cutId))
   if (quiet) return null
-  const label = section.label.toLowerCase()
+  // "this verse", not "this verse 1".
+  const label = section.label.replace(/\s*\d+$/, '').toLowerCase()
   return (
     <div className={styles.sectionSuggest}>
       {count >= 2 ? (

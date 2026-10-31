@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Info, Lock, Plus, RotateCcw, Sparkles } from 'lucide-react'
 import type { Asset, Project, SongSection } from '../../../../model/index.ts'
 import type { FootageResult } from '../../../../vision/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBytes, formatTime, plural } from '../../../format.ts'
-import { autoCutClipCount, matchingDownloadBytes, unanalyzedClipCount } from '../../../state/autocut.ts'
+import { analysisBacklog, autoCutClipCount, matchingDownloadBytes } from '../../../state/autocut.ts'
 import {
   analyzeFootageNow,
+  cancelFootageAnalysis,
   clipTags,
   retryFootageAnalysis,
   startFootageAnalysis,
@@ -15,9 +16,10 @@ import {
   useFootageResults,
 } from '../../../state/footage.ts'
 import { addAsset, openImport } from '../../../state/importer.ts'
-import { sectionKind, sectionName, sectionsOf, useProject } from '../../../state/project.ts'
+import { editor, sectionKind, sectionName, sectionsOf, useProject } from '../../../state/project.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
-import { ToolView } from './ToolView.tsx'
+import { toast } from '../../../state/ui.ts'
+import { CancelButton, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
 const PICKS = 3
@@ -59,21 +61,32 @@ function useMatchingDownload(needed: boolean): number {
   return needed ? bytes : 0
 }
 
+const baseName = (name: string) => name.replace(/\.[^.]+$/, '')
+
 function Pick({ asset, result, section }: { asset: Asset; result: FootageResult; section: SongSection }) {
   const project = useProject()
   const thumb = useThumbnail(asset)
-  const name = asset.name.replace(/\.[^.]+$/, '')
+  const name = baseName(asset.name)
   const tags = clipTags(project, asset.id)
   const best =
     asset.kind === 'video'
       ? `Best part ${formatTime(result.range.start)}–${formatTime(result.range.end)}`
       : ''
-  const place = () =>
-    addAsset(asset.id, {
+  const place = () => {
+    const added = addAsset(asset.id, {
       start: section.start,
       duration: Math.min(section.end - section.start, Math.max(2, result.range.end - result.range.start)),
       sourceStart: result.range.start,
     })
+    if (!added) return
+    const label = editor.undoLabel()
+    toast(`Added ${name} to ${sectionName(section)}`, {
+      label: 'Undo',
+      run: () => {
+        if (editor.undoLabel() === label) editor.undo()
+      },
+    })
+  }
   return (
     <Tooltip
       label={name}
@@ -128,14 +141,26 @@ export function MatchView() {
   const project = useProject()
   const indexing = useFootage((s) => s.indexing)
   const clipCount = autoCutClipCount(project)
-  const unanalyzed = unanalyzedClipCount(project)
-  const analyzed = clipCount - unanalyzed
+  const { waiting, unreadable } = analysisBacklog(project, indexing)
+  const analyzed = clipCount - waiting - unreadable.length
   const analyzing = indexing?.status === 'indexing'
   const failed = indexing?.status === 'error'
-  const offer = clipCount > 0 && unanalyzed > 0 && !analyzing && !failed
+  const offer = clipCount > 0 && waiting > 0 && !analyzing && !failed
+  const retry = !offer && !analyzing && !failed && unreadable.length > 0
+  const first = unreadable[0]
+  const reason =
+    first &&
+    (first.message.includes(first.name) ? first.message : `${baseName(first.name)}: ${first.message}`)
   const download = useMatchingDownload(offer)
   const groups = sectionGroups(project)
+  const refocus = useRef(false)
   useEffect(startFootageAnalysis, [])
+  // After Cancel the analyzing note and its button are gone: focus the button that analyzes again.
+  const focusAfterCancel = (el: HTMLButtonElement | null) => {
+    if (!el || !refocus.current) return
+    refocus.current = false
+    el.focus()
+  }
 
   if (!clipCount)
     return (
@@ -155,20 +180,33 @@ export function MatchView() {
       </ToolView>
     )
 
-  const footer = failed ? (
-    <Button variant="primary" block icon={<RotateCcw />} onClick={retryFootageAnalysis}>
-      Try again
-    </Button>
-  ) : offer ? (
-    <>
-      <Button variant="primary" block icon={<Sparkles />} onClick={analyzeFootageNow}>
-        {analyzed ? `Analyze ${plural(unanalyzed, 'more clip')}` : 'Analyze footage'}
+  const footer =
+    failed || retry ? (
+      <Button
+        ref={focusAfterCancel}
+        variant="primary"
+        block
+        icon={<RotateCcw />}
+        onClick={retryFootageAnalysis}
+      >
+        Try again
       </Button>
-      <div className={styles.costLine}>
-        <Lock /> Runs on this device · free{download ? ` · ${formatBytes(download)} download, once` : ''}
-      </div>
-    </>
-  ) : undefined
+    ) : offer ? (
+      <>
+        <Button
+          ref={focusAfterCancel}
+          variant="primary"
+          block
+          icon={<Sparkles />}
+          onClick={analyzeFootageNow}
+        >
+          {analyzed || unreadable.length ? `Analyze ${plural(waiting, 'more clip')}` : 'Analyze footage'}
+        </Button>
+        <div className={styles.costLine}>
+          <Lock /> Runs on this device · free{download ? ` · ${formatBytes(download)} download, once` : ''}
+        </div>
+      </>
+    ) : undefined
 
   return (
     <ToolView
@@ -199,16 +237,44 @@ export function MatchView() {
             Analyzing your footage… {indexing?.done ?? 0} of {indexing?.total ?? clipCount} clips. Picks
             update as clips finish.
           </div>
+          <span className={styles.calloutAction}>
+            <CancelButton
+              inline
+              onCancel={() => {
+                refocus.current = true
+                cancelFootageAnalysis()
+              }}
+            />
+          </span>
         </div>
-      ) : offer ? (
-        <div className={styles.callout}>
-          <Info />
-          <div>
-            {unanalyzed === clipCount ? 'Your clips aren’t' : `${plural(unanalyzed, 'clip')} aren’t`} analyzed
-            yet. Analyze them to see the best picks for each part of the song.
-          </div>
-        </div>
-      ) : null}
+      ) : (
+        <>
+          {unreadable.length > 0 && (
+            <div className={styles.failure} role="alert">
+              <span className={styles.failureIcon}>
+                <AlertTriangle />
+              </span>
+              <div>
+                <div className={styles.successTitle}>
+                  {plural(unreadable.length, 'clip')} couldn’t be analyzed
+                </div>
+                <div className={styles.muted}>{reason}</div>
+              </div>
+            </div>
+          )}
+          {offer && (
+            <div className={styles.callout}>
+              <Info />
+              <div>
+                {waiting === clipCount
+                  ? `Your ${waiting === 1 ? 'clip isn’t' : 'clips aren’t'}`
+                  : `${plural(waiting, 'clip')} ${waiting === 1 ? 'isn’t' : 'aren’t'}`}{' '}
+                analyzed yet. Analyze them to see the best picks for each part of the song.
+              </div>
+            </div>
+          )}
+        </>
+      )}
       {analyzed > 0 && groups.map((s) => <SectionPicks key={s.id} section={s} />)}
       {analyzed > 0 && !groups.length && (
         <p className={styles.muted}>Picks appear once the song’s sections are found.</p>

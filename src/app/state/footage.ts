@@ -204,6 +204,11 @@ export function clipTags(project: Project, assetId: Id): string[] {
   return tags.slice(0, MAX_TAGS)
 }
 
+/** Stops footage analysis; the clips left wait until it is asked for again or a clip is imported. */
+export function cancelFootageAnalysis(): void {
+  useFootage.getState().service?.indexing.cancel()
+}
+
 /** Analyzes footage again after a failed run, including the clips that failed. */
 export function retryFootageAnalysis(): void {
   started = true

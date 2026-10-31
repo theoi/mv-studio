@@ -33,6 +33,12 @@ async function openSample(page: Page, hash: string) {
       })
     const onnx = {
       async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        const w = window as Untyped
+        if (w.__embedGate) await w.__embedGate
+        if (w.__embedFails) {
+          for (const b of bitmaps) b.close()
+          throw new Error('This clip’s frames can’t be read.')
+        }
         const data = bitmaps.flatMap((b) => {
           const v = meanColor(b)
           b.close()
@@ -177,6 +183,21 @@ test('Assist › Match analyzes the clips on request, picks clips for each part 
   )
   expect(placed.sourceStart).toBeCloseTo(best.range.start, 3)
   expect(placed.duration).toBeLessThanOrEqual(chorus.end - chorus.start + 1e-6)
+  // A toast confirms it, and its Undo takes the clip off again.
+  const added = page.getByRole('status').filter({ hasText: `Added ${best.name} to Chorus` })
+  await expect(added).toBeVisible()
+  await added.getByRole('button', { name: 'Undo' }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ assetId, start }) =>
+          Object.values(
+            window.mvStudio.app.project.editor.getProject().clips as Record<string, Untyped>,
+          ).filter((c) => c.assetId === assetId && Math.abs(c.start - start) < 1e-6).length,
+        { assetId: best.assetId, start: chorus.start },
+      ),
+    )
+    .toBe(0)
 
   // Library › Media shows each clip's tags on hover: the clip name, then the tags analysis stored.
   const asset = await page.evaluate((id) => {
@@ -228,4 +249,74 @@ test('a selected section suggests re-cutting it until its footage matches, then 
   await chip.getByRole('button', { name: 'Dismiss suggestion' }).click()
   await expect(page.getByText(/clips match this chorus/)).toHaveCount(0)
   await expect(page.getByText('Re-cut this chorus to the beat')).toHaveCount(0)
+})
+
+test('Cancel stops footage analysis silently in Match and Auto-cut; clips that fail show why and Try again retries them', async ({
+  page,
+}) => {
+  test.setTimeout(200_000)
+  await openSample(page, '#/editor?kind=footage&tab=assist&assist=match&t=73.6')
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const analyze = assist.getByRole('button', { name: /^Analyze (footage|\d+ more clips?)$/ })
+  /** Holds every frame embedding until `release()`, so analysis is reliably still running. */
+  const hold = () =>
+    page.evaluate(() => {
+      const w = window as Untyped
+      w.__embedGate = new Promise<void>((resolve) => (w.__releaseEmbeds = resolve))
+    })
+  const release = () => page.evaluate(() => (window as Untyped).__releaseEmbeds())
+  const status = () => page.evaluate(() => window.mvStudio.app.footage.useFootage.getState().indexing?.status)
+
+  // Match: Cancel in the analyzing note stops the run and brings the offer back, with nothing else said.
+  await hold()
+  await analyze.click()
+  const analyzingNote = assist.getByText(/^Analyzing your footage…/)
+  await expect(analyzingNote).toBeVisible()
+  await assist.getByRole('button', { name: 'Cancel' }).click()
+  await release()
+  await expect(analyzingNote).toBeHidden()
+  await expect.poll(status).toBe('paused')
+  await expect(analyze).toBeFocused()
+  await expect(assist.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByText(/cancel/i)).toHaveCount(0)
+
+  // Auto-cut: the same note has a Cancel, which puts focus on Cut to the beat.
+  await hold()
+  await analyze.click()
+  await page.evaluate(() => window.mvStudio.app.ui.openAssist('autocut'))
+  const autocutNote = assist.getByText(/^Analyzing your footage… .* Cut again when it’s done/)
+  await expect(autocutNote).toBeVisible()
+  await assist.getByRole('button', { name: 'Cancel' }).click()
+  await release()
+  await expect(autocutNote).toBeHidden()
+  await expect.poll(status).toBe('paused')
+  await expect(assist.getByText(/analyzed yet, so this cut picks (it|them) for variety/)).toBeVisible()
+  await expect(assist.getByRole('button', { name: 'Cut to the beat' })).toBeFocused()
+
+  // Clips analysis can't read: Match says how many and why, offers only Try again, and that retries them.
+  await page.evaluate(() => {
+    ;(window as Untyped).__embedFails = true
+    window.mvStudio.app.ui.openAssist('match')
+  })
+  await analyze.click()
+  const failure = assist.getByRole('alert').filter({ hasText: /couldn’t be analyzed/ })
+  await expect(failure).toBeVisible({ timeout: 150_000 })
+  await expect.poll(status).toBe('idle')
+  const failed = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    return window.mvStudio.app.footage.useFootage
+      .getState()
+      .indexing.failed.filter((f: Untyped) => !project.analysis.visual[f.assetId]?.data?.embedding)
+      .map((f: Untyped) => f.message as string)
+  })
+  expect(failed.length).toBeGreaterThan(1)
+  await expect(failure).toContainText(`${failed.length} clips couldn’t be analyzed`)
+  await expect(failure).toContainText(failed[0]!)
+  await expect(analyze).toHaveCount(0)
+  await page.evaluate(() => ((window as Untyped).__embedFails = false))
+  await assist.getByRole('button', { name: 'Try again' }).click()
+  await analysisDone(page)
+  await expect(failure).toBeHidden()
+  await expect(assist.getByRole('button', { name: 'Try again' })).toHaveCount(0)
+  await expect(assist.getByRole('group', { name: 'Picks for Chorus' }).getByRole('button')).toHaveCount(3)
 })

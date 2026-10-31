@@ -416,6 +416,11 @@
   line-height: var(--lh-sm);
 }
 
+.calloutAction {
+  flex: none;
+  align-self: center;
+}
+
 .callout > svg {
   width: 14px;
   height: 14px;

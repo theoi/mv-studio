@@ -184,13 +184,13 @@ export interface Placement {
 }
 
 /** Adds an asset on the first free track of its kind (footage tracks first), adding one if needed. */
-export function addAsset(assetId: string, at: Placement = {}): void {
+export function addAsset(assetId: string, at: Placement = {}): boolean {
   const project = editor.getProject()
   const asset = project.assets[assetId]
   const placed = asset && assetPlacement(project, asset, at)
-  if (!placed) return
-  if (dispatch(placed.commands, { label: `Add ${baseName(asset.name)}` }))
-    select({ type: 'clip', id: placed.clip.id })
+  if (!placed || !dispatch(placed.commands, { label: `Add ${baseName(asset.name)}` })) return false
+  select({ type: 'clip', id: placed.clip.id })
+  return true
 }
 
 /**
