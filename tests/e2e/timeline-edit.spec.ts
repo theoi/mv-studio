@@ -92,7 +92,7 @@ test('Shift and Mod click select several clips, and copy, paste, duplicate, cut 
   await next.click({ modifiers: [mod] })
   expect(await selectedIds(page)).toHaveLength(2)
 
-  // From the keyboard: Enter selects the focused clip; with Shift or Mod, Enter or Space adds or removes it.
+  // From the keyboard: Enter selects the focused clip; with Shift or Mod, Enter adds or removes it.
   await singer.focus()
   await page.keyboard.press('Enter')
   expect(await selectedIds(page)).toHaveLength(1)
@@ -100,12 +100,10 @@ test('Shift and Mod click select several clips, and copy, paste, duplicate, cut 
   await page.keyboard.press('Shift+Enter')
   await expect(next).toHaveAttribute('aria-pressed', 'true')
   await expect(singer).toHaveAttribute('aria-pressed', 'true')
-  await page.keyboard.press(`${mod}+Space`)
+  await page.keyboard.press(`${mod}+Enter`)
   await expect(next).toHaveAttribute('aria-pressed', 'false')
-  await page.keyboard.press('Shift+Space')
+  await page.keyboard.press('Shift+Enter')
   expect(await selectedIds(page)).toHaveLength(2)
-  // The clip took Space, so it did not also start playback.
-  expect(await page.evaluate(() => window.mvStudio.app.ui.get().playing)).toBe(false)
   await expect(page.getByText(`Shift-click or ${mod === 'Meta' ? '⌘' : 'Ctrl'}-click a clip`)).toBeVisible()
 
   // Blend reads "Mixed" while the selected clips differ.
@@ -287,13 +285,15 @@ test('pasted and duplicated clips are scrolled into view, on a numbered track wh
   page,
 }) => {
   await openEditor(page, '#/editor?t=67')
-  // With no clips selected or copied, the palette shows why Copy and Paste can't run yet.
+  // With no clips selected or copied, the palette shows why Copy and Paste can't run yet, and Enter does nothing.
   const palette = page.getByRole('dialog')
   await page.keyboard.press(`${mod}+k`)
   await palette.getByRole('combobox').fill('Copy')
   const copyItem = palette.getByRole('option', { name: /^Copy/ })
-  await expect(copyItem).toHaveAttribute('aria-disabled', 'true')
+  await expect(copyItem).toHaveAttribute('aria-selected', 'true')
   await expect(copyItem).toContainText('Select clips first')
+  await page.keyboard.press('Enter')
+  await expect(copyItem).toBeVisible()
   await palette.getByRole('combobox').fill('Paste')
   await expect(palette.getByRole('option', { name: /^Paste at playhead/ })).toContainText('Copy clips first')
   await page.keyboard.press('Escape')

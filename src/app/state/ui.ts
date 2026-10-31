@@ -30,6 +30,7 @@ export type DialogName = null | 'export' | 'settings'
 export type LibraryTab = 'media' | 'text' | 'visuals' | 'effects'
 export type SettingsPage = 'general' | 'editing' | 'ai' | 'local' | 'shortcuts' | 'vj' | 'storage' | 'about'
 export type ExportPhase = 'setup' | 'exporting'
+export type TimelineTool = 'select' | 'split'
 
 export interface Toast {
   id: number
@@ -57,6 +58,7 @@ export interface UiState {
   /** Play was pressed and the preview is still loading audio. */
   starting: boolean
   pxPerSec: number
+  tool: TimelineTool
   snap: boolean
   beatSnap: boolean
   showEnergy: boolean
@@ -93,6 +95,7 @@ export const initialUi: UiState = {
   playing: false,
   starting: false,
   pxPerSec: 12,
+  tool: 'select',
   snap: true,
   beatSnap: prefs().beatSnap,
   showEnergy: true,

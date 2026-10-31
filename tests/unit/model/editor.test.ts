@@ -54,6 +54,21 @@ describe('ProjectEditor', () => {
     expect(editor.getProject().clips[clip.id]?.start).toBe(2)
   })
 
+  it('lists undo and redo step labels, the next one to undo or redo first', () => {
+    const { editor, visual, asset } = setup()
+    const clip = createVideoClip({ trackId: visual.id, assetId: asset.id, start: 0, duration: 4 })
+    editor.dispatch({ type: 'clip.add', clip }, { label: 'Add clip' })
+    editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start: 1 }] }, { label: 'Move clip' })
+    editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start: 2 }] }, { label: 'Move again' })
+    editor.undo()
+    expect(editor.history()).toEqual({
+      undo: ['Move clip', 'Add clip', 'Import media'],
+      redo: ['Move again'],
+    })
+    editor.undo()
+    expect(editor.history().redo).toEqual(['Move clip', 'Move again'])
+  })
+
   it('merges a drag gesture into one undo step via coalesceKey', () => {
     const { editor, visual, asset } = setup()
     const clip = createVideoClip({ trackId: visual.id, assetId: asset.id, start: 0, duration: 4 })

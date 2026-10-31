@@ -82,6 +82,7 @@ export function FieldRow({
       className={[styles.row, stacked && styles.rowStacked, wideLabel && styles.rowWide]
         .filter(Boolean)
         .join(' ')}
+      data-field-row
     >
       <span className={styles.rowLabel} title={label}>
         {label}
