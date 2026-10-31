@@ -2,15 +2,17 @@
  * Samples precomputed song analysis at timeline times for audio-reactive parameters. Everything is a pure function
  * of (project, time), with no state carried between frames, so scrubbing, preview and export agree exactly.
  */
-import type {
-  AudioAnalysis,
-  AudioClip,
-  AudioFeatures,
-  AudioFeatureSource,
-  Id,
-  Project,
-  Seconds,
-  StemName,
+import {
+  STEM_NAMES,
+  type AudioAnalysis,
+  type AudioClip,
+  type AudioFeatures,
+  type AudioFeatureSource,
+  type Clip,
+  type Id,
+  type Project,
+  type Seconds,
+  type StemName,
 } from '../model/types.ts'
 import type { AudioFrame } from './types.ts'
 
@@ -19,9 +21,17 @@ export interface AudioSampler {
   sample(source: AudioFeatureSource, time: Seconds, smoothing?: number, audioAssetId?: Id): number
   /** All features at `time` for the main song, for effect and generator shaders. */
   frame(time: Seconds): AudioFrame
+  /**
+   * The same, with loudness, bands, onsets and flow from one stem of the song: in frame(), and in sample() for sources
+   * that name no stem. The beat and bar grid stay the song's. Where the stem has not been separated, the full mix.
+   */
+  stem(name: StemName): AudioSampler
 }
 
-const STEMS: StemName[] = ['vocals', 'drums', 'bass', 'other']
+/** The sampler for everything reactive on a clip: a generator clip's audio source, else the song's mix. */
+export function clipSampler(audio: AudioSampler, clip: Clip): AudioSampler {
+  return clip.type === 'generator' && clip.audio ? audio.stem(clip.audio.stem) : audio
+}
 const SMOOTHING_WINDOW = 0.5
 const SMOOTHING_TAPS = 8
 const FALLBACK_BPM = 120
@@ -120,8 +130,14 @@ export function createAudioSampler(project: Project): AudioSampler {
     return null
   }
 
-  function featuresFor(analysis: AudioAnalysis, stem?: StemName): AudioFeatures | undefined {
-    return stem ? analysis.stemFeatures?.[stem] : analysis.features
+  /** A source's own stem; else the sampler's stem where it was separated; else the full mix. */
+  function featuresFor(
+    analysis: AudioAnalysis,
+    stem?: StemName,
+    preferred?: StemName,
+  ): AudioFeatures | undefined {
+    if (stem) return analysis.stemFeatures?.[stem]
+    return (preferred && analysis.stemFeatures?.[preferred]) || analysis.features
   }
 
   function raw(
@@ -129,18 +145,19 @@ export function createAudioSampler(project: Project): AudioSampler {
     analysis: AudioAnalysis,
     assetTime: Seconds,
     smoothing: number,
+    preferred: StemName | undefined,
   ): number {
     switch (source.kind) {
       case 'loudness': {
-        const f = featuresFor(analysis, source.stem)
+        const f = featuresFor(analysis, source.stem, preferred)
         return f ? clamp01(seriesAt(f.loudness, f.rate, assetTime)) : 0
       }
       case 'band': {
-        const f = featuresFor(analysis, source.stem)
+        const f = featuresFor(analysis, source.stem, preferred)
         return f ? clamp01(seriesAt(bandColumn(f, source.band), f.rate, assetTime)) : 0
       }
       case 'onset':
-        return pulse(featuresFor(analysis, source.stem)?.onsets, assetTime, 0.08 + smoothing * 0.4)
+        return pulse(featuresFor(analysis, source.stem, preferred)?.onsets, assetTime, 0.08 + smoothing * 0.4)
       case 'beat':
         return pulse(analysis.beats, assetTime, 0.12 + smoothing * 0.4)
       case 'downbeat':
@@ -164,7 +181,13 @@ export function createAudioSampler(project: Project): AudioSampler {
     return col
   }
 
-  function sample(source: AudioFeatureSource, time: Seconds, smoothing = 0, audioAssetId?: Id): number {
+  function sample(
+    source: AudioFeatureSource,
+    time: Seconds,
+    smoothing: number,
+    audioAssetId: Id | undefined,
+    preferred: StemName | undefined,
+  ): number {
     const assetId = audioAssetId ?? project.songAssetId
     if (!assetId) return 0
     const analysis = project.analysis.audio[assetId]
@@ -172,7 +195,7 @@ export function createAudioSampler(project: Project): AudioSampler {
     const assetTime = assetTimeAt(assetId, time)
     if (assetTime === null) return 0
     const isPulse = source.kind === 'onset' || source.kind === 'beat' || source.kind === 'downbeat'
-    if (smoothing <= 0 || isPulse) return raw(source, analysis, assetTime, smoothing)
+    if (smoothing <= 0 || isPulse) return raw(source, analysis, assetTime, smoothing, preferred)
     // Exponentially weighted average over the recent past (stateless, unlike a one-pole filter).
     const window = smoothing * SMOOTHING_WINDOW
     let sum = 0
@@ -180,7 +203,7 @@ export function createAudioSampler(project: Project): AudioSampler {
     for (let k = 0; k < SMOOTHING_TAPS; k++) {
       const age = (window * k) / (SMOOTHING_TAPS - 1)
       const w = Math.exp((-3 * k) / (SMOOTHING_TAPS - 1))
-      sum += w * raw(source, analysis, Math.max(0, assetTime - age), 0)
+      sum += w * raw(source, analysis, Math.max(0, assetTime - age), 0, preferred)
       weights += w
     }
     return sum / weights
@@ -216,8 +239,8 @@ export function createAudioSampler(project: Project): AudioSampler {
     return integralAt(f.loudness, sums, f.rate, t)
   }
 
-  /** Beat and bar grid positions and flow at a song time. Pure: no state carried between frames. */
-  function motion(analysis: AudioAnalysis | undefined, t: Seconds) {
+  /** Beat and bar grid positions, and flow of `f`, at a song time. Pure: no state carried between frames. */
+  function motion(analysis: AudioAnalysis | undefined, f: AudioFeatures | undefined, t: Seconds) {
     const period = 60 / (analysis?.tempo?.bpm && analysis.tempo.bpm > 0 ? analysis.tempo.bpm : FALLBACK_BPM)
     const beats = analysis?.beats
     const beatPos = gridPosition(beats, t) ?? (t - (beats?.[0] ?? 0)) / period
@@ -230,7 +253,6 @@ export function createAudioSampler(project: Project): AudioSampler {
     }
     const beatIndex = Math.floor(beatPos)
     const barIndex = Math.floor(barPos)
-    const f = analysis?.features
     return {
       beatIndex,
       beatPhase: beatPos - beatIndex,
@@ -240,14 +262,14 @@ export function createAudioSampler(project: Project): AudioSampler {
     }
   }
 
-  function frame(time: Seconds): AudioFrame {
+  function frame(time: Seconds, preferred: StemName | undefined): AudioFrame {
     const assetId = project.songAssetId
     const analysis = assetId ? project.analysis.audio[assetId] : undefined
     const assetTime = assetId ? assetTimeAt(assetId, time) : null
     const motionTime = (assetId ? extrapolatedAssetTime(assetId, time) : null) ?? time
+    const f = analysis && featuresFor(analysis, undefined, preferred)
     const silent = { loudness: 0, bands: [], onset: 0, beat: 0, downbeat: 0, stems: {} }
-    if (!analysis || assetTime === null) return { ...silent, ...motion(analysis, motionTime) }
-    const f = analysis.features
+    if (!analysis || assetTime === null) return { ...silent, ...motion(analysis, f, motionTime) }
     const bandCount = f?.bands[0]?.length ?? 0
     const out: AudioFrame = {
       loudness: f ? clamp01(seriesAt(f.loudness, f.rate, assetTime)) : 0,
@@ -257,10 +279,10 @@ export function createAudioSampler(project: Project): AudioSampler {
       onset: pulse(f?.onsets, assetTime, 0.08),
       beat: pulse(analysis.beats, assetTime, 0.12),
       downbeat: pulse(analysis.downbeats, assetTime, 0.2),
-      ...motion(analysis, assetTime),
+      ...motion(analysis, f, assetTime),
       stems: {},
     }
-    for (const stem of STEMS) {
+    for (const stem of STEM_NAMES) {
       const sf = analysis.stemFeatures?.[stem]
       if (!sf) continue
       const n = sf.bands[0]?.length ?? 0
@@ -273,5 +295,19 @@ export function createAudioSampler(project: Project): AudioSampler {
     return out
   }
 
-  return { sample, frame }
+  const views = new Map<StemName | undefined, AudioSampler>()
+  function view(preferred: StemName | undefined): AudioSampler {
+    let v = views.get(preferred)
+    if (!v) {
+      v = {
+        sample: (source, time, smoothing = 0, audioAssetId) =>
+          sample(source, time, smoothing, audioAssetId, preferred),
+        frame: (time) => frame(time, preferred),
+        stem: view,
+      }
+      views.set(preferred, v)
+    }
+    return v
+  }
+  return view(undefined)
 }

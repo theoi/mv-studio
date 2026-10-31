@@ -81,6 +81,7 @@ describe('audio modulation', () => {
       flow: 0,
       stems: {},
     }),
+    stem: () => sampler,
   }
 
   it('adds and multiplies feature values in order', () => {

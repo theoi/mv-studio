@@ -4,24 +4,26 @@
  * Apply them through ProjectEditor (./editor.ts); applyCommand() is the pure reducer behind it.
  */
 import type { Draft } from 'immer'
-import type {
-  Asset,
-  AudioAnalysis,
-  Clip,
-  EffectInstance,
-  Id,
-  JsonValue,
-  Keyframe,
-  LyricLine,
-  LyricsDoc,
-  Marker,
-  ParamValue,
-  Project,
-  ProjectSettings,
-  Seconds,
-  SongSection,
-  Track,
-  VisualAnalysis,
+import {
+  STEM_NAMES,
+  type Asset,
+  type AudioAnalysis,
+  type Clip,
+  type ClipAudioSource,
+  type EffectInstance,
+  type Id,
+  type JsonValue,
+  type Keyframe,
+  type LyricLine,
+  type LyricsDoc,
+  type Marker,
+  type ParamValue,
+  type Project,
+  type ProjectSettings,
+  type Seconds,
+  type SongSection,
+  type Track,
+  type VisualAnalysis,
 } from './types.ts'
 
 /** The fields a beat refinement owns. */
@@ -56,6 +58,8 @@ export type EditCommand =
   /** Sets any property by path, e.g. ['transform', 'x', 'value'] or ['style', 'color']. */
   /** `value` must be JSON-serializable. */
   | { type: 'clip.set'; clipId: Id; path: PropertyPath; value: unknown }
+  /** Picks the audio a generator clip reacts to, e.g. { stem: 'drums' }; null goes back to the song's full mix. */
+  | { type: 'clip.setAudioSource'; clipId: Id; source: ClipAudioSource | null }
   /** Adds or replaces (same time) a keyframe on the Animatable at `path`. */
   | { type: 'keyframe.set'; clipId: Id; path: PropertyPath; keyframe: Keyframe<ParamValue> }
   | { type: 'keyframe.remove'; clipId: Id; path: PropertyPath; time: Seconds }
@@ -302,6 +306,20 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
         throw new EditError('invalid', `Use a dedicated command to change ${cmd.path[0]}`)
       const { parent, key } = resolve(clip, cmd.path)
       parent[key] = cmd.value
+      return
+    }
+    case 'clip.setAudioSource': {
+      const clip = clipOf(p, cmd.clipId)
+      assertUnlocked(p, clip.trackId)
+      if (clip.type !== 'generator')
+        throw new EditError('invalid', `A ${clip.type} clip has no audio source; only generator clips do`)
+      if (cmd.source === null) {
+        delete clip.audio
+        return
+      }
+      if (!STEM_NAMES.includes(cmd.source.stem))
+        throw new EditError('invalid', `Unknown stem: ${String(cmd.source.stem)}`)
+      clip.audio = { stem: cmd.source.stem }
       return
     }
     case 'keyframe.set': {

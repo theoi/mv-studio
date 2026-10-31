@@ -22,7 +22,7 @@ import type {
 } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
 import { ease, evaluate, evaluateNumber } from './animation.ts'
-import { createAudioSampler, type AudioSampler } from './audioFeatures.ts'
+import { clipSampler, createAudioSampler, type AudioSampler } from './audioFeatures.ts'
 import { parseColor, type Rgba } from './color.ts'
 import {
   createProgram,
@@ -117,14 +117,22 @@ const NO_FRAME_UNIFORMS: Readonly<Record<string, EffectUniformValue>> = {}
 const finalInputs = (def: EffectDefinition): readonly string[] =>
   def.passInputs ?? (def.passes?.length ? [def.passes[def.passes.length - 1]!.id] : [])
 
+/** Audio a layer reacts to in one frame: the sampler for its modulations, the features for its shaders. */
+interface FrameAudio {
+  sampler: AudioSampler
+  frame: AudioFrame
+  bands: Float32Array
+}
+
 interface FrameState {
   project: Project
   time: Seconds
   width: number
   height: number
-  audio: AudioSampler
-  audioFrame: AudioFrame
-  bands: Float32Array
+  /** The song's mix. */
+  audio: FrameAudio
+  /** Other audio clips react to (stems), by sampler, computed on first use in the frame. */
+  clipAudio: Map<AudioSampler, FrameAudio>
   sources: Map<string, FrameRef | null>
 }
 
@@ -209,7 +217,7 @@ function coversCanvas(
 ): boolean {
   if (clip.blendMode !== 'normal' || clip.effects.some((e) => e.enabled) || clip.matte) return false
   const local = time - clip.start
-  if (evaluateNumber(clip.opacity, local, time, audio) < 1) return false
+  if (evaluateNumber(clip.opacity, local, time, clipSampler(audio, clip)) < 1) return false
   if (clip.type === 'solid') {
     if (parseColor(evaluate(clip.color, local))[3] < 1) return false
   } else if (clip.type === 'video') {
@@ -218,7 +226,7 @@ function coversCanvas(
   } else if (clip.type === 'image') {
     if (project.assets[clip.assetId]?.mimeType !== 'image/jpeg') return false
   } else return false
-  const m = knownLayerMatrix(clip, project, time, canvas, audio)
+  const m = knownLayerMatrix(clip, project, time, canvas, clipSampler(audio, clip))
   if (!m) return false
   const det = m[0] * m[3] - m[2] * m[1]
   if (Math.abs(det) < 1e-9) return false
@@ -247,8 +255,9 @@ function offCanvas(
   audio: AudioSampler,
 ): boolean {
   if (clip.type === 'adjustment' || clip.effects.some((e) => e.enabled)) return false
-  if (evaluateNumber(clip.opacity, time - clip.start, time, audio) <= 0) return true
-  const m = knownLayerMatrix(clip, project, time, canvas, audio)
+  const own = clipSampler(audio, clip)
+  if (evaluateNumber(clip.opacity, time - clip.start, time, own) <= 0) return true
+  const m = knownLayerMatrix(clip, project, time, canvas, own)
   if (!m) return false
   const xs = [m[4], m[0] + m[4], m[2] + m[4], m[0] + m[2] + m[4]]
   const ys = [m[5], m[1] + m[5], m[3] + m[5], m[1] + m[3] + m[5]]
@@ -470,9 +479,8 @@ export class WebGLCompositor implements Compositor {
       time,
       width,
       height,
-      audio,
-      audioFrame,
-      bands: bandUniform(audioFrame.bands),
+      audio: { sampler: audio, frame: audioFrame, bands: bandUniform(audioFrame.bands) },
+      clipAudio: new Map(),
       sources,
     }
     try {
@@ -601,7 +609,9 @@ export class WebGLCompositor implements Compositor {
       case 'clip': {
         const clip = layer.clip
         if (this.isPlain(clip, s)) {
-          const opacity = clamp01(evaluateNumber(clip.opacity, s.time - clip.start, s.time, s.audio))
+          const opacity = clamp01(
+            evaluateNumber(clip.opacity, s.time - clip.start, s.time, this.audioOf(clip, s).sampler),
+          )
           if (opacity > 0) this.drawContent(gpu, clip, acc, s, opacity)
           return acc
         }
@@ -647,6 +657,7 @@ export class WebGLCompositor implements Compositor {
   ): RenderTarget {
     const gl = this.gl
     const local = s.time - clip.start
+    const audio = this.audioOf(clip, s)
     let current = input
     let owned = ownsInput
     const mapping = layerUniforms(layer, s.width, s.height)
@@ -657,7 +668,7 @@ export class WebGLCompositor implements Compositor {
       const program = this.pluginProgram(gpu, def)
       const passes = (def.passes ?? []).map((pass) => this.passProgram(gpu, def, pass))
       if (!program || passes.some((p) => !p)) continue
-      const params = resolveParams(def.params, instance.params, local, s.time, s.audio)
+      const params = resolveParams(def.params, instance.params, local, s.time, audio.sampler)
       const values =
         def.frameUniforms?.({
           time: s.time,
@@ -665,7 +676,7 @@ export class WebGLCompositor implements Compositor {
           width: s.width,
           height: s.height,
           params,
-          audio: s.audioFrame,
+          audio: audio.frame,
         }) ?? NO_FRAME_UNIFORMS
       const outputs = new Map<string, RenderTarget>()
       ;(def.passes ?? []).forEach((pass, i) => {
@@ -688,6 +699,7 @@ export class WebGLCompositor implements Compositor {
           values,
           local,
           s,
+          audio,
         )
         outputs.set(pass.id, out)
       })
@@ -706,6 +718,7 @@ export class WebGLCompositor implements Compositor {
         values,
         local,
         s,
+        audio,
       )
       for (const target of outputs.values()) gpu.pool.release(target)
       if (owned) gpu.pool.release(current)
@@ -713,7 +726,7 @@ export class WebGLCompositor implements Compositor {
       owned = true
     }
 
-    const opacity = clamp01(evaluateNumber(clip.opacity, local, s.time, s.audio))
+    const opacity = clamp01(evaluateNumber(clip.opacity, local, s.time, audio.sampler))
     const adjust = this.adjustments(clip, s)
     const matte = this.matteTarget(gpu, clip, s)
     if (owned && opacity === 1 && !adjust && !matte) return current
@@ -751,12 +764,13 @@ export class WebGLCompositor implements Compositor {
     values: Readonly<Record<string, EffectUniformValue>>,
     local: Seconds,
     s: FrameState,
+    audio: FrameAudio,
   ): void {
     const gl = this.gl
     gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo)
     gl.disable(gl.BLEND)
     gl.useProgram(program.program)
-    this.setCommonUniforms(program, local, s)
+    this.setCommonUniforms(program, local, s, audio)
     gl.uniformMatrix3fv(program.uniform('u_canvasToLayer'), false, mapping.canvasToLayer)
     gl.uniformMatrix3fv(program.uniform('u_layerToCanvas'), false, mapping.layerToCanvas)
     this.setFrameUniforms(program, values)
@@ -776,11 +790,12 @@ export class WebGLCompositor implements Compositor {
   private adjustments(clip: VisualClip, s: FrameState): Record<ColorAdjustmentKey, number> | null {
     if (!clip.adjustments) return null
     const local = s.time - clip.start
+    const audio = this.audioOf(clip, s).sampler
     const out = {} as Record<ColorAdjustmentKey, number>
     let any = false
     for (const key of ADJUSTMENT_KEYS) {
       const anim = clip.adjustments[key]
-      const v = anim ? Math.max(-1, Math.min(1, evaluateNumber(anim, local, s.time, s.audio))) : 0
+      const v = anim ? Math.max(-1, Math.min(1, evaluateNumber(anim, local, s.time, audio))) : 0
       out[key] = v
       if (v !== 0) any = true
     }
@@ -813,7 +828,7 @@ export class WebGLCompositor implements Compositor {
       s.width,
       s.height,
     )
-    const m = layerMatrix(host, s.time - host.start, s.time, bw, bh, s.width, s.height, s.audio)
+    const m = layerMatrix(host, s.time - host.start, s.time, bw, bh, s.width, s.height, s.audio.sampler)
     this.drawQuad(gpu, target, m, { texture, flipY: false }, 1, s)
     return { target, mode: info.matte.mode, feather: info.matte.feather }
   }
@@ -838,7 +853,7 @@ export class WebGLCompositor implements Compositor {
     gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo)
     gl.disable(gl.BLEND)
     gl.useProgram(program.program)
-    this.setCommonUniforms(program, clip ? s.time - clip.start : 0, s)
+    this.setCommonUniforms(program, clip ? s.time - clip.start : 0, s, s.audio)
     const params = resolveStaticParams(def.params, layer.transition.params)
     this.setParamUniforms(program, def.params, params)
     this.bindImageParams(gpu, program, def.params, params, s)
@@ -889,8 +904,9 @@ export class WebGLCompositor implements Compositor {
     opacity: number,
   ): Mat2D | null {
     const local = s.time - clip.start
+    const audio = this.audioOf(clip, s).sampler
     const matrix = (bw: number, bh: number) =>
-      layerMatrix(clip, local, s.time, bw, bh, s.width, s.height, s.audio)
+      layerMatrix(clip, local, s.time, bw, bh, s.width, s.height, audio)
     switch (clip.type) {
       case 'video':
       case 'image': {
@@ -916,7 +932,7 @@ export class WebGLCompositor implements Compositor {
       }
       case 'text': {
         if (!clip.text.trim()) return null
-        const raster = this.text.draw(clip, s.project, s.time, s.width, s.height, s.audioFrame)
+        const raster = this.text.draw(clip, s.project, s.time, s.width, s.height, s.audio.frame)
         const texture = this.texture(gpu, `text:${clip.id}`, raster.canvas, raster.version)
         const m = matrix(raster.width, raster.height)
         this.drawQuad(gpu, target, m, { texture, flipY: false }, opacity, s)
@@ -942,7 +958,8 @@ export class WebGLCompositor implements Compositor {
     const def = this.registry.get(clip.generatorId)
     if (def?.kind !== 'generator') return false
     const local = s.time - clip.start
-    const params = resolveParams(def.params, clip.params, local, s.time, s.audio)
+    const audio = this.audioOf(clip, s)
+    const params = resolveParams(def.params, clip.params, local, s.time, audio.sampler)
     if (def.fragmentShader) {
       const program = this.pluginProgram(gpu, def)
       if (!program) return false
@@ -951,7 +968,7 @@ export class WebGLCompositor implements Compositor {
       gl.bindFramebuffer(gl.FRAMEBUFFER, g.fbo)
       gl.disable(gl.BLEND)
       gl.useProgram(program.program)
-      this.setCommonUniforms(program, local, s)
+      this.setCommonUniforms(program, local, s, audio)
       this.setParamUniforms(program, def.params, params)
       this.bindImageParams(gpu, program, def.params, params, s)
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
@@ -975,7 +992,7 @@ export class WebGLCompositor implements Compositor {
         width: s.width,
         height: s.height,
         params,
-        audio: s.audioFrame,
+        audio: audio.frame,
       }
       def.draw2d(ctx, frame)
       const texture = this.texture(gpu, `gen2d:${clip.id}`, canvas, undefined)
@@ -1090,16 +1107,29 @@ export class WebGLCompositor implements Compositor {
     return program
   }
 
-  private setCommonUniforms(p: Program, localTime: Seconds, s: FrameState): void {
+  /** The audio a clip reacts to (clipSampler): a generator clip's stem, else the song's mix. */
+  private audioOf(clip: VisualClip, s: FrameState): FrameAudio {
+    const sampler = clipSampler(s.audio.sampler, clip)
+    if (sampler === s.audio.sampler) return s.audio
+    let audio = s.clipAudio.get(sampler)
+    if (!audio) {
+      const frame = sampler.frame(s.time)
+      audio = { sampler, frame, bands: bandUniform(frame.bands) }
+      s.clipAudio.set(sampler, audio)
+    }
+    return audio
+  }
+
+  private setCommonUniforms(p: Program, localTime: Seconds, s: FrameState, audio: FrameAudio): void {
     const gl = this.gl
-    const a = s.audioFrame
+    const a = audio.frame
     gl.uniform2f(p.uniform('u_resolution'), s.width, s.height)
     gl.uniform1f(p.uniform('u_time'), localTime)
     gl.uniform1f(p.uniform('u_loudness'), a.loudness)
     gl.uniform1f(p.uniform('u_beat'), a.beat)
     gl.uniform1f(p.uniform('u_onset'), a.onset)
     gl.uniform1f(p.uniform('u_downbeat'), a.downbeat)
-    gl.uniform1fv(p.uniform('u_bands'), s.bands)
+    gl.uniform1fv(p.uniform('u_bands'), audio.bands)
     gl.uniform1f(p.uniform('u_bandCount'), Math.min(BAND_UNIFORMS, a.bands.length))
     gl.uniform1f(p.uniform('u_beatIndex'), a.beatIndex)
     gl.uniform1f(p.uniform('u_beatPhase'), a.beatPhase)
