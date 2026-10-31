@@ -65,6 +65,7 @@ import {
   phrasedCutTimes,
   sectionsFor,
   spans,
+  wordTime,
   type BeatGrid,
 } from './timing.ts'
 import {
@@ -790,9 +791,71 @@ function displayTimes(timed: TimedLine[], duration: Seconds): { start: Seconds; 
 interface PlacedLine extends TimedLine {
   shownStart: Seconds
   shownEnd: Seconds
+  /** Index of the two-line passage the line belongs to; then shownStart..shownEnd is its turn as the current line. */
+  passage?: number
 }
 
-/** Lyric lines the draft shows, with when each is sung and when it is on screen. */
+/** A line on screen for less than this, or read faster than FAST_CPS, joins a two-line passage. */
+const FAST_SHOWN = 1.2
+const FAST_CPS = 15
+/** Lines sung closer together than this belong to the same passage. */
+const PASSAGE_GAP = 1
+/** The next line waits below the current one at this size and opacity, then rolls up into place. */
+const PREVIEW_SCALE = 0.72
+const PREVIEW_OPACITY = 0.5
+const ROLL = 0.2
+/** Two one-row lines sung within this many seconds show together as a couplet. */
+const COUPLET = 4
+/**
+ * Most a passage's first line shows before it is sung, taken from the hold of the line before (which keeps at least
+ * PASSAGE_HOLD after it is sung): the first line has no turn as the next line to be read in.
+ */
+const PASSAGE_LEAD = 1.5
+const PASSAGE_HOLD = 0.3
+
+const isFast = (l: PlacedLine) => {
+  const shown = l.shownEnd - l.shownStart
+  return shown < FAST_SHOWN || l.line.text.length / shown > FAST_CPS
+}
+
+/**
+ * Passages shown two lines at a time: runs of lines sung back to back (gaps under PASSAGE_GAP) with a line in them
+ * that would flash by on its own.
+ */
+function twoLinePassages(lines: PlacedLine[]): PlacedLine[][] {
+  const runs: PlacedLine[][] = []
+  for (const l of lines) {
+    const run = runs[runs.length - 1]
+    const prev = run?.[run.length - 1]
+    if (run && prev && l.start - prev.end < PASSAGE_GAP) run.push(l)
+    else runs.push([l])
+  }
+  return runs.filter((run) => run.length >= 2 && run.some(isFast))
+}
+
+/**
+ * When each line of a passage is the current one: from just before it is sung until just before the next is, the
+ * first from up to PASSAGE_LEAD early and the last as long as it would show alone.
+ */
+function passageSlots(run: PlacedLine[], before: PlacedLine | undefined): { start: Seconds; end: Seconds }[] {
+  const first = run[0] as PlacedLine
+  const free = before ? Math.max(before.end + PASSAGE_HOLD, before.shownStart + 0.6) + 0.05 : 0
+  let start = Math.min(first.shownStart, Math.max(free, first.start - PASSAGE_LEAD))
+  return run.map((l, k) => {
+    const next = run[k + 1]
+    const end = next
+      ? Math.max(start + 0.3, next.start - Math.min(0.12, Math.max(0, next.start - l.end) / 2))
+      : Math.max(l.shownEnd, start + 0.6)
+    const slot = { start: round3(start), end: round3(end) }
+    start = end
+    return slot
+  })
+}
+
+/**
+ * Lyric lines the draft shows, with when each is sung and when it is on screen (in a two-line passage, when it is the
+ * current line).
+ */
 function placeLines(sections: SectionInfo[], ctx: Ctx): PlacedLine[] {
   const show = ctx.brief.text?.show ?? ctx.input.kind === 'lyric'
   const lines = ctx.input.lyrics?.lines.filter((l) => l.text.trim()) ?? []
@@ -800,10 +863,20 @@ function placeLines(sections: SectionInfo[], ctx: Ctx): PlacedLine[] {
   const duration = ctx.input.song.duration
   const timed = timedLines(lines, sections, duration, ctx)
   const shown = displayTimes(timed, duration)
-  return timed.flatMap((item, i) => {
+  const placed: PlacedLine[] = timed.flatMap((item, i) => {
     const s = shown[i] as { start: Seconds; end: Seconds }
     return s.end > s.start ? [{ ...item, shownStart: round3(s.start), shownEnd: round3(s.end) }] : []
   })
+  for (const [n, run] of twoLinePassages(placed).entries()) {
+    const before = placed[placed.indexOf(run[0] as PlacedLine) - 1]
+    const slots = passageSlots(run, before)
+    for (const [k, line] of run.entries()) {
+      const slot = slots[k] as { start: Seconds; end: Seconds }
+      Object.assign(line, { passage: n, shownStart: slot.start, shownEnd: slot.end })
+    }
+    if (before) before.shownEnd = Math.min(before.shownEnd, round3((slots[0]?.start ?? Infinity) - 0.05))
+  }
+  return placed
 }
 
 interface Box {
@@ -921,14 +994,6 @@ function behindLines(lines: PlacedLine[], sections: SectionInfo[], shots: PlanSh
     if (out.size) return out
   }
   return out
-}
-
-/** When a word of a line is sung: its own timing, else in proportion to the letters before it. */
-function wordTime(item: TimedLine, words: string[], index: number): Seconds {
-  const timed = item.line.words[index]
-  if (item.line.words.length === words.length && timed && timed.end > timed.start) return timed.start
-  const before = words.slice(0, index).join(' ').length + (index > 0 ? 1 : 0)
-  return item.start + ((item.end - item.start) * before) / Math.max(1, item.line.text.length)
 }
 
 /** Height of laid-out text as a fraction of the frame. */
@@ -1050,6 +1115,149 @@ function lineTexts(
   return [{ ...line(laid.text, style, whole.y), ...pulse }]
 }
 
+/**
+ * The text clips of a fast passage, two lines at a time in the look's text style: the current line in full with its
+ * karaoke, and the next one below it, smaller and dimmer (role 'preview'), rolling up into place when its turn comes,
+ * so no line flashes by. Two short lines sung close together form a couplet: both stay on screen until the second is
+ * sung. No emphasized words or beat pulses here; there is no time for them.
+ */
+function passageTexts(
+  run: PlacedLine[],
+  o: {
+    sectionAt: (t: Seconds) => SectionInfo | undefined
+    briefs: Map<string, BriefSection>
+    type: LyricTypography
+    anchor: number
+    shots: PlanShot[]
+    fade?: TransitionSpec
+    ctx: Ctx
+  },
+): PlanText[] {
+  const { type, ctx } = o
+  const aspect = type.aspect
+  const slots = run.map((l) => ({ start: l.shownStart, end: l.shownEnd }))
+  const layout = (item: PlacedLine) => {
+    const section = o.sectionAt(item.start)
+    const sb = section ? o.briefs.get(section.id) : undefined
+    const peak = !!section && isPeak(section) && (sb?.intensity ?? section.energy) >= 0.6
+    const lineStyle = peak ? peakStyle(type, ctx.brief.text) : type.style
+    const laid = layoutLine(item.line.text, lineStyle, aspect)
+    const style = { ...lineStyle, fontSize: laid.fontSize }
+    return {
+      item,
+      section,
+      animation: sb?.textPresetId ?? type.lineAnimation,
+      text: laid.text,
+      rows: laid.rows,
+      style,
+      height: blockHeight(laid.rows, style),
+      width: blockWidth(laid.text, style, aspect),
+    }
+  }
+  type Laid = ReturnType<typeof layout>
+  const timedWords = (l: Laid) =>
+    l.item.line.words.length > 0 && l.item.line.words.every((w) => w.end > w.start)
+  const text = (l: Laid, start: Seconds, end: Seconds, y: number, extra: Partial<PlanText>): PlanText => ({
+    id: newId(),
+    sectionId: l.section?.id,
+    start,
+    end,
+    text: l.text,
+    lyricLineId: l.item.line.id,
+    style: l.style,
+    position: { x: 0.5, y: round3(y) },
+    role: 'lyric',
+    ...extra,
+  })
+  const current = (
+    l: Laid,
+    start: Seconds,
+    end: Seconds,
+    y: number,
+    entering: PlanText['enter'],
+    last: boolean,
+  ) =>
+    text(l, start, end, y, {
+      // A line that was waiting below rolls up without its entrance animation, which would hide words again.
+      ...(entering ? { enter: entering } : l.animation ? { animationPresetId: l.animation } : {}),
+      ...(!entering && !l.animation && o.fade ? { transitionIn: o.fade } : {}),
+      ...(o.fade ? { transitionOut: last ? o.fade : { ...o.fade, duration: 0.12 } } : {}),
+      ...(type.karaoke && timedWords(l)
+        ? { karaoke: { highlightColor: type.accent, mode: 'word' as const } }
+        : {}),
+    })
+  const preview = (l: Laid, start: Seconds, end: Seconds, y: number) =>
+    text(l, start, end, y, {
+      role: 'preview',
+      opacity: PREVIEW_OPACITY,
+      scale: PREVIEW_SCALE,
+      ...(o.fade ? { transitionIn: o.fade } : {}),
+    })
+  const blocks = run.map(layout)
+  const readsAlone = (k: number) => {
+    const slot = slots[k] as { start: Seconds; end: Seconds }
+    const shown = slot.end - slot.start
+    return shown >= FAST_SHOWN && (blocks[k] as Laid).item.line.text.length / shown <= FAST_CPS
+  }
+  // The line after a couplet gets no turn waiting below, so a couplet forms only when that line reads in its own
+  // turn or starts a couplet itself.
+  const couplet: boolean[] = []
+  for (let k = run.length - 2; k >= 0; k--) {
+    const a = blocks[k] as Laid
+    const b = blocks[k + 1] as Laid
+    couplet[k] =
+      a.rows === 1 &&
+      b.rows === 1 &&
+      b.item.end - a.item.start <= COUPLET &&
+      (k + 2 >= run.length || readsAlone(k + 2) || !!couplet[k + 2])
+  }
+  const gap = 0.015
+  const out: PlanText[] = []
+  let waiting: { y: number } | undefined
+  for (let k = 0; k < run.length;) {
+    const a = blocks[k] as Laid
+    const slotA = slots[k] as { start: Seconds; end: Seconds }
+    const b = blocks[k + 1]
+    if (!waiting && b && couplet[k]) {
+      const slotB = slots[k + 1] as { start: Seconds; end: Seconds }
+      const total = a.height + gap + b.height
+      const faces = facesDuring(slotA.start, slotB.end, o.shots, ctx)
+      const top = clearOfFaces(o.anchor, total, Math.max(a.width, b.width), faces).y - total / 2
+      const yB = top + a.height + gap + b.height / 2
+      const last = k + 2 >= run.length
+      out.push(
+        current(a, slotA.start, slotB.end, top + a.height / 2, undefined, last),
+        preview(b, slotA.start, slotA.end, yB),
+        current(
+          b,
+          slotB.start,
+          slotB.end,
+          yB,
+          { scale: PREVIEW_SCALE, opacity: PREVIEW_OPACITY, duration: ROLL },
+          last,
+        ),
+      )
+      k += 2
+      continue
+    }
+    const total = a.height + (b ? gap + b.height * PREVIEW_SCALE : 0)
+    const faces = facesDuring(slotA.start, slotA.end, o.shots, ctx)
+    const width = Math.max(a.width, b ? b.width * PREVIEW_SCALE : 0)
+    const top = clearOfFaces(o.anchor, total, width, faces).y - total / 2
+    const entering = waiting
+      ? { y: round3(waiting.y), scale: PREVIEW_SCALE, opacity: PREVIEW_OPACITY, duration: ROLL }
+      : undefined
+    out.push(current(a, slotA.start, slotA.end, top + a.height / 2, entering, !b))
+    waiting = undefined
+    if (b) {
+      const y = top + a.height + gap + (b.height * PREVIEW_SCALE) / 2
+      out.push(preview(b, slotA.start, slotA.end, y))
+      waiting = { y }
+    }
+    k += 1
+  }
+  return out
+}
 /** Mean luma under a text box from which the text gets a scrim. */
 const BRIGHT = 0.5
 
@@ -1142,8 +1350,20 @@ function buildTexts(
       input.song.title,
       chorusLines.map((l) => l.line.text),
     )
-    const behind = behindLines(ctx.lines, sections, shots, ctx)
-    for (const item of ctx.lines) {
+    const behind = behindLines(
+      ctx.lines.filter((l) => l.passage === undefined),
+      sections,
+      shots,
+      ctx,
+    )
+    for (const [i, item] of ctx.lines.entries()) {
+      if (item.passage !== undefined) {
+        if (ctx.lines[i - 1]?.passage !== item.passage) {
+          const run = ctx.lines.filter((l) => l.passage === item.passage)
+          texts.push(...passageTexts(run, { sectionAt, briefs, type, anchor, shots, fade, ctx }))
+        }
+        continue
+      }
       const section = sectionAt(item.start)
       texts.push(
         ...lineTexts(item, {

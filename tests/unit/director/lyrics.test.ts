@@ -222,3 +222,109 @@ describe('lyric typography', () => {
     expect((await lyricDraft()).texts.some((t) => t.behind)).toBe(false)
   })
 })
+
+/** A line sung fast: a word every `step` seconds. */
+function fastLine(id: string, text: string, start: number, step = 0.2) {
+  const words = text
+    .split(' ')
+    .map((w, i) => ({ text: w, start: start + i * step, end: start + i * step + step * 0.85 }))
+  return { id, text, start, end: words[words.length - 1]!.end, words }
+}
+
+const FAST = [
+  fastLine('f1', 'Running down the empty road tonight', 9),
+  fastLine('f2', 'Every light is flashing by so fast', 10.3),
+  fastLine('f3', 'Holding on to every word you say', 11.8),
+  fastLine('f4', 'Never looking back again tonight', 13.3),
+  fastLine('c1', 'Oh oh oh', 16, 0.25),
+  fastLine('c2', 'Yeah yeah yeah', 16.9, 0.25),
+  fastLine('s1', 'Walking home alone', 20, 0.4),
+  fastLine('d1', 'Oh oh oh', 40.5, 0.25),
+  fastLine('d2', 'Yeah yeah yeah', 41.3, 0.5),
+  fastLine('d3', 'Fast forward to the end of every night', 42.8, 0.15),
+  fastLine('d4', 'Into the light', 44.1, 0.3),
+]
+
+describe('fast passages', () => {
+  const fastDraft = () => lyricDraft(makeProject({ lyrics: FAST }))
+  const of = (p: EditPlan, id: string, role?: PlanText['role']) =>
+    p.texts.filter((t) => t.lyricLineId === id && (!role || t.role === role))
+
+  it('shows every line long enough to read: the next line waits below the current one, then rolls up', async () => {
+    const p = await fastDraft()
+    // On screen as the current or the next line, no line reads faster than 15 characters per second.
+    for (const line of FAST) {
+      const spans = of(p, line.id).map((t) => [t.start, t.end] as const)
+      expect(spans.length).toBeGreaterThan(0)
+      const visible = Math.max(...spans.map((s) => s[1])) - Math.min(...spans.map((s) => s[0]))
+      expect(line.text.length / visible).toBeLessThan(15)
+    }
+    for (const [i, id] of ['f1', 'f2', 'f3'].entries()) {
+      const current = of(p, id, 'lyric')[0]!
+      const next = of(p, `f${i + 2}`, 'preview')[0]!
+      expect([next.start, next.end]).toEqual([current.start, current.end])
+      expect(next.position.y).toBeGreaterThan(current.position.y + halfHeight(current))
+      expect(next).toMatchObject({ scale: 0.72, opacity: 0.5 })
+      expect(next.style).toEqual(current.style)
+      // When its turn comes it rolls up from where it waited, at full size, in the same style.
+      const rolled = of(p, `f${i + 2}`, 'lyric')[0]!
+      expect(rolled.start).toBe(current.end)
+      expect(rolled.enter).toEqual({ y: next.position.y, scale: 0.72, opacity: 0.5, duration: 0.2 })
+      expect(rolled.animationPresetId).toBeUndefined()
+      expect(rolled.karaoke).toBeDefined()
+    }
+    expect(of(p, 'f1', 'lyric')[0]!.enter).toBeUndefined()
+    expect(of(p, 'f4', 'preview')).toHaveLength(1)
+    // A slow line on its own is shown as before.
+    expect(p.texts.filter((t) => t.lyricLineId === 's1').map((t) => t.role)).toEqual(['lyric'])
+  })
+
+  it('keeps a couplet of short lines on screen together until its second line is sung', async () => {
+    const p = await fastDraft()
+    const [first] = of(p, 'c1', 'lyric')
+    const [waiting] = of(p, 'c2', 'preview')
+    const [second] = of(p, 'c2', 'lyric')
+    expect(first!.end).toBe(second!.end)
+    expect([waiting!.start, waiting!.end]).toEqual([first!.start, second!.start])
+    expect(second!.position.y).toBe(waiting!.position.y)
+    expect(second!.position.y).toBeGreaterThan(first!.position.y)
+    expect(second!.enter).toMatchObject({ scale: 0.72, opacity: 0.5 })
+    expect(second!.enter?.y).toBeUndefined()
+  })
+
+  it('rolls up instead of keeping a couplet when the line after it would flash by', async () => {
+    const p = await fastDraft()
+    // d3 wraps to two rows and is sung right before d4, so it needs its turn waiting below d2.
+    expect(of(p, 'd3', 'lyric')[0]!.text).toContain('\n')
+    expect(of(p, 'd1', 'lyric')[0]!.end).toBe(of(p, 'd2', 'lyric')[0]!.start)
+    const [waiting] = of(p, 'd3', 'preview')
+    expect([waiting!.start, waiting!.end]).toEqual([
+      of(p, 'd2', 'lyric')[0]!.start,
+      of(p, 'd3', 'lyric')[0]!.start,
+    ])
+  })
+
+  it('compiles the next line unlinked, smaller and dimmer, and the roll-up as keyframes', async () => {
+    const project = makeProject({ lyrics: FAST })
+    const p = await lyricDraft(project)
+    const editor = new ProjectEditor(project)
+    editor.dispatch(compilePlan(p, project).commands)
+    const clips = Object.values(editor.getProject().clips).filter((c): c is TextClip => c.type === 'text')
+    const meta = (c: TextClip) => c.meta?.director as { textRole?: string; lyricLineId?: string } | undefined
+    const preview = clips.find((c) => meta(c)?.textRole === 'preview' && meta(c)?.lyricLineId === 'f2')!
+    expect(preview.lyricLineId).toBeUndefined()
+    expect(preview.opacity.value).toBe(0.5)
+    expect(preview.transform.scaleX.value).toBe(0.72)
+    const rolled = clips.find((c) => c.lyricLineId === 'f2')!
+    expect(meta(rolled)).toMatchObject({ textRole: 'lyric', lyricLineId: 'f2' })
+    expect(rolled.transform.y.keyframes?.map((k) => k.value)).toEqual([
+      preview.transform.y.value,
+      expect.any(Number),
+    ])
+    expect(rolled.transform.scaleY.keyframes?.map((k) => k.value)).toEqual([0.72, 1])
+    expect(rolled.opacity.keyframes?.map((k) => [k.time, k.value])).toEqual([
+      [0, 0.5],
+      [0.2, 1],
+    ])
+  })
+})

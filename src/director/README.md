@@ -49,12 +49,19 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   aiming at 17 characters per second), never overlapping the next. Each line stays on one shot: background cuts move
   to the nearest beat at a line change, else to the line change itself, else are dropped while the shot stays within
   about two planned shots.
+- **Fast passages, two lines at a time**: where a line would show for under 1.2 s or above 15 characters per second,
+  its run of back-to-back lines (gaps under 1 s) shows two lines at a time in the same text style: the current line
+  in full with its karaoke, and the next one below at 72% size and half opacity (`role: 'preview'`, not linked to
+  the lyrics), rolling up into place when its turn comes (`enter`, compiled to keyframes). The first line comes in up
+  to 1.5 s early. Two one-row lines sung within 4 s form a couplet and stay on screen together until the second is
+  sung, unless the line after them would then get no time waiting below and read too fast in its own turn. No
+  emphasized words or behind-subject lines in these passages.
 - **Lyric typography** (`typography.ts`): lines use the text style (`src/plugins/typography` TEXT_STYLES) the look
   pairs with (`LOOK_TEXT_STYLE`: Clean → Karaoke, Neon night → Neon sign, Cinematic → Poster, ...; other looks match
   by tags), with its kinetic preset and karaoke, and the look's colors. Lines are about 9% of the frame height in
   landscape (capitals 6–7%), broken into balanced rows from per-font width estimates (measured advances by weight),
-  laid out to 90% of the clip's wrap width so the renderer never pushes a word onto a row of its own. Chorus lines are a little bigger and heavier. The stressed
-  last word of chorus lines (and of other lines when it is long or a hook from the title or chorus) is shown 1.6×
+  laid out to 90% of the clip's wrap width so the renderer never pushes a word onto a row of its own. Chorus lines
+  are a little bigger and heavier. The stressed last word of chorus lines (and of other lines when it is long or a hook from the title or chorus) is shown 1.6×
   bigger in the accent color below the rest of the line, entering as it is sung (`role: 'emphasis'`).
 - **Contrast and placement**: over footage every line has a dark outline, plus a dark halo unless the style has its
   own glow. With `media` the director measures the frames under each text box and gives text over bright footage
@@ -98,6 +105,21 @@ await director.plan({ kind: 'beat-cut', prompt: 'neon night drive' })
 await director.apply() // or apply({ confirmSpend: true }) after the cost dialog
 director.undo()
 ```
+
+Director text clips carry `meta.director.textRole` (`lyric`, `title`, `emphasis`, `preview`) and
+`meta.director.lyricLineId`. Emphasized words and previews are not linked to their line (`clip.lyricLineId` unset), so
+when the lyrics are re-timed, move them with the line clips in the same step:
+
+```ts
+editor.dispatch([
+  setLyricsCommand(doc),
+  ...lyricClipCommands(project, doc),
+  ...retimeDirectorLyricCommands(project, doc), // from src/director/index.ts
+])
+```
+
+It keeps each clip's look and its offsets from its line (an emphasized word still enters as its word is sung), and
+removes clips whose line is gone or no longer has their words.
 
 ## UI states (Assist › Director)
 
