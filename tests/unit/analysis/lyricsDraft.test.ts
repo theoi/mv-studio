@@ -46,23 +46,24 @@ describe('voiceActivity', () => {
     expect(voiceActivity(new Float32Array(SR * 2), SR)).toEqual([])
   })
 
-  it('given the song, keeps singing 20 dB under it and drops bleed 27 dB under it', () => {
-    /** Noise whose amplitude follows `level` (dB relative to the song) over 12 s. */
-    const noise = (level: (t: number) => number, seed: number) => {
-      const pcm = new Float32Array(12 * SR)
-      for (let i = 0; i < pcm.length; i++) {
-        seed = (seed * 16807) % 2147483647
-        pcm[i] = ((seed / 2147483647) * 2 - 1) * 0.3 * 10 ** (level(i / SR) / 20)
-      }
-      return pcm
+  /** Noise whose amplitude follows `level` (dB relative to the song) over 12 s. */
+  const noise = (level: (t: number) => number, seed: number) => {
+    const pcm = new Float32Array(12 * SR)
+    for (let i = 0; i < pcm.length; i++) {
+      seed = (seed * 16807) % 2147483647
+      pcm[i] = ((seed / 2147483647) * 2 - 1) * 0.3 * 10 ** (level(i / SR) / 20)
     }
+    return pcm
+  }
+  const edges = (regions: { start: number; end: number }[]) =>
+    regions.map((r) => [Math.round(r.start * 10) / 10, Math.round(r.end * 10) / 10])
+
+  it('given the song, keeps singing 20 dB under it and drops bleed 27 dB under it', () => {
     const song = noise(() => 0, 7)
     const vocals = noise(
       (t) => ((t >= 1 && t < 3) || (t >= 9 && t < 11) ? -20 : t >= 4 && t < 8 ? -27 : -70),
       1,
     )
-    const edges = (regions: { start: number; end: number }[]) =>
-      regions.map((r) => [Math.round(r.start * 10) / 10, Math.round(r.end * 10) / 10])
     expect(edges(voiceActivity(vocals, SR, { pad: 0, mix: song }))).toEqual([
       [1, 3],
       [9, 11],
@@ -73,6 +74,33 @@ describe('voiceActivity', () => {
       [4, 8],
       [9, 11],
     ])
+  })
+
+  it('given the song, judges bleed by its typical level, so frames that waver above the line leave no islands', () => {
+    const song = noise(() => 0, 7)
+    // From 4 to 8 s the bleed is 29 dB under the song, up to 8 dB more or less in each 20 ms frame.
+    const wobble = (t: number) => (((Math.floor(t / 0.02) * 7919) % 17) / 16) * 16 - 8
+    const vocals = noise(
+      (t) => ((t >= 1 && t < 3) || (t >= 9 && t < 11) ? -20 : t >= 4 && t < 8 ? -29 + wobble(t) : -70),
+      1,
+    )
+    expect(edges(voiceActivity(vocals, SR, { pad: 0, mix: song }))).toEqual([
+      [1, 3],
+      [9, 11],
+    ])
+    // Judged frame by frame, the frames above the line join into regions inside the bleed.
+    const byFrame = voiceActivity(vocals, SR, { pad: 0, mix: song, mixWindow: 0 })
+    expect(byFrame.filter((r) => r.start >= 4 && r.end <= 8).length).toBeGreaterThan(0)
+  })
+
+  it('given the song, keeps short phrases and brief dips under it as singing', () => {
+    const song = noise(() => 0, 7)
+    // From 2 to 8 s, 0.2 s sung 15 dB under the song in every 0.5 s, one frame in five dipping to 35 dB under it.
+    const vocals = noise((t) => {
+      if (t < 2 || t >= 8 || (t - 2) % 0.5 >= 0.2) return -70
+      return Math.floor(t / 0.02) % 5 === 0 ? -35 : -15
+    }, 1)
+    expect(edges(voiceActivity(vocals, SR, { pad: 0, mix: song }))).toEqual([[2, 7.7]])
   })
 })
 
