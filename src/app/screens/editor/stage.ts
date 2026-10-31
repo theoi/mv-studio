@@ -6,6 +6,13 @@ import { appMedia } from '../../state/media.ts'
 import { editor } from '../../state/project.ts'
 import { get, set, useUi, type Selection } from '../../state/ui.ts'
 
+let current: PreviewController | null = null
+
+/** The preview drawing the editor's stage, while one is showing (for tests that read its frames). */
+export function stagePreview(): PreviewController | null {
+  return current
+}
+
 /**
  * Runs the engine preview on a canvas: the project comes from the editor, and the UI playhead and play state follow
  * the Web Audio clock (while playing) or drive it (seeks, play and pause from buttons and shortcuts).
@@ -15,6 +22,7 @@ export function connectPreview(
   viewport: { width: number; height: number },
 ): { preview: PreviewController; dispose(): void } {
   const preview = new PreviewController({ canvas, media: appMedia })
+  current = preview
   // The playhead last written from the clock, so it is not sent back as a seek.
   let fromClock = Number.NaN
   let wasPlaying = false
@@ -57,6 +65,7 @@ export function connectPreview(
     preview,
     dispose() {
       for (const u of unsubscribe) u()
+      if (current === preview) current = null
       preview.dispose()
       if (get().playing) set({ playing: false, starting: false })
     },

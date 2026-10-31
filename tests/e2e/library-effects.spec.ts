@@ -18,7 +18,7 @@ async function openEffectsTab(page: Page) {
   }
 }
 
-/** Mean absolute pixel difference (0..255) between two same-sized PNGs, below the top 15% where toasts show. */
+/** Mean absolute pixel difference (0..255) between two same-sized PNGs. */
 async function imageDiff(page: Page, a: Buffer, b: Buffer): Promise<number> {
   return page.evaluate(
     async ([a64, b64]) => {
@@ -29,21 +29,41 @@ async function imageDiff(page: Page, a: Buffer, b: Buffer): Promise<number> {
         return ctx.getImageData(0, 0, bitmap.width, bitmap.height).data
       }
       const [x, y] = await Promise.all([read(a64), read(b64)])
-      const from = Math.floor(x.length * 0.15) & ~3
       let sum = 0
-      for (let i = from; i < x.length; i++) if (i % 4 !== 3) sum += Math.abs(x[i] - y[i])
-      return sum / (((x.length - from) / 4) * 3)
+      for (let i = 0; i < x.length; i++) if (i % 4 !== 3) sum += Math.abs(x[i] - y[i])
+      return sum / ((x.length / 4) * 3)
     },
     [a.toString('base64'), b.toString('base64')],
   )
 }
 
-/** A screenshot of the preview once it has stopped changing. */
-async function settled(page: Page, preview: ReturnType<Page['getByRole']>): Promise<Buffer> {
-  let last = await preview.screenshot()
+/**
+ * The stage preview's frame for the current state as a PNG, drawn by the preview itself. Screenshots of the preview
+ * canvas, which the render worker draws, sometimes come back black on CI while the page shows the frame.
+ */
+async function frame(page: Page): Promise<Buffer> {
+  const png = await page.evaluate(async () => {
+    const preview = window.mvStudio.app.stagePreview()
+    if (!preview) throw new Error('The editor preview is not showing')
+    const bitmap = await preview.captureFrame()
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer())
+    let text = ''
+    for (let i = 0; i < bytes.length; i += 0x8000)
+      text += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    return btoa(text)
+  })
+  return Buffer.from(png, 'base64')
+}
+
+/** The preview's frame once it has stopped changing (footage and fonts can still be loading). */
+async function settled(page: Page): Promise<Buffer> {
+  let last = await frame(page)
   await expect
     .poll(async () => {
-      const next = await preview.screenshot()
+      const next = await frame(page)
       const diff = await imageDiff(page, last, next)
       last = next
       return diff
@@ -55,7 +75,7 @@ async function settled(page: Page, preview: ReturnType<Page['getByRole']>): Prom
 test('a look from the library restyles the whole video as one undo step; the inspector shows it and blends it', async ({
   page,
 }, testInfo) => {
-  const { preview, library, inspector } = await openEffectsTab(page)
+  const { library, inspector } = await openEffectsTab(page)
   const neon = library.getByRole('button', { name: 'Neon night', exact: true })
   const golden = library.getByRole('button', { name: 'Golden hour', exact: true })
   const original = library.getByRole('button', { name: 'Original', exact: true })
@@ -66,7 +86,7 @@ test('a look from the library restyles the whole video as one undo step; the ins
   await expect(inspector.getByText('Neon night', { exact: true })).toBeVisible()
   await expect(inspector.getByText('On every clip')).toBeVisible()
   await expect(inspector.getByText('70%', { exact: true })).toBeVisible()
-  const before = await settled(page, preview)
+  const before = await settled(page)
   await page.screenshot({ path: testInfo.outputPath('effects-tab.png') })
 
   await golden.click()
@@ -76,8 +96,8 @@ test('a look from the library restyles the whole video as one undo step; the ins
   await expect(inspector.getByText('Golden hour', { exact: true })).toBeVisible()
   // The intensity stays with the video when the look changes.
   await expect(inspector.getByText('70%', { exact: true })).toBeVisible()
-  await expect.poll(async () => imageDiff(page, before, await preview.screenshot())).toBeGreaterThan(2)
-  const goldenFrame = await settled(page, preview)
+  await expect.poll(async () => imageDiff(page, before, await frame(page))).toBeGreaterThan(2)
+  const goldenFrame = await settled(page)
   await page.screenshot({ path: testInfo.outputPath('effects-golden-hour.png') })
 
   // At 0% the look layer shows the picture as if there were no look. Home sets the slider, not the playhead.
@@ -85,13 +105,13 @@ test('a look from the library restyles the whole video as one undo step; the ins
   await page.keyboard.press('Home')
   await expect(inspector.getByText('0%', { exact: true })).toBeVisible()
   await expect(page.getByText('01:06.90')).toBeVisible()
-  await expect.poll(async () => imageDiff(page, goldenFrame, await preview.screenshot())).toBeGreaterThan(2)
-  const none = await settled(page, preview)
+  await expect.poll(async () => imageDiff(page, goldenFrame, await frame(page))).toBeGreaterThan(2)
+  const none = await settled(page)
   await original.click()
   await expect(original).toHaveAttribute('aria-pressed', 'true')
   await expect(inspector.getByText('No look', { exact: true })).toBeVisible()
   await expect(inspector.getByRole('slider', { name: 'Look intensity' })).toHaveCount(0)
-  expect(await imageDiff(page, none, await settled(page, preview))).toBeLessThan(0.5)
+  expect(await imageDiff(page, none, await settled(page))).toBeLessThan(0.5)
   await page.screenshot({ path: testInfo.outputPath('effects-original.png') })
 
   // Removing the look, the intensity change and the look are one undo step each.
@@ -102,7 +122,7 @@ test('a look from the library restyles the whole video as one undo step; the ins
   await expect(inspector.getByText('70%', { exact: true })).toBeVisible()
   await page.keyboard.press(`${mod}+z`)
   await expect(neon).toHaveAttribute('aria-pressed', 'true')
-  await expect.poll(async () => imageDiff(page, before, await preview.screenshot())).toBeLessThan(0.5)
+  await expect.poll(async () => imageDiff(page, before, await frame(page))).toBeLessThan(0.5)
 })
 
 test('effects and transitions from the library go on the clip at the playhead, and the search narrows the lists', async ({

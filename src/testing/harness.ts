@@ -39,6 +39,7 @@ import * as appModels from '../app/state/models.ts'
 import * as appPersistence from '../app/state/persistence.ts'
 import * as appProject from '../app/state/project.ts'
 import * as appSongAnalysis from '../app/state/songAnalysis.ts'
+import { stagePreview } from '../app/screens/editor/stage.ts'
 import * as appStems from '../app/state/stems.ts'
 import * as appStills from '../app/state/stills.ts'
 import * as appUi from '../app/state/ui.ts'
@@ -115,6 +116,8 @@ export function installHarness(): void {
       persistence: appPersistence,
       project: appProject,
       songAnalysis: appSongAnalysis,
+      /** The editor stage's preview: read its pixels with captureFrame(), which screenshots of a worker canvas can miss. */
+      stagePreview,
       stems: appStems,
       stills: appStills,
       ui: appUi,
