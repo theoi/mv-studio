@@ -55,7 +55,7 @@ test('switching the frame offers to reframe the clips, as one undoable edit', as
   // The sample's footage has no subject analysis, so it keeps its center; its lyrics move into the safe area.
   await expect(
     toasts.getByText(
-      /^Reframed for 9:16: \d+ titles and overlays moved into the safe area, \d+ clips without subject analysis stay centered\.$/,
+      /^Reframed for 9:16 · \d+ titles and overlays moved into the safe area · \d+ clips stay centered \(no subject analysis yet\)$/,
     ),
   ).toBeVisible()
   const after = await layouts(page)
@@ -74,13 +74,11 @@ test('Inspector › Framing sets how a clip fills other frames, in Export and wh
   const reframe = page.getByRole('combobox', { name: 'Reframe' })
   await expect(reframe).toHaveText('Auto')
   await expect(
-    page.getByText('Other aspect ratios use its center, as it has no subject analysis yet.'),
+    page.getByText('Other aspect ratios keep it centered: it has no subject analysis yet.'),
   ).toBeVisible()
   await reframe.click()
   await page.getByRole('option', { name: /^Fit/ }).click()
-  await expect(
-    page.getByText('How this clip fills other aspect ratios: in Export, and when you switch the frame.'),
-  ).toBeVisible()
+  await expect(page.getByText('Used in Export and when you change the aspect ratio.')).toBeVisible()
 
   // Export uses it for this shot.
   await page.getByRole('button', { name: 'Export', exact: true }).click()
@@ -94,7 +92,7 @@ test('Inspector › Framing sets how a clip fills other frames, in Export and wh
 
   // Reframing the project fits the clip with bars; a new choice on a reframed clip applies at once.
   await switchFrame(page, '16:9', '9:16')
-  await expect(page.getByRole('status').getByText(/^Reframed for 9:16: /)).toBeVisible()
+  await expect(page.getByRole('status').getByText(/^Reframed for 9:16 · /)).toBeVisible()
   await page.evaluate(() => (window.location.hash = '#/editor?sel=clip:c-s-c1-1&t=67.2'))
   await page.getByRole('button', { name: 'Framing', exact: true }).click()
   await expect(page.getByText('Reframed from 16:9.')).toBeVisible()
@@ -102,7 +100,7 @@ test('Inspector › Framing sets how a clip fills other frames, in Export and wh
   await reframe.click()
   await page.getByRole('option', { name: /^Auto/ }).click()
   await expect(
-    page.getByText('Reframed from 16:9 on its center, as it has no subject analysis yet.'),
+    page.getByText('Reframed from 16:9 and kept centered: it has no subject analysis yet.'),
   ).toBeVisible()
   await expect.poll(() => scaleOf(page, 'c-s-c1-1')).toBeCloseTo(1, 2)
 })
@@ -127,12 +125,13 @@ test('an ignored offer leaves the clips as they are, and switching back restores
   await pickFrame(page, '9:16', '1:1')
   await expect(offers(page)).toHaveCount(1)
   await toasts.getByRole('button', { name: 'Reframe automatically' }).click()
-  await expect(toasts.getByText(/^Reframed for 1:1: /)).toBeVisible()
+  await expect(toasts.getByText(/^Reframed for 1:1 · /)).toBeVisible()
   expect(await scaleOf(page, 'c-s-c1-1')).toBeCloseTo(1, 2)
 
-  // Back in 16:9, the clips remember their layout there.
+  // Back in 16:9, the clips remember their layout there. The 1:1 result and its Undo no longer apply.
   await pickFrame(page, '1:1', '16:9')
-  await expect(toasts.getByText("Switched to 16:9. Bring back the clips' 16:9 layout?")).toBeVisible()
+  await expect(toasts.getByText('Back to 16:9. Restore the 16:9 layout?')).toBeVisible()
+  await expect(toasts.getByText(/^Reframed for 1:1 · /)).toHaveCount(0)
   await toasts.getByRole('button', { name: 'Restore layout' }).click()
   await expect(toasts.getByText(/^Restored the 16:9 layout of \d+ clips\.$/)).toBeVisible()
   expect(await layouts(page)).toEqual(before)
@@ -153,5 +152,5 @@ test('every way of changing the frame offers to reframe', async ({ page }) => {
   await palette.getByRole('option', { name: 'Switch to vertical 9:16' }).click()
   await expect(toasts.getByText('Switched to 9:16. Keep subjects in frame?')).toBeVisible()
   await toasts.getByRole('button', { name: 'Reframe automatically' }).click()
-  await expect(toasts.getByText(/^Reframed for 9:16: /)).toBeVisible()
+  await expect(toasts.getByText(/^Reframed for 9:16 · /)).toBeVisible()
 })

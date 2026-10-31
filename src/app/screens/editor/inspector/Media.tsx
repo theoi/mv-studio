@@ -40,9 +40,9 @@ export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string 
             onChange={(mode) => setClipReframe(clip.id, mode)}
             ariaLabel="Reframe"
             options={[
-              { value: 'auto', label: 'Auto', description: 'Follows the subject' },
-              { value: 'fit', label: 'Fit', description: 'The whole picture, with bars' },
-              { value: 'fill', label: 'Fill', description: 'Crops the center' },
+              { value: 'auto', label: 'Auto', description: 'Follow the subject' },
+              { value: 'fit', label: 'Fit', description: 'Fit with bars' },
+              { value: 'fill', label: 'Fill', description: 'Center crop' },
             ]}
           />
         </FieldRow>

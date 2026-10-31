@@ -21,7 +21,7 @@ import {
 import { readSubjectTrack } from '../../vision/analysisData.ts'
 import { plural } from '../format.ts'
 import { dispatch, editor } from './project.ts'
-import { set, toast } from './ui.ts'
+import { set, toast, type Toast } from './ui.ts'
 
 function message(aspect: AspectPreset, reframe: ProjectReframe): string {
   const kinds = Object.values(reframe.changed)
@@ -38,19 +38,30 @@ function message(aspect: AspectPreset, reframe: ProjectReframe): string {
     moved ? `${plural(moved, 'title or overlay', 'titles and overlays')} moved into the safe area` : '',
     other ? `${plural(other, 'clip')} reframed` : '',
     centred
-      ? `${plural(centred, 'clip')} without subject analysis ${centred === 1 ? 'stays' : 'stay'} centered`
+      ? `${plural(centred, 'clip')} ${centred === 1 ? 'stays' : 'stay'} centered (no subject analysis yet)`
       : '',
     locked ? `${plural(locked, 'clip')} on locked tracks left as ${locked === 1 ? 'it is' : 'they are'}` : '',
   ].filter(Boolean)
-  return parts.length ? `Reframed for ${aspect}: ${parts.join(', ')}.` : `Everything already fits ${aspect}.`
+  return parts.length
+    ? [`Reframed for ${aspect}`, ...parts].join(' · ')
+    : `Everything already fits ${aspect}.`
 }
 
 const OFFERS = { reframe: 'Reframe automatically', restore: 'Restore layout' } as const
 
-/** Removes an earlier offer that no longer applies (a newer frame change replaces it). */
-function withdrawOffers(): void {
-  const labels: string[] = Object.values(OFFERS)
-  set((s) => ({ toasts: s.toasts.filter((t) => !t.action || !labels.includes(t.action.label)) }))
+type ToastAction = NonNullable<Toast['action']>
+
+/** The actions of the offers and results shown here, which a newer frame change makes stale. */
+const shown = new WeakSet<ToastAction>()
+
+function show(message: string, action: ToastAction): void {
+  shown.add(action)
+  toast(message, action)
+}
+
+/** Removes earlier offers and results with Undo: after a newer frame change they no longer apply. */
+function withdrawToasts(): void {
+  set((s) => ({ toasts: s.toasts.filter((t) => !t.action || !shown.has(t.action)) }))
 }
 
 /**
@@ -70,7 +81,7 @@ export function reframeProject(): void {
   const label = OFFERS[offer]
   if (!dispatch(reframe.commands, { label })) return
   const restored = Object.keys(reframe.changed).length
-  toast(
+  show(
     offer === 'restore'
       ? `Restored the ${aspect} layout of ${plural(restored, 'clip')}.`
       : message(aspect, reframe),
@@ -92,15 +103,12 @@ export function changeAspect(aspect: AspectPreset): void {
   if (aspect === project.settings.aspect) return
   const settings = settingsForAspect(aspect, project.settings.fps)
   if (!dispatch(aspectCommands(project, settings), { label: 'Change aspect ratio' })) return
-  withdrawOffers()
+  withdrawToasts()
   const offer = reframeOffer(editor.getProject())
   if (offer === 'restore')
-    toast(`Switched to ${aspect}. Bring back the clips' ${aspect} layout?`, {
-      label: OFFERS.restore,
-      run: reframeProject,
-    })
+    show(`Back to ${aspect}. Restore the ${aspect} layout?`, { label: OFFERS.restore, run: reframeProject })
   else if (offer === 'reframe')
-    toast(`Switched to ${aspect}. Keep subjects in frame?`, { label: OFFERS.reframe, run: reframeProject })
+    show(`Switched to ${aspect}. Keep subjects in frame?`, { label: OFFERS.reframe, run: reframeProject })
 }
 
 /** The clip and the cutouts that put text behind its subject, which are framed like it. */
@@ -138,11 +146,12 @@ export function framingHint(project: Project, clip: VisualClip): string {
   const mode = clipReframeMode(project, clip.id)
   const asset = 'assetId' in clip ? project.assets[clip.assetId] : undefined
   const centred = mode === 'auto' && asset && readSubjectTrack(project.analysis.visual[asset.id]) === null
-  if (from && centred) return `Reframed from ${from.aspect} on its center, as it has no subject analysis yet.`
+  if (from && centred)
+    return `Reframed from ${from.aspect} and kept centered: it has no subject analysis yet.`
   if (from)
     return mode === 'auto'
       ? `Reframed from ${from.aspect} around its subject.`
       : `Reframed from ${from.aspect}.`
-  if (centred) return 'Other aspect ratios use its center, as it has no subject analysis yet.'
-  return 'How this clip fills other aspect ratios: in Export, and when you switch the frame.'
+  if (centred) return 'Other aspect ratios keep it centered: it has no subject analysis yet.'
+  return 'Used in Export and when you change the aspect ratio.'
 }
