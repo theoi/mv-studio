@@ -136,6 +136,37 @@ describe('scrubbing on the render worker', () => {
     expect(preview.stats()).toMatchObject({ scale: 1, width: 1280 })
     preview.dispose()
   })
+  it('judges afresh when the preview grows during a scrub, instead of keeping what it learned at the old size', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    vi.stubGlobal('Worker', class {})
+    vi.stubGlobal('VideoFrame', class {})
+    // 60 ms per still at any size (decoding) until the GPU takes longer: 140 ms at 1920 × 1080.
+    worker.ms = ({ width, height }) => Math.max(60, (140 * width * height) / (1920 * 1080))
+    const preview = new PreviewController({
+      canvas: { transferControlToOffscreen: () => ({}) } as unknown as HTMLCanvasElement,
+      media: { getFile: async () => new Blob() },
+      renderer: 'worker',
+    })
+    preview.setViewport(640, 360, 1)
+    preview.setProject(createProject())
+    await vi.advanceTimersByTimeAsync(500)
+    let time = 0
+    const drag = async (ms: number) => {
+      let lowest = 1
+      for (let t = 0; t < ms; t += 16) {
+        preview.seek((time += 16) / 1000)
+        await vi.advanceTimersByTimeAsync(16)
+        lowest = Math.min(lowest, preview.stats().scale)
+      }
+      return lowest
+    }
+    // While small, a smaller size does not help: the step down is undone and not tried again for seconds.
+    expect(await drag(1500)).toBeLessThan(1)
+    expect(preview.stats()).toMatchObject({ scale: 1, width: 640 })
+    preview.setViewport(1920, 1080, 1)
+    expect(await drag(2000)).toBeLessThan(1)
+    preview.dispose()
+  })
 })
 
 describe('scrubbing on the main thread', () => {

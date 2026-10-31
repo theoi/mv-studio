@@ -102,18 +102,54 @@ describe('AdaptiveScale', () => {
     expect(auto.scale).toBeLessThan(1)
   })
 
-  it('stops stepping up when full resolution is too slow again right away', () => {
+  it('holds off stepping up after a step up is too slow right away, and tries again less and less often', () => {
     const auto = new AdaptiveScale()
     auto.start(0)
-    let changes = 0
+    const stepsUp: number[] = []
     let now = 0
-    // 30 ms at full resolution, 17 ms at 0.75: stepping up keeps failing.
+    // 30 ms at full resolution, 17 ms at 0.75: every step up fails.
     while (now < 30_000) {
       now += 30 * auto.scale * auto.scale
-      if (auto.frame(now)) changes++
+      const level = auto.level
+      if (auto.frame(now) && auto.level < level) stepsUp.push(now)
     }
     expect(auto.scale).toBe(0.75)
-    expect(changes).toBe(3)
+    // After 3 s of headroom, then at least 4 s and 8 s after each failed try.
+    expect(stepsUp).toHaveLength(3)
+    const [a, b, c] = stepsUp as [number, number, number]
+    expect(b - a).toBeGreaterThan(4000)
+    expect(c - b).toBeGreaterThan(8000)
+  })
+
+  it('recovers full resolution after a heavy stretch, even when a step up failed in it', () => {
+    const auto = new AdaptiveScale()
+    auto.start(0)
+    // A heavy section (30 ms at full resolution, 17 ms at 0.75) where stepping up fails, then a light one.
+    const now = run(auto, 0, 6_000, (s) => 30 * s * s)
+    expect(auto.scale).toBe(0.75)
+    run(auto, now, 20_000, () => 10)
+    expect(auto.scale).toBe(1)
+  })
+
+  it('keeps a step down that raises the frame rate although most intervals stay the same (60 Hz steps)', () => {
+    // About 30 ms per frame at full size and 18 ms at 0.75. On a 60 Hz display full size shows a frame every 33.3 ms,
+    // and at 0.75 two of every three frames still take 33.3 ms: 36 fps instead of 30.
+    const auto = new AdaptiveScale()
+    auto.start(0)
+    let now = 0
+    let n = 0
+    let left = false
+    let back = false
+    while (now < 10_000) {
+      if (auto.scale === 1) now += 33.3
+      else if (auto.scale === 0.75) now += n++ % 3 === 2 ? 16.7 : 33.3
+      else now += 16.7
+      auto.frame(now)
+      if (auto.scale < 1) left = true
+      else if (left) back = true
+    }
+    expect(left).toBe(true)
+    expect(back).toBe(false)
   })
 
   it('keeps its level for the next playback but ignores pauses between frames', () => {

@@ -48,44 +48,53 @@ export function scrubScale(fullStillMs: number): number {
 /**
  * Picks the playback render scale from the interval between preview frames. Steps down while frames come too slowly,
  * steps back up after a few seconds of headroom, undoes a step down that did not speed frames up (the bottleneck is
- * elsewhere, e.g. decoding) and tries again later, and stops stepping up when that keeps failing. Each level is judged
- * on frames drawn at that level only: the median of the latest few, once there are MIN_FRAMES.
+ * elsewhere, e.g. decoding), and holds off stepping up after a step up was too slow right away. Either kind of failed
+ * step is tried again later, waiting twice as long after each failure. Each level is judged on frames drawn at that
+ * level only, once there are MIN_FRAMES: too slow or fast on the median of the latest few, and whether a step down
+ * helped on their mean (the frame rate).
  */
 export class AdaptiveScale {
   /** Index into AUTO_SCALES. Kept between playbacks: it reflects what the machine sustains for this project. */
   level = 0
   /** Intervals between frames drawn at the current level, oldest first. */
   private recent: number[] = []
-  /** The next interval measures the first frame at a new size, so it is not counted. */
+  /**
+   * The next interval measures the first frame of a playback or at a new size, which pays for that change, so it is
+   * not counted. The mean that judges a step down would take one such frame for a trend.
+   */
   private skipNext = false
   private last = 0
   private changedAt = 0
   private steppedUpAt = -Infinity
-  /** Frame interval at the level before the last step down, to check that the step helped. */
+  /** Mean frame interval at the level before the last step down, to check that the step helped. */
   private before = 0
-  /** Best and worst levels allowed for the rest of this playback. */
+  /** Best and worst levels allowed for now: a failed step down caps `max`, a failed step up raises `min`. */
   private min = 0
   private max = AUTO_SCALES.length - 1
-  /** When a step down that did not help may be tried again (0: none pending). */
-  private retryAt = 0
-  private retryAfter = RETRY_AFTER_MS
+  /** When each limit lifts (0: not set), and how long the next one of its kind lasts. */
+  private minUntil = 0
+  private minFor = RETRY_AFTER_MS
+  private maxUntil = 0
+  private maxFor = RETRY_AFTER_MS
 
   get scale(): number {
     return AUTO_SCALES[this.level] ?? 1
   }
 
-  /** Starts a playback (or a scrub): measurements and limits reset, the level carries over. */
+  /** Starts a playback (or a scrub, or a new frame size): measurements and limits reset, the level carries over. */
   start(now: number): void {
     this.recent = []
-    this.skipNext = false
+    this.skipNext = true
     this.last = 0
     this.changedAt = now
     this.steppedUpAt = -Infinity
     this.before = 0
     this.min = 0
     this.max = AUTO_SCALES.length - 1
-    this.retryAt = 0
-    this.retryAfter = RETRY_AFTER_MS
+    this.minUntil = 0
+    this.minFor = RETRY_AFTER_MS
+    this.maxUntil = 0
+    this.maxFor = RETRY_AFTER_MS
   }
 
   /** Records that a frame started at `now` (ms) after waiting for something other than drawing: not measured. */
@@ -104,29 +113,39 @@ export class AdaptiveScale {
       }
     }
     this.last = now
-    if (this.retryAt && now >= this.retryAt) {
+    if (this.maxUntil && now >= this.maxUntil) {
       this.max = AUTO_SCALES.length - 1
-      this.retryAt = 0
+      this.maxUntil = 0
+    }
+    if (this.minUntil && now >= this.minUntil) {
+      this.min = 0
+      this.minUntil = 0
     }
     if (this.recent.length < MIN_FRAMES || now - this.changedAt < STEP_DOWN_AFTER_MS) return false
     const interval = median(this.recent)
     const slow = interval > TARGET_FRAME_MS * STEP_DOWN_RATIO
     let level = this.level
     if (this.before) {
-      const helped = interval < this.before * 0.9
+      // The mean, not the median: at 60 Hz intervals come in 16.7 ms steps, so a step that speeds up some of the
+      // frames (a higher frame rate) can leave the median where it was.
+      const helped = mean(this.recent) < this.before * 0.9
       this.before = 0
       if (slow && !helped) {
         level--
         this.max = level
-        this.retryAt = now + this.retryAfter
-        this.retryAfter *= 2
+        this.maxUntil = now + this.maxFor
+        this.maxFor *= 2
       }
     }
     if (level === this.level) {
       if (slow && level < this.max) {
         level++
-        // Too slow again soon after stepping up: stay at this level for the rest of the playback.
-        if (now - this.steppedUpAt < STEP_UP_AFTER_MS) this.min = level
+        // Too slow again soon after stepping up: stay at this level or below for a while.
+        if (now - this.steppedUpAt < STEP_UP_AFTER_MS) {
+          this.min = level
+          this.minUntil = now + this.minFor
+          this.minFor *= 2
+        }
       } else if (
         interval < TARGET_FRAME_MS * STEP_UP_RATIO &&
         level > this.min &&
@@ -137,13 +156,17 @@ export class AdaptiveScale {
       }
     }
     if (level === this.level) return false
-    this.before = level > this.level ? interval : 0
+    this.before = level > this.level ? mean(this.recent) : 0
     this.level = level
     this.changedAt = now
     this.recent = []
     this.skipNext = true
     return true
   }
+}
+
+function mean(values: readonly number[]): number {
+  return values.reduce((sum, v) => sum + v, 0) / values.length
 }
 
 function median(values: readonly number[]): number {
