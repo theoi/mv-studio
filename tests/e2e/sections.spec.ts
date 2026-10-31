@@ -49,7 +49,8 @@ test('a section label guessed from the audio is muted and says "Probably the cho
   expect(
     await named.getByText('Hook', { exact: true }).evaluate((el) => getComputedStyle(el).color),
   ).not.toBe(muted)
-  await named.dispatchEvent('pointerdown')
+  // A mouse pointerdown: one without a pointer type counts as touch, whose long press opens the section menu.
+  await named.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
   await expect(page.getByText(/^Named by you/)).toBeVisible()
   await expect(page.getByText(/^1:04 – 1:36 · \d+ bars$/)).toBeVisible()
 })

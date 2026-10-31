@@ -242,7 +242,8 @@ test('a selected section suggests re-cutting it until its footage matches, then 
   test.setTimeout(200_000)
   await openSample(page, '#/editor?t=73.6')
   const chorus = page.getByRole('button', { name: /^Section Chorus/ }).first()
-  await chorus.dispatchEvent('pointerdown')
+  // A mouse pointerdown: one without a pointer type counts as touch, whose long press opens the section menu.
+  await chorus.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
   await expect(page.getByText('Re-cut this chorus to the beat')).toBeVisible()
   await expect(page.getByText(/clips match this chorus/)).toHaveCount(0)
 
