@@ -104,6 +104,9 @@ test('preview plays in step with the audio clock, pauses, seeks, loops and stops
     preview.setProject(p)
     preview.setViewport(480, 270, 1)
     await preview.rendered()
+    // With the render worker, the page's canvas is a placeholder that takes the worker canvas's size only once a frame
+    // reaches the page, which can be after rendered() on a busy machine.
+    for (let i = 0; i < 120 && canvas.width !== 480; i++) await new Promise((r) => requestAnimationFrame(r))
     const size = [canvas.width, canvas.height]
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
