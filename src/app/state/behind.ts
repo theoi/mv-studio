@@ -798,6 +798,8 @@ async function storePersonMask(
  * step, like other results of background work: the cutout itself was the user's edit.
  */
 export function remakeOfflineMasks(): JobHandle<void> | undefined {
+  // Runs even with background analysis off (`backgroundAnalysisOn`): that setting is about analysis nobody asked for,
+  // and this finishes a cutout the user asked for.
   if (typeof navigator === 'undefined' || !navigator.onLine) return undefined
   if (isRunning(JOB_KINDS.cutout) || isRunning(JOB_KINDS.cutoutRemake)) return undefined
   const project = editor.getProject()
