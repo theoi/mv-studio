@@ -15,7 +15,15 @@ import {
 import { EmptyState, ProgressBar, Spinner } from '../../../ds/Feedback.tsx'
 import { Kbd } from '../../../ds/Kbd.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
-import { JOB_KINDS, jobTarget, openJob, runningJobs, useJobs } from '../../../state/jobs.ts'
+import {
+  JOB_KINDS,
+  jobFraction,
+  jobLabel,
+  jobTarget,
+  openJob,
+  runningJobs,
+  useJobs,
+} from '../../../state/jobs.ts'
 import { bpmOf, hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
 import { SONG_STATE_TEXT } from '../../../state/songAnalysis.ts'
 import { openAssist, useUi, type AssistView } from '../../../state/ui.ts'
@@ -64,15 +72,16 @@ function Running({ except }: { except: readonly string[] }) {
       {items.map((j) => (
         <button key={j.id} className={styles.job} onClick={() => openJob(j.kind)}>
           <div className={styles.jobTop}>
-            <span>{j.title}</span>
-            {j.progress.fraction === undefined ? (
+            <span>{jobLabel(j)}</span>
+            {jobFraction(j) === undefined ? (
               <Spinner size={12} />
             ) : (
               <span className={`${styles.jobPct} tnum`}>{pct(j)}%</span>
             )}
           </div>
           <ProgressBar value={j.progress.fraction ?? 0} label={j.title} />
-          <div className={styles.jobEta}>{etaText(j) ?? j.progress.message}</div>
+          {/* While stopping, the line under the bar keeps saying which job it is. */}
+          <div className={styles.jobEta}>{j.stopping ? j.title : (etaText(j) ?? j.progress.message)}</div>
         </button>
       ))}
     </div>

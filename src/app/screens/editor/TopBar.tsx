@@ -25,7 +25,7 @@ import { ProgressRing, Spinner } from '../../ds/Feedback.tsx'
 import { Input } from '../../ds/Fields.tsx'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
-import { openJob, runningJobs, useJobs } from '../../state/jobs.ts'
+import { jobFraction, jobLabel, openJob, runningJobs, useJobs } from '../../state/jobs.ts'
 import {
   downloadProjectFile,
   duplicateCurrent,
@@ -47,10 +47,9 @@ function Activity() {
   const running = runningJobs(useJobs())
   const first = running[0]
   if (!first) return null
-  // Jobs that can't measure their progress (a language model thinking) show a spinner instead of a stuck 0%. So does
-  // a job finishing after a Cancel (keeping a result it already paid for, say), whose progress no longer leads to done.
-  const fraction = first.stopping ? undefined : first.progress.fraction
-  const label = first.stopping ? 'Stopping…' : first.title
+  // Jobs that can't measure their progress (a language model thinking) show a spinner instead of a stuck 0%.
+  const fraction = jobFraction(first)
+  const label = jobLabel(first)
   return (
     <Tooltip label="Background tasks" description="You can keep editing. Click for details.">
       <button className={styles.activity} onClick={() => openJob(first.kind)}>

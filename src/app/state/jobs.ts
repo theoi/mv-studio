@@ -19,6 +19,19 @@ export function runningJobs(list: JobSnapshot[]): JobSnapshot[] {
   return list.filter((j) => j.status === 'running' || j.status === 'queued')
 }
 
+/** What a running job is called where jobs are listed: "Stopping…" from a Cancel until it ends, else its title. */
+export function jobLabel(job: JobSnapshot): string {
+  return job.stopping ? 'Stopping…' : job.title
+}
+
+/**
+ * The share done to show as a percentage, or undefined for a spinner: for a job that can't measure its progress, and
+ * for one finishing after a Cancel (keeping a result it already paid for, say), whose progress no longer leads to done.
+ */
+export function jobFraction(job: JobSnapshot): number | undefined {
+  return job.stopping ? undefined : job.progress.fraction
+}
+
 export function isRunning(kind: string): boolean {
   return runningJobs(jobs.list()).some((j) => j.kind === kind)
 }

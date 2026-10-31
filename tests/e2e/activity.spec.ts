@@ -53,3 +53,48 @@ test('the activity indicator opens the panel that shows the running job, never t
   await expect(page.getByRole('dialog', { name: /Export/ })).toHaveCount(0)
   await finish()
 })
+
+test('a job that took a Cancel says Stopping… in the top bar and in Assist’s Running list until it ends', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?tab=assist'
+  })
+  await waitForPreview(page)
+  await page.evaluate(() => {
+    const w = window as unknown as { finishJob?: () => void }
+    window.mvStudio.shared.jobs.run({
+      kind: 'analysis.lyrics',
+      title: 'Timing lyrics',
+      // Like a job keeping a result it already paid for: it doesn't end the moment Cancel is pressed.
+      run: (ctx: { progress: (p: { fraction: number }) => void }) =>
+        new Promise<void>((resolve) => {
+          ctx.progress({ fraction: 0.4 })
+          w.finishJob = resolve
+        }),
+    })
+  })
+  const chip = page.getByRole('banner').getByRole('button', { name: /Timing lyrics|Stopping…/ })
+  const running = page
+    .getByRole('tabpanel', { name: 'Assist' })
+    .getByText('Running', { exact: true })
+    .locator('..')
+  await expect(chip).toContainText('Timing lyrics')
+  await expect(chip).toContainText('40%')
+  await expect(running).toContainText('Timing lyrics')
+  await expect(running).toContainText('40%')
+
+  await page.evaluate(() => window.mvStudio.shared.jobs.cancelAll('analysis.lyrics'))
+  await expect(chip).toContainText('Stopping…')
+  await expect(chip).not.toContainText('%')
+  await expect(running.getByText('Stopping…', { exact: true })).toBeVisible()
+  await expect(running).not.toContainText('%')
+  // The row still says which job is stopping.
+  await expect(running).toContainText('Timing lyrics')
+
+  await page.evaluate(() => (window as unknown as { finishJob: () => void }).finishJob())
+  await expect(chip).toHaveCount(0)
+  await expect(running).toHaveCount(0)
+})
