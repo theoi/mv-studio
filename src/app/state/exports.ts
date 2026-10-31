@@ -1,45 +1,34 @@
-import { exportProject, exportSize, type ExportResolution } from '../../engine/export.ts'
-import { ASPECT_PRESETS, projectDuration, type AspectPreset, type Project } from '../../model/index.ts'
-import { JobError, jobs, type JobContext } from '../../shared/jobs.ts'
-import { JOB_KINDS } from './jobs.ts'
-import { appMedia } from './media.ts'
-import { editor, sectionKind, sectionsOf } from './project.ts'
+import { create } from 'zustand'
+import type { AspectPreset } from '../../model/index.ts'
 import { toast } from './ui.ts'
 
-export type ExportKind = 'full' | 'format' | 'teaser' | 'loop'
+/*
+ * The latest export as the exporting view shows it: one job that renders several files in order. Kept outside the
+ * dialog so the view can be reopened from the activity indicator, and free of src/export so the design preview's
+ * mock export does not pull the export code into the main bundle.
+ */
 
-export interface ExportRequest {
-  /** Output name shown in the dialog; jobs are titled "Exporting <name>". */
-  name: string
-  fileName: string
-  kind: ExportKind
+export interface ExportRow {
+  id: string
+  title: string
   aspect: AspectPreset
-  resolution: ExportResolution
-  fps: number
+  /** Frames to render: the row's share of the job's progress. */
+  frames: number
 }
 
-/** Seconds each short output covers, starting at the first chorus. */
-export const SHORT_LENGTH: Partial<Record<ExportKind, number>> = { teaser: 15, loop: 8 }
-
-export function exportTitle(name: string): string {
-  return `Exporting ${name}`
+interface ExportsState {
+  jobId: string | null
+  rows: ExportRow[]
+  /** Finished files by row id. */
+  files: Record<string, File>
 }
 
-function outputProject(base: Project, request: ExportRequest): Project {
-  const { width, height } = ASPECT_PRESETS[request.aspect]
-  return { ...base, settings: { ...base.settings, aspect: request.aspect, width, height, fps: request.fps } }
-}
+export const useExports = create<ExportsState>(() => ({ jobId: null, rows: [], files: {} }))
 
-function outputRange(project: Project, kind: ExportKind): { start: number; end: number } | undefined {
-  const length = SHORT_LENGTH[kind]
-  if (!length) return undefined
-  const duration = projectDuration(project)
-  const chorus = sectionsOf(project).find((s) => sectionKind(s) === 'chorus')
-  const start = Math.max(0, Math.min(chorus?.start ?? 0, duration - length))
-  return { start, end: Math.min(duration, start + length) }
+/** Shows a job in the exporting view. */
+export function showExport(jobId: string, rows: ExportRow[]): void {
+  useExports.setState({ jobId, rows, files: {} })
 }
-
-const files = new Map<string, File>()
 
 export function downloadFile(file: Blob, name: string): void {
   const url = URL.createObjectURL(file)
@@ -53,71 +42,9 @@ export function downloadFile(file: Blob, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-/** Downloads a finished export again (its file stays in browser storage until the next exports replace it). */
-export function downloadAgain(name: string): void {
-  const file = files.get(name)
+/** Downloads a finished file again (it stays in browser storage until the next export replaces it). */
+export function downloadAgain(rowId: string): void {
+  const file = useExports.getState().files[rowId]
   if (file) downloadFile(file, file.name)
   else toast('That file is no longer available. Export it again.')
-}
-
-function waitTurn(previous: Promise<unknown>, ctx: JobContext): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(new JobError('cancelled', 'Export cancelled'))
-    if (ctx.signal.aborted) return abort()
-    ctx.signal.addEventListener('abort', abort, { once: true })
-    void previous.then(() => {
-      ctx.signal.removeEventListener('abort', abort)
-      resolve()
-    })
-  })
-}
-
-let queue: Promise<unknown> = Promise.resolve()
-
-/**
- * Starts one export job per output. Jobs run one at a time in order (each waits for the previous one), render with
- * the real engine from the current project, and download the MP4 when done.
- */
-export function startExports(requests: ExportRequest[]): void {
-  const busy = new Set(
-    jobs
-      .list()
-      .filter((j) => j.kind === JOB_KINDS.export && (j.status === 'running' || j.status === 'queued'))
-      .map((j) => j.title),
-  )
-  const project = editor.getProject()
-  for (const request of requests) {
-    const title = exportTitle(request.name)
-    if (busy.has(title)) continue
-    const previous = queue
-    const handle = jobs.run({
-      kind: JOB_KINDS.export,
-      title,
-      run: async (ctx) => {
-        ctx.progress({ fraction: 0, stage: 'waiting', message: 'Waiting for the previous file' })
-        await waitTurn(previous, ctx)
-        const output = outputProject(project, request)
-        const result = await exportProject(
-          output,
-          {
-            ...exportSize(request.aspect, request.resolution),
-            fps: request.fps,
-            aspect: request.aspect,
-            range: outputRange(output, request.kind),
-          },
-          ctx,
-          { media: appMedia },
-        )
-        const file = new File([result.file], request.fileName, { type: 'video/mp4' })
-        files.set(request.name, file)
-        downloadFile(file, request.fileName)
-        return result
-      },
-    })
-    queue = handle.promise.catch(() => undefined)
-    handle.promise.then(
-      () => toast(`Saved ${request.name} to Downloads`),
-      () => undefined,
-    )
-  }
 }

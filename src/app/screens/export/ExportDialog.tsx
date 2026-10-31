@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   Check,
   Clock,
@@ -11,184 +11,319 @@ import {
   Repeat,
   Scissors,
   Square,
-  X,
 } from 'lucide-react'
+import {
+  estimateRenderSeconds,
+  planOutput,
+  type ExportQuality,
+  type OutputSpec,
+  type PlannedOutput,
+  type ReframeMode,
+} from '../../../export/index.ts'
+import type { ExportResolution } from '../../../engine/export.ts'
+import type { AspectPreset, Project } from '../../../model/index.ts'
 import { jobs, type JobSnapshot } from '../../../shared/jobs.ts'
-import { Button, IconButton } from '../../ds/Button.tsx'
+import { Button } from '../../ds/Button.tsx'
 import { Dialog } from '../../ds/Dialog.tsx'
 import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select } from '../../ds/Fields.tsx'
-import { formatTime } from '../../format.ts'
-import { sceneThumb } from '../../mock/art.ts'
-import type { ExportResolution } from '../../../engine/export.ts'
-import { downloadAgain, exportTitle, startExports, type ExportKind } from '../../state/exports.ts'
-import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
+import { formatTime, plural } from '../../format.ts'
+import { downloadAgain, useExports, type ExportRow } from '../../state/exports.ts'
+import { useJobs } from '../../state/jobs.ts'
 import { sectionColor, sectionKind, sectionsOf, timelineDuration, useProject } from '../../state/project.ts'
+import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
+import {
+  RATIO,
+  addCandidate,
+  candidateOutputs,
+  initialItems,
+  outputSummary,
+  outputTitle,
+  remainingCandidates,
+  sizeLabel,
+  specsLine,
+  startOutputs,
+  stillTime,
+  timeLabel,
+  withAspect,
+  type OutputItem,
+} from './outputs.ts'
 import styles from './ExportDialog.module.css'
 
-interface Output {
-  id: string
-  kind: ExportKind
-  name: string
-  aspect: '16:9' | '9:16' | '1:1' | '4:5'
-  res: string
-  fps: string
-  on: boolean
-}
-
-const suggestions: Omit<Output, 'id' | 'on'>[] = [
-  { kind: 'format', name: 'Square', aspect: '1:1', res: '1080', fps: '30' },
-  { kind: 'teaser', name: 'Chorus teaser', aspect: '9:16', res: '1080', fps: '30' },
-  { kind: 'loop', name: 'Loop for Canvas', aspect: '9:16', res: '720', fps: '30' },
-]
-
-const ratio: Record<Output['aspect'], number> = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5 }
-const aspectIcon = (a: Output['aspect']) =>
+const aspectIcon = (a: AspectPreset) =>
   a === '16:9' ? <RectangleHorizontal /> : a === '1:1' ? <Square /> : <RectangleVertical />
 
-function lengthOf(o: Output, duration: number) {
-  return o.kind === 'teaser' ? 15 : o.kind === 'loop' ? 8 : duration
+const image = (url: string | undefined) => (url ? `url(${url})` : undefined)
+
+/** Stills depend on the project, the output's layout and the moment, not on its name, size or quality. */
+function stillKey(project: Project, planned: PlannedOutput, time: number): string {
+  const { kind, aspect, reframe, range } = planned.spec
+  return [versionOf(project), kind, aspect, reframe, range ? `${range.start}-${range.end}` : '', time].join(
+    '|',
+  )
 }
 
-function specs(o: Output, duration: number) {
-  const len = o.kind === 'teaser' ? '15 s' : o.kind === 'loop' ? '8 s loop' : formatTime(duration)
-  return `${o.aspect} · ${o.res === '2160' ? '4K' : `${o.res}p`} · ${o.fps} fps · ${len}`
+function framingNote(planned: PlannedOutput): ReactNode {
+  const { reframe } = planned.spec
+  if (reframe === 'fit') return 'Shows the whole picture with bars. Text stays inside the safe area.'
+  if (reframe === 'fill') return 'Crops the center of each shot. Text stays inside the safe area.'
+  const unanalysed = planned.unanalysed.length
+  if (unanalysed) return `${plural(unanalysed, 'clip')} without subject analysis are cropped in the center.`
+  return (
+    <>
+      <Check /> Follows the subject in each shot. Text stays inside the safe area.
+    </>
+  )
 }
 
-function sizeMB(o: Output, duration: number) {
-  const rate = o.res === '2160' ? 4.5 : o.res === '1440' ? 2.4 : o.res === '1080' ? 1.3 : 0.7
-  return lengthOf(o, duration) * rate
-}
-
-function Frame({ o }: { o: Output }) {
-  const r = ratio[o.aspect]
-  const isWide = r >= 1.7
+function Frame({
+  project,
+  planned,
+  playhead,
+}: {
+  project: Project
+  planned: PlannedOutput
+  playhead: number
+}) {
+  const { spec } = planned
+  const same = spec.aspect === project.settings.aspect
+  const sourceRatio = project.settings.width / project.settings.height
+  const r = RATIO[spec.aspect]
+  const time = stillTime(planned, playhead)
+  const output = useStill(stillKey(project, planned, time), planned.project, time, r)
+  const source = useStill(same ? null : `${versionOf(project)}|source|${time}`, project, time, sourceRatio)
+  const box =
+    r >= sourceRatio
+      ? { left: 0, width: '100%', top: '50%', transform: 'translateY(-50%)' }
+      : { top: 0, height: '100%', left: '50%', transform: 'translateX(-50%)' }
   return (
     <div className={styles.frameWrap}>
       <div
         className={styles.frameOuter}
-        style={{ aspectRatio: '16 / 9', backgroundImage: `url(${sceneThumb('portrait', 640, 360)})` }}
+        role="img"
+        aria-label={`Preview of ${outputTitle(project, spec)}`}
+        style={{
+          aspectRatio: `${sourceRatio}`,
+          // Portrait and square projects keep the 16:9 preview's height.
+          width: sourceRatio < 16 / 9 ? `min(100%, ${Math.round(203 * sourceRatio)}px)` : undefined,
+          backgroundImage: image(same ? output : source),
+        }}
       >
-        {!isWide && <div className={styles.frameDim} />}
-        <div
-          className={[styles.frame, !isWide && styles.frameCrop].filter(Boolean).join(' ')}
-          style={
-            isWide
-              ? { inset: 0 }
-              : {
-                  height: '100%',
-                  aspectRatio: `${r}`,
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  backgroundImage: `url(${sceneThumb('portrait', 640, 360)})`,
-                }
-          }
-        >
-          <span className={styles.frameLyric}>Under the neon skyline</span>
-        </div>
+        {!same && (
+          <>
+            <div className={styles.frameDim} />
+            <div
+              className={[styles.frame, styles.frameCrop].join(' ')}
+              style={{ ...box, aspectRatio: `${r}`, backgroundImage: image(output), backgroundSize: 'cover' }}
+            />
+          </>
+        )}
       </div>
-      {!isWide && (
-        <div className={styles.frameNote}>
-          <Check /> Follows the singer. Drag the frame to adjust any shot.
-        </div>
-      )}
+      {!same && <div className={styles.frameNote}>{framingNote(planned)}</div>}
     </div>
   )
 }
 
-function TeaserRange() {
-  const project = useProject()
-  const list = sectionsOf(project)
-  const duration = timelineDuration(project)
-  const chorus = list.find((s) => sectionKind(s) === 'chorus')
-  const start = chorus?.start ?? 0
+function rangeReason(planned: PlannedOutput): string {
+  if (planned.loop) {
+    const { bars, barAligned } = planned.loop
+    return `${plural(bars, 'bar')}, ${barAligned ? 'loops seamlessly on the beat' : 'not on the beat, so the loop point may jump'}`
+  }
+  if (planned.spec.range) return 'the range you picked'
+  const pick = planned.teaser
+  if (pick?.source === 'chorus') return 'starts on the strongest chorus'
+  if (pick?.source === 'section') return `starts on ${pick.label ?? 'a section'}, the most repeated part`
+  if (pick?.source === 'energy') return 'the loudest part of the song'
+  return 'the start of the song, as no chorus was found'
+}
+
+/** The song's sections with the output's range on top: where a teaser or loop comes from. */
+function RangeLane({ project, planned }: { project: Project; planned: PlannedOutput }) {
+  const duration = Math.max(timelineDuration(project), 1e-3)
+  const { start, end } = planned.range
+  const lane: { key: string; flex: number; background?: string }[] = []
+  let cursor = 0
+  for (const s of sectionsOf(project)) {
+    if (s.start > cursor) lane.push({ key: `gap-${s.id}`, flex: s.start - cursor })
+    lane.push({
+      key: s.id,
+      flex: s.end - s.start,
+      background: `color-mix(in srgb, ${sectionColor[sectionKind(s)]} 45%, transparent)`,
+    })
+    cursor = Math.max(cursor, s.end)
+  }
+  if (cursor < duration)
+    lane.push({
+      key: 'end',
+      flex: duration - cursor,
+      background: cursor === 0 ? 'var(--bg-active)' : undefined,
+    })
   return (
     <div className={styles.range}>
       <div className={styles.rangeLane}>
-        {list.map((s) => (
-          <span
-            key={s.id}
-            style={{
-              flex: s.end - s.start,
-              background: `color-mix(in srgb, ${sectionColor[sectionKind(s)]} 45%, transparent)`,
-            }}
-          />
+        {lane.map((s) => (
+          <span key={s.key} style={{ flex: s.flex, background: s.background }} />
         ))}
         <span
           className={styles.rangeSel}
-          style={{ left: `${(start / duration) * 100}%`, width: `${(15 / duration) * 100}%` }}
+          style={{ left: `${(start / duration) * 100}%`, width: `${((end - start) / duration) * 100}%` }}
         />
       </div>
       <div className={`${styles.rangeText} tnum`}>
-        {formatTime(start)} – {formatTime(start + 15)} · starts on the first chorus, the most repeated part
+        {formatTime(start)} – {formatTime(end)} · {rangeReason(planned)}
       </div>
     </div>
   )
 }
 
-function rowStatus(job: JobSnapshot | undefined): string {
-  if (!job) return 'Waiting'
-  if (job.status === 'succeeded') return 'Saved'
-  if (job.status === 'cancelled') return 'Cancelled'
-  if (job.status === 'failed') return job.error?.message ?? 'Failed'
-  if (job.progress.stage === 'waiting') return 'Waiting'
-  const eta = job.progress.etaSeconds ?? 0
-  const left = eta < 50 ? 'less than a minute left' : `about ${Math.round(eta / 60)} min left`
-  return `${Math.round((job.progress.fraction ?? 0) * 100)}% · ${left}`
+function OutputRow({
+  project,
+  item,
+  planned,
+  selected,
+  playhead,
+  onSelect,
+  onToggle,
+}: {
+  project: Project
+  item: OutputItem
+  planned: PlannedOutput
+  selected: boolean
+  playhead: number
+  onSelect: () => void
+  onToggle: (on: boolean) => void
+}) {
+  const { spec } = item
+  const title = outputTitle(project, spec)
+  const time = stillTime(planned, playhead)
+  const still = useStill(stillKey(project, planned, time), planned.project, time, RATIO[spec.aspect])
+  return (
+    <div
+      className={[styles.output, selected && styles.outputOn].filter(Boolean).join(' ')}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect()
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+    >
+      <label className={styles.check} onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={item.on}
+          onChange={(e) => onToggle(e.target.checked)}
+          aria-label={`Include ${title}`}
+        />
+        <span>
+          <Check />
+        </span>
+      </label>
+      <span className={styles.outThumb}>
+        <span style={{ aspectRatio: `${RATIO[spec.aspect]}`, backgroundImage: image(still) }} />
+      </span>
+      <span className={styles.outText}>
+        <span className={styles.outName}>
+          {title}
+          {spec.kind === 'video' && spec.aspect !== project.settings.aspect && <Badge>Auto-reframe</Badge>}
+        </span>
+        <span className={`${styles.outSpecs} tnum`}>{specsLine(planned)}</span>
+      </span>
+    </div>
+  )
 }
 
-/** Matches each output to its most recent export job by title, so the list survives closing the dialog. */
-function useExportJobs(outputs: Output[]) {
-  const list = useJobs().filter((j) => j.kind === JOB_KINDS.export)
-  return outputs.map((o) => [...list].reverse().find((j) => j.title === exportTitle(o.name)))
+interface RowState {
+  fraction: number
+  status: string
 }
 
-function ExportingView({ outputs, onClose }: { outputs: Output[]; onClose: () => void }) {
-  const rows = useExportJobs(outputs)
-  const done = rows.every((j) => j && j.status !== 'running' && j.status !== 'queued')
-  const saved = rows.filter((j) => j?.status === 'succeeded').length
+/** Each file's share of the job is its share of the frames; files render in order. */
+function rowStates(job: JobSnapshot | undefined, rows: ExportRow[]): RowState[] {
+  const total = rows.reduce((sum, r) => sum + r.frames, 0) || 1
+  const f = job?.status === 'succeeded' ? 1 : (job?.progress.fraction ?? 0)
+  let before = 0
+  return rows.map((r) => {
+    const start = before / total
+    const share = r.frames / total
+    before += r.frames
+    const own = Math.min(1, Math.max(0, (f - start) / share))
+    if (!job) return { fraction: 0, status: 'Waiting' }
+    if (job.status === 'succeeded') return { fraction: 1, status: 'Saved' }
+    if (job.status === 'cancelled') return { fraction: own, status: 'Cancelled' }
+    if (job.status === 'failed') {
+      const current = f >= start && f < start + share
+      return {
+        fraction: own,
+        status: current ? (job.error?.message ?? 'Failed') : own >= 1 ? 'Not saved' : 'Not exported',
+      }
+    }
+    if (own <= 0) return { fraction: 0, status: 'Waiting' }
+    if (own >= 1) return { fraction: 1, status: 'Rendered' }
+    const pct = `${Math.round(own * 100)}%`
+    const eta = job.progress.etaSeconds
+    if (eta === undefined) return { fraction: own, status: pct }
+    const left = (eta * (start + share - f)) / Math.max(1e-6, 1 - f)
+    return {
+      fraction: own,
+      status: `${pct} · ${left < 50 ? 'less than a minute left' : `about ${Math.max(1, Math.round(left / 60))} min left`}`,
+    }
+  })
+}
+
+function ExportingView({ onClose }: { onClose: () => void }) {
+  const { jobId, rows } = useExports()
+  const job = useJobs().find((j) => j.id === jobId)
+  const states = rowStates(job, rows)
+  const running = job?.status === 'running' || job?.status === 'queued'
+  const title = running
+    ? `Exporting ${plural(rows.length, 'file')}`
+    : job?.status === 'succeeded'
+      ? `${plural(rows.length, 'file')} saved`
+      : job?.status === 'failed'
+        ? 'Export failed'
+        : job?.status === 'cancelled'
+          ? 'Export cancelled'
+          : 'Nothing is exporting'
+  const note = running
+    ? 'Rendering on this device. You can keep editing; files save to your Downloads folder.'
+    : job?.status === 'succeeded'
+      ? 'Find them in your Downloads folder.'
+      : job
+        ? 'No files were saved.'
+        : ''
   return (
     <div className={styles.exporting}>
       <div className={styles.exportingHead}>
-        <div className={styles.exportingTitle}>
-          {done
-            ? `${saved} ${saved === 1 ? 'file' : 'files'} saved`
-            : `Exporting ${outputs.length} ${outputs.length === 1 ? 'file' : 'files'}`}
-        </div>
-        <div className={styles.muted}>
-          {done
-            ? 'Find them in your Downloads folder.'
-            : 'Rendering on this device. You can keep editing; files save to your Downloads folder.'}
-        </div>
+        <div className={styles.exportingTitle}>{title}</div>
+        <div className={styles.muted}>{note}</div>
       </div>
       <div className={styles.jobList}>
-        {outputs.map((o, i) => {
-          const job = rows[i]
-          const finished = job?.status === 'succeeded'
-          const active = job?.status === 'running' || job?.status === 'queued'
+        {rows.map((r, i) => {
+          const state = states[i] ?? { fraction: 0, status: 'Waiting' }
+          const saved = job?.status === 'succeeded'
           return (
-            <div key={o.id} className={styles.jobRow}>
-              <span className={styles.jobIcon}>{aspectIcon(o.aspect)}</span>
+            <div key={r.id} className={styles.jobRow}>
+              <span className={styles.jobIcon}>{aspectIcon(r.aspect)}</span>
               <div className={styles.jobMain}>
                 <div className={styles.jobTop}>
-                  <span className={styles.jobName}>{o.name}</span>
-                  <span className={`${styles.muted} tnum`}>{rowStatus(job)}</span>
+                  <span className={styles.jobName}>{r.title}</span>
+                  <span className={`${styles.muted} tnum`}>{state.status}</span>
                 </div>
                 <ProgressBar
-                  value={job?.progress.fraction ?? 0}
-                  tone={finished ? 'success' : 'accent'}
-                  label={`${o.name} progress`}
+                  value={state.fraction}
+                  tone={saved ? 'success' : 'accent'}
+                  label={`${r.title} progress`}
                 />
               </div>
-              {finished ? (
-                <Button size="sm" variant="ghost" icon={<FolderDown />} onClick={() => downloadAgain(o.name)}>
+              {saved ? (
+                <Button size="sm" variant="ghost" icon={<FolderDown />} onClick={() => downloadAgain(r.id)}>
                   Download
                 </Button>
-              ) : active ? (
-                <IconButton label="Cancel this file" size="sm" onClick={() => job && jobs.cancel(job.id)}>
-                  <X />
-                </IconButton>
               ) : (
                 <span className={styles.jobSpacer} />
               )}
@@ -197,16 +332,12 @@ function ExportingView({ outputs, onClose }: { outputs: Output[]; onClose: () =>
         })}
       </div>
       <div className={styles.exportingFoot}>
-        {done ? (
-          <Button variant="primary" onClick={onClose}>
-            Done
-          </Button>
-        ) : (
+        {running ? (
           <>
             <Button
               variant="ghost"
               onClick={() => {
-                jobs.cancelAll(JOB_KINDS.export)
+                if (job) jobs.cancel(job.id)
                 set({ exportPhase: 'setup' })
               }}
             >
@@ -222,39 +353,69 @@ function ExportingView({ outputs, onClose }: { outputs: Output[]; onClose: () =>
               Keep editing
             </Button>
           </>
+        ) : (
+          <Button variant="primary" onClick={onClose}>
+            Done
+          </Button>
         )}
       </div>
     </div>
   )
 }
 
-export function ExportDialog() {
-  const open = useUi((s) => s.dialog === 'export')
+const RESOLUTIONS: { value: ExportResolution; label: string }[] = [
+  { value: '720p', label: '720p' },
+  { value: '1080p', label: '1080p' },
+  { value: '1440p', label: '1440p' },
+  { value: '2160p', label: '4K' },
+]
+
+const FRAMING: { value: ReframeMode; label: string; description?: string }[] = [
+  { value: 'auto', label: 'Follow the subject', description: 'Tracks people and motion in each shot' },
+  { value: 'fill', label: 'Center crop' },
+  { value: 'fit', label: 'Fit with bars' },
+]
+
+const QUALITY: { value: ExportQuality; label: string }[] = [
+  { value: 'high', label: 'High · recommended' },
+  { value: 'balanced', label: 'Balanced · smaller file' },
+  { value: 'small', label: 'Small · quick to share' },
+]
+
+function ExportDialogBody() {
   const phase = useUi((s) => s.exportPhase)
+  const playhead = useUi((s) => s.playhead)
   const project = useProject()
-  const duration = timelineDuration(project)
-  const [outputs, setOutputs] = useState<Output[]>([
-    { id: 'o1', kind: 'full', name: 'Full video', aspect: '16:9', res: '1080', fps: '30', on: true },
-    { id: 'o2', kind: 'format', name: 'Vertical', aspect: '9:16', res: '1080', fps: '30', on: true },
-  ])
-  const [selected, setSelected] = useState('o1')
-  const sel = outputs.find((o) => o.id === selected) ?? outputs[0]!
-  const active = outputs.filter((o) => o.on)
-  const total = active.reduce((a, o) => a + sizeMB(o, duration), 0)
-  const minutes = Math.max(
-    1,
-    Math.round(active.reduce((a, o) => a + (o.kind === 'full' || o.kind === 'format' ? 3 : 0.4), 0)),
+  const [items, setItems] = useState(() => initialItems(project))
+  const [candidates] = useState(() => candidateOutputs(project))
+  const [selectedId, setSelectedId] = useState(() => items[0]?.spec.id)
+  const planned = useMemo(() => items.map((i) => planOutput(project, i.spec)), [project, items])
+  const index = Math.max(
+    0,
+    items.findIndex((i) => i.spec.id === selectedId),
   )
-  const update = (patch: Partial<Output>) =>
-    setOutputs((os) => os.map((o) => (o.id === sel.id ? { ...o, ...patch } : o)))
-  const close = () => set({ dialog: null, exportPhase: 'setup' })
-  const remaining = suggestions.filter((s) => !outputs.some((o) => o.name === s.name))
-  const slug = project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-  const fileBase = (o: Output) => `${slug}-${o.name.toLowerCase().replace(/\s+/g, '-')}`
+  const sel = items[index]
+  const selPlan = planned[index]
+  const close = () => {
+    releaseStills()
+    set({ dialog: null, exportPhase: 'setup' })
+  }
+  if (!sel || !selPlan) return null
+
+  const active = planned.filter((_, k) => items[k]?.on)
+  const bytes = active.reduce((sum, p) => sum + p.estimatedBytes, 0)
+  const seconds = active.reduce((sum, p) => sum + estimateRenderSeconds(p), 0)
+  const update = (patch: Partial<OutputSpec>) =>
+    setItems((list) =>
+      list.map((i) => (i.spec.id === sel.spec.id ? { ...i, spec: { ...i.spec, ...patch } } : i)),
+    )
+  const remaining = remainingCandidates(candidates, items)
+  const audio = sel.spec.audio ?? sel.spec.kind !== 'loop'
+  const frameRates = [...new Set([24, 25, 30, 60, sel.spec.fps])].sort((a, b) => a - b)
 
   return (
     <Dialog
-      open={open}
+      open
       onOpenChange={(o) => (o ? set({ dialog: 'export' }) : close())}
       title="Export"
       description="Make one or more videos from this project. What you see in the preview is what you get."
@@ -265,10 +426,10 @@ export function ExportDialog() {
           <>
             <div className={styles.summary}>
               <span>
-                <HardDrive /> About {Math.round(total)} MB
+                <HardDrive /> {sizeLabel(bytes)}
               </span>
               <span>
-                <Clock /> About {minutes} min on this device
+                <Clock /> {timeLabel(seconds)}
               </span>
               <span>
                 <Lock /> Free · rendered in your browser
@@ -281,99 +442,58 @@ export function ExportDialog() {
               variant="primary"
               disabled={!active.length}
               onClick={() => {
-                startExports(
-                  active.map((o) => ({
-                    name: o.name,
-                    fileName: `${fileBase(o)}.mp4`,
-                    kind: o.kind,
-                    aspect: o.aspect,
-                    resolution: `${o.res}p` as ExportResolution,
-                    fps: Number(o.fps),
-                  })),
-                )
+                startOutputs(project, active)
+                releaseStills()
                 set({ exportPhase: 'exporting' })
               }}
             >
-              Export {active.length} {active.length === 1 ? 'file' : 'files'}
+              Export {plural(active.length, 'file')}
             </Button>
           </>
         ) : undefined
       }
     >
       {phase === 'exporting' ? (
-        <ExportingView outputs={active} onClose={close} />
+        <ExportingView onClose={close} />
       ) : (
         <div className={styles.layout}>
           <div className={styles.outputs}>
             <div className={styles.colLabel}>Outputs</div>
-            {outputs.map((o) => (
-              <div
-                key={o.id}
-                className={[styles.output, o.id === sel.id && styles.outputOn].filter(Boolean).join(' ')}
-                onClick={() => setSelected(o.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    setSelected(o.id)
+            {items.map((item, k) => {
+              const plan = planned[k]
+              if (!plan) return null
+              return (
+                <OutputRow
+                  key={item.spec.id}
+                  project={project}
+                  item={item}
+                  planned={plan}
+                  selected={item.spec.id === sel.spec.id}
+                  playhead={playhead}
+                  onSelect={() => setSelectedId(item.spec.id)}
+                  onToggle={(on) =>
+                    setItems((list) => list.map((x) => (x.spec.id === item.spec.id ? { ...x, on } : x)))
                   }
-                }}
-                role="button"
-                tabIndex={0}
-                aria-pressed={o.id === sel.id}
-              >
-                <label className={styles.check} onClick={(e) => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={o.on}
-                    onChange={(e) =>
-                      setOutputs((os) => os.map((x) => (x.id === o.id ? { ...x, on: e.target.checked } : x)))
-                    }
-                    aria-label={`Include ${o.name}`}
-                  />
-                  <span>
-                    <Check />
-                  </span>
-                </label>
-                <span className={styles.outThumb}>
-                  <span
-                    style={{
-                      aspectRatio: `${ratio[o.aspect]}`,
-                      backgroundImage: `url(${sceneThumb('portrait')})`,
-                    }}
-                  />
-                </span>
-                <span className={styles.outText}>
-                  <span className={styles.outName}>
-                    {o.name}
-                    {o.kind === 'format' && <Badge>Auto-reframe</Badge>}
-                  </span>
-                  <span className={`${styles.outSpecs} tnum`}>{specs(o, duration)}</span>
-                </span>
-              </div>
-            ))}
+                />
+              )
+            })}
             {remaining.length > 0 && <div className={styles.colLabel}>Add another</div>}
-            {remaining.map((s) => (
+            {remaining.map((c) => (
               <button
-                key={s.name}
+                key={c.id}
                 className={styles.suggest}
                 onClick={() => {
-                  const id = `o-${s.name}`
-                  setOutputs((os) => [...os, { ...s, id, on: true }])
-                  setSelected(id)
+                  const spec = addCandidate(project, c)
+                  setItems((list) => [...list, { spec, on: true }])
+                  setSelectedId(spec.id)
                 }}
               >
                 <span className={styles.suggestIcon}>
-                  {s.kind === 'teaser' ? <Scissors /> : s.kind === 'loop' ? <Repeat /> : aspectIcon(s.aspect)}
+                  {c.kind === 'teaser' ? <Scissors /> : c.kind === 'loop' ? <Repeat /> : aspectIcon(c.aspect)}
                 </span>
                 <span className={styles.outText}>
-                  <span className={styles.outName}>{s.name}</span>
-                  <span className={styles.outSpecs}>
-                    {s.kind === 'teaser'
-                      ? '15–30 s highlight of the chorus'
-                      : s.kind === 'loop'
-                        ? 'Seamless 3–8 s vertical loop'
-                        : `${s.aspect}, reframed to the subject`}
-                  </span>
+                  <span className={styles.outName}>{outputTitle(project, c)}</span>
+                  <span className={styles.outSpecs}>{outputSummary(project, c)}</span>
                 </span>
                 <Plus className={styles.plus} />
               </button>
@@ -381,80 +501,63 @@ export function ExportDialog() {
           </div>
 
           <div className={`${styles.settings} scroll`}>
-            <Frame o={sel} />
-            {sel.kind === 'teaser' && <TeaserRange />}
+            <Frame project={project} planned={selPlan} playhead={playhead} />
+            {sel.spec.kind !== 'video' && <RangeLane project={project} planned={selPlan} />}
             <div className={styles.form}>
               <label className={styles.formRow}>
                 <span>Name</span>
-                <Input value={fileBase(sel)} onChange={() => undefined} />
+                <Input value={sel.spec.name} onChange={(e) => update({ name: e.target.value })} />
               </label>
               <div className={styles.formRow}>
                 <span>Aspect</span>
                 <Segmented
-                  value={sel.aspect}
-                  onChange={(v) => update({ aspect: v })}
+                  value={sel.spec.aspect}
+                  onChange={(v) => update(withAspect(project, sel.spec, v))}
                   ariaLabel="Aspect ratio"
                   options={(['16:9', '9:16', '1:1', '4:5'] as const).map((a) => ({ value: a, label: a }))}
                 />
               </div>
-              {sel.aspect !== '16:9' && (
+              {sel.spec.aspect !== project.settings.aspect && (
                 <div className={styles.formRow}>
                   <span>Framing</span>
                   <Select
-                    value="follow"
-                    onChange={() => undefined}
+                    value={sel.spec.reframe}
+                    onChange={(v) => update({ reframe: v })}
                     ariaLabel="Framing"
-                    options={[
-                      {
-                        value: 'follow',
-                        label: 'Follow the subject',
-                        description: 'Tracks people and motion in each shot',
-                      },
-                      { value: 'center', label: 'Center crop' },
-                      { value: 'fit', label: 'Fit with blurred background' },
-                    ]}
+                    options={FRAMING}
                   />
                 </div>
               )}
               <div className={styles.formRow}>
                 <span>Resolution</span>
                 <Segmented
-                  value={sel.res}
-                  onChange={(v) => update({ res: v })}
+                  value={sel.spec.resolution}
+                  onChange={(v) => update({ resolution: v })}
                   ariaLabel="Resolution"
-                  options={[
-                    { value: '720', label: '720p' },
-                    { value: '1080', label: '1080p' },
-                    { value: '1440', label: '1440p' },
-                    { value: '2160', label: '4K' },
-                  ]}
+                  options={RESOLUTIONS}
                 />
               </div>
               <div className={styles.formRow}>
                 <span>Frame rate</span>
                 <Segmented
-                  value={sel.fps}
-                  onChange={(v) => update({ fps: v })}
+                  value={String(sel.spec.fps)}
+                  onChange={(v) => update({ fps: Number(v) })}
                   ariaLabel="Frame rate"
-                  options={['24', '25', '30', '60'].map((v) => ({ value: v, label: v }))}
+                  options={frameRates.map((v) => ({ value: String(v), label: String(v) }))}
                 />
               </div>
               <div className={styles.formRow}>
                 <span>Quality</span>
                 <Select
-                  value="high"
-                  onChange={() => undefined}
+                  value={sel.spec.quality}
+                  onChange={(v) => update({ quality: v })}
                   ariaLabel="Quality"
-                  options={[
-                    { value: 'std', label: 'Standard · smaller file' },
-                    { value: 'high', label: 'High · recommended' },
-                    { value: 'max', label: 'Maximum' },
-                  ]}
+                  options={QUALITY}
                 />
               </div>
               <div className={styles.formRow}>
                 <span>Format</span>
-                <span className={styles.static}>MP4 · H.264 video, AAC audio</span>
+                <span className={styles.static}>MP4 · H.264 video, {audio ? 'AAC audio' : 'no audio'}</span>
               </div>
             </div>
           </div>
@@ -462,4 +565,10 @@ export function ExportDialog() {
       )}
     </Dialog>
   )
+}
+
+/** Mounted only while open, so every opening starts from the saved (or suggested) outputs. */
+export function ExportDialog() {
+  const open = useUi((s) => s.dialog === 'export')
+  return open ? <ExportDialogBody /> : null
 }
