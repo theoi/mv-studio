@@ -78,15 +78,18 @@ A GPU is not required, but it makes the preview, export and AI features faster. 
 
 Each model downloads the first time you use a feature that needs it, with progress shown. The browser then keeps it in Cache Storage, so later use works offline. Models come straight from their public hosts (Hugging Face and Google's MediaPipe model storage); MV Studio hosts nothing.
 
-| Feature                     | Model                                                                                                                                                  | Download                  |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| Beats and bar starts        | Beat This!                                                                                                                                             | 82 MB                     |
-| Stem separation (opt-in)    | HTDemucs, four stems                                                                                                                                   | 181 MB                    |
-| Person cutout               | MediaPipe Selfie Segmenter and EfficientDet-Lite0 (checks that the cutout is a person), plus MODNet for a cleaner edge where text overlaps the subject | 0.25 MB + 4.6 MB + 6.6 MB |
-| Click-to-select objects     | MediaPipe MagicTouch                                                                                                                                   | 6.2 MB                    |
-| Faces for auto-reframe      | MediaPipe BlazeFace                                                                                                                                    | 0.2 MB                    |
-| 3D camera moves on stills   | Depth Anything V2 Small                                                                                                                                | 27 MB                     |
-| Footage matching and search | CLIP ViT-B/32 (default) or SigLIP Base                                                                                                                 | 154 MB or 207 MB          |
+| Feature                       | Model                                                                                                                                                  | Download                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| Beats and bar starts          | Beat This!                                                                                                                                             | 82 MB                     |
+| Stem separation (opt-in)      | HTDemucs, four stems                                                                                                                                   | 181 MB                    |
+| Lyric word timing             | wav2vec2 base 960h                                                                                                                                     | 95 MB                     |
+| Lyric drafts                  | Whisper small (default) or base                                                                                                                        | 249 MB or 77 MB           |
+| Person cutout                 | MediaPipe Selfie Segmenter and EfficientDet-Lite0 (checks that the cutout is a person), plus MODNet for a cleaner edge where text overlaps the subject | 0.25 MB + 4.6 MB + 6.6 MB |
+| Person cutout, optional model | MediaPipe Selfie Multiclass                                                                                                                            | 16 MB                     |
+| Click-to-select objects       | MediaPipe MagicTouch                                                                                                                                   | 6.2 MB                    |
+| Faces for auto-reframe        | MediaPipe BlazeFace                                                                                                                                    | 0.2 MB                    |
+| 3D camera moves on stills     | Depth Anything V2 Small                                                                                                                                | 27 MB                     |
+| Footage matching and search   | CLIP ViT-B/32 (default) or SigLIP Base                                                                                                                 | 154 MB or 207 MB          |
 
 - The quick tempo and beat analysis needs no download.
 - The MediaPipe models also need the MediaPipe Tasks runtime (about 15 MB of WebAssembly), which loads from cdn.jsdelivr.net.
@@ -199,4 +202,4 @@ Contributor conventions, folder ownership and the shared contracts (edit command
 
 ## License
 
-MIT. See [LICENSE](./LICENSE). Third-party software, models and fonts are listed with their licenses in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+MIT. See [LICENSE](./LICENSE). Third-party software, models and fonts are listed with their licenses in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md). Each build also ships the license texts and copyright notices of the open-source code and fonts it bundles, in `third-party-licenses.txt` next to `index.html` (Settings › About › Open-source licenses).

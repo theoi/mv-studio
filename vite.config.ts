@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
+import { thirdPartyLicenses } from './scripts/third-party-licenses.ts'
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
   version: string
@@ -8,10 +9,11 @@ const { version } = JSON.parse(readFileSync(new URL('./package.json', import.met
 
 // GitHub Pages serves the app from https://theoi.github.io/mv-studio/.
 const base = '/mv-studio/'
+const licenses = thirdPartyLicenses(version)
 
 export default defineConfig({
   base,
-  plugins: [react()],
+  plugins: [react(), licenses.plugin],
   define: { __APP_VERSION__: JSON.stringify(version) },
   server: {
     // The dev server can send isolation headers itself; GitHub Pages cannot, which is what
@@ -32,6 +34,7 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
+    plugins: () => [licenses.workerPlugin()],
   },
   test: {
     include: ['tests/unit/**/*.test.ts', 'src/**/*.test.ts'],

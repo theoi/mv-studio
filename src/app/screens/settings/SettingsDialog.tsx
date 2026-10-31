@@ -81,6 +81,8 @@ import {
 import styles from './SettingsDialog.module.css'
 
 const NOTICES_URL = 'https://github.com/theoi/mv-studio/blob/main/THIRD_PARTY_NOTICES.md'
+/** Written by the build (scripts/third-party-licenses.ts) next to index.html. */
+const LICENSES_URL = `${import.meta.env.BASE_URL}third-party-licenses.txt`
 
 const pages: { id: SettingsPage; label: string; icon: ReactNode }[] = [
   { id: 'general', label: 'General', icon: <Settings2 /> },
@@ -1003,11 +1005,25 @@ function SimplePage({ page }: { page: SettingsPage }) {
       <Row title="License" desc="MIT. Your videos are yours to use for anything.">
         <span />
       </Row>
-      <Row title="Third-party notices" desc="Fonts, libraries and AI models with their licenses.">
+      <Row title="Third-party notices" desc="Fonts, libraries and AI models with their licenses, on GitHub.">
         <Button
           size="sm"
           variant="ghost"
+          aria-label="View third-party notices"
           onClick={() => window.open(NOTICES_URL, '_blank', 'noopener,noreferrer')}
+        >
+          View
+        </Button>
+      </Row>
+      <Row
+        title="Open-source licenses"
+        desc="License texts and copyright notices of the code and fonts in this version."
+      >
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label="View open-source licenses"
+          onClick={() => window.open(LICENSES_URL, '_blank', 'noopener,noreferrer')}
         >
           View
         </Button>
