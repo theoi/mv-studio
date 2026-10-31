@@ -19,6 +19,7 @@ export function energySampler(series: FeatureSeries | undefined): (t: number, wi
     return (sums[i] as number) + (i < values.length ? (x - i) * (values[i] as number) : 0)
   }
   return (t, window) => {
+    if (t < 0 || t > end) return 0
     const half = Math.max(ENERGY_SMOOTH_SECONDS, window) / 2
     const a = Math.max(0, t - half)
     const b = Math.min(end, t + half)

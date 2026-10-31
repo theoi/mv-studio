@@ -31,5 +31,10 @@ describe('energy curve on the song lane', () => {
     const at = energySampler(series([0.5, 0.5, 0.5]))
     expect(at(-2, 0.01)).toBe(0)
     expect(at(2, 0.01)).toBe(0)
+    // Within half a smoothing window of the song, so the window still overlaps it.
+    expect(at(-0.1, 0.01)).toBe(0)
+    expect(at(0.4, 0.01)).toBe(0)
+    expect(at(0.4, 6)).toBe(0)
+    expect(at(0.2, 0.01)).toBeCloseTo(0.5)
   })
 })
