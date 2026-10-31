@@ -1,0 +1,101 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import type { BeatThisModel } from '../../../src/analysis/beats/beatThis.ts'
+import { createAnalysisApi } from '../../../src/analysis/worker-api.ts'
+import { JobError } from '../../../src/shared/jobs.ts'
+import { createWorkerClient, exposeWorker, type Endpoint } from '../../../src/shared/worker.ts'
+import { drumLoop, fmeasure, SR } from './synth.ts'
+
+/**
+ * Stands in for the Beat This! network: a beat wherever the log-mel energy jumps sharply (kicks and snares),
+ * a downbeat on none.
+ */
+const fakeBeatThis: BeatThisModel = {
+  async run(spect, frames) {
+    const energy = Array.from({ length: frames }, (_, f) => {
+      let s = 0
+      for (let b = 0; b < 128; b++) s += spect[f * 128 + b] as number
+      return s
+    })
+    const rise = energy.map((e, f) => (f > 0 ? Math.max(0, e - (energy[f - 1] as number)) : 0))
+    const threshold = 0.5 * Math.max(...rise)
+    const beat = Float32Array.from(rise, (r) => (r > threshold ? 5 : -5))
+    return { beat, downbeat: new Float32Array(frames).fill(-5) }
+  },
+}
+
+let channel: MessageChannel | undefined
+let modelLoads = 0
+
+function connect() {
+  modelLoads = 0
+  channel = new MessageChannel()
+  const api = createAnalysisApi({
+    beatThisModel: async () => {
+      modelLoads++
+      return fakeBeatThis
+    },
+  })
+  exposeWorker(api, channel.port1 as unknown as Endpoint)
+  return createWorkerClient<typeof api>(channel.port2 as unknown as Endpoint)
+}
+
+afterEach(() => {
+  channel?.port1.close()
+  channel?.port2.close()
+})
+
+const song = (seed: number) => {
+  const { audio, beats } = drumLoop({ bpm: 120, seconds: 20, offset: 0.3, seed })
+  return { audio: { sampleRate: SR, channels: [audio] }, beats }
+}
+
+describe('analysis worker API', () => {
+  it('analyzes a song, then refines its beats from the kept state', async () => {
+    const client = connect()
+    const { audio, beats } = song(1)
+    const stages = new Set<string>()
+    const analysis = await client.call(
+      'analyzeFast',
+      { assetId: 'a', audio },
+      { onProgress: (p) => stages.add(p.stage ?? '') },
+    )
+    expect(analysis.assetId).toBe('a')
+    expect(analysis.tempo?.bpm).toBeCloseTo(120, 0)
+    expect(stages).toContain('beats')
+
+    const refined = await client.call('refineBeats', { assetId: 'a' })
+    expect(modelLoads).toBe(1)
+    expect(refined.tempo?.bpm).toBeCloseTo(120, 0)
+    expect(fmeasure(refined.beats ?? [], beats)).toBeGreaterThan(0.95)
+    expect(refined.sections?.length).toBeGreaterThan(0)
+  })
+
+  it('needs the audio again to refine a song it does not hold', async () => {
+    const client = connect()
+    const error = await client.call('refineBeats', { assetId: 'unknown' }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(JobError)
+    expect((error as JobError).code).toBe('invalid-input')
+    expect(modelLoads).toBe(0)
+
+    const { audio } = song(2)
+    const refined = await client.call('refineBeats', { assetId: 'unknown', audio })
+    expect(refined.beats?.length).toBeGreaterThan(30)
+  })
+
+  it('forgets released songs and keeps at most two', async () => {
+    const client = connect()
+    for (const id of ['a', 'b', 'c']) await client.call('analyzeFast', { assetId: id, audio: song(3).audio })
+    expect(await client.call('release', { assetId: 'a' })).toBe(false)
+    expect(await client.call('release', { assetId: 'b' })).toBe(true)
+    expect(await client.call('release', { assetId: 'b' })).toBe(false)
+    expect(await client.call('release', { assetId: 'c' })).toBe(true)
+  })
+
+  it('reports an empty song as invalid input', async () => {
+    const client = connect()
+    const error = (await client
+      .call('analyzeFast', { assetId: 'e', audio: { sampleRate: SR, channels: [new Float32Array(0)] } })
+      .catch((e: unknown) => e)) as JobError
+    expect(error.code).toBe('invalid-input')
+  })
+})
