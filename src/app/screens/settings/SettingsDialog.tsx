@@ -551,7 +551,7 @@ const shortcutGroups: { label: string; items: [string, string][] }[] = [
       ['Beat snapping', 'Shift N'],
       ['Add text', 'T'],
       ['Add keyframe', 'Alt K'],
-      ['Nudge lyric line a frame', 'Alt ←'],
+      ['Nudge lyric line a frame', 'Alt ← →'],
       ['Add marker', 'M'],
       ['Zoom to fit', 'Shift Z'],
     ],

@@ -474,7 +474,7 @@
 .lyricText {
   display: block;
   padding: 0 6px;
-  color: #cfe9e4;
+  color: var(--clip-lyric-text);
   font-size: var(--text-xs);
   line-height: 22px;
   white-space: nowrap;
@@ -504,7 +504,7 @@
   padding: 0 3px;
   border-radius: 2px;
   background: rgb(95 212 200 / 0.12);
-  color: #cfe9e4;
+  color: var(--clip-lyric-text);
   font-size: var(--text-xs);
   line-height: 18px;
   white-space: nowrap;
@@ -529,7 +529,7 @@
 }
 
 .wordEdge:hover {
-  background: rgb(207 233 228 / 0.45);
+  background: color-mix(in srgb, var(--clip-lyric-text) 45%, transparent);
 }
 
 .untimedSuggest {

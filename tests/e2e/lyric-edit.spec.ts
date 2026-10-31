@@ -46,22 +46,29 @@ async function drag(page: Page, x: number, y: number, dx: number): Promise<void>
   await page.mouse.up()
 }
 
-/** A lyric chip fully inside the visible timeline and wide enough to grab its edges and words. */
+/**
+ * A lyric chip fully inside the visible timeline and wide enough to grab its edges and words, chosen from one snapshot
+ * of the chips once the timeline has drawn the lines around the scrolled-to time.
+ */
 async function visibleChip(page: Page): Promise<Locator> {
-  const scroller = (await page.locator('[data-timeline-scroller]').boundingBox())!
   const chips = page.getByRole('button', { name: /^Lyric: / })
-  const count = await chips.count()
-  for (let i = 0; i < count; i++) {
-    const box = await chips.nth(i).boundingBox()
-    if (
-      box &&
-      box.x > scroller.x + 170 &&
-      box.x + box.width < scroller.x + scroller.width - 30 &&
-      box.width > 160
-    )
-      return chips.nth(i)
-  }
-  throw new Error('No lyric chip in view')
+  let index = -1
+  await expect
+    .poll(async () => {
+      const scroller = (await page.locator('[data-timeline-scroller]').boundingBox())!
+      const boxes = await chips.evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect()
+          return { x: r.x, width: r.width }
+        }),
+      )
+      index = boxes.findIndex(
+        (b) => b.x > scroller.x + 170 && b.x + b.width < scroller.x + scroller.width - 30 && b.width > 160,
+      )
+      return index
+    })
+    .toBeGreaterThanOrEqual(0)
+  return chips.nth(index)
 }
 
 const PPS = 80
@@ -76,10 +83,13 @@ test('Lyrics track: a line moves and its edges and words re-time by dragging, ea
   })
   await waitForPreview(page)
   // Zoomed in, every word of a line shows at its sung time.
-  await page.evaluate((pps) => {
+  await page.evaluate(async (pps) => {
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 300))
     window.mvStudio.app.ui.set({ pxPerSec: pps })
+    await settle()
     const scroller = document.querySelector<HTMLElement>('[data-timeline-scroller]')!
     scroller.scrollLeft = 73.6 * pps - 300
+    await settle()
   }, PPS)
   const chip = await visibleChip(page)
   await chip.click()
@@ -222,10 +232,42 @@ test('Untimed lyric lines suggest timing them, and Karaoke highlight opens any t
   })
   const suggestion = page.getByRole('note').filter({ hasText: '2 lines not timed yet' })
   await expect(suggestion).toBeVisible()
+  // It sits where it covers no lyric chip: in the intro before the first line when that fits (zoomed in), else after
+  // the last line.
+  const overlaps = async () => {
+    const note = (await suggestion.boundingBox())!
+    const chips = page.getByRole('button', { name: /^Lyric: / })
+    const hits: string[] = []
+    for (let i = 0; i < (await chips.count()); i++) {
+      const b = await chips.nth(i).boundingBox()
+      if (
+        b &&
+        b.x < note.x + note.width &&
+        note.x < b.x + b.width &&
+        b.y < note.y + note.height &&
+        note.y < b.y + b.height
+      )
+        hits.push(`${Math.round(b.x)}`)
+    }
+    return hits
+  }
+  expect(await overlaps()).toEqual([])
+  await page.evaluate(() => {
+    window.mvStudio.app.ui.set({ pxPerSec: 30 })
+    document.querySelector<HTMLElement>('[data-timeline-scroller]')!.scrollLeft = 0
+  })
+  const lane = (await page
+    .getByRole('button', { name: /^Lyric: / })
+    .first()
+    .boundingBox())!
+  await expect.poll(async () => (await suggestion.boundingBox())!.x + 1).toBeLessThan(lane.x)
+  expect(await overlaps()).toEqual([])
   await shot(page, 'lyrics-untimed')
   await suggestion.getByRole('button', { name: 'Time words to the vocals' }).click()
   await expect(assist.getByRole('textbox', { name: 'Lyrics' })).toHaveValue(/One more time\nInto the night$/)
   await expect(assist.getByRole('button', { name: 'Time words to the vocals' })).toBeVisible()
+  // While Assist › Lyrics is open, the track does not repeat its action.
+  await expect(suggestion).toHaveCount(0)
 
   // Every line timed: no suggestion.
   await page.evaluate(() => {

@@ -308,6 +308,22 @@ function LyricChipContent({
 
 type LyricDrag = { type: 'line'; edge: LineEdge } | { type: 'word'; index: number; edge: WordEdge }
 
+/**
+ * Where a suggestion `width` px wide sits in a lane without covering its clips (`spans`, px): the first gap from the
+ * left of the view (`view`, px) that fits it inside the view, else just after the last clip.
+ */
+function freeSpot(spans: [number, number][], view: [number, number], width: number, gap = 8): number {
+  const sorted = [...spans].sort((a, b) => a[0] - b[0])
+  let x = view[0] + gap
+  for (const [a, b] of sorted) {
+    if (b + gap <= x) continue
+    if (a - gap >= x + width) break
+    x = b + gap
+  }
+  if (x + width <= view[1] - gap) return x
+  return sorted.reduce((end, s) => Math.max(end, s[1]), 0) + gap
+}
+
 /* ---------- toolbar ---------- */
 
 function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
@@ -691,7 +707,27 @@ export function Timeline() {
     lanes.find((l) => l.kind === 'lyrics')?.track.id ??
     templateState(project)?.tracks.lyrics ??
     project.tracks.find((t) => t.kind === 'visual' && t.name === 'Lyrics')?.id
-  const suggestTiming = untimed > 0 && !empty && !timingLyrics
+  // Assist › Lyrics already offers the same action while it is open.
+  const lyricsOpen = useUi((s) => s.rightTab === 'assist' && s.assistView === 'lyrics')
+  const suggestTiming = untimed > 0 && !empty && !timingLyrics && !lyricsOpen
+  const [suggestW, setSuggestW] = useState(320)
+  const measureSuggest = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return
+    const ro = new ResizeObserver(() => setSuggestW(el.offsetWidth))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const suggestLeft =
+    suggestTiming && lyricsTrackId
+      ? freeSpot(
+          clipsOnTrack(project, lyricsTrackId).map((c): [number, number] => [
+            c.start * pps,
+            (c.start + c.duration) * pps,
+          ]),
+          [Math.max(0, view.t0) * pps, view.t1 * pps - HEADER_W],
+          suggestW,
+        )
+      : 0
   const lanesH = lanes.reduce((a, l) => a + l.height, 0) + stems.length * stemH
   const totalH = RULER_H + (empty ? 0 : SONG_H) + lanesH
 
@@ -881,6 +917,11 @@ export function Timeline() {
     let moved = false
     // On the window: a word can stop showing as a word while it is dragged narrower, which unmounts its handle.
     const move = (ev: PointerEvent) => {
+      // A move with the button up means the press ended where no pointerup reached the window.
+      if ((ev.buttons & 1) === 0) {
+        up()
+        return
+      }
       const dx = ev.clientX - x0
       if (!moved && Math.abs(dx) < 3) return
       if (!moved && track?.locked) {
@@ -900,9 +941,11 @@ export function Timeline() {
       if (moved) editor.endGesture()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
 
   const selId = selection.type === 'none' ? null : selection.id
@@ -1137,7 +1180,7 @@ export function Timeline() {
                       )
                     })}
                   {suggestTiming && track.id === lyricsTrackId && (
-                    <div className={styles.untimedSuggest} style={{ left: Math.max(0, view.t0) * pps + 8 }}>
+                    <div ref={measureSuggest} className={styles.untimedSuggest} style={{ left: suggestLeft }}>
                       <InlineSuggestion
                         id="time-lyrics"
                         variant="chip"
