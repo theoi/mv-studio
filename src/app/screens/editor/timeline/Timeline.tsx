@@ -110,6 +110,7 @@ import {
 } from '../../../state/library.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
+import { addMarkerAtPlayhead } from '../../../state/markers.ts'
 import { registerReveal } from '../../../state/reveal.ts'
 import {
   separatedStems,
@@ -127,6 +128,7 @@ import { InlineSuggestion } from '../Suggestion.tsx'
 import { energySampler } from './energy.ts'
 import { LaneMenu } from './LaneMenu.tsx'
 import { openLaneMenu } from './laneMenu.ts'
+import { Markers } from './Markers.tsx'
 import styles from './Timeline.module.css'
 
 const HEADER_W = 148
@@ -443,12 +445,7 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
             </MenuContent>
           </Menu>
         </div>
-        <IconButton
-          label="Add marker"
-          shortcut="M"
-          size="sm"
-          onClick={() => toast(`Marker added at ${formatTime(get().playhead, true)}`)}
-        >
+        <IconButton label="Add marker" shortcut="M" size="sm" onClick={addMarkerAtPlayhead} data-add-marker>
           <Flag />
         </IconButton>
         {bpm !== undefined && (
@@ -1185,6 +1182,8 @@ export function Timeline() {
 
   const scrubFrom = (e: React.PointerEvent<HTMLDivElement>) => {
     const lane = e.currentTarget
+    // React bubbles events from portals (a marker's menu) through the ruler; those would capture the pointer here.
+    if (!lane.contains(e.target as Node)) return
     const rect = lane.getBoundingClientRect()
     const toT = (cx: number) => Math.min(duration, Math.max(0, (cx - rect.left) / get().pxPerSec))
     set({ playhead: toT(e.clientX), playing: false })
@@ -1501,6 +1500,7 @@ export function Timeline() {
             <div className={[styles.header, styles.corner].join(' ')} />
             <div className={styles.ruler} style={{ width: contentW }} onPointerDown={scrubFrom}>
               <ViewportCanvas height={RULER_H} draw={ruler} />
+              <Markers markers={project.markers} pps={pps} />
               <Playhead head />
             </div>
           </div>
