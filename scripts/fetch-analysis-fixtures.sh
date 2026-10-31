@@ -1,7 +1,7 @@
 #!/bin/sh
 # Downloads the JamendoLyrics evaluation songs (CC licenses, some NC/ND: never commit them) with word-level
-# lyric timings, pinned to a dataset revision and verified against scripts/analysis-fixtures.sha256.
-# Output: tests/fixtures/.cache/jamendolyrics/{mp3,words}/. Optional arguments limit languages: en de fr es.
+# lyric timings and lyrics text, pinned to a dataset revision and verified against scripts/analysis-fixtures.sha256.
+# Output: tests/fixtures/.cache/jamendolyrics/{mp3,words,lyrics}/. Optional arguments limit languages: en de fr es.
 # Source and per-song licenses: https://huggingface.co/datasets/jamendolyrics/jamendolyrics
 set -e
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,7 +10,7 @@ out="$root/tests/fixtures/.cache/jamendolyrics"
 rev=de188c963fd4539bc769b3feb83582e5a9595e36
 base="https://huggingface.co/datasets/jamendolyrics/jamendolyrics/resolve/$rev"
 langs="${*:-en de fr es}"
-mkdir -p "$out/mp3" "$out/words"
+mkdir -p "$out/mp3" "$out/words" "$out/lyrics"
 curl -sfL -o "$out/JamendoLyrics.csv" "$base/JamendoLyrics.csv"
 
 songs="$(mktemp)"
@@ -23,6 +23,7 @@ while read -r sum path; do
   case "$path" in
     subsets/*) dest="$out/mp3/$name" ;;
     annotations/words/*) dest="$out/words/$name" ;;
+    lyrics/*) dest="$out/lyrics/$name" ;;
     *) continue ;;
   esac
   grep -qxF "${name%.*}" "$songs" || continue
@@ -37,5 +38,5 @@ while read -r sum path; do
     failed=1
   fi
 done < "$manifest"
-echo "$(ls "$out/mp3" | wc -l) songs, $(ls "$out/words" | wc -l) word timings in $out"
+echo "$(ls "$out/mp3" | wc -l) songs, $(ls "$out/words" | wc -l) word timings, $(ls "$out/lyrics" | wc -l) lyrics in $out"
 exit $failed
