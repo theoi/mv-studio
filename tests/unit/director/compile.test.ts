@@ -214,6 +214,11 @@ describe('compilePlan', () => {
     const { project, plan } = await setup('ai', { videos: 0 }, { generation })
     const pending = compilePlan(plan, project)
     expect(pending.stats.placeholders).toBe(plan.shots.length)
+    const toMake = shotsToGenerate(plan).length
+    expect(toMake).toBeLessThan(plan.shots.length)
+    expect(pending.warnings).toContain(
+      `${toMake} AI shots are not generated yet; dark placeholders mark where they go.`,
+    )
     const placeholder = pending.commands.find((c) => c.type === 'clip.add' && directorMeta(c.clip)?.pending)
     expect(placeholder && placeholder.type === 'clip.add' && placeholder.clip.type).toBe('solid')
 

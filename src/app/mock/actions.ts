@@ -68,23 +68,6 @@ export function startStems(startAt = 0, fail = false) {
   })
 }
 
-export function startDirector(startAt = 0) {
-  if (isRunning(JOB_KINDS.director)) return
-  runMockJob({
-    kind: JOB_KINDS.director,
-    title: 'Drafting your video',
-    seconds: 8,
-    startAt,
-    stages: [
-      { at: 0, stage: 'structure', message: 'Reading the song’s structure' },
-      { at: 0.2, stage: 'match', message: 'Matching your clips to sections' },
-      { at: 0.4, stage: 'plan', message: 'Writing the creative plan' },
-      { at: 0.7, stage: 'place', message: 'Placing shots and lyrics' },
-      { at: 0.9, stage: 'looks', message: 'Applying looks and effects' },
-    ],
-  })
-}
-
 /** The design preview's export in progress: the full video and a vertical version, rendered in one job. */
 export function startMockExport(startAt = 0) {
   if (isRunning(JOB_KINDS.export)) return

@@ -66,3 +66,25 @@ export function presetFor(choice: LlmChoice, baseUrl: string): LlmPresetId {
 export function draftFor(choice: LlmChoice): LlmSettings {
   return { preset: choice, baseUrl: llmPreset(choice).baseUrl, apiKey: '', model: '' }
 }
+
+const PROVIDER_NAME: Record<LlmPresetId, string> = {
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+  ollama: 'Ollama',
+  lmstudio: 'LM Studio',
+  custom: '',
+}
+
+/** "Ollama · qwen2.5:7b" for a saved connection, or undefined when none is set up. */
+export function llmLabel(llm: LlmSettings | null): string | undefined {
+  if (!llm?.baseUrl || !llm.model) return undefined
+  let name = PROVIDER_NAME[llm.preset]
+  if (!name) {
+    try {
+      name = new URL(llm.baseUrl).host
+    } catch {
+      name = 'Your endpoint'
+    }
+  }
+  return `${name} · ${llm.model}`
+}

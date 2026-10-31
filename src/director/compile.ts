@@ -747,9 +747,17 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     if (clip) clips.push(clip)
   }
   if (stats.placeholders > 0) {
+    // Counted like the plan summary and the price: a repeated chorus shot is one picture in several places.
+    const pending = new Set(
+      plan.shots.flatMap((s) =>
+        s.source.type === 'generate' && !generatedAssetFor(s, s.source, generated)
+          ? [s.source.sameAs ?? s.id]
+          : [],
+      ),
+    ).size
     warn(
       ctx,
-      `${stats.placeholders} AI ${stats.placeholders === 1 ? 'shot is' : 'shots are'} not generated yet; dark placeholders mark where they go.`,
+      `${pending} AI ${pending === 1 ? 'shot is' : 'shots are'} not generated yet; dark placeholders mark where they go.`,
     )
   }
 

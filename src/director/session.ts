@@ -5,7 +5,7 @@
  */
 import { cloudErrorInfo } from '../cloud/errors.ts'
 import type { GeneratedMediaStore } from '../cloud/media.ts'
-import { formatUsd } from '../cloud/pricing.ts'
+import { formatEstimate } from '../cloud/pricing.ts'
 import type { MediaGenerationProvider } from '../cloud/types.ts'
 import type { MediaFileSource } from '../engine/types.ts'
 import type { ProjectEditor } from '../model/editor.ts'
@@ -196,7 +196,7 @@ export class DirectorSession {
       kind: 'director.plan',
       title: 'Planning your video',
       run: async (ctx) => {
-        ctx.progress({ stage: 'gather', message: 'Reading the song and your media' })
+        ctx.progress({ stage: 'gather', fraction: 0.05, message: 'Reading the song and your media' })
         const input = await buildPlannerInput(project, {
           kind: request.kind,
           prompt: request.prompt,
@@ -211,7 +211,7 @@ export class DirectorSession {
             provider && request.generate ? generationOptionsFor(provider, request.generate) : undefined,
         })
         ctx.throwIfCancelled()
-        ctx.progress({ stage: 'plan', message: 'Planning shots, text and effects' })
+        ctx.progress({ stage: 'plan', fraction: 0.3, message: 'Planning shots, text and effects' })
         return planner(input, ctx)
       },
     })
@@ -286,7 +286,8 @@ export class DirectorSession {
       },
       cost,
       confirmRequired,
-      actionLabel: toMake > 0 ? `Generate ${plural(toMake, 'shot')} · about ${formatUsd(usd)}` : 'Make video',
+      actionLabel:
+        toMake > 0 ? `Generate ${plural(toMake, 'shot')} · ${formatEstimate({ usd })}` : 'Make video',
       generatedShots: done.size,
     }
   }
@@ -330,7 +331,7 @@ export class DirectorSession {
     ) {
       throw new DirectorError(
         'needs-confirmation',
-        `Generating costs about ${formatUsd(usd)}. Confirm to continue.`,
+        `Generating costs ${formatEstimate({ usd })}. Confirm to continue.`,
       )
     }
 
@@ -341,7 +342,7 @@ export class DirectorSession {
       const total = cost?.count ?? 0
       const handle = this.deps.jobs.run({
         kind: 'director.generate',
-        title: total ? `Generating ${plural(total, 'shot')} · about ${formatUsd(usd)}` : 'Preparing shots',
+        title: total ? `Generating ${plural(total, 'shot')} · ${formatEstimate({ usd })}` : 'Preparing shots',
         run: (ctx) =>
           generatePlanShots({
             plan,

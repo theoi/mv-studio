@@ -1,0 +1,181 @@
+import { create } from 'zustand'
+import type {
+  DirectorRequest,
+  DirectorSession,
+  DirectorState,
+  PlanDescription,
+  VideoKind,
+} from '../../director/index.ts'
+import { pluginRegistry } from '../../engine/registry.ts'
+import { mediaStore } from '../../media/mediaStore.ts'
+import type { Project } from '../../model/index.ts'
+import { jobs } from '../../shared/jobs.ts'
+import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
+import { directorFootage } from './footage.ts'
+import { appMedia } from './media.ts'
+import { editor } from './project.ts'
+import { get as getUi, toast, type Kind } from './ui.ts'
+
+/*
+ * Assist › Director: one DirectorSession for the app. The director code loads on first use. A draft that costs
+ * nothing is applied as soon as it is planned; a draft with AI shots waits for the user to see the price.
+ */
+
+/** Where shots come from: the user's clips, clips plus AI shots, or AI shots only. */
+export type ShotSource = 'mine' | 'mix' | 'gen'
+
+interface DirectorUi {
+  state: DirectorState
+  /** What the panel shows for the plan in the current state. */
+  description: PlanDescription | null
+  idea: string
+  shots: ShotSource
+  /** fal.ai's note about what Cancel can and can't stop, shown while shots generate. */
+  cancelNotice: string
+  /** A free draft is planned and about to go on the timeline. */
+  applying: boolean
+}
+
+export const useDirector = create<DirectorUi>(() => ({
+  state: { status: 'idle' },
+  description: null,
+  idea: '',
+  shots: 'mine',
+  cancelNotice: '',
+  applying: false,
+}))
+
+/** Set while a draft started from the panel is planned: one that costs nothing is applied right away. */
+let autoApply = false
+
+let session: Promise<DirectorSession> | undefined
+
+function directorSession(): Promise<DirectorSession> {
+  session ??= Promise.all([
+    import('../../director/index.ts'),
+    cloudServices(),
+    import('../../cloud/fal/provider.ts'),
+  ]).then(([d, cloud, fal]) => {
+    const s = new d.DirectorSession({
+      editor,
+      jobs,
+      provider: () => cloud.generation(),
+      store: mediaStore,
+      media: appMedia,
+      readAsset: async (assetId) => {
+        const asset = editor.getProject().assets[assetId]
+        if (!asset) throw new Error('That media is no longer in the project.')
+        return appMedia.getFile(asset)
+      },
+      footage: () => directorFootage()?.ranker,
+      matcher: () => directorFootage()?.matcher,
+      catalog: () => d.catalogFromPlugins(pluginRegistry.catalog()),
+      spendPolicy: () => cloudSettings.get(),
+      ledger: spendLedger,
+      planner: d.createDirectorPlanner({
+        client: () => cloud.llm(),
+        model: () => cloudSettings.get().llm?.model,
+      }),
+    })
+    s.subscribe(() => {
+      const state = s.getState()
+      useDirector.setState({
+        state,
+        applying: autoApply && state.status === 'ready' && !state.cost,
+        description: 'plan' in state && state.plan ? d.describePlan(state.plan, editor.getProject()) : null,
+      })
+    })
+    useDirector.setState({ cancelNotice: fal.FAL_CANCEL_NOTICE })
+    return s
+  })
+  return session
+}
+
+/** The kind of video to draft for the project's kind (a blank project picks from what it has). */
+export function videoKindFor(kind: Kind, project: Project): VideoKind {
+  if (kind === 'footage') return 'beat-cut'
+  if (kind !== 'blank') return kind
+  if (project.lyrics?.lines.some((l) => l.text.trim())) return 'lyric'
+  if (Object.values(project.assets).some((a) => a.kind === 'video' && a.origin.type === 'import'))
+    return 'beat-cut'
+  return 'visualizer'
+}
+
+export function directorRequest(idea: string, shots: ShotSource): DirectorRequest {
+  return {
+    kind: videoKindFor(getUi().kind, editor.getProject()),
+    ...(idea.trim() ? { prompt: idea.trim() } : {}),
+    useMedia: shots !== 'gen',
+    ...(shots === 'mine' ? {} : { generate: { mode: 'images' as const, tier: 'draft' as const } }),
+  }
+}
+
+async function applyIfFree(state: DirectorState) {
+  try {
+    if (state.status === 'ready' && !state.cost) await applyDraft()
+  } finally {
+    autoApply = false
+    useDirector.setState({ applying: false })
+  }
+}
+
+/** Plans a draft; one that costs nothing goes on the timeline right away. */
+export async function draftVideo(request: DirectorRequest): Promise<void> {
+  const s = await directorSession()
+  autoApply = true
+  await applyIfFree(await s.plan(request))
+}
+
+/** Stops waiting for the AI model and drafts with the built-in planner. */
+export async function draftLocally(): Promise<void> {
+  const s = await directorSession()
+  autoApply = true
+  await applyIfFree(await s.useLocalDraft())
+}
+
+/** Applies the plan: generates AI shots first unless skipped (the panel has asked about the cost). */
+export async function applyDraft(options: { confirmSpend?: boolean; skipGeneration?: boolean } = {}) {
+  const s = await directorSession()
+  try {
+    const state = await s.apply(options)
+    if (state.status !== 'applied') return
+    const label = state.label
+    toast('Your draft is on the timeline', {
+      label: 'Undo',
+      run: () => {
+        if (editor.undoLabel() === label) void undoDraft()
+      },
+    })
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error))
+  }
+}
+
+/** Removes the applied draft while it is still the latest change. A free draft returns the panel to its start. */
+export async function undoDraft(): Promise<boolean> {
+  const s = await directorSession()
+  if (!s.undo()) {
+    toast('The draft has changed since. Use Undo in the top bar to step back.')
+    return false
+  }
+  const state = s.getState()
+  if (state.status === 'ready' && !state.cost) s.reset()
+  toast('Draft removed from the timeline')
+  return true
+}
+
+export function cancelDirector(): void {
+  void directorSession().then((s) => s.cancel())
+}
+
+/** Back to the start of the panel. Paid shots made for the last plan are kept for reuse. */
+export function resetDirector(): void {
+  void directorSession().then((s) => s.reset())
+}
+
+/** From the setup screen: drafts with the idea, with AI shots when fal.ai is connected (the price is shown first). */
+export function draftFromSetup(idea: string): void {
+  const shots: ShotSource = cloudSettings.get().falKey ? 'mix' : 'mine'
+  useDirector.setState({ idea, shots })
+  void draftVideo(directorRequest(idea, shots))
+}
