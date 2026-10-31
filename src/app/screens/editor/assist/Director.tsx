@@ -468,7 +468,7 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
             variant="subtle"
             icon={<RotateCcw />}
             onClick={spend.start}
-            title={state.failedReason ? `fal.ai said: ${state.failedReason}` : undefined}
+            title={state.failedReason}
           >
             {retryLabel}
           </Button>

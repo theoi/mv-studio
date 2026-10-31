@@ -324,7 +324,11 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
         const result = await this.client.queue.result(endpointId, { requestId, abortSignal: signal })
         return { data: result.data, requestId }
       } catch (error) {
-        throw fail(error)
+        const err = fail(error)
+        // A request fal.ai failed itself still reaches COMPLETED and returns the error here; fal.ai doesn't charge
+        // for its server errors (500 and up).
+        if ((err.status ?? 0) < 500) throw err
+        throw new CloudError({ ...err.info, message: err.message, cause: error, uncharged: true })
       }
     } finally {
       signal.removeEventListener('abort', cancelAtFal)

@@ -437,6 +437,57 @@ describe('generatePlanShots', () => {
     expect(server.queued.size).toBe(1)
     expect([...server.queued.values()].some((q) => q.cancelled)).toBe(false)
   })
+  it.each([
+    {
+      what: 'fal.ai fails the request itself (500 from the result)',
+      resultStatus: 500,
+      fileStatus: 200,
+      charged: false,
+    },
+    {
+      what: 'fal.ai may still charge (422 from the result)',
+      resultStatus: 422,
+      fileStatus: 200,
+      charged: true,
+    },
+    { what: 'the file host fails the download (500)', resultStatus: 200, fileStatus: 500, charged: true },
+  ])('counts a clip that fails after COMPLETED only if fal.ai charges for it: $what', async (c) => {
+    const { project, plan } = await aiPlan('video', 2)
+    const server = new MockFalServer()
+    const servers = server.servers()
+    const media = servers['https://v3.fal.media']!
+    servers['https://v3.fal.media'] = async (request) =>
+      c.fileStatus === 200 ? media(request) : new Response('', { status: c.fileStatus })
+    const fal = new FalProvider({
+      getKey: () => FAL_TEST_KEY,
+      fetch: browserFetch(servers).fetch,
+      pollIntervalMs: 1,
+    })
+    const url = server.file('clip.mp4', new Blob(['mp4'], { type: 'video/mp4' }))
+    for (const shot of shotsToGenerate(plan)) {
+      if (shot.source.type !== 'generate') continue
+      server.script(shot.source.modelId, {
+        statuses: ['COMPLETED'],
+        result: { video: { url, content_type: 'video/mp4' } },
+        ...(c.resultStatus === 200
+          ? {}
+          : { resultError: { status: c.resultStatus, body: { detail: 'Something went wrong' } } }),
+      })
+    }
+    const billed: number[] = []
+    const error = await generatePlanShots({
+      plan,
+      provider: fal,
+      store: memoryStore(),
+      project,
+      ctx: testCtx(),
+      onBilled: (usd) => billed.push(usd),
+      concurrency: 1,
+    }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(CloudError)
+    expect(server.queued.size).toBeGreaterThan(0)
+    expect(billed).toHaveLength(c.charged ? server.queued.size : 0)
+  })
 })
 
 describe('requiresConfirmation', () => {

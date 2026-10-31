@@ -22,8 +22,9 @@ draft. Everything it makes is ordinary project content created through `EditComm
    cancel or a later failure never loses paid results. Requests go through `generateKeepingPaid()` (src/cloud): a
    cancel stops a request at once only until fal.ai has finished (and billed) it; a result downloading by then gets
    30 s more to land and is kept, while the progress line says "Stopping… keeping 2 clips that are downloading".
-   `onBilled` records each billed request once, even if its result is lost after. Each request's own progress
-   moves the bar, `onProgress` counts shots as they finish or fail, and clips (minutes each) report the time left.
+   `onBilled` records each billed request once, even if its result is lost after, but not one fal.ai failed itself
+   (a 5xx result, which it doesn't charge). Each request's own progress moves the bar, `onProgress` counts shots
+   as they finish or fail, and clips (minutes each) report the time left.
 6. **Compile** (`compile.ts`): plan → `EditCommand`s on director tracks. Clips carry `meta.director`, so running
    the director again replaces the previous draft and leaves the user's clips alone.
 7. **Preview** (`diff.ts`): `previewCommands(project, commands)` dry-runs commands on a scratch editor and

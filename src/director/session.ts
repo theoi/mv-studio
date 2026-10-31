@@ -3,7 +3,7 @@
  * change preview and the generation cost, waits for the user to confirm any spend, generates AI shots as a job,
  * then applies everything as one undo step. React: useSyncExternalStore(session.subscribe, session.getState).
  */
-import { cloudErrorInfo } from '../cloud/errors.ts'
+import { CloudError, cloudErrorInfo } from '../cloud/errors.ts'
 import type { GeneratedMediaStore } from '../cloud/media.ts'
 import { formatEstimate } from '../cloud/pricing.ts'
 import type { MediaGenerationProvider } from '../cloud/types.ts'
@@ -172,7 +172,7 @@ export type DirectorState =
       warnings: string[]
       /** AI shots that failed and show as placeholders; apply again to retry just those. */
       failedShots: number
-      /** The provider's own words for the first failure, for a tooltip; the warning stays plain. */
+      /** The first failure in its source's words, for a tooltip ("fal.ai said: …" when from fal.ai); the warning stays plain. */
       failedReason?: string
       /** What retrying the failed shots costs, and whether that needs the user's OK first. */
       cost: PlanCost | null
@@ -556,7 +556,12 @@ export class DirectorSession {
         const result = await handle.promise
         for (const [id, asset] of result.assets) done.set(id, asset)
         failed = result.failed.length
-        failedReason = result.failed[0]?.error.message
+        const first = result.failed[0]?.error
+        if (first?.message)
+          failedReason =
+            first instanceof CloudError && first.provider === 'fal'
+              ? `fal.ai said: ${first.message}`
+              : first.message
         if (failed) {
           warnings.push(
             failed === 1
