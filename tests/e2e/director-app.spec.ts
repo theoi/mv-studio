@@ -542,6 +542,7 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
     page.getByRole('tabpanel', { name: 'Assist' }).getByText('Stopping…', { exact: true }),
   ).toHaveCount(2)
   await expect(cancel).toHaveAttribute('aria-disabled', 'true')
+  await expect(cancel).toHaveCSS('cursor', 'default')
   await expect(cancel).toBeFocused()
   await expect(hint).toHaveCount(0)
   // At 1280 the card's top line stays on one line, clear of the spinner that took the percent's place.
@@ -558,14 +559,32 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
   expect(m.height).toBeLessThan(2 * fontSize)
   await page.screenshot({ path: testInfo.outputPath('director-video-stopping.png') })
   fal.release()
-  await expect(page.getByText('Generation stopped. 3 clips made so far are kept.')).toBeVisible()
+  const note = page.getByText('Generation stopped. 3 clips made so far are kept.')
   const again = page.getByRole('button', {
     name: new RegExp(`^Generate ${count - 3} clips · about \\$\\d+\\.\\d\\d$`),
   })
-  // At 1280 the note is too far above the button to show with it: the focused button is scrolled into view.
   await expect(again).toBeFocused()
-  await expect(again).toBeInViewport()
   await expect(again).toHaveAccessibleDescription('Generation stopped. 3 clips made so far are kept.')
+  // The note sits in the footer just above Generate, and the panel is scrolled to its end: both show in full, with the
+  // focus ring clear of the fade that says more is below.
+  const panel = (await again.evaluate((button) => {
+    let s = button.parentElement
+    while (s && getComputedStyle(s).overflowY !== 'auto') s = s.parentElement
+    if (!s) return null
+    const top = s.getBoundingClientRect().top + s.clientTop
+    return {
+      atEnd: s.scrollTop + s.clientHeight >= s.scrollHeight - 1,
+      fade: getComputedStyle(s, '::after').opacity,
+      top,
+      bottom: top + s.clientHeight,
+    }
+  }))!
+  expect(panel).toMatchObject({ atEnd: true, fade: '0' })
+  const n = (await note.boundingBox())!
+  const b = (await again.boundingBox())!
+  expect(n.y).toBeGreaterThanOrEqual(panel.top)
+  expect(n.y + n.height).toBeLessThanOrEqual(b.y)
+  expect(b.y + b.height + 4).toBeLessThanOrEqual(panel.bottom)
   expect(fal.cancels).toEqual(['req-4'])
   expect(fal.submits).toHaveLength(4)
 })

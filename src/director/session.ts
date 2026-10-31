@@ -148,7 +148,7 @@ export type DirectorState =
       /** AI shots already generated for this plan (kept after a cancel). */
       generatedShots: number
       unit: GeneratedUnit
-      /** After a Cancel, the note that says so ("Generation stopped. 3 clips made so far are kept."), also in warnings. */
+      /** After a Cancel, the note that says so ("Generation stopped. 3 clips made so far are kept."). */
       stopped?: string
     }
   | {
@@ -449,7 +449,7 @@ export class DirectorSession {
         summary: plan.summary,
         changes: preview.ok ? preview.summary : preview.message,
         items: preview.ok ? preview.items : [],
-        warnings: [...new Set([...plan.warnings, ...compiled.warnings, ...(stopped ? [stopped] : [])])],
+        warnings: [...new Set([...plan.warnings, ...compiled.warnings])],
       },
       cost,
       confirmRequired,

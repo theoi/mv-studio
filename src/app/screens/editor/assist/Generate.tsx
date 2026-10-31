@@ -272,7 +272,7 @@ function Running({ job, onCancel }: { job?: JobSnapshot; onCancel: () => void })
   const steps = [
     ...(upload ? ['Upload the image'] : []),
     'Wait in line at fal.ai',
-    run?.task === 'text-to-image' ? 'Generate the image' : 'Generate the clip',
+    run?.task === 'text-to-image' ? 'Generate the image' : 'Generate the video',
     'Download and save to Media',
   ]
   const stepOf = STEP_OF_STAGE[job?.progress.stage ?? 'submit'] ?? 1
@@ -372,6 +372,8 @@ function Failed({ job }: { job?: JobSnapshot }) {
   const canRetry = keyProblem ? false : (job?.error?.retryable ?? false) || kind === 'insufficient-credit'
   const title = info?.title ?? job?.error?.message ?? 'Generation failed'
   const message = job?.error?.message && job.error.message !== title ? job.error.message : ''
+  // What fal.ai made before the failure went to Media, as the toast said.
+  const kept = generateOutcome(job?.id)?.kept
   const back = (
     <Button variant="secondary" onClick={() => dismiss(job)}>
       Back
@@ -424,7 +426,9 @@ function Failed({ job }: { job?: JobSnapshot }) {
         </span>
         <div>
           <div className={styles.successTitle}>{title}</div>
-          <div className={styles.muted}>{message} Your project is unchanged.</div>
+          <div className={styles.muted}>
+            {message} {kept ? `The timeline is unchanged. ${kept}` : 'Your project is unchanged.'}
+          </div>
         </div>
       </div>
       {info && info.steps.length > 0 && (

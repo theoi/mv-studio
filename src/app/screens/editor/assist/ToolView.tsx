@@ -34,7 +34,11 @@ export function ToolView({
       </div>
       <div className={`${styles.viewScroll} scroll`}>
         <div className={styles.viewBody}>{children}</div>
-        {footer && <div className={styles.viewFooter}>{footer}</div>}
+        {footer && (
+          <div className={styles.viewFooter} data-tool-footer>
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   )

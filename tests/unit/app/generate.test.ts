@@ -284,6 +284,26 @@ describe('startGenerate', () => {
     expect(Object.keys(editor.getProject().clips)).toHaveLength(clipsBefore)
     expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
   })
+
+  it('keeps the images made before a failure in Media, as one undo step, and records them once', async () => {
+    // The third of four requests fails at fal.ai.
+    fake.provider = provider([], 3)
+    setGenerateForm({ kind: 'image', prompt: 'neon city', count: 4, target: null })
+    const before = spendLedger.monthTotal()
+    await startGenerate()
+    const job = runningJob()!
+    await vi.waitFor(() => expect(statusOf(job.id)).toBe('failed'))
+    expect(generatedAssets()).toHaveLength(2)
+    expect(generatedClips()).toEqual([])
+    expect(editor.undoLabel()).toBe('Generate 4 images')
+    expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.006, 6)
+    expect(toasts()).toEqual(['Generation failed. 2 images made so far are kept in Media.'])
+    // The failed view says the same, and one undo takes both out again.
+    const kept = generateOutcome(job.id)!
+    expect(kept.kept).toBe('2 images made so far are kept in Media.')
+    expect(undoOutcome(kept)).toBe(true)
+    expect(generatedAssets()).toEqual([])
+  })
 })
 
 describe('a Cancel after fal.ai made something', () => {
@@ -311,7 +331,7 @@ describe('a Cancel after fal.ai made something', () => {
     expect(generatedClips()).toEqual([])
     expect(editor.undoLabel()).toBe('Generate video')
     expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
-    expect(toasts()).toEqual(['Generation stopped. 1 video made so far is kept in Media.'])
+    expect(toasts()).toEqual(['Generation stopped. The video is kept in Media.'])
   })
 
   it('keeps an image that came back just before the Cancel, saves it all the same, and asks for no more', async () => {

@@ -149,8 +149,8 @@ removes clips whose line is gone or no longer has their words.
   made so far are kept."), keeps the shots already made, and lowers the cost. While
   results fal.ai already made are still downloading after Cancel, `stopping` is set: the subtitle and the progress
   line say "Stopping…", "Keeping 2 clips that are downloading" goes under the bar, the cancel note hides, and Cancel
-  is disabled but keeps focus. When the run ends, focus moves to the Generate button of the `ready` view, which the
-  `stopped` note describes for screen readers.
+  is disabled but keeps focus. When the run ends, the `ready` view shows the `stopped` note in its footer just above
+  Generate, which takes focus and is described by the note; the panel scrolls to its end so both show.
 - Every state with a plan has `unit`: `'clip'` when all its AI shots are videos ("Generate 12 clips", "Retry 1
   failed clip"), else `'shot'`.
 - `applied`: summary, warnings, Undo (`undo()`; only while the draft is still the latest change) and, when

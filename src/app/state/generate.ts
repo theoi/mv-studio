@@ -27,7 +27,8 @@ import { get, openAssist, set, toast } from './ui.ts'
 /*
  * Assist › Generate: AI images and video clips with the user's fal.ai key. The form is kept here so a result or an
  * error returns to the same settings. Each run is one job; its results are stored as project media and placed on the
- * timeline at the playhead as one undo step. A Cancel keeps what fal.ai already made (and billed) in Media only.
+ * timeline at the playhead as one undo step. A Cancel, or a failure part-way, keeps what fal.ai already made (and
+ * billed) in Media only.
  */
 
 export type GenerateKind = 'image' | 'video'
@@ -205,6 +206,8 @@ export interface GenerateOutcome {
   usd: number
   /** The clips it put on the timeline, for Show. */
   clipIds: string[]
+  /** After a Cancel or a failure, what went to Media only: "2 images made so far are kept in Media." */
+  kept?: string
 }
 
 const outcomes = new Map<string, GenerateOutcome>()
@@ -274,21 +277,33 @@ function saving(ctx: JobContext, fraction: number, prefix: string): JobContext {
   }
 }
 
-/** After a Cancel, what fal.ai already made goes into Media (not the timeline) as one undo step. */
-function keepInMedia(assets: Asset[], label: string, unit: string, start: number, usd: number): void {
-  if (assets.length === 0) return
-  if (
-    !dispatch(
-      assets.map((asset) => ({ type: 'asset.add', asset })),
-      { label },
-    )
-  )
-    return
-  const kept: GenerateOutcome = { label, assets, start, usd, clipIds: [] }
-  toast(
-    `Generation stopped. ${plural(assets.length, unit)} made so far ${assets.length === 1 ? 'is' : 'are'} kept in Media.`,
-    { label: 'Undo', run: () => undoOutcome(kept) },
-  )
+/**
+ * After a Cancel or a failure part-way, what fal.ai already made goes into Media (not the timeline) as one undo step.
+ * `single` is a run that asked for one result.
+ */
+function keepInMedia(
+  assets: Asset[],
+  run: { label: string; unit: string; start: number; usd: number; single: boolean; failed: boolean },
+): GenerateOutcome | undefined {
+  if (assets.length === 0) return undefined
+  const commands: EditCommand[] = assets.map((asset) => ({ type: 'asset.add', asset }))
+  if (!dispatch(commands, { label: run.label })) return undefined
+  const kept = run.single
+    ? `The ${run.unit} is kept in Media.`
+    : `${plural(assets.length, run.unit)} made so far ${assets.length === 1 ? 'is' : 'are'} kept in Media.`
+  const outcome: GenerateOutcome = {
+    label: run.label,
+    assets,
+    start: run.start,
+    usd: run.usd,
+    clipIds: [],
+    kept,
+  }
+  toast(`Generation ${run.failed ? 'failed' : 'stopped'}. ${kept}`, {
+    label: 'Undo',
+    run: () => undoOutcome(outcome),
+  })
+  return outcome
 }
 
 /**
@@ -361,7 +376,15 @@ export async function startGenerate(at?: number): Promise<void> {
         // The next run goes to the playhead again, unless another place was picked meanwhile.
         if (target && form.target === target) setGenerateForm({ target: null })
       } catch (error) {
-        if (ctx.signal.aborted) keepInMedia(assets, label, model.output, start, usd)
+        const kept = keepInMedia(assets, {
+          label,
+          unit: model.output,
+          start,
+          usd,
+          single: count === 1,
+          failed: !ctx.signal.aborted,
+        })
+        if (kept) outcomes.set(jobId, kept)
         throw error
       } finally {
         ctx.signal.removeEventListener('abort', stopping)

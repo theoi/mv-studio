@@ -23,6 +23,10 @@
   opacity: 0.45;
 }
 
+.button[aria-disabled='true'] {
+  cursor: default;
+}
+
 .block {
   width: 100%;
 }
