@@ -13,8 +13,10 @@ import {
   bareCuts,
   changeTransitionKind,
   maxTransitionDuration,
+  placeTransitionMarks,
   removeTransition,
   setTransitionDuration,
+  transitionsAtClip,
   transitionSpots,
 } from '../../../src/app/state/transitions.ts'
 import { get, set } from '../../../src/app/state/ui.ts'
@@ -68,6 +70,40 @@ describe('transitions on the timeline', () => {
     expect(transitionSpots(editor.getProject(), s.track.id)).toEqual([
       expect.objectContaining({ clipId: s.b.id, edge: 'in', start: 4, fromId: s.a.id }),
     ])
+  })
+
+  it('leaves out a mark that would overlap the one before it, until the zoom spreads them, and keeps the selected one', () => {
+    const s = scene()
+    addTransitionAtCut(s.b.id)
+    addTransitionAtCut(s.c.id)
+    const shown = (pps: number) => {
+      const marks = [
+        ...placeTransitionMarks(editor.getProject(), s.track.id, pps, get().selection).values(),
+      ].flat()
+      return marks.map((m) => [m.clipId, m.left, m.width])
+    }
+    set({ selection: { type: 'none' } })
+    // 3 px a second: the cuts at 4 s and 8 s are 12 px apart, closer than a 24 px mark.
+    expect(shown(3)).toEqual([[s.b.id, 12, 24]])
+    expect(shown(6)).toEqual([
+      [s.b.id, 24, 24],
+      [s.c.id, 48, 24],
+    ])
+    set({ selection: { type: 'transition', id: s.c.id, edge: 'in' } })
+    expect(shown(3)).toEqual([[s.c.id, 24, 24]])
+  })
+
+  it("lists the transitions at a clip's edges, including the next clip's at the cut where it ends", () => {
+    const s = scene()
+    addTransitionAtCut(s.b.id)
+    addTransitionAtCut(s.c.id)
+    const at = (id: string) => transitionsAtClip(editor.getProject(), id).map((t) => [t.clipId, t.edge])
+    expect(at(s.a.id)).toEqual([[s.b.id, 'in']])
+    expect(at(s.b.id)).toEqual([
+      [s.b.id, 'in'],
+      [s.c.id, 'in'],
+    ])
+    expect(at(s.d.id)).toEqual([])
   })
 
   it('keeps a transition to half the clip, and never over 4 s', () => {

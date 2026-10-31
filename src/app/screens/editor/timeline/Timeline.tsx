@@ -50,7 +50,7 @@ import {
   MenuTrigger,
 } from '../../../ds/Menu.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
-import { TransitionMarks } from './Transitions.tsx'
+import { TransitionMark } from './Transitions.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import {
@@ -64,7 +64,15 @@ import {
   type WordEdge,
 } from '../../../state/lyricEdits.ts'
 import { lineTiming } from '../../../state/lyricTiming.ts'
-import { addTransitionAtCut, bareCuts, transitionMarkWidth } from '../../../state/transitions.ts'
+import {
+  addTransitionAtCut,
+  bareCuts,
+  placeTransitionMarks,
+  transitionMarkWidth,
+  transitionName,
+  transitionsAtClip,
+  type TransitionSpot,
+} from '../../../state/transitions.ts'
 import {
   copySelection,
   cutSelection,
@@ -794,6 +802,7 @@ function cutNear(clip: ClipView, time: number): { clipId: string; time: number }
 function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockProps) {
   const [canPaste, setCanPaste] = useState(false)
   const [cut, setCut] = useState<{ clipId: string; time: number } | null>(null)
+  const [transitions, setTransitions] = useState<TransitionSpot[]>([])
   const menuTime = useRef(clip.start)
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
@@ -815,6 +824,7 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
           if (!selectedClipIds(get().selection).includes(clip.id)) select({ type: 'clip', id: clip.id })
           setCanPaste(hasClipboard())
           setCut(cutNear(clip, menuTime.current))
+          setTransitions(transitionsAtClip(editor.getProject(), clip.id))
         }}
       >
         <ContextMenuTrigger asChild>
@@ -898,17 +908,25 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
           <ContextMenuItem shortcut="Mod V" disabled={!canPaste} onSelect={paste}>
             Paste
           </ContextMenuItem>
+          {(cut || transitions.length > 0) && <ContextMenuSeparator />}
           {cut && (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem
-                description={`At the cut at ${formatTime(cut.time, true)}`}
-                onSelect={() => addTransitionAtCut(cut.clipId)}
-              >
-                Add transition
-              </ContextMenuItem>
-            </>
+            <ContextMenuItem
+              description={`At the cut at ${formatTime(cut.time, true)}`}
+              onSelect={() => addTransitionAtCut(cut.clipId)}
+            >
+              Add transition
+            </ContextMenuItem>
           )}
+          {/* Also reaches a transition whose mark is left out at a low zoom. */}
+          {transitions.map((s) => (
+            <ContextMenuItem
+              key={`${s.clipId}:${s.edge}`}
+              description={`${transitionName(s.transition)} at ${formatTime(s.start, true)}`}
+              onSelect={() => select({ type: 'transition', id: s.clipId, edge: s.edge })}
+            >
+              Edit transition
+            </ContextMenuItem>
+          ))}
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
           <ContextMenuItem onSelect={() => openAssist('match')}>Find similar clips…</ContextMenuItem>
@@ -2014,6 +2032,10 @@ export function Timeline() {
             const clips = clipsOnTrack(project, track.id)
               .map((c) => viewOf(project, c))
               .filter((c) => inView(c.start, c.end))
+            const transitionMarks =
+              kind === 'video' || kind === 'overlay'
+                ? placeTransitionMarks(project, track.id, pps, selection)
+                : undefined
             return (
               <Fragment key={track.id}>
                 <div
@@ -2179,19 +2201,28 @@ export function Timeline() {
                           )
                         }
                         return (
-                          <ClipBlock
-                            key={c.id}
-                            clip={c}
-                            pps={pps}
-                            selected={selIds.has(c.id)}
-                            marks={markedClip?.id === c.id ? selectedMarks : undefined}
-                            onPointerDown={onClipPointerDown}
-                          />
+                          <Fragment key={c.id}>
+                            <ClipBlock
+                              clip={c}
+                              pps={pps}
+                              selected={selIds.has(c.id)}
+                              marks={markedClip?.id === c.id ? selectedMarks : undefined}
+                              onPointerDown={onClipPointerDown}
+                            />
+                            {transitionMarks?.get(c.id)?.map((m) => (
+                              <TransitionMark
+                                key={m.edge}
+                                mark={m}
+                                selected={
+                                  selection.type === 'transition' &&
+                                  selection.id === m.clipId &&
+                                  selection.edge === m.edge
+                                }
+                              />
+                            ))}
+                          </Fragment>
                         )
                       })}
-                    {(kind === 'video' || kind === 'overlay') && (
-                      <TransitionMarks trackId={track.id} pps={pps} />
-                    )}
                     {suggestTiming && track.id === lyricsTrackId && (
                       <div
                         className={[styles.untimedLayer, suggestLeft === null && styles.untimedPinned]

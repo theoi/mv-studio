@@ -10,6 +10,7 @@ import {
   removeTransition,
   setTransitionDuration,
   setTransitionEasing,
+  transitionName,
   transitionOf,
   transitionSeconds,
   transitionSpots,
@@ -51,12 +52,7 @@ export function TransitionInspector({ clipId, edge }: { clipId: string; edge: Tr
   const easing = easingChoice(transition.easing)
   return (
     <>
-      <Header
-        icon={<Blend />}
-        title={pluginRegistry.get(transition.kind)?.name ?? 'Transition'}
-        meta={meta}
-        metaBelow={metaBelow}
-      />
+      <Header icon={<Blend />} title={transitionName(transition)} meta={meta} metaBelow={metaBelow} />
       <Section title="Transition">
         <FieldRow label="Type">
           <Select

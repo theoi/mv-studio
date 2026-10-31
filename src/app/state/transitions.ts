@@ -12,7 +12,7 @@ import { createTransition } from '../../plugins/library.ts'
 import { formatTime } from '../format.ts'
 import { undoAction } from './library.ts'
 import { dispatch, editor, viewOf } from './project.ts'
-import { get, select, toast } from './ui.ts'
+import { get, select, toast, type Selection } from './ui.ts'
 
 export type TransitionEdge = 'in' | 'out'
 
@@ -85,8 +85,56 @@ export function bareCuts(project: Project, trackId: Id): { clipId: Id; time: num
     .map((c) => ({ clipId: c.id, time: c.start }))
 }
 
+/** The transitions at a clip's edges: its own in and out, and the next clip's in at a cut where this clip ends. */
+export function transitionsAtClip(project: Project, clipId: Id): TransitionSpot[] {
+  const clip = project.clips[clipId]
+  if (!clip) return []
+  return transitionSpots(project, clip.trackId).filter((s) => s.clipId === clipId || s.fromId === clipId)
+}
+
 /** How wide a transition's mark is on the timeline: its duration, and at least 24 px to click at any zoom. */
 export const transitionMarkWidth = (duration: number, pps: number) => Math.max(24, duration * pps)
+
+/** A transition's mark on the timeline, in px from the start of the lane. */
+export interface PlacedMark extends TransitionSpot {
+  left: number
+  width: number
+}
+
+/**
+ * The marks to draw for a track's transitions at this zoom, by the clip each belongs to. A mark that would overlap
+ * one already placed is left out until zooming in spreads them apart; its transition stays reachable from the clip's
+ * menu. The selected transition's mark is placed first, so it always shows.
+ */
+export function placeTransitionMarks(
+  project: Project,
+  trackId: Id,
+  pps: number,
+  selection: Selection,
+): Map<Id, PlacedMark[]> {
+  const marks = transitionSpots(project, trackId)
+    .map((s) => {
+      const width = transitionMarkWidth(s.end - s.start, pps)
+      return { ...s, width, left: s.edge === 'in' ? s.start * pps : s.end * pps - width }
+    })
+    .sort((a, b) => a.left - b.left)
+  const selected = (m: PlacedMark) =>
+    selection.type === 'transition' && selection.id === m.clipId && selection.edge === m.edge
+  const placed: PlacedMark[] = []
+  for (const m of [...marks.filter(selected), ...marks.filter((m) => !selected(m))]) {
+    if (placed.every((o) => m.left >= o.left + o.width || m.left + m.width <= o.left)) placed.push(m)
+  }
+  const byClip = new Map<Id, PlacedMark[]>()
+  for (const m of placed) {
+    const list = byClip.get(m.clipId)
+    if (list) list.push(m)
+    else byClip.set(m.clipId, [m])
+  }
+  return byClip
+}
+
+/** A transition's type as the timeline and inspector name it: "Fade". */
+export const transitionName = (t: Transition) => pluginRegistry.get(t.kind)?.name ?? 'Transition'
 
 /** A transition's duration as the inspector and the mark's tooltip show it: "0.6 s". */
 export const transitionSeconds = (s: number) => `${Number(s.toFixed(2))} s`
@@ -168,7 +216,7 @@ export function removeTransition(clipId: Id, edge: TransitionEdge): void {
   const clip = project.clips[clipId]
   const current = transitionOf(clip, edge)
   if (!clip || !current) return
-  const name = pluginRegistry.get(current.kind)?.name ?? 'Transition'
+  const name = transitionName(current)
   const label = `Remove transition: ${name}`
   if (!setTransition(clipId, edge, undefined, { label })) return
   const selected = get().selection

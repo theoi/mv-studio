@@ -43,6 +43,13 @@ const transitionIn = (page: Page, clipId: string) =>
     clipId,
   )
 
+const clipName = (page: Page, clipId: string) =>
+  page.evaluate((id) => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    const c = p.clips[id]
+    return (c.name ?? p.assets[c.assetId]?.name) as string
+  }, clipId)
+
 const clipStart = (page: Page, clipId: string) =>
   page.evaluate((id) => window.mvStudio.app.project.editor.getProject().clips[id].start as number, clipId)
 
@@ -169,6 +176,20 @@ test('a transition mark sits on its clip’s top edge: the clip still trims and 
   await expect(page.getByRole('menuitem', { name: /^Remove transition/ })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
+  // In Tab order the mark comes right after its clip, and then the next clip on the track.
+  const nextId = await page.evaluate((id) => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    const c = p.clips[id]
+    return (Object.values(p.clips) as Untyped[])
+      .filter((x) => x.trackId === c.trackId && x.start > c.start)
+      .sort((a, b) => a.start - b.start)[0].id as string
+  }, cut.toId)
+  await clip.focus()
+  await page.keyboard.press('Tab')
+  await expect(mark).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.locator(`[data-clip-id="${nextId}"]`)).toBeFocused()
+
   // The clip's left edge trims at mid height, under the mark's end.
   const before = await clipStart(page, cut.toId)
   const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
@@ -240,4 +261,101 @@ test('at 80 px a second, an Overlay clip with a transition into it still trims f
   ]
   expect(a.x < b.x + b.width && b.x < a.x + a.width).toBe(true)
   expect(a.y + a.height).toBeLessThanOrEqual(b.y)
+})
+
+test('at the lowest zoom no two transition marks overlap: one that would is left out until zooming in, and its clip’s menu selects it', async ({
+  page,
+}, testInfo) => {
+  await openAt(page, 67)
+  const cut = await cutNear(page, 'Video', 67)
+  await addAtCut(page, page.locator(`[data-clip-id="${cut.toId}"]`))
+  // The same fade on every other cut of the Video and Overlay tracks, as one step.
+  const { total, start, next } = await page.evaluate((id) => {
+    const editor = window.mvStudio.app.project.editor
+    const p = editor.getProject()
+    const fade = p.clips[id].transitionIn
+    const commands: object[] = []
+    for (const name of ['Video', 'Overlay']) {
+      const track = (p.tracks as Untyped[]).find((t) => t.name === name)
+      const clips = (Object.values(p.clips) as Untyped[])
+        .filter((c) => c.trackId === track.id)
+        .sort((a, b) => a.start - b.start)
+      for (let i = 1; i < clips.length; i++) {
+        const [a, b] = [clips[i - 1], clips[i]]
+        if (Math.abs(a.start + a.duration - b.start) > 1e-3 || b.transitionIn) continue
+        const value = { ...fade, duration: Math.min(fade.duration, b.duration / 2) }
+        commands.push({ type: 'clip.set', clipId: b.id, path: ['transitionIn'], value })
+      }
+    }
+    editor.dispatch(commands)
+    const c = p.clips[id]
+    const after = (Object.values(p.clips) as Untyped[]).find(
+      (x) => x.trackId === c.trackId && Math.abs(x.start - c.start - c.duration) < 1e-3,
+    )
+    return {
+      total: commands.length + 1,
+      start: c.start as number,
+      next: { id: after.id as string, start: after.start as number },
+    }
+  }, cut.toId)
+
+  await page.getByRole('slider', { name: 'Timeline zoom' }).focus()
+  await page.keyboard.press('Home')
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)).toBe(3)
+  const marks = page.getByRole('button', { name: /^Transition: / })
+  await expect(marks.first()).toBeVisible()
+  const noOverlap = async () => {
+    const boxes = (await Promise.all((await marks.all()).map((m) => m.boundingBox()))).filter(
+      (b) => b !== null,
+    )
+    for (const [i, a] of boxes.entries())
+      for (const b of boxes.slice(i + 1)) {
+        const apart =
+          a.x + a.width <= b.x + 0.5 ||
+          b.x + b.width <= a.x + 0.5 ||
+          a.y + a.height <= b.y ||
+          b.y + b.height <= a.y
+        expect(apart, JSON.stringify([a, b])).toBe(true)
+      }
+    return boxes.length
+  }
+  const shown = await noOverlap()
+  expect(shown).toBeGreaterThan(1)
+  expect(shown).toBeLessThan(total)
+  await page.screenshot({ path: testInfo.outputPath('transition-marks-lowest-zoom.png') })
+
+  // The 2 s clip's transition is left out beside the one at the cut before it.
+  const time = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`
+  const firstMark = page.getByRole('button', { name: `Transition: Fade, ${time(start)}` })
+  const nextMark = page.getByRole('button', { name: `Transition: Fade, ${time(next.start)}` })
+  await expect(firstMark).toBeVisible()
+  await expect(nextMark).toHaveCount(0)
+
+  // Its clip's menu selects it, and its mark shows in place of its neighbor's.
+  const box = (await page.locator(`[data-clip-id="${next.id}"]`).boundingBox())!
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height * 0.7, { button: 'right' })
+  await page
+    .getByRole('menuitem', { name: /^Edit transition/ })
+    .filter({ hasText: `Fade at ${time(next.start)}` })
+    .click()
+  await expect(nextMark).toHaveAttribute('aria-pressed', 'true')
+  await expect(firstMark).toHaveCount(0)
+  await expect(
+    page.getByRole('tabpanel', { name: 'Inspector' }).getByText(`Into “${await clipName(page, next.id)}”`),
+  ).toBeVisible()
+  await noOverlap()
+
+  // Zoomed in, both show.
+  await page.evaluate(
+    ([pps, t]) => {
+      window.mvStudio.app.ui.set({ pxPerSec: pps })
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('[data-timeline-scroller]')!.scrollLeft = t * pps - 300
+      })
+    },
+    [24, start] as const,
+  )
+  await expect(firstMark).toBeVisible()
+  await expect(nextMark).toBeVisible()
+  await noOverlap()
 })
