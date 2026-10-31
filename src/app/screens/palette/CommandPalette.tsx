@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { settingsForAspect } from '../../../model/index.ts'
+import { openImport } from '../../state/importer.ts'
 import { addTextAtPlayhead, dispatch, editor, splitAtPlayhead, undo } from '../../state/project.ts'
 import { openAssist, set, toast, useUi } from '../../state/ui.ts'
 import styles from './CommandPalette.module.css'
@@ -127,7 +128,7 @@ const actions: Action[] = [
     label: 'Import media…',
     icon: <Film />,
     shortcut: 'Mod I',
-    run: () => set({ libraryTab: 'media' }),
+    run: () => openImport(),
   },
   {
     group: 'View',

@@ -98,10 +98,25 @@
   position: relative;
   aspect-ratio: 16 / 9;
   border-radius: var(--radius);
+  background-color: var(--bg-hover);
   background-size: cover;
   background-position: center;
   box-shadow: 0 0 0 1px var(--border-subtle);
   transition: box-shadow var(--dur-fast);
+}
+
+.thumbIcon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+
+.thumbIcon svg {
+  width: 20px;
+  height: 20px;
 }
 
 .card:hover .thumb {
@@ -181,9 +196,16 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  width: 100%;
   padding: 6px;
   border-radius: var(--radius-md);
   background: var(--bg-hover);
+  text-align: left;
+}
+
+button.songRow:hover {
+  background: var(--bg-active);
+  box-shadow: 0 0 0 1px var(--border-strong);
 }
 
 .songIcon {

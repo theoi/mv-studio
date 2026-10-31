@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Upload } from 'lucide-react'
 import { useUi } from '../../state/ui.ts'
 import { TopBar } from './TopBar.tsx'
 import { Library, LibraryRail } from './Library.tsx'
@@ -8,6 +9,7 @@ import { Timeline } from './timeline/Timeline.tsx'
 import { CommandPalette, ExportDialog, FirstRunGuide } from '../../lazy.ts'
 import { Deferred } from '../common/Deferred.tsx'
 import { Splitter } from './Splitter.tsx'
+import { importFiles, registerImportInput } from '../../state/importer.ts'
 import styles from './Editor.module.css'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -22,6 +24,63 @@ function storedSizes(): PanelSizes {
   } catch {
     return {}
   }
+}
+
+const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files')
+
+/** Files dragged over the editor import on drop; the overlay shows while they hover. */
+function DropImport() {
+  const [over, setOver] = useState(false)
+  useEffect(() => {
+    let timer = 0
+    const onOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+      setOver(true)
+      // dragleave fires for every child element, so hide only once dragover stops arriving.
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => setOver(false), 150)
+    }
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      window.clearTimeout(timer)
+      setOver(false)
+      void importFiles([...(e.dataTransfer?.files ?? [])])
+    }
+    window.addEventListener('dragover', onOver)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('dragover', onOver)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [])
+  return (
+    <>
+      <input
+        ref={registerImportInput}
+        type="file"
+        multiple
+        hidden
+        aria-label="Import media files"
+        onChange={(e) => {
+          void importFiles([...(e.target.files ?? [])])
+          e.target.value = ''
+        }}
+      />
+      {over && (
+        <div className={styles.dropOverlay}>
+          <div className={styles.dropCard}>
+            <Upload />
+            <span className={styles.dropTitle}>Drop to import</span>
+            <span className={styles.dropHint}>Songs, video clips and images. Files stay on this device.</span>
+          </div>
+        </div>
+      )}
+    </>
+  )
 }
 
 export function Editor() {
@@ -104,6 +163,7 @@ export function Editor() {
       <Deferred when={guideOn}>
         <FirstRunGuide />
       </Deferred>
+      <DropImport />
     </div>
   )
 }

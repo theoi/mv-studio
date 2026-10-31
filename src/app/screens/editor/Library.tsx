@@ -16,22 +16,67 @@ import type { ReactNode } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ds/Tabs.tsx'
 import { SearchInput } from '../../ds/Fields.tsx'
 import { Button, IconButton } from '../../ds/Button.tsx'
-import { EmptyState } from '../../ds/Feedback.tsx'
+import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
-import { formatTime } from '../../format.ts'
+import { formatBpm, formatTime, plural } from '../../format.ts'
 import { sceneThumb, type SceneId } from '../../mock/art.ts'
-import { media, type MediaItem } from '../../mock/media.ts'
+import { media, mediaById } from '../../mock/media.ts'
 import { peaks } from '../../mock/song.ts'
-import { bpmOf, hasSong, lyricLines, sectionsOf, timelineDuration, useProject } from '../../state/project.ts'
+import type { Asset, Project } from '../../../model/index.ts'
+import { addAssetAtPlayhead, openImport } from '../../state/importer.ts'
+import {
+  bpmOf,
+  hasSong,
+  lyricLines,
+  sectionsOf,
+  songAnalysis,
+  timelineDuration,
+  useProject,
+} from '../../state/project.ts'
+import { useThumbnail } from '../../state/thumbs.ts'
 import { set, toast, useUi, type LibraryTab } from '../../state/ui.ts'
 import styles from './Library.module.css'
 
 const filters = ['All', 'Video', 'Images', 'Generated'] as const
 
-function MediaCard({ item }: { item: MediaItem }) {
+interface LibraryItem {
+  asset: Asset
+  name: string
+  type: 'video' | 'image' | 'generated' | 'audio'
+  tags: string[]
+}
+
+/** The project's media for the library: everything but the song, masks and fonts, newest imports first. */
+function libraryItems(project: Project): LibraryItem[] {
+  return Object.values(project.assets)
+    .filter((a) => a.id !== project.songAssetId && a.origin.type !== 'derived' && a.kind !== 'font')
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((asset) => ({
+      asset,
+      name: asset.name.replace(/\.[^.]+$/, ''),
+      type:
+        asset.origin.type === 'generated'
+          ? 'generated'
+          : asset.kind === 'audio'
+            ? 'audio'
+            : asset.kind === 'image'
+              ? 'image'
+              : 'video',
+      tags: mediaById[asset.id]?.tags ?? [],
+    }))
+}
+
+function MediaCard({ item }: { item: LibraryItem }) {
+  const thumb = useThumbnail(item.asset)
+  const duration = item.type === 'image' ? undefined : item.asset.duration
   return (
     <div className={styles.card} draggable tabIndex={0} aria-label={`${item.name}, ${item.type}`}>
-      <div className={styles.thumb} style={{ backgroundImage: `url(${sceneThumb(item.scene)})` }}>
+      <div className={styles.thumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}>
+        {item.type === 'audio' && (
+          <span className={styles.thumbIcon}>
+            <AudioWaveform />
+          </span>
+        )}
         {item.type === 'generated' && (
           <span className={styles.genBadge}>
             <Sparkles /> AI
@@ -42,14 +87,14 @@ function MediaCard({ item }: { item: MediaItem }) {
             <ImageIcon />
           </span>
         )}
-        {item.duration && <span className={`${styles.duration} tnum`}>{formatTime(item.duration)}</span>}
+        {duration !== undefined && <span className={`${styles.duration} tnum`}>{formatTime(duration)}</span>}
         <span className={styles.addBtn}>
           <IconButton
             label="Add at playhead"
             size="xs"
             variant="secondary"
             tooltipSide="top"
-            onClick={() => toast(`Added “${item.name}” at the playhead`)}
+            onClick={() => addAssetAtPlayhead(item.asset.id)}
           >
             <Plus />
           </IconButton>
@@ -60,29 +105,65 @@ function MediaCard({ item }: { item: MediaItem }) {
   )
 }
 
+const WAVE_BARS = 40
+
+/** Bar heights (0..1) for the song row: the analyzed loudness when available, else the mock peaks. */
+function songBars(project: Project): number[] {
+  const loudness = songAnalysis(project)?.features?.loudness
+  const values = loudness?.length ? loudness : peaks
+  const step = values.length / WAVE_BARS
+  return Array.from({ length: WAVE_BARS }, (_, i) => {
+    let m = 0
+    for (let j = Math.floor(i * step); j < Math.floor((i + 1) * step); j++) m = Math.max(m, values[j] ?? 0)
+    return m
+  })
+}
+
 function SongRow() {
   const project = useProject()
-  const bars = 40
-  const step = Math.floor(peaks.length / bars)
-  const name = project.songAssetId ? project.assets[project.songAssetId]?.name : undefined
+  const asset = project.songAssetId ? project.assets[project.songAssetId] : undefined
+  const analyzed = !!songAnalysis(project)
+  const bpm = bpmOf(project)
   return (
     <div className={styles.songRow} tabIndex={0}>
       <span className={styles.songIcon}>
         <Music2 />
       </span>
       <span className={styles.songText}>
-        <span className={styles.songName}>{name}</span>
+        <span className={styles.songName}>{asset?.name}</span>
         <span className={`${styles.songMeta} tnum`}>
-          {formatTime(timelineDuration(project))} · {bpmOf(project)} BPM · {sectionsOf(project).length}{' '}
-          sections
+          {analyzed ? (
+            <>
+              {formatTime(timelineDuration(project))} · {bpm ? `${formatBpm(bpm)} · ` : ''}
+              {plural(sectionsOf(project).length, 'section')}
+            </>
+          ) : (
+            <>
+              <Spinner size={10} /> Finding beats and sections…
+            </>
+          )}
         </span>
       </span>
       <span className={styles.songWave} aria-hidden>
-        {Array.from({ length: bars }, (_, i) => (
-          <i key={i} style={{ height: `${15 + (peaks[i * step] ?? 0) * 85}%` }} />
+        {songBars(project).map((v, i) => (
+          <i key={i} style={{ height: `${15 + v * 85}%` }} />
         ))}
       </span>
     </div>
+  )
+}
+
+function AddSongRow() {
+  return (
+    <button className={styles.songRow} onClick={() => openImport('song')}>
+      <span className={styles.songIcon}>
+        <Upload />
+      </span>
+      <span className={styles.songText}>
+        <span className={styles.songName}>Import a song</span>
+        <span className={styles.songMeta}>Beats, sections and energy are found in a few seconds</span>
+      </span>
+    </button>
   )
 }
 
@@ -94,7 +175,8 @@ function Suggestions() {
     selection.type === 'lyric'
       ? `“${lyricLines(project).find((l) => l.id === selection.id)?.text ?? ''}”`
       : (sectionsOf(project).find((s) => s.id === selection.id)?.label ?? 'this section')
-  const picks = media.filter((m) => ['m-city', 'm-neon', 'm-crowd'].includes(m.id))
+  const picks = media.filter((m) => ['m-city', 'm-neon', 'm-crowd'].includes(m.id) && project.assets[m.id])
+  if (!picks.length) return null
   return (
     <div className={styles.suggest}>
       <div className={styles.suggestHead}>
@@ -122,18 +204,20 @@ function Suggestions() {
 }
 
 function MediaTab() {
-  const empty = !hasSong(useProject())
+  const project = useProject()
+  const all = useMemo(() => libraryItems(project), [project])
+  const empty = !hasSong(project) && all.length === 0
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<(typeof filters)[number]>('All')
   const items = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return media.filter((m) => {
+    return all.filter((m) => {
       if (filter === 'Video' && m.type !== 'video') return false
       if (filter === 'Images' && m.type !== 'image') return false
       if (filter === 'Generated' && m.type !== 'generated') return false
       return !q || m.name.toLowerCase().includes(q) || m.tags.some((t) => t.includes(q))
     })
-  }, [query, filter])
+  }, [all, query, filter])
 
   if (empty) {
     return (
@@ -143,7 +227,7 @@ function MediaTab() {
           title="Bring in your media"
           description="Drop a song, video clips or images anywhere, or import them. Files stay on this device."
           action={
-            <Button variant="secondary" icon={<Plus />}>
+            <Button variant="secondary" icon={<Plus />} onClick={() => openImport()}>
               Import
             </Button>
           }
@@ -161,7 +245,7 @@ function MediaTab() {
           placeholder="Search by content"
           ariaLabel="Search media by content"
         />
-        <IconButton label="Import media" shortcut="Mod I" variant="secondary">
+        <IconButton label="Import media" shortcut="Mod I" variant="secondary" onClick={() => openImport()}>
           <Plus />
         </IconButton>
       </div>
@@ -181,14 +265,14 @@ function MediaTab() {
       <div className={`${styles.scroller} scroll`}>
         <Suggestions />
         <div className={styles.groupLabel}>Song</div>
-        <SongRow />
+        {hasSong(project) ? <SongRow /> : <AddSongRow />}
         <div className={styles.groupLabel}>
           Clips and images <span className={styles.count}>{items.length}</span>
         </div>
         {items.length ? (
           <div className={styles.grid}>
             {items.map((m) => (
-              <MediaCard key={m.id} item={m} />
+              <MediaCard key={m.asset.id} item={m} />
             ))}
           </div>
         ) : (

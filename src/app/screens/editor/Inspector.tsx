@@ -36,7 +36,7 @@ import {
 } from '../../ds/Fields.tsx'
 import { Badge } from '../../ds/Feedback.tsx'
 import { Button, IconButton } from '../../ds/Button.tsx'
-import { formatTime } from '../../format.ts'
+import { formatBpm, formatTime, plural } from '../../format.ts'
 import { sceneThumb } from '../../mock/art.ts'
 import { sceneOf } from '../../mock/demoProject.ts'
 import {
@@ -390,7 +390,7 @@ function ProjectInspector() {
                   {project.songAssetId ? project.assets[project.songAssetId]?.name : ''}
                 </div>
                 <div className={`${styles.meta} tnum`}>
-                  {bpmOf(project)} BPM · 4/4 · {sectionsOf(project).length} sections
+                  {formatBpm(bpmOf(project) ?? 120)} · 4/4 · {plural(sectionsOf(project).length, 'section')}
                 </div>
               </div>
             </div>

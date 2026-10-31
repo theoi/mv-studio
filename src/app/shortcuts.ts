@@ -1,6 +1,15 @@
 import { useEffect } from 'react'
 import { jumpSection, stepPlayhead } from './state/playback.ts'
-import { addTextAtPlayhead, editor, redo, splitAtPlayhead, timelineDuration, undo } from './state/project.ts'
+import { openImport } from './state/importer.ts'
+import {
+  addTextAtPlayhead,
+  editor,
+  hasSong,
+  redo,
+  splitAtPlayhead,
+  timelineDuration,
+  undo,
+} from './state/project.ts'
 import { get, openAssist, set, toast } from './state/ui.ts'
 
 function isTyping(el: EventTarget | null) {
@@ -59,6 +68,9 @@ export function useGlobalShortcuts() {
       } else if (mod && key === 'b') {
         e.preventDefault()
         set({ libraryOpen: !s.libraryOpen })
+      } else if (mod && key === 'i') {
+        e.preventDefault()
+        openImport()
       } else if (mod && (key === '=' || key === '+')) {
         e.preventDefault()
         set({ pxPerSec: Math.min(80, s.pxPerSec * 1.4) })
@@ -69,7 +81,7 @@ export function useGlobalShortcuts() {
         return
       } else if (e.key === ' ') {
         e.preventDefault()
-        set({ playing: !s.playing })
+        if (hasSong(editor.getProject())) set({ playing: !s.playing })
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
         jumpSection(-1)
