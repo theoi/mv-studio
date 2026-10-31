@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { part } from '../../../src/analysis/jobContext.ts'
 import { lyricsSeconds } from '../../../src/analysis/lyrics/client.ts'
 import {
   deviceSlowdown,
   separateSecondsPerSecond,
   stemJobSeconds,
 } from '../../../src/analysis/stems/device.ts'
+import type { JobProgress } from '../../../src/shared/jobs.ts'
 
 /*
  * Wall times measured on a 4-core machine without a GPU (so 3 WASM threads), on held-out songs the estimates were
@@ -67,5 +69,20 @@ describe('lyrics estimate, vocals already separated', () => {
       expect(lyricsSeconds(song, 'draft')).toBeGreaterThanOrEqual(148)
       expect(lyricsSeconds(song, 'draft')).toBeLessThanOrEqual(142 * 1.35)
     }
+  })
+})
+
+describe('time left in a job made of parts', () => {
+  it("adds the later steps' time to a part's remaining time and maps its fraction", () => {
+    const seen: JobProgress[] = []
+    const ctx = {
+      signal: new AbortController().signal,
+      throwIfCancelled: () => {},
+      progress: (p: JobProgress) => seen.push(p),
+    }
+    const stems = part(ctx, 0, 0.8, 60)
+    stems.progress({ fraction: 0.5, etaSeconds: 100, stage: 'separate' })
+    stems.progress({ stage: 'encode' })
+    expect(seen).toEqual([{ fraction: 0.4, etaSeconds: 160, stage: 'separate' }, { stage: 'encode' }])
   })
 })
