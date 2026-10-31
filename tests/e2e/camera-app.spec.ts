@@ -370,3 +370,30 @@ test('Inspector › Motion adds a smear-safe amount until Strength is set, and n
   if (orbit < 100) await expect(note).toHaveText(`May smear behind foreground objects above ${orbit}%.`)
   else await expect(note).toHaveCount(0)
 })
+
+test('one inline suggestion at a time: a selected still’s suggestion takes the lyrics hint’s place, which comes back after', async ({
+  page,
+}) => {
+  await openWithFakeDepth(page, '#/editor?t=28')
+  await page.evaluate(() => {
+    const editor = window.mvStudio.app.project.editor
+    const p = editor.getProject()
+    const lines = [...p.lyrics.lines, { id: 'new-1', text: 'One more time', words: [] }]
+    editor.dispatch({ type: 'lyrics.set', lyrics: { ...p.lyrics, lines } })
+  })
+  const hint = page.getByRole('note').filter({ hasText: '1 line not timed yet' })
+  await expect(hint).toBeVisible()
+
+  const target = (await stills(page)).clips[0]!
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?sel=clip:${id}&t=28`
+  }, target.id)
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  const camera = inspector.getByRole('note').filter({ hasText: 'Add 3D camera' })
+  await expect(camera).toBeVisible()
+  await expect(hint).toHaveCount(0)
+
+  await camera.getByRole('button', { name: 'Not now' }).click()
+  await expect(camera).toHaveCount(0)
+  await expect(hint).toBeVisible()
+})

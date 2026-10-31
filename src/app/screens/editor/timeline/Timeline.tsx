@@ -1741,6 +1741,7 @@ export function Timeline() {
                         <InlineSuggestion
                           id="time-lyrics"
                           variant="chip"
+                          ambient
                           action="Time words to the vocals"
                           onAction={() => openAssist('lyrics')}
                         >
