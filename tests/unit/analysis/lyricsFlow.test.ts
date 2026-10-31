@@ -281,7 +281,9 @@ describe('LyricsService.prepareRealign', () => {
   it('listens to the stored vocals once, so words re-align without the model afterwards', async () => {
     const { service, song, deps, calls, separations } = setup({ storedVocals: true })
     expect(service.canRealign(song.id)).toBe(false)
-    await service.prepareRealign(song.id, deps).promise
+    const handle = service.prepareRealign(song.id, deps)
+    expect(handle.snapshot().kind).toBe('analysis.realign')
+    await handle.promise
     await service.prepareRealign(song.id, deps).promise
     expect(service.canRealign(song.id)).toBe(true)
     expect(calls.map((c) => [c.method, c.seconds, c.sampleRate])).toEqual([['emissions', 5, 16000]])

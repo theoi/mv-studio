@@ -37,9 +37,14 @@ export interface StemsEstimate {
   device: ModelDevice
 }
 
+/** Where the song is read and the stems are stored. `getFile` may serve generated media, such as sample songs. */
+export interface StemStore extends Pick<MediaStore, 'storeBlob'> {
+  getFile(asset: Asset): Promise<Blob>
+}
+
 export interface StemDeps {
   editor: Pick<ProjectEditor, 'getProject' | 'dispatch'>
-  store: Pick<MediaStore, 'getFile' | 'storeBlob'>
+  store: StemStore
 }
 
 export interface StemSeparationOptions {
