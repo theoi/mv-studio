@@ -15,6 +15,7 @@ import {
 import { CAMERA_EFFECT_ID } from '../../../src/vision/render/cameraEffect.ts'
 import type * as Canvas from '../../../src/vision/runtime/canvas.ts'
 import { VISION_MODELS } from '../../../src/vision/runtime/models.ts'
+import { closeFakeWorkers, FakeWorker } from '../shared/fakeWorker.ts'
 
 // No canvas in unit tests. A stored depth image reads as `pictures.depth` (gray level by column, on a 96-column
 // scale); a still reads as `pictures.still` (by pixel), else as a fine checkerboard, a detailed background everywhere.
@@ -432,35 +433,60 @@ describe('the amount of an automatic move', () => {
 })
 
 describe('without the camera worker', () => {
+  const add = async () => {
+    const { project, clipId } = setup()
+    const { moves } = await addCameraMoves(
+      { editor: new ProjectEditor(project), ...storingMedia(), ...rampDepth() },
+      [clipId],
+      { preset: 'orbit-left' },
+    )
+    const { intensity, safe, alwaysBends } = moves[0]!
+    return { intensity, safe, alwaysBends }
+  }
+  let made = 0
+  /** A worker whose script the browser cannot fetch: it fires an error event without a message. */
+  class Unloadable extends EventTarget {
+    constructor() {
+      super()
+      made++
+      setTimeout(() => this.dispatchEvent(new Event('error', { cancelable: true })))
+    }
+    postMessage() {}
+    terminate() {}
+  }
+
   it('predicts on the page when the camera worker’s script does not load, as offline before it ever started', async () => {
     stubCanvas()
-    const add = async () => {
-      const { project, clipId } = setup()
-      const { moves } = await addCameraMoves(
-        { editor: new ProjectEditor(project), ...storingMedia(), ...rampDepth() },
-        [clipId],
-        { preset: 'orbit-left' },
-      )
-      const { intensity, safe, alwaysBends } = moves[0]!
-      return { intensity, safe, alwaysBends }
-    }
     const onPage = await add()
-    let made = 0
-    vi.stubGlobal(
-      'Worker',
-      class extends EventTarget {
-        constructor() {
-          super()
-          made++
-          // What the browser fires when it cannot fetch a worker's script: an error event without a message.
-          setTimeout(() => this.dispatchEvent(new Event('error', { cancelable: true })))
-        }
-        postMessage() {}
-        terminate() {}
-      },
-    )
+    vi.stubGlobal('Worker', Unloadable)
     expect(await add()).toEqual(onPage)
     expect(made).toBeGreaterThan(0)
     vi.unstubAllGlobals()
+  })
+
+  it.each([
+    ['crashed', 'Uncaught Error: lost', 'worker-crashed'],
+    ['ran out of memory', 'Uncaught RangeError: Out of memory', 'out-of-memory'],
+  ])('checks again that the script loads after the camera worker %s', async (_, death, code) => {
+    stubCanvas()
+    const onPage = await add()
+    let next: 'dies' | 'unloadable' = 'dies'
+    vi.stubGlobal('Worker', function () {
+      if (next === 'unloadable') return new Unloadable()
+      const worker: FakeWorker = new FakeWorker({
+        ready: () => true,
+        predict: () => {
+          setTimeout(() => worker.crash(death))
+          return new Promise(() => undefined)
+        },
+      })
+      return worker
+    })
+    await expect(add()).rejects.toMatchObject({ code })
+    // The next worker's script does not load (offline by now): the prediction runs here.
+    next = 'unloadable'
+    expect(await add()).toEqual(onPage)
+    vi.unstubAllGlobals()
+    closeFakeWorkers()
   })
 })
