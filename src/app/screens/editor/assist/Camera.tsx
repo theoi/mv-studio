@@ -157,7 +157,7 @@ export function CameraView() {
               Added a 3D camera move to {plural(result.moves.length, 'image')}
             </div>
             <div className={styles.muted}>
-              It is the first effect on each image. Change its motion or strength in Inspector › Effects.
+              It is the first effect on each image. Change its motion or strength in Inspector › Motion.
             </div>
           </div>
         </div>

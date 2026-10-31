@@ -1,5 +1,14 @@
-import { beforeEach, expect, it } from 'vitest'
-import { cameraTargets, stillClips, undoCameraMoves } from '../../../src/app/state/camera.ts'
+import { beforeEach, describe, expect, it } from 'vitest'
+import type { ImageClip } from '../../../src/model/index.ts'
+import {
+  cameraMoveOf,
+  cameraTargets,
+  motionOf,
+  removeCameraMove,
+  setCameraMove,
+  stillClips,
+  undoCameraMoves,
+} from '../../../src/app/state/camera.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 
 beforeEach(() => loadDemoProject())
@@ -31,4 +40,74 @@ it('undoes the camera moves only while they are the latest edit', () => {
   editor.undo()
   expect(undoCameraMoves(result)).toBe(true)
   expect(stillClips(editor.getProject()).find((c) => c.id === clipId)?.effects).toEqual([])
+})
+
+const fullMove = (id: string) => ({
+  id,
+  effectId: 'camera-3d',
+  enabled: true,
+  params: {
+    depth: { value: 'depth-1' },
+    preset: { value: 'dolly-in' },
+    intensity: { value: 0.4 },
+    focus: { value: 0.5 },
+    progress: { value: 0, keyframes: [{ time: 0, value: 0, easing: 'linear' as const }] },
+  },
+})
+
+describe('editing a move in Inspector › Motion', () => {
+  const withMove = () => {
+    const clipId = stillClips(editor.getProject())[0]!.id
+    editor.dispatch([
+      {
+        type: 'effect.add',
+        clipId,
+        effect: { id: 'grain', effectId: 'grain', enabled: true, params: {} },
+        index: 0,
+      },
+      { type: 'effect.add', clipId, effect: fullMove('move'), index: 1 },
+    ])
+    return clipId
+  }
+  const move = (clipId: string) => cameraMoveOf(editor.getProject().clips[clipId]!)
+
+  it('reads the move wherever it sits in the effects, and maps presets back to the panel’s motions', () => {
+    const clipId = withMove()
+    expect(move(clipId)).toEqual({ index: 1, preset: 'dolly-in', intensity: 0.4 })
+    expect(motionOf('dolly-in')).toBe('push')
+    expect(motionOf('orbit-right')).toBe('orbit')
+    expect(motionOf('tilt-up')).toBeUndefined()
+    expect(cameraMoveOf(stillClips(editor.getProject())[1]!)).toBeUndefined()
+  })
+
+  it('changes the preset in place, keeping the depth map and the timing, as one undo step', () => {
+    const clipId = withMove()
+    expect(setCameraMove(clipId, { preset: 'orbit-right' })).toBe(true)
+    const fx = (editor.getProject().clips[clipId] as ImageClip).effects[1]!
+    expect(fx.params.preset).toEqual({ value: 'orbit-right' })
+    expect(fx.params.depth).toEqual({ value: 'depth-1' })
+    expect(fx.params.progress?.keyframes).toHaveLength(1)
+    expect(editor.undoLabel()).toBe('Change 3D camera move')
+    editor.undo()
+    expect(move(clipId)?.preset).toBe('dolly-in')
+  })
+
+  it('folds a strength drag into one undo step and keeps it between 0 and 1', () => {
+    const clipId = withMove()
+    setCameraMove(clipId, { intensity: 0.55 }, true)
+    setCameraMove(clipId, { intensity: 1.7 }, true)
+    editor.endGesture()
+    expect(move(clipId)?.intensity).toBe(1)
+    editor.undo()
+    expect(move(clipId)?.intensity).toBe(0.4)
+  })
+
+  it('removes only the camera move', () => {
+    const clipId = withMove()
+    expect(removeCameraMove(clipId)).toBe(true)
+    const effects = (editor.getProject().clips[clipId] as ImageClip).effects
+    expect(effects.map((e) => e.id)).toEqual(['grain'])
+    expect(removeCameraMove(clipId)).toBe(false)
+    expect(setCameraMove(clipId, { preset: 'orbit-right' })).toBe(false)
+  })
 })

@@ -124,3 +124,42 @@ test('the image inspector’s suggestion adds a 3D camera move to the selected s
   expect((await stills(page)).clips.filter((c) => c.camera)).toHaveLength(1)
   await expect(inspector.getByRole('button', { name: 'Add 3D camera' })).toHaveCount(0)
 })
+
+test('Inspector › Motion adds, changes, strengthens and removes a still’s 3D camera move', async ({
+  page,
+}) => {
+  await openWithFakeDepth(page, '#/editor?t=28')
+  const target = (await stills(page)).clips[0]!
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?sel=clip:${id}&t=28`
+  }, target.id)
+  const camera = async () => (await stills(page)).clips.find((c) => c.id === target.id)?.camera
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await inspector.getByRole('button', { name: 'Motion', exact: true }).click()
+  const select = inspector.getByRole('combobox', { name: '3D camera move' })
+  await expect(select).toHaveText('None')
+
+  await select.click()
+  await page.getByRole('option', { name: 'Drift' }).click()
+  await expect.poll(camera).toMatchObject({ preset: 'pan-right', intensity: 0.4 })
+  await expect(select).toHaveText('Drift')
+  const added = (await camera())!
+
+  // Changing the move keeps its depth map: no second depth estimate.
+  await select.click()
+  await page.getByRole('option', { name: 'Orbit' }).click()
+  await expect.poll(async () => (await camera())?.preset).toBe('orbit-right')
+  expect((await camera())?.depth).toBe(added.depth)
+  expect(await page.evaluate(() => (window as Untyped).depthCalls.length)).toBe(1)
+
+  const strength = inspector.getByRole('slider', { name: '3D camera strength' })
+  await strength.focus()
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight')
+  await expect.poll(async () => (await camera())?.intensity).toBe(0.45)
+
+  await select.click()
+  await page.getByRole('option', { name: 'None' }).click()
+  await expect.poll(camera).toBeUndefined()
+  await expect(strength).toHaveCount(0)
+  await expect(select).toHaveText('None')
+})
