@@ -9,7 +9,11 @@ import path from 'node:path'
 
 const OUT = path.resolve(import.meta.dirname, '../tests/fixtures/.cache/vision')
 
-/** name, Commons file name, license, author, analysed segment [start, end] in seconds. Checksums of the 480p VP9 transcodes are in vision-fixtures.sha256.json. */
+/**
+ * name, Commons file name, license, author, analysed segment [start, end] in seconds, and an optional ffmpeg
+ * crop (w:h:x:y) that removes bars baked into the source. Checksums of the 480p VP9 transcodes are in
+ * vision-fixtures.sha256.json.
+ */
 export const CLIPS = [
   [
     'people_teacher',
@@ -19,7 +23,15 @@ export const CLIPS = [
     [60, 68],
   ],
   ['people_interview', 'Entrevista_Maricarmen_Canales_-_TECMTY.webm', 'CC0', 'NachoCHOCO', [40, 48]],
-  ['people_dance', "Chinese_fitness_dancing_in_Haikou_People's_Park.ogv", 'CC0', 'Anna Frodesiak', [5, 13]],
+  [
+    'people_dance',
+    "Chinese_fitness_dancing_in_Haikou_People's_Park.ogv",
+    'CC0',
+    'Anna Frodesiak',
+    [5, 13],
+    // The picture spans columns 88-631 between dark gray pillarbox bars.
+    '540:480:90:0',
+  ],
   ['city_street', 'Spiegelgasse.ogv', 'CC0', 'Albinfo', [20, 28]],
   [
     'nature_creek',
@@ -55,7 +67,7 @@ async function download(url) {
 
 mkdirSync(OUT, { recursive: true })
 const update = process.argv.includes('--update-checksums')
-for (const [name, file, license, author, [start, end]] of CLIPS) {
+for (const [name, file, license, author, [start, end], crop] of CLIPS) {
   const out = path.join(OUT, `${name}.webm`)
   if (existsSync(out)) continue
   console.log(`${name}: ${file} (${license}, ${author})`)
@@ -78,6 +90,7 @@ for (const [name, file, license, author, [start, end]] of CLIPS) {
     '-t',
     String(end - start),
     '-an',
+    ...(crop ? ['-vf', `crop=${crop}`] : []),
     '-c:v',
     'libvpx-vp9',
     '-b:v',
