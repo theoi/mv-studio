@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ANALYZER_VERSION, analyzeSongFast } from '../../../src/analysis/song.ts'
+import { ANALYZER_VERSION, analyzeSongFast, sectionFields } from '../../../src/analysis/song.ts'
 import { JobError } from '../../../src/shared/jobs.ts'
 import { chordPad, concat, drumLoop, fmeasure, mix, SR } from './synth.ts'
 
@@ -87,5 +87,26 @@ describe('analyzeSongFast', () => {
     expect(() =>
       analyzeSongFast('x', { sampleRate: SR, channels: [mono] }, { signal: controller.signal }),
     ).toThrow('Cancelled')
+  })
+})
+
+describe('sectionFields', () => {
+  it('cuts and relabels the sections at the detected chorus ranges', () => {
+    const fields = sectionFields(
+      {
+        version: 1,
+        sections: [
+          { start: 0, end: 40, label: 'verse', group: 'A', energy: 0.4 },
+          { start: 40, end: 60, label: 'chorus', group: 'B', energy: 0.8 },
+        ],
+        chorus: [{ start: 20.3, end: 29.8 }],
+      },
+      [0, 10, 20, 30, 40, 50],
+    )
+    expect(fields.map((s) => [s.start, s.end, s.label])).toEqual([
+      [0, 20, 'verse'],
+      [20, 30, 'chorus'],
+      [30, 60, 'verse'],
+    ])
   })
 })

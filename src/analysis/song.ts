@@ -15,9 +15,10 @@ import {
   type SongSections,
 } from './structure/sections.ts'
 import { computeAudioFeatures } from './features/features.ts'
+import { withChorus } from './structure/chorus.ts'
 
 /** Stored with results; bump when algorithms change so older analyses can be recomputed. */
-export const ANALYZER_VERSION = 'mvs-audio-1'
+export const ANALYZER_VERSION = 'mvs-audio-2'
 
 export interface AnalysisCallbacks {
   signal?: AbortSignal
@@ -49,8 +50,9 @@ export function gridFields(grid: BeatGrid): Pick<AudioAnalysis, 'tempo' | 'beats
   }
 }
 
-export function sectionFields(sections: SongSections): SongSection[] {
-  return sections.sections.map((s) => ({
+/** Sections with ids, cut and relabeled so the detected chorus ranges are the choruses. */
+export function sectionFields(sections: SongSections, downbeats: readonly number[]): SongSection[] {
+  const fields = sections.sections.map((s) => ({
     id: newId(),
     start: s.start,
     end: s.end,
@@ -58,6 +60,7 @@ export function sectionFields(sections: SongSections): SongSection[] {
     repeatGroup: s.group.charCodeAt(0) - 65,
     energy: s.energy,
   }))
+  return withChorus(fields, sections.chorus, downbeats)
 }
 
 /** Fast path: tempo, beat grid, provisional downbeats, sections, energy and features in a few seconds. */
@@ -86,7 +89,7 @@ export function analyzeSongFast(
     assetId,
     version: ANALYZER_VERSION,
     ...gridFields(grid),
-    sections: sectionFields(sections),
+    sections: sectionFields(sections, grid.downbeats),
     energy: { rate: energy.fps, values: energy.values },
     features,
   }
@@ -116,5 +119,5 @@ export async function refineSongBeats(
   })
   const sections = analyzeStructure(state.spec, grid, state.energy)
   state.grid = grid
-  return { fields: { ...gridFields(grid), sections: sectionFields(sections) }, grid }
+  return { fields: { ...gridFields(grid), sections: sectionFields(sections, grid.downbeats) }, grid }
 }

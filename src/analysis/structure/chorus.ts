@@ -63,7 +63,8 @@ function sameLine(a: Set<string>, b: Set<string>): boolean {
 /**
  * The sections with `chorus` as their choruses: sections are cut at the chorus edges (moved to the nearest downbeat
  * within 2 s), the pieces inside become one repeat group labeled chorus, and detected choruses outside become verses.
- * Labels the user entered are kept. Neighbours with the same label merge, as in the section analysis.
+ * Labels the user entered are kept. Neighbours with the same label merge, as in the section analysis. The chorus
+ * keeps the repeat group it mostly came from when no section outside it shares that group.
  */
 export function withChorus(
   sections: readonly SongSection[],
@@ -84,8 +85,7 @@ export function withChorus(
     .map((r) => ({ start: snap(r.start), end: snap(r.end) }))
     .filter((r) => r.end > r.start)
   const inChorus = (t: number) => ranges.some((r) => t >= r.start && t < r.end)
-  const group = Math.max(-1, ...sections.map((s) => s.repeatGroup ?? -1)) + 1
-  const pieces: SongSection[] = []
+  const cut: { piece: SongSection; inside: boolean }[] = []
   for (const s of sections) {
     const cuts = [
       s.start,
@@ -95,21 +95,36 @@ export function withChorus(
       .sort((a, b) => a - b)
       .filter((t, i, all) => i === 0 || t > all[i - 1]!)
     for (let k = 0; k + 1 < cuts.length; k++) {
-      const start = cuts[k]!
-      const end = cuts[k + 1]!
-      const piece: SongSection = { ...s, id: k === 0 ? s.id : `${s.id}.${k}`, start, end }
-      if (DETECTED.has(s.label)) {
-        if (inChorus((start + end) / 2)) {
-          piece.label = 'chorus'
-          piece.repeatGroup = group
-        } else if (s.label === 'chorus') piece.label = 'verse'
+      const piece: SongSection = {
+        ...s,
+        id: k === 0 ? s.id : `${s.id}.${k}`,
+        start: cuts[k]!,
+        end: cuts[k + 1]!,
       }
-      const last = pieces.at(-1)
-      const sameKind =
-        last?.label === piece.label && (last.repeatGroup === piece.repeatGroup || piece.label !== 'chorus')
-      if (last && (end - start < 1 || sameKind)) last.end = end
-      else pieces.push(piece)
+      cut.push({ piece, inside: DETECTED.has(s.label) && inChorus((piece.start + piece.end) / 2) })
     }
+  }
+  const weight = new Map<number, number>()
+  for (const { piece, inside } of cut)
+    if (inside && piece.repeatGroup !== undefined)
+      weight.set(piece.repeatGroup, (weight.get(piece.repeatGroup) ?? 0) + piece.end - piece.start)
+  const main = [...weight].sort((a, b) => b[1] - a[1])[0]?.[0]
+  const group =
+    main !== undefined &&
+    !cut.some(({ piece, inside }) => !inside && piece.repeatGroup === main && piece.end - piece.start >= 1)
+      ? main
+      : Math.max(-1, ...sections.map((s) => s.repeatGroup ?? -1)) + 1
+  const pieces: SongSection[] = []
+  for (const { piece, inside } of cut) {
+    if (inside) {
+      piece.label = 'chorus'
+      piece.repeatGroup = group
+    } else if (piece.label === 'chorus') piece.label = 'verse'
+    const last = pieces.at(-1)
+    const sameKind =
+      last?.label === piece.label && (last.repeatGroup === piece.repeatGroup || piece.label !== 'chorus')
+    if (last && (piece.end - piece.start < 1 || sameKind)) last.end = piece.end
+    else pieces.push(piece)
   }
   return pieces
 }
