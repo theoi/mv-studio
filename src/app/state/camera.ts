@@ -169,7 +169,7 @@ export function smearingMoves(
 /** What to tell the user when `smearing` of the `total` stills just given a move may smear; null when none may. */
 export function smearNote(total: number, smearing: number): string | null {
   if (!smearing) return null
-  const rest = 'may smear behind the foreground at this strength. Try a lower Strength.'
+  const rest = 'may smear behind foreground objects at this strength. Try a lower Strength.'
   if (total === 1) return `This image ${rest}`
   return `${smearing === total ? `All ${total}` : `${smearing} of ${total}`} images ${rest}`
 }

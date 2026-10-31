@@ -163,7 +163,7 @@ test('Assist › 3D camera adds a depth camera move to every still in one undo s
   await apply.click()
   await expect(assist.getByText(`Added a 3D camera move to ${before.clips.length} images`)).toBeVisible()
   // The smooth depth smears nowhere, even at 60%.
-  await expect(assist.getByText(/may smear behind the foreground/)).toHaveCount(0)
+  await expect(assist.getByText(/may smear behind foreground objects/)).toHaveCount(0)
 
   const after = await stills(page)
   expect(after.depthAssets).toHaveLength(1)
@@ -442,7 +442,7 @@ test('a move added at a strength that may smear says so where it lands: in Assis
     window.location.hash = `#/editor?tab=assist&assist=camera&sel=clip:${id}&t=28`
   }, clipId)
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
-  const advice = 'This image may smear behind the foreground at this strength. Try a lower Strength.'
+  const advice = 'This image may smear behind foreground objects at this strength. Try a lower Strength.'
   await assist.getByRole('slider', { name: 'Strength' }).focus()
   await page.keyboard.press('End')
   await expect(assist.getByText('100%', { exact: true })).toBeVisible()
@@ -454,7 +454,8 @@ test('a move added at a strength that may smear says so where it lands: in Assis
   await expect(assist.getByText(`Strength 100% · may smear above ${safe}%`)).toBeVisible()
 
   // Show opens the image in the Inspector, where Motion has its strength and the same advice.
-  await assist.getByRole('button', { name: /^Show checker/ }).click()
+  // Names repeat when a still is on the timeline more than once, so the button also says where the clip is.
+  await assist.getByRole('button', { name: /^Show checker at \d+:\d\d$/ }).click()
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   const note = inspector.getByText(`May smear behind foreground objects above ${safe}%.`)
   await expect(note).toBeVisible()

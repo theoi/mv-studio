@@ -42,11 +42,13 @@ export function CameraBadge() {
 function StillRow({
   clip,
   asset,
+  title,
   detail,
   action,
 }: {
   clip: ImageClip
   asset: Asset
+  title?: string
   detail?: string
   action?: ReactNode
 }) {
@@ -55,7 +57,7 @@ function StillRow({
     <div className={styles.suitRow}>
       <span className={styles.suitThumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined} />
       <span className={styles.suitText}>
-        <span className={styles.toolTitle}>{clip.name ?? asset.name}</span>
+        <span className={styles.toolTitle}>{title ?? clip.name ?? asset.name}</span>
         <span className={styles.muted}>
           {detail ??
             `Image · on the timeline at ${formatTime(clip.start)}${hasCameraMove(clip) ? ' · replaces its camera move' : ''}`}
@@ -125,6 +127,11 @@ export function CameraView() {
     const canUndo = editor.undoLabel() === result.label
     const smearing = smearingMoves(project, result, preset)
     const smear = smearNote(result.moves.length, smearing.length)
+    const smearRows = smearing.flatMap((m) => {
+      const clip = project.clips[m.clipId]
+      const asset = clip?.type === 'image' ? project.assets[clip.assetId] : undefined
+      return clip?.type === 'image' && asset ? [{ m, clip, asset, name: clip.name ?? asset.name }] : []
+    })
     const undoButton = (
       <Button
         variant="secondary"
@@ -191,22 +198,23 @@ export function CameraView() {
             <div>{smear}</div>
           </div>
         )}
-        {smearing.map((m) => {
-          const clip = project.clips[m.clipId]
-          const asset = clip?.type === 'image' ? project.assets[clip.assetId] : undefined
-          if (clip?.type !== 'image' || !asset) return null
+        {smearRows.map(({ m, clip, asset, name }) => {
+          const at = `${name} at ${formatTime(clip.start)}`
           const strength = Math.round((cameraMoveOf(clip)?.intensity ?? m.intensity) * 100)
+          const safe = Math.round(m.safeIntensity * 100)
           return (
             <StillRow
               key={m.clipId}
               clip={clip}
               asset={asset}
-              detail={`Strength ${strength}% · may smear above ${Math.round(m.safeIntensity * 100)}%`}
+              {...(smearRows.filter((r) => r.name === name).length > 1 ? { title: at } : {})}
+              // No-break spaces keep each fact whole, so a narrow panel breaks the line only after the dot.
+              detail={`Strength\u00a0${strength}%\u00a0· may\u00a0smear\u00a0above\u00a0${safe}%`}
               action={
                 <Button
                   size="sm"
                   variant="secondary"
-                  aria-label={`Show ${clip.name ?? asset.name}`}
+                  aria-label={`Show ${at}`}
                   onClick={() => showClips([m.clipId])}
                 >
                   Show

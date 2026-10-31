@@ -61,16 +61,16 @@ it('says how many of the stills just given a move may smear', () => {
   expect(smearNote(1, 0)).toBeNull()
   expect(smearNote(4, 0)).toBeNull()
   expect(smearNote(1, 1)).toBe(
-    'This image may smear behind the foreground at this strength. Try a lower Strength.',
+    'This image may smear behind foreground objects at this strength. Try a lower Strength.',
   )
   expect(smearNote(4, 1)).toBe(
-    '1 of 4 images may smear behind the foreground at this strength. Try a lower Strength.',
+    '1 of 4 images may smear behind foreground objects at this strength. Try a lower Strength.',
   )
   expect(smearNote(4, 3)).toBe(
-    '3 of 4 images may smear behind the foreground at this strength. Try a lower Strength.',
+    '3 of 4 images may smear behind foreground objects at this strength. Try a lower Strength.',
   )
   expect(smearNote(3, 3)).toBe(
-    'All 3 images may smear behind the foreground at this strength. Try a lower Strength.',
+    'All 3 images may smear behind foreground objects at this strength. Try a lower Strength.',
   )
 })
 
