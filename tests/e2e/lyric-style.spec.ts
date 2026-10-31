@@ -87,3 +87,28 @@ test('the karaoke highlight turns on and its color changes as one undo step per 
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
   await expect.poll(async () => (await lines(page)).highlight).toBe('#ffd27a')
 })
+
+test('with a color field focused, only Ctrl or Cmd shortcuts act', async ({ page }) => {
+  await openLyricLine(page)
+  const clips = () =>
+    page.evaluate(() => Object.keys(window.mvStudio.app.project.editor.getProject().clips).length)
+  const count = await clips()
+  const time = await page.getByText(/^01:10\.40/).textContent()
+  await page.getByLabel('Text color').focus()
+  // S splits, T adds text, the arrows move the playhead and Escape clears the selection, but not here.
+  for (const key of ['s', 't', 'ArrowRight', 'Escape']) await page.keyboard.press(key)
+  expect(await clips()).toBe(count)
+  await expect(page.getByText(/^01:10\.40/)).toHaveText(time!)
+  await expect(page.getByText('Lyric line', { exact: true })).toBeVisible()
+  await page.getByLabel('Text color').fill('#ff3366')
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const project: Project = window.mvStudio.app.project.editor.getProject()
+        const line = Object.values(project.clips).find((c) => c.type === 'text' && c.lyricLineId === 'l-c1-2')
+        return line?.type === 'text' ? line.style.color : null
+      }),
+    )
+    .not.toBe('#ff3366')
+})

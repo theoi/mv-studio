@@ -449,11 +449,15 @@ export function ColorField({
 }) {
   if (!onChange)
     return (
-      <span className={styles.color} aria-label={ariaLabel} role="button" tabIndex={0}>
+      <span className={styles.color} role="img" aria-label={`${ariaLabel}: ${value.toUpperCase()}`}>
         <span className={styles.colorSwatch} style={{ background: value }} />
-        <span className="tnum">{value.toUpperCase()}</span>
+        <span className="tnum" aria-hidden>
+          {value.toUpperCase()}
+        </span>
       </span>
     )
+  // The color input has no alpha, so a picked color keeps the value's own (#rrggbbaa).
+  const alpha = /^#[0-9a-f]{8}$/i.test(value.trim()) ? value.trim().slice(7) : ''
   return (
     <label className={styles.color}>
       <input
@@ -466,7 +470,7 @@ export function ColorField({
         type="color"
         className={styles.colorInput}
         value={inputHex(value)}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value + alpha)}
         aria-label={ariaLabel}
       />
       <span className={styles.colorSwatch} style={{ background: value }} />

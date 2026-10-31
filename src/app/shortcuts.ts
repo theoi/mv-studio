@@ -12,13 +12,15 @@ import {
 } from './state/project.ts'
 import { get, openAssist, set, toast } from './state/ui.ts'
 
-function isTyping(el: EventTarget | null) {
+function isTyping(el: EventTarget | null, mod: boolean) {
   const node = el as HTMLElement | null
   if (!node) return false
+  // A color input takes no typing but keeps its keys (Space and Enter open the picker), so only shortcuts with
+  // Ctrl or Cmd, such as undo, pass while it is focused.
+  if (node.tagName === 'INPUT' && (node as HTMLInputElement).type === 'color') return !mod
   return (
     node.isContentEditable ||
-    // A color input takes no typing, so undo and the other shortcuts still work while it is focused.
-    (node.tagName === 'INPUT' && (node as HTMLInputElement).type !== 'color') ||
+    node.tagName === 'INPUT' ||
     node.tagName === 'TEXTAREA' ||
     node.getAttribute('role') === 'combobox' ||
     // Sliders take the arrow keys, Home and End for their value.
@@ -45,7 +47,7 @@ export function useGlobalShortcuts() {
         return
       }
       if (s.screen !== 'editor' || s.dialog || s.paletteOpen || s.guideStep !== null) return
-      if (isTyping(e.target)) return
+      if (isTyping(e.target, mod)) return
 
       if (mod && key === 'e') {
         e.preventDefault()
