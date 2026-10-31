@@ -45,6 +45,8 @@ import {
   Cpu,
   HardDrive,
   Info,
+  Repeat,
+  Maximize2,
 } from 'lucide-react'
 import { useReturnFocus } from '../../ds/focus.ts'
 import { Kbd } from '../../ds/Kbd.tsx'
@@ -66,6 +68,7 @@ import { ASK_SCORE, paletteScore } from '../../state/paletteScore.ts'
 import { chooseLook, lookItems } from '../../state/library.ts'
 import { addTextAtPlayhead, editor, redo, splitAtPlayhead, undo } from '../../state/project.ts'
 import { get, openAssist, selectedClipIds, set, toast, useUi, type SettingsPage } from '../../state/ui.ts'
+import { toggleFullscreen, toggleLoop } from '../../state/previewControls.ts'
 import { changeAspect } from '../../state/reframe.ts'
 import { saveFrameFromPalette } from '../../state/stills.ts'
 import { fitTimeline, zoomBy } from '../../state/zoom.ts'
@@ -299,6 +302,21 @@ const actions: Action[] = [
     shortcut: keysOf('library'),
     keywords: 'panel media sidebar',
     run: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
+  },
+  {
+    group: 'View',
+    label: 'Loop playback',
+    icon: <Repeat />,
+    shortcut: keysOf('loop'),
+    keywords: 'repeat section',
+    run: toggleLoop,
+  },
+  {
+    group: 'View',
+    label: 'Full-screen preview',
+    icon: <Maximize2 />,
+    shortcut: keysOf('fullscreen'),
+    run: toggleFullscreen,
   },
   {
     group: 'View',

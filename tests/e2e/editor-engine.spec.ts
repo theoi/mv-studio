@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, openApp, test, waitForPreview } from './fixtures.ts'
 
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
@@ -54,6 +54,21 @@ async function imageDiff(page: Page, a: Buffer, b: Buffer): Promise<number> {
   )
 }
 
+/** A screenshot of the preview once it shows a picture that stays put. The render worker's first frame can come
+ * before the media in it has loaded, so the canvas can still be black right after the preview stops being busy. */
+async function settledPicture(page: Page, preview: Locator): Promise<Buffer> {
+  let last = await preview.screenshot()
+  await expect
+    .poll(async () => {
+      const next = await preview.screenshot()
+      const still = (await imageDiff(page, last, next)) < 0.5
+      last = next
+      return still && (await imageStats(page, next)).mean > 12
+    })
+    .toBe(true)
+  return last
+}
+
 async function playheadSeconds(page: Page): Promise<number> {
   const text = await page
     .getByText(/^\d\d:\d\d\.\d\d$/)
@@ -67,7 +82,7 @@ test('the editor preview renders the sample project with the engine and plays in
   page,
 }) => {
   const preview = await openEditorAt(page, '#/editor?t=66.9')
-  const frame = await imageStats(page, await preview.screenshot())
+  const frame = await imageStats(page, await settledPicture(page, preview))
   // A drawn scene, not the black canvas behind it.
   expect(frame.mean).toBeGreaterThan(12)
   expect(frame.spread).toBeGreaterThan(8)
@@ -97,7 +112,7 @@ test('putting lyrics behind the singer cuts the subject out above them, as one u
   page,
 }) => {
   const preview = await openEditorAt(page, '#/editor?t=66.9&sel=clip:c-s-c1-1')
-  const before = await preview.screenshot()
+  const before = await settledPicture(page, preview)
   await page.getByRole('button', { name: 'Put lyrics behind' }).click()
   const cutout = page.getByRole('button', { name: 'Singer close-up · subject, 1:06.0 to 1:08.0' })
   await expect(cutout).toBeVisible()

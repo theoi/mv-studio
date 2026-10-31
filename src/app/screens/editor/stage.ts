@@ -1,8 +1,10 @@
 import { applyMat, fitSize, layerMatrix } from '../../../engine/layout.ts'
 import { PreviewController } from '../../../engine/preview.ts'
 import { cssFont, fontPxFor, layoutText } from '../../../engine/text.ts'
-import type { Clip, Project } from '../../../model/index.ts'
+import type { Clip, Project, VisualClip } from '../../../model/index.ts'
 import { appMedia } from '../../state/media.ts'
+import { prefs, usePrefs } from '../../state/prefs.ts'
+import { loopRange } from '../../state/previewControls.ts'
 import { editor } from '../../state/project.ts'
 import { audioErrorText } from '../../state/stems.ts'
 import { get, set, toast, useUi, type Selection } from '../../state/ui.ts'
@@ -11,10 +13,20 @@ import { get, set, toast, useUi, type Selection } from '../../state/ui.ts'
 const reportedAudio = new Set<string>()
 
 let current: PreviewController | null = null
+// The project the preview was last given, so the same one is not drawn twice.
+let shown: Project | null = null
 
 /** The preview drawing the editor's stage, while one is showing (for tests that read its frames). */
 export function stagePreview(): PreviewController | null {
   return current
+}
+
+/** Shows a project the editor does not have yet, such as a drag in progress; null goes back to the editor's. */
+export function showDraft(project: Project | null) {
+  const next = project ?? editor.getProject()
+  if (!current || next === shown) return
+  shown = next
+  current.setProject(next)
 }
 
 /**
@@ -30,15 +42,37 @@ export function connectPreview(
   // The playhead last written from the clock, so it is not sent back as a seek.
   let fromClock = Number.NaN
   let wasPlaying = false
+  let loopKey = ''
+  // Only when the range changes: setting a loop while playing reschedules the audio.
+  const applyLoop = (t: number) => {
+    const range = get().loop ? loopRange(editor.getProject(), t) : null
+    const key = range ? `${range.start}:${range.end}` : ''
+    if (key === loopKey) return
+    loopKey = key
+    preview.setLoop(range && { start: range.start, end: range.end })
+  }
   // Size and time first, so the first frame drawn is the one the user sees.
   preview.setViewport(viewport.width, viewport.height)
   preview.seek(get().playhead)
-  preview.setProject(editor.getProject())
+  shown = editor.getProject()
+  preview.setProject(shown)
+  preview.setVolume(prefs().previewVolume)
+  applyLoop(get().playhead)
   if (get().playing) set({ playing: false })
   const unsubscribe = [
-    editor.subscribe((project) => preview.setProject(project)),
+    editor.subscribe((project) => {
+      shown = project
+      preview.setProject(project)
+      applyLoop(get().playhead)
+    }),
+    usePrefs.subscribe((p, prev) => {
+      if (p.previewVolume !== prev.previewVolume) preview.setVolume(p.previewVolume)
+    }),
     useUi.subscribe((s, prev) => {
-      if (s.playhead !== prev.playhead && s.playhead !== fromClock) preview.seek(s.playhead)
+      const seeked = s.playhead !== prev.playhead && s.playhead !== fromClock
+      // A seek into another section moves the loop there.
+      if (seeked || s.loop !== prev.loop) applyLoop(s.playhead)
+      if (seeked) preview.seek(s.playhead)
       if (s.playing === prev.playing) return
       if (s.playing) {
         if (preview.clock.state !== 'playing') set({ starting: true })
@@ -76,17 +110,19 @@ export function connectPreview(
     preview,
     dispose() {
       for (const u of unsubscribe) u()
-      if (current === preview) current = null
+      if (current === preview) {
+        current = null
+        shown = null
+      }
       preview.dispose()
       if (get().playing) set({ playing: false, starting: false })
     },
   }
 }
 
-/** The largest frame of the given aspect ratio that fits the stage, in CSS pixels. */
-export function fitStage(stage: HTMLElement, ratio: number): { width: number; height: number } {
+/** The largest frame of the given aspect ratio that fits the stage with `pad` around it, in CSS pixels. */
+export function fitStage(stage: HTMLElement, ratio: number, pad = 12): { width: number; height: number } {
   const r = stage.getBoundingClientRect()
-  const pad = 12
   const width = Math.max(1, Math.floor(Math.min(r.width - pad * 2, (r.height - pad * 2) * ratio)))
   return { width, height: Math.max(1, Math.floor(width / ratio)) }
 }
@@ -113,6 +149,20 @@ function textBox(clip: Extract<Clip, { type: 'text' }>, width: number, height: n
   return [layout.width, layout.height]
 }
 
+/** The clip the selection shows on the preview at time t, if any (a lyric line selects its text clip there). */
+export function selectedClip(project: Project, selection: Selection, t: number): VisualClip | undefined {
+  const live = (c: Clip) => c.enabled && t >= c.start && t < c.start + c.duration
+  let clip: Clip | undefined
+  if (selection.type === 'clip') clip = project.clips[selection.id]
+  else if (selection.type === 'lyric')
+    clip = Object.values(project.clips).find(
+      (c) => c.type === 'text' && c.lyricLineId === selection.id && live(c),
+    )
+  if (!clip || clip.type === 'audio' || !live(clip)) return undefined
+  if (project.tracks.find((tr) => tr.id === clip.trackId)?.hidden) return undefined
+  return clip
+}
+
 /** The selected clip's outline on the preview at time t, as four corners in CSS pixels, or null when off screen. */
 export function selectionOutline(
   project: Project,
@@ -121,15 +171,8 @@ export function selectionOutline(
   width: number,
   height: number,
 ): [number, number][] | null {
-  const live = (c: Clip) => c.enabled && t >= c.start && t < c.start + c.duration
-  let clip: Clip | undefined
-  if (selection.type === 'clip') clip = project.clips[selection.id]
-  else if (selection.type === 'lyric')
-    clip = Object.values(project.clips).find(
-      (c) => c.type === 'text' && c.lyricLineId === selection.id && live(c),
-    )
-  if (!clip || clip.type === 'audio' || !live(clip)) return null
-  if (project.tracks.find((tr) => tr.id === clip.trackId)?.hidden) return null
+  const clip = selectedClip(project, selection, t)
+  if (!clip) return null
   let base: [number, number] = [width, height]
   if (clip.type === 'video' || clip.type === 'image') {
     const asset = project.assets[clip.assetId]

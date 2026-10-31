@@ -17,6 +17,8 @@
   --bg-active: rgb(255 255 255 / 0.08);
   --bg-selected: rgb(249 122 94 / 0.14);
   --bg-scrim: rgb(5 5 8 / 0.62);
+  /* Around the video in full screen */
+  --letterbox: #000;
 
   --border-subtle: rgb(255 255 255 / 0.06);
   --border: rgb(255 255 255 / 0.09);

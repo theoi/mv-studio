@@ -12,6 +12,7 @@ import { openImport } from './importer.ts'
 import { saveNow } from './persistence.ts'
 import { nudgeLine } from './lyricEdits.ts'
 import { jumpSection, stepPlayhead } from './playback.ts'
+import { toggleFullscreen, toggleLoop } from './previewControls.ts'
 import {
   addTextAtPlayhead,
   editor,
@@ -142,6 +143,10 @@ export const SHORTCUTS = [
     group: 'General',
     keys: ['Esc'],
     run: () => {
+      if (document.fullscreenElement) {
+        void document.exitFullscreen()
+        return
+      }
       stopShuttle()
       set({ selection: { type: 'none' } })
     },
@@ -212,6 +217,8 @@ export const SHORTCUTS = [
     keys: ['End'],
     run: () => set({ playhead: timelineDuration(editor.getProject()) - 0.01 }),
   },
+  { id: 'loop', label: 'Loop playback', group: 'Playback', keys: ['Mod L'], run: toggleLoop },
+  { id: 'fullscreen', label: 'Full-screen preview', group: 'Playback', keys: ['F'], run: toggleFullscreen },
 
   { id: 'split', label: 'Split at playhead', group: 'Timeline', keys: ['S'], run: splitAtPlayhead },
   {

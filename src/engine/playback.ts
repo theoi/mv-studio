@@ -54,7 +54,7 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   /** The next loop pass, scheduled ahead so playback wraps without a gap. */
   private nextPass: { context: number; time: Seconds; mix: ScheduledMix } | null = null
   private loop: { start: Seconds; end: Seconds } | null = null
-  private volume = 1
+  private level = 1
   private ticker: ReturnType<typeof setInterval> | null = null
   private playRequest = 0
   private readonly listeners = new Set<(state: PlaybackState, time: Seconds) => void>()
@@ -184,7 +184,7 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' })
       this.master = this.ctx.createGain()
-      this.master.gain.value = this.volume
+      this.master.gain.value = this.level
       this.master.connect(this.ctx.destination)
     }
     return this.ctx
@@ -241,9 +241,14 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     this.reschedule(outside && this.loop ? this.loop.start : t)
   }
 
+  /** The output gain set with setVolume (1 = as mixed). */
+  get volume(): number {
+    return this.level
+  }
+
   setVolume(volume: number): void {
-    this.volume = Math.max(0, volume)
-    if (this.master) this.master.gain.value = this.volume
+    this.level = Math.max(0, volume)
+    if (this.master) this.master.gain.value = this.level
   }
 
   subscribe(listener: (state: PlaybackState, time: Seconds) => void): () => void {
