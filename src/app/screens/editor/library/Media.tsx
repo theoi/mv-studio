@@ -26,6 +26,17 @@ import styles from '../Library.module.css'
 
 const filters = ['All', 'Video', 'Images', 'Generated'] as const
 
+/** What a filter shows before there is anything to show. */
+const noneYet: Record<(typeof filters)[number], { title: string; description: string }> = {
+  All: { title: 'No clips or images yet', description: 'Drop clips and images, or Import.' },
+  Video: { title: 'No video clips yet', description: 'Drop clips and images, or Import.' },
+  Images: { title: 'No images yet', description: 'Drop clips and images, or Import.' },
+  Generated: {
+    title: 'Nothing generated yet',
+    description: 'Images and clips you make in Assist › Generate appear here.',
+  },
+}
+
 interface LibraryItem {
   asset: Asset
   name: string
@@ -267,7 +278,7 @@ export function MediaTab() {
         <EmptyState
           icon={<Upload />}
           title="Bring in your media"
-          description="Drop a song, video clips or images anywhere, or import them. Files stay on this device."
+          description="Drop a song, clips and images anywhere, or Import. Files stay on this device."
           action={
             <Button variant="secondary" icon={<Plus />} onClick={() => openImport()}>
               Import
@@ -309,7 +320,7 @@ export function MediaTab() {
         <div className={styles.groupLabel}>Song</div>
         {hasSong(project) ? <SongRow /> : <AddSongRow />}
         <div className={styles.groupLabel}>
-          Clips and images <span className={styles.count}>{items.length}</span>
+          Clips and images {items.length > 0 && <span className={styles.count}>{items.length}</span>}
         </div>
         {items.length ? (
           <div className={styles.grid}>
@@ -319,6 +330,18 @@ export function MediaTab() {
           </div>
         ) : analyzing ? (
           <EmptyState compact title="Analyzing your footage…" description="Results appear as clips finish." />
+        ) : !q ? (
+          <EmptyState
+            compact
+            {...noneYet[filter]}
+            action={
+              filter !== 'Generated' && (
+                <Button variant="secondary" icon={<Plus />} onClick={() => openImport()}>
+                  Import
+                </Button>
+              )
+            }
+          />
         ) : (
           <EmptyState
             compact
