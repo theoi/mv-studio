@@ -50,7 +50,7 @@ const COVERS_SECTION = 0.6
 /** Fewest words sung in a passage before the lyrics can say what it is; fewer is instrumental. */
 const MIN_SUNG_WORDS = 6
 /** How much the lyrics may extend a detected chorus they repeat in, at both ends together, as a share of its length. */
-const MAX_EXTENSION = 0.25
+const MAX_EXTENSION = 0.1
 /** How far a chorus edge may move to reach a downbeat (or a beat when bars are not found), in seconds. */
 const SNAP = 2
 
@@ -294,8 +294,8 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
 /**
  * The chorus ranges once the lyrics' chorus is combined with the detected one, so pasted lyrics correct the detected
  * chorus without overriding a good one:
- * - A detected chorus the lyrics repeat in is confirmed and never shrinks. The lyrics extend it by at most a quarter
- *   of its length (a longer occurrence also spans a neighbouring part that repeats with it).
+ * - A detected chorus the lyrics repeat in is confirmed and never shrinks. The lyrics extend it by at most a tenth
+ *   of its length (a longer occurrence also spans a lead-in line or a neighbouring part that repeats with it).
  * - A detected chorus the lyrics do not repeat in stays only where mostly repeated words are sung: an instrumental
  *   passage or a verse is not the chorus when the lyrics show where it is.
  * - A lyric chorus elsewhere takes over the sections it covers most of.
