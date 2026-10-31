@@ -14,13 +14,11 @@ import {
 } from 'mediabunny'
 import type { Asset } from '../../model/index.ts'
 import { sceneLayers, type SceneId } from './art.ts'
-import { MASK_PREFIX } from './demoProject.ts'
+import { MASK_PREFIX, SAMPLE_VIDEO_FPS } from './demoProject.ts'
 import { synthesizeSong } from './sampleSong.ts'
 
 const WIDTH = 1280
 const HEIGHT = 720
-/** The scenes are still, so a low frame rate is enough and keeps encoding fast. */
-const VIDEO_FPS = 2
 
 const SCENE_PREFIX = 'mock:'
 
@@ -87,10 +85,10 @@ async function encodeStillVideo(canvas: HTMLCanvasElement, duration: number): Pr
     keyFrameInterval: 4,
     latencyMode: 'realtime',
   })
-  output.addVideoTrack(source, { frameRate: VIDEO_FPS })
+  output.addVideoTrack(source, { frameRate: SAMPLE_VIDEO_FPS })
   await output.start()
-  const frames = Math.max(2, Math.ceil(duration * VIDEO_FPS))
-  for (let i = 0; i < frames; i++) await source.add(i / VIDEO_FPS, 1 / VIDEO_FPS)
+  const frames = Math.max(2, Math.ceil(duration * SAMPLE_VIDEO_FPS))
+  for (let i = 0; i < frames; i++) await source.add(i / SAMPLE_VIDEO_FPS, 1 / SAMPLE_VIDEO_FPS)
   source.close()
   await output.finalize()
   if (!target.buffer) throw new Error('Video encoding produced no data')
