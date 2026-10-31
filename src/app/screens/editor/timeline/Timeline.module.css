@@ -509,7 +509,34 @@
   line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
+}
+
+/* A word's start and end: drag to re-time the word. */
+.wordEdge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
   cursor: ew-resize;
+}
+
+.wordEdgeL {
+  left: 0;
+}
+
+.wordEdgeR {
+  right: 0;
+}
+
+.wordEdge:hover {
+  background: rgb(207 233 228 / 0.45);
+}
+
+.untimedSuggest {
+  position: absolute;
+  top: 50%;
+  z-index: 8;
+  transform: translateY(-50%);
 }
 
 .lyricSuggest {

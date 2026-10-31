@@ -6,8 +6,15 @@ import { Segmented, TextArea } from '../../../ds/Fields.tsx'
 import { formatBytes, plural } from '../../../format.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { estimateLyrics, lastLyricsRequest, startLyrics } from '../../../state/lyrics.ts'
-import { hasSong, lyricLines, songAnalysis, useProject } from '../../../state/project.ts'
-import { set } from '../../../state/ui.ts'
+import {
+  hasSong,
+  lyricLines,
+  sectionKind,
+  sectionsOf,
+  songAnalysis,
+  useProject,
+} from '../../../state/project.ts'
+import { select, set } from '../../../state/ui.ts'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -65,7 +72,17 @@ export function LyricsView() {
       live = false
     }
   }, [mode, project.songAssetId, stemsReady, phase])
-  const firstChorusLine = lines.find((l) => l.id.startsWith('l-c1'))
+  // The highlight is a setting of a line's clip: open the first chorus line that has one, else the first such line.
+  const shown = new Set(
+    Object.values(project.clips).flatMap((c) => (c.type === 'text' && c.lyricLineId ? [c.lyricLineId] : [])),
+  )
+  const choruses = sectionsOf(project).filter((s) => sectionKind(s) === 'chorus')
+  const withClip = lines.filter((l) => shown.has(l.id))
+  const karaokeLine =
+    withClip.find((l) => {
+      const t = l.start
+      return t !== undefined && choruses.some((s) => t >= s.start && t < s.end)
+    }) ?? withClip[0]
   const timed = lines.some((l) => l.start !== undefined)
 
   if (phase === 'running') {
@@ -180,12 +197,8 @@ export function LyricsView() {
           <Button size="sm" variant="ghost" onClick={() => set({ libraryTab: 'text' })}>
             Kinetic presets
           </Button>
-          {firstChorusLine && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => set({ selection: { type: 'lyric', id: firstChorusLine.id } })}
-            >
+          {karaokeLine && (
+            <Button size="sm" variant="ghost" onClick={() => select({ type: 'lyric', id: karaokeLine.id })}>
               Karaoke highlight
             </Button>
           )}

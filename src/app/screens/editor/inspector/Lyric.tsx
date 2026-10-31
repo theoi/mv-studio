@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Check, Mic2 } from 'lucide-react'
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Mic2 } from 'lucide-react'
 import type { Clip, LyricLine } from '../../../../model/index.ts'
 import { jobs } from '../../../../shared/jobs.ts'
-import { Button } from '../../../ds/Button.tsx'
+import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBytes, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
+import { nudgeLine, setLineEdge } from '../../../state/lyricEdits.ts'
 import { lineTiming, retimeCost, retimeLine } from '../../../state/lyricTiming.ts'
 import {
   dispatch,
@@ -120,17 +121,20 @@ function WordsSection({ line }: { line: LyricLine }) {
       Re-time line
     </Button>
   )
-  const updateLine = (patch: { text?: string; start?: number; end?: number }) =>
+  const updateText = (text: string) =>
     dispatch(
-      { type: 'lyrics.updateLine', lineId: line.id, patch },
-      { coalesceKey: `inspector:${line.id}:${Object.keys(patch).join()}` },
+      { type: 'lyrics.updateLine', lineId: line.id, patch: { text } },
+      { coalesceKey: `inspector:${line.id}:text` },
     )
+  const setEdge = (edge: 'start' | 'end', value: number) =>
+    setLineEdge(line.id, edge, value, `inspector:${line.id}:${edge}`)
+  const timed = line.words.length > 0
   return (
     <Section title="Words">
       <div className={styles.padded}>
         <Input
           value={line.text}
-          onChange={(e) => updateLine({ text: e.target.value })}
+          onChange={(e) => updateText(e.target.value)}
           onBlur={() => editor.endGesture()}
           aria-label="Lyric text"
         />
@@ -153,7 +157,7 @@ function WordsSection({ line }: { line: LyricLine }) {
       <FieldRow label="Start">
         <NumberField
           value={line.start ?? 0}
-          onChange={(v) => updateLine({ start: v })}
+          onChange={(v) => setEdge('start', v)}
           onCommit={() => editor.endGesture()}
           step={0.01}
           precision={2}
@@ -164,13 +168,37 @@ function WordsSection({ line }: { line: LyricLine }) {
       <FieldRow label="End">
         <NumberField
           value={line.end ?? 0}
-          onChange={(v) => updateLine({ end: v })}
+          onChange={(v) => setEdge('end', v)}
           onCommit={() => editor.endGesture()}
           step={0.01}
           precision={2}
           unit="s"
           ariaLabel="End time"
         />
+      </FieldRow>
+      <FieldRow label="Nudge">
+        <div className={styles.nudgeRow}>
+          <IconButton
+            size="sm"
+            variant="secondary"
+            label="Nudge one frame earlier"
+            shortcut="Alt ←"
+            disabled={!timed}
+            onClick={() => nudgeLine(line.id, -1)}
+          >
+            <ChevronLeft />
+          </IconButton>
+          <IconButton
+            size="sm"
+            variant="secondary"
+            label="Nudge one frame later"
+            shortcut="Alt →"
+            disabled={!timed}
+            onClick={() => nudgeLine(line.id, 1)}
+          >
+            <ChevronRight />
+          </IconButton>
+        </div>
       </FieldRow>
     </Section>
   )

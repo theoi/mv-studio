@@ -39,9 +39,22 @@ import {
   MenuTrigger,
 } from '../../../ds/Menu.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
-import { formatBpm, formatTime } from '../../../format.ts'
+import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { sceneThumb } from '../../../mock/art.ts'
 import { peakRate, peaks } from '../../../mock/song.ts'
+import { templateState } from '../../../../plugins/templates.ts'
+import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
+import {
+  lineDeltaRange,
+  lineTimingCommands,
+  MOVE_LABEL,
+  TIMING_LABEL,
+  wordEdgeCommands,
+  wordEdgeRange,
+  type LineEdge,
+  type WordEdge,
+} from '../../../state/lyricEdits.ts'
+import { lineTiming } from '../../../state/lyricTiming.ts'
 import {
   bpmOf,
   dispatch,
@@ -236,9 +249,14 @@ function labelWidth(text: string): number {
   return w
 }
 
+/** Narrowest word that still shows as a word with edge handles on the selected line. */
+const MIN_WORD_PX = 12
+
 /**
- * A lyric line shows its words only where they fit whole. Zoomed in, each word sits at its sung time; otherwise the
- * whole line shows if it fits, and a too-narrow chip shows the rhythm of its words as marks instead of cut-off text.
+ * A lyric line shows its words only where they fit whole. Zoomed in, each word sits at its sung time and its edges
+ * are handles; the selected line keeps its words as handles while every word is at least MIN_WORD_PX wide, even
+ * where a label no longer fits. Otherwise the whole line shows if it fits, and a too-narrow chip shows the rhythm of
+ * its words as marks instead of cut-off text.
  */
 function LyricChipContent({
   text,
@@ -246,12 +264,16 @@ function LyricChipContent({
   start,
   width,
   pps,
+  selected,
+  onWordEdge,
 }: {
   text: string
   words: LyricWord[]
   start: number
   width: number
   pps: number
+  selected: boolean
+  onWordEdge: (e: React.PointerEvent, index: number, edge: WordEdge) => void
 }) {
   const spans = words.map((wd) => ({
     text: wd.text,
@@ -259,10 +281,18 @@ function LyricChipContent({
     width: Math.max(2, (wd.end - wd.start) * pps - WORD_GAP),
   }))
   const wordsFit = spans.length > 0 && spans.every((s) => labelWidth(s.text) + 6 <= s.width)
-  if (wordsFit)
+  if (wordsFit || (selected && spans.length > 0 && spans.every((s) => s.width >= MIN_WORD_PX)))
     return spans.map((s, i) => (
       <span key={i} className={styles.word} style={{ left: s.left, width: s.width }}>
         {s.text}
+        <i
+          className={[styles.wordEdge, styles.wordEdgeL].join(' ')}
+          onPointerDown={(e) => onWordEdge(e, i, 'start')}
+        />
+        <i
+          className={[styles.wordEdge, styles.wordEdgeR].join(' ')}
+          onPointerDown={(e) => onWordEdge(e, i, 'end')}
+        />
       </span>
     ))
   if (labelWidth(text) + LABEL_PAD <= width) return <span className={styles.lyricText}>{text}</span>
@@ -275,6 +305,8 @@ function LyricChipContent({
     </span>
   )
 }
+
+type LyricDrag = { type: 'line'; edge: LineEdge } | { type: 'word'; index: number; edge: WordEdge }
 
 /* ---------- toolbar ---------- */
 
@@ -646,12 +678,20 @@ export function Timeline() {
   const duration = empty ? 90 : timelineDuration(project)
   const contentW = duration * pps + 120
   const stems = analysis?.stems ? Object.keys(analysis.stems) : []
+  const timingLyrics = runningJobs(useJobs()).some((j) => j.kind === JOB_KINDS.lyrics)
 
   const lanes = project.tracks.map((t) => {
     const kind = laneKind(project, t)
     return { track: t, kind, height: laneHeight[kind] }
   })
   const stemH = 22
+  // Untimed lines have no clip yet, so the suggestion to time them sits in the Lyrics track itself.
+  const untimed = lines.filter((l) => l.text.trim() && lineTiming(l) === 'untimed').length
+  const lyricsTrackId =
+    lanes.find((l) => l.kind === 'lyrics')?.track.id ??
+    templateState(project)?.tracks.lyrics ??
+    project.tracks.find((t) => t.kind === 'visual' && t.name === 'Lyrics')?.id
+  const suggestTiming = untimed > 0 && !empty && !timingLyrics
   const lanesH = lanes.reduce((a, l) => a + l.height, 0) + stems.length * stemH
   const totalH = RULER_H + (empty ? 0 : SONG_H) + lanesH
 
@@ -817,6 +857,52 @@ export function Timeline() {
     }
     target.addEventListener('pointermove', move)
     target.addEventListener('pointerup', up)
+  }
+
+  /**
+   * Drags a lyric line (its body moves it, its edges move its start or end) or one edge of a word, as one undo step.
+   * A click without moving only selects the line.
+   */
+  const onLyricPointerDown = (e: React.PointerEvent, lineId: string, trackId: string, drag: LyricDrag) => {
+    e.stopPropagation()
+    select({ type: 'lyric', id: lineId })
+    if (e.button !== 0) return
+    e.preventDefault()
+    const p = editor.getProject()
+    const limits =
+      drag.type === 'line'
+        ? lineDeltaRange(p, lineId, drag.edge)
+        : wordEdgeRange(p, lineId, drag.index, drag.edge)
+    if (!limits) return
+    const track = p.tracks.find((t) => t.id === trackId)
+    const key = `lyric:${e.pointerId}:${lineId}:${e.timeStamp}`
+    const label = drag.type === 'line' && drag.edge === 'move' ? MOVE_LABEL : TIMING_LABEL
+    const x0 = e.clientX
+    let moved = false
+    // On the window: a word can stop showing as a word while it is dragged narrower, which unmounts its handle.
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - x0
+      if (!moved && Math.abs(dx) < 3) return
+      if (!moved && track?.locked) {
+        toast(`The ${track.name} track is locked. Unlock it to edit.`)
+        up()
+        return
+      }
+      moved = true
+      const d = dx / get().pxPerSec
+      const commands =
+        drag.type === 'line'
+          ? lineTimingCommands(p, lineId, drag.edge, d)
+          : wordEdgeCommands(p, lineId, drag.index, drag.edge, d)
+      if (commands) dispatch(commands, { coalesceKey: key, label })
+    }
+    const up = () => {
+      if (moved) editor.endGesture()
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
   }
 
   const selId = selection.type === 'none' ? null : selection.id
@@ -997,9 +1083,14 @@ export function Timeline() {
                   {kind !== 'audio' &&
                     clips.map((c) => {
                       if (c.kind === 'lyric') {
-                        const line = lines.find((l) => l.id === c.lyricLineId)
+                        const lineId = c.lyricLineId
+                        const line = lines.find((l) => l.id === lineId)
                         const w = (c.end - c.start) * pps
-                        const sel = selId === c.lyricLineId
+                        const sel = selId === lineId
+                        const drag = (e: React.PointerEvent, d: LyricDrag) => {
+                          if (lineId) onLyricPointerDown(e, lineId, track.id, d)
+                          else e.stopPropagation()
+                        }
                         return (
                           <div
                             key={c.id}
@@ -1008,10 +1099,7 @@ export function Timeline() {
                             role="button"
                             tabIndex={0}
                             aria-label={`Lyric: ${c.name}`}
-                            onPointerDown={(e) => {
-                              e.stopPropagation()
-                              if (c.lyricLineId) select({ type: 'lyric', id: c.lyricLineId })
-                            }}
+                            onPointerDown={(e) => drag(e, { type: 'line', edge: 'move' })}
                           >
                             <LyricChipContent
                               text={line?.text ?? c.name}
@@ -1019,8 +1107,22 @@ export function Timeline() {
                               start={c.start}
                               width={w}
                               pps={pps}
+                              selected={sel}
+                              onWordEdge={(e, index, edge) => drag(e, { type: 'word', index, edge })}
                             />
-                            {sel && c.lyricLineId && <LineMatches lineId={c.lyricLineId} />}
+                            {w >= 16 && (
+                              <>
+                                <span
+                                  className={[styles.handle, styles.handleL].join(' ')}
+                                  onPointerDown={(e) => drag(e, { type: 'line', edge: 'start' })}
+                                />
+                                <span
+                                  className={[styles.handle, styles.handleR].join(' ')}
+                                  onPointerDown={(e) => drag(e, { type: 'line', edge: 'end' })}
+                                />
+                              </>
+                            )}
+                            {sel && lineId && <LineMatches lineId={lineId} />}
                           </div>
                         )
                       }
@@ -1034,6 +1136,18 @@ export function Timeline() {
                         />
                       )
                     })}
+                  {suggestTiming && track.id === lyricsTrackId && (
+                    <div className={styles.untimedSuggest} style={{ left: Math.max(0, view.t0) * pps + 8 }}>
+                      <InlineSuggestion
+                        id="time-lyrics"
+                        variant="chip"
+                        action="Time words to the vocals"
+                        onAction={() => openAssist('lyrics')}
+                      >
+                        {plural(untimed, 'line')} not timed yet
+                      </InlineSuggestion>
+                    </div>
+                  )}
                 </div>
               </div>
             )
