@@ -2,19 +2,15 @@ import { beforeEach, expect, it } from 'vitest'
 import { autoCut } from '../../../src/vision/autocut/index.ts'
 import {
   autoCutOptions,
+  DEFAULT_AUTOCUT_CHOICES,
+  matchesMood,
   unanalyzedClipCount,
   undoAutoCut,
   type AutoCutChoices,
 } from '../../../src/app/state/autocut.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 
-const choices: AutoCutChoices = {
-  pace: 'beat',
-  followEnergy: false,
-  matchMood: true,
-  range: 'all',
-  clips: 'all',
-}
+const choices: AutoCutChoices = { ...DEFAULT_AUTOCUT_CHOICES, pace: 'beat', followEnergy: false }
 
 beforeEach(() => loadDemoProject())
 
@@ -74,4 +70,23 @@ it('counts clips footage analysis has not indexed for matching', () => {
     { history: 'skip' },
   )
   expect(unanalyzedClipCount(editor.getProject())).toBe(total - 1)
+})
+
+it('passes the More options through: where cuts land, and story order over the mood switch', () => {
+  const project = editor.getProject()
+  expect(autoCutOptions(choices, project, { type: 'none' }, 0)).toMatchObject({
+    cutOn: 'beats',
+    order: 'matched',
+  })
+  expect(autoCutOptions({ ...choices, cutOn: 'sections' }, project, { type: 'none' }, 0).cutOn).toBe(
+    'sections',
+  )
+  const story = { ...choices, clipOrder: 'story' as const }
+  expect(autoCutOptions(story, project, { type: 'none' }, 0).order).toBe('chronological')
+  expect(autoCutOptions({ ...story, matchMood: false }, project, { type: 'none' }, 0).order).toBe(
+    'chronological',
+  )
+  expect(matchesMood(choices)).toBe(true)
+  expect(matchesMood(story)).toBe(false)
+  expect(matchesMood({ ...choices, matchMood: false })).toBe(false)
 })

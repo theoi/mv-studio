@@ -203,3 +203,62 @@ test('with matching on, the first cut starts footage analysis (background analys
     }),
   ).toBeGreaterThanOrEqual(8)
 })
+
+test('Assist › Auto-cut › More options cuts on bar lines only, with the clips in story order', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?kind=footage&tab=assist&assist=autocut&t=73.6'
+  })
+  await waitForPreview(page)
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await assist.getByRole('switch', { name: 'Follow the song’s energy' }).click()
+  await assist.getByRole('radio', { name: 'Beat', exact: true }).click()
+
+  const more = assist.getByRole('button', { name: 'More options' })
+  await expect(more).toHaveAttribute('aria-expanded', 'false')
+  await expect(assist.getByRole('combobox', { name: 'Cut on' })).toHaveCount(0)
+  await more.click()
+  await expect(more).toHaveAttribute('aria-expanded', 'true')
+  await assist.getByRole('combobox', { name: 'Cut on' }).click()
+  await page.getByRole('option', { name: /Bar lines only/ }).click()
+  await assist.getByRole('combobox', { name: 'Clip order' }).click()
+  await page.getByRole('option', { name: /Story order/ }).click()
+  const mood = assist.getByRole('switch', { name: 'Match clips to the mood' })
+  await expect(mood).toBeDisabled()
+  await expect(mood).not.toBeChecked()
+  await expect(assist.getByText('Off while clips play in story order')).toBeVisible()
+  // Story order never needs footage analysis, so there is no download note.
+  await expect(assist.getByText(/analyzed yet/)).toHaveCount(0)
+
+  await assist.getByRole('button', { name: 'Cut to the beat' }).click()
+  await expect(assist.getByRole('button', { name: /^Keep \d+ cuts$/ })).toBeVisible()
+  const { clips, beat } = await autoCutTrack(page)
+  const { downbeats, order } = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const media = Object.values(project.assets as Record<string, Untyped>)
+      .filter(
+        (a) =>
+          (a.kind === 'video' || a.kind === 'image') &&
+          (a.origin.type === 'import' || a.origin.type === 'generated'),
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name))
+    return {
+      downbeats: project.analysis.audio[project.songAssetId].downbeats as number[],
+      order: media.map((a) => a.id as string),
+    }
+  })
+  expect(clips.length).toBeGreaterThan(10)
+  // Beat pace on bar lines only: every shot starts on a bar and lasts a bar or more.
+  for (const c of clips.slice(1))
+    expect(Math.min(...downbeats.map((d) => Math.abs(d - c.start)))).toBeLessThan(0.02)
+  expect(Math.min(...clips.map((c) => c.duration))).toBeGreaterThan(beat * 4 - 0.02)
+  // Story order walks through the clips in import order.
+  const indices = clips.map((c) => order.indexOf(c.assetId))
+  expect(indices.every((i) => i >= 0)).toBe(true)
+  expect(indices).toEqual([...indices].sort((a, b) => a - b))
+  expect(new Set(indices).size).toBeGreaterThan(5)
+})
