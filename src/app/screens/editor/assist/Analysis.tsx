@@ -50,7 +50,9 @@ function TempoLevelButton({ factor, bpm, disabled }: { factor: 2 | 0.5; bpm: num
   const tooFast = next > TEMPO_LEVEL_RANGE.max
   const allowed = next >= TEMPO_LEVEL_RANGE.min && !tooFast
   const name = factor === 2 ? 'Double tempo' : 'Half tempo'
-  let description = `${formatBpm(next)} is ${tooFast ? 'faster' : 'slower'} than any beat you could tap`
+  let description = tooFast
+    ? `${formatBpm(next)} is too fast to be the beat. Tempos go up to ${formatBpm(TEMPO_LEVEL_RANGE.max)}.`
+    : `${formatBpm(next)} is too slow to be the beat. Tempos go down to ${formatBpm(TEMPO_LEVEL_RANGE.min)}.`
   if (allowed)
     description =
       factor === 2

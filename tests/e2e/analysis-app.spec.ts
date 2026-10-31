@@ -163,7 +163,9 @@ test('Assist › Song analysis halves and doubles the tempo, keeping bars of fou
   await page.mouse.move(0, 0)
   await tooFast.hover()
   await expect(
-    page.getByRole('tooltip').filter({ hasText: '480 BPM is faster than any beat you could tap' }),
+    page
+      .getByRole('tooltip')
+      .filter({ hasText: '480 BPM is too fast to be the beat. Tempos go up to 300 BPM.' }),
   ).toBeVisible()
   await shot(page, 'analysis-double-off-tooltip')
   await page.getByRole('button', { name: 'Undo' }).last().click()
