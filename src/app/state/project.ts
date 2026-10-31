@@ -34,6 +34,13 @@ export function loadEmptyProject() {
   editor.load(createProject({ name: 'Untitled video' }))
 }
 
+/** Replaces an empty project with the sample project, keeping the current workspace. */
+export function loadSample() {
+  loadDemoProject()
+  set({ playhead: 0, playing: false, selection: { type: 'none' } })
+  toast(`Sample project loaded: “${editor.getProject().name}”`)
+}
+
 /** Opens the editor for a video kind with the demo project (or an empty one) and its workspace preset. */
 export function openEditor(kind: Kind, empty = false) {
   if (empty) loadEmptyProject()

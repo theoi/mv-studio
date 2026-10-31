@@ -116,6 +116,7 @@ function applyHash(hash: string) {
     ...(wantEmpty ? { playhead: 0 } : {}),
     ...hashToState(hash),
     toasts: get().toasts,
+    libraryOpen: get().libraryOpen,
     playing: false,
   })
 }

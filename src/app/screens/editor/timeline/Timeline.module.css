@@ -469,7 +469,22 @@
   line-height: 22px;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+/* Word rhythm for lyric chips too narrow for their text: one mark per sung word. */
+.lyricMarks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.lyricMarks i {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: rgb(207 233 228 / 0.42);
 }
 
 .word {

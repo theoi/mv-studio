@@ -3,7 +3,7 @@
   display: grid;
   height: 100%;
   min-width: 1200px;
-  grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--tl-h, var(--timeline-h));
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr) min(var(--tl-h, var(--timeline-h)), 62vh);
   grid-template-columns: var(--lib-w, var(--library-w)) minmax(0, 1fr) var(--right-w, var(--inspector-w));
   grid-template-areas:
     'top top top'
@@ -15,12 +15,7 @@
 }
 
 .noLibrary {
-  grid-template-columns: 0 minmax(0, 1fr) var(--right-w, var(--inspector-w));
-  column-gap: 0;
-}
-
-.noLibrary .preview {
-  margin-right: var(--gap);
+  grid-template-columns: 44px minmax(0, 1fr) var(--right-w, var(--inspector-w));
 }
 
 .panel {

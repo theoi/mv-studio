@@ -128,7 +128,8 @@
   --panel-header-h: 40px;
   --library-w: clamp(248px, 19vw, 340px);
   --inspector-w: clamp(280px, 21vw, 360px);
-  --timeline-h: clamp(236px, 35vh, 440px);
+  /* Fits the default tracks with a little room to spare, so short screens give the preview the height. */
+  --timeline-h: clamp(236px, 30vh, 440px);
   --track-header-w: 148px;
 
   --z-popover: 50;

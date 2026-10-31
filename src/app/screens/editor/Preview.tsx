@@ -26,6 +26,7 @@ import {
   dispatch,
   editor,
   hasSong,
+  loadSample,
   sectionAt,
   timelineDuration,
   useProject,
@@ -70,7 +71,7 @@ function Stage({ ratio }: { ratio: number }) {
     }
     const layout = () => {
       const r = wrap.getBoundingClientRect()
-      const pad = 16
+      const pad = 12
       cssW = Math.max(1, Math.floor(Math.min(r.width - pad * 2, (r.height - pad * 2) * ratio)))
       cssH = Math.max(1, Math.floor(cssW / ratio))
       const dpr = Math.min(2, window.devicePixelRatio || 1)
@@ -207,7 +208,9 @@ export function Preview() {
                 <Button variant="primary" icon={<Upload />}>
                   Import a song
                 </Button>
-                <Button variant="ghost">Use a sample</Button>
+                <Button variant="ghost" onClick={loadSample}>
+                  Use a sample
+                </Button>
               </>
             }
           />

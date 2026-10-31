@@ -97,3 +97,9 @@ p {
 .scroll:hover {
   scrollbar-color: rgb(255 255 255 / 0.14) transparent;
 }
+
+/* Shown for a moment while a screen's code loads; matches the app background so nothing flashes. */
+.screen-loading {
+  height: 100%;
+  background: var(--bg-app);
+}

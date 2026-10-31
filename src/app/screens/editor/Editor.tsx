@@ -1,26 +1,47 @@
-import { useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useUi } from '../../state/ui.ts'
 import { TopBar } from './TopBar.tsx'
-import { Library } from './Library.tsx'
+import { Library, LibraryRail } from './Library.tsx'
 import { Preview } from './Preview.tsx'
 import { RightPanel } from './RightPanel.tsx'
 import { Timeline } from './timeline/Timeline.tsx'
-import { ExportDialog } from '../export/ExportDialog.tsx'
-import { CommandPalette } from '../palette/CommandPalette.tsx'
-import { FirstRunGuide } from '../guide/FirstRunGuide.tsx'
+import { CommandPalette, ExportDialog, FirstRunGuide } from '../../lazy.ts'
+import { Deferred } from '../common/Deferred.tsx'
 import { usePlaybackClock } from './hooks.ts'
 import { Splitter } from './Splitter.tsx'
 import styles from './Editor.module.css'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 
+type PanelSizes = { lib?: number; right?: number; tl?: number }
+const SIZES_KEY = 'mv-studio.panel-sizes'
+
+function storedSizes(): PanelSizes {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(SIZES_KEY) ?? '{}')
+    return v && typeof v === 'object' ? (v as PanelSizes) : {}
+  } catch {
+    return {}
+  }
+}
+
 export function Editor() {
   usePlaybackClock()
   const libraryOpen = useUi((s) => s.libraryOpen)
+  const exportOpen = useUi((s) => s.dialog === 'export')
+  const paletteOpen = useUi((s) => s.paletteOpen)
+  const guideOn = useUi((s) => s.guideStep !== null)
   const libRef = useRef<HTMLDivElement>(null)
   const rightRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
-  const [sizes, setSizes] = useState<{ lib?: number; right?: number; tl?: number }>({})
+  const [sizes, setSizes] = useState<PanelSizes>(storedSizes)
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIZES_KEY, JSON.stringify(sizes))
+    } catch {
+      // Not remembered when storage is unavailable.
+    }
+  }, [sizes])
 
   const style = {
     '--lib-w': sizes.lib ? `${sizes.lib}px` : undefined,
@@ -34,6 +55,11 @@ export function Editor() {
       style={style}
     >
       <TopBar />
+      {!libraryOpen && (
+        <div className={styles.library} data-guide="library">
+          <LibraryRail />
+        </div>
+      )}
       {libraryOpen && (
         <div ref={libRef} className={styles.library} data-guide="library">
           <Library />
@@ -71,9 +97,15 @@ export function Editor() {
         />
         <Timeline />
       </div>
-      <ExportDialog />
-      <CommandPalette />
-      <FirstRunGuide />
+      <Deferred when={exportOpen}>
+        <ExportDialog />
+      </Deferred>
+      <Deferred when={paletteOpen}>
+        <CommandPalette />
+      </Deferred>
+      <Deferred when={guideOn}>
+        <FirstRunGuide />
+      </Deferred>
     </div>
   )
 }
