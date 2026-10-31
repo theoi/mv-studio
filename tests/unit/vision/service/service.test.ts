@@ -90,10 +90,7 @@ describe('vision service', () => {
     expect(count(second.seg.calls, 'beginTrack')).toBe(1)
   })
 
-  it('judges a cached person track again when its report predates the current criteria', async () => {
-    const cache = createMemoryCache()
-    const { source } = fakeSource({ duration: 1, frameRate: 10 })
-    await setup(cache).service.personTrack(source)
+  describe('a stored person track report', () => {
     const stale: SuitabilityReport = {
       verdict: 'unsuitable',
       reasons: ['unstable-mask'],
@@ -103,30 +100,62 @@ describe('vision service', () => {
       sampledFrames: 1,
       suitableRanges: [],
     }
-    // The stored file, rewritten with a stale report: without a version (written before versions existed) or with
-    // the current one.
-    const rewritten = (version?: number): BlobCache => ({
-      get: async (k) => {
-        const bytes = await cache.get(k)
-        if (!bytes || !k.startsWith('person-track')) return bytes
-        const { meta, chunks } = await decodeContainer<Record<string, unknown>>(bytes)
-        const { suitabilityVersion: _, ...rest } = meta
-        return encodeContainer(
+    /** A cache holding one person track whose report is replaced by `stale`, without a version or with `version`. */
+    const storedWithReport = async (version?: number) => {
+      const cache = createMemoryCache()
+      const { source } = fakeSource({ duration: 2, frameRate: 10 })
+      let key = ''
+      const spy: BlobCache = {
+        get: (k) => {
+          if (k.startsWith('person-track')) key = k
+          return cache.get(k)
+        },
+        put: cache.put,
+        delete: cache.delete,
+      }
+      await setup(spy).service.personTrack(source)
+      const { meta, chunks } = await decodeContainer<Record<string, unknown>>((await cache.get(key))!)
+      const { suitabilityVersion: _, ...rest } = meta
+      await cache.put(
+        key,
+        await encodeContainer(
           { ...rest, suitability: stale, ...(version ? { suitabilityVersion: version } : {}) },
           chunks,
-        )
-      },
-      put: cache.put,
-      delete: cache.delete,
-    })
-    const old = setup(rewritten())
-    const judgedAgain = await old.service.personTrack(source)
-    expect(count(old.seg.calls, 'beginTrack')).toBe(0)
-    expect(judgedAgain.suitability.verdict).toBe('good')
-    const current = setup(rewritten(SUITABILITY_VERSION))
-    expect((await current.service.personTrack(source)).suitability).toEqual(stale)
-  })
+        ),
+      )
+      const storedVersion = async () =>
+        (await decodeContainer<Record<string, unknown>>((await cache.get(key))!)).meta.suitabilityVersion
+      return { cache, source, storedVersion }
+    }
 
+    it('is judged again from the stored masks when older criteria judged it, and written back', async () => {
+      const { cache, source, storedVersion } = await storedWithReport()
+      const old = setup(cache)
+      const judged = await old.service.personTrack(source)
+      expect(count(old.seg.calls, 'beginTrack')).toBe(0)
+      expect(judged.suitability.verdict).toBe('good')
+      expect(await storedVersion()).toBe(SUITABILITY_VERSION)
+      const current = await storedWithReport(SUITABILITY_VERSION)
+      expect((await setup(current.cache).service.personTrack(current.source)).suitability).toEqual(stale)
+    })
+
+    it('is judged again with the caller’s criteria', async () => {
+      const { cache, source } = await storedWithReport()
+      const strict = await setup(cache).service.cachedPersonTrack(source, {
+        suitability: { minSubjectHeight: 0.99 },
+      })
+      expect(strict?.suitability.verdict).toBe('unsuitable')
+    })
+
+    it('is left alone when only its observations are read for subject tracking', async () => {
+      const { cache, source, storedVersion } = await storedWithReport()
+      const s = setup(cache)
+      const subjects = await s.service.subjects(source)
+      expect(count(s.seg.calls, 'analyze')).toBe(0)
+      expect(subjects.samples.length).toBe(10)
+      expect(await storedVersion()).toBeUndefined()
+    })
+  })
   it('reuses the cached person track observations for subject tracking', async () => {
     const { service, seg } = setup()
     const { source } = fakeSource({ duration: 2, frameRate: 10 })

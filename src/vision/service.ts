@@ -106,6 +106,8 @@ interface SelectionFileMeta {
   confidence: number[]
 }
 
+type StoredPersonTrack = Omit<PersonTrackResult, 'suitability'> & { suitability: SuitabilityReport | null }
+
 interface PersonTrackFileMeta {
   track: MaskTrackMeta
   suitability: SuitabilityReport
@@ -167,19 +169,30 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
       JSON.stringify([p, o.hqRanges ?? [], o.hqShortSide ?? 256, o.delegate ?? 'CPU']),
     )
   }
-  const decodePerson = async (bytes: Uint8Array): Promise<PersonTrackResult> => {
+  /** A stored person track; `suitability` is null when it was judged by older criteria. */
+  const decodeStoredPerson = async (bytes: Uint8Array): Promise<StoredPersonTrack> => {
     const { meta, chunks } = await decodeContainer<PersonTrackFileMeta>(bytes)
     if (meta.track.frameCount !== chunks.length) throw new Error('inconsistent person track')
-    const track = { meta: meta.track, packed: chunks.map((c) => c.slice()) }
     return {
-      track,
-      // A report judged by older criteria is judged again from the stored masks, without segmenting again.
-      suitability:
-        meta.suitabilityVersion === SUITABILITY_VERSION ? meta.suitability : trackSuitability(track),
+      track: { meta: meta.track, packed: chunks.map((c) => c.slice()) },
+      suitability: meta.suitabilityVersion === SUITABILITY_VERSION ? meta.suitability : null,
       observations: meta.observations,
       hqFrames: meta.hqFrames,
     }
   }
+  /**
+   * Decoder for reads that need the verdict. A report judged by older criteria is judged again from the stored masks
+   * (no segmenting) and written back, since judging a long track takes about a second on the main thread.
+   */
+  const decodePerson =
+    (key: string, o: PersonTrackOptions) =>
+    async (bytes: Uint8Array): Promise<PersonTrackResult> => {
+      const stored = await decodeStoredPerson(bytes)
+      if (stored.suitability) return { ...stored, suitability: stored.suitability }
+      const result = { ...stored, suitability: trackSuitability(stored.track, o.suitability) }
+      await store(key, await encodePerson(result))
+      return result
+    }
   const encodePerson = (r: PersonTrackResult) =>
     encodeContainer<PersonTrackFileMeta>(
       {
@@ -196,8 +209,10 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
     decode: async <T>(b: Uint8Array) => (await decodeContainer<T>(b)).meta,
   }
 
-  const cachedPersonTrack = (source: FrameSource, o: PersonTrackOptions = {}) =>
-    cached(personKey(source, o), decodePerson)
+  const cachedPersonTrack = (source: FrameSource, o: PersonTrackOptions = {}) => {
+    const key = personKey(source, o)
+    return cached(key, decodePerson(key, o))
+  }
 
   return {
     livePreview(o) {
@@ -208,9 +223,10 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
     },
     personTrack(source, o = {}) {
       const { signal, onProgress, ...rest } = o
+      const key = personKey(source, o)
       return memo(
-        personKey(source, o),
-        decodePerson,
+        key,
+        decodePerson(key, o),
         encodePerson,
         (task) =>
           buildPersonTrack(
@@ -260,7 +276,8 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
     },
     async subjects(source, o = {}) {
       const { signal, onProgress, ...rest } = o
-      const person = await cachedPersonTrack(source)
+      // Only the observations are needed here, so a stale verdict is not judged again.
+      const person = await cached(personKey(source, {}), decodeStoredPerson)
       if (person?.observations.length && !rest.range) return subjectTrackFrom(source, person.observations)
       const key = cacheKey('subjects', source.mediaId, SUBJECT_TRACK_VERSION, JSON.stringify(rest))
       return memo<SubjectTrack>(
