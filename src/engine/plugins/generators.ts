@@ -11,6 +11,46 @@ float bandAt(float x) {
   return mix(u_bands[i], u_bands[j], fract(f));
 }`
 
+/**
+ * Display levels for visualizers, given a \`bandAt(x)\`. Loudness and bands put each song's loud level at 0.9, with
+ * louder moments compressed above it and quiet passages well below.
+ */
+export const DISPLAY_LEVELS = `
+/** A level with the song's loud level at 1, expanded so quiet passages stay small and loud ones reach the top. */
+float expandLevel(float v) {
+  float x = clamp(v / 0.9, 0.0, 1.12);
+  return x * sqrt(x);
+}
+float loudLevel() { return expandLevel(u_loudness); }
+float barHash(float n) {
+  n = fract(n * 0.1031);
+  n *= n + 33.33;
+  return fract(n * (n + n));
+}
+/**
+ * Height (0..1) of spectrum bar \`bar\` at x (0 lows .. 1 highs). Each band is normalized to its own loud level, so on
+ * loud passages the raw bands sit side by side near the top like a wall. Bars instead show how far their band stands
+ * out from the frame's average over a level that follows loudness, fall off gently toward the highs as real spectra
+ * do, and each moves a little on its own at a pace that follows the music: loud passages stay tall without pinning.
+ */
+float spectrumLevel(float x, float bar) {
+  float b = bandAt(x);
+  float m = u_loudness;
+  if (u_bandCount >= 1.0) {
+    m = 0.0;
+    for (int i = 0; i < 16; i++) {
+      if (float(i) >= u_bandCount) break;
+      m += u_bands[i];
+    }
+    m /= u_bandCount;
+  }
+  float shape = clamp(0.35 * loudLevel() + 0.65 * b + 1.2 * (b - m), 0.0, 1.2);
+  float life = 0.84 + 0.16 * sin(u_flow * (4.0 + 3.0 * barHash(bar)) + 6.2831853 * barHash(bar + 17.0));
+  float v = 1.2 * shape * life * (1.0 - 0.15 * x);
+  // Soft top: the tallest bars approach full height on peaks instead of sitting there.
+  return v < 0.8 ? max(v, 0.0) : 0.8 + 0.2 * (1.0 - exp(-(v - 0.8) / 0.2));
+}`
+
 export const spectrum: GeneratorDefinition = {
   kind: 'generator',
   id: 'visualizer.spectrum',
@@ -59,14 +99,14 @@ export const spectrum: GeneratorDefinition = {
     },
     { key: 'glow', label: 'Glow', type: 'number', default: 0.3, min: 0, max: 1, step: 0.01 },
   ],
-  fragmentShader: `${BAND_AT}
+  fragmentShader: `${BAND_AT}${DISPLAY_LEVELS}
 vec4 mainImage(vec2 uv) {
   float bars = max(floor(u_bars), 1.0);
   bool mirrored = u_mirror > 0.5;
   bool centered = u_baseline > 0.5;
   float x = mirrored ? abs(uv.x - 0.5) * 2.0 : uv.x;
   float idx = floor(x * bars);
-  float h = max(clamp(bandAt((idx + 0.5) / bars), 0.0, 1.0) * u_height, 0.006);
+  float h = max(spectrumLevel((idx + 0.5) / bars, idx) * u_height, 0.006);
   // Bar geometry in canvas pixels, relative to the bar's cell.
   float cellW = u_resolution.x / bars * (mirrored ? 0.5 : 1.0);
   float halfW = max(0.5 * cellW * (1.0 - u_gap), 0.5);
@@ -128,7 +168,7 @@ export const waveform: GeneratorDefinition = {
       modulatable: false,
     },
   ],
-  fragmentShader: `
+  fragmentShader: `${BAND_AT}${DISPLAY_LEVELS}
 /** The wave at x (0..1) and its slope, summed in one pass over the bands. */
 vec2 wave(float x, float phase) {
   float n = max(u_bandCount, 1.0);
@@ -137,7 +177,7 @@ vec2 wave(float x, float phase) {
   for (int i = 0; i < 16; i++) {
     float fi = float(i);
     if (fi >= n) break;
-    float amp = (u_bandCount < 1.0 ? u_loudness : u_bands[i]) / (1.0 + fi * 0.35);
+    float amp = expandLevel(u_bandCount < 1.0 ? u_loudness : u_bands[i]) / (1.0 + fi * 0.35);
     float w = 6.2831853 * (1.5 + fi * 1.7);
     float arg = x * w + u_time * u_speed * (2.0 + fi * 0.9) + fi * 1.3 + phase;
     s += amp * sin(arg);
@@ -150,7 +190,7 @@ vec2 wave(float x, float phase) {
 vec4 mainImage(vec2 uv) {
   float H = u_resolution.y;
   float scale = H / 1080.0;
-  float amp = u_amplitude * (0.5 + u_loudness) * H;
+  float amp = u_amplitude * (0.4 + 1.15 * loudLevel()) * H;
   float halfWidth = u_thickness * scale * 0.5;
   float lines = floor(u_lines);
   vec3 rgb = vec3(0.0);
@@ -201,7 +241,7 @@ export const particles: GeneratorDefinition = {
       ],
     },
   ],
-  fragmentShader: `
+  fragmentShader: `${BAND_AT}${DISPLAY_LEVELS}
 vec2 hash2(vec2 p) {
   vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
   q += dot(q, q.yzx + 33.33);
@@ -209,7 +249,7 @@ vec2 hash2(vec2 p) {
 }
 vec4 mainImage(vec2 uv) {
   float aspect = u_resolution.x / u_resolution.y;
-  float pulse = 1.0 + u_reactivity * (0.7 * u_beat + 0.8 * u_loudness);
+  float pulse = 1.0 + u_reactivity * (0.7 * u_beat + 0.8 * loudLevel());
   float dir = u_direction > 0.5 ? -1.0 : 1.0;
   vec3 rgb = vec3(0.0);
   float acc = 0.0;
