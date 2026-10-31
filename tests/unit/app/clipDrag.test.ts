@@ -144,15 +144,26 @@ describe('refuseTrack', () => {
       expect(refusalToast(p, refusal)).toBe("Video clips can't go on the Look track.")
     })
 
-    it('keeps looks off a track of other clips', () => {
-      const { p, overlay, neon } = lanes()
-      const refusal = refuseTrack(p, neon, overlay)!
-      expect(refusalLabel(refusal)).toBe('Visual clips only')
-      expect(refusalToast(p, refusal)).toBe("Look clips can't go on the Overlay track.")
+    it('keeps looks off every track but a look lane, even an empty one', () => {
+      const { p, overlay, empty, neon } = lanes()
+      const audio = p.tracks.find((t) => t.kind === 'audio')!
+      for (const track of [overlay, empty, audio]) {
+        const refusal = refuseTrack(p, neon, track)!
+        expect(refusalLabel(refusal)).toBe('No looks here')
+        expect(refusalToast(p, refusal)).toBe(`Look clips can't go on the ${track.name} track.`)
+      }
     })
 
-    it('takes a look on an empty track, and any clip on a look lane whose looks move away with it', () => {
+    it('takes a look on another look lane, and any clip on a look lane whose looks move away with it', () => {
       const { p, look, empty, neon, shot } = lanes()
+      const { color: _color, ...rest } = createSolidClip({
+        trackId: empty.id,
+        color: '#000',
+        start: 0,
+        duration: 5,
+      })
+      const tint: Clip = { ...rest, type: 'adjustment', meta: { role: 'look' } }
+      p.clips[tint.id] = tint
       expect(refuseTrack(p, neon, empty)).toBeNull()
       expect(refuseTrack(p, shot, look, new Set([neon.id, shot.id]))).toBeNull()
     })

@@ -152,8 +152,12 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
 }) => {
   await openEditor(page)
   await page.keyboard.press('n')
+  // An empty track below Video, where a look would no longer grade the picture.
   await page.evaluate(() =>
-    window.mvStudio.app.project.dispatch({ type: 'clip.move', moves: [{ clipId: 'o-spec1', start: 69 }] }),
+    window.mvStudio.app.project.dispatch([
+      { type: 'clip.move', moves: [{ clipId: 'o-spec1', start: 69 }] },
+      { type: 'track.add', track: window.mvStudio.model.createTrack('visual', 'Empty'), index: 4 },
+    ]),
   )
   const id: string = await page.evaluate(
     () =>
@@ -172,6 +176,7 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   const from = await center(singer)
   const lookY = (await center(look)).y
   const overlayY = (await center(spectrum)).y
+  const emptyY = (await center(page.getByRole('button', { name: 'Move the Empty track' }))).y
   const before = await placed(page, id)
   const lookBefore = await placed(page, 'c-look')
   const startLabel = await undoLabel(page)
@@ -185,13 +190,19 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   await expect(page.getByText("Video clips can't go on the Look track.")).toHaveCount(1)
   expect(await placed(page, id)).toEqual(before)
 
-  // The look onto the Overlay track, which holds other clips.
+  // The look onto the Overlay track, which holds other clips, and onto the empty track.
   await page.mouse.move(from.x, lookY)
   await page.mouse.down()
   await page.mouse.move(from.x, overlayY, { steps: 8 })
-  await expect(page.getByText('Visual clips only', { exact: true })).toBeVisible()
+  await expect(page.getByText('No looks here', { exact: true })).toBeVisible()
   await page.mouse.up()
   await expect(page.getByText("Look clips can't go on the Overlay track.")).toHaveCount(1)
+  await page.mouse.move(from.x, lookY)
+  await page.mouse.down()
+  await page.mouse.move(from.x, emptyY, { steps: 12 })
+  await expect(page.getByText('No looks here', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await expect(page.getByText("Look clips can't go on the Empty track.")).toHaveCount(1)
   expect(await placed(page, 'c-look')).toEqual(lookBefore)
   expect(await undoLabel(page)).toBe(startLabel)
 
