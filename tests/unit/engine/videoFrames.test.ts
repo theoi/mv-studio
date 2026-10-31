@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BridgedFrameProvider, VideoElementFrameProvider } from '../../../src/engine/frames.ts'
 import type { Asset } from '../../../src/model/types.ts'
 
-type FrameCallback = (now: number, metadata: { mediaTime: number }) => void
+type FrameCallback = (now: number, metadata: { mediaTime: number; presentationTime: number }) => void
 
-/** A paused <video> that seeks in 10 ms and presents the new frame before 'seeked' or some time after it. */
+/**
+ * A paused <video> that seeks in 10 ms. As in Chrome, each seek's frame goes to the compositor as the seek ends, before
+ * 'seeked' (the frame's presentationTime), and its frame callback runs then or some time after.
+ */
 class FakeVideo extends EventTarget {
   muted = false
   playsInline = false
@@ -15,13 +18,16 @@ class FakeVideo extends EventTarget {
   videoWidth = 1920
   videoHeight = 1080
   playbackRate = 1
-  /** How long after 'seeked' the frame for a seek to `t` is presented, or null for just before it. */
+  /** How long after 'seeked' the frame callback for a seek to `t` runs, or null for just before it. */
   presentAfter = (_t: number): number | null => null
   /** The media time of the frame presented for a seek to `t`. */
   shows = (t: number) => t
-  /** Frames presented: the seek they were for, and when. */
+  /** How long after 'loadeddata' the callback of the first frame (presented before it) runs, or null for never. */
+  firstFrameAfter: number | null = null
+  /** Frames of seeks whose callbacks ran: the seek they were for, and when. */
   readonly presented: { t: number; at: number }[] = []
   private time = 0
+  private seeks = 0
   private callbacks: FrameCallback[] = []
 
   /** Set once the element let go of its media. */
@@ -29,9 +35,14 @@ class FakeVideo extends EventTarget {
 
   set src(_url: string) {
     setTimeout(() => {
-      this.readyState = 2
-      this.dispatchEvent(new Event('loadeddata'))
-    }, 5)
+      const presentedAt = performance.now()
+      setTimeout(() => {
+        this.readyState = 2
+        this.dispatchEvent(new Event('loadeddata'))
+        const after = this.firstFrameAfter
+        if (after !== null) setTimeout(() => this.runCallbacks(this.shows(0), presentedAt), after)
+      }, 1)
+    }, 4)
   }
 
   get currentTime(): number {
@@ -41,25 +52,40 @@ class FakeVideo extends EventTarget {
   set currentTime(t: number) {
     this.time = t
     this.seeking = true
+    const seek = ++this.seeks
     const after = this.presentAfter(t)
     setTimeout(() => {
-      if (after === null) this.presentFrame(t)
+      const presentedAt = performance.now()
+      const present = () => {
+        this.presented.push({ t, at: performance.now() })
+        this.runCallbacks(this.shows(t), presentedAt)
+      }
+      if (after === null) present()
+      else setTimeout(present, after)
+      // A seek made while another was under way ends both, with one 'seeked'.
+      if (seek !== this.seeks) return
       this.seeking = false
       this.dispatchEvent(new Event('seeked'))
-      if (after !== null) setTimeout(() => this.presentFrame(t), after)
     }, 10)
+  }
+
+  /** Playback reaching `t`, presenting its frame. */
+  playTo(t: number): void {
+    this.time = t
+    this.runCallbacks(this.shows(t), performance.now())
+  }
+
+  /** Runs the frame callbacks for a frame of media time `mediaTime` that went to the compositor at `presentedAt`. */
+  runCallbacks(mediaTime: number, presentedAt: number): void {
+    const callbacks = this.callbacks
+    this.callbacks = []
+    for (const callback of callbacks)
+      callback(performance.now(), { mediaTime, presentationTime: presentedAt })
   }
 
   requestVideoFrameCallback(callback: FrameCallback): number {
     this.callbacks.push(callback)
     return this.callbacks.length
-  }
-
-  private presentFrame(t: number): void {
-    this.presented.push({ t, at: performance.now() })
-    const callbacks = this.callbacks
-    this.callbacks = []
-    for (const callback of callbacks) callback(performance.now(), { mediaTime: this.shows(t) })
   }
 
   pause(): void {
@@ -121,7 +147,7 @@ describe('seeking a paused preview video', () => {
     expect(ms).toBeLessThan(60)
   })
 
-  it('waits for the new frame when it is presented after the seek ends', async () => {
+  it('waits for the new frame when its callback runs after the seek ends', async () => {
     const video = new FakeVideo()
     video.presentAfter = () => 30
     const ms = await pausedFrameMs(video)
@@ -159,6 +185,27 @@ describe('seeking a paused preview video', () => {
     expect(ms).toBeLessThan(60)
   })
 
+  it('returns at once for a step forward within the frame shown when playback pauses', async () => {
+    const video = new FakeVideo()
+    video.shows = (t) => Math.floor(t * 30 + 1e-9) / 30
+    const provider = pausedProvider(video)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(100)
+    provider.setPlaying(true)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(5)
+    video.playTo(4.51)
+    await vi.advanceTimersByTimeAsync(10)
+    provider.setPlaying(false)
+    const start = performance.now()
+    let ms = -1
+    void provider.videoFrame(asset, 4.52, 'clip').then(() => (ms = performance.now() - start))
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    expect(ms).toBeGreaterThan(0)
+    expect(ms).toBeLessThan(60)
+  })
+
   it('does not take another frame presented during the seek for the new one', async () => {
     const video = new FakeVideo()
     // A frame from where the video was before (e.g. its playback, just paused), and none after the seek.
@@ -169,7 +216,8 @@ describe('seeking a paused preview video', () => {
 
   it('does not take a late frame of the seek before for the new one, going forward by less than a second', async () => {
     const video = new FakeVideo()
-    // The seek to 4.5 s presents its frame 125 ms after it ends, once its own wait (120 ms) is over.
+    // The seek to 4.5 s presents its frame as it ends, but the frame's callback runs 125 ms later, once that seek's
+    // wait (120 ms) is over and the next seek has started.
     video.presentAfter = (t) => (t < 4.75 ? 125 : 30)
     const provider = pausedProvider(video)
     void provider.videoFrame(asset, 4.5, 'clip')
@@ -192,7 +240,8 @@ describe('seeking a paused preview video', () => {
     async ({ reports, has }) => {
       const video = new FakeVideo()
       video.shows = (t) => Math.floor(t * has + 1e-9) / has
-      // The seek to 4 s presents its frame 125 ms after it ends, once its own wait (120 ms) is over.
+      // The seek to 4 s presents its frame as it ends, but the frame's callback runs 125 ms later, once that seek's
+      // wait (120 ms) is over and the next seek has started.
       video.presentAfter = (t) => (t < 4.01 ? 125 : 30)
       const footage = { ...asset, frameRate: reports }
       const provider = pausedProvider(video)
@@ -209,11 +258,32 @@ describe('seeking a paused preview video', () => {
     },
   )
 
+  it('keeps waiting when a late frame of the seek before comes while the new seek waits for its own', async () => {
+    const video = new FakeVideo()
+    // The seek to 4.5 s presents its frame as it ends, but the frame's callback runs 140 ms later: after that seek's
+    // wait (120 ms), and after the next seek ends, while it waits for its own frame's callback (40 ms after it ends).
+    video.presentAfter = (t) => (t < 4.75 ? 140 : 40)
+    const provider = pausedProvider(video)
+    void provider.videoFrame(asset, 4.5, 'clip')
+    await vi.advanceTimersByTimeAsync(20)
+    let resolvedAt = -1
+    void provider.videoFrame(asset, 5, 'clip').then(() => (resolvedAt = performance.now()))
+    await vi.advanceTimersByTimeAsync(400)
+    provider.dispose()
+    const late = video.presented.find((p) => p.t < 4.75)
+    const own = video.presented.find((p) => p.t > 4.75)
+    expect(late).toBeDefined()
+    expect(own).toBeDefined()
+    expect(own!.at).toBeGreaterThan(late!.at)
+    expect(resolvedAt).toBeGreaterThanOrEqual(own!.at)
+  })
+
   it('does not take a frame from playback, presented after the pause, for the next frame', async () => {
     const video = new FakeVideo()
     // 60 fps footage, though the asset reports 30 fps.
     video.shows = (t) => Math.floor(t * 60 + 1e-9) / 60
-    // Starting playback seeks to 4.5 s; that frame is presented 8 ms after the seek ends, once paused again.
+    // Starting playback seeks to 4.5 s; that frame's callback runs 8 ms after the seek ends, once paused again and the
+    // next seek has started.
     video.presentAfter = (t) => (t > 4.49 && t < 4.51 ? 8 : 30)
     const provider = pausedProvider(video)
     void provider.videoFrame(asset, 4, 'clip')
@@ -228,6 +298,74 @@ describe('seeking a paused preview video', () => {
     provider.dispose()
     const own = video.presented.find((p) => p.t > 4.51)
     expect(video.presented.some((p) => p.t > 4.49 && p.t < 4.51)).toBe(true)
+    expect(own).toBeDefined()
+    expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
+  })
+
+  it('does not take a frame from playback that was in flight at the pause, past where the video paused', async () => {
+    const video = new FakeVideo()
+    video.shows = (t) => Math.floor(t * 30 + 1e-9) / 30
+    video.presentAfter = () => 30
+    const provider = pausedProvider(video)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(100)
+    provider.setPlaying(true)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(5)
+    video.playTo(4.4)
+    // The next frame goes to the compositor 5 ms before the pause, and its callback runs once the seek after the pause
+    // has ended.
+    await vi.advanceTimersByTimeAsync(10)
+    const inFlight = performance.now()
+    await vi.advanceTimersByTimeAsync(5)
+    provider.setPlaying(false)
+    let resolvedAt = -1
+    void provider.videoFrame(asset, 5.2, 'clip').then(() => (resolvedAt = performance.now()))
+    setTimeout(() => video.runCallbacks(4.4 + 1 / 30, inFlight), 12)
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    const own = video.presented.find((p) => p.t > 5)
+    expect(own).toBeDefined()
+    expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
+  })
+
+  it('does not take the frame of a seek still under way when it started, going forward', async () => {
+    const video = new FakeVideo()
+    video.shows = (t) => Math.floor(t * 30 + 1e-9) / 30
+    // Playback starts with a seek to 6 s and pauses before that seek ends. Its frame goes to the compositor as it ends,
+    // after the next seek started, with a callback 20 ms later; the next seek's frame callback runs 40 ms after it ends.
+    video.presentAfter = (t) => (t < 6.25 ? 20 : 40)
+    const provider = pausedProvider(video)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(100)
+    provider.setPlaying(true)
+    void provider.videoFrame(asset, 6, 'clip')
+    await vi.advanceTimersByTimeAsync(0)
+    provider.setPlaying(false)
+    let resolvedAt = -1
+    void provider.videoFrame(asset, 6.5, 'clip').then(() => (resolvedAt = performance.now()))
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    const earlier = video.presented.find((p) => p.t > 5.9 && p.t < 6.25)
+    const own = video.presented.find((p) => p.t > 6.25)
+    expect(earlier).toBeDefined()
+    expect(own).toBeDefined()
+    expect(own!.at).toBeGreaterThan(earlier!.at)
+    expect(resolvedAt).toBeGreaterThanOrEqual(own!.at)
+  })
+
+  it('does not take a new element’s first frame for its first seek when that frame’s callback runs late', async () => {
+    const video = new FakeVideo()
+    video.shows = (t) => Math.floor(t * 30 + 1e-9) / 30
+    // The first frame goes to the compositor before 'loadeddata'; its callback runs after the first seek ends.
+    video.firstFrameAfter = 13
+    video.presentAfter = () => 30
+    const provider = pausedProvider(video)
+    let resolvedAt = -1
+    void provider.videoFrame(asset, 0.5, 'clip').then(() => (resolvedAt = performance.now()))
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    const own = video.presented.find((p) => p.t > 0.4)
     expect(own).toBeDefined()
     expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
   })
