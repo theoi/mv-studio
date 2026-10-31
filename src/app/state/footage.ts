@@ -10,6 +10,8 @@ import type {
   VisionService,
   VisionServiceOptions,
 } from '../../vision/index.ts'
+import { readClipTags } from '../../vision/analysisData.ts'
+import { mediaById } from '../mock/media.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
 import { appMedia } from './media.ts'
 import { editor } from './project.ts'
@@ -27,9 +29,16 @@ interface FootageState {
   indexing: IndexingState | null
   /** Score from which a result counts as a match worth suggesting. */
   strongMatch: number
+  /** Library › Media should scroll its suggestion row into view when it next shows. */
+  revealSuggestions: boolean
 }
 
-export const useFootage = create<FootageState>(() => ({ service: null, indexing: null, strongMatch: 1 }))
+export const useFootage = create<FootageState>(() => ({
+  service: null,
+  indexing: null,
+  strongMatch: 1,
+  revealSuggestions: false,
+}))
 
 let loading: Promise<FootageService> | null = null
 let visionLoading: Promise<VisionService> | null = null
@@ -180,4 +189,41 @@ export function useFootageResults(type: FootageQuery, value: string | Id | null)
     }
   }, [service, type, value, key, progress])
   return state && state.key === key ? state.results : null
+}
+
+const MAX_TAGS = 5
+
+/**
+ * Up to five words describing a clip ("crowd", "lights", "energetic"), from footage analysis (stored as `VisualAnalysis.data.tags`, see `readClipTags`). The
+ * sample project's clips use their own descriptions until they are analyzed; other clips have none before.
+ */
+export function clipTags(project: Project, assetId: Id): string[] {
+  const analyzed = readClipTags(project.analysis.visual[assetId])
+  const asset = project.assets[assetId]
+  const tags = analyzed ?? (asset && isSampleAsset(asset) ? (mediaById[assetId]?.tags ?? []) : [])
+  return tags.slice(0, MAX_TAGS)
+}
+
+/** Analyzes footage again after a failed run, including the clips that failed. */
+export function retryFootageAnalysis(): void {
+  started = true
+  void footageService().then((service) => {
+    service.indexing.start()
+    service.indexing.resume({ retryFailed: true })
+  })
+}
+
+/**
+ * Asks Library › Media to bring its "Suggested for …" row into view the next time it shows (from the "N clips
+ * match" chips, whose matches load again in the library).
+ */
+export function revealSuggestions(): void {
+  useFootage.setState({ revealSuggestions: true })
+}
+
+/** Ref for the suggestion row: scrolls it into view once after `revealSuggestions()`. */
+export function suggestionRowRef(el: HTMLElement | null): void {
+  if (!el || !useFootage.getState().revealSuggestions) return
+  useFootage.setState({ revealSuggestions: false })
+  el.scrollIntoView({ block: 'nearest' })
 }

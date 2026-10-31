@@ -751,3 +751,17 @@
 .askFailed svg {
   color: var(--danger);
 }
+
+/* Match footage: each pick is a button that places the clip's best part in the section. */
+.matchPick {
+  padding: 0;
+  border: 0;
+  background-color: var(--bg-hover);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+  cursor: pointer;
+  transition: box-shadow var(--dur-fast);
+}
+
+.matchPick:hover {
+  box-shadow: 0 0 0 1px var(--border-strong);
+}

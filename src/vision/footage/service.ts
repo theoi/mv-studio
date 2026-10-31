@@ -19,12 +19,15 @@ import {
 import {
   buildVisualAnalysis,
   readClipIndex,
+  readClipTags,
   readSubjectTrack,
+  withClipTags,
   type VisualAnalysisParts,
 } from '../analysisData.ts'
 import { visionError } from '../errors.ts'
 import { createAssetFrameSource } from '../runtime/assetSource.ts'
 import type { FrameSource } from '../runtime/frames.ts'
+import { describeClips, tagWords } from '../matching/tags.ts'
 import { createImageFrameSource } from '../runtime/imageSource.ts'
 import type { VisionService } from '../service.ts'
 import type { ClipVisionIndex, MatchQuery, TimeRange } from '../types.ts'
@@ -64,8 +67,8 @@ export type AssetIndexStatus = 'indexed' | 'queued' | 'indexing' | 'paused' | 'f
 /** Where a clip stands for subject-aware framing. `no-subject`: analyzed, and no face or person was found. */
 export type SubjectStatus =
   'analyzed' | 'no-subject' | 'analyzing' | 'queued' | 'paused' | 'failed' | 'unsupported'
-/** The two analyses of a clip, in the order they run. */
-export type IndexStep = 'matching' | 'subjects'
+/** The analyses of a clip, in the order they run. `tags` describes the clip from its matching index. */
+export type IndexStep = 'matching' | 'tags' | 'subjects'
 
 export interface IndexingState {
   /** `paused` after Cancel; `error` when the run stopped (model download failed, ...). */
@@ -139,6 +142,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
 
   const failedMatching = new Map<Id, string>()
   const failedSubjects = new Map<Id, string>()
+  const failedTags = new Set<Id>()
   const listeners = new Set<(state: IndexingState) => void>()
   let watching = false
   let paused = false
@@ -153,7 +157,14 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
   const stepsFor = (project: Project, asset: Asset): IndexStep[] => {
     if (!analyzable(asset)) return []
     const steps: IndexStep[] = []
-    if (!failedMatching.has(asset.id) && !indexOf(project, asset.id)) steps.push('matching')
+    const indexed = !!indexOf(project, asset.id)
+    if (!failedMatching.has(asset.id) && !indexed) steps.push('matching')
+    if (
+      (indexed || steps.includes('matching')) &&
+      !failedTags.has(asset.id) &&
+      !readClipTags(project.analysis.visual[asset.id])
+    )
+      steps.push('tags')
     if (!failedSubjects.has(asset.id) && !readSubjectTrack(project.analysis.visual[asset.id]))
       steps.push('subjects')
     return steps
@@ -224,8 +235,10 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
         const fail = (asset: Asset, err: unknown, steps: readonly IndexStep[]) => {
           const e = visionError(err)
           if (e.code === 'cancelled' || ctx.signal.aborted || RUN_LEVEL.includes(e.code)) throw e
-          for (const step of steps)
-            (step === 'matching' ? failedMatching : failedSubjects).set(asset.id, e.message)
+          for (const step of steps) {
+            if (step === 'tags') failedTags.add(asset.id)
+            else (step === 'matching' ? failedMatching : failedSubjects).set(asset.id, e.message)
+          }
         }
         const write = (
           asset: Asset,
@@ -240,7 +253,13 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
           )
           editor.dispatch({ type: 'analysis.setVisual', analysis }, { history: 'skip' })
         }
-        const runStep = async (asset: Asset, src: FrameSource, step: IndexStep, k: number, of: number) => {
+        const runStep = async (
+          asset: Asset,
+          src: FrameSource | undefined,
+          step: IndexStep,
+          k: number,
+          of: number,
+        ) => {
           if (current) Object.assign(current, { step, fraction: k / of })
           const task = {
             signal: ctx.signal,
@@ -251,7 +270,23 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
             },
           }
           try {
-            if (step === 'matching') {
+            if (step === 'tags') {
+              const project = editor.getProject()
+              const index = indexOf(project, asset.id)
+              const analysis = project.analysis.visual[asset.id]
+              if (!index || !analysis || asset.kind === 'audio' || asset.kind === 'font') return
+              const [description] = await describeClips([index], vision.matcher, ctx.signal)
+              ctx.throwIfCancelled()
+              const tags = tagWords(description!, asset.kind === 'image' ? 'image' : 'video')
+              const latest = editor.getProject().analysis.visual[asset.id]
+              if (latest && editor.getProject().assets[asset.id])
+                editor.dispatch(
+                  { type: 'analysis.setVisual', analysis: withClipTags(latest, tags) },
+                  { history: 'skip' },
+                )
+            } else if (!src) {
+              return
+            } else if (step === 'matching') {
               const index = await vision.indexClip(src, task)
               write(asset, src, { duration: index.duration, index })
             } else {
@@ -274,14 +309,19 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
           report()
           emit()
           let src: (FrameSource & { dispose?(): void }) | undefined
-          try {
-            src = await frameSource(asset)
-          } catch (err) {
-            fail(asset, err, steps)
+          let opened = true
+          // Tags come from the stored index, so a clip that only needs them is not decoded.
+          if (steps.some((s) => s !== 'tags')) {
+            try {
+              src = await frameSource(asset)
+            } catch (err) {
+              opened = false
+              fail(asset, err, steps)
+            }
           }
           try {
-            for (const [k, step] of src ? steps.entries() : [])
-              await runStep(asset, src as FrameSource, step, k, steps.length)
+            for (const [k, step] of opened ? steps.entries() : [])
+              await runStep(asset, src, step, k, steps.length)
           } finally {
             src?.dispose?.()
           }
@@ -325,6 +365,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
           }
           failedMatching.clear()
           failedSubjects.clear()
+          failedTags.clear()
           paused = false
           error = undefined
         } else if (change.commands.some((c) => c.type === 'asset.add')) {
@@ -374,6 +415,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       if (options.retryFailed) {
         failedMatching.clear()
         failedSubjects.clear()
+        failedTags.clear()
       }
       schedule()
     },

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ProjectEditor } from '../../../../src/model/editor.ts'
 import type { Asset, Project } from '../../../../src/model/types.ts'
 import { JobError, JobRunner } from '../../../../src/shared/jobs.ts'
-import { readClipIndex, readSubjectTrack } from '../../../../src/vision/analysisData.ts'
+import { readClipIndex, readClipTags, readSubjectTrack } from '../../../../src/vision/analysisData.ts'
 import {
   createFootageService,
   FOOTAGE_INDEX_JOB,
@@ -254,6 +254,28 @@ describe('background footage analysis', () => {
     expect(service.indexing.subjectStatusOf('ocean')).toBe('paused')
   })
 
+  it('tags each clip from its index after matching, and tags clips matched before without decoding them', async () => {
+    const { editor, service, release, tick, disposed, indexClip } = setup()
+    service.indexing.start()
+    for (const id of ['city', 'ocean', 'crowd', 'misc']) await release(id)
+    const tags = (id: string) => readClipTags(editor.getProject().analysis.visual[id])
+    expect(tags('city')).toContain('city')
+    expect(tags('crowd')).toContain('crowd')
+    expect(tags('ocean')).toContain('water')
+    expect(editor.canUndo()).toBe(false)
+    expect(disposed).toHaveLength(4)
+
+    // A clip analyzed before tags existed gets them from its stored index: no decoding, no new matching.
+    const analysis = editor.getProject().analysis.visual.city!
+    const { tags: _dropped, ...data } = analysis.data
+    editor.dispatch({ type: 'analysis.setVisual', analysis: { ...analysis, data } }, { history: 'skip' })
+    expect(tags('city')).toBeNull()
+    editor.dispatch({ type: 'project.rename', name: 'Any edit' })
+    for (let i = 0; i < 10; i++) await tick()
+    expect(tags('city')).toContain('city')
+    expect(disposed).toHaveLength(4)
+    expect(indexClip).toHaveBeenCalledTimes(4)
+  })
   it('drops the run of a project that was closed', async () => {
     const { editor, service, tick, indexed } = setup()
     service.indexing.start()
