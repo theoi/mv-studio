@@ -24,6 +24,9 @@ import type {
   VisualAnalysis,
 } from './types.ts'
 
+/** The fields a beat refinement owns. */
+export type RefinedAnalysis = Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats' | 'sections'>
+
 /** Path from a clip to a property, e.g. ['transform', 'x'] or ['effects', 0, 'params', 'radius']. */
 export type PropertyPath = (string | number)[]
 
@@ -62,7 +65,31 @@ export type EditCommand =
   | { type: 'marker.add'; marker: Marker }
   | { type: 'marker.update'; markerId: Id; patch: Partial<Omit<Marker, 'id'>> }
   | { type: 'marker.remove'; markerId: Id }
+  /** Replaces an asset's whole analysis. Background jobs use the narrow commands below instead. */
   | { type: 'analysis.setAudio'; analysis: AudioAnalysis }
+  /**
+   * A fresh analysis of an audio asset (everything but stems), keeping any stems already attached. It replaces the
+   * user's corrections, so `history: 'skip'` is only for the first analysis after import; a re-analysis the user asks
+   * for is a normal, undoable dispatch.
+   */
+  | { type: 'analysis.setDetected'; analysis: Omit<AudioAnalysis, 'stems' | 'stemFeatures'> }
+  /**
+   * Refined beat grid and sections, applied only where the analysis still equals `baseline` (the result the
+   * refinement started from), so corrections the user made in the meantime are kept. Background results.
+   */
+  | { type: 'analysis.setRefined'; assetId: Id; refined: RefinedAnalysis; baseline: RefinedAnalysis }
+  /**
+   * Separated stems (asset ids) and their features. Background results. Without an analysis it creates an entry
+   * with only stems and an empty version (not analyzed), rather than failing and orphaning the stem assets.
+   */
+  | {
+      type: 'analysis.setStems'
+      assetId: Id
+      stems: NonNullable<AudioAnalysis['stems']>
+      stemFeatures: NonNullable<AudioAnalysis['stemFeatures']>
+    }
+  /** A user correction of the beat grid, e.g. doubling the tempo or moving the downbeat. Writes only the given fields. */
+  | { type: 'analysis.setGrid'; assetId: Id; grid: Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'> }
   | { type: 'analysis.removeAudio'; assetId: Id }
   | { type: 'analysis.updateSection'; assetId: Id; sectionId: Id; patch: Partial<Omit<SongSection, 'id'>> }
   | { type: 'analysis.setVisual'; analysis: VisualAnalysis }
@@ -345,6 +372,37 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
     case 'analysis.setAudio':
       p.analysis.audio[cmd.analysis.assetId] = cmd.analysis
       return
+    case 'analysis.setDetected': {
+      const current = p.analysis.audio[cmd.analysis.assetId]
+      const next: AudioAnalysis = { ...cmd.analysis }
+      if (current?.stems) next.stems = current.stems
+      if (current?.stemFeatures) next.stemFeatures = current.stemFeatures
+      p.analysis.audio[cmd.analysis.assetId] = next
+      return
+    }
+    case 'analysis.setRefined': {
+      const a = p.analysis.audio[cmd.assetId]
+      if (!a) return
+      const gridUntouched =
+        sameData(a.tempo, cmd.baseline.tempo) &&
+        sameData(a.beats, cmd.baseline.beats) &&
+        sameData(a.downbeats, cmd.baseline.downbeats)
+      if (gridUntouched) setFields(a, cmd.refined, ['tempo', 'beats', 'downbeats'])
+      if (sameData(a.sections, cmd.baseline.sections)) setFields(a, cmd.refined, ['sections'])
+      return
+    }
+    case 'analysis.setStems': {
+      const a = (p.analysis.audio[cmd.assetId] ??= { assetId: cmd.assetId, version: '' })
+      a.stems = cmd.stems
+      a.stemFeatures = cmd.stemFeatures
+      return
+    }
+    case 'analysis.setGrid': {
+      const a = p.analysis.audio[cmd.assetId]
+      if (!a) throw new EditError('not-found', 'No analysis for that asset')
+      setFields(a, cmd.grid, ['tempo', 'beats', 'downbeats'])
+      return
+    }
     case 'analysis.removeAudio':
       delete p.analysis.audio[cmd.assetId]
       return
@@ -373,6 +431,19 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
       const unknown: never = cmd
       throw new EditError('invalid', `Unknown command ${(unknown as { type: string }).type}`)
     }
+  }
+}
+
+function sameData(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+/** Copies the listed keys that `from` has (an explicit undefined removes the field), touching no others. */
+function setFields<T extends object, K extends keyof T>(target: T, from: Partial<T>, keys: K[]) {
+  for (const key of keys) {
+    if (!(key in from)) continue
+    if (from[key] === undefined) delete target[key]
+    else target[key] = from[key] as T[K]
   }
 }
 
@@ -413,6 +484,8 @@ export function describeCommand(cmd: EditCommand): string {
     'effect.remove': 'Remove effect',
     'marker.add': 'Add marker',
     'marker.remove': 'Remove marker',
+    'analysis.updateSection': 'Edit section',
+    'analysis.setGrid': 'Change beat grid',
     'lyrics.set': 'Edit lyrics',
     'lyrics.updateLine': 'Edit lyric line',
   }

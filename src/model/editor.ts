@@ -56,6 +56,12 @@ function cloneCommands(commands: EditCommand[]): EditCommand[] {
   }
 }
 
+function pathsOverlap(a: Patch['path'], b: Patch['path']): boolean {
+  const n = Math.min(a.length, b.length)
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 export class ProjectEditor {
   private project: Project
   private undoStack: HistoryEntry[] = []
@@ -89,6 +95,7 @@ export class ProjectEditor {
     })
     if (patches.length === 0) return
     if (options.history === 'skip') {
+      if (import.meta.env.DEV) this.warnOnHistoryOverlap(list, patches)
       this.project = next
       this.emit({ source: 'derived', commands: list, patches })
       return
@@ -114,6 +121,28 @@ export class ProjectEditor {
     this.emit({ source: 'edit', commands: list, patches })
   }
 
+  /**
+   * Development check for `history: 'skip'`: warns when a derived write touches a path that undo (its inverse patches)
+   * or redo (its patches) would later overwrite.
+   */
+  private warnOnHistoryOverlap(commands: EditCommand[], patches: Patch[]) {
+    const written = patches.filter((p) => p.path[0] !== 'updatedAt')
+    const applied = [
+      ...this.undoStack.flatMap((e) => e.inversePatches.map((p) => [e, p] as const)),
+      ...this.redoStack.flatMap((e) => e.patches.map((p) => [e, p] as const)),
+    ]
+    for (const [entry, recorded] of applied) {
+      // Removals follow their owner's lifetime: undoing or redoing one drops derived data together with its owner.
+      if (recorded.op === 'remove') continue
+      const hit = written.find((p) => pathsOverlap(p.path, recorded.path))
+      if (hit) {
+        console.warn(
+          `Derived edit ${commands[0]?.type} writes ${hit.path.join('.')}, which the undo step "${entry.label}" also changes`,
+        )
+        return
+      }
+    }
+  }
   /** Ends coalescing so the next dispatch with the same key starts a new undo step (call on pointerup). */
   endGesture(): void {
     const last = this.undoStack[this.undoStack.length - 1]
