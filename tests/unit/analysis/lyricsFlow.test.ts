@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { LyricsService, type LyricsDeps } from '../../../src/analysis/lyrics/client.ts'
+import type { CtcVocabulary } from '../../../src/analysis/lyrics/align.ts'
+import type { CtcEmissions } from '../../../src/analysis/lyrics/ctc.ts'
+import { alignmentKey } from '../../../src/analysis/lyrics/text.ts'
 import type { AlignTextArgs, TranscribeArgs } from '../../../src/analysis/lyrics/worker-api.ts'
 import { STEM_MODEL_BYTES, StemSeparationService } from '../../../src/analysis/stems/client.ts'
 import type { StemSeparationResult } from '../../../src/analysis/stems/worker-api.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
-import { createProject, type Asset } from '../../../src/model/index.ts'
+import { createProject, type Asset, type LyricsDoc } from '../../../src/model/index.ts'
 import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
 import {
   exposeWorker,
@@ -46,7 +49,14 @@ interface Call {
   reusedEmissions: boolean
 }
 
-function setup(options: { storedVocals?: boolean; alignFails?: boolean } = {}) {
+/** What the aligner heard in the vocals, for the `emissions` worker call. */
+interface Heard {
+  emissions: CtcEmissions
+  vocab: CtcVocabulary
+  voiced: { start: number; end: number }[]
+}
+
+function setup(options: { storedVocals?: boolean; alignFails?: boolean; heard?: Heard } = {}) {
   const calls: Call[] = []
   const record = (method: string, args: { vocals: { sampleRate: number; channels: Float32Array[] } }) =>
     calls.push({
@@ -71,7 +81,7 @@ function setup(options: { storedVocals?: boolean; alignFails?: boolean } = {}) {
     },
     async emissions(args: { vocals: { sampleRate: number; channels: Float32Array[] } }) {
       record('emissions', args)
-      return { emissions: emissions(), vocab }
+      return options.heard ?? { emissions: emissions(), vocab, voiced: [] }
     },
     async transcribe(args: TranscribeArgs) {
       record('transcribe', args)
@@ -288,5 +298,59 @@ describe('LyricsService.prepareRealign', () => {
     expect(service.canRealign(song.id)).toBe(true)
     expect(calls.map((c) => [c.method, c.seconds, c.sampleRate])).toEqual([['emissions', 5, 16000]])
     expect(separations()).toBe(0)
+  })
+
+  it('re-times a dragged word with the voice regions it heard, so the next lines stay out of an instrumental', async () => {
+    const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ'"
+    const letters: CtcVocabulary = {
+      ids: Object.fromEntries([...LETTERS].map((c, i) => [c, i + 2])),
+      blank: 0,
+      wordDelimiter: 1,
+    }
+    const V = LETTERS.length + 2
+    const em: CtcEmissions = {
+      logProbs: new Float32Array(1600 * V).fill(Math.log(0.01 / (V - 1))),
+      frames: 1600,
+      vocab: V,
+      frameSeconds: 0.02,
+    }
+    for (let f = 0; f < em.frames; f++) em.logProbs[f * V] = Math.log(0.99)
+    const spell = (word: string, frame: number, p: number) =>
+      [...alignmentKey(word)].forEach((c, k) => {
+        const row = (frame + 2 * k) * V
+        em.logProbs[row] = Math.log(0.99 - p)
+        em.logProbs[row + (letters.ids[c] as number)] = Math.log(p)
+      })
+    // "go" is sung at 30 s; at 10 s, in an instrumental, bleed from the separation sounds even more like it.
+    spell('no', 50, 0.9)
+    spell('go', 500, 0.9)
+    spell('go', 1500, 0.6)
+    const voiced = [
+      { start: 0.5, end: 2 },
+      { start: 29.5, end: 31 },
+    ]
+    const { service, song, deps } = setup({
+      storedVocals: true,
+      heard: { emissions: em, vocab: letters, voiced },
+    })
+    await service.prepareRealign(song.id, deps).promise
+    const line = (id: string, text: string, start: number) => ({
+      id,
+      text,
+      start,
+      end: start + 0.3,
+      words: [{ text, start, end: start + 0.3 }],
+    })
+    const doc: LyricsDoc = {
+      audioAssetId: song.id,
+      source: 'pasted',
+      lines: [line('a', 'no', 1.4), line('b', 'go', 10)],
+    }
+    const fixed = service.realignFrom(doc, 0, 0, 1)
+    expect(fixed?.lines[0]?.start).toBe(1)
+    expect(fixed?.lines[1]?.start).toBe(30)
+    // Timing an untimed line after an edit uses them too.
+    const edited: LyricsDoc = { ...doc, lines: [line('a', 'no', 1), { id: 'b', text: 'go', words: [] }] }
+    expect(service.realignLine(edited, 1)?.lines[1]?.start).toBe(30)
   })
 })
