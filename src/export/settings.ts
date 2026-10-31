@@ -35,6 +35,7 @@ const output = z.object({
   quality: z.enum(['high', 'balanced', 'small']),
   reframe: mode,
   range: range.optional(),
+  maxLength: z.number().min(5).max(60).optional(),
   audio: z.boolean().optional(),
 })
 const preferences = z.object({

@@ -22,6 +22,16 @@ export interface TeaserPick extends TimeRange {
 
 export const TEASER_LENGTH = { min: 15, max: 30 } as const
 export const LOOP_LENGTH = { min: 3, max: 8 } as const
+/** Teaser lengths offered in the export dialog, as the longest a teaser may run. */
+export const TEASER_CHOICES = [15, 30] as const
+
+/**
+ * The lengths a teaser may take: with a limit, up to it (ending on the last bar before it, so a 15 s teaser fits a
+ * 15 s story); without one, 15 to 30 s.
+ */
+export function teaserWindow(maxLength?: Seconds): { min: Seconds; max: Seconds } {
+  return maxLength ? { min: Math.round((maxLength * 2) / 3), max: maxLength } : TEASER_LENGTH
+}
 /** Window used to find the loudest part when the song has no sections. */
 const ENERGY_WINDOW: Seconds = 20
 
@@ -223,6 +233,41 @@ export function fitLoopRange(project: Project, start: Seconds, bars: number): Lo
   return { start: s, end: e, bars: n, crossfade: Math.min(loopCrossfade(e - s), s) }
 }
 
+/** A loop length: whole bars, or plain seconds (bars 0) for a song without a beat grid. */
+export interface LoopLength {
+  bars: number
+  seconds: Seconds
+}
+
+/**
+ * A loop of `length` placed near `start`: on bars when it has bars (null when they don't fit), else clamped inside
+ * the timeline with room for the crossfade before it.
+ */
+export function placeLoop(project: Project, start: Seconds, length: LoopLength): LoopPick | null {
+  if (length.bars > 0) return fitLoopRange(project, start, length.bars)
+  const duration = projectDuration(project)
+  if (duration <= 0) return null
+  const len = Math.min(duration, length.seconds)
+  const s = Math.min(Math.max(start, loopCrossfade(len)), Math.max(0, duration - len))
+  return { start: s, end: s + len, bars: 0, crossfade: Math.min(loopCrossfade(len), s) }
+}
+
+/**
+ * The loop lengths to offer around `start`: 1, 2, 4 or 8 bars that last 3 to 8 s there, or 4, 6 and 8 s without a
+ * beat grid.
+ */
+export function loopLengths(project: Project, start: Seconds): LoopLength[] {
+  if (barTimes(project).length < 2) return [4, 6, 8].map((seconds) => ({ bars: 0, seconds }))
+  const lengths: LoopLength[] = []
+  for (const bars of [1, 2, 4, 8]) {
+    const pick = fitLoopRange(project, start, bars)
+    const seconds = pick ? pick.end - pick.start : 0
+    if (seconds >= LOOP_LENGTH.min - 1e-6 && seconds <= LOOP_LENGTH.max + 1e-6)
+      lengths.push({ bars, seconds })
+  }
+  return lengths
+}
+
 /**
  * A Canvas loop range: 4, 2 or 1 bars (3-8 s) starting on the bar where the teaser starts, with enough timeline
  * before it for the crossfade. Without a beat grid, 6 s.
@@ -235,11 +280,8 @@ export function loopRange(
   const duration = projectDuration(project)
   if (duration <= 0) return null
   const bars = barTimes(project)
-  const fallback = (start: Seconds): LoopPick => {
-    const len = Math.min(duration, Math.max(length.min, Math.min(length.max, 6)))
-    const s = Math.min(Math.max(start, loopCrossfade(len)), Math.max(0, duration - len))
-    return { start: s, end: s + len, bars: 0, crossfade: Math.min(loopCrossfade(len), s) }
-  }
+  const fallback = (start: Seconds) =>
+    placeLoop(project, start, { bars: 0, seconds: Math.max(length.min, Math.min(length.max, 6)) })
   if (bars.length < 2) return fallback(around)
   const first = bars.findIndex((b) => b >= around - 1e-6)
   const from = first < 0 ? bars.length - 1 : first
