@@ -288,9 +288,10 @@ function keepInMedia(
   if (assets.length === 0) return undefined
   const commands: EditCommand[] = assets.map((asset) => ({ type: 'asset.add', asset }))
   if (!dispatch(commands, { label: run.label })) return undefined
+  // A no-break space keeps the count on the same line as its noun ("2 images").
   const kept = run.single
     ? `The ${run.unit} is kept in Media.`
-    : `${plural(assets.length, run.unit)} made so far ${assets.length === 1 ? 'is' : 'are'} kept in Media.`
+    : `${plural(assets.length, run.unit).replace(' ', '\u00a0')} made so far ${assets.length === 1 ? 'is' : 'are'} kept in Media.`
   const outcome: GenerateOutcome = {
     label: run.label,
     assets,

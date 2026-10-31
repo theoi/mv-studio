@@ -583,8 +583,9 @@ export class DirectorSession {
         if (this.job !== handle) return this.state
         const err = JobError.from(error)
         if (err.code === 'cancelled') {
+          // A no-break space keeps the count on the same line as its noun ("3 clips").
           const kept = done.size
-            ? ` ${plural(done.size, unit)} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
+            ? ` ${plural(done.size, unit).replace(' ', '\u00a0')} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
             : ''
           this.set(this.readyState(request, plan, `Generation stopped.${kept}`))
         } else {

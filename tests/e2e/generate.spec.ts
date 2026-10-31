@@ -491,7 +491,7 @@ test('errors say what to do: a rejected key opens Settings, and Try again recove
   fal.submitError = { status: 500, body: { detail: 'Internal server error' } }
   await page.getByRole('button', { name: /^Generate · / }).click()
   await expect(page.getByRole('alert')).toContainText('fal.ai had a problem')
-  await expect(page.getByText('Choose Retry in a moment.')).toBeVisible()
+  await expect(page.getByText('Try again in a moment.')).toBeVisible()
   fal.submitError = undefined
   await page.getByRole('button', { name: 'Try again' }).click()
   await expect(page.getByText('Added AI image: Rain on a window', { exact: true })).toBeVisible({

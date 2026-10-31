@@ -297,7 +297,7 @@ function Running({ job, onCancel }: { job?: JobSnapshot; onCancel: () => void })
         label="Generation progress"
         note={
           keeping
-            ? `Keeping 1 ${run?.task === 'text-to-image' ? 'image' : 'video'} that is downloading`
+            ? `Keeping 1\u00a0${run?.task === 'text-to-image' ? 'image' : 'video'} that is downloading`
             : undefined
         }
       />
@@ -386,7 +386,7 @@ function Failed({ job }: { job?: JobSnapshot }) {
   return (
     <ToolView
       title="Generate"
-      subtitle="Generation stopped"
+      subtitle="Generation failed"
       footer={
         keyProblem ? (
           <div className={styles.footerRow}>

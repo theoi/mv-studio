@@ -413,7 +413,7 @@ function GeneratingView({ state, onCancel }: { state: StateOf<'generating'>; onC
         label={`Generating ${unit}s`}
         note={
           stopping?.keeping
-            ? `Keeping ${plural(stopping.keeping, unit)} that ${stopping.keeping === 1 ? 'is' : 'are'} downloading`
+            ? `Keeping ${plural(stopping.keeping, unit).replace(' ', '\u00a0')} that ${stopping.keeping === 1 ? 'is' : 'are'} downloading`
             : undefined
         }
       />
@@ -581,7 +581,7 @@ function ErrorView({ state }: { state: StateOf<'error'> }) {
           <div className={styles.muted}>
             {sentence(state.message)} Your project is unchanged
             {kept > 0
-              ? `, and the ${plural(kept, `AI ${state.unit}`)} made so far ${kept === 1 ? 'is' : 'are'} kept`
+              ? `, and the ${plural(kept, `AI ${state.unit}`).replace(' ', '\u00a0')} made so far ${kept === 1 ? 'is' : 'are'} kept`
               : ''}
             .
           </div>

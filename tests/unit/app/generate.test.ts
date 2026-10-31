@@ -297,10 +297,10 @@ describe('startGenerate', () => {
     expect(generatedClips()).toEqual([])
     expect(editor.undoLabel()).toBe('Generate 4 images')
     expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.006, 6)
-    expect(toasts()).toEqual(['Generation failed. 2 images made so far are kept in Media.'])
+    expect(toasts()).toEqual(['Generation failed. 2\u00a0images made so far are kept in Media.'])
     // The failed view says the same, and one undo takes both out again.
     const kept = generateOutcome(job.id)!
-    expect(kept.kept).toBe('2 images made so far are kept in Media.')
+    expect(kept.kept).toBe('2\u00a0images made so far are kept in Media.')
     expect(undoOutcome(kept)).toBe(true)
     expect(generatedAssets()).toEqual([])
   })
@@ -353,7 +353,7 @@ describe('a Cancel after fal.ai made something', () => {
     expect(generatedAssets()).toHaveLength(1)
     expect(generatedClips()).toEqual([])
     expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
-    expect(toasts()).toEqual(['Generation stopped. 1 image made so far is kept in Media.'])
+    expect(toasts()).toEqual(['Generation stopped. 1\u00a0image made so far is kept in Media.'])
     expect(calls).toBe(1)
   })
 
@@ -374,7 +374,7 @@ describe('a Cancel after fal.ai made something', () => {
     expect(generatedAssets()).toHaveLength(2)
     expect(generatedClips()).toEqual([])
     expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.006, 6)
-    expect(toasts()).toEqual(['Generation stopped. 2 images made so far are kept in Media.'])
+    expect(toasts()).toEqual(['Generation stopped. 2\u00a0images made so far are kept in Media.'])
     expect(editor.undoLabel()).toBe('Generate 4 images')
     expect(editor.undo()).toBe(true)
     expect(generatedAssets()).toEqual([])

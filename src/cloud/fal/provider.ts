@@ -154,7 +154,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
         provider: 'fal',
         title: 'fal.ai returned no result',
         message: 'The request finished but did not include a file.',
-        steps: ['Choose Retry.'],
+        steps: ['Try again.'],
       })
     }
     const media: GeneratedMedia[] = []
@@ -286,7 +286,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
             provider: 'fal',
             title: 'Generation took too long',
             message: `No result after ${humanDuration(this.options.timeoutMs / 1000)}, so the request was cancelled.`,
-            steps: ['Choose Retry, or pick a faster model.'],
+            steps: ['Try again, or pick a faster model.'],
           })
         }
         let status
@@ -345,7 +345,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
           status: response.status,
           title: "Couldn't download the result",
           message: `fal.ai's file host returned ${response.status}.`,
-          steps: ['Choose Retry.'],
+          steps: ['Try again.'],
         })
       }
       return await response.blob()

@@ -140,7 +140,7 @@ describe('DirectorSession', () => {
     const after = ready(await applying)
     // The note is its own field: the panel shows it above Generate, not among the plan's notes.
     expect(planned.stopped).toBeUndefined()
-    expect(after.stopped).toBe('Generation stopped. 2 shots made so far are kept.')
+    expect(after.stopped).toBe('Generation stopped. 2\u00a0shots made so far are kept.')
     expect(after.preview.warnings).not.toContain(after.stopped)
     const kept = after.generatedShots
     expect(kept).toBe(2)
@@ -170,7 +170,7 @@ describe('DirectorSession', () => {
     expect(session.getState()).toMatchObject({ status: 'generating', stopping: { keeping: 1 } })
     downloading[0]!()
     const after = ready(await applying)
-    expect(after.stopped).toBe('Generation stopped. 1 clip made so far is kept.')
+    expect(after.stopped).toBe('Generation stopped. 1\u00a0clip made so far is kept.')
     expect(after.generatedShots).toBe(1)
     expect(store.stored).toHaveLength(1)
     expect(ledger.monthTotal()).toBeCloseTo(provider.estimate(provider.calls[0]!).usd, 6)
