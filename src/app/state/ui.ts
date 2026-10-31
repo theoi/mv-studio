@@ -14,6 +14,8 @@ export type Selection =
   | { type: 'clip'; id: string; ids?: string[] }
   | { type: 'lyric'; id: string }
   | { type: 'section'; id: string }
+  /** A clip's transition in (at its start) or out (at its end); `id` is the clip. */
+  | { type: 'transition'; id: string; edge: 'in' | 'out' }
 export type RightTab = 'inspector' | 'assist'
 export type AssistView =
   | 'home'
@@ -69,8 +71,15 @@ export interface UiState {
   pxPerSec: number
   tool: TimelineTool
   snap: boolean
+  /** What snapping snaps to (the snap menu). */
   beatSnap: boolean
+  barSnap: boolean
+  sectionSnap: boolean
+  edgeSnap: boolean
+  playheadSnap: boolean
   showEnergy: boolean
+  /** Bar and beat lines behind the tracks. */
+  showGrid: boolean
   review: boolean
   dismissed: string[]
   toasts: Toast[]
@@ -109,7 +118,12 @@ export const initialUi: UiState = {
   tool: 'select',
   snap: true,
   beatSnap: prefs().beatSnap,
+  barSnap: true,
+  sectionSnap: true,
+  edgeSnap: true,
+  playheadSnap: true,
   showEnergy: true,
+  showGrid: true,
   review: false,
   dismissed: [],
   toasts: [],

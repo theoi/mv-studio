@@ -185,6 +185,12 @@ export const sectionColor: Record<SectionKind, string> = {
   outro: 'var(--section-outro)',
 }
 
+/** A section's color: the one the user picked, else the color of its kind. */
+export function sectionTint(s: SongSection): string {
+  const picked = s.color && Object.hasOwn(sectionColor, s.color) ? (s.color as SectionKind) : undefined
+  return sectionColor[picked ?? sectionKind(s)]
+}
+
 export function sectionsOf(p: Project): SongSection[] {
   return songAnalysis(p)?.sections ?? []
 }
@@ -236,6 +242,9 @@ export interface ClipView {
   lyricLineId?: string
   /** Look layers: how strongly the look applies (the clip's opacity, 0..1). */
   amount?: number
+  /** Video and image clips: how long their transitions in and out are, whose marks the clip's name sits beside. */
+  transitionIn?: number
+  transitionOut?: number
 }
 
 export function viewOf(p: Project, c: Clip): ClipView {
@@ -250,6 +259,8 @@ export function viewOf(p: Project, c: Clip): ClipView {
         name: c.name ?? a?.name ?? 'Clip',
         ...(a ? { asset: a } : {}),
         ...(c.type === 'video' ? { sourceStart: c.sourceStart } : {}),
+        ...(c.transitionIn ? { transitionIn: c.transitionIn.duration } : {}),
+        ...(c.transitionOut ? { transitionOut: c.transitionOut.duration } : {}),
       }
     }
     case 'text':

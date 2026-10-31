@@ -83,12 +83,15 @@ export function MenuCheckItem({
   onCheckedChange,
   children,
   shortcut,
+  description,
   disabled,
 }: {
   checked: boolean
   onCheckedChange?: (v: boolean) => void
   children: ReactNode
   shortcut?: string
+  /** A second line, e.g. why the item is disabled. */
+  description?: string
   disabled?: boolean
 }) {
   return (
@@ -100,7 +103,10 @@ export function MenuCheckItem({
       onSelect={(e) => e.preventDefault()}
     >
       <span className={styles.itemIcon}>{checked && <Check />}</span>
-      <span className={styles.itemText}>{children}</span>
+      <span className={styles.itemText}>
+        <span>{children}</span>
+        {description && <span className={styles.itemDesc}>{description}</span>}
+      </span>
       {shortcut && <Kbd keys={shortcut} />}
     </RMenu.CheckboxItem>
   )

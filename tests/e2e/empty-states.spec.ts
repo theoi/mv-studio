@@ -18,7 +18,7 @@ test('the Media and Assist empty states say what to do next, before and after a 
   const media = page.getByRole('tabpanel', { name: 'Media' })
   await expect(media.getByText('Bring in your media')).toBeVisible()
   await expect(
-    media.getByText('Drop a song, clips and images anywhere, or Import. Files stay on this device.'),
+    media.getByText('Drop a song, clips and images anywhere, or Import. Files are kept in this browser.'),
   ).toBeVisible()
   await page.getByRole('tab', { name: 'Assist' }).click()
   await expect(page.getByText('Add a song to unlock smart tools')).toBeVisible()

@@ -448,6 +448,10 @@ test('a song without a beat says no beat was found, as the editor does, and show
 test('Blank project opens an empty timeline with a video and a song track', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  // The privacy line promises no more than the app keeps: cloud features upload what they work on.
+  await expect(page.getByRole('contentinfo')).toHaveText(
+    'Runs in your browser. Your songs and footage stay on this device unless you use a cloud feature.',
+  )
   await page.getByRole('button', { name: /^Blank project/ }).click()
   await expect(page.getByText('Start with a song')).toBeVisible()
   expect((await opened(page)).tracks).toEqual(['Video 1', 'Song'])

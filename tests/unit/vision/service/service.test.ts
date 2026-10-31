@@ -4,12 +4,18 @@ import { JobError } from '../../../../src/shared/jobs.ts'
 import { createMemoryCache, type BlobCache } from '../../../../src/vision/runtime/cache.ts'
 import { decodeContainer, encodeContainer } from '../../../../src/vision/runtime/container.ts'
 import { createVisionService } from '../../../../src/vision/service.ts'
-import type { VisionBackends } from '../../../../src/vision/backends.ts'
+import type { PersonDetection, VisionBackends } from '../../../../src/vision/backends.ts'
 import type { SuitabilityReport } from '../../../../src/vision/types.ts'
 import { discMask, fakeOnnx, fakeSegmentation, fakeSource, flatGray } from '../segmentation/fakes.ts'
 
-function setup(cache: BlobCache = createMemoryCache()) {
-  const seg = fakeSegmentation((_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 3))
+/** `detectors: 'unavailable'` stands for a person and face detector that cannot be downloaded. */
+function setup(cache: BlobCache = createMemoryCache(), detectors: 'available' | 'unavailable' = 'available') {
+  const whole = (): PersonDetection[] => [{ box: { x: 0, y: 0, width: 1, height: 1 }, score: 0.9 }]
+  const seg = fakeSegmentation(
+    (_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 3),
+    detectors === 'available' ? whole : () => null,
+    { facesUnavailable: detectors === 'unavailable' },
+  )
   const onnx = fakeOnnx({ dim: 8 })
   const backends: VisionBackends = { segmentation: () => seg, onnx: () => onnx }
   const service = createVisionService({ backends, cache, toGray: (_b, size) => flatGray(size) })
@@ -190,11 +196,28 @@ describe('vision service', () => {
       const offline = setup(cache)
       offline.seg.analyze = async (req) => {
         req.bitmap.close()
-        throw new JobError('model-load', 'offline')
+        throw new JobError('worker-crashed', 'crashed')
       }
-      await expect(offline.service.personTrack(source)).rejects.toMatchObject({ code: 'model-load' })
+      await expect(offline.service.personTrack(source)).rejects.toMatchObject({ code: 'worker-crashed' })
       const online = setup(cache)
       expect((await online.service.personTrack(source)).suitability.verdict).toBe('good')
+      expect(count(online.seg.calls, 'beginTrack')).toBe(0)
+    })
+
+    it('is judged on its whole mask when the person detector cannot be downloaded, and looked at again later', async () => {
+      const { cache, source, storedMeta } = await storedWithReport(undefined, false)
+      const offline = setup(cache, 'unavailable')
+      const judged = await offline.service.personTrack(source)
+      expect(judged.suitability).toMatchObject({ verdict: 'good', peopleSkipped: true })
+      expect(count(offline.seg.calls, 'beginTrack')).toBe(0)
+      expect(offline.seg.analyzed).toHaveLength(1)
+      const meta = await storedMeta()
+      expect(meta.people).toBeUndefined()
+      expect(meta.suitabilityVersion).toBeUndefined()
+      const online = setup(cache)
+      const later = await online.service.personTrack(source)
+      expect(later.suitability.peopleSkipped).toBeUndefined()
+      expect(later.people).toHaveLength(10)
       expect(count(online.seg.calls, 'beginTrack')).toBe(0)
     })
 
@@ -215,6 +238,22 @@ describe('vision service', () => {
       expect(await storedVersion()).toBeUndefined()
     })
   })
+  it('builds a track without the detectors when they cannot be downloaded, and finds the people in it later', async () => {
+    const offline = setup(createMemoryCache(), 'unavailable')
+    const { source } = fakeSource({ duration: 2, frameRate: 10 })
+    const built = await offline.service.personTrack(source)
+    expect(built.suitability).toMatchObject({ verdict: 'good', peopleSkipped: true })
+    const online = setup(offline.cache)
+    const later = await online.service.personTrack(source)
+    expect(count(online.seg.calls, 'beginTrack')).toBe(0)
+    expect(online.seg.analyzed.filter((a) => a.people)).toHaveLength(10)
+    expect(later.suitability.peopleSkipped).toBeUndefined()
+    expect(later.track.packed).toEqual(built.track.packed)
+    // The observations have no faces, so subject tracking looks again instead of reusing them.
+    const subjects = await online.service.subjects(source)
+    expect(subjects.samples[0]!.source).toBe('face')
+  })
+
   it('reuses the cached person track observations for subject tracking', async () => {
     const { service, seg } = setup()
     const { source } = fakeSource({ duration: 2, frameRate: 10 })

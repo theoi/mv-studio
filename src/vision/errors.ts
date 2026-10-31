@@ -9,6 +9,13 @@ export function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 /**
+ * Whether a model failed to download or load (offline, a blocked host, a bad file), rather than failing on its input.
+ */
+export function isModelUnavailable(err: unknown): boolean {
+  return err instanceof JobError && (err.code === 'network' || err.code === 'model-load')
+}
+
+/**
  * Normalizes anything a model runtime throws into a JobError. Unlike JobError.from, it recognizes the ways
  * WASM runtimes report heap exhaustion, and lets the caller pick the code for unknown failures.
  */

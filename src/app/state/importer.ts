@@ -10,13 +10,14 @@ import {
   type Project,
   type Track,
 } from '../../model/index.ts'
+import { importLut, isCubeFile, isLutAsset } from '../../plugins/lut.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
 import { templateState } from '../../plugins/templates.ts'
 import { TRACK_IDS } from '../mock/demoProject.ts'
 import { numberedName } from './clipboard.ts'
 import { backgroundAnalysisOn } from './footage.ts'
 import { JOB_KINDS } from './jobs.ts'
-import { formatTime } from '../format.ts'
+import { formatTime, plural } from '../format.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
 import { analysisService, findBars, foundText, markSongPending } from './songAnalysis.ts'
@@ -37,7 +38,7 @@ export function registerImportInput(input: HTMLInputElement | null): void {
 
 export function openImport(what: 'media' | 'song' = 'media'): void {
   if (!fileInput) return
-  fileInput.accept = what === 'song' ? 'audio/*' : 'audio/*,video/*,image/*'
+  fileInput.accept = what === 'song' ? 'audio/*' : 'audio/*,video/*,image/*,.cube'
   fileInput.click()
 }
 
@@ -125,7 +126,10 @@ export async function storeFiles(files: File[]): Promise<StoredFiles> {
         jobs.run({
           kind: JOB_KINDS.import,
           title: `Importing ${file.name}`,
-          run: (ctx) => mediaStore.importFile(file, ctx),
+          run: (ctx) =>
+            isCubeFile(file)
+              ? importLut(file, mediaStore, Object.values(editor.getProject().assets))
+              : mediaStore.importFile(file, ctx),
         }).promise,
     ),
   )
@@ -146,18 +150,27 @@ export async function storeFiles(files: File[]): Promise<StoredFiles> {
  */
 export async function importFiles(files: File[], at?: Placement): Promise<Asset[]> {
   if (!files.length) return []
-  const { assets, failed } = await storeFiles(files)
-  if (failed[0]) {
-    const { file, reason } = failed[0]
+  const stored = await storeFiles(files)
+  if (stored.failed[0]) {
+    const { file, reason } = stored.failed[0]
     toast(
-      failed.length === 1
+      stored.failed.length === 1
         ? `${file.name} was not imported: ${reason}`
-        : `${failed.length} files were not imported. ${reason}`,
+        : `${stored.failed.length} files were not imported. ${reason}`,
     )
   }
+  const project = editor.getProject()
+  // A LUT file the project already has comes back as that LUT, already in the project.
+  const known = stored.assets.filter((a) => project.assets[a.id])
+  if (known[0])
+    toast(
+      known.length === 1
+        ? `“${known[0].name}” is already in this project.`
+        : `${known.length} of these LUTs are already in this project.`,
+    )
+  const assets = stored.assets.filter((a) => !project.assets[a.id])
   if (!assets.length) return []
 
-  const project = editor.getProject()
   const commands: EditCommand[] = assets.map((asset) => ({ type: 'asset.add', asset }))
   const song = project.songAssetId ? undefined : assets.find((a) => a.kind === 'audio')
   if (song) commands.push(...songCommands(project, song))
@@ -165,7 +178,7 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
     ? placeAll(
         project,
         commands,
-        assets.filter((a) => a !== song),
+        assets.filter((a) => a !== song && !isLutAsset(a)),
         at,
       )
     : []
@@ -176,7 +189,14 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
     if (song) markSongPending(song.id, false)
     return []
   }
-  const visual = assets.filter((a) => a.kind === 'video' || a.kind === 'image').length
+  const luts = assets.filter(isLutAsset)
+  const visual = assets.filter((a) => (a.kind === 'video' || a.kind === 'image') && !isLutAsset(a)).length
+  // A LUT is not media, so the Media library doesn't list it: say where it went.
+  const lutNote = luts[0]
+    ? luts.length === 1
+      ? `Imported the LUT “${luts[0].name}”. Choose it in a Color grade’s LUT.`
+      : `Imported ${luts.length} LUTs. Choose them in a Color grade’s LUT.`
+    : undefined
   const first = placed[0]?.clip
   if (first) {
     select({ type: 'clip', id: first.id })
@@ -190,17 +210,27 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
     set({ playhead: 0, selection: { type: 'none' } })
     toast(`Added “${baseName(song.name)}” as the song. Finding its beats and sections…`)
     void analyzeSong(song).finally(() => markSongPending(song.id, false))
-  } else if (!first) {
-    toast(
-      assets.length === 1
-        ? `Imported ${assets[0]?.name}`
-        : `Imported ${assets.length} files${visual ? ` (${visual} clips and images)` : ''}`,
-    )
   }
+  if (lutNote && (song || first || luts.length === assets.length)) toast(lutNote)
+  else if (!song && !first) toast(assets.length === 1 ? `Imported ${assets[0]?.name}` : importedFiles(assets))
   if (visual) set({ libraryTab: 'media', libraryOpen: true })
   return assets
 }
 
+/** "Imported 3 files: 2 clips and images, 1 LUT." */
+function importedFiles(assets: readonly Asset[]): string {
+  const luts = assets.filter(isLutAsset).length
+  const visual = assets.filter((a) => (a.kind === 'video' || a.kind === 'image') && !isLutAsset(a)).length
+  const audio = assets.filter((a) => a.kind === 'audio').length
+  const fonts = assets.filter((a) => a.kind === 'font').length
+  const kinds = [
+    visual && plural(visual, 'clip or image', 'clips and images'),
+    audio && plural(audio, 'audio file'),
+    fonts && plural(fonts, 'font'),
+    luts && plural(luts, 'LUT'),
+  ].filter(Boolean)
+  return `Imported ${assets.length} files: ${kinds.join(', ')}.`
+}
 /** Places assets one after another from `at`, against the project as `before` (the import) leaves it. */
 function placeAll(
   project: Project,

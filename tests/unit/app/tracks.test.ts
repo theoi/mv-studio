@@ -40,7 +40,7 @@ describe('track order', () => {
     const c = editor.getProject().tracks[2]!
     expect(moveTrack(c.id, 0)).toBe(true)
     expect(names()).toEqual(['C', 'A', 'B', 'X', 'Y'])
-    expect(editor.undoLabel()).toBe('Move track')
+    expect(editor.undoLabel()).toBe('Move C up')
     editor.undo()
     expect(names()).toEqual(['A', 'B', 'C', 'X', 'Y'])
   })

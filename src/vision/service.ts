@@ -123,8 +123,9 @@ interface PersonTrackFileMeta {
   suitabilityVersion?: number
   observations: FrameObservation[]
   hqFrames: number
-  /** Missing in files written before people were detected. */
+  /** Missing in files written before people were detected, or while the person detector could not be downloaded. */
   people?: PeopleAt[]
+  facesSkipped?: boolean
 }
 
 function defaultToGray(bitmap: ImageBitmap, size: Size): GrayImage {
@@ -192,25 +193,31 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
       observations: meta.observations,
       hqFrames: meta.hqFrames,
       people,
+      ...(meta.facesSkipped ? { facesSkipped: true } : {}),
     }
   }
-  const encodePerson = (r: StoredPersonTrack) =>
-    encodeContainer<PersonTrackFileMeta>(
+  const encodePerson = (r: StoredPersonTrack) => {
+    // A report judged without the person detector is not kept, so the people are looked for again next time.
+    const people = r.suitability?.peopleSkipped ? null : r.people
+    return encodeContainer<PersonTrackFileMeta>(
       {
         track: r.track.meta,
-        suitability: r.suitability,
-        ...(r.suitability && r.people ? { suitabilityVersion: SUITABILITY_VERSION } : {}),
+        suitability: people ? r.suitability : null,
+        ...(r.suitability && people ? { suitabilityVersion: SUITABILITY_VERSION } : {}),
         observations: r.observations,
         hqFrames: r.hqFrames,
-        ...(r.people ? { people: r.people } : {}),
+        ...(people ? { people } : {}),
+        ...(r.facesSkipped ? { facesSkipped: true } : {}),
       },
       r.track.packed,
     )
+  }
   /**
    * The stored track with a current report. A report from older criteria is judged again from the stored masks, after
    * a pass over the frames for what the track predates (people detection, pop shares), and written back, so this
    * runs once per entry (judging a long track takes about a second on the main thread). It runs outside the cache
-   * read, so a failed model download does not discard the stored masks.
+   * read, so a failed model download does not discard the stored masks. When the person detector cannot be
+   * downloaded, the report counts the whole mask (`peopleSkipped`) and the people are looked for again next time.
    */
   const currentPerson = (
     key: string,
@@ -238,12 +245,14 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
         const track = found.pops
           ? { ...stored.track, meta: { ...stored.track.meta, pops: found.pops } }
           : stored.track
-        const withPeople = people ?? found.people ?? []
+        const withPeople = people ?? found.people
         const result = {
           ...stored,
           track,
-          people: withPeople,
-          suitability: trackSuitability(track, withPeople, o.suitability),
+          people: withPeople ?? [],
+          suitability: withPeople
+            ? trackSuitability(track, withPeople, o.suitability)
+            : { ...trackSuitability(track, undefined, o.suitability), peopleSkipped: true },
         }
         await store(key, await encodePerson(result))
         return result
@@ -327,7 +336,8 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
       const { signal, onProgress, ...rest } = o
       // Only the observations are needed here, so a stale verdict is not judged again.
       const person = await cached(personKey(source, {}), decodeStoredPerson)
-      if (person?.observations.length && !rest.range) return subjectTrackFrom(source, person.observations)
+      if (person?.observations.length && !person.facesSkipped && !rest.range)
+        return subjectTrackFrom(source, person.observations)
       const key = cacheKey('subjects', source.mediaId, SUBJECT_TRACK_VERSION, JSON.stringify(rest))
       return memo<SubjectTrack>(
         key,

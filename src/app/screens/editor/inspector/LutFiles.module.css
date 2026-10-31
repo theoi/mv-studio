@@ -1,0 +1,45 @@
+.list {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-5);
+  list-style: none;
+  overflow-y: auto;
+  max-height: 320px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.name {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}

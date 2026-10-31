@@ -242,8 +242,11 @@ test('Section › Export as a teaser opens Export with a teaser of that section'
     window.location.hash = '#/editor?t=20'
   })
   await waitForPreview(page)
-  await page.getByRole('button', { name: /^Section Verse 1, 0:16 to 0:48$/ }).dispatchEvent('pointerdown')
-  await page.getByRole('button', { name: 'Export as a teaser' }).click()
+  // A mouse pointerdown: one without a pointer type counts as touch, whose long press opens the section menu.
+  await page
+    .getByRole('button', { name: /^Section Verse 1, 0:16 to 0:48$/ })
+    .dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
+  await page.getByRole('button', { name: 'Export as a teaser…' }).click()
   const dialog = page.getByRole('dialog', { name: 'Export' })
   await expect(dialog.getByRole('slider', { name: 'Teaser range' })).toBeVisible()
   await expect(dialog.getByText(/^0:16 – 0:46 · starts on Verse 1$/)).toBeVisible()

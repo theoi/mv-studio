@@ -1,11 +1,14 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  ArrowDown,
+  ArrowUp,
   AudioWaveform,
   ChevronDown,
   Eye,
   EyeOff,
   Flag,
   GripVertical,
+  Headphones,
   Lock,
   LockOpen,
   Magnet,
@@ -32,7 +35,7 @@ import type {
   StemName,
   Track,
 } from '../../../../model/index.ts'
-import { clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
+import { BARS_NOTES, clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
 import {
@@ -50,6 +53,7 @@ import {
   MenuTrigger,
 } from '../../../ds/Menu.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
+import { TransitionMark } from './Transitions.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import {
@@ -63,6 +67,15 @@ import {
   type WordEdge,
 } from '../../../state/lyricEdits.ts'
 import { lineTiming } from '../../../state/lyricTiming.ts'
+import {
+  addTransitionAtCut,
+  bareCuts,
+  placeTransitionMarks,
+  transitionMarkWidth,
+  transitionName,
+  transitionsAtClip,
+  type TransitionSpot,
+} from '../../../state/transitions.ts'
 import {
   copySelection,
   cutSelection,
@@ -79,11 +92,10 @@ import {
   hasSong,
   isLookClip,
   lyricLines,
-  sectionColor,
-  sectionKind,
   sectionGuess,
   sectionName,
   sectionsOf,
+  sectionTint,
   sectionUnsure,
   songAnalysis,
   splitAtPlayhead,
@@ -104,17 +116,21 @@ import {
   toast,
   useUi,
 } from '../../../state/ui.ts'
+import { beatGrid, lastIndexAt, snapTo, type BeatGrid } from '../../../state/beats.ts'
+import { useBars, type BarsState } from '../../../state/songAnalysis.ts'
 import {
   droppedLibraryItem,
   dropLibraryItem,
   isLibraryDrag,
   libraryDropHint,
 } from '../../../state/library.ts'
+import { exportSectionTeaser } from '../../../state/exports.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
 import { addMarkerAtPlayhead } from '../../../state/markers.ts'
 import {
   EASINGS,
+  groupMarks,
   keyframeMarks,
   markTargets,
   removeKeyframes,
@@ -122,6 +138,13 @@ import {
   type KeyframeMark,
 } from '../../../state/keyframes.ts'
 import { registerReveal } from '../../../state/reveal.ts'
+import {
+  cutClipsToSection,
+  moveBoundary,
+  sectionBoundaries,
+  sectionClipIds,
+  type SectionBoundary,
+} from '../../../state/sections.ts'
 import {
   separatedStems,
   songStemTrack,
@@ -223,18 +246,32 @@ function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
   return <canvas ref={ref} className={styles.vcanvas} aria-hidden />
 }
 
-function makeRuler(beat: number | null): DrawFn {
+function makeRuler(grid: BeatGrid | null): DrawFn {
   return (ctx, t0, pps, w, h) => {
     const t1 = t0 + w / pps
     const labelStep = [1, 2, 5, 10, 15, 30, 60].find((s) => s * pps >= 64) ?? 60
     ctx.font = '500 10px "Inter Variable", Inter, sans-serif'
     ctx.textBaseline = 'top'
-    if (beat) {
-      const dense = beat * pps >= 5
-      const step = dense ? beat : beat * 4
-      for (let b = Math.floor(t0 / step); b * step <= t1; b++) {
-        const x = Math.round((b * step - t0) * pps) + 0.5
-        const down = !dense || b % 4 === 0
+    if (grid) {
+      const dense = grid.beat * pps >= 5
+      // Until the bars are found, zoomed-out ticks fall on every few beats, all alike.
+      const bars = grid.detectedBars
+      const events = dense || !bars ? grid.beats : grid.downbeats
+      const every = dense ? 1 : Math.max(1, Math.ceil(5 / (grid.beat * (bars ? grid.beatsPerBar : 1) * pps)))
+      let d = Math.max(0, lastIndexAt(grid.downbeats, t0 - grid.beat))
+      for (
+        let i = Math.floor(Math.max(0, lastIndexAt(events, t0)) / every) * every;
+        i < events.length;
+        i += every
+      ) {
+        const t = events[i] as number
+        if (t > t1) break
+        let down = bars && !dense
+        if (bars && dense) {
+          while ((grid.downbeats[d] ?? Infinity) < t - grid.beat / 4) d++
+          down = Math.abs((grid.downbeats[d] ?? Infinity) - t) < grid.beat / 4
+        }
+        const x = Math.round((t - t0) * pps) + 0.5
         ctx.fillStyle = down ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.14)'
         ctx.fillRect(x, down ? h - 9 : h - 5, 1, down ? 9 : 5)
       }
@@ -257,6 +294,32 @@ function makeFlatWave(color: string, end: number): DrawFn {
     if (right <= left) return
     ctx.fillStyle = color
     ctx.fillRect(left, Math.round(h / 2) - 1, right - left, 2)
+  }
+}
+
+/** Bar lines behind the tracks once the bars are found, and beat lines when zoomed in, from the song's beat grid. */
+function makeBeatLines(grid: BeatGrid | null): DrawFn {
+  return (ctx, t0, pps, w, h) => {
+    if (!grid) return
+    const t1 = t0 + w / pps
+    const line = (events: readonly number[], every: number) => {
+      for (
+        let i = Math.floor(Math.max(0, lastIndexAt(events, t0)) / every) * every;
+        i < events.length;
+        i += every
+      ) {
+        const t = events[i] as number
+        if (t > t1) break
+        ctx.fillRect(Math.round((t - t0) * pps), 0, 1, h)
+      }
+    }
+    if (grid.beat * pps >= 18) {
+      ctx.fillStyle = 'rgba(255,255,255,0.02)'
+      line(grid.beats, 1)
+    }
+    if (!grid.detectedBars) return
+    ctx.fillStyle = 'rgba(255,255,255,0.045)'
+    line(grid.downbeats, Math.max(1, Math.ceil(12 / (grid.beat * grid.beatsPerBar * pps))))
   }
 }
 
@@ -409,12 +472,31 @@ function freeSpot(spans: [number, number][], view: [number, number], width: numb
 /* ---------- toolbar ---------- */
 
 // Memoized, like TrackHeader: a drag re-renders the timeline on every pointer move, and neither depends on the clips.
-const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
+const Toolbar = memo(function Toolbar({
+  onFit,
+  bpm,
+  grid,
+  bars,
+}: {
+  onFit: () => void
+  bpm?: number
+  grid: BeatGrid | null
+  bars: BarsState['status']
+}) {
   const snap = useUi((s) => s.snap)
   const beatSnap = useUi((s) => s.beatSnap)
+  const barSnap = useUi((s) => s.barSnap)
+  const sectionSnap = useUi((s) => s.sectionSnap)
+  const edgeSnap = useUi((s) => s.edgeSnap)
+  const playheadSnap = useUi((s) => s.playheadSnap)
   const showEnergy = useUi((s) => s.showEnergy)
+  const showGrid = useUi((s) => s.showGrid)
   const pps = useUi((s) => s.pxPerSec)
   const tool = useUi((s) => s.tool)
+  // While the bars are not found, "Bar starts" is off (the choice is kept for when they are).
+  const waiting = bars === 'finding' || bars === 'unavailable'
+  const barsShort =
+    bars === 'finding' ? BARS_NOTES.finding : bars === 'unavailable' ? BARS_NOTES.notFound : undefined
   const sliderVal = Math.round((Math.log(pps / MIN_PPS) / Math.log(MAX_PPS / MIN_PPS)) * 100)
   return (
     <div className={styles.toolbar}>
@@ -455,10 +537,23 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
               >
                 Beats
               </MenuCheckItem>
-              <MenuCheckItem checked>Bar starts</MenuCheckItem>
-              <MenuCheckItem checked>Sections</MenuCheckItem>
-              <MenuCheckItem checked>Clip edges</MenuCheckItem>
-              <MenuCheckItem checked>Playhead</MenuCheckItem>
+              <MenuCheckItem
+                checked={barSnap && !waiting}
+                onCheckedChange={(v) => set({ barSnap: v })}
+                disabled={waiting}
+                description={barsShort}
+              >
+                Bar starts
+              </MenuCheckItem>
+              <MenuCheckItem checked={sectionSnap} onCheckedChange={(v) => set({ sectionSnap: v })}>
+                Sections
+              </MenuCheckItem>
+              <MenuCheckItem checked={edgeSnap} onCheckedChange={(v) => set({ edgeSnap: v })}>
+                Clip edges
+              </MenuCheckItem>
+              <MenuCheckItem checked={playheadSnap} onCheckedChange={(v) => set({ playheadSnap: v })}>
+                Playhead
+              </MenuCheckItem>
             </MenuContent>
           </Menu>
         </div>
@@ -466,10 +561,20 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
           <Flag />
         </IconButton>
         {bpm !== undefined && (
-          <Tooltip label="Detected tempo and meter" description="Adjust in Assist › Song analysis">
+          <Tooltip
+            label="Detected tempo and meter"
+            description={
+              grid?.detectedBars || bars === 'none'
+                ? 'Adjust in Assist › Song analysis'
+                : bars === 'finding'
+                  ? `${BARS_NOTES.finding} The meter shows once they are found.`
+                  : `${BARS_NOTES.notFound}. ${BARS_NOTES.analyzeAgain} The meter shows once they are found.`
+            }
+          >
             <button className={`${styles.bpm} tnum`} onClick={() => openAssist('analysis')}>
               <Music4 />
-              {formatBpm(bpm)} · 4/4
+              {formatBpm(bpm)}
+              {grid?.detectedBars && ` · ${grid.beatsPerBar}/4`}
             </button>
           </Tooltip>
         )}
@@ -488,7 +593,7 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
             <MenuCheckItem checked={showEnergy} onCheckedChange={(v) => set({ showEnergy: v })}>
               Energy curve
             </MenuCheckItem>
-            <MenuCheckItem checked={beatSnap} onCheckedChange={(v) => set({ beatSnap: v })}>
+            <MenuCheckItem checked={showGrid} onCheckedChange={(v) => set({ showGrid: v })}>
               Beat grid
             </MenuCheckItem>
             <MenuCheckItem checked>Clip thumbnails</MenuCheckItem>
@@ -524,29 +629,17 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
 
 type DragMode = 'move' | 'start' | 'end'
 
-function snapTime(t: number, pps: number, edges: number[], beat: number | null, sectionStarts: number[]) {
+/** Snaps within 8 px, to what the snap menu has on. */
+function snapTime(t: number, pps: number, grid: BeatGrid | null, edges: number[], sections: number[]) {
   const s = get()
-  if (!s.snap) return { t, snapped: null as number | null }
-  const cands = [...edges, s.playhead, ...sectionStarts]
-  if (s.beatSnap && beat) cands.push(Math.round(t / beat) * beat)
-  let best = t
-  let bestD = 8 / pps
-  let snapped: number | null = null
-  for (const c of cands) {
-    const d = Math.abs(c - t)
-    if (d < bestD) {
-      bestD = d
-      best = c
-      snapped = c
-    }
-  }
-  return { t: best, snapped }
+  return snapTo(t, 8 / pps, grid, s, { edges, sections, playhead: s.playhead })
 }
 
 /**
  * The selected clip's keyframes, one Tab stop: Left and Right (Home, End) move between them, Enter or a click moves
  * the playhead to one and opens its easing menu, Delete removes it. After a removal, focus goes to the neighboring
- * mark, or to the clip when none is left.
+ * mark, or to the clip when none is left. Keyframes whose diamonds would touch share one mark at the first of them,
+ * with their count and a line to the last; its menu sets the easing of all of them or removes them.
  */
 function KeyframeMarks({
   clip,
@@ -561,18 +654,24 @@ function KeyframeMarks({
 }) {
   const [active, setActive] = useState(0)
   const buttons = useRef(new Map<number, HTMLButtonElement>())
-  /** Where focus goes once a removal's menu has closed: a mark's time, or the clip. */
+  /** Where focus goes once a removal's menu has closed: a mark's first time, or the clip. */
   const after = useRef<{ remove: number; focus: number | 'clip' } | null>(null)
-  const current = Math.min(active, marks.length - 1)
-  const focusMark = (i: number) => buttons.current.get(marks[i]!.time)?.focus()
-  const focusAfterRemoving = (i: number): number | 'clip' =>
-    marks[i + 1]?.time ?? marks[i - 1]?.time ?? 'clip'
+  const groups = groupMarks(
+    marks,
+    marks.map((m) => Math.min(width - 8, Math.max(8, m.time * pps))),
+  )
+  const targets = markTargets(
+    groups.map((g) => g.at),
+    width,
+  )
+  const firstTime = (i: number) => groups[i]?.marks[0]?.time
+  const current = Math.min(active, groups.length - 1)
+  const focusGroup = (i: number) => buttons.current.get(firstTime(i)!)?.focus()
+  const focusAfterRemoving = (i: number): number | 'clip' => firstTime(i + 1) ?? firstTime(i - 1) ?? 'clip'
   const moveFocus = (target: number | 'clip') => {
     if (target === 'clip') document.querySelector<HTMLElement>(`[data-clip-id="${clip.id}"]`)?.focus()
     else buttons.current.get(target)?.focus()
   }
-  const diamonds = marks.map((m) => Math.min(width - 8, Math.max(8, m.time * pps)))
-  const targets = markTargets(diamonds, width)
   return (
     <span
       className={[styles.keyframes, clip.kind === 'look' && styles['keyframes-look']]
@@ -580,24 +679,45 @@ function KeyframeMarks({
         .join(' ')}
       style={{ left: clip.start * pps, width }}
     >
-      {marks.map((mark, i) => {
-        const at = clip.start + mark.time
+      {groups.map(
+        (group) =>
+          group.end > group.at && (
+            <span
+              key={`run-${group.marks[0]!.time}`}
+              className={styles.keyframeRun}
+              style={{ left: group.at, width: group.end - group.at }}
+            />
+          ),
+      )}
+      {groups.map((group, i) => {
+        const first = group.marks[0]!
+        const last = group.marks.at(-1)!
+        const times = group.marks.map((m) => m.time)
+        const count = times.length
+        const at = clip.start + first.time
+        const easing = group.marks.every((m) => m.easing === first.easing) ? first.easing : null
+        const hasNext = group.marks.some((m) => m.hasNext)
+        const target = targets[i]!
         return (
-          <Menu key={mark.time}>
+          <Menu key={first.time}>
             <MenuTrigger asChild>
               <button
                 ref={(el) => {
-                  if (el) buttons.current.set(mark.time, el)
-                  else buttons.current.delete(mark.time)
+                  if (el) buttons.current.set(first.time, el)
+                  else buttons.current.delete(first.time)
                 }}
                 className={styles.keyframe}
                 style={{
-                  left: targets[i]!.left,
-                  width: targets[i]!.width,
-                  ['--diamond-x' as string]: `${diamonds[i]! - targets[i]!.left}px`,
+                  left: target.left,
+                  width: target.width,
+                  ['--diamond-x' as string]: `${group.at - target.left}px`,
                 }}
                 tabIndex={i === current ? 0 : -1}
-                aria-label={`Keyframe at ${formatTime(at, true)}`}
+                aria-label={
+                  count > 1
+                    ? `${count} keyframes, ${formatTime(at, true)} to ${formatTime(clip.start + last.time, true)}`
+                    : `Keyframe at ${formatTime(at, true)}`
+                }
                 onFocus={() => setActive(i)}
                 onPointerDown={(e) => {
                   e.stopPropagation()
@@ -610,13 +730,13 @@ function KeyframeMarks({
                     : e.key === 'Home'
                       ? 0
                       : e.key === 'End'
-                        ? marks.length - 1
+                        ? groups.length - 1
                         : null
                   if (to !== null) {
                     // The global Left and Right move the playhead; here they move between the marks.
                     e.preventDefault()
                     e.stopPropagation()
-                    focusMark(Math.max(0, Math.min(marks.length - 1, to)))
+                    focusGroup(Math.max(0, Math.min(groups.length - 1, to)))
                   } else if (e.key === 'Enter' || e.key === ' ') {
                     e.stopPropagation()
                     set({ playhead: at })
@@ -624,45 +744,51 @@ function KeyframeMarks({
                     // Without this, the global Delete would remove the whole clip.
                     e.preventDefault()
                     e.stopPropagation()
-                    const target = focusAfterRemoving(i)
-                    removeKeyframes(clip.id, mark.time)
-                    requestAnimationFrame(() => moveFocus(target))
+                    const next = focusAfterRemoving(i)
+                    removeKeyframes(clip.id, times)
+                    requestAnimationFrame(() => moveFocus(next))
                   }
                 }}
-              />
+              >
+                {count > 1 && (
+                  <span className={`${styles.keyframeCount} tnum`} aria-hidden>
+                    {count}
+                  </span>
+                )}
+              </button>
             </MenuTrigger>
             <MenuContent
               side="top"
               align="center"
               onCloseAutoFocus={(e) => {
                 const pending = after.current
-                if (!pending || pending.remove !== mark.time) return
+                if (!pending || pending.remove !== first.time) return
                 // Remove once the menu has closed, so its trigger is still there to close against.
                 e.preventDefault()
                 after.current = null
-                removeKeyframes(clip.id, mark.time)
+                removeKeyframes(clip.id, times)
                 requestAnimationFrame(() => moveFocus(pending.focus))
               }}
             >
-              <MenuLabel>{mark.hasNext ? 'Easing to the next keyframe' : 'No next keyframe'}</MenuLabel>
-              {EASINGS.map((easing) => (
+              <MenuLabel>{hasNext ? 'Easing to the next keyframe' : 'No next keyframe'}</MenuLabel>
+              {EASINGS.map((option) => (
                 <MenuCheckItem
-                  key={easing.value}
-                  checked={mark.easing === easing.value}
-                  disabled={!mark.hasNext}
-                  onCheckedChange={() => setKeyframeEasing(clip.id, mark.time, easing.value)}
+                  key={option.value}
+                  checked={easing === option.value}
+                  disabled={!hasNext}
+                  onCheckedChange={() => setKeyframeEasing(clip.id, times, option.value)}
                 >
-                  {easing.label}
+                  {option.label}
                 </MenuCheckItem>
               ))}
               <MenuSeparator />
               <MenuItem
                 danger
                 onSelect={() => {
-                  after.current = { remove: mark.time, focus: focusAfterRemoving(i) }
+                  after.current = { remove: first.time, focus: focusAfterRemoving(i) }
                 }}
               >
-                Remove keyframe
+                {count > 1 ? `Remove ${count} keyframes` : 'Remove keyframe'}
               </MenuItem>
             </MenuContent>
           </Menu>
@@ -702,12 +828,27 @@ const ClipBlock = memo(
     sameView(a.clip, b.clip),
 )
 
+/** The cut without a transition at either end of a clip, the one nearer `time`; `clipId` is the clip after it. */
+function cutNear(clip: ClipView, time: number): { clipId: string; time: number } | null {
+  const cuts = bareCuts(editor.getProject(), clip.trackId).filter(
+    (c) => Math.abs(c.time - clip.start) < 1e-3 || Math.abs(c.time - clip.end) < 1e-3,
+  )
+  cuts.sort((a, b) => Math.abs(a.time - time) - Math.abs(b.time - time))
+  return cuts[0] ?? null
+}
+
 function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockProps) {
   const [canPaste, setCanPaste] = useState(false)
+  const [cut, setCut] = useState<{ clipId: string; time: number } | null>(null)
+  const [transitions, setTransitions] = useState<TransitionSpot[]>([])
+  const menuTime = useRef(clip.start)
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
-  const showLabel = width > (isMedia ? 36 : 54)
+  // A media clip's name sits beside its transition marks, which straddle its top edge where the name would be.
+  const inW = clip.transitionIn ? transitionMarkWidth(clip.transitionIn, pps) : 0
+  const outW = clip.transitionOut ? transitionMarkWidth(clip.transitionOut, pps) : 0
+  const showLabel = isMedia ? width - inW - outW > 36 : width > 54
   const label =
     clip.kind === 'look' && clip.amount !== undefined
       ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
@@ -720,6 +861,8 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
           // The menu acts on the selection, so a clip outside it becomes the selection.
           if (!selectedClipIds(get().selection).includes(clip.id)) select({ type: 'clip', id: clip.id })
           setCanPaste(hasClipboard())
+          setCut(cutNear(clip, menuTime.current))
+          setTransitions(transitionsAtClip(editor.getProject(), clip.id))
         }}
       >
         <ContextMenuTrigger asChild>
@@ -742,6 +885,14 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
             // with the clip focused from the keyboard.
             data-space-plays
             onPointerDown={(e) => onPointerDown(e, clip, 'move')}
+            onContextMenu={(e) => {
+              const box = e.currentTarget.getBoundingClientRect()
+              // From the keyboard (Shift F10) the menu opens with no pointer over the clip: use its start.
+              menuTime.current =
+                e.clientX >= box.left && e.clientX <= box.right
+                  ? clip.start + (e.clientX - box.left) / pps
+                  : clip.start
+            }}
             onKeyDown={(e) => {
               if (e.key !== 'Enter') return
               e.preventDefault()
@@ -755,7 +906,14 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
                 {showLabel && label}
               </span>
             )}
-            {isMedia && showLabel && <span className={styles.mediaLabel}>{clip.name}</span>}
+            {isMedia && showLabel && (
+              <span
+                className={styles.mediaLabel}
+                style={inW || outW ? { left: inW + 3, maxWidth: width - inW - outW - 6 } : undefined}
+              >
+                {clip.name}
+              </span>
+            )}
             <span
               className={[styles.handle, styles.handleL].join(' ')}
               onPointerDown={(e) => {
@@ -788,6 +946,25 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
           <ContextMenuItem shortcut="Mod V" disabled={!canPaste} onSelect={paste}>
             Paste
           </ContextMenuItem>
+          {(cut || transitions.length > 0) && <ContextMenuSeparator />}
+          {cut && (
+            <ContextMenuItem
+              description={`At the cut at ${formatTime(cut.time, true)}`}
+              onSelect={() => addTransitionAtCut(cut.clipId)}
+            >
+              Add transition
+            </ContextMenuItem>
+          )}
+          {/* Also reaches a transition whose mark is left out at a low zoom. */}
+          {transitions.map((s) => (
+            <ContextMenuItem
+              key={`${s.clipId}:${s.edge}`}
+              description={`${transitionName(s.transition)} at ${formatTime(s.start, true)}`}
+              onSelect={() => select({ type: 'transition', id: s.clipId, edge: s.edge })}
+            >
+              Edit transition
+            </ContextMenuItem>
+          ))}
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
           <ContextMenuItem onSelect={() => openAssist('match')}>Find similar clips…</ContextMenuItem>
@@ -806,6 +983,14 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
 }
 
 /* ---------- headers ---------- */
+
+/** What turning a track setting on and off is called. */
+const TRACK_TOGGLES = {
+  muted: ['Mute', 'Unmute'],
+  solo: ['Solo', 'Unsolo'],
+  locked: ['Lock', 'Unlock'],
+  hidden: ['Hide', 'Show'],
+} as const
 
 const TrackHeader = memo(function TrackHeader({
   track,
@@ -827,8 +1012,12 @@ const TrackHeader = memo(function TrackHeader({
   /** The stem the preview could not decode, so it plays the full song. */
   fallback?: UnplayableStem | null
 }) {
-  const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
-    dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
+  // Undo names the action and the track: "Undid: Hide Video".
+  const toggle = (key: keyof typeof TRACK_TOGGLES) =>
+    dispatch(
+      { type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } },
+      { label: `${TRACK_TOGGLES[key][track[key] ? 1 : 0]} ${track.name}` },
+    )
   const isAudio = track.kind === 'audio'
   const badge = stems && stemBadge(stems, fallback)
   const grip = useRef<HTMLButtonElement>(null)
@@ -938,24 +1127,47 @@ const TrackHeader = memo(function TrackHeader({
           grip.current?.focus()
         }}
       >
-        <ContextMenuItem disabled={!canMoveUp} onSelect={() => moveFromMenu(-1)}>
+        <ContextMenuItem icon={<ArrowUp />} disabled={!canMoveUp} onSelect={() => moveFromMenu(-1)}>
           Move up
         </ContextMenuItem>
-        <ContextMenuItem disabled={!canMoveDown} onSelect={() => moveFromMenu(1)}>
+        <ContextMenuItem icon={<ArrowDown />} disabled={!canMoveDown} onSelect={() => moveFromMenu(1)}>
           Move down
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        {isAudio ? (
+          <>
+            <ContextMenuItem icon={track.muted ? <Volume2 /> : <VolumeX />} onSelect={() => toggle('muted')}>
+              {track.muted ? 'Unmute' : 'Mute'}
+            </ContextMenuItem>
+            <ContextMenuItem icon={<Headphones />} onSelect={() => toggle('solo')}>
+              {track.solo ? 'Unsolo' : 'Solo'}
+            </ContextMenuItem>
+          </>
+        ) : (
+          <ContextMenuItem icon={track.hidden ? <Eye /> : <EyeOff />} onSelect={() => toggle('hidden')}>
+            {track.hidden ? 'Show track' : 'Hide track'}
+          </ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
+        <ContextMenuItem icon={track.locked ? <LockOpen /> : <Lock />} onSelect={() => toggle('locked')}>
+          {track.locked ? 'Unlock track' : 'Lock track'}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   )
 })
 
-/** A stem lane's header under the song track: mute and solo for that stem of the song. */
+/** A stem lane's header under the song track: mute and solo for that stem of the song, from its icons or its menu. */
 function StemHeader({ name, track }: { name: StemName; track: Track | undefined }) {
   const label = STEM_LABELS[name]
   const flags = track?.stems?.[name]
   const lower = label.toLowerCase()
-  return (
-    <div className={[styles.header, styles.stemHeader].join(' ')}>
+  const header = (
+    <div
+      className={[styles.header, styles.stemHeader].join(' ')}
+      // Without a song track there is nothing to offer, and the browser's page menu would open instead.
+      onContextMenu={track ? undefined : (e) => e.preventDefault()}
+    >
       <span className={styles.stemName}>{label}</span>
       {track && (
         <span className={styles.trackIcons}>
@@ -981,6 +1193,23 @@ function StemHeader({ name, track }: { name: StemName; track: Track | undefined 
         </span>
       )}
     </div>
+  )
+  if (!track) return header
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{header}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          icon={flags?.muted ? <Volume2 /> : <VolumeX />}
+          onSelect={() => toggleStem(name, 'muted')}
+        >
+          {flags?.muted ? `Unmute ${lower}` : `Mute ${lower}`}
+        </ContextMenuItem>
+        <ContextMenuItem icon={<Headphones />} onSelect={() => toggleStem(name, 'solo')}>
+          {flags?.solo ? `Unsolo ${lower}` : `Solo ${lower}`}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
@@ -1089,7 +1318,7 @@ function SectionSuggestion({ section }: { section: SongSection }) {
           id={cutId}
           variant="chip"
           action="Cut clips to it"
-          onAction={() => openAssist('autocut')}
+          onAction={() => cutClipsToSection(section.id)}
         >
           Re-cut this {label} to the beat
         </InlineSuggestion>
@@ -1135,8 +1364,11 @@ export function Timeline() {
   const selection = useUi((s) => s.selection)
   const selIds = useMemo(() => new Set(selectedClipIds(selection)), [selection])
   const showEnergy = useUi((s) => s.showEnergy)
-  const beatSnap = useUi((s) => s.beatSnap)
+  const showGrid = useUi((s) => s.showGrid)
   const [snapLine, setSnapLine] = useState<number | null>(null)
+  // Where a dragged section edge is, shown beside it.
+  const [edgeTime, setEdgeTime] = useState<number | null>(null)
+  const nudgeEnd = useRef(0)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
@@ -1145,7 +1377,8 @@ export function Timeline() {
   const empty = !hasSong(project)
   const analysis = songAnalysis(project)
   const bpm = bpmOf(project)
-  const beat = bpm ? 60 / bpm : null
+  const grid = beatGrid(project)
+  const bars = useBars().status
   const sections = sectionsOf(project)
   const lines = lyricLines(project)
   const duration = empty ? 90 : timelineDuration(project)
@@ -1187,10 +1420,13 @@ export function Timeline() {
           suggestW,
         )
       : null
-  const lanesH = lanes.reduce((a, l) => a + l.height, 0) + stems.length * stemH
+  const tracksH = lanes.reduce((a, l) => a + l.height, 0)
+  const lanesH = tracksH + stems.length * stemH
   const totalH = RULER_H + (empty ? 0 : SONG_H) + lanesH
 
-  const ruler = useMemo(() => makeRuler(beat), [beat])
+  const ruler = useMemo(() => makeRuler(grid), [grid])
+  const beatLines = useMemo(() => makeBeatLines(grid), [grid])
+  const boundaries = useMemo(() => sectionBoundaries(sections, duration), [sections, duration])
   const energyDraw = useMemo(() => makeEnergy(analysis?.energy), [analysis?.energy])
   const features = analysis?.features
   const songEnd = (project.songAssetId && project.assets[project.songAssetId]?.duration) || duration
@@ -1289,9 +1525,9 @@ export function Timeline() {
       snapTime(
         t,
         pps,
+        grid,
         edges,
-        beat,
-        sections.map((x) => x.start),
+        sections.flatMap((x) => [x.start, x.end]),
       ).t,
     )
   }
@@ -1366,8 +1602,8 @@ export function Timeline() {
         const edges = clipsOnTrack(p, clip.trackId)
           .filter((c) => c.id !== clip.id)
           .flatMap((c) => [c.start, c.start + c.duration])
-        const sectionStarts = sectionsOf(p).map((s) => s.start)
-        splitClipAt(clip.id, snapTime(at, scale, edges, beat, sectionStarts).t)
+        const sectionEdges = sectionsOf(p).flatMap((s) => [s.start, s.end])
+        splitClipAt(clip.id, snapTime(at, scale, grid, edges, sectionEdges).t)
         return
       }
       const picked = selectedClipIds(get().selection)
@@ -1412,7 +1648,7 @@ export function Timeline() {
       }
       const same = clipsOnTrack(p, clip.trackId).filter((c) => !movingIds.has(c.id))
       const edges = same.flatMap((c) => [c.start, c.start + c.duration])
-      const sectionStarts = sectionsOf(p).map((s) => s.start)
+      const sectionEdges = sectionsOf(p).flatMap((s) => [s.start, s.end])
       const key = `drag:${e.pointerId}:${clip.id}:${Date.now()}`
       const x0 = e.clientX
       let moved = false
@@ -1425,7 +1661,7 @@ export function Timeline() {
         const scale = get().pxPerSec
         const dt = dx / scale
         if (mode === 'move') {
-          const r = snapTime(clip.start + dt, scale, edges, beat, sectionStarts)
+          const r = snapTime(clip.start + dt, scale, grid, edges, sectionEdges)
           const shift = Math.min(maxShift, Math.max(minShift, r.t - clip.start))
           setSnapLine(
             r.snapped !== null && Math.abs(r.snapped - (clip.start + shift)) < 0.001 ? r.snapped : null,
@@ -1435,7 +1671,7 @@ export function Timeline() {
             { coalesceKey: key },
           )
         } else if (mode === 'start') {
-          const r = snapTime(clip.start + dt, scale, edges, beat, sectionStarts)
+          const r = snapTime(clip.start + dt, scale, grid, edges, sectionEdges)
           const start = Math.min(clip.end - 0.25, Math.max(min, r.t))
           setSnapLine(r.snapped)
           dispatch(
@@ -1443,7 +1679,7 @@ export function Timeline() {
             { coalesceKey: key },
           )
         } else {
-          const r = snapTime(clip.end + dt, scale, edges, beat, sectionStarts)
+          const r = snapTime(clip.end + dt, scale, grid, edges, sectionEdges)
           const end = Math.max(clip.start + 0.25, Math.min(max, r.t))
           setSnapLine(r.snapped)
           dispatch(
@@ -1462,8 +1698,66 @@ export function Timeline() {
       target.addEventListener('pointermove', move)
       target.addEventListener('pointerup', up)
     },
-    [beat, duration],
+    [grid, duration],
   )
+
+  /** Dragging a section boundary: snaps to the beat grid and the playhead, and stops short of the neighbors. */
+  const startEdgeDrag = (e: React.PointerEvent<HTMLElement>, b: SectionBoundary) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const handle = e.currentTarget
+    const owner = b.after ?? b.before
+    if (owner) select({ type: 'section', id: owner.id })
+    const key = `section-edge:${e.pointerId}:${e.timeStamp}`
+    const x0 = e.clientX
+    let moved = false
+    handle.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - x0
+      if (!moved && Math.abs(dx) < 3) return
+      moved = true
+      const scale = get().pxPerSec
+      const r = snapTime(b.t + dx / scale, scale, grid, [], [])
+      const t = Math.min(b.max, Math.max(b.min, r.t))
+      setSnapLine(r.snapped !== null && Math.abs(r.snapped - t) < 0.001 ? r.snapped : null)
+      setEdgeTime(t)
+      moveBoundary(b, t, key)
+    }
+    const up = () => {
+      editor.endGesture()
+      setSnapLine(null)
+      setEdgeTime(null)
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      handle.removeEventListener('pointercancel', up)
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+    handle.addEventListener('pointercancel', up)
+  }
+
+  /** Left and right arrows move a boundary to the previous or next beat (bar with Shift). */
+  const nudgeEdge = (e: React.KeyboardEvent, b: SectionBoundary) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    // The arrows otherwise move the playhead.
+    e.preventDefault()
+    e.stopPropagation()
+    const dir = e.key === 'ArrowLeft' ? -1 : 1
+    let t = b.t + dir * (e.shiftKey ? 1 : 0.1)
+    if (grid) {
+      // Shift moves a bar: to the next bar start, or four beats until the bars are found.
+      const byBar = e.shiftKey && grid.detectedBars
+      const events = byBar ? grid.downbeats : grid.beats
+      const steps = e.shiftKey && !byBar ? grid.beatsPerBar : 1
+      const i = lastIndexAt(events, b.t + (dir * grid.beat) / 4)
+      t = (dir > 0 ? events[i + steps] : events[i - steps + 1]) ?? t
+    }
+    // A run of nudges, until a pause, is one undo step.
+    moveBoundary(b, t, `edge-nudge:${b.before?.id ?? ''}|${b.after?.id ?? ''}`)
+    window.clearTimeout(nudgeEnd.current)
+    nudgeEnd.current = window.setTimeout(() => editor.endGesture(), 800)
+  }
 
   /** Drag on empty track space: selects the clips the rectangle touches (added to the selection with Shift or Mod). */
   const startMarquee = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1659,12 +1953,11 @@ export function Timeline() {
       ? project.clips[selection.id]
       : undefined
   const selectedMarks = useMemo(() => (markedClip ? keyframeMarks(markedClip) : undefined), [markedClip])
-  const gridStyle = beatSnap && beat ? { backgroundSize: `${beat * 4 * pps}px 100%` } : undefined
   const inView = (start: number, end: number) => end >= view.t0 - 4 && start <= view.t1 + 4
 
   return (
     <div className={styles.root}>
-      <Toolbar onFit={fit} bpm={bpm} />
+      <Toolbar onFit={fit} bpm={bpm} grid={grid} bars={bars} />
       <div ref={scrollRef} className={`${styles.scroller} scroll`} data-timeline-scroller data-tool={tool}>
         <div
           ref={contentRef}
@@ -1702,61 +1995,126 @@ export function Timeline() {
                 {sections.map((s) => {
                   const sel = selId === s.id
                   return (
-                    <div
+                    <ContextMenu
                       key={s.id}
-                      className={[styles.section, sel && styles.sectionSel].filter(Boolean).join(' ')}
-                      style={{
-                        left: s.start * pps,
-                        width: (s.end - s.start) * pps,
-                        ['--sec' as string]: sectionColor[sectionKind(s)],
-                      }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                        select({ type: 'section', id: s.id })
-                      }}
-                      onDoubleClick={() => setRenaming(s.id)}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Section ${sectionName(s)}, ${formatTime(s.start)} to ${formatTime(s.end)}`}
-                      title={sectionGuess(s) && `${sectionGuess(s)}. Double-click to rename.`}
+                      onOpenChange={(open) => open && select({ type: 'section', id: s.id })}
                     >
-                      {renaming === s.id ? (
-                        <input
-                          className={styles.renameInput}
-                          autoFocus
-                          defaultValue={s.label}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onBlur={(e) => {
-                            const label = e.target.value.trim()
-                            if (label && label !== s.label && analysis)
-                              dispatch({
-                                type: 'analysis.updateSection',
-                                assetId: analysis.assetId,
-                                sectionId: s.id,
-                                patch: { label },
-                              })
-                            setRenaming(null)
+                      <ContextMenuTrigger asChild>
+                        <div
+                          className={[styles.section, sel && styles.sectionSel].filter(Boolean).join(' ')}
+                          style={{
+                            left: s.start * pps,
+                            width: (s.end - s.start) * pps,
+                            ['--sec' as string]: sectionTint(s),
                           }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') e.currentTarget.value = s.label
-                            if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            if (e.button === 0) select({ type: 'section', id: s.id })
                           }}
-                          aria-label="Rename section"
-                        />
-                      ) : (
-                        <span
-                          className={[styles.sectionLabel, sectionUnsure(s) && styles.sectionLabelGuess]
-                            .filter(Boolean)
-                            .join(' ')}
+                          onDoubleClick={() => setRenaming(s.id)}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Section ${sectionName(s)}, ${formatTime(s.start)} to ${formatTime(s.end)}`}
+                          title={sectionGuess(s) && `${sectionGuess(s)}. Double-click to rename.`}
                         >
-                          {sectionName(s)}
-                        </span>
-                      )}
-                      {sel && <SectionSuggestion section={s} />}
-                    </div>
+                          {renaming === s.id ? (
+                            <input
+                              className={styles.renameInput}
+                              autoFocus
+                              defaultValue={s.label}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onBlur={(e) => {
+                                const label = e.target.value.trim()
+                                if (label && label !== s.label && analysis)
+                                  dispatch({
+                                    type: 'analysis.updateSection',
+                                    assetId: analysis.assetId,
+                                    sectionId: s.id,
+                                    patch: { label },
+                                  })
+                                setRenaming(null)
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') e.currentTarget.value = s.label
+                                if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
+                              }}
+                              aria-label="Rename section"
+                            />
+                          ) : (
+                            <span
+                              className={[styles.sectionLabel, sectionUnsure(s) && styles.sectionLabelGuess]
+                                .filter(Boolean)
+                                .join(' ')}
+                            >
+                              {sectionName(s)}
+                            </span>
+                          )}
+                          {sel && <SectionSuggestion section={s} />}
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem onSelect={() => set({ playhead: s.start, playing: false })}>
+                          Go to its start
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => selectClips(sectionClipIds(editor.getProject(), s))}>
+                          Select its clips
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem onSelect={() => cutClipsToSection(s.id)}>
+                          Cut clips to this section…
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => exportSectionTeaser(s.id)}>
+                          Export as a teaser…
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
                   )
                 })}
+                {boundaries.map((b) => {
+                  const name =
+                    b.before && b.after
+                      ? `Edge between ${sectionName(b.before)} and ${sectionName(b.after)}`
+                      : b.after
+                        ? `Start of ${sectionName(b.after)}`
+                        : `End of ${b.before ? sectionName(b.before) : 'section'}`
+                  return (
+                    <div
+                      key={`${b.before?.id ?? ''}|${b.after?.id ?? ''}`}
+                      className={styles.sectionEdge}
+                      style={{ left: b.t * pps }}
+                      role="slider"
+                      tabIndex={0}
+                      aria-label={name}
+                      aria-orientation="horizontal"
+                      aria-valuemin={b.min}
+                      aria-valuemax={b.max}
+                      aria-valuenow={b.t}
+                      aria-valuetext={formatTime(b.t, true)}
+                      onPointerDown={(e) => startEdgeDrag(e, b)}
+                      onKeyDown={(e) => nudgeEdge(e, b)}
+                    />
+                  )
+                })}
+                {edgeTime !== null && (
+                  <div className={`${styles.edgeTime} tnum`} style={{ left: edgeTime * pps }}>
+                    {formatTime(edgeTime, true)}
+                  </div>
+                )}
               </div>
+            </div>
+          )}
+
+          {showGrid && grid && (
+            <div
+              className={styles.beatLines}
+              style={{
+                top: RULER_H + (empty ? 0 : SONG_H),
+                left: HEADER_W,
+                width: contentW,
+                height: tracksH,
+              }}
+            >
+              <ViewportCanvas height={tracksH} draw={beatLines} />
             </div>
           )}
 
@@ -1764,6 +2122,10 @@ export function Timeline() {
             const clips = clipsOnTrack(project, track.id)
               .map((c) => viewOf(project, c))
               .filter((c) => inView(c.start, c.end))
+            const transitionMarks =
+              kind === 'video' || kind === 'overlay'
+                ? placeTransitionMarks(project, track.id, pps, selection)
+                : undefined
             return (
               <Fragment key={track.id}>
                 <div
@@ -1783,8 +2145,8 @@ export function Timeline() {
                     />
                   </div>
                   <div
-                    className={[styles.lane, beatSnap && beat && styles.grid].filter(Boolean).join(' ')}
-                    style={{ width: contentW, ...gridStyle }}
+                    className={styles.lane}
+                    style={{ width: contentW }}
                     data-locked={track.locked || undefined}
                     onPointerDown={startMarquee}
                     onContextMenu={(e) =>
@@ -1929,14 +2291,26 @@ export function Timeline() {
                           )
                         }
                         return (
-                          <ClipBlock
-                            key={c.id}
-                            clip={c}
-                            pps={pps}
-                            selected={selIds.has(c.id)}
-                            marks={markedClip?.id === c.id ? selectedMarks : undefined}
-                            onPointerDown={onClipPointerDown}
-                          />
+                          <Fragment key={c.id}>
+                            <ClipBlock
+                              clip={c}
+                              pps={pps}
+                              selected={selIds.has(c.id)}
+                              marks={markedClip?.id === c.id ? selectedMarks : undefined}
+                              onPointerDown={onClipPointerDown}
+                            />
+                            {transitionMarks?.get(c.id)?.map((m) => (
+                              <TransitionMark
+                                key={m.edge}
+                                mark={m}
+                                selected={
+                                  selection.type === 'transition' &&
+                                  selection.id === m.clipId &&
+                                  selection.edge === m.edge
+                                }
+                              />
+                            ))}
+                          </Fragment>
                         )
                       })}
                     {suggestTiming && track.id === lyricsTrackId && (

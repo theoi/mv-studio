@@ -248,6 +248,40 @@
   font-size: var(--text-xs);
 }
 
+.sectionEdge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  /* A 24 px hit area centered on the boundary. */
+  width: 24px;
+  margin-left: -12px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.sectionEdge::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: calc(50% - 1.5px);
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent-line);
+  opacity: 0;
+  transition: opacity var(--dur-fast);
+}
+
+.sectionEdge:hover::after,
+.sectionEdge:focus-visible::after {
+  opacity: 1;
+}
+
+.sectionEdge:focus-visible {
+  outline: none;
+}
+
 .sectionSuggest {
   position: absolute;
   left: 4px;
@@ -255,14 +289,16 @@
   z-index: 8;
 }
 
+/* The left padding makes room for the grip, which is out of the flow. */
 .trackHeader {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-content: center;
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  padding: 0 6px 0 var(--space-3);
+  padding: 0 6px 0 32px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -341,9 +377,9 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.grid {
-  background-image: linear-gradient(to right, rgb(255 255 255 / 0.035) 1px, transparent 1px);
-  background-position: 0 0;
+.beatLines {
+  position: absolute;
+  pointer-events: none;
 }
 
 /* Clips */
@@ -535,6 +571,33 @@
 .keyframe:focus-visible::before,
 .keyframe[data-state='open']::before {
   background: var(--accent-line);
+}
+
+/* A group's extent along the clip's bottom edge, from its first keyframe to its last, under its diamond and count.
+   It takes no clicks, so dragging the clip there still works. */
+.keyframeRun {
+  position: absolute;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgb(255 255 255 / 0.55);
+}
+
+/* How many keyframes a mark stands for, just right of its diamond. It takes no clicks, so it never blocks a
+   neighboring mark. Its offset and size are counted in countEnd() (state/keyframes.ts), so no diamond lands on it. */
+.keyframeCount {
+  position: absolute;
+  top: 2px;
+  left: calc(var(--diamond-x) + 7px);
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-overlay);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  color: var(--text-1);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 12px;
+  pointer-events: none;
 }
 
 /* Lyrics */
@@ -879,15 +942,17 @@
   pointer-events: none;
 }
 
-/* Track reordering: the header grip (shown on hover) and the drop line */
+/* Track reordering: the header grip (shown on hover) and the drop line. The grip spans the header's height out of the
+   flow: in it, it made the first line as tall as the header and pushed the stem badge's line below the header. */
 .grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
   display: inline-flex;
-  flex: none;
   align-items: center;
   justify-content: center;
   width: 24px;
-  height: 100%;
-  margin-left: calc(-1 * var(--space-2));
   color: var(--text-3);
   cursor: grab;
   opacity: 0;
@@ -931,4 +996,76 @@
 .scroller[data-tool='split'] .lane:not([data-locked]) .clip,
 .scroller[data-tool='split'] .lane:not([data-locked]) .clip .handle {
   cursor: crosshair;
+}
+
+/* The time of a section edge while it is dragged, beside the edge. */
+.edgeTime {
+  position: absolute;
+  top: 50%;
+  z-index: 5;
+  margin-left: 14px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-1);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* A transition's mark: a 16 px tall target straddling the top edge of the clip it belongs to (clips sit 2 px into
+   the lane), at its start (in) or end (out) and as long as the transition. The clip's trim handles, its body and its
+   label stay clear below it. */
+.transition {
+  position: absolute;
+  top: -6px;
+  z-index: 3;
+  height: 16px;
+  min-width: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.transitionChip {
+  position: absolute;
+  inset: 1px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: rgb(10 12 16 / 0.86);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22);
+  color: var(--text-1);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.transitionChip svg {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+.transition:hover .transitionChip {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.45);
+}
+
+.transitionSel .transitionChip,
+.transitionSel:hover .transitionChip {
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent-line),
+    0 0 0 1px rgb(0 0 0 / 0.6);
+}
+
+.transitionName {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

@@ -156,16 +156,35 @@ export function isLutAsset(asset: Asset): boolean {
   )
 }
 
+/** Whether a file is a .cube LUT, which Import media turns into a LUT rather than rejecting. */
+export const isCubeFile = (file: File): boolean => /\.cube$/i.test(file.name)
+
+/** The LUT files shipped with the app, as `bundled:` param values. */
+export const BUILT_IN_LUTS: readonly string[] = ['bundled:luts/neutral.png']
+
+// The messages follow "<file> was not loaded: ", so they read as the end of that sentence.
 async function readLut(file: Blob & { name?: string }): Promise<Lut3D> {
-  if (/\.cube$/i.test(file.name ?? '') || file.type === 'text/plain' || file.type === '') {
+  const cube = /\.cube$/i.test(file.name ?? '')
+  if (cube || file.type === 'text/plain' || file.type === '') {
     const text = await file.text()
-    if (/LUT_(1D|3D)_SIZE/.test(text)) return parseCubeLut(text)
+    if (cube || /LUT_(1D|3D)_SIZE/.test(text)) {
+      try {
+        return parseCubeLut(text)
+      } catch (error) {
+        const only1D = /LUT_1D_SIZE/.test(text) && !/LUT_3D_SIZE/.test(text)
+        throw new JobError(
+          'invalid-input',
+          only1D ? 'it’s a 1D LUT, and only 3D LUTs work here.' : 'the file couldn’t be read as a LUT.',
+          { cause: error },
+        )
+      }
+    }
   }
   let bitmap: ImageBitmap
   try {
     bitmap = await createImageBitmap(file, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })
   } catch (error) {
-    throw new JobError('invalid-input', 'Choose a .cube file or a Hald CLUT image.', { cause: error })
+    throw new JobError('invalid-input', 'it isn’t a .cube file or a LUT image.', { cause: error })
   }
   const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
   const ctx = canvas.getContext('2d')
@@ -173,15 +192,38 @@ async function readLut(file: Blob & { name?: string }): Promise<Lut3D> {
   ctx.drawImage(bitmap, 0, 0)
   bitmap.close()
   const lut = haldToLut(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height)
-  if (!lut)
-    throw invalid('This image is not a Hald CLUT (a square image whose side is a cube number, like 512).')
+  if (!lut) throw invalid('it isn’t a LUT image.')
   return lut
 }
 
-/** Converts a .cube file or Hald CLUT image into a LUT strip image asset, ready for the color grade's LUT param. */
+async function sameBytes(a: Blob, b: Blob): Promise<boolean> {
+  if (a.size !== b.size) return false
+  const [x, y] = await Promise.all([a.arrayBuffer(), b.arrayBuffer()])
+  const u = new Uint8Array(x)
+  const v = new Uint8Array(y)
+  return u.every((byte, i) => byte === v[i])
+}
+
+/** `name`, or "name 2", "name 3"… when it is taken. */
+function freeName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name
+  let n = 2
+  while (taken.has(`${name} ${n}`)) n++
+  return `${name} ${n}`
+}
+
+/**
+ * Converts a .cube file or Hald CLUT image into a LUT strip image asset, ready for the color grade's LUT param. A LUT
+ * already among `existing` (same strip, so the same colors) is returned instead of a copy, so callers can tell it by
+ * its id already being in the project. A new LUT whose name is taken is numbered ("Teal push 2").
+ */
 export async function importLut(
   file: File,
-  store: { storeBlob(blob: Blob, info: Pick<Asset, 'kind' | 'name' | 'origin'>): Promise<Asset> },
+  store: {
+    storeBlob(blob: Blob, info: Pick<Asset, 'kind' | 'name' | 'origin'>): Promise<Asset>
+    getFile(asset: Asset): Promise<Blob>
+  },
+  existing: readonly Asset[] = [],
 ): Promise<Asset> {
   const lut = await readLut(file)
   const strip = lutToStrip(lut)
@@ -192,6 +234,12 @@ export async function importLut(
   image.data.set(strip.pixels)
   ctx.putImageData(image, 0, 0)
   const blob = await canvas.convertToBlob({ type: 'image/png' })
-  const name = lut.title ?? file.name.replace(/\.[^.]+$/, '')
+  const luts = existing.filter(isLutAsset)
+  for (const asset of luts) {
+    if (asset.byteSize !== blob.size) continue
+    const stored = await store.getFile(asset).catch(() => null)
+    if (stored && (await sameBytes(stored, blob))) return asset
+  }
+  const name = freeName(lut.title ?? file.name.replace(/\.[^.]+$/, ''), new Set(luts.map((a) => a.name)))
   return store.storeBlob(blob, { kind: 'image', name, origin: { ...LUT_ORIGIN } })
 }
