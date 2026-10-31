@@ -1,0 +1,205 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  GenerationRequest,
+  GenerationResult,
+  MediaGenerationProvider,
+} from '../../../src/cloud/types.ts'
+import { createProject, createTrack, createImageClip, type Asset } from '../../../src/model/index.ts'
+import { jobs } from '../../../src/shared/jobs.ts'
+import type * as cloudState from '../../../src/app/state/cloud.ts'
+import { cloudSettings, spendLedger } from '../../../src/app/state/cloud.ts'
+import {
+  generateOutcome,
+  placementCommands,
+  setGenerateForm,
+  spendCheck,
+  startGenerate,
+  undoOutcome,
+} from '../../../src/app/state/generate.ts'
+import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
+import { editor } from '../../../src/app/state/project.ts'
+import { buildDemoProject, TRACK_IDS } from '../../../src/app/mock/demoProject.ts'
+
+const fake = vi.hoisted(() => ({
+  provider: undefined as MediaGenerationProvider | undefined,
+  stored: 0,
+}))
+
+vi.mock('../../../src/app/state/ui.ts', () => ({
+  get: () => ({ playhead: 12 }),
+  set: vi.fn(),
+  select: vi.fn(),
+  toast: vi.fn(),
+  editorPreset: vi.fn(),
+  maybeStartGuide: vi.fn(),
+}))
+
+vi.mock('../../../src/app/state/cloud.ts', async (original) => ({
+  ...(await original<typeof cloudState>()),
+  cloudServices: async () => ({ generation: () => fake.provider }),
+}))
+
+vi.mock('../../../src/media/mediaStore.ts', () => ({
+  mediaStore: {
+    getFile: async () => new Blob(),
+    storeBlob: async (blob: Blob, info: Pick<Asset, 'kind' | 'name' | 'origin'>): Promise<Asset> => ({
+      id: `gen-${++fake.stored}`,
+      kind: info.kind,
+      name: info.name,
+      origin: info.origin,
+      mimeType: blob.type,
+      byteSize: blob.size,
+      storageKey: `media/gen-${fake.stored}`,
+      createdAt: '2026-10-31T00:00:00.000Z',
+    }),
+  },
+}))
+
+function image(id: string): Asset {
+  return {
+    id,
+    kind: 'image',
+    name: id,
+    mimeType: 'image/jpeg',
+    byteSize: 1,
+    storageKey: `media/${id}`,
+    origin: { type: 'generated' },
+    createdAt: '2026-10-31T00:00:00.000Z',
+  }
+}
+
+function provider(progress: number[][] = [], failOnCall?: number): MediaGenerationProvider {
+  let calls = 0
+  return {
+    id: 'fal',
+    name: 'fal.ai',
+    models: [],
+    getModel: () => undefined,
+    estimate: () => ({ usd: 0.003, approximate: false, breakdown: '1 MP × $0.003', pricesCheckedOn: '' }),
+    validateKey: async () => ({ ok: true, message: '' }),
+    async generate(request: GenerationRequest, ctx): Promise<GenerationResult> {
+      if (calls + 1 === failOnCall) throw new Error('fal.ai is down')
+      const seen: number[] = []
+      progress.push(seen)
+      ctx.progress({ stage: 'generate', fraction: 0.5, etaSeconds: 3 })
+      seen.push(jobs.list().find((j) => j.kind === JOB_KINDS.generate)?.progress.fraction ?? -1)
+      ctx.progress({ stage: 'download', fraction: 1 })
+      seen.push(jobs.list().find((j) => j.kind === JOB_KINDS.generate)?.progress.fraction ?? -1)
+      calls++
+      return {
+        requestId: `r${calls}`,
+        modelId: request.modelId,
+        task: request.task,
+        media: [
+          {
+            kind: 'image',
+            blob: new Blob(['x'], { type: 'image/jpeg' }),
+            mimeType: 'image/jpeg',
+            sourceUrl: '',
+          },
+        ],
+        estimate: { usd: 0.003, approximate: false, breakdown: '', pricesCheckedOn: '' },
+      }
+    },
+  }
+}
+
+beforeEach(() => {
+  editor.load(createProject({ name: 'Test' }))
+  cloudSettings.update({
+    falKey: 'id:secret',
+    alwaysConfirmPaid: false,
+    confirmAboveUsd: 1,
+    monthlyReminderUsd: 0,
+  })
+})
+
+describe('placementCommands', () => {
+  it('adds the assets and places them one after another, sharing a new track when every track is busy', () => {
+    const project = createProject({ name: 'Busy' })
+    const track = createTrack('visual', 'Video')
+    const busy = createImageClip({ trackId: track.id, assetId: 'x', start: 0, duration: 60 })
+    const withClip = {
+      ...project,
+      tracks: [...project.tracks.filter((t) => t.kind !== 'visual'), track],
+      clips: { [busy.id]: busy },
+    }
+    const commands = placementCommands(withClip, [image('a'), image('b')], 10)
+    expect(commands.map((c) => c.type)).toEqual([
+      'asset.add',
+      'track.add',
+      'clip.add',
+      'asset.add',
+      'clip.add',
+    ])
+    const clips = commands.flatMap((c) => (c.type === 'clip.add' ? [c.clip] : []))
+    expect(clips.map((c) => ['assetId' in c ? c.assetId : '', c.start])).toEqual([
+      ['a', 10],
+      ['b', 14],
+    ])
+    expect(clips[0]?.trackId).toBe(clips[1]?.trackId)
+    expect(clips[0]?.trackId).not.toBe(track.id)
+  })
+})
+
+it('never puts media on the Lyrics track, even where it is free', () => {
+  const project = buildDemoProject()
+  const commands = placementCommands(project, [image('a')], 12)
+  const clip = commands.flatMap((c) => (c.type === 'clip.add' ? [c.clip] : []))[0]
+  expect(clip?.trackId).toBe(TRACK_IDS.overlay)
+})
+
+describe('spendCheck', () => {
+  it('asks above the threshold, always when set, and when the monthly reminder would be crossed', () => {
+    expect(spendCheck(0.2)).toBeNull()
+    expect(spendCheck(1.5)).not.toBeNull()
+    cloudSettings.update({ alwaysConfirmPaid: true })
+    expect(spendCheck(0.2)).not.toBeNull()
+    cloudSettings.update({ alwaysConfirmPaid: false, monthlyReminderUsd: spendLedger.monthTotal() + 0.1 })
+    expect(spendCheck(0.2)).toMatchObject({ reminderUsd: spendLedger.monthTotal() + 0.1 })
+  })
+})
+
+describe('startGenerate', () => {
+  it('runs one job for several images, adds them at the playhead as one undo step, and records the spend', async () => {
+    const progress: number[][] = []
+    fake.provider = provider(progress)
+    setGenerateForm({ kind: 'image', prompt: 'neon city', count: 2 })
+    const before = spendLedger.monthTotal()
+    await startGenerate()
+    const job = jobs.list().find((j) => j.kind === JOB_KINDS.generate && j.status !== 'succeeded')
+    expect(job).toBeDefined()
+    await vi.waitFor(() => expect(jobs.list().find((j) => j.id === job?.id)?.status).toBe('succeeded'))
+
+    // Each image's progress fills its own half of the bar.
+    expect(progress[0]?.every((f) => f > 0 && f <= 0.5)).toBe(true)
+    expect(progress[1]?.every((f) => f > 0.5 && f <= 1)).toBe(true)
+
+    const project = editor.getProject()
+    const clips = Object.values(project.clips).filter((c) => 'assetId' in c && c.assetId.startsWith('gen-'))
+    expect(clips.map((c) => c.start).sort((a, b) => a - b)).toEqual([12, 16])
+    expect(editor.undoLabel()).toBe('Generate 2 images')
+    expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.006, 6)
+
+    const outcome = generateOutcome(job?.id)
+    expect(outcome?.assets).toHaveLength(2)
+    expect(undoOutcome(outcome!)).toBe(true)
+    expect(Object.keys(editor.getProject().assets).some((id) => id.startsWith('gen-'))).toBe(false)
+    expect(
+      Object.values(editor.getProject().clips).some((c) => 'assetId' in c && c.assetId.startsWith('gen-')),
+    ).toBe(false)
+  })
+
+  it('leaves the project unchanged when a later image fails, but still records what fal.ai charged', async () => {
+    fake.provider = provider([], 2)
+    setGenerateForm({ kind: 'image', prompt: 'neon city', count: 2 })
+    const before = spendLedger.monthTotal()
+    const clipsBefore = Object.keys(editor.getProject().clips).length
+    await startGenerate()
+    const job = jobs.list().find((j) => j.kind === JOB_KINDS.generate && j.status === 'running')
+    expect(job).toBeDefined()
+    await vi.waitFor(() => expect(jobs.list().find((j) => j.id === job?.id)?.status).toBe('failed'))
+    expect(Object.keys(editor.getProject().clips)).toHaveLength(clipsBefore)
+    expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
+  })
+})

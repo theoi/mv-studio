@@ -30,6 +30,7 @@ export const JOB_KINDS = {
   export: 'export.outputs',
   footage: 'vision.index',
   lyrics: 'analysis.lyrics',
+  generate: 'cloud.generate',
 } as const
 
 interface MockJobOptions {

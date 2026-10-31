@@ -51,6 +51,7 @@ const viewForKind: Record<string, AssistView> = {
   [JOB_KINDS.autocut]: 'autocut',
   [JOB_KINDS.camera]: 'camera',
   [JOB_KINDS.lyrics]: 'lyrics',
+  [JOB_KINDS.generate]: 'generate',
 }
 
 function Running() {

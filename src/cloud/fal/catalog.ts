@@ -171,6 +171,11 @@ function perSecondVideoModel(o: {
     resolution: string,
   ): Record<string, unknown>
 }): FalModel {
+  // Models with a single unnamed resolution ('default') leave it out of the price text.
+  const at = (resolution: string) =>
+    resolution === 'default'
+      ? ''
+      : ` at ${o.resolutions.find((r) => r.id === resolution)?.label ?? resolution}`
   const model: FalModel = {
     id: o.id,
     provider: 'fal',
@@ -184,12 +189,12 @@ function perSecondVideoModel(o: {
     resolutions: o.resolutions,
     defaultResolution: o.defaultResolution,
     typicalSeconds: o.typicalSeconds,
-    priceLabel: `${money(o.usdPerSecond[o.defaultResolution] ?? 0)} per second at ${o.defaultResolution}`,
+    priceLabel: `${money(o.usdPerSecond[o.defaultResolution] ?? 0)} per second${at(o.defaultResolution)}`,
     estimate(request) {
       const duration = snapDuration(model, request.duration)
       const resolution = resolutionOf(model, request.resolution)
       const rate = o.usdPerSecond[resolution] ?? Math.max(...Object.values(o.usdPerSecond))
-      return estimate(duration * rate, `${duration} s × ${money(rate)}/s at ${resolution}`)
+      return estimate(duration * rate, `${duration} s × ${money(rate)}/s${at(resolution)}`)
     },
     buildInput(request) {
       const duration = snapDuration(model, request.duration)

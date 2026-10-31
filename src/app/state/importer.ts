@@ -13,6 +13,7 @@ import type { AudioAnalysis } from '../../model/index.ts'
 import type * as AnalysisClient from '../../analysis/client.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
+import { TRACK_IDS } from '../mock/demoProject.ts'
 import { backgroundAnalysisOn } from './footage.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
@@ -187,7 +188,22 @@ export interface Placement {
 export function addAsset(assetId: string, at: Placement = {}): void {
   const project = editor.getProject()
   const asset = project.assets[assetId]
-  if (!asset || asset.kind === 'font') return
+  const placed = asset && assetPlacement(project, asset, at)
+  if (!placed) return
+  if (dispatch(placed.commands, { label: `Add ${baseName(asset.name)}` }))
+    select({ type: 'clip', id: placed.clip.id })
+}
+
+/**
+ * The commands that put an asset (already in the project, or added by the same dispatch) on the first free track of
+ * its kind, footage tracks first, adding a track if none is free.
+ */
+export function assetPlacement(
+  project: Project,
+  asset: Asset,
+  at: Placement = {},
+): { commands: EditCommand[]; clip: Clip } | null {
+  if (asset.kind === 'font') return null
   const start = at.start ?? get().playhead
   const kind = asset.kind === 'audio' ? 'audio' : 'visual'
   const sourceStart = asset.kind === 'image' ? 0 : Math.max(0, at.sourceStart ?? 0)
@@ -195,7 +211,7 @@ export function addAsset(assetId: string, at: Placement = {}): void {
   const imageDuration = barsToSeconds(prefs().imageBars, bpmOf(project))
   const duration = Math.min(available, at.duration ?? (asset.kind === 'image' ? imageDuration : available))
   const candidates = project.tracks
-    .filter((t) => t.kind === kind && !t.locked)
+    .filter((t) => t.kind === kind && !t.locked && t.id !== TRACK_IDS.lyrics)
     .sort((a, b) => Number(isFootageTrack(project, b)) - Number(isFootageTrack(project, a)))
   const commands: EditCommand[] = []
   let track = candidates.find((t) => !busyAt(project, t.id, start, start + duration))
@@ -208,13 +224,14 @@ export function addAsset(assetId: string, at: Placement = {}): void {
       index: kind === 'visual' && footage >= 0 ? footage : undefined,
     })
   }
-  const common = { trackId: track.id, assetId, start, duration }
+  const common = { trackId: track.id, assetId: asset.id, start, duration }
   const clip: Clip =
     asset.kind === 'audio'
       ? createAudioClip({ ...common, sourceStart })
       : asset.kind === 'video'
         ? createVideoClip({ ...common, sourceStart })
         : createImageClip(common)
-  commands.push({ type: 'clip.add', clip: { ...clip, name: baseName(asset.name) } })
-  if (dispatch(commands, { label: `Add ${baseName(asset.name)}` })) select({ type: 'clip', id: clip.id })
+  const named = { ...clip, name: baseName(asset.name) }
+  commands.push({ type: 'clip.add', clip: named })
+  return { commands, clip: named }
 }

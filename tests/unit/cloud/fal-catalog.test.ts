@@ -66,6 +66,18 @@ describe('fal.ai price table', () => {
     ).toBeCloseTo(1.0)
   })
 
+  it('names the resolution in price text by its label, and leaves out a single unnamed one', () => {
+    const h3 = falModel('minimax/h3-max-turbo/image-to-video')!
+    const kling = falModel('fal-ai/kling-video/v3/pro/image-to-video')!
+    const req = { task: 'image-to-video' as const, prompt: 'p', aspect: '16:9' as const, duration: 5 }
+    expect(h3.estimate({ ...req, modelId: h3.id, resolution: '480P' }).breakdown).toBe(
+      '5 s × $0.025/s at 480p',
+    )
+    expect(h3.priceLabel).toBe('$0.04 per second at 768p')
+    expect(kling.estimate({ ...req, modelId: kling.id }).breakdown).toBe('5 s × $0.11/s')
+    expect(kling.priceLabel).toBe('$0.11 per second')
+  })
+
   it('snaps durations up to the next supported length and clamps to the range', () => {
     const hailuo = falModel('fal-ai/minimax/hailuo-02/standard/image-to-video')!
     expect(snapDuration(hailuo, 3)).toBe(6)
