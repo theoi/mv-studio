@@ -4,7 +4,15 @@
  */
 import { projectDuration } from '../model/queries.ts'
 import type { Project, Seconds } from '../model/types.ts'
-import { audibleClips, AudioBufferCache, scheduleMix, type AudibleClip, type ScheduledMix } from './audio.ts'
+import { JobError } from '../shared/jobs.ts'
+import {
+  audibleClips,
+  audioBufferCache,
+  type AudioBufferCache,
+  scheduleMix,
+  type AudibleClip,
+  type ScheduledMix,
+} from './audio.ts'
 import type { MediaFileSource, PlaybackClock, PlaybackState } from './types.ts'
 
 /** Audio is scheduled this far ahead so every source starts exactly on time. */
@@ -21,8 +29,21 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   private master: GainNode | null = null
   private readonly buffers: AudioBufferCache
   private project: Project | null = null
+  /** What the project asks to hear. */
+  private wanted: AudibleClip[] = []
+  private wantedSignature = ''
+  /** The project's mix without stem mute and solo. */
+  private plain: AudibleClip[] = []
+  private plainSignature = ''
+  private loadRequest = 0
+  /** What is scheduled: `wanted` once its stems are decoded, the mix before them until then. */
   private clips: AudibleClip[] = []
-  private signature = ''
+  /** `plainSignature` when `clips` was chosen, to tell whether the project changed beyond stem flags since. */
+  private clipsPlain = ''
+  /** The scheduled clips and which of their buffers were decoded, to reschedule only when that changes. */
+  private scheduledKey = ''
+  private readonly reported = new WeakSet<JobError>()
+  private readonly errorListeners = new Set<(error: JobError) => void>()
   private mix: ScheduledMix | null = null
   private playState: PlaybackState = 'stopped'
   /** Timeline time while not playing. */
@@ -39,7 +60,7 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   private readonly listeners = new Set<(state: PlaybackState, time: Seconds) => void>()
 
   constructor(media: MediaFileSource) {
-    this.buffers = new AudioBufferCache(media)
+    this.buffers = audioBufferCache(media)
   }
 
   get state(): PlaybackState {
@@ -50,18 +71,93 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     return this.project ? projectDuration(this.project) : 0
   }
 
-  /** Updates the project. Audio is rescheduled only when the audible clips changed. */
+  /** The clips scheduled now. While newly needed stems decode, the mix that was playing before. */
+  get scheduledClips(): readonly AudibleClip[] {
+    return this.clips
+  }
+
+  /**
+   * Updates the project. Audio is rescheduled only when the audible clips changed. When stems are muted or soloed and
+   * not decoded yet, the current mix keeps playing until they are, then switches at the current time.
+   */
   setProject(project: Project): void {
     this.project = project
-    const clips = audibleClips(project)
-    const signature = audioSignature(clips)
-    if (signature === this.signature) return
+    const wanted = audibleClips(project)
+    const stems = wanted.some((c) => c.stem !== undefined)
+    const plain = stems ? audibleClips(project, { stems: false }) : wanted
+    // With stems, the plain mix plays while they decode and when they cannot be, so its changes matter too.
+    const plainSignature = audioSignature(plain)
+    const signature = audioSignature(wanted) + (stems ? plainSignature : '')
+    if (signature === this.wantedSignature) return
+    this.wanted = wanted
+    this.plain = plain
+    this.plainSignature = plainSignature
+    this.wantedSignature = signature
+    // The cache is shared by every clock and export on this media source, so it is never cleared, only trimmed to
+    // what this project can play. That assumes every preview on the source shows the current project or a copy of it:
+    // a clock holding an unrelated project would evict the audio the others play.
+    const used = new Set(wanted.map((c) => c.assetId))
+    this.buffers.evict(
+      (asset) => !project.assets[asset.id] || (!stems && asset.origin.type === 'stem' && !used.has(asset.id)),
+    )
+    const request = ++this.loadRequest
+    for (const id of new Set([...wanted, ...plain].map((c) => c.assetId))) {
+      const asset = project.assets[id]
+      if (!asset || this.buffers.loaded.has(id)) continue
+      void this.buffers.get(asset).then(() => {
+        if (request === this.loadRequest) this.refresh()
+      })
+    }
+    this.refresh()
+  }
+
+  /**
+   * Reports audio that cannot play: stems that could not be decoded ('out-of-memory' or 'decode', with
+   * `details.assetId`). The full mix plays instead.
+   */
+  onAudioError(listener: (error: JobError) => void): () => void {
+    this.errorListeners.add(listener)
+    return () => this.errorListeners.delete(listener)
+  }
+
+  /** Chooses what to schedule from the decoded buffers, and reschedules while playing when that changed. */
+  private refresh(): void {
+    const project = this.project
+    if (!project) return
+    const loaded = this.buffers.loaded
+    let clips = this.wanted
+    const pending = clips.filter((c) => c.stem !== undefined && !loaded.has(c.assetId))
+    if (pending.length > 0) {
+      const failed = pending.find((c) => this.buffers.error(c.assetId))
+      const failure = failed && this.buffers.error(failed.assetId)
+      if (failed && failure) this.report(failure, failed.assetId)
+      else if (
+        this.clips.length > 0 &&
+        this.clipsPlain === this.plainSignature &&
+        this.clips.every((c) => loaded.has(c.assetId))
+      )
+        // Stems that already play (another solo, say) keep playing until the newly needed ones are decoded.
+        return
+      clips = this.plain
+    }
+    const key = `${audioSignature(clips)}|${clips.map((c) => loaded.has(c.assetId)).join()}`
+    if (key === this.scheduledKey) return
     this.clips = clips
-    this.signature = signature
-    void this.buffers.load(project, clips).then(() => {
-      if (this.playState === 'playing' && this.project === project) this.reschedule(this.currentTime())
-    })
-    if (this.playState === 'playing') this.reschedule(this.currentTime())
+    this.clipsPlain = this.plainSignature
+    this.scheduledKey = key
+    this.switchMix()
+  }
+
+  private report(failure: JobError, assetId: string): void {
+    if (this.reported.has(failure)) return
+    this.reported.add(failure)
+    const memory = failure.code === 'out-of-memory'
+    const error = new JobError(
+      memory ? 'out-of-memory' : 'decode',
+      memory ? 'There is not enough memory to play the stems separately.' : 'A stem could not be decoded.',
+      { retryable: memory, cause: failure, details: { assetId } },
+    )
+    for (const listener of this.errorListeners) listener(error)
   }
 
   /** The context's time of the sample now reaching the output device. */
@@ -94,15 +190,19 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     return this.ctx
   }
 
-  /** Starts playback; call from a user gesture (browsers block audio otherwise). Waits for audio to decode. */
+  /**
+   * Starts playback; call from a user gesture (browsers block audio otherwise). Waits for the song to decode, but not
+   * for stems: until they are decoded the plain mix plays, then it switches to them on the same sample.
+   */
   async play(): Promise<void> {
     if (this.playState === 'playing') return
     const request = ++this.playRequest
     const ctx = this.ensureContext()
     const resumed = ctx.resume()
-    if (this.project) await this.buffers.load(this.project, this.clips)
+    if (this.project) await this.buffers.load(this.project, this.plain)
     await resumed
     if (request !== this.playRequest) return
+    this.refresh()
     const duration = this.duration
     if (this.loop && (this.position < this.loop.start || this.position >= this.loop.end))
       this.position = this.loop.start
@@ -161,6 +261,27 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     const until = this.loop ? this.loop.end : Infinity
     this.mix = scheduleMix(ctx, master, this.clips, this.buffers.loaded, time, when, until)
     // currentTime() compares this against the heard (output) time, so the picture waits out the device latency.
+    this.anchorContext = when
+    this.anchorTime = time
+  }
+
+  /**
+   * Replaces the playing mix with the scheduled clips without a gap or a jump: the new sources start where the old
+   * ones stop, on the same sample.
+   */
+  private switchMix(): void {
+    const ctx = this.ctx
+    const master = this.master
+    if (this.playState !== 'playing' || !ctx || !master) return
+    const when = ctx.currentTime + LOOKAHEAD
+    const time = this.anchorTime + (when - this.anchorContext)
+    const until = this.loop ? this.loop.end : Infinity
+    if (this.nextPass || time >= until) {
+      this.reschedule(this.currentTime())
+      return
+    }
+    this.mix?.stop(when)
+    this.mix = scheduleMix(ctx, master, this.clips, this.buffers.loaded, time, when, until)
     this.anchorContext = when
     this.anchorTime = time
   }
@@ -235,7 +356,7 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     void this.ctx?.close()
     this.ctx = null
     this.master = null
-    this.buffers.clear()
     this.listeners.clear()
+    this.errorListeners.clear()
   }
 }

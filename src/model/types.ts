@@ -82,7 +82,14 @@ export interface Track {
   locked: boolean
   /** Visual tracks only: excluded from preview and export. */
   hidden: boolean
+  /**
+   * Audio tracks only: mute and solo per separated stem of the song clips on the track (the stems in
+   * `analysis.audio[assetId].stems`). A soloed stem solos its track. Set with 'track.update'.
+   */
+  stems?: TrackStems
 }
+
+export type TrackStems = Partial<Record<StemName, { muted?: boolean; solo?: boolean }>>
 
 // ---------------------------------------------------------------------------------------------------------------
 // Animation: every animatable parameter is { value, keyframes?, modulation? }.

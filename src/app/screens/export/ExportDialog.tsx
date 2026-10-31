@@ -74,6 +74,7 @@ import {
   withAspect,
   type OutputItem,
 } from './outputs.ts'
+import { StemsWarning } from './StemsWarning.tsx'
 import styles from './ExportDialog.module.css'
 
 const aspectIcon = (a: AspectPreset) =>
@@ -961,6 +962,7 @@ function ExportDialogBody() {
           </div>
         </div>
       )}
+      {phase === 'setup' && <StemsWarning />}
     </Dialog>
   )
 }

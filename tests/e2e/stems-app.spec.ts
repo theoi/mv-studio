@@ -65,6 +65,74 @@ test('Assist › Stems separates the imported song on this device and shows its 
   expect(r.origins).toEqual(['stem', 'stem', 'stem', 'stem'])
   // Stems are an analysis result: no undo step of their own.
   expect(r.undoLabel).toBe(undoLabel)
+  // The stems must line up with the song sample for sample: the same start and length at 48 kHz, and their sum must
+  // match the song at lag 0 (an encoder priming delay or a container pre-skip shows up here).
+  const alignment = await page.evaluate(async () => {
+    const { app, media } = window.mvStudio
+    const project = app.project.editor.getProject()
+    const song = project.assets[project.songAssetId]
+    const stems = Object.values(project.analysis.audio[song.id].stems as Record<string, string>).map(
+      (id) => project.assets[id],
+    )
+    const decode = async (asset: object) =>
+      new OfflineAudioContext(2, 1, 48_000).decodeAudioData(
+        await (await media.mediaStore.getFile(asset)).arrayBuffer(),
+      )
+    const songBuffer = await decode(song)
+    const stemBuffers = await Promise.all(stems.map(decode))
+    const x = songBuffer.getChannelData(0)
+    const from = 2 * 48_000
+    const length = 3 * 48_000
+    /** The shift of `y` against the song with the largest cross-correlation, within ±2048 samples. */
+    const lagOf = (y: Float32Array) => {
+      let bestLag = 0
+      let best = -Infinity
+      for (let lag = -2048; lag <= 2048; lag++) {
+        let dot = 0
+        for (let i = from; i < from + length; i += 2) dot += x[i] * (y[i + lag] ?? 0)
+        if (dot > best) {
+          best = dot
+          bestLag = lag
+        }
+      }
+      return bestLag
+    }
+    const rmsDb = (y: Float32Array) => {
+      let ss = 0
+      for (let i = from; i < from + length; i++) ss += y[i] ** 2
+      return 10 * Math.log10(ss / length + 1e-20)
+    }
+    const sum = new Float32Array(x.length)
+    for (const b of stemBuffers) {
+      const data = b.getChannelData(0)
+      for (let i = 0; i < Math.min(sum.length, data.length); i++) sum[i] += data[i]
+    }
+    return {
+      mimeTypes: stems.map((s: { mimeType: string }) => s.mimeType),
+      songSeconds: songBuffer.duration,
+      stemSeconds: stemBuffers.map((b) => b.duration),
+      lag: lagOf(sum),
+      stems: Object.keys(project.analysis.audio[song.id].stems).map((name, k) => {
+        const y = stemBuffers[k].getChannelData(0)
+        return { name, lag: lagOf(y), rmsDb: rmsDb(y) }
+      }),
+    }
+  })
+  console.log('stem alignment', JSON.stringify(alignment))
+  for (const seconds of alignment.stemSeconds)
+    expect(Math.abs(seconds - alignment.songSeconds)).toBeLessThan(1e-3)
+  expect(Math.abs(alignment.lag)).toBeLessThanOrEqual(1)
+  // Each stem on its own lines up with the song too. The fixture has no voice, so its vocals stem is faint leakage
+  // (about -70 dBFS) whose correlation peak means nothing; it is checked only if it carries real sound.
+  expect(alignment.stems.map((s: { name: string }) => s.name).sort()).toEqual([
+    'bass',
+    'drums',
+    'other',
+    'vocals',
+  ])
+  for (const stem of alignment.stems)
+    if (stem.name !== 'vocals' || stem.rmsDb > -66)
+      expect(Math.abs(stem.lag), stem.name).toBeLessThanOrEqual(1)
   // The fixture is kicks over a pad with no voice, so the drums waveform stands well above the vocals.
   expect(await waveHeight(page, 'Drums')).toBeGreaterThan((await waveHeight(page, 'Vocals')) + 20)
   // A flat waveform says why: the fixture has no voice.

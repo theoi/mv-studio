@@ -5,7 +5,15 @@ import { Badge } from '../../../ds/Feedback.tsx'
 import { formatBytes } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { hasSong, songAnalysis, useProject } from '../../../state/project.ts'
-import { estimateStems, startStems, stemBars } from '../../../state/stems.ts'
+import {
+  estimateStems,
+  songStemTrack,
+  startStems,
+  stemBars,
+  stemMix,
+  stemNoteText,
+  toggleStem,
+} from '../../../state/stems.ts'
 import { pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -120,10 +128,13 @@ export function StemsView() {
     )
   }
   if (ready) {
+    const flags = songStemTrack(project)?.stems
+    const mix = stemMix(project)
     return (
       <ToolView title="Stems" subtitle="Ready · shown under the song track">
         {STEMS.filter((s) => analysis?.stems?.[s.name]).map((s) => {
           const bars = stemBars(analysis?.stemFeatures?.[s.name], 36)
+          const soloed = !!flags?.[s.name]?.solo
           return (
             <div key={s.name} className={styles.stemRow}>
               <span className={styles.stemName}>{s.label}</span>
@@ -133,9 +144,22 @@ export function StemsView() {
                 ))}
               </span>
               {Math.max(...bars) < ALMOST_SILENT && <span className={styles.muted}>Almost silent</span>}
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-pressed={soloed}
+                onClick={() => toggleStem(s.name, 'solo')}
+              >
+                {soloed ? 'Unsolo' : 'Solo'}
+              </Button>
             </div>
           )
         })}
+        {mix && (
+          <p className={styles.stemMixNote} role="status">
+            {stemNoteText(mix)}
+          </p>
+        )}
         <p className={styles.muted}>
           Effects and visualizers can now react to one stem, like the kick in Drums.
         </p>

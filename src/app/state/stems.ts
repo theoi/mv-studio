@@ -1,8 +1,15 @@
 import type { StemsEstimate, StemSeparationService, StemStore } from '../../analysis/stems/client.ts'
-import type { AudioFeatures } from '../../model/index.ts'
+import {
+  STEM_NAMES,
+  type AudioFeatures,
+  type Project,
+  type StemName,
+  type Track,
+  type TrackStems,
+} from '../../model/index.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { isRunning, JOB_KINDS } from './jobs.ts'
-import { editor } from './project.ts'
+import { dispatch, editor } from './project.ts'
 import { openAssist, toast } from './ui.ts'
 
 /*
@@ -72,4 +79,148 @@ export function stemBars(features: AudioFeatures | undefined, bars: number): num
     for (let i = a; i < z && i < values.length; i++) peak = Math.max(peak, values[i] ?? 0)
     return peak
   })
+}
+
+/* ---------- stem mute and solo: Track.stems on the song's track, honored by preview and export ---------- */
+
+export const STEM_LABELS: Record<StemName, string> = {
+  vocals: 'Vocals',
+  drums: 'Drums',
+  bass: 'Bass',
+  other: 'Other',
+}
+
+/** The audio track that plays the song: the track of the first audio clip of the song asset. */
+export function songStemTrack(project: Project): Track | undefined {
+  const songId = project.songAssetId
+  if (!songId) return undefined
+  const clip = Object.values(project.clips).find((c) => c.type === 'audio' && c.assetId === songId)
+  return clip && project.tracks.find((t) => t.id === clip.trackId && t.kind === 'audio')
+}
+
+/** The stems the song has been separated into, in the usual order. */
+export function separatedStems(project: Project): StemName[] {
+  const stems = project.songAssetId ? project.analysis.audio[project.songAssetId]?.stems : undefined
+  return stems ? STEM_NAMES.filter((name) => stems[name]) : []
+}
+
+/** Stem mute and solo that change what the song sounds like, or null when none does. */
+export interface StemMix {
+  solo: StemName[]
+  muted: StemName[]
+}
+
+/**
+ * The song track's stem flags that take effect: only stems the song has separated (and whose audio is in the
+ * project), like the mix itself. Null when the song has no separated stems or no flag is set.
+ */
+export function stemMix(project: Project): StemMix | null {
+  const track = songStemTrack(project)
+  const separated = project.songAssetId ? project.analysis.audio[project.songAssetId]?.stems : undefined
+  if (!track?.stems || !separated) return null
+  const flags = track.stems
+  const present = STEM_NAMES.filter((name) => {
+    const id = separated[name]
+    return id !== undefined && project.assets[id] !== undefined
+  })
+  const solo = present.filter((name) => flags[name]?.solo)
+  const muted = present.filter((name) => flags[name]?.muted)
+  return solo.length || muted.length ? { solo, muted } : null
+}
+
+/** "Only the other plays" does not read as a stem, so sentences say "the other stem". */
+const SENTENCE_NAMES: Record<StemName, string> = {
+  vocals: 'vocals',
+  drums: 'drums',
+  bass: 'bass',
+  other: 'other stem',
+}
+
+/** "the vocals", "the vocals and bass", "the vocals, drums and bass". */
+export function stemList(names: readonly StemName[]): string {
+  const words = names.map((n) => SENTENCE_NAMES[n])
+  const last = words.pop() ?? ''
+  return `the ${words.length ? `${words.join(', ')} and ${last}` : last}`
+}
+
+const singular = (names: readonly StemName[]) =>
+  names.length === 1 && (names[0] === 'bass' || names[0] === 'other')
+
+/** Header badge of the song track: "Stems: vocals solo · drums muted". */
+export function stemBadgeText(mix: StemMix): string {
+  const part = (names: StemName[], what: string) =>
+    names.length ? `${names.map((n) => STEM_LABELS[n].toLowerCase()).join(', ')} ${what}` : ''
+  return `Stems: ${[part(mix.solo, 'solo'), part(mix.muted, 'muted')].filter(Boolean).join(' · ')}`
+}
+
+/** Assist › Stems note: what plays, in the preview and the export. */
+export function stemNoteText(mix: StemMix): string {
+  const muted = mix.muted.length
+    ? `${capitalize(stemList(mix.muted))} ${singular(mix.muted) ? 'is' : 'are'} muted`
+    : ''
+  if (!mix.solo.length) return `${muted}, in the preview and the export.`
+  const only = `Only ${stemList(mix.solo)} ${singular(mix.solo) ? 'plays' : 'play'}, in the preview and the export.`
+  return muted ? `${only} ${muted}.` : only
+}
+
+/** Export dialog warning. */
+export function stemExportWarning(mix: StemMix): string {
+  const muted = `${capitalize(stemList(mix.muted))} ${singular(mix.muted) ? 'is' : 'are'} muted in this export.`
+  if (!mix.solo.length) return muted
+  const only = `Only ${stemList(mix.solo)} will play in this export`
+  return mix.muted.length ? `${only}, without ${stemList(mix.muted)}.` : `${only}.`
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/** The song track's stem flags after toggling one, without entries that end up with no flag. */
+export function toggledStems(
+  stems: TrackStems | undefined,
+  name: StemName,
+  flag: 'muted' | 'solo',
+): TrackStems {
+  const next: TrackStems = { ...stems }
+  const entry = { ...next[name] }
+  if (entry[flag]) delete entry[flag]
+  else entry[flag] = true
+  if (entry.muted || entry.solo) next[name] = entry
+  else delete next[name]
+  return next
+}
+
+/** Mutes or solos one stem of the song, as one undo step ("Solo vocals", "Unmute drums"). */
+export function toggleStem(name: StemName, flag: 'muted' | 'solo'): void {
+  const track = songStemTrack(editor.getProject())
+  if (!track) return
+  const on = !track.stems?.[name]?.[flag]
+  const verb = flag === 'solo' ? (on ? 'Solo' : 'Unsolo') : on ? 'Mute' : 'Unmute'
+  dispatch(
+    { type: 'track.update', trackId: track.id, patch: { stems: toggledStems(track.stems, name, flag) } },
+    { label: `${verb} ${STEM_LABELS[name].toLowerCase()}` },
+  )
+}
+
+/** Clears every stem mute and solo of the song track, as one undo step ("Play all stems"). */
+export function resetStems(): void {
+  const track = songStemTrack(editor.getProject())
+  if (!track?.stems || !Object.values(track.stems).some((f) => f?.muted || f?.solo)) return
+  dispatch({ type: 'track.update', trackId: track.id, patch: { stems: {} } }, { label: 'Play all stems' })
+}
+
+/**
+ * The toast for a stem the preview could not play, in stem words: the stem's file name means nothing to the user.
+ * Other audio keeps the engine's message.
+ */
+export function audioErrorText(project: Project, error: JobError): string {
+  const assetId = (error.details as { assetId?: string } | undefined)?.assetId
+  const origin = assetId ? project.assets[assetId]?.origin : undefined
+  const parentId = origin?.type === 'stem' ? origin.parentAssetId : undefined
+  const stems = parentId ? project.analysis.audio[parentId]?.stems : undefined
+  const name = stems && STEM_NAMES.find((n) => stems[n] === assetId)
+  if (!name) return `${error.message} Playing the full song instead.`
+  return error.code === 'out-of-memory'
+    ? `There is not enough memory to play ${stemList([name])} separately. Playing the full song instead.`
+    : `The ${STEM_LABELS[name].toLowerCase()} stem could not be decoded. Playing the full song instead.`
 }
