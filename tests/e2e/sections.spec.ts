@@ -29,8 +29,8 @@ test('a section label guessed from the audio is muted and says "Probably the cho
   const muted = await guessed
     .getByText('Chorus', { exact: true })
     .evaluate((el) => getComputedStyle(el).color)
-  // Selected, the Inspector's header says it is a guess too.
-  await guessed.dispatchEvent('pointerdown')
+  // Selected, the Inspector's header says it is a guess too. A mouse pointerdown: see below.
+  await guessed.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   await expect(inspector.getByText('Probably the chorus', { exact: true })).toBeVisible()
   await expect(inspector.getByText(/^1:04 – 1:36 · \d+ bars$/)).toBeVisible()
@@ -76,7 +76,9 @@ test('a guessed section header reads in full at 1280×720, the guess on its own 
       { history: 'skip' },
     )
   })
-  await page.getByRole('button', { name: 'Section Pre-chorus, 0:48 to 1:04' }).dispatchEvent('pointerdown')
+  await page
+    .getByRole('button', { name: 'Section Pre-chorus, 0:48 to 1:04' })
+    .dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
   const title = page
     .getByRole('tabpanel', { name: 'Inspector' })
     .getByText('Section: Pre-chorus', { exact: true })
