@@ -63,4 +63,15 @@ describe('JobRunner', () => {
     const back = JobError.fromJSON(JSON.parse(JSON.stringify(e)))
     expect(back).toMatchObject({ code: 'network', message: 'offline', retryable: true })
   })
+
+  it('recognizes exhausted memory in the words of WebAssembly runtimes', () => {
+    expect(JobError.from(new Error('std::bad_alloc')).code).toBe('out-of-memory')
+    expect(JobError.from(new Error('Aborted(OOM)')).code).toBe('out-of-memory')
+    expect(JobError.from(new Error('Out of memory: Cannot allocate Wasm memory')).code).toBe('out-of-memory')
+    expect(JobError.from(new Error('Unexpected token < in JSON')).code).toBe('internal')
+  })
+
+  it('makes worker crashes retryable', () => {
+    expect(new JobError('worker-crashed', 'The worker stopped').retryable).toBe(true)
+  })
 })

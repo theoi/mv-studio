@@ -28,9 +28,11 @@ import * as thumbnails from '../plugins/thumbnails.ts'
 import * as typography from '../plugins/typography/index.ts'
 import { detectCapabilities } from '../shared/capabilities.ts'
 import { jobs } from '../shared/jobs.ts'
+import { createWorkerClient } from '../shared/worker.ts'
 import * as vision from '../vision/index.ts'
 import * as vj from '../vj/index.ts'
 import * as bench from './bench.ts'
+import type { CrashTestApi } from './crash.worker.ts'
 import * as appFootage from '../app/state/footage.ts'
 import * as appModels from '../app/state/models.ts'
 import * as appProject from '../app/state/project.ts'
@@ -42,6 +44,20 @@ function createCompositor(mode: 'preview' | 'export', width: number, height: num
   const compositor = new WebGLCompositor({ frames, media: mediaStore, preserveDrawingBuffer: true })
   compositor.resize(width, height)
   return { compositor, frames }
+}
+
+/** A client for the crash-test worker, and the workers it has started, so a test can kill one from outside. */
+function crashTestClient() {
+  const workers: Worker[] = []
+  const client = createWorkerClient<CrashTestApi>(() => {
+    const worker = new Worker(new URL('./crash.worker.ts', import.meta.url), {
+      type: 'module',
+      name: 'crash-test',
+    })
+    workers.push(worker)
+    return worker
+  })
+  return { client, workers }
 }
 
 /** RGBA bytes of a canvas or image, top row first, scaled to width x height. */
@@ -81,7 +97,7 @@ export function installHarness(): void {
     director,
     shared: { jobs, detectCapabilities },
     plugins: { library, looks, lut, preview, reactions, templates, thumbnails, typography },
-    testing: { createCompositor, readPixels, bench },
+    testing: { createCompositor, readPixels, bench, crashTestClient },
     vision,
     vj,
     exporting,

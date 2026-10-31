@@ -23,6 +23,7 @@
  */
 import { projectDuration } from '../model/queries.ts'
 import type { Asset, Project, Seconds, VideoClip } from '../model/types.ts'
+import type { JobError, SerializedJobError } from '../shared/jobs.ts'
 import { createAudioSampler, type AudioSampler } from './audioFeatures.ts'
 import { videoRequests, visibleLayers, WebGLCompositor } from './compositor.ts'
 import { VideoElementFrameProvider, type BridgedVideo } from './frames.ts'
@@ -56,6 +57,11 @@ export interface PreviewSnapshot {
   quality: PreviewQuality
   /** Current render resolution relative to full (1 when paused; below 1 while playback runs at reduced quality). */
   scale: number
+  /**
+   * Set once the preview can no longer draw: its render worker died ('worker-crashed', 'out-of-memory'), taking the
+   * canvas with it. A new preview on a new canvas draws again.
+   */
+  error?: SerializedJobError
 }
 
 export interface PreviewStats {
@@ -103,6 +109,8 @@ interface FrameRenderer {
   snapshot(project: Project, time: Seconds, size: Size): Promise<ImageBitmap>
   /** The frame drawn last; needs preserveDrawingBuffer. */
   capture(): Promise<ImageBitmap>
+  /** Why this renderer can no longer draw at all, or null. */
+  failure(): JobError | null
   dispose(): void
 }
 
@@ -131,6 +139,10 @@ class MainRenderer implements FrameRenderer {
 
   capture(): Promise<ImageBitmap> {
     return createImageBitmap(this.compositor.canvas)
+  }
+
+  failure(): JobError | null {
+    return null
   }
 
   dispose(): void {
@@ -179,6 +191,10 @@ class WorkerRenderer implements FrameRenderer {
 
   capture(): Promise<ImageBitmap> {
     return this.worker.capture()
+  }
+
+  failure(): JobError | null {
+    return this.worker.failure()
   }
 
   busy(): boolean {
@@ -279,6 +295,8 @@ export class PreviewController {
   private readonly rendererReady: Promise<FrameRenderer>
   private readonly preserveDrawingBuffer: boolean
   private disposed = false
+  /** Why the renderer can no longer draw; frames are no longer requested. */
+  private failure: JobError | null = null
   private lastSize: Size = { width: 0, height: 0 }
   private project: Project | null = null
   private raf = 0
@@ -529,11 +547,15 @@ export class PreviewController {
     return renderer.snapshot(project, this.clock.currentTime(), this.frameSize(project))
   }
 
-  /** Resolves once the current state (project, time, size) is on screen at its settled quality. */
+  /**
+   * Resolves once the current state (project, time, size) is on screen at its settled quality. Rejects when the
+   * preview can no longer draw (snapshot `error`).
+   */
   async rendered(): Promise<void> {
     for (;;) {
       if (this.inFlight) await this.inFlight
       else if (this.stillPending && !this.raf) this.requestStill()
+      else if (this.failure) throw this.failure
       else return
     }
   }
@@ -545,6 +567,7 @@ export class PreviewController {
       duration: this.project ? projectDuration(this.project) : 0,
       quality: this.quality,
       scale: this.scale,
+      ...(this.failure ? { error: this.failure.toJSON() } : {}),
     }
     const s = this.snapshot
     if (
@@ -552,7 +575,8 @@ export class PreviewController {
       s.time === next.time &&
       s.duration === next.duration &&
       s.quality === next.quality &&
-      s.scale === next.scale
+      s.scale === next.scale &&
+      s.error?.code === next.error?.code
     )
       return
     this.snapshot = next
@@ -564,6 +588,7 @@ export class PreviewController {
     this.stillPending = false
     const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop)
+      if (this.failure) return
       if (this.inFlight || this.renderer?.busy()) {
         this.dropped++
         return
@@ -585,6 +610,10 @@ export class PreviewController {
   }
 
   private requestStill(): void {
+    if (this.failure) {
+      this.stillPending = false
+      return
+    }
     if (this.raf || !this.project) return
     if (this.inFlight) {
       this.stillPending = true
@@ -619,7 +648,15 @@ export class PreviewController {
             this.frameLog.shift()
           for (const listener of this.frameListeners) listener(time)
         },
-        (error: unknown) => console.error('Preview render failed', error),
+        (error: unknown) => {
+          const failure = this.renderer?.failure()
+          if (!failure) console.error('Preview render failed', error)
+          else if (!this.failure) {
+            this.failure = failure
+            console.error('The preview stopped drawing: its render worker died', failure)
+            this.updateSnapshot()
+          }
+        },
       )
       .finally(() => {
         this.inFlight = null

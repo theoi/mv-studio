@@ -13,7 +13,8 @@ import type { MediaFileSource } from './types.ts'
 export interface RenderWorker {
   /**
    * Renders and encodes an export (encodeExport). Pass the audio channel buffers in `options.transfer`. On cancel, the
-   * call settles once the worker has stopped writing.
+   * call settles once the worker has stopped writing. If the worker dies, rejects with 'worker-crashed' or
+   * 'out-of-memory'.
    */
   exportVideo(job: EncodeJob, options?: CallOptions): Promise<EncodeResult>
   /** Terminates the worker; pending calls reject with 'cancelled'. */
@@ -21,30 +22,15 @@ export interface RenderWorker {
 }
 
 function spawnRenderWorker(name: string) {
-  const worker = new Worker(new URL('./render.worker.ts', import.meta.url), { type: 'module', name })
-  const client = createWorkerClient<RenderWorkerApi>(worker)
-  // An error outside a call (the module failed to load, or the worker crashed) would otherwise leave calls pending.
-  const died = new Promise<never>((_, reject) => {
-    worker.addEventListener(
-      'error',
-      (event) => {
-        event.preventDefault()
-        reject(
-          new JobError('internal', `The render worker stopped${event.message ? `: ${event.message}` : ''}`),
-        )
-      },
-      { once: true },
-    )
-  })
-  died.catch(() => undefined)
-  return { client, died }
+  return createWorkerClient<RenderWorkerApi>(
+    new Worker(new URL('./render.worker.ts', import.meta.url), { type: 'module', name }),
+  )
 }
 
 export function startRenderWorker(): RenderWorker {
-  const { client, died } = spawnRenderWorker('render')
+  const client = spawnRenderWorker('render')
   return {
-    exportVideo: (job, options) =>
-      Promise.race([client.call('exportVideo', job, { ...options, awaitCancel: true }), died]),
+    exportVideo: (job, options) => client.call('exportVideo', job, { ...options, awaitCancel: true }),
     dispose: () => client.terminate(),
   }
 }
@@ -54,6 +40,8 @@ export interface PreviewWorker {
   render(request: PreviewRenderRequest, transfer: Transferable[]): Promise<ImageBitmap | null>
   /** The frame drawn last; needs preserveDrawingBuffer. */
   capture(): Promise<ImageBitmap>
+  /** The error the worker died with, or null. A dead worker cannot draw again: the canvas went with it. */
+  failure(): JobError | null
   dispose(): void
 }
 
@@ -69,7 +57,7 @@ export async function startPreviewWorker(
   media: MediaFileSource,
   options: { preserveDrawingBuffer?: boolean } = {},
 ): Promise<PreviewWorker> {
-  const { client, died } = spawnRenderWorker('preview')
+  const client = spawnRenderWorker('preview')
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -79,21 +67,18 @@ export async function startPreviewWorker(
   })
   const channel = new MessageChannel()
   try {
-    await Promise.race([client.call('previewProbe', undefined), died, timeout])
+    await Promise.race([client.call('previewProbe', undefined), timeout])
     const offscreen = canvas.transferControlToOffscreen()
     serveMedia(channel.port1, media)
-    await Promise.race([
-      client.call(
-        'previewStart',
-        {
-          canvas: offscreen,
-          port: channel.port2,
-          preserveDrawingBuffer: options.preserveDrawingBuffer ?? false,
-        },
-        { transfer: [offscreen, channel.port2] },
-      ),
-      died,
-    ])
+    await client.call(
+      'previewStart',
+      {
+        canvas: offscreen,
+        port: channel.port2,
+        preserveDrawingBuffer: options.preserveDrawingBuffer ?? false,
+      },
+      { transfer: [offscreen, channel.port2] },
+    )
   } catch (error) {
     client.terminate()
     channel.port1.close()
@@ -102,9 +87,9 @@ export async function startPreviewWorker(
     clearTimeout(timer)
   }
   return {
-    render: (request, transfer) =>
-      Promise.race([client.call('previewRender', request, { transfer }), died]).then((r) => r.bitmap),
-    capture: () => Promise.race([client.call('previewCapture', undefined), died]).then((r) => r.bitmap),
+    render: (request, transfer) => client.call('previewRender', request, { transfer }).then((r) => r.bitmap),
+    capture: () => client.call('previewCapture', undefined).then((r) => r.bitmap),
+    failure: () => client.failure(),
     dispose: () => {
       client.terminate()
       channel.port1.close()
