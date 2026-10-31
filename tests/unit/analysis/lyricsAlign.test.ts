@@ -285,6 +285,14 @@ describe('alignLines with unlisted singing', () => {
     expect(aligned[1]?.words.every((w) => (w.confidence ?? 1) < 0.1)).toBe(true)
   })
 
+  it('reports an unlisted intro before the first line', () => {
+    const em = song(1000, { 600: 'no', 800: 'go' })
+    unlisted(em, 0, 500)
+    const found: { start: number; end: number }[] = []
+    alignLines(em, vocab, lines, { unlistedFound: found })
+    expect(found).toEqual([{ start: 0, end: expect.closeTo(10, 0) }])
+  })
+
   it('reports the unlisted singing, so the lines near it are to check until the missing lines are added and timed', async () => {
     // "no" at 1 s and "go" at 16 s, with a line of twelve "hey"s from 4 to 13 s that the first paste leaves out.
     const hey = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [200 + 40 * i, 'hey']))

@@ -90,7 +90,7 @@ function setup(options: { storedVocals?: boolean; alignFails?: boolean; heard?: 
         end: i + 0.5,
         words: [],
       }))
-      return { lines, emissions: emissions(), vocab }
+      return { lines, emissions: emissions(), vocab, unlisted: [{ start: 2, end: 9 }] }
     },
     async emissions(args: { vocals: DecodedAudio; mix?: DecodedAudio }) {
       record('emissions', args)
@@ -183,9 +183,10 @@ describe('LyricsService.run', () => {
       if (s.progress.fraction !== undefined)
         progress.push({ stage: s.progress.stage, fraction: s.progress.fraction })
     })
-    const { doc } = await handle.promise
+    const { doc, unlisted } = await handle.promise
 
     expect(doc.source).toBe('pasted')
+    expect(unlisted).toEqual([{ start: 2, end: 9 }])
     expect(doc.audioAssetId).toBe(song.id)
     expect(doc.lines.map((l) => l.text)).toEqual(['We were young', 'Hold on tight'])
     expect(calls).toEqual([

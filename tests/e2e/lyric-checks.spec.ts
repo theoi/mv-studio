@@ -239,7 +239,7 @@ test('timed lines near singing the pasted lyrics leave out say so, until the mis
   await near.click()
   await expect(
     page.getByText(
-      'Singing near this line isn’t in the pasted lyrics, so its words may be timed wrong. Play the line to check.',
+      'Singing near this line isn’t in the pasted lyrics, so some words may be timed wrong. Play the line to check, or add the missing lines in Assist\u00a0›\u00a0Lyrics and time the words again.',
       { exact: true },
     ),
   ).toBeVisible()

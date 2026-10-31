@@ -106,6 +106,10 @@ function TimingBadge({ line }: { line: LyricLine }) {
   )
 }
 
+/** No-break spaces keep "Assist › Lyrics" on one line. */
+const UNLISTED_NOTE =
+  'Singing near this line isn’t in the pasted lyrics, so some words may be timed wrong. Play the line to check, or add the missing lines in Assist\u00a0›\u00a0Lyrics and time the words again.'
+
 /** A line to check: why, its words with the uncertain ones underlined, and Mark as checked. */
 function CheckNote({ line }: { line: LyricLine }) {
   const underlined = line.words.some(isUncertain)
@@ -114,7 +118,7 @@ function CheckNote({ line }: { line: LyricLine }) {
       <p className={styles.draftText}>
         {line.check === 'words'
           ? `Drafted from the vocals. Check the words.${underlined ? ' Uncertain ones are underlined.' : ''}`
-          : `${line.check === 'unlisted' ? 'Singing near this line isn’t in the pasted lyrics, so its words may be timed wrong.' : 'Some words may be timed wrong.'} Play the line to check.${underlined ? ' Uncertain words are underlined.' : ''}`}
+          : `${line.check === 'unlisted' ? UNLISTED_NOTE : 'Some words may be timed wrong. Play the line to check.'}${underlined ? ' Uncertain words are underlined.' : ''}`}
       </p>
       {line.words.length > 0 && (
         <p className={styles.draftWords}>
