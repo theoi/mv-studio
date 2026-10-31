@@ -51,6 +51,16 @@ export function scrubScale(fullStillMs: number): number {
 }
 
 /**
+ * The level a scrub on the render worker starts at, from how long a full-size still took to draw: the best of
+ * AUTO_SCALES whose frames auto quality would not find too slow, since draw time grows with the pixel count.
+ */
+export function stillLevel(fullStillMs: number): number {
+  const fits = Math.sqrt((TARGET_FRAME_MS * STEP_DOWN_RATIO) / fullStillMs)
+  const level = AUTO_SCALES.findIndex((s) => s <= fits)
+  return level === -1 ? AUTO_SCALES.length - 1 : level
+}
+
+/**
  * Picks the playback render scale from the interval between preview frames. Steps down while frames come too slowly,
  * steps back up after a few seconds of headroom, undoes a step down that did not speed frames up (the bottleneck is
  * elsewhere, e.g. decoding), and holds off stepping up after a step up was too slow right away. Either kind of failed
@@ -86,8 +96,12 @@ export class AdaptiveScale {
     return AUTO_SCALES[this.level] ?? 1
   }
 
-  /** Starts a playback (or a scrub, or a new frame size): measurements and limits reset, the level carries over. */
-  start(now: number): void {
+  /**
+   * Starts a playback (or a scrub, or a new frame size): measurements and limits reset, the level carries over, lowered
+   * to `atLeast` when that is a lower resolution.
+   */
+  start(now: number, atLeast = 0): void {
+    this.level = Math.max(this.level, atLeast)
     this.recent = []
     this.skipNext = true
     this.last = 0

@@ -167,6 +167,85 @@ describe('scrubbing on the render worker', () => {
     expect(await drag(2000)).toBeLessThan(1)
     preview.dispose()
   })
+
+  /** A worker preview at 1280 × 720 that has drawn its first frame. */
+  async function openWorker(): Promise<PreviewController> {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    vi.stubGlobal('Worker', class {})
+    vi.stubGlobal('VideoFrame', class {})
+    const preview = new PreviewController({
+      canvas: { transferControlToOffscreen: () => ({}) } as unknown as HTMLCanvasElement,
+      media: { getFile: async () => new Blob() },
+      renderer: 'worker',
+    })
+    preview.setViewport(1280, 720, 1)
+    preview.setProject(createProject())
+    await vi.advanceTimersByTimeAsync(2000)
+    return preview
+  }
+
+  /** Starts a drag with seeks `everyMs` apart and returns the lowest scale over its first `ms`. */
+  async function dragFrom(preview: PreviewController, time: number, ms: number, everyMs = 16) {
+    let lowest = 1
+    for (let t = 0; t < ms; t += everyMs) {
+      preview.seek(time + t / 1000)
+      lowest = Math.min(lowest, preview.stats().scale)
+      await vi.advanceTimersByTimeAsync(everyMs)
+    }
+    return lowest
+  }
+
+  it('starts a scrub as small as the full-size stills drawn before it call for, instead of after seconds of slow stills', async () => {
+    // A slow GPU: 450 ms per still at 1280 × 720, less at smaller sizes.
+    worker.ms = ({ width, height }) => (450 * width * height) / (1280 * 720)
+    const preview = await openWorker()
+    // A click on the ruler, drawn at full size.
+    preview.seek(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(preview.stats()).toMatchObject({ scale: 1, width: 1280 })
+    // The drag's second step finds its first still drawing: the scrub starts, at the lowest level.
+    expect(await dragFrom(preview, 2, 32)).toBe(0.33)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(preview.stats().width).toBe(Math.round(1280 * 0.33))
+    // Released: the frame settles at full size.
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(preview.stats()).toMatchObject({ scale: 1, width: 1280 })
+    preview.dispose()
+  })
+
+  it('starts a scrub after the preview grew from the stills drawn at the new size only', async () => {
+    worker.ms = ({ width, height }) => (450 * width * height) / (1280 * 720)
+    const preview = await openWorker()
+    preview.setViewport(320, 180, 1)
+    await vi.advanceTimersByTimeAsync(500)
+    preview.seek(1)
+    await vi.advanceTimersByTimeAsync(500)
+    preview.setViewport(1280, 720, 1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(preview.stats()).toMatchObject({ scale: 1, width: 1280 })
+    expect(await dragFrom(preview, 2, 32)).toBe(0.33)
+    preview.dispose()
+  })
+
+  it('takes neither the first frame nor a one-off slow still for how fast stills draw', async () => {
+    // 20 ms per full-size still, but the first frame starts the worker and one still compiles a shader on first use.
+    let next = 1500
+    worker.ms = ({ width, height }) => {
+      const ms = next
+      next = 20
+      return (ms * width * height) / (1280 * 720)
+    }
+    const preview = await openWorker()
+    expect(await dragFrom(preview, 1, 300, 10)).toBe(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    preview.seek(3)
+    await vi.advanceTimersByTimeAsync(500)
+    next = 400
+    preview.seek(4)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await dragFrom(preview, 5, 300, 10)).toBe(1)
+    preview.dispose()
+  })
 })
 
 describe('scrubbing on the main thread', () => {
