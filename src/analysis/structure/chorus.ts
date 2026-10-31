@@ -483,8 +483,9 @@ function confirmed(sections: readonly SongSection[], chorus: readonly TimeRange[
 /**
  * The edit that moves the edges of the lyrics' chorus (sections labeled chorus with `LYRIC_CHORUS_CONFIDENCE`) to the
  * nearest downbeat within 2 s, for bars found after the chorus was set on beats. Each edge moves with the section
- * next to it, and never so far that a section gets shorter than a second. Null without bars or when nothing moves. A
- * background result: dispatch with `{ history: 'skip' }`.
+ * next to it, and never so far that a section gets shorter than a second. An edge next to a section the user named or
+ * changed (`isUserSection`) stays where it is. Null without bars or when nothing moves. A background result: dispatch
+ * with `{ history: 'skip' }`.
  */
 export function chorusEdgesCommand(analysis: AudioAnalysis): EditCommand | null {
   const sections = analysis.sections
@@ -495,7 +496,8 @@ export function chorusEdgesCommand(analysis: AudioAnalysis): EditCommand | null 
   let moved = false
   for (let i = 0; i + 1 < next.length; i++) {
     const [a, b] = [next[i]!, next[i + 1]!]
-    if (lyric(a) === lyric(b) || Math.abs(a.end - b.start) > 1e-6) continue
+    if (lyric(a) === lyric(b) || Math.abs(a.end - b.start) > 1e-6 || isUserSection(a) || isUserSection(b))
+      continue
     let edge = a.end
     let distance = Infinity
     for (const d of downbeats) {
