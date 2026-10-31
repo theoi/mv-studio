@@ -8,6 +8,7 @@ import {
   type TextareaHTMLAttributes,
 } from 'react'
 import { Check, ChevronDown, ChevronRight, Diamond, AudioWaveform, Search, X } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from './Popover.tsx'
 import { Tooltip } from './Tooltip.tsx'
 import styles from './Fields.module.css'
 
@@ -105,35 +106,54 @@ export function AnimateButtons({
   onKey,
   onReact,
   property,
+  reaction,
+  reactPanel,
 }: {
   keyed?: boolean
   reactive?: boolean
   onKey?: () => void
   onReact?: () => void
   property: string
+  /** What the value reacts to, for the tooltip, e.g. "Kick · 40% · Drums stem". */
+  reaction?: string
+  /** Controls for choosing the reaction. When given, the react button opens them instead of calling `onReact`. */
+  reactPanel?: ReactNode
 }) {
+  const reactButton = (
+    <button
+      className={[styles.animateBtn, styles.reactBtn, reactive && styles.reactOn].filter(Boolean).join(' ')}
+      aria-label={`React to music: ${property}`}
+      aria-pressed={!!reactive}
+      onClick={reactPanel ? undefined : onReact}
+    >
+      <AudioWaveform />
+    </button>
+  )
+  const tooltip = (trigger: ReactNode) => (
+    <Tooltip
+      label={reactive ? `${property} reacts to the music` : 'React to music'}
+      description={
+        reactive
+          ? `Driven by: ${reaction ?? 'the music'}`
+          : 'Drive this value with loudness, a frequency band, beats or a stem'
+      }
+      side="left"
+    >
+      {trigger}
+    </Tooltip>
+  )
   return (
     <span className={styles.animate}>
-      <Tooltip
-        label={reactive ? `${property} reacts to the music` : 'React to music'}
-        description={
-          reactive
-            ? 'Driven by: Drums stem'
-            : 'Drive this value with loudness, a frequency band, beats or a stem'
-        }
-        side="left"
-      >
-        <button
-          className={[styles.animateBtn, styles.reactBtn, reactive && styles.reactOn]
-            .filter(Boolean)
-            .join(' ')}
-          aria-label={`React to music: ${property}`}
-          aria-pressed={!!reactive}
-          onClick={onReact}
-        >
-          <AudioWaveform />
-        </button>
-      </Tooltip>
+      {reactPanel ? (
+        <Popover>
+          {tooltip(<PopoverTrigger asChild>{reactButton}</PopoverTrigger>)}
+          <PopoverContent title={`React to music: ${property}`} side="left" align="start">
+            {reactPanel}
+          </PopoverContent>
+        </Popover>
+      ) : (
+        tooltip(reactButton)
+      )}
       <Tooltip label={keyed ? 'Keyframe at playhead' : 'Animate this'} shortcut="Alt K" side="left">
         <button
           className={[styles.animateBtn, keyed && styles.keyOn].filter(Boolean).join(' ')}
