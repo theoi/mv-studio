@@ -31,3 +31,39 @@ test('Settings lists the downloaded models and clears the model cache', async ({
   await dialog.getByRole('button', { name: 'This device' }).click()
   await expect(beats.getByText('Downloads when used')).toBeVisible()
 })
+
+test('Settings › This device removes one downloaded model and keeps the others', async ({ page }) => {
+  await openHarness(page)
+  const urls: { beats: string; stems: string } = await page.evaluate(() => {
+    const models: { id: string; urls: string[] }[] = window.mvStudio.app.models.LOCAL_MODELS
+    return {
+      beats: models.find((m) => m.id === 'beats')!.urls[0],
+      stems: models.find((m) => m.id === 'stems')!.urls[0],
+    }
+  })
+  await page.evaluate(async (list) => {
+    const cache = await caches.open('mv-studio-models-v1')
+    for (const url of list) await cache.put(url, new Response(new Uint8Array(1000)))
+  }, Object.values(urls))
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?dialog=settings&page=local'
+  })
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  const beats = dialog.getByRole('group', { name: 'Beat and bar tracker' })
+  const stems = dialog.getByRole('group', { name: 'Stem separator' })
+  await expect(stems.getByText('On this device')).toBeVisible()
+  await expect(dialog.getByRole('group', { name: 'Depth' }).getByRole('button')).toHaveCount(0)
+
+  await beats.getByRole('button', { name: 'Remove Beat and bar tracker' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(
+    page.getByText('Beat and bar tracker removed (82 MB). It downloads again when needed.'),
+  ).toBeVisible()
+  await expect(beats.getByText('Downloads when used')).toBeVisible()
+  await expect(beats.getByRole('button')).toHaveCount(0)
+  await expect(beats).toBeFocused()
+  await expect(stems.getByText('On this device')).toBeVisible()
+  expect(await page.evaluate((url) => caches.match(url).then(Boolean), urls.beats)).toBe(false)
+  expect(await page.evaluate((url) => caches.match(url).then(Boolean), urls.stems)).toBe(true)
+})

@@ -260,11 +260,19 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.modelAction {
+  display: flex;
+  justify-content: flex-end;
+  width: 72px;
+  flex: none;
+}
+
 .size {
   color: var(--text-2);
   font-size: var(--text-sm);
-  width: 64px;
+  width: 72px;
   text-align: right;
+  white-space: nowrap;
 }
 
 .storage {
