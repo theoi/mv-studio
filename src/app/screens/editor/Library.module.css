@@ -324,6 +324,12 @@ button.songRow:hover {
   gap: var(--space-3) var(--space-2);
 }
 
+/* "Show all N" under a group that shows only its first rows. */
+.groupMore {
+  display: flex;
+  padding-top: var(--space-1);
+}
+
 .tile {
   display: flex;
   flex-direction: column;

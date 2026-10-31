@@ -196,10 +196,53 @@ test('effects and transitions dragged onto the timeline land on the clip or cut 
   expect(await effects(clip.id)).toEqual({ effects: ['rgb-split'], transition: undefined })
   await expect(block).toHaveAttribute('aria-pressed', 'true')
 
-  // Near the clip's left edge is the cut where it starts.
+  // Near the clip's left edge is the cut where it starts. Whip pan is past the transitions' first rows.
+  await library.getByRole('textbox', { name: 'Search looks and effects' }).fill('whip')
   await library
     .getByRole('button', { name: 'Whip pan', exact: true })
     .dragTo(block, { targetPosition: { x: 3, y: 10 } })
   await expect(page.getByText(/^“Whip pan” added to the cut at \d+:\d\d\.\d$/)).toBeVisible()
   expect(await effects(clip.id)).toEqual({ effects: ['rgb-split'], transition: 'whip-pan' })
+})
+
+test('each group shows its first two rows until "Show all", which lasts the session; search shows every match', async ({
+  page,
+}) => {
+  const { library } = await openEffectsTab(page)
+  const transitions = library.getByRole('group', { name: 'Transitions' })
+  const showAll = library.getByRole('button', { name: /^Show all \d+$/ })
+  await expect(library.getByText(/^Transitions · \d+$/)).toBeVisible()
+  const total = Number((await library.getByText(/^Transitions · \d+$/).textContent())?.match(/\d+$/)?.[0])
+  const columns = await transitions.evaluate(
+    (grid) => getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+  )
+  await expect(transitions.getByRole('button')).toHaveCount(2 * columns)
+
+  const toggle = library.getByRole('button', { name: `Show all ${total}` })
+  await toggle.click()
+  await expect(transitions.getByRole('button')).toHaveCount(total)
+  const fewer = library.getByRole('button', { name: 'Show fewer' })
+  await expect(fewer).toBeFocused()
+  await expect(fewer).toHaveAttribute('aria-expanded', 'true')
+
+  // The group stays open across tab switches for the session.
+  await page.getByRole('tab', { name: 'Media' }).click()
+  await page.getByRole('tab', { name: 'Effects' }).click()
+  await expect(transitions.getByRole('button')).toHaveCount(total)
+
+  await library.getByRole('button', { name: 'Show fewer' }).click()
+  await expect(transitions.getByRole('button')).toHaveCount(2 * columns)
+  await expect(library.getByRole('button', { name: `Show all ${total}` })).toBeFocused()
+
+  // Searching shows every match, without the buttons, and hides groups with none.
+  const search = library.getByRole('textbox', { name: 'Search looks and effects' })
+  await search.fill('a')
+  await expect(showAll).toHaveCount(0)
+  const matches = Number((await library.getByText(/^Transitions · \d+$/).textContent())?.match(/\d+$/)?.[0])
+  expect(matches).toBeGreaterThan(2 * columns)
+  await expect(transitions.getByRole('button')).toHaveCount(matches)
+  await search.fill('glitch')
+  await expect(library.getByRole('group', { name: 'Looks' })).toHaveCount(0)
+  await search.fill('')
+  await expect(library.getByRole('button', { name: `Show all ${total}` })).toBeVisible()
 })

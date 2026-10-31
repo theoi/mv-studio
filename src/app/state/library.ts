@@ -15,7 +15,7 @@ import {
 } from '../../plugins/looks.ts'
 import { formatTime } from '../format.ts'
 import { dispatch, editor, viewOf } from './project.ts'
-import { get, select, toast, type Selection } from './ui.ts'
+import { get, select, set, toast, type Selection } from './ui.ts'
 
 /** Anything the library search can match: names, categories, descriptions and tags. */
 export interface Searchable {
@@ -90,6 +90,18 @@ export function effectItems(group: 'effects' | 'filters'): PluginCatalogEntry[] 
   return pluginRegistry
     .catalog('effect')
     .filter((e) => !needsDepth(e) && FILTER_CATEGORIES.has(e.category) === (group === 'filters'))
+}
+
+/** Rows of tiles a library group shows until it is expanded. */
+export const GROUP_ROWS = 2
+
+/** Shows all of a library group's items, or only its first rows again. */
+export function toggleLibraryGroup(group: string): void {
+  set((s) => ({
+    libraryExpanded: s.libraryExpanded.includes(group)
+      ? s.libraryExpanded.filter((g) => g !== group)
+      : [...s.libraryExpanded, group],
+  }))
 }
 
 export function transitionItems(): PluginCatalogEntry[] {

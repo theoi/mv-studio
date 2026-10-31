@@ -81,8 +81,10 @@ test('transition and effect tiles play their preview on hover, and a click still
   page,
 }) => {
   const library = await openEffectsTab(page)
-  for (const name of ['Whip pan', 'RGB split']) {
-    const tile = library.getByRole('button', { name, exact: true })
+  for (const tile of [
+    library.getByRole('group', { name: 'Transitions' }).getByRole('button').first(),
+    library.getByRole('button', { name: 'RGB split', exact: true }),
+  ]) {
     await tile.scrollIntoViewIfNeeded()
     await tile.hover()
     await expect.poll(() => motion(page, tile)).toBeGreaterThan(1)
