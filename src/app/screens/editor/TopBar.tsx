@@ -36,7 +36,7 @@ import {
 } from '../../state/persistence.ts'
 import { editor, redo, undo, useProject } from '../../state/project.ts'
 import { set } from '../../state/ui.ts'
-import { enterVj, takeVjButtonFocus } from '../../state/vj.ts'
+import { enterVj, takeVjButtonFocus, useVjEntering } from '../../state/vj.ts'
 import { LogoMark } from '../common/Logo.tsx'
 import styles from './TopBar.module.css'
 
@@ -139,6 +139,7 @@ export function TopBar() {
   const redoLabel = editor.redoLabel()
   const [renaming, setRenaming] = useState(false)
   const vjButton = useRef<HTMLButtonElement>(null)
+  const vjEntering = useVjEntering()
   // Back from VJ mode, focus returns to the button that opened it.
   useEffect(() => {
     if (takeVjButtonFocus()) vjButton.current?.focus()
@@ -227,7 +228,13 @@ export function TopBar() {
           shortcut="Shift V"
           description="Perform live with the keyboard or a MIDI controller"
         >
-          <Button ref={vjButton} variant="ghost" icon={<Disc3 />} onClick={enterVj}>
+          <Button
+            ref={vjButton}
+            variant="ghost"
+            icon={vjEntering ? <Spinner size={16} /> : <Disc3 />}
+            aria-busy={vjEntering || undefined}
+            onClick={enterVj}
+          >
             VJ
           </Button>
         </Tooltip>

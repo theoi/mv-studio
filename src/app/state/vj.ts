@@ -27,6 +27,23 @@ const entryListeners = new Set<() => void>()
 let focusVjButton = false
 /** Set while VJ mode's code loads (see enterVj), so another press does not start a second entry. */
 let entering = false
+const enteringListeners = new Set<() => void>()
+
+function setEntering(value: boolean) {
+  if (value === entering) return
+  entering = value
+  for (const listener of enteringListeners) listener()
+}
+
+function subscribeEntering(listener: () => void): () => void {
+  enteringListeners.add(listener)
+  return () => enteringListeners.delete(listener)
+}
+
+/** True from a press until VJ mode's code has loaded and the screen switches, for the VJ button's busy state. */
+export function useVjEntering(): boolean {
+  return useSyncExternalStore(subscribeEntering, () => entering)
+}
 
 function setEntryFrame(frame: ImageBitmap | null) {
   if (frame === entryFrame) return
@@ -42,7 +59,7 @@ function setEntryFrame(frame: ImageBitmap | null) {
  */
 export function enterVj() {
   if (get().screen === 'vj' || entering) return
-  entering = true
+  setEntering(true)
   setEntryFrame(null)
   const capture = stagePreview()?.captureFrame()
   capture?.then(
@@ -55,7 +72,7 @@ export function enterVj() {
   void loadVjMode()
     .catch(() => undefined)
     .then(() => {
-      entering = false
+      setEntering(false)
       if (get().screen === 'editor') set({ screen: 'vj' })
       else clearVjEntryFrame()
     })

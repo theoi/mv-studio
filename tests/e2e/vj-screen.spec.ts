@@ -495,11 +495,14 @@ test('opened from the editor, VJ mode shows the frame at the playhead at once; l
 })
 
 test('the first VJ entry keeps the editor on screen until VJ mode has loaded', async ({ page }) => {
-  // VJ mode's code arrives late, as on a first visit over a slow connection.
+  // VJ mode's code arrives only once the test lets it, as on a first visit over a slow connection. Held, not
+  // delayed: the editor's idle preload asks for it too, and could otherwise have it before the press.
   let delayed = 0
+  let release = () => {}
+  const released = new Promise<void>((resolve) => (release = resolve))
   await page.context().route(/\/assets\/VjMode-[^/]+\.js$/, async (route) => {
     delayed++
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await released
     await route.continue()
   })
   await openApp(page)
@@ -518,7 +521,12 @@ test('the first VJ entry keeps the editor on screen until VJ mode has loaded', a
     }
     requestAnimationFrame(tick)
   })
-  await page.getByRole('button', { name: 'VJ', exact: true }).click()
+  const vjButton = page.getByRole('button', { name: 'VJ', exact: true })
+  await vjButton.click()
+  // The press shows at once: the button is busy while the code loads.
+  await expect(vjButton).toHaveAttribute('aria-busy', 'true')
+  await page.waitForTimeout(500)
+  release()
   await expect(page.getByRole('img', { name: 'Live output' })).toBeVisible({ timeout: 10_000 })
   await expect(page.getByRole('img', { name: 'Live output' })).toHaveAttribute('aria-busy', 'false', {
     timeout: 30_000,
