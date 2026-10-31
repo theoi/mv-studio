@@ -5,12 +5,12 @@ on:
   push:
     branches: [main]
 
-# A new push to a pull request cancels its older run. Each push to main gets its own group, so it is neither
-# cancelled nor replaced while waiting, and every main commit gets a result. A main commit whose E2E jobs start after
-# a newer commit has landed skips them: the newer commit's run tests a tree that contains it.
+# A new push to a pull request cancels its older run, waiting or running. On main, a new commit cancels the run of the
+# one before it the same way: the newest commit's tree contains every earlier merge, and each pull request was green on
+# its own head, so only the newest main commit's result matters.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -54,13 +54,7 @@ jobs:
           LEG: ${{ matrix.preview }}
         run: |
           run=true
-          if [ "$EVENT" = push ]; then
-            tip=$(git ls-remote origin refs/heads/main | cut -f1) || tip=
-            if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
-              echo "::notice::main has moved on to $tip, whose run tests this commit's changes too; skipping E2E here."
-              run=false
-            fi
-          elif [ "$LEG" = main ]; then
+          if [ "$EVENT" = pull_request ] && [ "$LEG" = main ]; then
             # Pull requests run the main-thread leg only when they change code that can draw or behave differently
             # there, or the test setup. Every push to main runs it.
             specs=$(printf '%s' "$MAIN_THREAD_SPECS" | tr ' ' '|')
