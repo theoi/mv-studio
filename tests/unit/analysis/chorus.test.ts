@@ -66,6 +66,19 @@ describe('findLyricChorus', () => {
     ])
   })
 
+  it('leaves out words before a pause that only match because the lines before end alike', () => {
+    const lines = [
+      ...sing(['The first verse ends with fire'], 0),
+      ...sing(CHORUS, 10),
+      ...sing(['A second verse ends with fire'], 30),
+      ...sing(CHORUS, 40),
+    ]
+    expect(ranges(lines)).toEqual([
+      { start: 10, end: 18.5 },
+      { start: 40, end: 48.5 },
+    ])
+  })
+
   it('needs at least six words sung again and keeps a late last line from stretching an occurrence', () => {
     expect(
       ranges([...sing(['Yeah yeah', 'One more time'], 0), ...sing(['Yeah yeah', 'One more time'], 10)]),
@@ -144,12 +157,13 @@ describe('withChorus', () => {
 const VERSE_1 = ['Woke up late on a Sunday morning', 'coffee cold and the radio on']
 const VERSE_2 = ['Streets are empty and the shops are closed', 'shoes in my hand']
 const VERSE_3 = ['Every window shows a different face', 'nobody knows my name']
+const VERSE_4 = ['Out in the cold where the rivers bend', 'we walk alone']
 
 describe('lyricChorusRanges', () => {
   const chorusAt = (sections: SongSection[], lines: LyricLine[]) =>
     lyricChorusRanges(sections, findLyricChorus(lines)!).map((r) => [r.start, r.end, r.confidence])
 
-  it('confirms a detected chorus the lyrics repeat in, without its instrumental end, and demotes a sung verse', () => {
+  it('confirms a detected chorus without shrinking it, demotes one where a verse is sung, and runs a lyric chorus on to the edge of its section', () => {
     const sections = [
       section('a', 0, 10, 'intro'),
       section('b', 10, 30, 'verse', 0),
@@ -164,11 +178,12 @@ describe('lyricChorusRanges', () => {
       ...say(VERSE_2, 52),
       ...say(VERSE_3, 72),
       ...say(CHORUS, 92),
+      ...say(VERSE_4, 101),
     ]
-    // Chorus 2 (92-99) covers too little of f to take it over.
+    // Chorus 2 (92-99) covers too little of f to take it over: it starts with f, and ends where the verse begins.
     expect(chorusAt(sections, lines)).toEqual([
-      [31, 38, 0.8],
-      [92, 99, 0.8],
+      [30, 50, 0.8],
+      [90, 99, 0.8],
     ])
   })
 
@@ -192,13 +207,13 @@ describe('lyricChorusRanges', () => {
     ]
     // The lyrics' chorus starts with the pre-chorus at 14 and 54.
     expect(chorusAt(sections, lines)).toEqual([
-      [15, 26, 0.8],
-      [55, 66, 0.8],
+      [15, 40, 0.8],
+      [55, 80, 0.8],
       [100, 120, 0.4],
     ])
   })
 
-  it('lets a lyric chorus take over a section it covers most of', () => {
+  it('lets a lyric chorus take over a section it covers most of, or run on to its edge where nothing is sung', () => {
     const sections = [
       section('a', 0, 20, 'verse', 0),
       section('b', 20, 30, 'verse', 0),
@@ -206,7 +221,7 @@ describe('lyricChorusRanges', () => {
     ]
     const lines = [...say(CHORUS, 2), ...say(VERSE_2, 12, 0.3), ...say(CHORUS, 22)]
     expect(chorusAt(sections, lines)).toEqual([
-      [2, 9, 0.8],
+      [0, 9, 0.8],
       [20, 30, 0.8],
     ])
   })
@@ -228,7 +243,9 @@ describe('lyricChorusCommand', () => {
     lines: [
       ...sing(['Verse words here', 'More verse words'], 10),
       ...sing(CHORUS, 25),
+      ...sing(['Second verse begins', 'something else entirely'], 40),
       ...sing(CHORUS, 55),
+      ...sing(['Third verse is here', 'nothing like the others'], 72),
       ...sing(CHORUS, 80),
     ],
   }
@@ -245,9 +262,8 @@ describe('lyricChorusCommand', () => {
       [25, 'chorus'],
       [34, 'verse'],
       [55, 'chorus'],
-      [64, 'verse'],
+      [70, 'verse'],
       [80, 'chorus'],
-      [89, 'verse'],
     ])
     const choruses = editor.getProject().analysis.audio.song?.sections?.filter((s) => s.label === 'chorus')
     expect(choruses?.map((s) => s.confidence)).toEqual([0.8, 0.8, 0.8])
@@ -267,8 +283,9 @@ describe('lyricChorusCommand', () => {
   it('puts the chorus edges on beats while bars are not found', () => {
     const beats = Array.from({ length: 200 }, (_, i) => i * 0.5)
     const lines = [
+      ...sing(['Verse words here', 'More verse words'], 10),
       ...sing(CHORUS, 25.2),
-      ...sing(['Verse words here', 'More verse words'], 40),
+      ...sing(['Second verse begins', 'something else entirely'], 40),
       ...sing(CHORUS, 55.2),
     ]
     const command = lyricChorusCommand(
@@ -278,7 +295,7 @@ describe('lyricChorusCommand', () => {
     const sections = command?.type === 'analysis.setRefined' ? command.refined.sections : undefined
     expect(sections?.filter((s) => s.label === 'chorus').map((s) => [s.start, s.end])).toEqual([
       [25, 33.5],
-      [55, 63.5],
+      [55, 70],
     ])
   })
 

@@ -17,6 +17,8 @@ const BRIDGE = 2
 const MIN_PASSAGE_WORDS = 6
 /** Most passage lengths tried from one word, which bounds the time spent on songs that chant one word for long. */
 const LENGTHS_TRIED = 24
+/** A pause (seconds) that cuts a few first or last matching words off an occurrence. */
+const EDGE_PAUSE = 2.5
 /** An occurrence lasts at most this times the median occurrence, so a late last line does not stretch it. */
 const MAX_STRETCH = 1.25
 /** A lyric chorus outside the detected chorus takes over a section it covers at least this much of. */
@@ -79,7 +81,8 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
   const words = sungWords(lines)
   const keys = words.map((w) => w.key)
   const n = keys.length
-  // run[i * n + j]: words from i that match the words from j, in order, with small differences.
+  // run[i * n + j]: words from i that match the words from j, in order, with small differences. After a difference
+  // the match picks up again only on two words in a row, so verses sharing a few common words do not match.
   const run = new Uint16Array(n * n)
   for (let i = n - 1; i >= 0; i--)
     for (let j = n - 1; j >= 0; j--) {
@@ -89,7 +92,8 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
         for (let b = Math.max(1, a - 1); b <= Math.min(BRIDGE + 1, a + 1); b++) {
           if (i + a >= n || j + b >= n) continue
           const next = run[(i + a) * n + j + b]!
-          if (next) best = Math.max(best, a + next)
+          if (!next || ((a > 1 || b > 1) && (next < 2 || keys[i + a + 1] !== keys[j + b + 1]))) continue
+          best = Math.max(best, a + next)
         }
       run[i * n + j] = best
     }
@@ -120,8 +124,23 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
   }
   if (!best.starts.length) return null
   const ranges = best.starts.map((s) => {
-    const last = Math.min(n - 1, s + best.length - 1)
-    return { start: words[s]!.start, end: words[last]!.end }
+    let first = s
+    let last = Math.min(n - 1, s + best.length - 1)
+    // A few words cut off by a pause only match because the lines before (or after) both occurrences end (or start)
+    // alike; they are not part of the chorus.
+    const pause = (k: number) => words[k + 1]!.start - words[k]!.end > EDGE_PAUSE
+    const edge = MIN_PASSAGE_WORDS - 1
+    for (let k = Math.min(last - 1, first + edge - 1); k >= first; k--)
+      if (pause(k)) {
+        first = k + 1
+        break
+      }
+    for (let k = Math.max(first, last - edge); k < last; k++)
+      if (pause(k)) {
+        last = k
+        break
+      }
+    return { start: words[first]!.start, end: words[last]!.end }
   })
   const durations = ranges.map((r) => r.end - r.start).sort((a, b) => a - b)
   const longest = MAX_STRETCH * durations[(durations.length - 1) >> 1]!
@@ -134,12 +153,12 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
 /**
  * The chorus ranges once the lyrics' chorus is combined with the detected one, so pasted lyrics correct the detected
  * chorus without overriding a good one:
- * - A detected chorus the lyrics repeat in is confirmed. The lyrics extend it by at most a quarter of its length (a
- *   longer occurrence also spans a neighbouring part that repeats with it). It loses the part before or after them
- *   that is instrumental or where mostly words sung nowhere else are sung (a verse).
+ * - A detected chorus the lyrics repeat in is confirmed and never shrinks. The lyrics extend it by at most a quarter
+ *   of its length (a longer occurrence also spans a neighbouring part that repeats with it).
  * - A detected chorus the lyrics do not repeat in stays only where mostly repeated words are sung: an instrumental
  *   passage or a verse is not the chorus when the lyrics show where it is.
- * - A lyric chorus elsewhere takes over the sections it covers most of, or its own range otherwise.
+ * - A lyric chorus elsewhere takes over the sections it covers most of, and otherwise runs on to the edges of the
+ *   sections it starts and ends in, unless a verse is sung there: a chorus lasts longer than its repeated lines.
  * Ranges the lyrics confirm or add get `LYRIC_CHORUS_CONFIDENCE`.
  */
 export function lyricChorusRanges(sections: readonly SongSection[], chorus: LyricChorus): ChorusRange[] {
@@ -149,42 +168,37 @@ export function lyricChorusRanges(sections: readonly SongSection[], chorus: Lyri
     const sung = sungIn(range)
     return sung.length >= MIN_SUNG_WORDS && sung.filter((w) => !w.repeated).length > sung.length / 2
   }
-  const notChorus = (range: TimeRange) => sungIn(range).length < MIN_SUNG_WORDS || verse(range)
   const ranges: ChorusRange[] = []
   const used = new Set<TimeRange>()
   for (const s of sections) {
     if (s.label !== 'chorus' || !isDetected(s)) continue
     const hits = chorus.ranges.filter((r) => overlap(r, s) >= Math.min(1, (r.end - r.start) / 2))
     if (!hits.length) {
-      if (!notChorus(s)) ranges.push({ start: s.start, end: s.end, confidence: s.confidence })
+      if (sungIn(s).length >= MIN_SUNG_WORDS && !verse(s))
+        ranges.push({ start: s.start, end: s.end, confidence: s.confidence })
       continue
     }
     hits.forEach((r) => used.add(r))
-    const first = Math.min(...hits.map((r) => r.start))
-    const last = Math.max(...hits.map((r) => r.end))
     const reach = MAX_EXTENSION * (s.end - s.start)
     ranges.push({
-      start:
-        first < s.start
-          ? Math.max(first, s.start - reach)
-          : notChorus({ start: s.start, end: first })
-            ? first
-            : s.start,
-      end:
-        last > s.end ? Math.min(last, s.end + reach) : notChorus({ start: last, end: s.end }) ? last : s.end,
+      start: Math.min(s.start, Math.max(s.start - reach, Math.min(...hits.map((r) => r.start)))),
+      end: Math.max(s.end, Math.min(s.end + reach, Math.max(...hits.map((r) => r.end)))),
       confidence: LYRIC_CHORUS_CONFIDENCE,
     })
   }
+  const at = (t: number) => sections.find((s) => t >= s.start && t < s.end && isDetected(s))
   for (const r of chorus.ranges) {
     if (used.has(r)) continue
     const covered = sections.filter(
       (s) => isDetected(s) && overlap(r, s) >= COVERS_SECTION * (s.end - s.start),
     )
-    ranges.push({
-      start: Math.min(r.start, ...covered.map((s) => s.start)),
-      end: Math.max(r.end, ...covered.map((s) => s.end)),
-      confidence: LYRIC_CHORUS_CONFIDENCE,
-    })
+    let start = Math.min(r.start, ...covered.map((s) => s.start))
+    let end = Math.max(r.end, ...covered.map((s) => s.end))
+    const head = at(start)
+    const tail = at(end - 1e-3)
+    if (head && head.start < start && !verse({ start: head.start, end: start })) start = head.start
+    if (tail && tail.end > end && !verse({ start: end, end: tail.end })) end = tail.end
+    ranges.push({ start, end, confidence: LYRIC_CHORUS_CONFIDENCE })
   }
   return ranges.sort((a, b) => a.start - b.start)
 }
