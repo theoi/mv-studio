@@ -34,6 +34,11 @@ const MIN_FRAMES = 4
 const RECENT_FRAMES = 8
 /** After a step down that did not speed frames up, how long until one is tried again; doubles with each failure. */
 const RETRY_AFTER_MS = 4000
+/**
+ * A step down this soon after a step up counts as a failed step up. Well after the step up's own 3 s wait: a level that
+ * is only just fast enough reads as too slow now and then, when a few frames in a row miss a vsync.
+ */
+const FAILED_STEP_UP_MS = 20_000
 
 /**
  * The scale a scrub draws at on a renderer that draws synchronously (the main-thread preview), from how long a
@@ -141,7 +146,7 @@ export class AdaptiveScale {
       if (slow && level < this.max) {
         level++
         // Too slow again soon after stepping up: stay at this level or below for a while.
-        if (now - this.steppedUpAt < STEP_UP_AFTER_MS) {
+        if (now - this.steppedUpAt < FAILED_STEP_UP_MS) {
           this.min = level
           this.minUntil = now + this.minFor
           this.minFor *= 2

@@ -152,6 +152,23 @@ describe('AdaptiveScale', () => {
     expect(back).toBe(false)
   })
 
+  it('counts a step down well after a step up as a failed step up, so a borderline level does not cycle', () => {
+    // Full size is too slow and 0.5 is always fast. 0.75 is fast too, but every 15 s a burst of frames that miss a
+    // vsync makes it read as too slow, long after the step up to it.
+    const auto = new AdaptiveScale()
+    auto.start(0)
+    let now = 0
+    let changes = 0
+    while (now < 300_000) {
+      if (auto.scale === 1) now += 30
+      else if (auto.scale === 0.75) now += now % 15_000 < 300 ? 33.3 : 16.7
+      else now += 16.7
+      if (auto.frame(now) && now > 120_000) changes++
+    }
+    // Each failed step up doubles the hold, so by then retries are minutes apart instead of a cycle every 15 s.
+    expect(changes).toBeLessThanOrEqual(6)
+  })
+
   it('keeps its level for the next playback but ignores pauses between frames', () => {
     const auto = new AdaptiveScale()
     auto.start(0)
