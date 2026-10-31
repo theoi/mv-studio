@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { JOB_KINDS, latestJob, useJobs } from '../../../state/jobs.ts'
 import { useProject } from '../../../state/project.ts'
@@ -22,6 +23,34 @@ export function useSongState(): SongState {
   const project = useProject()
   const { phase } = useJob(JOB_KINDS.analysis)
   return songState(project, phase, useSongPending(project.songAssetId))
+}
+
+/**
+ * Keeps focus in a tool after its Cancel. The running view goes away when the run ends, which drops focus to the
+ * page: it goes to the next view's main action (`target`, in the tool's footer) instead, unless something else took
+ * it meanwhile. Pass `cancelled` as the CancelButton's `onCancel`.
+ */
+export function useFocusAfterCancel(running: boolean) {
+  const pending = useRef(false)
+  const target = useRef<HTMLButtonElement>(null)
+  const wasRunning = useRef(running)
+  useEffect(() => {
+    const ended = wasRunning.current && !running
+    wasRunning.current = running
+    if (!ended || !pending.current) return
+    pending.current = false
+    const button = target.current
+    if (!button || (document.activeElement && document.activeElement !== document.body)) return
+    button.focus({ preventScroll: true })
+    // Scrolling just the button into view leaves it under the fade that says more is below, with the rest of the
+    // footer (the note about the stop, say) out of view. The whole footer ends the scroll in a short panel.
+    const footer = button.closest<HTMLElement>('[data-tool-footer]') ?? button
+    footer.scrollIntoView({ block: 'nearest' })
+  }, [running])
+  const cancelled = () => {
+    pending.current = true
+  }
+  return { cancelled, target }
 }
 
 /** Returns a finished or failed tool view to idle. */

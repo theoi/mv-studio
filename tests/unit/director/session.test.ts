@@ -138,7 +138,10 @@ describe('DirectorSession', () => {
     expect(session.getState().status).toBe('generating')
     session.cancel()
     const after = ready(await applying)
-    expect(after.preview.warnings.some((w) => w.startsWith('Generation stopped.'))).toBe(true)
+    // The note is its own field: the panel shows it above Generate, not among the plan's notes.
+    expect(planned.stopped).toBeUndefined()
+    expect(after.stopped).toBe('Generation stopped. 2\u00a0shots made so far are kept.')
+    expect(after.preview.warnings).not.toContain(after.stopped)
     const kept = after.generatedShots
     expect(kept).toBe(2)
     expect(after.cost?.count).toBe(total - kept)
@@ -167,7 +170,7 @@ describe('DirectorSession', () => {
     expect(session.getState()).toMatchObject({ status: 'generating', stopping: { keeping: 1 } })
     downloading[0]!()
     const after = ready(await applying)
-    expect(after.preview.warnings).toContain('Generation stopped. 1 clip made so far is kept.')
+    expect(after.stopped).toBe('Generation stopped. 1\u00a0clip made so far is kept.')
     expect(after.generatedShots).toBe(1)
     expect(store.stored).toHaveLength(1)
     expect(ledger.monthTotal()).toBeCloseTo(provider.estimate(provider.calls[0]!).usd, 6)
@@ -254,7 +257,7 @@ describe('DirectorSession', () => {
     expect(applied.failedShots).toBe(1)
     // One note for the failure, pointing at Retry; fal.ai's own words go to the Retry button's tooltip.
     expect(applied.warnings).toContain(
-      '1 clip couldn’t be generated. Retry it below; a dark placeholder marks its place.',
+      '1 clip couldn’t be generated. Retry it below; a dark placeholder marks its\u00a0place.',
     )
     expect(applied.warnings.filter((w) => w.includes('placeholder'))).toHaveLength(1)
     expect(applied.failedReason).toBe('fal.ai said: HTTP 500')

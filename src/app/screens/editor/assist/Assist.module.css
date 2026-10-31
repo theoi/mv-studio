@@ -415,6 +415,15 @@
   flex: 1;
 }
 
+.footerNote {
+  margin: 0 0 var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: 18px;
+  text-align: center;
+  text-wrap: balance;
+}
+
 /* Inline text, not flex, so a wrapped line stays centered under the button with the icon leading the first line. */
 .costLine {
   margin-top: var(--space-2);

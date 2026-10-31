@@ -87,7 +87,7 @@ export function mapFalError(
         : [
             'Check your internet connection.',
             'Allow fal.ai, fal.run and fal.media in any ad or content blocker.',
-            'Choose Retry.',
+            'Try again.',
           ],
       cause: error,
     })
@@ -118,7 +118,7 @@ export function mapFalError(
         status,
         title: 'Your fal.ai balance is empty',
         message: 'fal.ai accepted the key but will not run paid models until you add credit.',
-        steps: ['Add credit at fal.ai › Dashboard › Billing.', 'Choose Retry.'],
+        steps: ['Add credit at fal.ai › Dashboard › Billing.', 'Try again.'],
         helpUrl: FAL_BILLING_URL,
         cause: error,
       })
@@ -187,7 +187,7 @@ export function mapFalError(
         status,
         title: 'fal.ai took too long',
         message: 'The request timed out at fal.ai.',
-        steps: ['Choose Retry. If it keeps happening, pick a faster model.'],
+        steps: ['Try again. If it keeps happening, pick a faster model.'],
         cause: error,
       })
     }
@@ -198,7 +198,7 @@ export function mapFalError(
         status,
         title: 'fal.ai had a problem',
         message: text || `fal.ai returned an error (${status}).`,
-        steps: ['Choose Retry in a moment.'],
+        steps: ['Try again in a moment.'],
         cause: error,
       })
     }
@@ -208,7 +208,7 @@ export function mapFalError(
       status,
       title: 'Unexpected answer from fal.ai',
       message: text || `fal.ai returned status ${status}.`,
-      steps: ['Choose Retry.'],
+      steps: ['Try again.'],
       cause: error,
     })
   }
@@ -218,7 +218,7 @@ export function mapFalError(
     provider: 'fal',
     title: 'Something went wrong with fal.ai',
     message: message || 'Unknown error',
-    steps: ['Choose Retry.'],
+    steps: ['Try again.'],
     cause: error,
   })
 }

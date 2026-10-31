@@ -148,6 +148,8 @@ export type DirectorState =
       /** AI shots already generated for this plan (kept after a cancel). */
       generatedShots: number
       unit: GeneratedUnit
+      /** After a Cancel, the note that says so ("Generation stopped. 3 clips made so far are kept."). */
+      stopped?: string
     }
   | {
       status: 'generating'
@@ -427,7 +429,7 @@ export class DirectorSession {
     return { cost, confirmRequired, toMake }
   }
 
-  private readyState(request: DirectorRequest, plan: EditPlan, extraWarnings: string[] = []): DirectorState {
+  private readyState(request: DirectorRequest, plan: EditPlan, stopped?: string): DirectorState {
     const project = this.deps.editor.getProject()
     const done = this.generatedFor(plan)
     const compiled = compilePlan(plan, project, {
@@ -447,7 +449,7 @@ export class DirectorSession {
         summary: plan.summary,
         changes: preview.ok ? preview.summary : preview.message,
         items: preview.ok ? preview.items : [],
-        warnings: [...new Set([...plan.warnings, ...compiled.warnings, ...extraWarnings])],
+        warnings: [...new Set([...plan.warnings, ...compiled.warnings])],
       },
       cost,
       confirmRequired,
@@ -455,6 +457,7 @@ export class DirectorSession {
         toMake > 0 ? `Generate ${plural(toMake, unit)} · ${formatEstimate({ usd })}` : 'Make video',
       generatedShots: done.size,
       unit,
+      ...(stopped ? { stopped } : {}),
     }
   }
 
@@ -569,20 +572,22 @@ export class DirectorSession {
               ? `fal.ai said: ${first.message}`
               : first.message
         if (failed) {
+          // The no-break space keeps "place" from ending up alone on the note's last line in the narrow panel.
           warnings.push(
             failed === 1
-              ? `1 ${unit} couldn’t be generated. Retry it below; a dark placeholder marks its place.`
-              : `${plural(failed, unit)} couldn’t be generated. Retry them below; dark placeholders mark their place.`,
+              ? `1 ${unit} couldn’t be generated. Retry it below; a dark placeholder marks its\u00a0place.`
+              : `${plural(failed, unit)} couldn’t be generated. Retry them below; dark placeholders mark their\u00a0place.`,
           )
         }
       } catch (error) {
         if (this.job !== handle) return this.state
         const err = JobError.from(error)
         if (err.code === 'cancelled') {
+          // A no-break space keeps the count on the same line as its noun ("3 clips").
           const kept = done.size
-            ? ` ${plural(done.size, unit)} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
+            ? ` ${plural(done.size, unit).replace(' ', '\u00a0')} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
             : ''
-          this.set(this.readyState(request, plan, [`Generation stopped.${kept}`]))
+          this.set(this.readyState(request, plan, `Generation stopped.${kept}`))
         } else {
           this.failOrReset(err, request, plan)
         }

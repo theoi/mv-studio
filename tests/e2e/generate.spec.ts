@@ -27,6 +27,10 @@ interface Fal {
   submits: { endpoint: string; input: Record<string, unknown> }[]
   cancels: string[]
   uploads: string[]
+  /** Result downloads started (GETs of fal.ai's media host). */
+  downloads: number
+  /** With `holdDownload`, lets the held downloads finish. */
+  release: () => void
 }
 
 const json = (route: Route, status: number, body: unknown) =>
@@ -34,8 +38,14 @@ const json = (route: Route, status: number, body: unknown) =>
 
 async function mockFal(
   page: Page,
-  init: Partial<Pick<Fal, 'statuses' | 'submitError' | 'output'>> = {},
+  {
+    holdDownload = false,
+    ...init
+  }: Partial<Pick<Fal, 'statuses' | 'submitError' | 'output'>> & {
+    holdDownload?: boolean
+  } = {},
 ): Promise<Fal> {
+  const held: (() => void)[] = []
   const fal: Fal = {
     statuses: ['IN_QUEUE', 'IN_PROGRESS', 'COMPLETED'],
     output: 'image',
@@ -43,6 +53,11 @@ async function mockFal(
     submits: [],
     cancels: [],
     uploads: [],
+    downloads: 0,
+    release: () => {
+      holdDownload = false
+      for (const go of held.splice(0)) go()
+    },
   }
   const polls = new Map<string, number>()
   let next = 1
@@ -111,6 +126,8 @@ async function mockFal(
       fal.uploads.push(request.url())
       return route.fulfill({ status: 200, headers: CORS, body: '' })
     }
+    fal.downloads++
+    if (holdDownload) await new Promise<void>((go) => held.push(go))
     const video = request.url().endsWith('.mp4')
     return route.fulfill({
       status: 200,
@@ -332,10 +349,124 @@ test('asks before spending when Settings says so, and Cancel stops the request a
     endpoint: 'minimax/h3-max-turbo/text-to-video',
     input: { prompt: 'Slow aerial over a neon city', duration: 5, resolution: '768P', aspect_ratio: '16:9' },
   })
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeFocused()
   await expect.poll(() => fal.cancels).toEqual(['req-1'])
   await expect(page.locator('[aria-label^="AI video: "]')).toHaveCount(0)
+})
+
+test('a Cancel while the video downloads says it is stopping, and keeps the video fal.ai made in Media only', async ({
+  page,
+}, testInfo) => {
+  const fal = await mockFal(page, { output: 'video', holdDownload: true })
+  await openGenerate(page, { falKey: KEY })
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Slow aerial over a neon city')
+  await page.getByRole('button', { name: 'Generate · about $0.20' }).click()
+  await expect.poll(() => fal.downloads, { timeout: 20_000 }).toBe(1)
+  // The step names the result as the card and the toast do.
+  await expect(page.getByText('Generate the video', { exact: true })).toBeVisible()
+  const hint = page.getByText(/Cancelling stops the request/)
+  const lands = page.getByText(/^Keep editing\. The result lands at/)
+  await expect(hint).toBeVisible()
+  await expect(lands).toBeVisible()
+  const cancel = page.getByRole('button', { name: 'Cancel', exact: true })
+  await cancel.focus()
+  await page.keyboard.press('Enter')
+
+  // As in the director: the subtitle and the card say it is stopping, and Cancel is disabled but keeps focus.
+  await expect(page.getByText('Keeping 1 video that is downloading')).toBeVisible()
+  await expect(
+    page.getByRole('tabpanel', { name: 'Assist' }).getByText('Stopping…', { exact: true }),
+  ).toHaveCount(2)
+  await expect(cancel).toHaveAttribute('aria-disabled', 'true')
+  await expect(cancel).toBeFocused()
+  // The hint is for a Cancel not yet taken, and the video goes to Media, not the timeline.
+  await expect(hint).toHaveCount(0)
+  await expect(lands).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('generate-stopping-1440x900.png') })
+  fal.release()
+  const kept = page
+    .locator('[data-toast]')
+    .filter({ hasText: 'Generation stopped. The video is kept in Media.' })
+  await expect(kept).toBeVisible()
+  await kept.hover()
+  await page.screenshot({ path: testInfo.outputPath('generate-kept-1440x900.png') })
+  await expect(libraryCard(page, 'AI video: Slow aerial over a neon city')).toBeVisible()
+  await expect(page.locator('[aria-label^="AI video: Slow aerial over a neon city, "]')).toHaveCount(1)
+  expect(fal.cancels).toEqual([])
+  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeFocused()
+})
+
+test('a Cancel while the video is being saved says it is stopping too, and keeps the video in Media', async ({
+  page,
+}) => {
+  const fal = await mockFal(page, { output: 'video' })
+  await openGenerate(page, { falKey: KEY }, { harness: true })
+  // Saving waits until released, so the Cancel lands after the download, while the video is being saved.
+  await page.evaluate(() => {
+    const store = window.mvStudio.media.mediaStore
+    const save = store.storeBlob.bind(store)
+    const w = window as unknown as { releaseSave?: () => void }
+    store.storeBlob = (...args: unknown[]) =>
+      new Promise((resolve, reject) => {
+        w.releaseSave = () => void save(...args).then(resolve, reject)
+      })
+  })
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Slow aerial over a neon city')
+  await page.getByRole('button', { name: 'Generate · about $0.20' }).click()
+  await page.waitForFunction(() => 'releaseSave' in window, undefined, { timeout: 20_000 })
+  const lands = page.getByText(/^Keep editing\. The result lands at/)
+  await expect(lands).toBeVisible()
+  const cancel = page.getByRole('button', { name: 'Cancel', exact: true })
+  await cancel.focus()
+  await page.keyboard.press('Enter')
+
+  await expect(
+    page.getByRole('tabpanel', { name: 'Assist' }).getByText('Stopping…', { exact: true }),
+  ).toHaveCount(2)
+  await expect(cancel).toHaveAttribute('aria-disabled', 'true')
+  await expect(cancel).toBeFocused()
+  await expect(page.getByText(/Cancelling stops the request/)).toHaveCount(0)
+  await expect(lands).toHaveCount(0)
+  // The download is done: nothing is said to be downloading.
+  await expect(page.getByText('Keeping 1 video that is downloading')).toHaveCount(0)
+  await page.evaluate(() => (window as unknown as { releaseSave: () => void }).releaseSave())
+  await expect(
+    page.locator('[data-toast]').filter({ hasText: 'Generation stopped. The video is kept in Media.' }),
+  ).toBeVisible()
+  await expect(page.locator('[aria-label^="AI video: Slow aerial over a neon city, "]')).toHaveCount(1)
+  expect(fal.cancels).toEqual([])
+  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeFocused()
+})
+
+test('a run that fails part-way keeps the images fal.ai already made in Media and says so', async ({
+  page,
+}, testInfo) => {
+  const fal = await mockFal(page)
+  await openGenerate(page, { falKey: KEY })
+  await page.getByRole('radio', { name: 'Image' }).click()
+  await page.getByRole('combobox', { name: 'Count' }).click()
+  await page.getByRole('option', { name: '4 images' }).click()
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Rain on a window')
+  await page.getByRole('button', { name: /^Generate · / }).click()
+  // The third request fails at fal.ai; the second is still in line when this is set.
+  await expect.poll(() => fal.submits.length, { timeout: 20_000 }).toBe(2)
+  fal.submitError = { status: 500, body: { detail: 'Internal server error' } }
+
+  await expect(
+    page
+      .locator('[data-toast]')
+      .filter({ hasText: 'Generation failed. 2 images made so far are kept in Media.' }),
+  ).toBeVisible({ timeout: 20_000 })
+  const alert = page.getByRole('alert')
+  await expect(alert).toContainText('fal.ai had a problem')
+  await expect(alert).toContainText(
+    'Internal server error. The timeline is unchanged. 2 images made so far are kept in Media.',
+  )
+  await page.screenshot({ path: testInfo.outputPath('generate-failed-kept-1440x900.png') })
+  await expect(libraryCard(page, 'AI image: Rain on a window')).toHaveCount(2)
+  await expect(timelineClip(page, 'AI image: Rain on a window', '0:')).toHaveCount(0)
 })
 
 test('errors say what to do: a rejected key opens Settings, and Try again recovers from a fal.ai outage', async ({
@@ -360,7 +491,7 @@ test('errors say what to do: a rejected key opens Settings, and Try again recove
   fal.submitError = { status: 500, body: { detail: 'Internal server error' } }
   await page.getByRole('button', { name: /^Generate · / }).click()
   await expect(page.getByRole('alert')).toContainText('fal.ai had a problem')
-  await expect(page.getByText('Choose Retry in a moment.')).toBeVisible()
+  await expect(page.getByText('Try again in a moment.')).toBeVisible()
   fal.submitError = undefined
   await page.getByRole('button', { name: 'Try again' }).click()
   await expect(page.getByText('Added AI image: Rain on a window', { exact: true })).toBeVisible({
