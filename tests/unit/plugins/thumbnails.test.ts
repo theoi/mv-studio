@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { pluginRegistry } from '../../../src/engine/registry.ts'
-import { lookRegistry } from '../../../src/plugins/looks.ts'
+import { lookRegistry, ORIGINAL_LOOK } from '../../../src/plugins/looks.ts'
 import { THUMBNAILS } from '../../../src/plugins/thumbnails.manifest.ts'
 import { thumbnailPath, thumbnailUrl, type ThumbnailKind } from '../../../src/plugins/thumbnails.ts'
 import { TEXT_STYLES } from '../../../src/plugins/typography/styles.ts'
@@ -14,6 +14,7 @@ const REGENERATE = 'regenerate with `npm run build && npm run thumbnails`'
 const items: [ThumbnailKind, string][] = [
   ...pluginRegistry.list().map((p): [ThumbnailKind, string] => [p.kind, p.id]),
   ...lookRegistry.list().map((l): [ThumbnailKind, string] => ['look', l.id]),
+  ['look', ORIGINAL_LOOK.id],
   ...TEXT_STYLES.map((s): [ThumbnailKind, string] => ['text-style', s.id]),
 ]
 
@@ -53,6 +54,7 @@ describe('library thumbnails', () => {
     )
     expect(pluginRegistry.catalog().filter((e) => !e.thumbnail)).toEqual([])
     expect(lookRegistry.get('neon')?.thumbnail).toContain('thumbnails/look/neon.webp?v=')
+    expect(ORIGINAL_LOOK.thumbnail).toContain('thumbnails/look/original.webp?v=')
     expect(TEXT_STYLES.find((s) => s.id === 'caption')?.thumbnail).toContain(
       'thumbnails/text-style/caption.webp?v=',
     )

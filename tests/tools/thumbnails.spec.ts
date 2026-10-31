@@ -29,7 +29,10 @@ test('library thumbnails', async ({ page }) => {
       const options = { image: await store('color'), depth: await store('depth') }
       const ids: string[] =
         kind === 'look'
-          ? plugins.looks.lookRegistry.list().map((l: { id: string }) => l.id)
+          ? [
+              ...plugins.looks.lookRegistry.list().map((l: { id: string }) => l.id),
+              plugins.looks.ORIGINAL_LOOK.id,
+            ]
           : kind === 'text-style'
             ? plugins.typography.styles.TEXT_STYLES.map((s: { id: string }) => s.id)
             : engine.pluginRegistry.list(kind).map((d: { id: string }) => d.id)

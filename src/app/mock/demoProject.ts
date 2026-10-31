@@ -19,6 +19,7 @@ import {
   type Project,
   type Track,
 } from '../../model/index.ts'
+import { createLookClip, lookRegistry } from '../../plugins/looks.ts'
 import { songFeatures } from './arrangement.ts'
 import type { SceneId } from './art.ts'
 import { media } from './media.ts'
@@ -28,6 +29,7 @@ const CREATED = '2026-10-31T00:00:00.000Z'
 export const SONG_ASSET_ID = 'a-song'
 export const TRACK_IDS = {
   lyrics: 't-lyrics',
+  look: 't-look',
   overlay: 't-overlay',
   video: 't-video',
   song: 't-song',
@@ -230,6 +232,12 @@ export function buildDemoProject(): Project {
     })
   }
 
+  const neon = lookRegistry.get('neon')
+  if (neon) {
+    const look = createLookClip(neon, { trackId: TRACK_IDS.look, start: 0, duration: song.duration })
+    add({ ...look, id: 'c-look', opacity: anim(0.7) })
+  }
+
   add({
     ...createAudioClip({
       trackId: TRACK_IDS.song,
@@ -283,6 +291,7 @@ export function buildDemoProject(): Project {
     assets,
     tracks: [
       track(TRACK_IDS.lyrics, 'visual', 'Lyrics'),
+      track(TRACK_IDS.look, 'visual', 'Look'),
       track(TRACK_IDS.overlay, 'visual', 'Overlay'),
       track(TRACK_IDS.video, 'visual', 'Video'),
       track(TRACK_IDS.song, 'audio', 'Song'),

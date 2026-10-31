@@ -18,6 +18,7 @@ import {
   createLookRegistry,
   currentLook,
   lookRegistry,
+  ORIGINAL_LOOK,
   removeLookCommands,
 } from '../../../src/plugins/looks.ts'
 
@@ -107,6 +108,8 @@ describe('look registry', () => {
     expect(registry.list().map((l) => l.name)).toEqual(['Renamed'])
     expect(calls).toBe(2)
     expect(() => registry.register({ ...look, id: 'Bad Id' })).toThrow(/Invalid look id/)
+    // "Original" is the no-look choice pickers show next to the looks.
+    expect(() => registry.register({ ...look, id: ORIGINAL_LOOK.id })).toThrow(/reserved/)
   })
 })
 
@@ -177,6 +180,27 @@ describe('applying looks', () => {
     expect(looks).toHaveLength(1)
     expect(looks[0]).toMatchObject({ start: 2, duration: 5, meta: { lookId: 'ember' } })
     expect(p.tracks.filter((t) => t.name === 'Look')).toHaveLength(1)
+  })
+
+  it('keeps the look layer intensity (its opacity, keyframes and audio mapping) when the look changes', () => {
+    const s = scene()
+    const editor = new ProjectEditor(s.p)
+    applyLook(editor, 'neon')
+    const opacity = {
+      value: 0.6,
+      modulation: [
+        { source: { kind: 'onset' as const, stem: 'drums' as const }, amount: 0.2, mode: 'add' as const },
+      ],
+    }
+    editor.dispatch({
+      type: 'clip.set',
+      clipId: currentLook(editor.getProject())!.clipId,
+      path: ['opacity'],
+      value: opacity,
+    })
+    applyLook(editor, 'vintage')
+    const layer = editor.getProject().clips[currentLook(editor.getProject())!.clipId]
+    expect(layer).toMatchObject({ meta: { lookId: 'vintage' }, opacity })
   })
 
   it("switching looks replaces the previous look's typography instead of layering on it", () => {

@@ -77,6 +77,7 @@ export function createLookRegistry(looks: readonly LookDefinition[] = BUILTIN_LO
     list: () => [...byId.values()],
     register(look) {
       if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(look.id)) throw new Error(`Invalid look id "${look.id}"`)
+      if (look.id === ORIGINAL_LOOK.id) throw new Error(`The look id "${look.id}" is reserved`)
       byId.set(look.id, look)
       for (const listener of listeners) listener()
     },
@@ -91,6 +92,17 @@ export function createLookRegistry(looks: readonly LookDefinition[] = BUILTIN_LO
 
 const LOOK_ROLE = 'look'
 const LOOK_TRACK_NAME = 'Look'
+
+/**
+ * The "no look" choice pickers offer next to the looks (VJ mode's "Original" pad, the library's first tile). It is not
+ * a registered look: choosing it removes the look layer with removeLookCommands.
+ */
+export const ORIGINAL_LOOK = {
+  id: 'original',
+  name: 'Original',
+  description: 'The video’s own colors, without a look.',
+  thumbnail: thumbnailUrl('look', 'original'),
+} as const
 
 /** The look layer (adjustment clip) of a project and the look it came from, or null. */
 export function currentLook(project: Project): { clipId: Id; lookId: string | undefined } | null {
@@ -185,7 +197,10 @@ export function applyLookCommands(
   }
   const start = existingClip?.start ?? 0
   const duration = existingClip?.duration ?? Math.max(projectDuration(project), 10)
-  commands.push({ type: 'clip.add', clip: createLookClip(look, { trackId, start, duration }, registry) })
+  const clip = createLookClip(look, { trackId, start, duration }, registry)
+  // The layer's opacity is the look's intensity, which stays with the video when the look changes.
+  if (existingClip && existingClip.type !== 'audio') clip.opacity = existingClip.opacity
+  commands.push({ type: 'clip.add', clip })
 
   for (const clip of Object.values(project.clips)) {
     if (locked.has(clip.trackId) || clip.type === 'audio') continue

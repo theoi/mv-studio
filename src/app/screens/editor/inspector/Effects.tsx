@@ -1,4 +1,5 @@
 import { AudioWaveform, Plus } from 'lucide-react'
+import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { VisualClip } from '../../../../model/index.ts'
 import { IconButton } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
@@ -54,12 +55,12 @@ export function EffectsSection({ clip }: { clip: VisualClip }) {
       }
     >
       {clip.effects.length === 0 ? (
-        <p className={styles.note}>No effects yet. Drag one from Library › Effects.</p>
+        <p className={styles.note}>No effects yet. Add one from Library › Effects.</p>
       ) : (
         clip.effects.map((fx) => (
           <div key={fx.id} className={styles.effectRow}>
             <AudioWaveform className={styles.effectIcon} />
-            <span className={styles.effectName}>{fx.effectId}</span>
+            <span className={styles.effectName}>{pluginRegistry.get(fx.effectId)?.name ?? fx.effectId}</span>
           </div>
         ))
       )}
