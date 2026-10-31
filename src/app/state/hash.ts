@@ -95,18 +95,22 @@ export function hashToState(hash: string): Partial<UiState> {
   }
 }
 
-function applyHash(hash: string) {
+/** `navigated`: the hash changed while the app was open (a link, the address bar, Back or Forward). */
+function applyHash(hash: string, navigated = false) {
   const q = new URLSearchParams(hash.split('?')[1] ?? '')
   const project = q.get('project')
   const wantEmpty = project === 'empty'
+  const openId = editor.getProject().id
   // A kept project opens as it was saved; the preview's project and job parameters apply to the sample only.
   if (project && !wantEmpty) openFromLink(project)
   else untracked(() => applyPreviewProject(q, wantEmpty))
   const next = hashToState(hash)
   // An export doesn't survive a reload: a link to one in progress opens the export setup.
   if (next.exportPhase === 'exporting' && !isRunning(JOB_KINDS.export)) next.exportPhase = 'setup'
+  const keepTime = navigated && editor.getProject().id === openId && (project === null || project === openId)
   set({
     ...initialUi,
+    ...(keepTime ? { playhead: get().playhead } : {}),
     ...(wantEmpty ? { playhead: 0 } : {}),
     ...next,
     toasts: get().toasts,
@@ -154,19 +158,25 @@ export function initHashSync() {
   // The URL as this sync last left it. When the hash differs, a link, the address bar or Back changed it and its
   // hashchange is still queued: writing now (an autosave keeping the project, say) would put back the old state.
   let synced = window.location.hash
+  // A navigation's history entry is made by the browser, so the first write after it (which may wait for a linked
+  // project to open) replaces that entry: pushing would drop the entries ahead of it, and Forward would go nowhere.
+  let navigated = false
   const write = () => {
     if (usePersistence.getState().restoring || window.location.hash !== synced) return
+    const replace = navigated
+    navigated = false
     const next = stateToHash(get(), editor.getProject())
     if (next === last) return
     const screenChanged = next.split('?')[0] !== last.split('?')[0]
     last = next
-    if (screenChanged) window.history.pushState(null, '', next)
+    if (screenChanged && !replace) window.history.pushState(null, '', next)
     else window.history.replaceState(null, '', next)
     synced = window.location.hash
   }
   window.addEventListener('hashchange', () => {
-    applyHash(window.location.hash)
+    applyHash(window.location.hash, true)
     synced = window.location.hash
+    navigated = true
     write()
   })
   useUi.subscribe(write)
