@@ -288,6 +288,8 @@ class WorkerRenderer implements FrameRenderer {
 /** Video clips starting within this many seconds get their media element loaded and seeked ahead of time. */
 const LOOKAHEAD = 1.5
 const WARM_EVERY_MS = 200
+/** How long dispose() waits for frames being drawn or captured before it stops the renderer anyway. */
+const DISPOSE_WAIT_MS = 2000
 
 export class PreviewController {
   readonly canvas: HTMLCanvasElement
@@ -544,6 +546,7 @@ export class PreviewController {
    * cannot be read on this thread.
    */
   captureFrame(): Promise<ImageBitmap> {
+    if (this.disposed) return Promise.reject(new Error('The preview is closed'))
     const capture = this.capture()
     this.captures.add(capture)
     const done = () => this.captures.delete(capture)
@@ -698,13 +701,23 @@ export class PreviewController {
     this.listeners.clear()
     this.frameListeners.clear()
     // Frames being drawn or captured finish first: stopping the worker mid-render drops the video frames it was sent,
-    // unclosed.
+    // unclosed. A renderer that is alive but stuck (render calls have no timeout once it has drawn) is stopped anyway.
     const release = () => {
       this.renderer?.dispose()
       this.frames.dispose()
     }
     const busy = [...this.captures, ...(this.inFlight ? [this.inFlight] : [])]
-    if (busy.length) void Promise.allSettled(busy).then(release)
-    else release()
+    if (busy.length === 0) {
+      release()
+      return
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const waited = new Promise((resolve) => {
+      timer = setTimeout(resolve, DISPOSE_WAIT_MS)
+    })
+    void Promise.race([Promise.allSettled(busy), waited]).then(() => {
+      clearTimeout(timer)
+      release()
+    })
   }
 }
