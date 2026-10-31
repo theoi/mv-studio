@@ -428,6 +428,88 @@ describe('person evidence for the verdict', () => {
       reasons: ['subject-too-small'],
     })
   })
+
+  it('keeps the animals the detector finds with the people, their scores rounded down like the people’s', () => {
+    const cat = { x: 0.5, y: 0.5, width: 0.2, height: 0.2 }
+    expect(detectedPeople(0.4, [{ box: around, score: 0.61 }], [{ box: cat, score: 0.4569 }])).toEqual({
+      t: 0.4,
+      boxes: [around],
+      scores: [0.61],
+      animals: [cat],
+      animalScores: [0.456],
+    })
+    expect(detectedPeople(0.4, [{ box: around, score: 0.61 }])).not.toHaveProperty('animals')
+  })
+
+  /** 6 s at 5 detections a second, with the subject's box a person where `person(i)` holds and an animal elsewhere. */
+  const labelled = (person: (i: number) => boolean, animal = around) =>
+    Array.from({ length: 30 }, (_, i) => ({
+      t: i * 0.2,
+      boxes: person(i) ? [around] : [],
+      scores: person(i) ? [0.6] : [],
+      ...(person(i) ? {} : { animals: [animal], animalScores: [0.6] }),
+    }))
+  const subjectFor = (people: ReadonlyArray<{ t: number }>) => people.map((p) => ({ t: p.t, mask: subject }))
+
+  it('rules out a "person" the detector calls an animal more often, as in a close-up of a cat', () => {
+    const cat = labelled((i) => i % 3 === 0)
+    const withoutAnimals = cat.map(({ t, boxes, scores }) => ({ t, boxes, scores }))
+    expect(assessSuitability(subjectFor(cat), 0.2, {}, withoutAnimals).verdict).toBe('good')
+    expect(assessSuitability(subjectFor(cat), 0.2, {}, cat)).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['no-subject'],
+    })
+  })
+
+  it('keeps a person the detector calls an animal now and then, and a person beside an animal', () => {
+    const sometimes = labelled((i) => i % 3 !== 0)
+    expect(assessSuitability(subjectFor(sometimes), 0.2, {}, sometimes).verdict).toBe('good')
+    const dog = { x: 44 / W, y: 26 / H, width: 16 / W, height: 10 / H }
+    const walker = Array.from({ length: 30 }, (_, i) => ({
+      t: i * 0.2,
+      boxes: [around],
+      scores: [0.6],
+      animals: [dog],
+      animalScores: [0.8],
+    }))
+    expect(assessSuitability(subjectFor(walker), 0.2, {}, walker).verdict).toBe('good')
+  })
+
+  it('keeps a person called a person exactly as often as an animal, and rules them out with one animal call more', () => {
+    const at = (t: number, person: boolean) =>
+      person
+        ? { t, boxes: [around], scores: [0.6] }
+        : { t, boxes: [], animals: [around], animalScores: [0.6] }
+    const tie = [at(0, true), at(0.2, false), at(0.4, true), at(0.6, false)]
+    expect(peopleNear(tie, 0.2)).toEqual([around, around])
+    expect(peopleNear([...tie, at(0.8, false)], 0.2)).toEqual([])
+  })
+  it('counts the votes near each box, so an animal earlier in the shot does not rule out a person later', () => {
+    // 20 s: a cat for the first 10 s, then from 12 s a person in the same place.
+    const people = Array.from({ length: 100 }, (_, i) => {
+      const t = i * 0.2
+      return t < 10
+        ? { t, boxes: [], animals: [around], animalScores: [0.6] }
+        : { t, boxes: t >= 12 ? [around] : [], scores: t >= 12 ? [0.6] : [] }
+    })
+    expect(peopleNear(people, 12)).not.toEqual([])
+    expect(peopleNear(people, 16)).not.toEqual([])
+  })
+
+  it('counts the votes over at least 15 samples on a long shot, whose quick check samples further apart', () => {
+    // 60 s in 90 samples, one every 0.67 s: a person, called an animal in two of every three samples from 24 s to 34 s.
+    const interval = 60 / 90
+    const people = Array.from({ length: 90 }, (_, i) => {
+      const person = i < 36 || i > 50 || i % 3 === 2
+      return {
+        t: i * interval,
+        boxes: person ? [around] : [],
+        scores: person ? [0.6] : [],
+        ...(person ? {} : { animals: [around], animalScores: [0.6] }),
+      }
+    })
+    expect(peopleNear(people, 44 * interval)).not.toEqual([])
+  })
 })
 describe('packed mask tracks', () => {
   const meta = {

@@ -23,7 +23,7 @@ import { decodeContainer, encodeContainer } from './runtime/container.ts'
 import type { FrameSource } from './runtime/frames.ts'
 import { createSharedRunner } from './runtime/shared.ts'
 import type { TaskOptions } from './runtime/tasks.ts'
-import { SUITABILITY_VERSION, type PeopleAt } from './mask/suitability.ts'
+import { PEOPLE_VERSION, SUITABILITY_VERSION, type PeopleAt } from './mask/suitability.ts'
 import {
   buildPersonTrack,
   findTrackEvidence,
@@ -110,7 +110,10 @@ interface SelectionFileMeta {
   confidence: number[]
 }
 
-/** A stored person track; the report is null when older criteria judged it, `people` null when it predates them. */
+/**
+ * A stored person track; the report is null when older criteria judged it, `people` null when it predates them or an
+ * older detection found them (`PEOPLE_VERSION`).
+ */
 type StoredPersonTrack = Omit<PersonTrackResult, 'suitability' | 'people'> & {
   suitability: SuitabilityReport | null
   people: PeopleAt[] | null
@@ -183,7 +186,7 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
   const decodeStoredPerson = async (bytes: Uint8Array): Promise<StoredPersonTrack> => {
     const { meta, chunks } = await decodeContainer<PersonTrackFileMeta>(bytes)
     if (meta.track.frameCount !== chunks.length) throw new Error('inconsistent person track')
-    const people = meta.people ?? null
+    const people = meta.people && (meta.suitabilityVersion ?? 0) >= PEOPLE_VERSION ? meta.people : null
     return {
       track: { meta: meta.track, packed: chunks.map((c) => c.slice()) },
       suitability:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SUITABILITY_VERSION } from '../../../../src/vision/mask/suitability.ts'
+import { PEOPLE_VERSION, SUITABILITY_VERSION } from '../../../../src/vision/mask/suitability.ts'
 import { JobError } from '../../../../src/shared/jobs.ts'
 import { createMemoryCache, type BlobCache } from '../../../../src/vision/runtime/cache.ts'
 import { decodeContainer, encodeContainer } from '../../../../src/vision/runtime/container.ts'
@@ -147,14 +147,17 @@ describe('vision service', () => {
       return { cache, source, storedVersion, storedMeta }
     }
 
-    it('is judged again from the stored masks when older criteria judged it, and written back', async () => {
-      const { cache, source, storedVersion } = await storedWithReport()
+    it('is judged again from the stored masks, with the people found again, when an older version judged it', async () => {
+      const { cache, source, storedVersion, storedMeta } = await storedWithReport(PEOPLE_VERSION - 1)
       const old = setup(cache)
       const judged = await old.service.personTrack(source)
       expect(count(old.seg.calls, 'beginTrack')).toBe(0)
-      expect(count(old.seg.calls, 'analyze')).toBe(0)
+      // An older detection did not look for animals, so the people are looked for again, without segmenting.
+      expect(old.seg.analyzed).toHaveLength(10)
+      expect(old.seg.analyzed.every((a) => a.people && !a.mask)).toBe(true)
       expect(judged.suitability.verdict).toBe('good')
       expect(await storedVersion()).toBe(SUITABILITY_VERSION)
+      expect((await storedMeta()).people).toEqual(judged.people)
       const current = await storedWithReport(SUITABILITY_VERSION)
       expect((await setup(current.cache).service.personTrack(current.source)).suitability).toEqual(stale)
     })
@@ -176,7 +179,7 @@ describe('vision service', () => {
     })
 
     it('measures the pops of a track stored before they were kept, from every frame, and writes them back', async () => {
-      const { cache, source, storedMeta } = await storedWithReport(undefined, true, false)
+      const { cache, source, storedMeta } = await storedWithReport(SUITABILITY_VERSION, true, false)
       const old = setup(cache)
       const judged = await old.service.personTrack(source)
       expect(count(old.seg.calls, 'beginTrack')).toBe(0)

@@ -172,6 +172,16 @@ describe('buildPersonTrack', () => {
     expect(seg.calls).not.toContain('configure')
   })
 
+  it('keeps the animals the detector finds with the people, when building a track and in a stored one', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const cat = { box: { x: 0.6, y: 0.5, width: 0.3, height: 0.4 }, score: 0.7 }
+    const seg = () => fakeSegmentation(undefined, undefined, { animalsAt: () => [cat] })
+    const built = await buildPersonTrack({ segmentation: seg() }, source, { faceFps: 0 })
+    expect(built.people[0]).toMatchObject({ animals: [cat.box], animalScores: [0.7] })
+    const { people } = await findTrackEvidence(seg(), source, built.track, { people: true, pops: false })
+    expect(people![0]).toMatchObject({ animals: [cat.box], animalScores: [0.7] })
+  })
+
   it('measures the pops of a stored track from every frame, as the build does', async () => {
     const { source } = fakeSource({ duration: 2, frameRate: 25 })
     const built = await buildPersonTrack({ segmentation: fakeSegmentation(dropouts) }, source, { faceFps: 0 })

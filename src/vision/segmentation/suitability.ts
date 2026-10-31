@@ -80,7 +80,7 @@ export async function checkSuitability(
         { signal, transfer: [bitmap] },
       )
       if (res.peopleUnavailable) peopleAvailable = false
-      else if (peopleAvailable) people.push(detectedPeople(t, res.people))
+      else if (peopleAvailable) people.push(detectedPeople(t, res.people, res.animals))
       if (res.mask) samples.push({ t, mask: res.mask })
       progress(samples.length / times.length, 'analyzing')
     }

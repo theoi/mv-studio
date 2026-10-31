@@ -15,7 +15,7 @@ export interface FaceObservation {
   score: number
 }
 
-/** A person the object detector found, with the box normalized to the frame. */
+/** A person (or, in `animals`, an animal) the object detector found, with the box normalized to the frame. */
 export interface PersonDetection {
   box: Rect
   score: number
@@ -41,6 +41,11 @@ export interface FrameAnalysis {
   mask?: Mask
   faces?: FaceObservation[]
   people?: PersonDetection[]
+  /**
+   * Animals the object detector found along with the people (the COCO animal classes, score at least
+   * `DETECTOR_MIN_SCORE`), so a "person" box that is really an animal can be ruled out (`peopleIndex`).
+   */
+  animals?: PersonDetection[]
   /** Set instead of `faces` when the face detector cannot be downloaded or loaded (offline, a blocked host). */
   facesUnavailable?: boolean
   /** Set instead of `people` when the person detector cannot be downloaded or loaded. */
@@ -73,6 +78,7 @@ export interface TrackFrameRequest {
 export interface TrackFrameResult extends TrackFrameStats {
   faces?: FaceObservation[]
   people?: PersonDetection[]
+  animals?: PersonDetection[]
   /** As in `FrameAnalysis`. */
   facesUnavailable?: boolean
   peopleUnavailable?: boolean
