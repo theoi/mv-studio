@@ -325,3 +325,58 @@ test('pasted and duplicated clips are scrolled into view, on a numbered track wh
   await expect(copy).toHaveAttribute('aria-pressed', 'true')
   await expect(copy).toBeInViewport()
 })
+
+test('Paste here on an empty stretch of a lane pastes at that time, on that track when it can take the clips', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=60')
+  await page.evaluate(() => window.mvStudio.app.ui.set({ review: false }))
+  const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
+  const spectrum = page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' })
+  const box = (await spectrum.boundingBox())!
+  /** A right-click on the Overlay track at t seconds; the spectrum starts at 64 s. */
+  const rightClickOverlay = (t: number) =>
+    page.mouse.click(box.x + (t - 64) * pps, box.y + box.height / 2, { button: 'right' })
+  const item = page.getByRole('menu').getByRole('menuitem', { name: /^Paste here/ })
+
+  // Before anything is copied it says why, and Generate a shot here stays last.
+  await rightClickOverlay(61.55)
+  await expect(item).toBeDisabled()
+  await expect(item).toContainText('Copy clips first')
+  await expect(page.getByRole('menu').getByRole('menuitem').last()).toContainText('Generate a shot here')
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' }).click()
+  await page.keyboard.press(`${mod}+c`)
+  await expect(page.getByText('Copied 1 clip')).toBeVisible()
+
+  // Free there: the copy lands on the Overlay track at the right-clicked time, selected.
+  await rightClickOverlay(61.55)
+  await expect(item).toBeEnabled()
+  await expect(item).toContainText(/At 1:01\.5$/)
+  await item.click()
+  const pasted = page.getByRole('button', { name: /^Singer close-up, 1:01\.5 to 1:03\.5$/ })
+  await expect(pasted).toHaveAttribute('aria-pressed', 'true')
+  const placed = await page.evaluate(() => {
+    const { ui, project } = window.mvStudio.app
+    const [id] = ui.selectedClipIds(ui.get().selection)
+    const clip = project.editor.getProject().clips[id]
+    return { trackId: clip.trackId, label: project.editor.undoLabel() }
+  })
+  expect(placed).toEqual({ trackId: 't-overlay', label: 'Paste clip' })
+  await page.keyboard.press(`${mod}+z`)
+  await expect(pasted).toHaveCount(0)
+
+  // Where the spectrum is in the way, it pastes there by the usual rules, and says so.
+  await rightClickOverlay(63.05)
+  await expect(item).toContainText(/At 1:03\.0 · on their own tracks$/)
+  await item.click()
+  const elsewhere = await page.evaluate(() => {
+    const { ui, project } = window.mvStudio.app
+    const [id] = ui.selectedClipIds(ui.get().selection)
+    const clip = project.editor.getProject().clips[id]
+    return { trackId: clip.trackId, start: Math.round(clip.start * 100) / 100 }
+  })
+  expect(elsewhere.trackId).not.toBe('t-overlay')
+  expect(elsewhere.start).toBeCloseTo(63.05, 1)
+})

@@ -12,7 +12,7 @@ import {
   type Project,
   type Track,
 } from '../../model/index.ts'
-import { dispatch, editor } from './project.ts'
+import { dispatch, editor, isLookClip } from './project.ts'
 import { revealClips } from './reveal.ts'
 import { get, selectClips, selectedClipIds, toast } from './ui.ts'
 
@@ -105,6 +105,40 @@ export function paste(): void {
   place(clipboard, Math.max(get().playhead, 0) - first, 'Paste')
 }
 
+/**
+ * Where the lane menu's "Paste here" puts the copied clips when right-clicked at `time` on a track: 'here' on that
+ * track, 'own' by the usual paste rules (clips from several tracks, a track of another sort, locked or without room),
+ * or null when nothing is copied.
+ */
+export function pasteHereTarget(p: Project, trackId: string, time: number): 'here' | 'own' | null {
+  if (!clipboard?.clips.length) return null
+  return hereTrack(p, clipboard.clips, trackId, time) ? 'here' : 'own'
+}
+
+/** Pastes the clipboard with its first clip at `time`, on `trackId` when it can take them (see pasteHereTarget). */
+export function pasteAt(trackId: string, time: number): void {
+  if (!clipboard?.clips.length) return
+  const first = Math.min(...clipboard.clips.map((c) => c.start))
+  const at = Math.max(0, time)
+  place(clipboard, at - first, 'Paste', hereTrack(editor.getProject(), clipboard.clips, trackId, at))
+}
+
+/** The track at `trackId` when all `clips` come from one track, it holds clips like them and is free for them at `time`. */
+function hereTrack(p: Project, clips: Clip[], trackId: string, time: number): Track | undefined {
+  const track = p.tracks.find((t) => t.id === trackId)
+  if (!track || track.locked || new Set(clips.map((c) => c.trackId)).size !== 1) return undefined
+  if (track.kind !== (clips[0]?.type === 'audio' ? 'audio' : 'visual')) return undefined
+  const there = clipsOnTrack(p, track.id)
+  // Not the lyrics lane, and a look lane only for looks.
+  if (track.name === 'Lyrics' || there.some((c) => c.type === 'text' && c.lyricLineId)) return undefined
+  const looks = clips.every(isLookClip)
+  if (there.length ? there.every(isLookClip) !== looks : looks) return undefined
+  const first = Math.min(...clips.map((c) => c.start))
+  const end = time + Math.max(...clips.map((c) => c.start + c.duration)) - first
+  const free = !there.some((c) => c.start < end - EPS && c.start + c.duration > time + EPS)
+  return free ? track : undefined
+}
+
 /** Copies the selected clips to right after the last of them; false when no clip is selected. */
 export function duplicateSelection(): boolean {
   const p = editor.getProject()
@@ -119,9 +153,9 @@ export function duplicateSelection(): boolean {
 /**
  * Adds copies of the clips moved by `offset` seconds, as one undo step, and selects them. The clips of each source
  * track go back on that track when it is unlocked and free over their span, else on a new track of the same kind and
- * name added above it.
+ * name added above it. `onto`, already checked by hereTrack, takes the clips of a single source track instead.
  */
-function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplicate'): void {
+function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplicate', onto?: Track): void {
   const p = editor.getProject()
   const commands: EditCommand[] = source.assets
     .filter((a) => !p.assets[a.id])
@@ -138,7 +172,7 @@ function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplic
       own &&
       !own.locked &&
       !clipsOnTrack(p, own.id).some((c) => c.start < end - EPS && c.start + c.duration > start + EPS)
-    let target = free ? own : undefined
+    let target = onto ?? (free ? own : undefined)
     if (!target) {
       const like = own ?? source.tracks.find((t) => t.id === trackId)
       const kind = like?.kind ?? (group[0]?.type === 'audio' ? 'audio' : 'visual')

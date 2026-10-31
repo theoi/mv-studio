@@ -1,8 +1,9 @@
 import type { ComponentType, MouseEvent } from 'react'
-import { Sparkles } from 'lucide-react'
+import { ClipboardPaste, Sparkles } from 'lucide-react'
 import { create } from 'zustand'
 import { clipsOnTrack, type Project } from '../../../../model/index.ts'
 import { formatTime } from '../../../format.ts'
+import { hasClipboard, pasteAt, pasteHereTarget } from '../../../state/clipboard.ts'
 import { cloudSettings } from '../../../state/cloud.ts'
 import { gapAt, generateInGap, shotStart } from '../../../state/generate.ts'
 import { editor, isLookClip } from '../../../state/project.ts'
@@ -60,8 +61,22 @@ const generateShot: LaneItem = {
   run: (spot) => generateInGap(spot.trackId, spot.time),
 }
 
+const pasteHere: LaneItem = {
+  group: 'clipboard',
+  label: 'Paste here',
+  icon: ClipboardPaste,
+  applies: () => true,
+  description: (project, spot) => {
+    const target = pasteHereTarget(project, spot.trackId, spot.time)
+    if (!target) return 'Copy clips first'
+    return `At ${formatTime(spot.time, true)}${target === 'own' ? ' · on their own tracks' : ''}`
+  },
+  disabled: () => !hasClipboard(),
+  run: (spot) => pasteAt(spot.trackId, spot.time),
+}
+
 /** The lane menu's items, in order. Generate a shot here stays last. */
-export const LANE_ITEMS: LaneItem[] = [generateShot]
+export const LANE_ITEMS: LaneItem[] = [pasteHere, generateShot]
 
 /** The items offered at a spot. */
 export function laneItemsAt(project: Project, spot: LaneSpot): LaneItem[] {
