@@ -215,17 +215,24 @@ async function storeDepth(
   })
 }
 
-/** Whether an effect other than the camera moves being replaced on `replacing` clips uses `assetId`. */
+/**
+ * Whether anything in the project refers to `assetId` (a clip's media, an effect or generator param such as a
+ * visualizer's artwork, another asset's parent), apart from the camera moves being replaced on `replacing` clips.
+ */
 function usedElsewhere(project: Project, assetId: Id, replacing: readonly Id[]): boolean {
-  return Object.values(project.clips).some(
-    (clip) =>
-      'effects' in clip &&
-      clip.effects.some(
-        (e) =>
-          !(replacing.includes(clip.id) && e.effectId === CAMERA_EFFECT_ID) &&
-          Object.values(e.params).some((p) => p.value === assetId),
+  const refers = (value: unknown): boolean =>
+    value === assetId || (typeof value === 'object' && value !== null && Object.values(value).some(refers))
+  return Object.entries(project).some(([key, value]) => {
+    if (key === 'assets') return Object.values(project.assets).some((a) => a.id !== assetId && refers(a))
+    if (key !== 'clips') return refers(value)
+    return Object.values(project.clips).some((clip) =>
+      refers(
+        replacing.includes(clip.id) && 'effects' in clip
+          ? { ...clip, effects: clip.effects.filter((e) => e.effectId !== CAMERA_EFFECT_ID) }
+          : clip,
       ),
-  )
+    )
+  })
 }
 
 function stillOf(project: Project, clipId: Id): { clip: ImageClip; asset: Asset } {

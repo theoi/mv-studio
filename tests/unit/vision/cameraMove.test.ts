@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectEditor } from '../../../src/model/editor.ts'
-import { createImageClip, createProject } from '../../../src/model/factory.ts'
-import type { Asset, ImageClip, Project } from '../../../src/model/types.ts'
+import { createImageClip, createProject, createSolidClip } from '../../../src/model/factory.ts'
+import type { Asset, GeneratorClip, ImageClip, Project } from '../../../src/model/types.ts'
 import {
   addCameraMoves,
   cameraMoveCommands,
@@ -238,39 +238,13 @@ describe('3D camera moves on several stills', () => {
     const { project, clipId } = setup()
     const track = project.tracks.find((t) => t.kind === 'visual')!
     // Stored before preparations were recorded, and used by the camera move on a second clip of the still.
-    project.assets.oldDepth = asset('oldDepth', {
-      type: 'derived',
-      parentAssetId: 'still',
-      provider: DEPTH_MODEL,
-    })
+    project.assets.oldDepth = olderDepth()
     const other = createImageClip({ trackId: track.id, assetId: 'still', start: 10, duration: 3 })
     other.effects = [cameraMoveEffect(other, 'oldDepth', { focus: 0.5 })]
     project.clips[other.id] = other
     const editor = new ProjectEditor(project)
-    const estimated: string[] = []
-    const depth = {
-      async get(req: { mediaId: string; sourceSize: { width: number; height: number } }) {
-        estimated.push(req.mediaId)
-        return {
-          version: 1 as const,
-          width: 16,
-          height: 9,
-          data: new Uint8Array(16 * 9).map((_, i) => (i % 16) * 16),
-          sourceSize: req.sourceSize,
-          model: DEPTH_MODEL,
-          quality: 'full' as const,
-        }
-      },
-      peek: async () => null,
-    }
-    const stored: Array<Asset['origin']> = []
-    const media = {
-      getFile: fileOf,
-      storeBlob: async (_blob: Blob, info: { origin: Asset['origin'] }): Promise<Asset> => {
-        stored.push(info.origin)
-        return asset('newDepth', info.origin)
-      },
-    }
+    const { depth, estimated } = rampDepth()
+    const { media, stored } = storingMedia()
 
     const first = await addCameraMoves({ editor, media, depth }, [clipId], { intensity: 0.3 })
     expect(estimated).toEqual(['still'])
@@ -289,8 +263,82 @@ describe('3D camera moves on several stills', () => {
     expect(restored.params.depth!.value).toBe('oldDepth')
     vi.unstubAllGlobals()
   })
+
+  it.each([
+    [
+      'a visualizer’s artwork',
+      (project: Project, trackId: string) => {
+        const { color: _color, ...base } = createSolidClip({ trackId, color: '#000', start: 10, duration: 4 })
+        const visualizer: GeneratorClip = {
+          ...base,
+          type: 'generator',
+          generatorId: 'visualizer.circle',
+          params: { artwork: { value: 'oldDepth' } },
+        }
+        project.clips[visualizer.id] = visualizer
+      },
+    ],
+    [
+      'a clip that shows it',
+      (project: Project, trackId: string) => {
+        const clip = createImageClip({ trackId, assetId: 'oldDepth', start: 10, duration: 3 })
+        project.clips[clip.id] = clip
+      },
+    ],
+  ])('keeps a depth image from an older preparation that %s uses', async (_, use) => {
+    stubCanvas()
+    const { project, clipId } = setup()
+    project.assets.oldDepth = olderDepth()
+    use(project, project.tracks.find((t) => t.kind === 'visual')!.id)
+    const editor = new ProjectEditor(project)
+    const before = Object.keys(editor.getProject().clips).length
+
+    const { moves } = await addCameraMoves({ editor, ...storingMedia(), ...rampDepth() }, [clipId], {
+      intensity: 0.3,
+    })
+    expect(moves[0]!.depthAssetId).toBe('newDepth')
+    expect(editor.getProject().assets.oldDepth).toBeDefined()
+    expect(Object.keys(editor.getProject().clips)).toHaveLength(before)
+    vi.unstubAllGlobals()
+  })
 })
 
+/** A depth image stored before preparations were recorded. */
+const olderDepth = () => asset('oldDepth', { type: 'derived', parentAssetId: 'still', provider: DEPTH_MODEL })
+
+/** A depth service that estimates a left-to-right ramp and records which stills it estimated. */
+function rampDepth() {
+  const estimated: string[] = []
+  const depth = {
+    async get(req: { mediaId: string; sourceSize: { width: number; height: number } }) {
+      estimated.push(req.mediaId)
+      return {
+        version: 1 as const,
+        width: 16,
+        height: 9,
+        data: new Uint8Array(16 * 9).map((_, i) => (i % 16) * 16),
+        sourceSize: req.sourceSize,
+        model: DEPTH_MODEL,
+        quality: 'full' as const,
+      }
+    },
+    peek: async () => null,
+  }
+  return { depth, estimated }
+}
+
+/** Media that stores each new depth image as `newDepth` and records its origin. */
+function storingMedia() {
+  const stored: Array<Asset['origin']> = []
+  const media = {
+    getFile: fileOf,
+    storeBlob: async (_blob: Blob, info: { origin: Asset['origin'] }): Promise<Asset> => {
+      stored.push(info.origin)
+      return asset('newDepth', info.origin)
+    },
+  }
+  return { media, stored }
+}
 describe('the amount of an automatic move', () => {
   let runs = 0
   const run = async (storedDepth: (x: number) => number, intensity?: number) => {

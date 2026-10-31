@@ -37,7 +37,7 @@ export function BehindBadge() {
 function SuitRow({ asset, suitability, clips }: Omit<FootageRow, 'key'>) {
   const thumb = useThumbnail(asset)
   const text = suitabilityText(suitability)
-  const detail = `${(text.why ?? text.status).replace(/\.$/, '')} · ${plural(clips, 'clip')}`
+  const detail = `${(text.brief ?? text.why ?? text.status).replace(/\.$/, '')} · ${plural(clips, 'clip')}`
   const checked = suitability.status === 'checked'
   return (
     <div className={styles.suitRow}>
