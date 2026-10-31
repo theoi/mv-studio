@@ -268,7 +268,10 @@ export interface ImageClip extends VisualClipBase {
 /** Pixel sizes (fontSize, stroke, shadow, background) are at a 1080-pixel-tall canvas and scale with it. */
 export interface TextStyle {
   fontFamily: string
-  /** When the font is an imported font asset. */
+  /**
+   * When the font is an imported font asset. fontFamily then starts with the font's name, then the stack to fall back
+   * to when the project no longer has the file.
+   */
   fontAssetId?: Id
   fontSize: number
   fontWeight: number

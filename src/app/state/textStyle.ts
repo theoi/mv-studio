@@ -5,7 +5,7 @@
  */
 import { pluginRegistry } from '../../engine/registry.ts'
 import type { ParamSpec } from '../../engine/types.ts'
-import type { EditCommand, ParamValue, TextClip, TextStyle } from '../../model/index.ts'
+import type { Asset, EditCommand, ParamValue, Project, TextClip, TextStyle } from '../../model/index.ts'
 import { BUNDLED_FONTS, bundledFont, fontStack, type FontCategory } from '../../plugins/typography/fonts.ts'
 import { plural } from '../format.ts'
 import { dispatch, editor } from './project.ts'
@@ -29,29 +29,97 @@ function firstFamily(fontFamily: string): string {
   )
 }
 
-/**
- * The font picker for a text style: every bundled font, plus the style's own font first when it is not one of them
- * (a system font or an imported one), so the picker always shows what the text uses.
- */
-export function fontChoice(style: TextStyle): {
+/** The picker value of an imported font: its asset id, which can't clash with a family name. */
+const IMPORTED = 'font:'
+
+/** An imported font goes by its file name without the extension. */
+const importedName = (asset: Asset) => asset.name.replace(/\.[^.]+$/, '')
+
+interface FontOption {
   value: string
-  options: { value: string; label: string; description: string }[]
-} {
-  const options = BUNDLED_FONTS.map((f) => ({
-    value: f.family,
-    label: f.family,
-    description: [CATEGORY[f.category], ...f.tags.slice(0, 2)].join(' · '),
-  }))
+  label: string
+  description?: string
+  disabled?: boolean
+  group?: string
+}
+
+/** A bundled font only when no imported font is set: an imported file may share a bundled family's name. */
+function bundledOf(style: TextStyle) {
+  return style.fontAssetId ? undefined : bundledFont(style.fontFamily)
+}
+
+/**
+ * The font picker for a text style: the project's imported fonts and every bundled font, in two groups once there
+ * are imported fonts, plus the style's own font first when it is neither (a system font), so the picker always shows
+ * what the text uses. An imported font the project no longer has stays listed, disabled, by the name the style kept.
+ */
+export function fontChoice(
+  style: TextStyle,
+  assets: Project['assets'],
+): { value: string; options: FontOption[] } {
+  const imported: FontOption[] = Object.values(assets)
+    .filter((a) => a.kind === 'font')
+    .map((a) => ({ value: IMPORTED + a.id, label: importedName(a), group: 'Imported' }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+  if (style.fontAssetId && !assets[style.fontAssetId])
+    imported.push({
+      value: IMPORTED + style.fontAssetId,
+      label: firstFamily(style.fontFamily),
+      description: 'Missing: shown in a fallback font',
+      disabled: true,
+      group: 'Imported',
+    })
+  const options = [
+    ...imported,
+    ...BUNDLED_FONTS.map((f) => ({
+      value: f.family,
+      label: f.family,
+      description: [CATEGORY[f.category], ...f.tags.slice(0, 2)].join(' · '),
+      ...(imported.length ? { group: 'Bundled' } : {}),
+    })),
+  ]
+  if (style.fontAssetId) return { value: IMPORTED + style.fontAssetId, options }
   const bundled = bundledFont(style.fontFamily)
   if (bundled) return { value: bundled.family, options }
   const own = firstFamily(style.fontFamily)
   return { value: own, options: [{ value: own, label: own, description: 'Not bundled' }, ...options] }
 }
 
-/** Sets a bundled font, keeping the weight and italics where the font has them. */
+/**
+ * Sets an imported font, regular and upright: a font file is usually one face, and the browser would fake a heavier
+ * weight or a slant. Its name goes first in the family stack, ahead of the font the text had, so a project that loses
+ * the file still names it and draws in the previous font.
+ */
+function setImportedFont(clip: TextClip, assetId: string): void {
+  const asset = editor.getProject().assets[assetId]
+  if (asset?.kind !== 'font' || clip.style.fontAssetId === assetId) return
+  const name = importedName(asset)
+  const previous = clip.style.fontAssetId
+    ? clip.style.fontFamily.split(',').slice(1).join(',').trim()
+    : clip.style.fontFamily
+  dispatch(
+    {
+      type: 'clip.set',
+      clipId: clip.id,
+      path: ['style'],
+      value: {
+        ...clip.style,
+        fontAssetId: assetId,
+        // Quotes and commas would break the family list when the name is read back or dropped.
+        fontFamily: `"${name.replace(/["\\,]/g, '')}", ${previous || 'Inter, system-ui, sans-serif'}`,
+        fontWeight: 400,
+        italic: false,
+      },
+    },
+    { label: `Font: ${name}` },
+  )
+}
+
+/** Sets a bundled font, keeping the weight and italics where the font has them, or an imported one. */
 export function setFont(clip: TextClip, family: string): void {
+  if (family.startsWith(IMPORTED)) return setImportedFont(clip, family.slice(IMPORTED.length))
   const font = BUNDLED_FONTS.find((f) => f.family === family)
-  if (!font || bundledFont(clip.style.fontFamily) === font) return
+  if (!font || bundledOf(clip.style) === font) return
   const [lightest, boldest] = font.weights
   const { fontAssetId: _imported, ...style } = clip.style
   dispatch(
@@ -197,12 +265,15 @@ const WEIGHTS: [number, string][] = [
 
 const weightName = (weight: number) => WEIGHTS.find(([w]) => w === weight)?.[1]
 
-/** The weights the style's font has (all of them for a font that isn't bundled), and the style's own. */
+/**
+ * The weights the style's font has, and the style's own: all of them for a system font, and only Regular for an
+ * imported one, whose file is loaded as a single regular face (other weights would be faked by the browser).
+ */
 export function weightChoice(style: TextStyle): {
   value: string
   options: { value: string; label: string; description?: string }[]
 } {
-  const [lightest, boldest] = bundledFont(style.fontFamily)?.weights ?? [100, 900]
+  const [lightest, boldest] = style.fontAssetId ? [400, 400] : (bundledOf(style)?.weights ?? [100, 900])
   const weights = WEIGHTS.map(([w]) => w).filter((w) => w >= lightest && w <= boldest)
   if (!weights.includes(style.fontWeight)) weights.push(style.fontWeight)
   return {

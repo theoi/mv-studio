@@ -441,13 +441,26 @@ export function Select<T extends string>({
 }: {
   value: T
   onChange: (v: T) => void
-  options: { value: T; label: string; description?: string; disabled?: boolean }[]
+  /** Options with a `group` show under its heading, in the order the groups first appear; ungrouped ones go first. */
+  options: { value: T; label: string; description?: string; disabled?: boolean; group?: string }[]
   ariaLabel: string
   size?: 'sm' | 'md'
   disabled?: boolean
   /** Shown while the value matches no option, e.g. "Mixed" for several items that differ. */
   placeholder?: string
 }) {
+  const item = (o: (typeof options)[number]) => (
+    <RSelect.Item key={o.value} value={o.value} disabled={o.disabled} className={styles.selectItem}>
+      <RSelect.ItemText>{o.label}</RSelect.ItemText>
+      {o.description && <span className={styles.selectDesc}>{o.description}</span>}
+      <RSelect.ItemIndicator className={styles.selectCheck}>
+        <Check />
+      </RSelect.ItemIndicator>
+    </RSelect.Item>
+  )
+  const groups = options.some((o) => o.group)
+    ? [...new Set([undefined, ...options.map((o) => o.group)])]
+    : undefined
   return (
     <RSelect.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
       <RSelect.Trigger
@@ -467,15 +480,20 @@ export function Select<T extends string>({
           collisionPadding={8}
         >
           <RSelect.Viewport>
-            {options.map((o) => (
-              <RSelect.Item key={o.value} value={o.value} disabled={o.disabled} className={styles.selectItem}>
-                <RSelect.ItemText>{o.label}</RSelect.ItemText>
-                {o.description && <span className={styles.selectDesc}>{o.description}</span>}
-                <RSelect.ItemIndicator className={styles.selectCheck}>
-                  <Check />
-                </RSelect.ItemIndicator>
-              </RSelect.Item>
-            ))}
+            {groups
+              ? groups.map((group) => {
+                  const items = options.filter((o) => o.group === group)
+                  if (!items.length) return null
+                  return group === undefined ? (
+                    items.map(item)
+                  ) : (
+                    <RSelect.Group key={group} className={styles.selectGroup}>
+                      <RSelect.Label className={styles.selectLabel}>{group}</RSelect.Label>
+                      {items.map(item)}
+                    </RSelect.Group>
+                  )
+                })
+              : options.map(item)}
           </RSelect.Viewport>
         </RSelect.Content>
       </RSelect.Portal>

@@ -14,7 +14,7 @@ import {
   TextArea,
 } from '../../../ds/Fields.tsx'
 import { formatTime } from '../../../format.ts'
-import { dispatch, editor } from '../../../state/project.ts'
+import { dispatch, editor, useProject } from '../../../state/project.ts'
 import {
   fontChoice,
   NO_PRESET,
@@ -36,7 +36,8 @@ import styles from '../Inspector.module.css'
 const spacer = <span className={styles.trailSpacer} />
 
 export function FontRow({ clip }: { clip: TextClip }) {
-  const { value, options } = fontChoice(clip.style)
+  const { assets } = useProject()
+  const { value, options } = fontChoice(clip.style, assets)
   return (
     <FieldRow label="Font" trailing={spacer}>
       <Select value={value} onChange={(family) => setFont(clip, family)} ariaLabel="Font" options={options} />

@@ -31,6 +31,21 @@ export function cssFont(style: TextStyle, fontPx: number): string {
   return `${style.italic ? 'italic ' : ''}${style.fontWeight} ${fontPx}px ${fontFamilyFor(style)}`
 }
 
+/**
+ * The style text is drawn with: an imported font the project no longer has is left out, even when its face is still
+ * loaded here, so the text falls back exactly as a fresh export would. Its name, first in the stack, goes too, so a
+ * system font that happens to share it doesn't stand in for the font the text had before.
+ */
+function drawnStyle(style: TextStyle, project: Project): TextStyle {
+  if (!style.fontAssetId || project.assets[style.fontAssetId]) return style
+  const { fontAssetId: _missing, ...rest } = style
+  const fallback = style.fontFamily.split(',').slice(1).join(',').trim()
+  return fallback ? { ...rest, fontFamily: fallback } : rest
+}
+
+const fontMissing = (style: TextStyle, project: Project) =>
+  !!style.fontAssetId && !project.assets[style.fontAssetId]
+
 export function applyTextTransform(text: string, transform: TextStyle['textTransform']): string {
   if (transform === 'uppercase') return text.toUpperCase()
   if (transform === 'lowercase') return text.toLowerCase()
@@ -221,6 +236,8 @@ interface Entry {
   /** Bumped whenever the canvas pixels change. */
   version: number
   drawnStatic: boolean
+  /** Whether the style's imported font was gone from the project, so removing it redraws the text. */
+  fontMissing: boolean
 }
 
 export interface RasterizedText {
@@ -250,7 +267,7 @@ export class TextRenderer {
 
   /** Loads the fonts a clip needs; await before draw() so the first layout uses the right metrics. */
   async prepare(clip: TextClip, project: Project): Promise<void> {
-    const { style } = clip
+    const style = drawnStyle(clip.style, project)
     const asset = style.fontAssetId ? project.assets[style.fontAssetId] : undefined
     if (asset && style.fontAssetId) {
       let face = this.fontFaces.get(asset.id)
@@ -305,11 +322,12 @@ export class TextRenderer {
       existing.lyrics === project.lyrics &&
       existing.canvasWidth === canvasWidth &&
       existing.canvasHeight === canvasHeight &&
-      existing.preset === preset
+      existing.preset === preset &&
+      existing.fontMissing === fontMissing(clip.style, project)
     )
       return existing
 
-    const { style } = clip
+    const style = drawnStyle(clip.style, project)
     const k = canvasHeight / 1080
     const fontPx = fontPxFor(style, canvasHeight)
     const font = cssFont(style, fontPx)
@@ -355,6 +373,7 @@ export class TextRenderer {
       ctx,
       version: (existing?.version ?? 0) + 1,
       drawnStatic: false,
+      fontMissing: fontMissing(clip.style, project),
     }
     this.entries.set(clip.id, entry)
     return entry
