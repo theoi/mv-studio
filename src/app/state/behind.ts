@@ -71,6 +71,11 @@ export interface CutoutResult {
   count: number
   /** Requested clips left as they were: no person to cut out, or already behind. */
   skipped: number
+  /**
+   * Clips the check offered but the person track then judged unsuitable, with why (the "Not suitable" text), so the
+   * offer is not followed by a silent skip.
+   */
+  refused?: Array<{ assetId: Id; name: string; why: string }>
   label: string
   /** Set when the cutout follows a picked object. */
   object?: ObjectPick
@@ -259,7 +264,12 @@ const MEDIAPIPE_RUNTIME_BYTES = 14_800_000
 
 /** Bytes finding and cutting out people still has to download (models and runtime, once), 0 when cached. */
 export async function personDownloadBytes(): Promise<number> {
-  const needed = [VISION_MODELS.selfieLandscape, VISION_MODELS.selfie, VISION_MODELS.faceShortRange]
+  const needed = [
+    VISION_MODELS.selfieLandscape,
+    VISION_MODELS.selfie,
+    VISION_MODELS.faceShortRange,
+    VISION_MODELS.personDetector,
+  ]
   const mediapipe = [...needed, VISION_MODELS.magicTouch, VISION_MODELS.selfieMulticlass]
   const fileOf = (m: (typeof mediapipe)[number]) => Object.values(m.files)[0]
   const cached = await Promise.all(
@@ -438,6 +448,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
         needMask.set(asset.id, asset)
       }
       const newMasks = new Map<Id, Asset>()
+      const refused: NonNullable<CutoutResult['refused']> = []
       if (needMask.size) {
         const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
         const assets = [...needMask.values()]
@@ -451,8 +462,17 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
               signal: ctx.signal,
               onProgress: (p) => step(0.9 * (p.fraction ?? 0)),
             })
-            setCheck(asset.id, fromReport(person.suitability))
-            if (person.suitability.verdict === 'unsuitable') continue
+            const check = fromReport(person.suitability)
+            setCheck(asset.id, check)
+            if (person.suitability.verdict === 'unsuitable') {
+              const { status, why } = suitabilityText(check)
+              refused.push({
+                assetId: asset.id,
+                name: asset.name.replace(/\.[^.]+$/, ''),
+                why: why ?? status,
+              })
+              continue
+            }
             const blob = await v.encodeMaskVideo(person.track, {
               duration: asset.duration ?? source.duration,
               signal: ctx.signal,
@@ -471,7 +491,12 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
       }
       ctx.throwIfCancelled()
       const { commands, count } = cutoutCommands(editor.getProject(), wanted, newMasks)
-      const result: CutoutResult = { count, skipped: clipIds.length - count, label: CUTOUT_LABEL }
+      const result: CutoutResult = {
+        count,
+        skipped: clipIds.length - count,
+        ...(refused.length ? { refused } : {}),
+        label: CUTOUT_LABEL,
+      }
       if (count && !dispatch(commands, { label: CUTOUT_LABEL }))
         throw new JobError(
           'invalid-input',

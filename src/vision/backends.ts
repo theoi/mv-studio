@@ -15,12 +15,22 @@ export interface FaceObservation {
   score: number
 }
 
+/** A person the object detector found, with the box normalized to the frame. */
+export interface PersonDetection {
+  box: Rect
+  score: number
+}
+
 export interface FrameAnalysisRequest {
   bitmap: ImageBitmap
   /** Monotonic per stream, required by MediaPipe VIDEO mode. */
   timestampMs: number
   mask?: boolean
+  /** Mask size (default: bitmap size), so people can be detected on a larger frame than the mask needs. */
+  maskSize?: Size
   faces?: boolean
+  /** People found by the object detector (score at least `PERSON_MIN_SCORE`). */
+  people?: boolean
   /** Return the frame as luma at bitmap size (guide for smoothing and motion). */
   gray?: boolean
   /** Return the frame as RGBA at bitmap size (guide for edge-aware upsampling). */
@@ -30,6 +40,7 @@ export interface FrameAnalysisRequest {
 export interface FrameAnalysis {
   mask?: Mask
   faces?: FaceObservation[]
+  people?: PersonDetection[]
   gray?: GrayImage
   rgba?: RgbaImage
 }
@@ -52,10 +63,12 @@ export interface TrackFrameRequest {
    */
   hq?: Mask
   faces?: boolean
+  people?: boolean
 }
 
 export interface TrackFrameResult extends TrackFrameStats {
   faces?: FaceObservation[]
+  people?: PersonDetection[]
   usedHq: boolean
 }
 

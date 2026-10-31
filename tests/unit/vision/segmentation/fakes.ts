@@ -2,6 +2,7 @@ import type {
   FrameAnalysis,
   FrameAnalysisRequest,
   OnnxBackend,
+  PersonDetection,
   SegmentationBackend,
   SelectRequest,
   TrackFrameRequest,
@@ -86,18 +87,28 @@ export function flatGray(size: Size, value = 100): GrayImage {
   }
 }
 
+/** The person detector's answer when a test does not say: one person covering the frame. */
+const wholeFrame = (): PersonDetection[] => [{ box: { x: 0, y: 0, width: 1, height: 1 }, score: 0.9 }]
+
 /**
- * In-process stand-in for the segmentation worker: same track builder, masks from `personAt`.
+ * In-process stand-in for the segmentation worker: same track builder, masks from `personAt`, detected people from
+ * `peopleAt`.
  */
 export function fakeSegmentation(
   personAt: (t: number, size: Size) => Mask = (_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 4),
+  peopleAt: (t: number) => PersonDetection[] = wholeFrame,
 ) {
   const calls: string[] = []
   const tracks = new Map<number, MaskTrackBuilder>()
   let nextId = 1
-  const backend: SegmentationBackend & { calls: string[]; pushed: TrackFrameRequest[] } = {
+  const backend: SegmentationBackend & {
+    calls: string[]
+    pushed: TrackFrameRequest[]
+    analyzed: Array<Omit<FrameAnalysisRequest, 'bitmap'> & { t: number; size: Size }>
+  } = {
     calls,
     pushed: [],
+    analyzed: [],
     async configure() {
       calls.push('configure')
     },
@@ -106,12 +117,15 @@ export function fakeSegmentation(
     },
     async analyze(req: FrameAnalysisRequest): Promise<FrameAnalysis> {
       calls.push('analyze')
-      const size = { width: req.bitmap.width, height: req.bitmap.height }
-      const t = timeOf(req.bitmap)
-      req.bitmap.close()
+      const { bitmap, ...rest } = req
+      const size = { width: bitmap.width, height: bitmap.height }
+      const t = timeOf(bitmap)
+      backend.analyzed.push({ ...rest, t, size })
+      bitmap.close()
       return {
-        ...(req.mask ? { mask: personAt(t, size) } : {}),
+        ...(req.mask ? { mask: personAt(t, req.maskSize ?? size) } : {}),
         ...(req.faces ? { faces: [{ box: { x: 0.45, y: 0.3, width: 0.1, height: 0.15 }, score: 0.9 }] } : {}),
+        ...(req.people ? { people: peopleAt(t) } : {}),
         ...(req.gray ? { gray: flatGray(size) } : {}),
       }
     },
@@ -136,7 +150,8 @@ export function fakeSegmentation(
       const builder = tracks.get(req.id)
       if (!builder) throw new JobError('invalid-input', 'unknown track')
       const size = { width: req.bitmap.width, height: req.bitmap.height }
-      const standard = personAt(timeOf(req.bitmap), size)
+      const t = timeOf(req.bitmap)
+      const standard = personAt(t, size)
       req.bitmap.close()
       const { mask, usedHq } = req.hq ? preferHq(standard, req.hq) : { mask: standard, usedHq: false }
       const stats = builder.push({ mask, gray: flatGray(size) })
@@ -144,6 +159,7 @@ export function fakeSegmentation(
         ...stats,
         usedHq,
         ...(req.faces ? { faces: [{ box: { x: 0.45, y: 0.3, width: 0.1, height: 0.15 }, score: 0.9 }] } : {}),
+        ...(req.people ? { people: peopleAt(t) } : {}),
       }
     },
     async endTrack({ id }) {

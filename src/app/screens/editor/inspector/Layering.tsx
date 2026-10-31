@@ -70,6 +70,7 @@ function cutOut(hostId: string) {
             else toast('The project has changed since. Use Undo in the top bar to step back.')
           },
         })
+      else if (result.refused?.[0]) toast(result.refused[0].why)
     },
     () => undefined,
   )

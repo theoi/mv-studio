@@ -48,7 +48,9 @@ export const LOCAL_MODELS: LocalModel[] = [
     'Text behind the subject',
     VISION_MODELS.selfieLandscape,
     VISION_MODELS.faceShortRange,
+    VISION_MODELS.personDetector,
   ),
+  local('matte', 'Cutout edges', 'Cleaner edges where text overlaps the person', VISION_MODELS.modnet),
   local('depth', 'Depth', '3D camera on stills', VISION_MODELS.depthAnythingSmall),
   local('tagger', 'Footage tagger', 'Search and match clips', VISION_MODELS.clipB32),
 ]

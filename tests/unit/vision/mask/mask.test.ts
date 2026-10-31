@@ -14,7 +14,12 @@ import {
 } from '../../../../src/vision/mask/ops.ts'
 import { createCausalSmoother, createTemporalFilter } from '../../../../src/vision/mask/smoothing.ts'
 import { jointBilateralUpsample } from '../../../../src/vision/mask/upsample.ts'
-import { assessFrame, assessSuitability } from '../../../../src/vision/mask/suitability.ts'
+import {
+  assessFrame,
+  assessSuitability,
+  keepPeople,
+  peopleNear,
+} from '../../../../src/vision/mask/suitability.ts'
 import {
   appendFrame,
   createPackedTrack,
@@ -240,6 +245,106 @@ describe('suitability', () => {
   })
 })
 
+describe('person evidence for the verdict', () => {
+  const W = 64
+  const H = 36
+  // A subject 30 px tall in the middle: the same mask whether it is a person or a horse.
+  const subject = rectMask(W, H, 20, 6, 40, 36)
+  const around = { x: 20 / W, y: 6 / H, width: 20 / W, height: 30 / H }
+
+  it('keeps the mask inside the grown person boxes only', () => {
+    const full = rectMask(W, H, 0, 0, W, H)
+    const kept = keepPeople(full, [{ x: 0.25, y: 0.25, width: 0.5, height: 0.5 }], 0.1)
+    // 0.2..0.8 of each side.
+    expect(coverage(kept)).toBeCloseTo(
+      ((Math.ceil(0.8 * W) - Math.floor(0.2 * W)) * (Math.ceil(0.8 * H) - Math.floor(0.2 * H))) / (W * H),
+      5,
+    )
+    expect(kept.data[0]).toBe(0)
+    expect(kept.data[(H / 2) * W + W / 2]).toBe(255)
+  })
+
+  it('bridges a missed detection between two hits, but does not spread a stray hit', () => {
+    const other = { x: 0, y: 0, width: 0.1, height: 0.1 }
+    const hits = new Map([
+      [1, around],
+      [3, around],
+      [7, other],
+    ])
+    const people = Array.from({ length: 12 }, (_, i) => ({
+      t: i * 0.2,
+      boxes: hits.has(i) ? [hits.get(i)!] : [],
+    }))
+    // The clip's first frame needs a hit after it only.
+    expect(peopleNear(people, 0)).toEqual([around])
+    expect(peopleNear(people, 0.4)).toEqual([around, around])
+    expect(peopleNear(people, 0.8)).toEqual([])
+    expect(peopleNear(people, 1.2)).toEqual([])
+    expect(peopleNear(people, 1.4)).toEqual([other])
+    expect(peopleNear(people, 1.6)).toEqual([])
+    // Within the hold of the last frame, a hit before it is enough.
+    expect(peopleNear(people, 1.8)).toEqual([other])
+  })
+
+  it.each([
+    ['the track at 24 fps', 5 / 24],
+    ['the track at 30 fps', 6 / 30],
+    ['the track at 60 fps', 12 / 60],
+    ['the quick check of a 60 s shot', 60 / 90],
+  ])('bridges two missed detections in a row but not three, for %s', (_, interval) => {
+    const at = (hits: number[]) =>
+      Array.from({ length: 12 }, (_, i) => ({ t: i * interval, boxes: hits.includes(i) ? [around] : [] }))
+    const two = at([0, 3])
+    expect(peopleNear(two, interval)).toEqual([around, around])
+    expect(peopleNear(two, 2 * interval)).toEqual([around, around])
+    const three = at([0, 4])
+    expect(peopleNear(three, interval)).toEqual([])
+    expect(peopleNear(three, 2 * interval)).toEqual([around, around])
+    expect(peopleNear(three, 3 * interval)).toEqual([])
+  })
+
+  it('does not let an animal the detector takes for a person now and then cover the shot', () => {
+    const samples = Array.from({ length: 30 }, (_, i) => ({ t: i * 0.2, mask: subject }))
+    const now = samples.map((s, i) => ({ t: s.t, boxes: i % 5 ? [] : [around] }))
+    expect(assessSuitability(samples, 0.2, {}, now)).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['no-subject'],
+    })
+  })
+
+  it('finds no one in a mask the detector does not see as a person', () => {
+    const samples = Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask: subject }))
+    expect(assessSuitability(samples, 0.2).verdict).toBe('good')
+    const noOne = assessSuitability(
+      samples,
+      0.2,
+      {},
+      samples.map((s) => ({ t: s.t, boxes: [] })),
+    )
+    expect(noOne).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+  })
+
+  it('keeps a person the detector sees in every other frame', () => {
+    const samples = Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask: subject }))
+    const everyOther = samples.map((s, i) => ({ t: s.t, boxes: i % 2 ? [] : [around] }))
+    expect(assessSuitability(samples, 0.2, {}, everyOther).verdict).toBe('good')
+  })
+
+  it('judges only the part of the mask that is a person', () => {
+    // A person box around a small figure; the large blob beside it (an animal, say) does not count.
+    const figure = rectMask(W, H, 4, 20, 8, 30)
+    const both = { width: W, height: H, data: figure.data.map((v, i) => Math.max(v, subject.data[i]!)) }
+    const samples = Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask: both }))
+    const people = samples.map((s) => ({
+      t: s.t,
+      boxes: [{ x: 4 / W, y: 20 / H, width: 4 / W, height: 10 / H }],
+    }))
+    expect(assessSuitability(samples, 0.2, {}, people)).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['subject-too-small'],
+    })
+  })
+})
 describe('packed mask tracks', () => {
   const meta = {
     version: 1 as const,

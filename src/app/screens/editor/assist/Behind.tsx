@@ -176,13 +176,22 @@ export function BehindView() {
                   ? `Lyrics now sit behind the person on ${plural(result.count, 'clip')}`
                   : 'No clip changed'}
             </div>
-            <div className={styles.muted}>
-              {result.object
-                ? `${trackingText(result.object)}${result.object.fix.length ? ' Show the clip to fix those spots.' : ''}`
-                : result.count
-                  ? 'Each cutout is on the Subject track, above the lyrics.'
-                  : 'The clips have no person large enough to cut out, or already have a cutout.'}
-            </div>
+            {result.object ? (
+              <div className={styles.muted}>
+                {`${trackingText(result.object)}${result.object.fix.length ? ' Show the clip to fix those spots.' : ''}`}
+              </div>
+            ) : result.count ? (
+              <div className={styles.muted}>Each cutout is on the Subject track, above the lyrics.</div>
+            ) : result.refused ? null : (
+              <div className={styles.muted}>
+                The clips have no person large enough to cut out, or already have a cutout.
+              </div>
+            )}
+            {result.refused?.map((r) => (
+              <div key={r.assetId} className={styles.muted}>
+                {`${r.name}: ${r.why}`}
+              </div>
+            ))}
           </div>
         </div>
       </ToolView>

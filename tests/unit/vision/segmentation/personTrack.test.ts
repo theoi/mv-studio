@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { centroid } from '../../../../src/vision/mask/ops.ts'
 import { appendFrame, createPackedTrack, createTrackReader } from '../../../../src/vision/mask/track.ts'
-import { buildPersonTrack, trackSuitability } from '../../../../src/vision/segmentation/personTrack.ts'
+import {
+  buildPersonTrack,
+  findTrackPeople,
+  trackSuitability,
+} from '../../../../src/vision/segmentation/personTrack.ts'
 import type { JobProgress as Progress } from '../../../../src/shared/jobs.ts'
 import { discMask, fakeBitmap, fakeOnnx, fakeSegmentation, fakeSource, timeOf } from './fakes.ts'
 
@@ -95,6 +99,31 @@ describe('buildPersonTrack', () => {
     expect(seg.calls).toContain('cancelTrack')
   })
 
+  it('looks for people 5 times a second and judges only the mask near them', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const withPeople = await buildPersonTrack({ segmentation: fakeSegmentation() }, source, { faceFps: 0 })
+    expect(withPeople.people.map((p) => p.t)).toEqual(
+      [0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8].map((t) => expect.closeTo(t, 6)),
+    )
+    expect(withPeople.suitability.verdict).toBe('good')
+    // The same masks with no one the detector calls a person.
+    const noOne = await buildPersonTrack({ segmentation: fakeSegmentation(undefined, () => []) }, source, {
+      faceFps: 0,
+    })
+    expect(noOne.track.packed).toEqual(withPeople.track.packed)
+    expect(noOne.suitability).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+  })
+
+  it('finds the people in a stored track without segmenting', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const seg = fakeSegmentation()
+    const people = await findTrackPeople(seg, source, { start: 0, fps: 25, frameCount: 50 })
+    expect(people).toHaveLength(10)
+    expect(people[0]!.boxes).toEqual([{ x: 0, y: 0, width: 1, height: 1 }])
+    expect(seg.analyzed.every((a) => a.people && !a.mask)).toBe(true)
+    expect(seg.calls).not.toContain('configure')
+  })
+
   it('requires an ONNX backend for high-quality ranges', async () => {
     const { source } = fakeSource({ duration: 1 })
     await expect(
@@ -126,14 +155,23 @@ describe('trackSuitability', () => {
     return t
   }
 
+  const everywhere = [{ t: 0, boxes: [{ x: 0, y: 0, width: 1, height: 1 }] }]
+  const hold = (n: number) => Array.from({ length: n }, (_, i) => ({ ...everywhere[0]!, t: i * 0.2 }))
+
   it('reports a cutout that flickers between frames, measured on the frames next to each sample', () => {
-    const r = trackSuitability(track((k) => (k % 2 ? rect(20, 30) : rect(20, 40))))
+    const r = trackSuitability(
+      track((k) => (k % 2 ? rect(20, 30) : rect(20, 40))),
+      hold(10),
+    )
     expect(r.stability!).toBeLessThan(0.7)
     expect(r.reasons).toContain('unstable-mask')
   })
 
   it('keeps a subject that moves and changes shape smoothly stable and good', () => {
-    const r = trackSuitability(track((k) => rect(4 + Math.floor(k / 2), 20 + k)))
+    const r = trackSuitability(
+      track((k) => rect(4 + Math.floor(k / 2), 20 + k)),
+      hold(10),
+    )
     expect(r.stability!).toBeGreaterThan(0.95)
     expect(r.verdict).toBe('good')
   })

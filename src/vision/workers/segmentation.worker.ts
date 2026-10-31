@@ -1,10 +1,16 @@
 /// <reference lib="webworker" />
-import { FaceDetector, ImageSegmenter, InteractiveSegmenterLegacy } from '@mediapipe/tasks-vision'
+import {
+  FaceDetector,
+  ImageSegmenter,
+  InteractiveSegmenterLegacy,
+  ObjectDetector,
+} from '@mediapipe/tasks-vision'
 import type {
   Delegate,
   FaceObservation,
   FrameAnalysis,
   FrameAnalysisRequest,
+  PersonDetection,
   PersonModel,
   SelectRequest,
   TrackFrameRequest,
@@ -13,6 +19,7 @@ import type {
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
 import { floatToMask, resizeMask } from '../mask/ops.ts'
+import { PERSON_MIN_SCORE } from '../mask/suitability.ts'
 import { createMediaPipeTask, mediapipeModel } from '../runtime/loaders.ts'
 import { withModelProgress } from '../../shared/transformers.ts'
 import { VISION_MODELS } from '../runtime/models.ts'
@@ -28,6 +35,7 @@ import type { GrayImage, Mask, PackedMaskTrack, RgbaImage } from '../types.ts'
 let segmenter: ImageSegmenter | null = null
 let segmenterKey = ''
 let faceDetector: FaceDetector | null = null
+let personDetector: ObjectDetector | null = null
 let selector: InteractiveSegmenterLegacy | null = null
 let lastTimestamp = 0
 let timestampOffset = 0
@@ -71,6 +79,21 @@ async function getFaceDetector(): Promise<FaceDetector> {
     }),
   )
   return faceDetector
+}
+
+async function getPersonDetector(): Promise<ObjectDetector> {
+  if (personDetector) return personDetector
+  const modelAssetBuffer = await mediapipeModel(VISION_MODELS.personDetector)
+  personDetector ??= await createMediaPipeTask((fileset) =>
+    ObjectDetector.createFromOptions(fileset, {
+      baseOptions: { modelAssetBuffer, delegate: 'CPU' },
+      runningMode: 'IMAGE',
+      scoreThreshold: PERSON_MIN_SCORE,
+      categoryAllowlist: ['person'],
+      maxResults: 10,
+    }),
+  )
+  return personDetector
 }
 
 async function getSelector(): Promise<InteractiveSegmenterLegacy> {
@@ -149,6 +172,27 @@ async function detectFaces(bitmap: ImageBitmap): Promise<FaceObservation[]> {
     })
 }
 
+async function detectPeople(bitmap: ImageBitmap): Promise<PersonDetection[]> {
+  const det = await getPersonDetector()
+  return det
+    .detect(bitmap)
+    .detections.filter((d) => d.boundingBox)
+    .map((d): PersonDetection => {
+      const b = d.boundingBox!
+      const x = Math.max(0, b.originX / bitmap.width)
+      const y = Math.max(0, b.originY / bitmap.height)
+      return {
+        box: {
+          x,
+          y,
+          width: Math.min(1 - x, b.width / bitmap.width),
+          height: Math.min(1 - y, b.height / bitmap.height),
+        },
+        score: d.categories[0]?.score ?? 0,
+      }
+    })
+}
+
 async function segmentPerson(bitmap: ImageBitmap, timestampMs: number): Promise<Mask> {
   const seg = await getSegmenter()
   const result = seg.segmentForVideo(bitmap, nextTimestamp(timestampMs))
@@ -196,10 +240,12 @@ const api = {
       const list: Transferable[] = []
       if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
       if (req.mask) {
-        out.mask = await segmentPerson(bitmap, req.timestampMs)
+        const mask = await segmentPerson(bitmap, req.timestampMs)
+        out.mask = req.maskSize ? resizeMask(mask, req.maskSize.width, req.maskSize.height) : mask
         list.push(out.mask.data.buffer)
       }
       if (req.faces) out.faces = await withModelProgress(ctx.progress, () => detectFaces(bitmap))
+      if (req.people) out.people = await withModelProgress(ctx.progress, () => detectPeople(bitmap))
       if (req.gray || req.rgba) {
         const rgba = pixels(bitmap)
         if (req.gray) {
@@ -262,9 +308,12 @@ const api = {
       const standard = await segmentPerson(bitmap, req.timestampMs)
       const { mask, usedHq } = req.hq ? preferHq(standard, req.hq) : { mask: standard, usedHq: false }
       const faces = req.faces ? await withModelProgress(ctx.progress, () => detectFaces(bitmap)) : undefined
+      const people = req.people
+        ? await withModelProgress(ctx.progress, () => detectPeople(bitmap))
+        : undefined
       const rgba = pixels(bitmap)
       const stats = builder.push({ mask, gray: luma(rgba), rgba })
-      return { ...stats, usedHq, ...(faces ? { faces } : {}) }
+      return { ...stats, usedHq, ...(faces ? { faces } : {}), ...(people ? { people } : {}) }
     } catch (err) {
       throw visionError(err, 'internal')
     } finally {
