@@ -6,6 +6,7 @@ import {
   cutoutCommands,
   findPersonMask,
   footageRows,
+  refusalText,
   retryPeopleSkipped,
   suitabilityOf,
   suitabilityText,
@@ -148,6 +149,37 @@ describe('suitability', () => {
     useBehind.setState({ checks: {} })
   })
 
+  it('says the cutout may still turn down a shot the quick check found a person in only in parts', () => {
+    const quick: Suitability = {
+      status: 'checked',
+      verdict: 'marginal',
+      reasons: ['no-subject'],
+      quick: true,
+    }
+    expect(suitabilityText(quick)).toEqual({
+      status: 'Person found',
+      why: 'Works in parts of this shot. In the other parts, no one is large enough to cut out. The cutout takes a closer look and may still turn it down.',
+      brief: 'Works in parts of this shot, may change on a closer look',
+      ok: true,
+    })
+    expect(suitabilityText({ status: 'checked', verdict: 'good', reasons: [], quick: true })).toEqual({
+      status: 'Person found',
+      ok: true,
+    })
+  })
+
+  it('says a turn-down after an offer comes from the cutout’s closer look', () => {
+    const refused = (first: 'no-subject' | 'subject-too-small'): Suitability => ({
+      status: 'checked',
+      verdict: 'unsuitable',
+      reasons: [first, 'many-small-subjects'],
+    })
+    expect(refusalText(refused('no-subject'))).toBe('On a closer look, no one is large enough to cut out.')
+    expect(refusalText(refused('subject-too-small'))).toBe(
+      'On a closer look, people are too small in this wide shot.',
+    )
+  })
+
   it('says why a failed check failed and that only video clips have people', () => {
     expect(suitabilityText({ status: 'failed', message: 'The clip could not be read.' })).toMatchObject({
       why: 'The clip could not be read.',
@@ -234,6 +266,19 @@ describe('clips showing part of their footage', () => {
       [asset.id]: { ...firstHalf, peopleSkipped: true },
     })
     expect(whole).toMatchObject({ verdict: 'marginal', reasons: ['subject-too-small'], peopleSkipped: true })
+  })
+
+  it('keep a quick check’s hedge when the part they show has a person only in parts', () => {
+    const asset = threeParts()
+    const project = editor.getProject()
+    const checks = { [asset.id]: { ...firstHalf, quick: true } }
+    expect(suitabilityText(suitabilityOf(project, project.clips['c-whole'], checks)).brief).toBe(
+      'Works in parts of this shot, may change on a closer look',
+    )
+    expect(suitabilityText(suitabilityOf(project, project.clips['c-first'], checks))).toEqual({
+      status: 'Person found',
+      ok: true,
+    })
   })
 })
 

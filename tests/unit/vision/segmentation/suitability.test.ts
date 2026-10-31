@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { checkSuitability } from '../../../../src/vision/segmentation/suitability.ts'
+import { checkMinRangeSeconds, checkSuitability } from '../../../../src/vision/segmentation/suitability.ts'
+import { suitabilityInRange } from '../../../../src/vision/mask/suitability.ts'
 import { analyzeSubjects } from '../../../../src/vision/reframe/analyze.ts'
 import { discMask, fakeSegmentation, fakeSource } from './fakes.ts'
 
@@ -58,6 +59,40 @@ describe('checkSuitability', () => {
     expect(seg.analyzed.every((a) => a.people)).toBe(true)
     expect(seg.analyzed[0]!.size).toEqual({ width: 512, height: 288 })
     expect(seg.analyzed[0]!.maskSize).toEqual({ width: 256, height: 144 })
+  })
+
+  it('offers a part of a shot only where the person is usable for 1.2 s, and judges parts of it the same way', async () => {
+    // 4 s at 5 samples a second: a large person in the samples from 1 s until `until`, a small one in the others.
+    const shot = (until: number) =>
+      checkSuitability(
+        fakeSegmentation((t, s) =>
+          discMask(s, s.width / 2, s.height / 2, t > 0.99 && t < until ? s.height / 3 : s.height / 20),
+        ),
+        fakeSource({ duration: 4 }).source,
+      )
+    // 5 samples: a person for 1 s.
+    const brief = await shot(1.99)
+    expect(brief).toMatchObject({ verdict: 'unsuitable', usableFraction: 0.25 })
+    expect(suitabilityInRange(brief.evidence!, { start: 0.5, end: 3.5 })).toMatchObject({
+      verdict: 'unsuitable',
+      usableFraction: 1 / 3,
+    })
+    // 7 samples: 1.4 s.
+    expect(await shot(2.39)).toMatchObject({ verdict: 'marginal', reasons: ['subject-too-small'] })
+  })
+
+  it('allows half a spacing on long shots, so a part needs the sample count nearest 1.2 s', async () => {
+    // 45 s in 90 samples: one every 0.5 s. A large person in the 2 samples at 10 and 10.5 s (1 s), small elsewhere.
+    const seg = fakeSegmentation((t, s) =>
+      discMask(s, s.width / 2, s.height / 2, t > 9.9 && t < 10.6 ? s.height / 3 : s.height / 20),
+    )
+    const report = await checkSuitability(seg, fakeSource({ duration: 45 }).source)
+    expect(report.sampledFrames).toBe(90)
+    expect(suitabilityInRange(report.evidence!, { start: 9, end: 12 })).toMatchObject({
+      verdict: 'marginal',
+      suitableRanges: [{ start: 9.75, end: 10.75 }],
+    })
+    expect(checkMinRangeSeconds(0.2)).toBe(1.1)
   })
 
   it('bridges a missed detection on a long shot, whose samples are further apart than the hold', async () => {
