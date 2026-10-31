@@ -423,11 +423,54 @@ export function Select<T extends string>({
   )
 }
 
-export function ColorField({ value, ariaLabel }: { value: string; ariaLabel: string }) {
+/** #rgb and #rrggbbaa as #rrggbb, which is all a color input takes; anything else as black. */
+function inputHex(value: string): string {
+  const v = value.trim().toLowerCase()
+  if (/^#[0-9a-f]{6}$/.test(v)) return v
+  if (/^#[0-9a-f]{8}$/.test(v)) return v.slice(0, 7)
+  if (/^#[0-9a-f]{3}$/.test(v)) return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`
+  return '#000000'
+}
+
+/**
+ * A color swatch and its value. With `onChange`, clicking it (or Enter or Space when focused) opens the system color
+ * picker; `onChange` runs while a color is picked and `onCommit` once the picker closes.
+ */
+export function ColorField({
+  value,
+  ariaLabel,
+  onChange,
+  onCommit,
+}: {
+  value: string
+  ariaLabel: string
+  onChange?: (hex: string) => void
+  onCommit?: () => void
+}) {
+  if (!onChange)
+    return (
+      <span className={styles.color} aria-label={ariaLabel} role="button" tabIndex={0}>
+        <span className={styles.colorSwatch} style={{ background: value }} />
+        <span className="tnum">{value.toUpperCase()}</span>
+      </span>
+    )
   return (
-    <span className={styles.color} aria-label={ariaLabel} role="button" tabIndex={0}>
+    <label className={styles.color}>
+      <input
+        // React's onChange is the input event; the native change event fires once the picker closes.
+        ref={(el) => {
+          if (!el || !onCommit) return
+          el.addEventListener('change', onCommit)
+          return () => el.removeEventListener('change', onCommit)
+        }}
+        type="color"
+        className={styles.colorInput}
+        value={inputHex(value)}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={ariaLabel}
+      />
       <span className={styles.colorSwatch} style={{ background: value }} />
       <span className="tnum">{value.toUpperCase()}</span>
-    </span>
+    </label>
   )
 }

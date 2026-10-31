@@ -17,7 +17,8 @@ function isTyping(el: EventTarget | null) {
   if (!node) return false
   return (
     node.isContentEditable ||
-    node.tagName === 'INPUT' ||
+    // A color input takes no typing, so undo and the other shortcuts still work while it is focused.
+    (node.tagName === 'INPUT' && (node as HTMLInputElement).type !== 'color') ||
     node.tagName === 'TEXTAREA' ||
     node.getAttribute('role') === 'combobox' ||
     // Sliders take the arrow keys, Home and End for their value.

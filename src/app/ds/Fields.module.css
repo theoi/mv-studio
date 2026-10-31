@@ -626,6 +626,26 @@
   background: var(--bg-active);
 }
 
+label.color {
+  position: relative;
+}
+
+label.color:has(.colorInput:focus-visible) {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+/* The native color input covers the field, invisible, so a click or Enter opens the system picker. */
+.colorInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .colorSwatch {
   width: 18px;
   height: 18px;
