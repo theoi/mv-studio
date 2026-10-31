@@ -227,3 +227,26 @@ test('a slow model shows the time so far, and Cancel stops the request', async (
   await expect(page.getByText('“make the chorus more intense”')).toBeHidden()
   expect((await projectState(page)).clips).toBe(before.clips)
 })
+
+test('a sentence typed in the command palette goes to the Ask box', async ({ page }) => {
+  const bodies = await model(page, [addTitle])
+  await openHarness(page)
+  await page.evaluate((settings) => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem('mv-studio.cloud.v1', JSON.stringify({ llm: settings }))
+  }, OLLAMA)
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate(() => {
+    window.location.hash = '#/editor?kind=ai&tab=inspector'
+  })
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k')
+  const palette = page.getByRole('dialog')
+  await palette.getByRole('combobox').fill('add a title at the start')
+  await palette.getByRole('option', { name: /^Ask Assist: “add a title at the start”/ }).click()
+  await expect(palette).toBeHidden()
+  await expect(page.getByText('“add a title at the start”')).toBeVisible()
+  await expect(page.getByText('Added a title at the start', { exact: true }).first()).toBeVisible()
+  expect(await projectState(page)).toMatchObject({ titles: 1, undo: 'Ask: Added a title at the start' })
+  expect(bodies[0]).toContain('Request: add a title at the start')
+})

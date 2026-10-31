@@ -30,10 +30,11 @@ import {
 } from 'lucide-react'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { settingsForAspect } from '../../../model/index.ts'
+import { ask } from '../../state/ask.ts'
 import { openImport } from '../../state/importer.ts'
 import { downloadProjectFile, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { addTextAtPlayhead, dispatch, editor, splitAtPlayhead, undo } from '../../state/project.ts'
-import { openAssist, set, toast, useUi } from '../../state/ui.ts'
+import { openAssist, set, useUi } from '../../state/ui.ts'
 import styles from './CommandPalette.module.css'
 
 interface Action {
@@ -255,7 +256,7 @@ export function CommandPalette() {
                     onSelect={() =>
                       run(() => {
                         openAssist('home')
-                        toast('Assist is planning your change…')
+                        void ask(search.trim())
                       })
                     }
                   >
