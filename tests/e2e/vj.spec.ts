@@ -91,9 +91,14 @@ async function setUp(page: Page, o: { beats?: boolean } = {}): Promise<PadKeys> 
     window.addEventListener('keyup', log, { capture: true })
     const frames: { at: number; time: number; rgb: number[] }[] = []
     preview.onFrame((time: number) => {
-      const px = testing.readPixels(canvas, 4, 4)
-      const i = (1 * 4 + 1) * 4
-      frames.push({ at: performance.now(), time, rgb: [px[i], px[i + 1], px[i + 2]] })
+      const at = performance.now()
+      // Through captureFrame(): a canvas drawn in the render worker cannot be read here.
+      void preview.captureFrame().then((frame: ImageBitmap) => {
+        const px = testing.readPixels(frame, 4, 4)
+        frame.close()
+        const i = (1 * 4 + 1) * 4
+        frames.push({ at, time, rgb: [px[i], px[i + 1], px[i + 2]] })
+      })
     })
     window.mvStudio.vjTest = {
       editor,
@@ -239,7 +244,9 @@ test('keys played over the song switch clips, effects and looks live and land on
       const still = async (t: number) => {
         preview.seek(t)
         await preview.rendered()
-        const a = testing.readPixels(preview.canvas, 4, 4)
+        const frame = await preview.captureFrame()
+        const a = testing.readPixels(frame, 4, 4)
+        frame.close()
         const i = (1 * 4 + 1) * 4
         const exp = testing.createCompositor('export', 320, 180)
         await exp.compositor.render(project, t)
@@ -442,17 +449,21 @@ test('holding Freeze stills the playing footage in the live preview and records 
     let previous: Uint8ClampedArray | null = null
     const motion: { at: number; diff: number }[] = []
     preview.onFrame(() => {
-      const px: Uint8ClampedArray = testing.readPixels(preview.canvas, 32, 18)
-      if (previous) {
-        let sum = 0
-        for (let i = 0; i < px.length; i += 4)
-          sum +=
-            Math.abs(px[i]! - previous[i]!) +
-            Math.abs(px[i + 1]! - previous[i + 1]!) +
-            Math.abs(px[i + 2]! - previous[i + 2]!)
-        motion.push({ at: performance.now(), diff: sum / (px.length / 4) / 3 })
-      }
-      previous = px
+      const at = performance.now()
+      void preview.captureFrame().then((frame: ImageBitmap) => {
+        const px: Uint8ClampedArray = testing.readPixels(frame, 32, 18)
+        frame.close()
+        if (previous) {
+          let sum = 0
+          for (let i = 0; i < px.length; i += 4)
+            sum +=
+              Math.abs(px[i]! - previous[i]!) +
+              Math.abs(px[i + 1]! - previous[i + 1]!) +
+              Math.abs(px[i + 2]! - previous[i + 2]!)
+          motion.push({ at, diff: sum / (px.length / 4) / 3 })
+        }
+        previous = px
+      })
     })
     window.mvStudio.vjTest.motion = motion
     return frames.length

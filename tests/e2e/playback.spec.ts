@@ -214,7 +214,9 @@ test('a paused preview frame matches the export render of the same time', async 
     for (const t of [0.5, 2.2, 1.1]) {
       preview.seek(t)
       await preview.rendered()
-      const a = testing.readPixels(canvas, 480, 270)
+      const frame = await preview.captureFrame()
+      const a = testing.readPixels(frame, 480, 270)
+      frame.close()
       await exp.compositor.render(p, t)
       const b = testing.readPixels(exp.compositor.canvas, 480, 270)
       let sum = 0
@@ -296,9 +298,19 @@ test('slow-motion and frozen clips show the same source frames in playing previe
     preview.setViewport(W, H, 1)
     await preview.rendered()
     const samples: { t: number; n: number }[] = []
-    preview.onFrame((t: number) => samples.push({ t, n: frameNumber(canvas) }))
+    const reads: Promise<void>[] = []
+    // Through captureFrame(): a canvas drawn in the render worker cannot be read here.
+    preview.onFrame((t: number) =>
+      reads.push(
+        preview.captureFrame().then((frame: ImageBitmap) => {
+          samples.push({ t, n: frameNumber(frame) })
+          frame.close()
+        }),
+      ),
+    )
     await preview.play()
     await new Promise((resolve) => setTimeout(resolve, 4300))
+    await Promise.all(reads)
     preview.dispose()
 
     const exp = testing.createCompositor('export', W, H)
