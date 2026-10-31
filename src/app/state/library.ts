@@ -31,7 +31,7 @@ import {
 } from '../../plugins/typography/styles.ts'
 import { formatTime, plural } from '../format.ts'
 import { dispatch, editor, sectionAt, timelineDuration, viewOf } from './project.ts'
-import { get, select, set, toast, type Selection } from './ui.ts'
+import { get, select, selectedClipIds, set, toast, type Selection } from './ui.ts'
 
 /** Anything the library search can match: names, categories, descriptions and tags. */
 export interface Searchable {
@@ -562,35 +562,58 @@ export function textStyleItems(group: 'styles' | 'karaoke'): TextStylePreset[] {
 export type TextTargets =
   | {
       clipIds: Id[]
-      /** Names them for the toast and the note: "“Title”", "this lyric line", "2 lyric lines". */
+      /** Names them for the toast and the note: "“Title”", "this lyric line", "3 texts", "2 lyric lines". */
       what: string
-      /** The selected text clip, the selected lyric line, or every lyric line (nothing is selected). */
-      scope: 'text' | 'line' | 'lyrics'
+      /**
+       * The selected text clip, the selected lyric line, the texts among several selected clips, or every lyric line
+       * (nothing is selected).
+       */
+      scope: 'text' | 'line' | 'several' | 'lyrics'
     }
   | { why: string }
 
 const NO_TEXT = 'Select a text or lyric line, or add text first'
 const NOT_TEXT = 'Select a text or lyric line first'
 const LOCKED_TEXT = 'That track is locked. Unlock it to restyle this text.'
+const LOCKED_TEXTS = 'Their tracks are locked. Unlock them to restyle these texts.'
 const LOCKED_LYRICS = 'The Lyrics track is locked. Unlock it to restyle the lyrics.'
 
+const one = (clip: TextClip): TextTargets =>
+  clip.lyricLineId
+    ? { clipIds: [clip.id], what: 'this lyric line', scope: 'line' }
+    : { clipIds: [clip.id], what: `“${clip.name ?? clip.text}”`, scope: 'text' }
+
 /**
- * The text clips a clicked kinetic preset or text style goes on: the selected text clip or lyric line, or every lyric
- * line when nothing is selected (skipping lines on locked tracks). Anything else selected, or a selected text on a
- * locked track, changes nothing, and `why` says what to do.
+ * The text clips a clicked kinetic preset or text style goes on: the selected text clip or lyric line, the texts
+ * among several selected clips (skipping those on locked tracks), or every lyric line when nothing is selected
+ * (skipping lines on locked tracks). Anything else selected, or selected text only on locked tracks, changes nothing,
+ * and `why` says what to do.
  */
 export function textTargets(project: Project, selection: Selection): TextTargets {
   const locked = lockedTracks(project)
   const texts = Object.values(project.clips).filter((c): c is TextClip => c.type === 'text')
+  const picked = selectedClipIds(selection)
+  if (picked.length > 1) {
+    const chosen = picked.flatMap((id) => texts.filter((c) => c.id === id))
+    if (!chosen.length) return { why: NOT_TEXT }
+    const open = chosen.filter((c) => !locked.has(c.trackId))
+    if (!open.length) return { why: chosen.length > 1 ? LOCKED_TEXTS : LOCKED_TEXT }
+    const [first] = open
+    if (open.length === 1 && first) return one(first)
+    const lines = open.every((c) => c.lyricLineId)
+    return {
+      clipIds: open.map((c) => c.id),
+      what: plural(open.length, lines ? 'lyric line' : 'text'),
+      scope: 'several',
+    }
+  }
   if (selection.type === 'clip' || selection.type === 'lyric') {
     const selected = texts.find((c) =>
       selection.type === 'clip' ? c.id === selection.id : c.lyricLineId === selection.id,
     )
     if (!selected) return { why: NOT_TEXT }
     if (locked.has(selected.trackId)) return { why: LOCKED_TEXT }
-    return selected.lyricLineId
-      ? { clipIds: [selected.id], what: 'this lyric line', scope: 'line' }
-      : { clipIds: [selected.id], what: `“${selected.name ?? selected.text}”`, scope: 'text' }
+    return one(selected)
   }
   if (selection.type !== 'none') return { why: NOT_TEXT }
   const lines = texts.filter((c) => c.lyricLineId)

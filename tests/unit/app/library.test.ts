@@ -33,7 +33,7 @@ import {
   visualPlacement,
 } from '../../../src/app/state/library.ts'
 import { editor } from '../../../src/app/state/project.ts'
-import { get, set } from '../../../src/app/state/ui.ts'
+import { get, set, type Selection } from '../../../src/app/state/ui.ts'
 
 beforeAll(() => {
   // Toasts time out through window.setTimeout.
@@ -401,6 +401,45 @@ describe('kinetic presets and text styles', () => {
     )
   })
 
+  it('goes on the texts among several selected clips, skipping locked ones', () => {
+    const s = textScene()
+    const several = (...ids: string[]): Selection => ({ type: 'clip', id: ids[ids.length - 1]!, ids })
+    expect(textTargets(s.p, several(s.line2.id, s.title.id))).toEqual({
+      clipIds: [s.line2.id, s.title.id],
+      what: '2 texts',
+      scope: 'several',
+    })
+    expect(textTargets(s.p, several(s.line.id, s.line2.id, s.hidden.id))).toEqual({
+      clipIds: [s.line.id, s.line2.id],
+      what: '2 lyric lines',
+      scope: 'several',
+    })
+    // A video in the selection is left out; one text left is named as when it is selected alone.
+    expect(textTargets(s.p, several(s.a.id, s.title.id))).toMatchObject({
+      clipIds: [s.title.id],
+      what: '“Title”',
+    })
+    expect(textTargetHint(s.p, several(s.line2.id, s.title.id))).toBe('Click a style to use it on 2 texts')
+    expect(textTargets(s.p, several(s.a.id, s.b.id))).toEqual({ why: 'Select a text or lyric line first' })
+    s.p.tracks[0] = { ...s.p.tracks[0]!, locked: true }
+    expect(textTargets(s.p, several(s.line.id, s.line2.id))).toEqual({
+      why: 'Their tracks are locked. Unlock them to restyle these texts.',
+    })
+  })
+
+  it('restyles several selected texts as one undo step', () => {
+    const s = textScene()
+    const original = (s.p.clips[s.title.id] as TextClip).style
+    editor.load(s.p)
+    set({ selection: { type: 'clip', id: s.title.id, ids: [s.line2.id, s.title.id] } })
+    applyLibraryTextStyle('neon')
+    const styled = (id: string) => (editor.getProject().clips[id] as TextClip).style
+    expect(styled(s.title.id)).toEqual(styled(s.line2.id))
+    expect(styled(s.title.id)).not.toEqual(original)
+    expect(get().toasts.at(-1)?.message).toBe('“Neon sign” on 2 texts')
+    editor.undo()
+    expect(styled(s.title.id)).toEqual(original)
+  })
   it('says to time the words when a word karaoke style lands on lines without word timings', () => {
     const s = textScene()
     editor.load(s.p)
