@@ -1,4 +1,5 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { create } from 'zustand'
 import {
   Check,
   ChevronLeft,
@@ -554,13 +555,37 @@ const QUALITY: { value: ExportQuality; label: string }[] = [
   { value: 'small', label: 'Small · quick to share' },
 ]
 
+interface OutputsDraft {
+  items: OutputItem[]
+  selectedId: string | undefined
+}
+
+/**
+ * The outputs being edited live outside the dialog's components, so a remount while the dialog is open keeps the
+ * user's choices. Closing the dialog drops them: the next opening starts from the saved (or suggested) outputs.
+ */
+const useDraft = create<{ draft: OutputsDraft | null }>(() => ({ draft: null }))
+useUi.subscribe((s, prev) => {
+  if (prev.dialog === 'export' && s.dialog !== 'export') useDraft.setState({ draft: null })
+})
+
 function ExportDialogBody() {
   const phase = useUi((s) => s.exportPhase)
   const playhead = useUi((s) => s.playhead)
   const project = useProject()
-  const [items, setItems] = useState(() => initialItems(project))
+  const [initial] = useState<OutputsDraft>(() => {
+    const items = initialItems(project)
+    return { items, selectedId: items[0]?.spec.id }
+  })
+  const { items, selectedId } = useDraft((s) => s.draft) ?? initial
+  const edit = (change: (draft: OutputsDraft) => Partial<OutputsDraft>) => {
+    const draft = useDraft.getState().draft ?? initial
+    useDraft.setState({ draft: { ...draft, ...change(draft) } })
+  }
+  const setItems = (change: (list: OutputItem[]) => OutputItem[]) =>
+    edit((draft) => ({ items: change(draft.items) }))
+  const setSelectedId = (selectedId: string) => edit(() => ({ selectedId }))
   const [candidates] = useState(() => candidateOutputs(project))
-  const [selectedId, setSelectedId] = useState(() => items[0]?.spec.id)
   /** The moment the preview shows once a shot is picked; otherwise each output's own moment. */
   const [viewTime, setViewTime] = useState<number | null>(null)
   const planned = useMemo(() => items.map((i) => planOutput(project, i.spec)), [project, items])
@@ -750,7 +775,6 @@ function ExportDialogBody() {
   )
 }
 
-/** Mounted only while open, so every opening starts from the saved (or suggested) outputs. */
 export function ExportDialog() {
   const open = useUi((s) => s.dialog === 'export')
   return open ? <ExportDialogBody /> : null

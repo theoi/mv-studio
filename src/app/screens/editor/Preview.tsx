@@ -112,7 +112,13 @@ function Stage({ ratio }: { ratio: number }) {
   return (
     <div ref={wrapRef} className={styles.stage}>
       <div className={styles.frame} style={{ width: size.width, height: size.height }}>
-        <canvas ref={canvasRef} className={styles.canvas} aria-label="Video preview" role="img" />
+        <canvas
+          ref={canvasRef}
+          className={styles.canvas}
+          aria-label="Video preview"
+          aria-busy={status === 'loading'}
+          role="img"
+        />
         {status === 'ready' && <SelectionOverlay width={size.width} height={size.height} />}
         {status === 'loading' && (
           <div className={styles.stageNote}>

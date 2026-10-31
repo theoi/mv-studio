@@ -1,5 +1,5 @@
 import type { Locator, Page } from '@playwright/test'
-import { expect, openApp, test } from './fixtures.ts'
+import { expect, openApp, test, waitForPreview } from './fixtures.ts'
 
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
 
@@ -9,12 +9,9 @@ async function openExport(page: Page) {
     localStorage.setItem('mv-studio.guide-seen', '1')
     window.location.hash = '#/editor?t=73.6'
   })
-  await expect(page.getByText('Preparing the preview')).toBeHidden({ timeout: 30_000 })
+  await waitForPreview(page)
   await page.keyboard.press(`${mod}+e`)
-  const dialog = page.getByRole('dialog', { name: 'Export' })
-  // Clicks during the opening animation land beside their (still scaling) targets.
-  await dialog.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)))
-  return dialog
+  return page.getByRole('dialog', { name: 'Export' })
 }
 
 /** The CSS background images of an element and its descendants. */
@@ -67,7 +64,7 @@ test('the export dialog plans every output from the project', async ({ page }) =
 
 test('the outputs of an export are saved with the project for next time', async ({ page }) => {
   const dialog = await openExport(page)
-  await dialog.getByLabel('Include Vertical').uncheck({ force: true })
+  await dialog.getByLabel('Include Vertical').uncheck()
   await dialog.getByRole('button', { name: /Square/ }).click()
   await dialog.getByLabel('Name').fill('Square for feed')
   await dialog.getByRole('button', { name: 'Export 2 files' }).click()
@@ -131,8 +128,8 @@ test('dragging the frame adjusts the framing of the shot shown, one shot at a ti
 test('cancelling an export keeps the files that are already done', async ({ page }) => {
   test.setTimeout(180_000)
   const dialog = await openExport(page)
-  await dialog.getByLabel('Include Full video').uncheck({ force: true })
-  await dialog.getByLabel('Include Vertical').uncheck({ force: true })
+  await dialog.getByLabel('Include Full video').uncheck()
+  await dialog.getByLabel('Include Vertical').uncheck()
   await dialog.getByRole('button', { name: /Loop for Canvas/ }).click()
   await dialog.getByRole('radio', { name: '720p' }).click()
   await dialog.getByRole('button', { name: /Square.*reframed/ }).click()
