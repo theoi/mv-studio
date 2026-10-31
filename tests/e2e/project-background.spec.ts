@@ -14,6 +14,8 @@ test('Inspector › Project › Background changes the canvas color as one undo 
     })
   await expect.poll(state).toEqual({ color: '#ff3366', undo: 'Change background color' })
   await expect(page.getByText('#FF3366')).toBeVisible()
+  // Without a song there is no preview yet; the empty stage shows the canvas in the picked color behind its card.
+  await expect(page.locator('[class*="emptyFrame"]')).toHaveCSS('background-color', 'rgb(255, 51, 102)')
   await page.getByRole('button', { name: 'Undo' }).first().click()
   await expect.poll(async () => (await state()).color).not.toBe('#ff3366')
 })
