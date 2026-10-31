@@ -35,6 +35,8 @@ export interface Toast {
   id: number
   message: string
   action?: { label: string; run: () => void }
+  /** Selects what an automatic or AI tool just made. The toast stays, so Undo is still at hand. */
+  show?: () => void
 }
 
 export interface UiState {
@@ -116,9 +118,9 @@ useUi.subscribe((s, prev) => {
 })
 
 let toastId = 1
-export function toast(message: string, action?: Toast['action']) {
+export function toast(message: string, action?: Toast['action'], options: { show?: () => void } = {}) {
   const id = toastId++
-  set((s) => ({ toasts: [...s.toasts.slice(-2), { id, message, action }] }))
+  set((s) => ({ toasts: [...s.toasts.slice(-2), { id, message, action, show: options.show }] }))
   window.setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 5200)
 }
 

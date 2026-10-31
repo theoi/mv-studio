@@ -20,6 +20,7 @@ import { assetPlacement } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { dispatch, editor } from './project.ts'
+import { showClips } from './reveal.ts'
 import { beatGridOf } from '../../vj/quantize.ts'
 import { get, openAssist, set, toast } from './ui.ts'
 
@@ -287,6 +288,7 @@ export async function startGenerate(at?: number): Promise<void> {
       const blob = image ? await appMedia.getFile(image) : undefined
       ctx.throwIfCancelled()
       const assets: Asset[] = []
+      let placed: string[] = []
       let usd = 0
       try {
         for (let i = 0; i < count; i++) {
@@ -310,11 +312,9 @@ export async function startGenerate(at?: number): Promise<void> {
         }
         ctx.throwIfCancelled()
         // Placed against the project as it is now, where it was meant to go when the user pressed Generate.
-        if (
-          !dispatch(placementCommands(editor.getProject(), assets, start, target ?? undefined), { label })
-        ) {
-          throw new Error('The result could not be added to the project.')
-        }
+        const placement = placementCommands(editor.getProject(), assets, start, target ?? undefined)
+        if (!dispatch(placement, { label })) throw new Error('The result could not be added to the project.')
+        placed = placement.flatMap((c) => (c.type === 'clip.add' ? [c.clip.id] : []))
         // The next run goes to the playhead again, unless another place was picked meanwhile.
         if (target && form.target === target) setGenerateForm({ target: null })
       } finally {
@@ -324,10 +324,11 @@ export async function startGenerate(at?: number): Promise<void> {
       const outcome = { label, assets, start, usd }
       outcomes.set(jobId, outcome)
       const name = assets.length === 1 ? (assets[0]?.name ?? 'the result') : `${assets.length} images`
-      toast(`Added ${name} at ${formatTime(start)}`, {
-        label: 'Undo',
-        run: () => undoOutcome(outcome),
-      })
+      toast(
+        `Added ${name} at ${formatTime(start)}`,
+        { label: 'Undo', run: () => undoOutcome(outcome) },
+        { show: () => showClips(placed) },
+      )
       return outcome
     },
   })

@@ -210,6 +210,13 @@ test('an image goes through fal.ai’s queue and lands in Media and at the playh
   const name = 'AI image: Neon city skyline at night'
   await expect(timelineClip(page, name, '0:12.0 to 0:16.0')).toHaveCount(1)
   await expect(libraryCard(page, name)).toHaveCount(1)
+  // Show in the toast selects the new clip, and the toast stays so Undo is still at hand.
+  await page.getByRole('button', { name: 'Show', exact: true }).first().click()
+  await expect(timelineClip(page, name, '0:12.0 to 0:16.0')).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    page.getByRole('tabpanel', { name: 'Inspector' }).getByText(name, { exact: true }),
+  ).toBeVisible()
+  await page.getByRole('tab', { name: 'Assist' }).click()
   await page.getByRole('button', { name: 'Undo', exact: true }).first().click()
   await expect(timelineClip(page, name, '0:12')).toHaveCount(0)
   await expect(libraryCard(page, name)).toHaveCount(0)

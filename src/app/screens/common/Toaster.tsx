@@ -9,6 +9,11 @@ export function Toaster() {
       {toasts.map((t) => (
         <div key={t.id} className={styles.toast} data-toast>
           <span>{t.message}</span>
+          {t.show && (
+            <button className={styles.toastAction} onClick={t.show}>
+              Show
+            </button>
+          )}
           {t.action && (
             <button
               className={styles.toastAction}
