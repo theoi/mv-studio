@@ -300,3 +300,80 @@ test('contrast keeps fully saturated solids, text and visualizers at full streng
   const hue = (Math.atan2(Math.sqrt(3) * (eg - eb), 2 * er - eg - eb) * 180) / Math.PI
   expect(Math.abs(hue - 30)).toBeLessThan(4)
 })
+
+test('hue turns saturated colors instead of darkening them, exposure keeps them saturated, every variant compiles', async ({
+  page,
+}) => {
+  await openHarness(page)
+  const r = await page.evaluate(async () => {
+    const { model, testing } = window.mvStudio
+    const W = 32
+    const H = 18
+    const { compositor } = testing.createCompositor('export', W, H)
+    const solid = async (color: string, adjustments: Record<string, number>) => {
+      const p = model.createProject({ name: 'solid' })
+      const clip = model.createSolidClip({ trackId: p.tracks[0].id, color, start: 0, duration: 4 })
+      clip.adjustments = Object.fromEntries(Object.entries(adjustments).map(([k, value]) => [k, { value }]))
+      p.clips[clip.id] = clip
+      await compositor.render(p, 1)
+      const px = testing.readPixels(compositor.canvas, W, H) as Uint8ClampedArray
+      const i = ((H / 2) * W + W / 2) * 4
+      return [px[i]!, px[i + 1]!, px[i + 2]!]
+    }
+    const hue = {
+      blueA: await solid('#0000ff', { hue: 0.2 }),
+      blueWithContrast: await solid('#0000ff', { hue: 0.2, contrast: 0.3 }),
+      blueHalfway: await solid('#0000ff', { hue: 1 }),
+      muted: await solid('#806060', { hue: 0.3 }),
+      mutedSource: await solid('#806060', {}),
+    }
+    const exposure: Record<string, number[][]> = {}
+    for (const color of ['#00ff00', '#ffff00', '#00ffff', '#ff0000'])
+      exposure[color] = [
+        await solid(color, { exposure: 0.3 }),
+        await solid(color, { exposure: 0.3, saturation: 0.001 }),
+      ]
+    const nearWhite = await solid('#e0e0e0', { exposure: 1 })
+    // Every combination of adjustments, which reaches every finish-pass variant.
+    const keys = ['exposure', 'brightness', 'contrast', 'saturation', 'temperature', 'tint', 'hue']
+    const source = await solid('#3366cc', {})
+    const unchanged: string[] = []
+    for (let m = 1; m < 1 << keys.length; m++) {
+      const set = keys.filter((_, i) => m & (1 << i))
+      const c = await solid('#3366cc', Object.fromEntries(set.map((k) => [k, 0.3])))
+      if (c.every((v, i) => Math.abs(v - source[i]!) < 2)) unchanged.push(set.join('+'))
+    }
+    compositor.dispose()
+    return { hue, exposure, nearWhite, unchanged }
+  })
+  console.log('hue/exposure', JSON.stringify(r))
+  const hueOf = ([red, g, b]: number[]) =>
+    (Math.atan2(Math.sqrt(3) * (g! - b!), 2 * red! - g! - b!) * 180) / Math.PI
+  const luma = ([red, g, b]: number[]) => 0.2126 * red! + 0.7152 * g! + 0.0722 * b!
+  // A hue turn keeps a saturated blue saturated: violet a little way round, yellow halfway, never dark gray or black.
+  for (const [red, g, b] of [r.hue.blueA, r.hue.blueWithContrast]) {
+    expect(red).toBeGreaterThan(100)
+    expect(g).toBeLessThanOrEqual(5)
+    expect(b).toBeGreaterThanOrEqual(240)
+  }
+  const [hr, hg, hb] = r.hue.blueHalfway
+  expect(Math.min(hr!, hg!)).toBeGreaterThan(200)
+  expect(hb).toBeLessThan(40)
+  // A color the turn keeps in range keeps its luma.
+  expect(Math.abs(luma(r.hue.muted) - luma(r.hue.mutedSource))).toBeLessThan(3)
+  expect(Math.abs(hueOf(r.hue.muted) - hueOf(r.hue.mutedSource))).toBeGreaterThan(20)
+  // Exposure past white keeps saturated colors saturated and in their hue, with or without other adjustments.
+  for (const [color, [alone, withSaturation]] of Object.entries(r.exposure)) {
+    const want = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16))
+    for (let c = 0; c < 3; c++) {
+      if (want[c] === 255) expect(alone![c], `${color} channel ${c}`).toBeGreaterThanOrEqual(254)
+      else expect(alone![c], `${color} channel ${c}`).toBeLessThan(45)
+      expect(Math.abs(alone![c]! - withSaturation![c]!), `${color} with saturation`).toBeLessThanOrEqual(2)
+    }
+    const d = Math.abs(hueOf(alone!) - hueOf(want)) % 360
+    expect(Math.min(d, 360 - d), `${color} hue`).toBeLessThan(3)
+  }
+  // Colors close to white do turn white when pushed far past it.
+  for (const v of r.nearWhite) expect(v).toBeGreaterThanOrEqual(250)
+  expect(r.unchanged).toEqual([])
+})

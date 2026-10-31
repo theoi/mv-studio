@@ -92,13 +92,13 @@ vec3 fitGamut(vec3 c, float knee) {
 }
 
 /**
- * Pulls the chroma of c, which has no channel below 0, toward its luma just enough to bring every channel to 1 or
- * below, keeping hue and luma; colors inside are unchanged.
+ * Brings a color pushed past white back under it by its brightest channel, so it keeps its hue and saturation (a
+ * brightened pure green stays green), and eases it toward white only as it goes further past, as film highlights do.
  */
-vec3 clipWhite(vec3 c) {
-  float l = dot(c, LUMA_709);
+vec3 fitBright(vec3 c) {
   float hi = max(c.r, max(c.g, c.b));
-  return l >= 1.0 ? vec3(1.0) : l + (c - l) * min((1.0 - l) / max(hi - l, 1e-5), 1.0);
+  float over = max(hi - 1.0, 0.0);
+  return mix(c / max(hi, 1.0), vec3(1.0), over / (over + 3.0));
 }
 
 /** S-curve with slope k > 1 at pivot p that flattens into 0 and 1, for two values at once. */
@@ -129,8 +129,9 @@ vec3 contrastCurve(vec3 c, float k, float p) {
 `
 /**
  * Color adjustments, matte and opacity in one pass over a premultiplied layer. Contrast above 0 is an S-curve and
- * below 0 a fade (to 40% at -1, so the extreme stays usable); out-of-range colors roll off toward their luma, so no
- * setting clips channels or shifts hue, and neutral settings leave the layer unchanged. CURVE (contrast above 0), COLOR
+ * below 0 a fade (to 40% at -1, so the extreme stays usable). Colors pushed past white keep their hue and saturation
+ * and ease toward white, other out-of-range colors roll off toward their luma, so no setting clips channels or shifts
+ * hue, and neutral settings leave the layer unchanged. CURVE (contrast above 0), COLOR
  * (brightness, temperature, tint, hue, saturation) and HUE compile in only the adjustments a layer uses, see
  * `finishShader`.
  */
@@ -152,10 +153,21 @@ uniform float u_tint;
 uniform float u_hue;
 out vec4 outColor;
 ${TONE_GLSL}
+/**
+ * Rotates the hue of c by angle a in the BT.709 Cb/Cr plane, which keeps luma. Where the rotated color leaves 0..1
+ * (beyond where c already was), it keeps its hue and chroma and gives up luma instead: lifted out of the negatives,
+ * then scaled under the top. So a saturated blue turns violet, or yellow halfway round, instead of dark and gray.
+ */
 vec3 hueRotate(vec3 c, float a) {
-  const vec3 k = vec3(0.57735);
-  float cosA = cos(a);
-  return c * cosA + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - cosA);
+  float lo0 = min(min(c.r, min(c.g, c.b)), 0.0);
+  float hi0 = max(max(c.r, max(c.g, c.b)), 1.0);
+  float y = dot(c, LUMA_709);
+  vec2 cbcr = mat2(cos(a), sin(a), -sin(a), cos(a)) * vec2((c.b - y) / 1.8556, (c.r - y) / 1.5748);
+  float r = y + 1.5748 * cbcr.y;
+  float b = y + 1.8556 * cbcr.x;
+  c = vec3(r, (y - 0.2126 * r - 0.0722 * b) / 0.7152, b);
+  c -= min(min(c.r, min(c.g, c.b)) - lo0, 0.0);
+  return c * (hi0 / max(max(c.r, max(c.g, c.b)), hi0));
 }
 
 void main() {
@@ -169,6 +181,8 @@ void main() {
 #ifdef COLOR
     rgb += u_brightness * 0.5;
 #endif
+    // Contrast and fade keep colors in 0..1, so without COLOR this is the only fitting needed.
+    rgb = fitBright(rgb);
 #ifdef CURVE
     rgb = contrastCurve(rgb, 1.0 + u_contrast, 0.5);
 #else
@@ -181,10 +195,6 @@ void main() {
 #endif
     float l = dot(rgb, LUMA_709);
     rgb = fitGamut(mix(vec3(l), rgb, 1.0 + u_saturation), knee);
-#else
-    // Exposure, contrast and fade keep in-range colors in range and never go below 0, so only colors pushed past
-    // white need fitting, without the soft knee.
-    rgb = clipWhite(rgb);
 #endif
     c = vec4(clamp(rgb, 0.0, 1.0) * c.a, c.a);
   }
