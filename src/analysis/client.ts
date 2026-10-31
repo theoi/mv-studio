@@ -1,7 +1,9 @@
 import type { AudioAnalysis, EditCommand, Id } from '../model/index.ts'
-import { jobs, type JobHandle, type JobRunner } from '../shared/jobs.ts'
+import { JobError, jobs, type JobHandle, type JobRunner } from '../shared/jobs.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../shared/worker.ts'
 import type { DecodedAudio } from './beats/fast.ts'
+import { decodeAudioFile } from './decode.ts'
+import { part } from './jobContext.ts'
 import type { RefinedFields } from './song.ts'
 import type { AnalysisWorkerApi } from './worker-api.ts'
 
@@ -11,6 +13,8 @@ export { decodeAudioFile } from './decode.ts'
 export interface SongAnalysisOptions {
   runner?: JobRunner
   createWorker?: () => Worker
+  /** Decodes song files for analyzeAgain and trackAtTempo; defaults to the browser's decoder (main thread only). */
+  decode?: (file: Blob) => Promise<DecodedAudio>
 }
 
 /**
@@ -25,9 +29,11 @@ export class SongAnalysisService {
   private client: WorkerClient<AnalysisWorkerApi> | undefined
   private readonly runner: JobRunner
   private readonly createWorker: () => Worker
+  private readonly decode: (file: Blob) => Promise<DecodedAudio>
 
   constructor(options: SongAnalysisOptions = {}) {
     this.runner = options.runner ?? jobs
+    this.decode = options.decode ?? ((file) => decodeAudioFile(file))
     this.createWorker =
       options.createWorker ??
       (() =>
@@ -72,6 +78,69 @@ export class SongAnalysisService {
           ctx,
           audio?.channels.map((c) => c.buffer),
         ),
+    })
+  }
+
+  /**
+   * Analysis the user asked for: the fast pass, then Beat This! bars and beats, as one job `analysis.song`. Resolves
+   * with both combined, for one undoable `setAnalysisCommand` dispatch. If the refinement fails (e.g. its model
+   * cannot be downloaded), the fast analysis is returned.
+   */
+  analyzeAgain(assetId: Id, file: () => Promise<Blob>): JobHandle<AudioAnalysis> {
+    return this.runner.run({
+      kind: 'analysis.song',
+      title: 'Analyzing the song',
+      run: async (ctx) => {
+        ctx.progress({ stage: 'decode', fraction: 0, message: 'Reading the song' })
+        const audio = await this.decode(await file())
+        ctx.throwIfCancelled()
+        const transfer = audio.channels.map((c) => c.buffer)
+        const fast = await runWorkerCall(
+          this.worker(),
+          'analyzeFast',
+          { assetId, audio },
+          part(ctx, 0.05, 0.25),
+          transfer,
+        )
+        try {
+          const refined = await runWorkerCall(this.worker(), 'refineBeats', { assetId }, part(ctx, 0.25, 1))
+          return { ...fast, ...refined }
+        } catch (error) {
+          if (error instanceof JobError && error.code === 'cancelled') throw error
+          return fast
+        }
+      },
+    })
+  }
+
+  /**
+   * The beats tracked again around a tempo the user tapped (job `analysis.tempo`), for an undoable
+   * `analysis.setGrid` edit. `file` is read only when the worker no longer holds the song.
+   */
+  trackAtTempo(
+    assetId: Id,
+    bpm: number,
+    file: () => Promise<Blob>,
+  ): JobHandle<Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'>> {
+    return this.runner.run({
+      kind: 'analysis.tempo',
+      title: 'Following your tempo',
+      run: async (ctx) => {
+        if (!(await this.worker().call('holds', { assetId }))) {
+          ctx.progress({ stage: 'decode', fraction: 0, message: 'Reading the song' })
+          const audio = await this.decode(await file())
+          ctx.throwIfCancelled()
+          const transfer = audio.channels.map((c) => c.buffer)
+          return runWorkerCall(
+            this.worker(),
+            'trackAtTempo',
+            { assetId, bpm, audio },
+            part(ctx, 0.1, 1),
+            transfer,
+          )
+        }
+        return runWorkerCall(this.worker(), 'trackAtTempo', { assetId, bpm }, ctx)
+      },
     })
   }
 

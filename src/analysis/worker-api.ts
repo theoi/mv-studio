@@ -3,7 +3,13 @@ import { JobError } from '../shared/jobs.ts'
 import type { WorkerCallContext } from '../shared/worker.ts'
 import type { BeatThisModel } from './beats/beatThis.ts'
 import type { DecodedAudio } from './beats/fast.ts'
-import { analyzeSongFast, refineSongBeats, type RefinedFields, type SongState } from './song.ts'
+import {
+  analyzeSongFast,
+  refineSongBeats,
+  trackSongAtTempo,
+  type RefinedFields,
+  type SongState,
+} from './song.ts'
 
 export interface AnalysisWorkerDeps {
   beatThisModel(ctx: WorkerCallContext): Promise<BeatThisModel>
@@ -45,6 +51,25 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
       ctx.progress({ stage: 'downbeats', fraction: 0, message: 'Finding bars and refining beats' })
       const { fields } = await refineSongBeats(state, model, { signal: ctx.signal, onProgress: ctx.progress })
       return fields
+    },
+
+    async trackAtTempo(
+      args: { assetId: string; bpm: number; audio?: DecodedAudio },
+      ctx: WorkerCallContext,
+    ): Promise<Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'>> {
+      let state = states.get(args.assetId)
+      if (!state) {
+        if (!args.audio) throw new JobError('invalid-input', 'Song audio is needed to follow a tempo')
+        ctx.progress({ stage: 'spectrum', fraction: 0.1, message: 'Listening to the song' })
+        state = analyzeSongFast(args.assetId, args.audio, { signal: ctx.signal }).state
+        keep(args.assetId, state)
+      }
+      ctx.progress({ stage: 'beats', fraction: 0.8, message: 'Following your tempo' })
+      return trackSongAtTempo(state, args.bpm, ctx.signal)
+    },
+
+    holds(args: { assetId: string }): boolean {
+      return states.has(args.assetId)
     },
 
     release(args: { assetId: string }): boolean {

@@ -38,6 +38,38 @@ export function rescaleTempo(analysis: AudioAnalysis, factor: 2 | 0.5): GridEdit
   return gridEdit(analysis.assetId, rescaleGrid(gridFromAnalysis(analysis), factor))
 }
 
+/**
+ * The tempo of the beats as a listener taps it: from the median beat interval, so gaps (a silent intro, a break the
+ * beat tracker skipped) do not pull it down the way a fit over all beats does.
+ */
+function beatLevelBpm(beats: readonly number[]): number {
+  const gaps = beats
+    .slice(1)
+    .map((t, i) => t - (beats[i] as number))
+    .sort((a, b) => a - b)
+  const median = gaps[gaps.length >> 1]
+  return median ? 60 / median : 0
+}
+
+/** How close a tapped tempo must be to a beat level of the grid to count as that level. */
+const TAPPED_TEMPO_TOLERANCE = 0.04
+
+export type TappedTempoFit = { kind: 'same' } | { kind: 'rescale'; edit: GridEdit } | { kind: 'retrack' }
+
+/**
+ * How a tapped tempo fits the beats found: already followed ('same'), followed at twice or half the beat level (an
+ * instant 'rescale' edit), or not at all ('retrack': track the beats again at that tempo).
+ */
+export function fitTappedTempo(analysis: AudioAnalysis, bpm: number): TappedTempoFit {
+  const current = beatLevelBpm(analysis.beats ?? [])
+  if (!current) return { kind: 'retrack' }
+  for (const level of [1, 2, 0.5] as const) {
+    if (Math.abs(Math.log((current * level) / bpm)) > Math.log1p(TAPPED_TEMPO_TOLERANCE)) continue
+    return level === 1 ? { kind: 'same' } : { kind: 'rescale', edit: rescaleTempo(analysis, level) }
+  }
+  return { kind: 'retrack' }
+}
+
 /** Makes beat `beatIndex` a downbeat and renumbers bars from it (optionally with a new meter). */
 export function moveDownbeat(analysis: AudioAnalysis, beatIndex: number, beatsPerBar?: number): GridEdit {
   const grid = gridFromAnalysis(analysis)

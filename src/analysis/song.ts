@@ -96,6 +96,24 @@ export function analyzeSongFast(
   return { analysis, state: { mono, spec, onset, energy, grid } }
 }
 
+/** How far the tracked tempo may stray from a tempo the user tapped (ratio). */
+const TAPPED_TEMPO_RANGE = 1.06
+
+/**
+ * The beat grid tracked again around a tempo the user tapped: the period is refined from the audio within 6% of it,
+ * downbeats are provisional. The tempo counts as confirmed (confidence 1).
+ */
+export function trackSongAtTempo(
+  state: SongState,
+  bpm: number,
+  signal?: AbortSignal,
+): Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'> {
+  const tempo = { minBpm: bpm / TAPPED_TEMPO_RANGE, maxBpm: bpm * TAPPED_TEMPO_RANGE, priorBpm: bpm }
+  const { grid } = trackBeatsFast(state.spec, tempo, signal)
+  state.grid = grid
+  return { ...gridFields(grid), tempo: { bpm: grid.bpm, confidence: 1 } }
+}
+
 export type RefinedFields = Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats' | 'sections'>
 
 /** Background step: Beat This! beats and downbeats on the fast grid's tempo level, then sections on real bars. */

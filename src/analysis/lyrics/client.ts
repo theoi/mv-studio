@@ -5,6 +5,7 @@ import { modelCache, type ModelDescriptor } from '../../shared/models.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../../shared/worker.ts'
 import type { DecodedAudio } from '../beats/fast.ts'
 import { decodeAudioFile } from '../decode.ts'
+import { part } from '../jobContext.ts'
 import { DEMUCS_MODEL, WAV2VEC2_MODEL, WHISPER_MODELS, whisperFileUrls, type WhisperSize } from '../models.ts'
 import { separateRate, StemSeparationService, type StemStore } from '../stems/client.ts'
 import { lyricChorusCommand } from '../structure/chorus.ts'
@@ -275,16 +276,6 @@ function modelFiles(model: ModelDescriptor) {
 }
 
 const isCached = (url: string) => modelCache.has(url)
-
-/** A view of `ctx` whose progress fractions map onto `from`..`to` of the whole job. */
-function part(ctx: JobContext, from: number, to: number): JobContext {
-  return {
-    signal: ctx.signal,
-    throwIfCancelled: () => ctx.throwIfCancelled(),
-    progress: (p) =>
-      ctx.progress(p.fraction === undefined ? p : { ...p, fraction: from + p.fraction * (to - from) }),
-  }
-}
 
 const mixed = (doc: LyricsDoc): LyricsDoc['source'] => (doc.source === 'transcribed' ? 'mixed' : doc.source)
 
