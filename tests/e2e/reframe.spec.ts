@@ -94,7 +94,11 @@ test('Inspector › Framing sets how a clip fills other frames, in Export and wh
   await switchFrame(page, '16:9', '9:16')
   await expect(page.getByRole('status').getByText(/^Reframed for 9:16 · /)).toBeVisible()
   await page.evaluate(() => (window.location.hash = '#/editor?sel=clip:c-s-c1-1&t=67.2'))
-  await page.getByRole('button', { name: 'Framing', exact: true }).click()
+  // Escape closed Export without clearing the selection, so the clip's Framing section is still open.
+  await expect(page.getByRole('button', { name: 'Framing', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
   await expect(page.getByText('Reframed from 16:9.')).toBeVisible()
   expect(await scaleOf(page, 'c-s-c1-1')).toBeLessThan(0.9)
   await reframe.click()
