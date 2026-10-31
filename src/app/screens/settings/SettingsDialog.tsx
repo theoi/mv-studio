@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import {
+  AlertTriangle,
   Check,
   Cpu,
   ExternalLink,
@@ -19,7 +20,29 @@ import { Button } from '../../ds/Button.tsx'
 import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select, SearchInput, Switch } from '../../ds/Fields.tsx'
 import { Kbd } from '../../ds/Kbd.tsx'
-import { formatBytes } from '../../format.ts'
+import type { CloudError } from '../../../cloud/errors.ts'
+import type { CloudSettings, LlmSettings } from '../../../cloud/keys.ts'
+import {
+  llmPreset,
+  llmTimeoutSeconds,
+  modelHint,
+  pageOrigin,
+  pickDefaultModel,
+  RECOMMENDED_MODELS,
+} from '../../../cloud/llm/presets.ts'
+import { formatUsd } from '../../../cloud/pricing.ts'
+import { formatBytes, plural } from '../../format.ts'
+import {
+  choiceOf,
+  cloudSettings,
+  draftFor,
+  presetFor,
+  spendLedger,
+  testFalKey,
+  testLlm,
+  useCloud,
+  type LlmChoice,
+} from '../../state/cloud.ts'
 import { LOCAL_MODELS, clearModels, refreshModels, useModels } from '../../state/models.ts'
 import { set, toast, useUi, type SettingsPage } from '../../state/ui.ts'
 import { setVjQuantize, vjMidiDevices, vjSettings } from '../../state/vj.ts'
@@ -73,15 +96,341 @@ function Card({
   )
 }
 
-function AiPage() {
-  const [provider, setProvider] = useState('ollama')
-  const [confirm, setConfirm] = useState(true)
-  const urls: Record<string, string> = {
-    openai: 'https://api.openai.com/v1',
-    ollama: 'http://localhost:11434/v1',
-    lmstudio: 'http://localhost:1234/v1',
-    custom: '',
+const TIME_LIMITS = [30, 60, 120, 300, 600]
+const duration = (s: number) => (s < 60 ? `${s} s` : `${Math.round(s / 60)} min`)
+const NO_MODEL = 'none'
+
+/** A failed key or connection check: what happened and what to do, in place. */
+function CheckFailed({ error }: { error: CloudError }) {
+  return (
+    <div className={styles.hintBox} role="alert">
+      <AlertTriangle />
+      <span>
+        <strong>{error.title}</strong> {error.message}
+        {error.steps.map((s) => (
+          <Fragment key={s}>
+            <br />
+            {s.trim()}
+          </Fragment>
+        ))}
+      </span>
+    </div>
+  )
+}
+
+function FalCard({ falKey }: { falKey: string }) {
+  const [draft, setDraft] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState<CloudError>()
+  const connect = async () => {
+    setChecking(true)
+    setError(undefined)
+    const result = await testFalKey(draft)
+    setChecking(false)
+    if (!result.ok) return setError(result.error)
+    cloudSettings.setFalKey(draft)
+    setDraft('')
+    toast('fal.ai connected. The key is saved in this browser.')
   }
+  return (
+    <Card
+      title="fal.ai"
+      desc="AI images and video clips, and an optional better lyric draft. Pay per use with your own key."
+      status={
+        falKey ? (
+          <Badge tone="success" icon={<Check />}>
+            Connected
+          </Badge>
+        ) : (
+          <Badge>Not connected</Badge>
+        )
+      }
+    >
+      {falKey ? (
+        <div className={styles.keyRow}>
+          <Input value={`•••• ${falKey.slice(-4)}`} readOnly aria-label="fal.ai key" mono />
+          <Button
+            variant="secondary"
+            onClick={() => {
+              cloudSettings.setFalKey('')
+              toast('fal.ai key removed from this browser')
+            }}
+          >
+            Remove
+          </Button>
+        </div>
+      ) : (
+        <div className={styles.keyRow}>
+          <Input
+            type="password"
+            placeholder="Paste your fal.ai key"
+            aria-label="fal.ai key"
+            mono
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && draft.trim() && !checking) void connect()
+            }}
+          />
+          <Button variant="secondary" disabled={!draft.trim() || checking} onClick={() => void connect()}>
+            {checking ? 'Checking…' : 'Connect'}
+          </Button>
+        </div>
+      )}
+      {error && <CheckFailed error={error} />}
+      <a className={styles.link} href="https://fal.ai/dashboard/keys" target="_blank" rel="noreferrer">
+        Get a key at fal.ai <ExternalLink />
+      </a>
+    </Card>
+  )
+}
+
+const sameEndpoint = (a: LlmSettings, b: LlmSettings) =>
+  a.preset === b.preset && a.baseUrl === b.baseUrl && a.apiKey === b.apiKey
+
+function LlmCard({ saved }: { saved: LlmSettings | null }) {
+  const [draft, setDraft] = useState<LlmSettings>(() => saved ?? draftFor('ollama'))
+  const [models, setModels] = useState<string[]>([])
+  const [checking, setChecking] = useState(false)
+  const [result, setResult] = useState<{ found: number } | { error: CloudError }>()
+  const choice = choiceOf(draft.preset)
+  const preset = presetFor(choice, draft.baseUrl)
+  const connected = !!saved && sameEndpoint(saved, draft)
+  const edit = (patch: Partial<LlmSettings>) => {
+    setDraft((d) => ({ ...d, ...patch }))
+    setResult(undefined)
+  }
+  /** Changes that apply to the saved connection right away (model, time limit). */
+  const tune = (patch: Partial<LlmSettings>) => {
+    setDraft((d) => ({ ...d, ...patch }))
+    if (saved && connected) cloudSettings.setLlm({ ...saved, ...patch })
+  }
+  const pick = (c: LlmChoice) => {
+    setDraft(saved && choiceOf(saved.preset) === c ? saved : draftFor(c))
+    setModels([])
+    setResult(undefined)
+  }
+  const test = async () => {
+    const candidate = { ...draft, preset }
+    setChecking(true)
+    setResult(undefined)
+    const check = await testLlm(candidate)
+    setChecking(false)
+    if (!check.ok) return setResult({ error: check.error })
+    const model = check.models.includes(draft.model)
+      ? draft.model
+      : (pickDefaultModel(check.models, preset) ?? '')
+    const next = { ...candidate, baseUrl: check.baseUrl, model }
+    setModels(check.models)
+    setDraft(next)
+    setResult({ found: check.models.length })
+    if (model) cloudSettings.setLlm(next)
+  }
+  const options = (models.length ? models : draft.model ? [draft.model] : []).map((m) => ({
+    value: m,
+    label: m,
+  }))
+  const recommended = RECOMMENDED_MODELS.find((r) => r.preset === preset)
+  const hint = draft.model ? modelHint({ ...draft, preset }) : undefined
+  const defaultLimit = llmTimeoutSeconds({ ...draft, preset, timeoutSeconds: undefined })
+  return (
+    <Card
+      title="Language model"
+      desc="Plain-language edits and richer director plans. Works with any OpenAI-compatible endpoint, including Ollama and LM Studio on this computer."
+      status={
+        saved ? (
+          <Badge tone="success" icon={<Check />}>
+            Connected
+          </Badge>
+        ) : (
+          <Badge>Not connected</Badge>
+        )
+      }
+    >
+      <div className={styles.field}>
+        <span className={styles.fieldLabel}>Provider</span>
+        <Segmented
+          value={choice}
+          onChange={pick}
+          ariaLabel="LLM provider"
+          options={[
+            { value: 'openai', label: 'OpenAI' },
+            { value: 'ollama', label: 'Ollama' },
+            { value: 'lmstudio', label: 'LM Studio' },
+            { value: 'custom', label: 'Other' },
+          ]}
+        />
+      </div>
+      <div className={styles.grid2}>
+        <div className={styles.field}>
+          <span className={styles.fieldLabel}>Endpoint URL</span>
+          <Input
+            value={draft.baseUrl}
+            onChange={(e) => edit({ baseUrl: e.target.value })}
+            mono
+            aria-label="Endpoint URL"
+            placeholder="https://…/v1"
+          />
+        </div>
+        <div className={styles.field}>
+          <span className={styles.fieldLabel}>API key</span>
+          <Input
+            type="password"
+            value={draft.apiKey}
+            onChange={(e) => edit({ apiKey: e.target.value })}
+            placeholder={
+              llmPreset(preset).needsKey
+                ? preset === 'openai'
+                  ? 'sk-…'
+                  : 'Paste your key'
+                : llmPreset(preset).local
+                  ? 'Not needed for local models'
+                  : 'Optional'
+            }
+            aria-label="LLM API key"
+            mono
+          />
+        </div>
+      </div>
+      <div className={styles.grid2}>
+        <div className={styles.field}>
+          <span className={styles.fieldLabel}>Model</span>
+          <Select
+            value={draft.model || NO_MODEL}
+            onChange={(model) => tune({ model })}
+            ariaLabel="Model"
+            options={options.length ? options : [{ value: NO_MODEL, label: 'Test the connection first' }]}
+          />
+        </div>
+        <div className={[styles.field, styles.testField].join(' ')}>
+          <Button
+            variant="secondary"
+            disabled={checking || !draft.baseUrl.trim()}
+            onClick={() => void test()}
+          >
+            {checking ? 'Testing…' : 'Test connection'}
+          </Button>
+          {result && 'found' in result && (
+            <span className={styles.ok}>
+              <Check /> {plural(result.found, 'model')} found
+            </span>
+          )}
+        </div>
+      </div>
+      {result && 'error' in result && <CheckFailed error={result.error} />}
+      {result && 'found' in result && result.found === 0 && (
+        <div className={styles.hintBox} role="alert">
+          <AlertTriangle />
+          <span>The endpoint has no models yet. Download or load a model, then test again.</span>
+        </div>
+      )}
+      {recommended && (
+        <div className={styles.rowDesc}>
+          Recommended: <code>{recommended.model}</code>. {recommended.note.replace(/^Recommended\.\s*/, '')}
+        </div>
+      )}
+      {hint && (
+        <div className={styles.hintBox}>
+          <Info />
+          <span>{hint}</span>
+        </div>
+      )}
+      {choice !== 'openai' && preset !== 'openrouter' && !(result && 'error' in result) && (
+        <div className={styles.hintBox}>
+          <Info />
+          <span>
+            {choice === 'ollama' ? (
+              <>
+                Local runners must allow requests from this site. For Ollama, start it with{' '}
+                <code>OLLAMA_ORIGINS={pageOrigin()}</code>.
+              </>
+            ) : choice === 'lmstudio' ? (
+              <>
+                Local runners must allow requests from this site. In LM Studio, turn on “Enable CORS” in the
+                server settings.
+              </>
+            ) : (
+              <>
+                The server must allow requests from this site (<code>{pageOrigin()}</code>) in its CORS
+                settings.
+              </>
+            )}
+          </span>
+        </div>
+      )}
+      <Row
+        title="Answer time limit"
+        desc="How long to wait for one answer. Models on this computer need longer, especially the first time."
+      >
+        <Select
+          value={draft.timeoutSeconds ? String(draft.timeoutSeconds) : 'default'}
+          onChange={(v) => tune({ timeoutSeconds: v === 'default' ? undefined : Number(v) })}
+          ariaLabel="Answer time limit"
+          size="sm"
+          options={[
+            { value: 'default', label: `Default · ${duration(defaultLimit)}` },
+            ...TIME_LIMITS.map((s) => ({ value: String(s), label: duration(s) })),
+          ]}
+        />
+      </Row>
+      {saved && (
+        <div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              cloudSettings.setLlm(null)
+              setDraft(draftFor(choiceOf(saved.preset)))
+              setModels([])
+              setResult(undefined)
+              toast('Language model connection removed from this browser')
+            }}
+          >
+            Remove this connection
+          </Button>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+const REMINDERS = [0, 1, 5, 20, 50]
+
+function SpendingCard({ settings }: { settings: CloudSettings }) {
+  const month = spendLedger.monthTotal()
+  const reminders = REMINDERS.includes(settings.monthlyReminderUsd)
+    ? REMINDERS
+    : [...REMINDERS, settings.monthlyReminderUsd].sort((a, b) => a - b)
+  return (
+    <Card title="Spending" desc="Paid generation always shows its estimated cost on the button first.">
+      <Row
+        title="Ask before every paid generation"
+        desc={`Otherwise only batches over ${formatUsd(settings.confirmAboveUsd)} ask first.`}
+      >
+        <Switch
+          checked={settings.alwaysConfirmPaid}
+          onCheckedChange={(alwaysConfirmPaid) => cloudSettings.update({ alwaysConfirmPaid })}
+          ariaLabel="Ask before every paid generation"
+        />
+      </Row>
+      <Row
+        title="Remind me when this month’s spending passes"
+        desc={month > 0 ? `About ${formatUsd(month)} so far this month (estimated)` : undefined}
+      >
+        <Select
+          value={String(settings.monthlyReminderUsd)}
+          onChange={(v) => cloudSettings.update({ monthlyReminderUsd: Number(v) })}
+          ariaLabel="Spending reminder"
+          size="sm"
+          options={reminders.map((usd) => ({ value: String(usd), label: usd ? `$${usd}` : 'Off' }))}
+        />
+      </Row>
+    </Card>
+  )
+}
+
+function AiPage() {
+  const settings = useCloud()
   return (
     <>
       <div className={styles.privacy}>
@@ -89,123 +438,12 @@ function AiPage() {
         Keys are stored only in this browser and sent only to the provider you choose. Everything else works
         without them.
       </div>
-      <Card
-        title="fal.ai"
-        desc="AI images and video clips, and an optional better lyric draft. Pay per use with your own key."
-        status={<Badge>Not connected</Badge>}
-      >
-        <div className={styles.keyRow}>
-          <Input type="password" placeholder="Paste your fal.ai key" aria-label="fal.ai key" mono />
-          <Button variant="secondary" onClick={() => toast('Key saved in this browser')}>
-            Connect
-          </Button>
-        </div>
-        <a className={styles.link} href="https://fal.ai/dashboard/keys" target="_blank" rel="noreferrer">
-          Get a key at fal.ai <ExternalLink />
-        </a>
-      </Card>
-      <Card
-        title="Language model"
-        desc="Plain-language edits and richer director plans. Works with any OpenAI-compatible endpoint, including Ollama and LM Studio on this computer."
-        status={
-          <Badge tone="success" icon={<Check />}>
-            Connected
-          </Badge>
-        }
-      >
-        <div className={styles.field}>
-          <span className={styles.fieldLabel}>Provider</span>
-          <Segmented
-            value={provider}
-            onChange={setProvider}
-            ariaLabel="LLM provider"
-            options={[
-              { value: 'openai', label: 'OpenAI' },
-              { value: 'ollama', label: 'Ollama' },
-              { value: 'lmstudio', label: 'LM Studio' },
-              { value: 'custom', label: 'Other' },
-            ]}
-          />
-        </div>
-        <div className={styles.grid2}>
-          <div className={styles.field}>
-            <span className={styles.fieldLabel}>Endpoint URL</span>
-            <Input
-              value={urls[provider]}
-              onChange={() => undefined}
-              mono
-              aria-label="Endpoint URL"
-              placeholder="https://…/v1"
-            />
-          </div>
-          <div className={styles.field}>
-            <span className={styles.fieldLabel}>API key</span>
-            <Input
-              type="password"
-              placeholder={provider === 'openai' ? 'sk-…' : 'Not needed for local models'}
-              aria-label="LLM API key"
-              mono
-            />
-          </div>
-        </div>
-        <div className={styles.grid2}>
-          <div className={styles.field}>
-            <span className={styles.fieldLabel}>Model</span>
-            <Select
-              value="llama3.2"
-              onChange={() => undefined}
-              ariaLabel="Model"
-              options={[
-                { value: 'llama3.2', label: 'llama3.2' },
-                { value: 'qwen2.5', label: 'qwen2.5:14b' },
-              ]}
-            />
-          </div>
-          <div className={[styles.field, styles.testField].join(' ')}>
-            <Button variant="secondary" onClick={() => toast('Connected · 12 models · 140 ms')}>
-              Test connection
-            </Button>
-            <span className={styles.ok}>
-              <Check /> 12 models found
-            </span>
-          </div>
-        </div>
-        {provider !== 'openai' && (
-          <div className={styles.hintBox}>
-            <Info />
-            <span>
-              Local runners must allow requests from this site. For Ollama, start it with{' '}
-              <code>OLLAMA_ORIGINS=https://theoi.github.io</code>.
-            </span>
-          </div>
-        )}
-      </Card>
-      <Card title="Spending" desc="Paid generation always shows its estimated cost on the button first.">
-        <Row title="Ask before every paid generation">
-          <Switch
-            checked={confirm}
-            onCheckedChange={setConfirm}
-            ariaLabel="Ask before every paid generation"
-          />
-        </Row>
-        <Row title="Remind me after this session spends">
-          <Select
-            value="5"
-            onChange={() => undefined}
-            ariaLabel="Spending reminder"
-            size="sm"
-            options={[
-              { value: '1', label: '$1' },
-              { value: '5', label: '$5' },
-              { value: '20', label: '$20' },
-            ]}
-          />
-        </Row>
-      </Card>
+      <FalCard falKey={settings.falKey} />
+      <LlmCard saved={settings.llm} />
+      <SpendingCard settings={settings} />
     </>
   )
 }
-
 function GeneralPage() {
   const [suggest, setSuggest] = useState(true)
   const [motion, setMotion] = useState(false)

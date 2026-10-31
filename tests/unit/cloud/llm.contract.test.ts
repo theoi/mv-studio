@@ -550,4 +550,12 @@ describe('OpenAI-compatible client: model parameters and limits', () => {
       }),
     ).toBeUndefined()
   })
+
+  it('preselects the recommended model, else a preferred one that is not small', () => {
+    expect(pickDefaultModel(['llama3.2:3b', 'qwen2.5:3b', 'qwen2.5:7b'], 'ollama')).toBe('qwen2.5:7b')
+    expect(pickDefaultModel(['qwen2.5:3b', 'qwen2.5:14b'], 'ollama')).toBe('qwen2.5:14b')
+    expect(pickDefaultModel(['qwen3:4b', 'llama3.1:8b'], 'ollama')).toBe('llama3.1:8b')
+    expect(pickDefaultModel(['qwen3:4b', 'phi3:3.8b'], 'ollama')).toBe('qwen3:4b')
+    expect(pickDefaultModel(['gpt-4o-mini', 'gpt-5-mini'], 'openai')).toBe('gpt-5-mini')
+  })
 })
