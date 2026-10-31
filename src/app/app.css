@@ -1,0 +1,45 @@
+:root {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  color: #e6e7ea;
+  background: #0d0f13;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.placeholder {
+  max-width: 40rem;
+  margin: 15vh auto;
+  padding: 0 1.5rem;
+}
+
+.placeholder h1 {
+  font-size: 2rem;
+  margin: 0 0 0.5rem;
+}
+
+.placeholder p {
+  color: #a3a7b0;
+}
+
+.caps {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin-top: 2rem;
+  font-size: 0.9rem;
+  color: #a3a7b0;
+}
+
+.caps dd {
+  margin: 0;
+  color: #e6e7ea;
+  font-variant-numeric: tabular-nums;
+}
