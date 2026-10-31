@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useEffectEvent,
   useRef,
@@ -25,6 +26,7 @@ import {
   type VjSnapshot,
 } from '../../../vj/index.ts'
 import { Button } from '../../ds/Button.tsx'
+import { Spinner } from '../../ds/Feedback.tsx'
 import { Kbd } from '../../ds/Kbd.tsx'
 import {
   ContextMenu,
@@ -54,7 +56,16 @@ import {
 } from '../../state/project.ts'
 import { barsState } from '../../state/songAnalysis.ts'
 import { useThumbnail } from '../../state/thumbs.ts'
-import { midiControllers, midiDevicesLabel, setActiveVjSession, vjMidi } from '../../state/vj.ts'
+import {
+  clearVjEntryFrame,
+  leaveVj,
+  midiControllers,
+  midiDevicesLabel,
+  setActiveVjSession,
+  subscribeVjEntryFrame,
+  vjEntryFrame,
+  vjMidi,
+} from '../../state/vj.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
 import styles from './VjMode.module.css'
 
@@ -122,6 +133,9 @@ function failedTakeMessage(take: VjSnapshot['takes'][number]): string {
   return `Take ${take.number} could not be added${why}. The timeline is unchanged.`
 }
 
+/** How long the editor's frame stays over the live output after its first frame is drawn. */
+const SHOWN_AFTER_MS = 400
+
 /** Runs the engine preview and the VJ session on the stage while VJ mode is open. */
 function useEngine(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
@@ -131,6 +145,8 @@ function useEngine(
   const [engine, setEngine] = useState<Engine | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [drawn, setDrawn] = useState(false)
+  // A little after the first frame: with a software GPU it reaches the screen a few hundred ms after it is drawn.
+  const [shown, setShown] = useState(false)
   const exitEvent = useEffectEvent(onExit)
 
   useEffect(() => {
@@ -161,8 +177,13 @@ function useEngine(
     // Each visit starts as a rehearsal: nothing lands on the timeline until Record is on.
     session.setArmed(false)
     const detach = session.attachKeyboard(window)
+    let shownTimer = 0
     const offFirstFrame = preview.onFrame(() => {
       setDrawn(true)
+      shownTimer = window.setTimeout(() => {
+        setShown(true)
+        clearVjEntryFrame()
+      }, SHOWN_AFTER_MS)
       offFirstFrame()
     })
     const offFrame = preview.onFrame((time) => {
@@ -187,14 +208,16 @@ function useEngine(
       offFrame()
       offState()
       detach()
+      window.clearTimeout(shownTimer)
       session.close()
       preview.dispose()
       setEngine(null)
       setDrawn(false)
+      setShown(false)
     }
   }, [canvasRef, stageRef])
 
-  return { engine, size, drawn }
+  return { engine, size, drawn, shown }
 }
 
 type PadButtonProps = Omit<ComponentProps<'button'>, 'className'> & {
@@ -456,7 +479,7 @@ export function VjMode() {
     }
     const kept = session && !closed.current ? session.close().kept : 0
     closed.current = true
-    set({ screen: 'editor', playing: false })
+    leaveVj()
     if (kept > 0)
       toast(`Performance added to the timeline: ${plural(kept, 'take')}, all editable`, {
         label: 'Undo',
@@ -467,7 +490,23 @@ export function VjMode() {
       })
   }
 
-  const { engine, size, drawn } = useEngine(canvasRef, stageRef, (s) => exit(s, true))
+  const { engine, size, drawn, shown } = useEngine(canvasRef, stageRef, (s) => exit(s, true))
+  // The editor's frame from when VJ mode opened, shown until the live output shows its own.
+  const entryFrame = useSyncExternalStore(subscribeVjEntryFrame, vjEntryFrame)
+  const entry = shown ? null : entryFrame
+  const showEntry = useCallback(
+    (canvas: HTMLCanvasElement | null) => {
+      if (!canvas || !entry) return
+      canvas.width = entry.width
+      canvas.height = entry.height
+      try {
+        canvas.getContext('2d')?.drawImage(entry, 0, 0)
+      } catch {
+        // Closed already: the live output has drawn.
+      }
+    },
+    [entry],
+  )
   const session = engine?.session
   const snapshot = useSnapshot(session)
   const playing = usePlaying(engine?.preview)
@@ -627,6 +666,19 @@ export function VjMode() {
           aria-busy={!drawn}
           role="img"
         />
+        {entry && (
+          <canvas
+            ref={showEntry}
+            className={styles.entryFrame}
+            style={{ width: size.width, height: size.height }}
+            aria-hidden
+          />
+        )}
+        {!drawn && !entry && (
+          <div className={styles.stageNote} role="status">
+            <Spinner /> Preparing the live output
+          </div>
+        )}
         {mapping ? (
           <div className={styles.playHint} role="status">
             {learnLabel

@@ -242,7 +242,7 @@ class WorkerRenderer implements FrameRenderer {
       requests.map((r) => this.frames.videoFrame(r.asset, r.time, r.key, r.rate).catch(() => null)),
     )
     const videos: BridgedVideo[] = []
-    const transfer: Transferable[] = []
+    const transfer: VideoFrame[] = []
     const keys = new Set<string>()
     requests.forEach(({ key }, i) => {
       keys.add(key)
@@ -276,6 +276,8 @@ class WorkerRenderer implements FrameRenderer {
         transfer,
       )
     } catch (error) {
+      // A stopped worker rejects without taking the frames; close them (a no-op for frames it took).
+      for (const frame of transfer) frame.close()
       // The worker may not have applied this request: send everything again next time.
       this.sentProject = null
       this.sentVersions.clear()
@@ -296,6 +298,8 @@ const SCRUB_SETTLE_MS = 150
 /** Video clips starting within this many seconds get their media element loaded and seeked ahead of time. */
 const LOOKAHEAD = 1.5
 const WARM_EVERY_MS = 200
+/** How long dispose() waits for frames being drawn or captured before it stops the renderer anyway. */
+const DISPOSE_WAIT_MS = 2000
 
 export class PreviewController {
   readonly canvas: HTMLCanvasElement
@@ -335,6 +339,8 @@ export class PreviewController {
   private dropped = 0
   private loop: { start: Seconds; end: Seconds } | null = null
   private warmedAt = 0
+  /** captureFrame() calls not yet resolved: dispose() lets them finish, so a preview can be captured as it closes. */
+  private readonly captures = new Set<Promise<ImageBitmap>>()
   private readonly unsubscribeClock: () => void
 
   constructor(options: PreviewOptions) {
@@ -567,7 +573,16 @@ export class PreviewController {
    * frame); otherwise the current state, drawn again. Use it to read pixels: a canvas moved to the render worker
    * cannot be read on this thread.
    */
-  async captureFrame(): Promise<ImageBitmap> {
+  captureFrame(): Promise<ImageBitmap> {
+    if (this.disposed) return Promise.reject(new Error('The preview is closed'))
+    const capture = this.capture()
+    this.captures.add(capture)
+    const done = () => this.captures.delete(capture)
+    capture.then(done, done)
+    return capture
+  }
+
+  private async capture(): Promise<ImageBitmap> {
     const renderer = await this.rendererReady
     if (this.preserveDrawingBuffer) return renderer.capture()
     await this.rendered()
@@ -640,6 +655,10 @@ export class PreviewController {
   }
 
   private requestStill(): void {
+    if (this.disposed) {
+      this.stillPending = false
+      return
+    }
     if (this.failure) {
       this.stillPending = false
       return
@@ -687,7 +706,7 @@ export class PreviewController {
 
   private draw(time: Seconds, still = false): Promise<void> {
     const project = this.project
-    if (!project) return Promise.resolve()
+    if (!project || this.disposed) return Promise.resolve()
     const started = performance.now()
     const size = this.frameSize(project)
     const scale = this.scale
@@ -711,6 +730,7 @@ export class PreviewController {
           for (const listener of this.frameListeners) listener(time)
         },
         (error: unknown) => {
+          if (this.disposed) return
           const failure = this.renderer?.failure()
           if (!failure) console.error('Preview render failed', error)
           else if (!this.failure) {
@@ -736,9 +756,26 @@ export class PreviewController {
     this.stopLoop()
     this.unsubscribeClock()
     this.clock.dispose()
-    this.renderer?.dispose()
-    this.frames.dispose()
     this.listeners.clear()
     this.frameListeners.clear()
+    // Frames being drawn or captured finish first: stopping the worker mid-render drops the video frames it was sent,
+    // unclosed. A renderer that is alive but stuck (render calls have no timeout once it has drawn) is stopped anyway.
+    const release = () => {
+      this.renderer?.dispose()
+      this.frames.dispose()
+    }
+    const busy = [...this.captures, ...(this.inFlight ? [this.inFlight] : [])]
+    if (busy.length === 0) {
+      release()
+      return
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const waited = new Promise((resolve) => {
+      timer = setTimeout(resolve, DISPOSE_WAIT_MS)
+    })
+    void Promise.race([Promise.allSettled(busy), waited]).then(() => {
+      clearTimeout(timer)
+      release()
+    })
   }
 }

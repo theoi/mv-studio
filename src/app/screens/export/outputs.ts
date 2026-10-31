@@ -134,6 +134,12 @@ export function timeLabel(seconds: number): string {
     : `About ${Math.round(seconds / 60)} min on this device`
 }
 
+/** What a cancelled export says, however it was cancelled: files done before the cancel are kept. */
+export function cancelledMessage(total: number, saved: number): string {
+  if (!saved) return 'Export cancelled. Nothing was saved.'
+  return `Export cancelled. ${saved} of ${total} files ${saved === 1 ? 'was' : 'were'} saved to Downloads.`
+}
+
 /**
  * Saves the outputs with the project and renders them one after another in one job; every file downloads when the
  * job finishes. Returns false when another export is still running.
@@ -172,7 +178,11 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
       )
     },
     (error: unknown) => {
-      if (error instanceof JobError && error.code === 'cancelled') return
+      if (error instanceof JobError && error.code === 'cancelled') {
+        const { files } = useExports.getState()
+        toast(cancelledMessage(planned.length, planned.filter((p) => files[p.spec.id]).length))
+        return
+      }
       toast(`Export failed: ${error instanceof Error ? error.message : String(error)}`)
     },
   )

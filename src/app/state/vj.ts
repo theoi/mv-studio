@@ -11,12 +11,82 @@ import {
   type VjSession,
   type VjSettings,
 } from '../../vj/index.ts'
+import { loadVjMode } from '../preload.ts'
+import { stagePreview } from '../screens/editor/stage.ts'
+import { get, set } from './ui.ts'
 
 /** The VJ session while VJ mode is open, so Settings › VJ and MIDI changes reach it as well as the saved settings. */
 let active: VjSession | null = null
 
 export function setActiveVjSession(session: VjSession | null) {
   active = session
+}
+
+let entryFrame: ImageBitmap | null = null
+const entryListeners = new Set<() => void>()
+let focusVjButton = false
+/** Set while VJ mode's code loads (see enterVj), so another press does not start a second entry. */
+let entering = false
+
+function setEntryFrame(frame: ImageBitmap | null) {
+  if (frame === entryFrame) return
+  entryFrame?.close()
+  entryFrame = frame
+  for (const listener of entryListeners) listener()
+}
+
+/**
+ * Opens VJ mode, capturing the editor's frame at the playhead on the way (its preview finishes the capture as it
+ * closes) for the VJ stage to show while its own preview starts, which takes a second or two. The editor stays on
+ * screen until VJ mode's code has loaded: until then the screen's loading fallback would blank the whole window.
+ */
+export function enterVj() {
+  if (get().screen === 'vj' || entering) return
+  entering = true
+  setEntryFrame(null)
+  const capture = stagePreview()?.captureFrame()
+  capture?.then(
+    (frame) => {
+      if (entering || get().screen === 'vj') setEntryFrame(frame)
+      else frame.close()
+    },
+    () => undefined,
+  )
+  void loadVjMode()
+    .catch(() => undefined)
+    .then(() => {
+      entering = false
+      if (get().screen === 'editor') set({ screen: 'vj' })
+      else clearVjEntryFrame()
+    })
+}
+
+export function subscribeVjEntryFrame(listener: () => void): () => void {
+  entryListeners.add(listener)
+  return () => entryListeners.delete(listener)
+}
+
+/** The editor's frame from when VJ mode opened (see enterVj), until VJ mode drops it. */
+export function vjEntryFrame(): ImageBitmap | null {
+  return entryFrame
+}
+
+export function clearVjEntryFrame() {
+  setEntryFrame(null)
+}
+
+/** Back to the editor from VJ mode; the editor then focuses its VJ button (see takeVjButtonFocus). */
+export function leaveVj() {
+  clearVjEntryFrame()
+  focusVjButton = true
+  set({ screen: 'editor', playing: false })
+}
+
+/** True once after leaving VJ mode, for the editor to put focus back on the VJ button. */
+export function takeVjButtonFocus(): boolean {
+  const focus = focusVjButton
+  focusVjButton = false
+  return focus
 }
 
 export function vjSettings(): VjSettings {

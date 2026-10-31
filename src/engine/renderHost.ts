@@ -54,6 +54,9 @@ export interface PreviewWorker {
  */
 const PREVIEW_START_TIMEOUT_MS = 15_000
 
+/** How long a closing preview's worker gets to close its frames before it is terminated anyway. */
+const PREVIEW_STOP_TIMEOUT_MS = 1000
+
 /** `promise`, or a rejection with `timedOut` after `ms`. */
 function within<T>(promise: Promise<T>, ms: number, timedOut: JobError): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -143,6 +146,15 @@ export async function startPreviewWorker(
       return client.call('previewCapture', undefined).then((r) => r.bitmap)
     },
     failure: dead,
-    dispose: stop,
+    dispose: () => {
+      if (dead()) {
+        stop()
+        return
+      }
+      // The browser reports video frames a terminated worker still holds as garbage collected without being closed.
+      void within(client.call('previewStop', undefined), PREVIEW_STOP_TIMEOUT_MS, timedOut)
+        .catch(() => undefined)
+        .finally(stop)
+    },
   }
 }

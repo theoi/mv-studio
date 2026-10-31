@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
   BookOpen,
@@ -36,6 +36,7 @@ import {
 } from '../../state/persistence.ts'
 import { editor, redo, undo, useProject } from '../../state/project.ts'
 import { set } from '../../state/ui.ts'
+import { enterVj, takeVjButtonFocus } from '../../state/vj.ts'
 import { LogoMark } from '../common/Logo.tsx'
 import styles from './TopBar.module.css'
 
@@ -137,6 +138,11 @@ export function TopBar() {
   const undoLabel = editor.undoLabel()
   const redoLabel = editor.redoLabel()
   const [renaming, setRenaming] = useState(false)
+  const vjButton = useRef<HTMLButtonElement>(null)
+  // Back from VJ mode, focus returns to the button that opened it.
+  useEffect(() => {
+    if (takeVjButtonFocus()) vjButton.current?.focus()
+  }, [])
 
   return (
     <header className={styles.bar}>
@@ -221,7 +227,7 @@ export function TopBar() {
           shortcut="Shift V"
           description="Perform live with the keyboard or a MIDI controller"
         >
-          <Button variant="ghost" icon={<Disc3 />} onClick={() => set({ screen: 'vj' })}>
+          <Button ref={vjButton} variant="ghost" icon={<Disc3 />} onClick={enterVj}>
             VJ
           </Button>
         </Tooltip>

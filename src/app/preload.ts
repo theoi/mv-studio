@@ -1,3 +1,5 @@
+import type { ComponentType } from 'react'
+
 /*
  * Screens and dialogs that are not on the first screen load as separate chunks. preloadDeferred() fetches them when
  * the browser is idle, so opening one later is instant.
@@ -14,4 +16,15 @@ export const loaders = {
 
 export function preloadDeferred() {
   for (const load of Object.values(loaders)) void load()
+}
+
+let vjMode: ComponentType | null = null
+
+/** Loads VJ mode's code; from then on its screen renders without suspending (VjMode in ./lazy.ts). */
+export function loadVjMode(): Promise<ComponentType> {
+  return loaders.vj().then((m) => (vjMode = m.VjMode))
+}
+
+export function loadedVjMode(): ComponentType | null {
+  return vjMode
 }

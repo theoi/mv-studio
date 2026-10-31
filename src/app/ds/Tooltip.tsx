@@ -1,5 +1,5 @@
 import { Tooltip as RTooltip } from 'radix-ui'
-import type { ReactNode } from 'react'
+import type { FocusEvent, ReactNode } from 'react'
 import { Kbd } from './Kbd.tsx'
 import styles from './Feedback.module.css'
 
@@ -19,10 +19,20 @@ interface TooltipProps {
   children: ReactNode
 }
 
+/**
+ * A focus that draws no ring (focus put back on the trigger after a click elsewhere) opens no tooltip: it would stay
+ * open over the page until the next click. Radix skips opening when the focus event's default is prevented.
+ */
+function onlyKeyboardFocus(e: FocusEvent<HTMLElement>) {
+  if (!e.currentTarget.matches(':focus-visible')) e.preventDefault()
+}
+
 export function Tooltip({ label, shortcut, description, side = 'bottom', children }: TooltipProps) {
   return (
     <RTooltip.Root>
-      <RTooltip.Trigger asChild>{children}</RTooltip.Trigger>
+      <RTooltip.Trigger asChild onFocus={onlyKeyboardFocus}>
+        {children}
+      </RTooltip.Trigger>
       <RTooltip.Portal>
         <RTooltip.Content side={side} sideOffset={6} collisionPadding={8} className={styles.tooltip}>
           <span className={styles.tooltipRow}>

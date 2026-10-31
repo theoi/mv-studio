@@ -97,6 +97,12 @@ export class WorkerPreview {
     return this.queue.then(() => createImageBitmap(this.compositor.canvas))
   }
 
+  /** Disposes once the frames already queued are drawn. */
+  async stop(): Promise<void> {
+    await this.queue
+    this.dispose()
+  }
+
   dispose(): void {
     this.compositor.dispose()
     this.frames.dispose()

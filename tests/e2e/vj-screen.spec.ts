@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, openApp, openHarness, test } from './fixtures.ts'
+import { expect, openApp, openHarness, test, waitForPreview } from './fixtures.ts'
 
 /** Opens VJ mode on the sample project with the playhead at `t`. */
 async function openVj(page: Page, t = 60) {
@@ -412,4 +412,131 @@ test('VJ mode offers Try again when MIDI access was blocked', async ({ page }) =
   await expect(page.getByRole('menuitem', { name: /MIDI access was blocked/ })).toBeDisabled()
   await page.getByRole('menuitem', { name: /^Try again/ }).click()
   await expect(page.getByRole('button', { name: 'E2E Pad Controller' })).toBeVisible()
+})
+
+/** Mean brightness (0 to 255) of what is on screen in a locator's box. */
+async function brightness(page: Page, locator: ReturnType<Page['locator']>): Promise<number> {
+  const png = (await locator.screenshot()).toString('base64')
+  return page.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+    const image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }))
+    const ctx = new OffscreenCanvas(image.width, image.height).getContext(
+      '2d',
+    ) as OffscreenCanvasRenderingContext2D
+    ctx.drawImage(image, 0, 0)
+    const d = ctx.getImageData(0, 0, image.width, image.height).data
+    let sum = 0
+    for (let i = 0; i < d.length; i += 4)
+      sum += ((d[i] as number) + (d[i + 1] as number) + (d[i + 2] as number)) / 3
+    return sum / (d.length / 4)
+  }, png)
+}
+
+test('opened from the editor, VJ mode shows the frame at the playhead at once; leaving gives focus back to VJ', async ({
+  page,
+}) => {
+  const problems: string[] = []
+  page.on('console', (m) => {
+    if (/Preview render failed|VideoFrame was garbage collected/.test(m.text())) problems.push(m.text())
+  })
+  await openApp(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=60'
+  })
+  await waitForPreview(page)
+  const shown = await brightness(page, page.getByRole('img', { name: 'Video preview' }))
+  expect(shown).toBeGreaterThan(5)
+
+  const vjButton = page.getByRole('button', { name: 'VJ', exact: true })
+  await vjButton.click()
+  const live = page.getByRole('img', { name: 'Live output' })
+  await expect(live).toBeVisible()
+  // The live output takes a second or two to start its own renderer; meanwhile the stage shows the editor's frame.
+  let busyWhenShown: string | null = null
+  await expect
+    .poll(async () => {
+      busyWhenShown = await live.getAttribute('aria-busy')
+      return brightness(page, live)
+    })
+    .toBeGreaterThan(shown * 0.85)
+  expect(busyWhenShown).toBe('true')
+  await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+  await expect.poll(() => brightness(page, live)).toBeGreaterThan(shown * 0.85)
+
+  // Leaving while playing, with frames in flight, logs no failed render or unclosed frame.
+  await page.keyboard.press('Space')
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(live).toBeHidden()
+  await expect(vjButton).toBeFocused()
+  // Focus from the keyboard shows the button's ring and tooltip.
+  const tooltip = page.getByRole('tooltip').filter({ hasText: 'VJ mode' })
+  await expect(tooltip).toHaveCount(1)
+
+  await page.keyboard.press('Shift+KeyV')
+  await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+  await page.getByRole('button', { name: 'Back to editor' }).click()
+  await expect(live).toBeHidden()
+  await expect(vjButton).toBeFocused()
+  // After a click, the focus draws no ring, and no tooltip opens over the panels below.
+  await page.waitForTimeout(700)
+  await expect(tooltip).toHaveCount(0)
+  await waitForPreview(page)
+
+  // Each preview closed on the way (the editor's twice, VJ mode's twice) closed its video frames. The browser reports
+  // a frame collected unclosed about 10 s after the collection.
+  const cdp = await page.context().newCDPSession(page)
+  for (let i = 0; i < 12; i++) {
+    await cdp.send('HeapProfiler.collectGarbage')
+    await page.waitForTimeout(1000)
+  }
+  expect(problems).toEqual([])
+})
+
+test('the first VJ entry keeps the editor on screen until VJ mode has loaded', async ({ page }) => {
+  // VJ mode's code arrives late, as on a first visit over a slow connection.
+  let delayed = 0
+  await page.context().route(/\/assets\/VjMode-[^/]+\.js$/, async (route) => {
+    delayed++
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await route.continue()
+  })
+  await openApp(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=60'
+  })
+  await waitForPreview(page)
+  // Before each paint: whether the screen's loading placeholder is up instead of a screen.
+  await page.evaluate(() => {
+    const w = window as unknown as { blankFrames: number }
+    w.blankFrames = 0
+    const tick = () => {
+      if (document.querySelector('.screen-loading')) w.blankFrames++
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+  await page.getByRole('button', { name: 'VJ', exact: true }).click()
+  await expect(page.getByRole('img', { name: 'Live output' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('img', { name: 'Live output' })).toHaveAttribute('aria-busy', 'false', {
+    timeout: 30_000,
+  })
+  expect(delayed).toBeGreaterThan(0)
+  expect(await page.evaluate(() => (window as unknown as { blankFrames: number }).blankFrames)).toBe(0)
+})
+
+test('opened directly, the VJ stage says it is preparing until the live output draws', async ({ page }) => {
+  await openApp(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/vj?t=60'
+  })
+  const note = page.getByRole('status').filter({ hasText: 'Preparing the live output' })
+  await expect(note).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Live output' })).toHaveAttribute('aria-busy', 'false', {
+    timeout: 30_000,
+  })
+  await expect(note).toBeHidden()
 })

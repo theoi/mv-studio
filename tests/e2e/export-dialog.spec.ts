@@ -70,6 +70,9 @@ test('the outputs of an export are saved with the project for next time', async 
   await dialog.getByRole('button', { name: 'Export 2 files' }).click()
   await expect(dialog.getByText('Exporting 2 files')).toBeVisible()
   await dialog.getByRole('button', { name: 'Cancel all' }).click()
+  // With nothing done yet, the dialog goes back to the outputs and a toast says what happened.
+  await expect(page.getByText('Export cancelled. Nothing was saved.')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Export 2 files' })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
 
@@ -139,8 +142,11 @@ test('cancelling an export keeps the files that are already done', async ({ page
   // The loop renders first and downloads as soon as it is done, while the square is still rendering.
   expect((await download).suggestedFilename()).toBe('Neon Skyline - Canvas.mp4')
   await dialog.getByRole('button', { name: 'Cancel all' }).click()
-  await expect(dialog.getByText('Export cancelled')).toBeVisible()
-  await expect(dialog.getByText('1 file saved to your Downloads folder.')).toBeVisible()
+  await expect(dialog.getByText('Export cancelled', { exact: true })).toBeVisible()
+  await expect(
+    dialog.getByText('1 of 2 files saved to your Downloads folder. The rest were not saved.'),
+  ).toBeVisible()
+  await expect(page.getByText('Export cancelled. 1 of 2 files was saved to Downloads.')).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Download' })).toHaveCount(1)
   const again = page.waitForEvent('download')
   await dialog.getByRole('button', { name: 'Download' }).click()

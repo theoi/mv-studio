@@ -604,9 +604,11 @@ function ExportingView({ onClose }: { onClose: () => void }) {
     : job?.status === 'succeeded'
       ? 'Find them in your Downloads folder.'
       : job
-        ? savedCount
-          ? `${plural(savedCount, 'file')} saved to your Downloads folder.`
-          : 'No files were saved.'
+        ? savedCount === 0
+          ? 'Nothing was saved.'
+          : savedCount < rows.length
+            ? `${savedCount} of ${rows.length} files saved to your Downloads folder. The rest were not saved.`
+            : `${plural(savedCount, 'file')} saved to your Downloads folder.`
         : ''
   return (
     <div className={styles.exporting}>
