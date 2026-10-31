@@ -130,7 +130,10 @@ export function CancelButton({
   inline?: boolean
   /** After the cancel is requested, e.g. to move focus off the button before it goes away. */
   onCancel?: () => void
-  /** For a job that took the cancel but is still finishing (it stops on its own). */
+  /**
+   * For a job that took the cancel but is still finishing (it stops on its own). The button stays focusable
+   * (aria-disabled), so a keyboard Cancel doesn't drop focus to the page.
+   */
   disabled?: boolean
 }) {
   return (
@@ -139,8 +142,9 @@ export function CancelButton({
       size={inline ? 'sm' : 'md'}
       block={!inline}
       icon={<X />}
-      disabled={disabled}
+      aria-disabled={disabled || undefined}
       onClick={() => {
+        if (disabled) return
         if (job) jobs.cancel(job.id)
         onCancel?.()
       }}

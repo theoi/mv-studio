@@ -569,10 +569,11 @@ export class DirectorSession {
               ? `fal.ai said: ${first.message}`
               : first.message
         if (failed) {
+          // The no-break space keeps "place" from ending up alone on the note's last line in the narrow panel.
           warnings.push(
             failed === 1
-              ? `1 ${unit} couldn’t be generated. Retry it below; a dark placeholder marks its place.`
-              : `${plural(failed, unit)} couldn’t be generated. Retry them below; dark placeholders mark their place.`,
+              ? `1 ${unit} couldn’t be generated. Retry it below; a dark placeholder marks its\u00a0place.`
+              : `${plural(failed, unit)} couldn’t be generated. Retry them below; dark placeholders mark their\u00a0place.`,
           )
         }
       } catch (error) {

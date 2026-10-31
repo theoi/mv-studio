@@ -329,12 +329,7 @@ export async function startGenerate(at?: number): Promise<void> {
       let downloading = false
       // A result fal.ai already billed still downloads for a while after a Cancel: say the Cancel was received.
       const stopping = () => {
-        if (downloading)
-          ctx.progress({
-            stage: 'stopping',
-            message: `Stopping… keeping 1 ${model.output} that is downloading`,
-            etaSeconds: undefined,
-          })
+        if (downloading) ctx.progress({ stage: 'stopping', message: 'Stopping…', etaSeconds: undefined })
       }
       ctx.signal.addEventListener('abort', stopping, { once: true })
       try {

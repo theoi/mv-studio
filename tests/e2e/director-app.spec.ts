@@ -494,7 +494,7 @@ test('drafts with AI video clips: priced per clip, each clip’s progress shows,
   expect(fal.submits).toHaveLength(count + 1)
 })
 
-test('cancelling AI video clips stops the one underway at fal.ai and keeps the clips already made', async ({
+test('cancelling AI video clips stops the one underway at fal.ai, keeps the clips already made, and leaves focus on Generate', async ({
   page,
 }) => {
   const fal = await mockFalVideo(page, { held: 3 })
@@ -503,10 +503,13 @@ test('cancelling AI video clips stops the one underway at fal.ai and keeps the c
   await expect(page.getByText(`Generating clip ${count} of ${count}`).first()).toBeVisible({
     timeout: 60_000,
   })
-  await page.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Cancel' }).focus()
+  await page.keyboard.press('Enter')
 
   await expect(page.getByText(`Generation stopped. ${count - 1} clips made so far are kept.`)).toBeVisible()
-  await expect(page.getByRole('button', { name: /^Generate 1 clip · about \$\d+\.\d\d$/ })).toBeVisible()
+  const again = page.getByRole('button', { name: /^Generate 1 clip · about \$\d+\.\d\d$/ })
+  await expect(again).toBeVisible()
+  await expect(again).toBeFocused()
   expect(fal.cancels).toEqual(['req-3'])
   expect(fal.submits).toHaveLength(count)
   expect((await draftState(page)).director).toBe(0)
@@ -523,14 +526,20 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
   await expect.poll(() => fal.downloads, { timeout: 60_000 }).toContain('req-3')
   // The fourth clip starts only after the first two are made.
   await expect.poll(() => fal.submits.length, { timeout: 30_000 }).toBe(4)
-  await page.getByRole('button', { name: 'Cancel' }).click()
+  const hint = page.getByText(/^Cancelling stops the request/)
+  await expect(hint).toBeVisible()
+  const cancel = page.getByRole('button', { name: 'Cancel' })
+  await cancel.focus()
+  await page.keyboard.press('Enter')
 
-  // The whole panel agrees it is stopping: the subtitle, the card's line, and a disabled Cancel.
+  // The whole panel agrees it is stopping: the subtitle, the card's line, and a disabled Cancel that keeps focus.
   await expect(page.getByText('Keeping 1 clip that is downloading')).toBeVisible()
   await expect(
     page.getByRole('tabpanel', { name: 'Assist' }).getByText('Stopping…', { exact: true }),
   ).toHaveCount(2)
-  await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  await expect(cancel).toHaveAttribute('aria-disabled', 'true')
+  await expect(cancel).toBeFocused()
+  await expect(hint).toHaveCount(0)
   // At 1280 the card's top line stays on one line, clear of the spinner that took the percent's place.
   const top = page
     .getByRole('progressbar', { name: 'Generating clips' })
@@ -546,9 +555,11 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
   await page.screenshot({ path: testInfo.outputPath('director-video-stopping.png') })
   fal.release()
   await expect(page.getByText('Generation stopped. 3 clips made so far are kept.')).toBeVisible()
-  await expect(
-    page.getByRole('button', { name: new RegExp(`^Generate ${count - 3} clips · about \\$\\d+\\.\\d\\d$`) }),
-  ).toBeVisible()
+  const again = page.getByRole('button', {
+    name: new RegExp(`^Generate ${count - 3} clips · about \\$\\d+\\.\\d\\d$`),
+  })
+  await expect(again).toBeVisible()
+  await expect(again).toBeFocused()
   expect(fal.cancels).toEqual(['req-4'])
   expect(fal.submits).toHaveLength(4)
 })

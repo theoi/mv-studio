@@ -14,11 +14,12 @@
   border: 1px solid transparent;
 }
 
-.button:active:not(:disabled) {
+.button:active:not(:disabled, [aria-disabled='true']) {
   transform: translateY(0.5px) scale(0.985);
 }
 
-.button:disabled {
+.button:disabled,
+.button[aria-disabled='true'] {
   opacity: 0.45;
 }
 
@@ -82,11 +83,11 @@
     0 1px 2px rgb(0 0 0 / 0.35);
 }
 
-.primary:hover:not(:disabled) {
+.primary:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--accent-hover);
 }
 
-.primary:active:not(:disabled) {
+.primary:active:not(:disabled, [aria-disabled='true']) {
   background: var(--accent-press);
 }
 
@@ -97,7 +98,7 @@
   box-shadow: var(--shadow-raised);
 }
 
-.secondary:hover:not(:disabled) {
+.secondary:hover:not(:disabled, [aria-disabled='true']) {
   background: #1f2025;
   border-color: var(--border-strong);
 }
@@ -106,7 +107,7 @@
   color: var(--text-2);
 }
 
-.ghost:hover:not(:disabled) {
+.ghost:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--bg-hover);
   color: var(--text-1);
 }
@@ -116,7 +117,7 @@
   color: var(--text-1);
 }
 
-.subtle:hover:not(:disabled) {
+.subtle:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--bg-active);
 }
 
@@ -125,7 +126,7 @@
   color: var(--danger-text);
 }
 
-.danger:hover:not(:disabled) {
+.danger:hover:not(:disabled, [aria-disabled='true']) {
   background: rgb(236 90 114 / 0.22);
 }
 

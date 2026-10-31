@@ -349,8 +349,9 @@ test('asks before spending when Settings says so, and Cancel stops the request a
     endpoint: 'minimax/h3-max-turbo/text-to-video',
     input: { prompt: 'Slow aerial over a neon city', duration: 5, resolution: '768P', aspect_ratio: '16:9' },
   })
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeFocused()
   await expect.poll(() => fal.cancels).toEqual(['req-1'])
   await expect(page.locator('[aria-label^="AI video: "]')).toHaveCount(0)
 })
@@ -363,9 +364,22 @@ test('a Cancel while the video downloads says it is stopping, and keeps the vide
   await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Slow aerial over a neon city')
   await page.getByRole('button', { name: 'Generate · about $0.20' }).click()
   await expect.poll(() => fal.downloads, { timeout: 20_000 }).toBe(1)
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  const hint = page.getByText(/Cancelling stops the request/)
+  const lands = page.getByText(/^Keep editing\. The result lands at/)
+  await expect(hint).toBeVisible()
+  await expect(lands).toBeVisible()
+  const cancel = page.getByRole('button', { name: 'Cancel', exact: true })
+  await cancel.focus()
+  await page.keyboard.press('Enter')
 
-  await expect(page.getByText('Stopping… keeping 1 video that is downloading')).toBeVisible()
+  // As in the director: the subtitle and the card say it is stopping, and Cancel is disabled but keeps focus.
+  await expect(page.getByText('Keeping 1 video that is downloading')).toBeVisible()
+  await expect(page.getByText('Stopping…', { exact: true })).toHaveCount(2)
+  await expect(cancel).toHaveAttribute('aria-disabled', 'true')
+  await expect(cancel).toBeFocused()
+  // The hint is for a Cancel not yet taken, and the video goes to Media, not the timeline.
+  await expect(hint).toHaveCount(0)
+  await expect(lands).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('generate-stopping-1440x900.png') })
   fal.release()
   const kept = page
@@ -377,7 +391,7 @@ test('a Cancel while the video downloads says it is stopping, and keeps the vide
   await expect(libraryCard(page, 'AI video: Slow aerial over a neon city')).toBeVisible()
   await expect(page.locator('[aria-label^="AI video: Slow aerial over a neon city, "]')).toHaveCount(1)
   expect(fal.cancels).toEqual([])
-  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeFocused()
 })
 
 test('errors say what to do: a rejected key opens Settings, and Try again recovers from a fal.ai outage', async ({

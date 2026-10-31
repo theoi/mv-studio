@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { JOB_KINDS, latestJob, useJobs } from '../../../state/jobs.ts'
 import { useProject } from '../../../state/project.ts'
@@ -22,6 +23,28 @@ export function useSongState(): SongState {
   const project = useProject()
   const { phase } = useJob(JOB_KINDS.analysis)
   return songState(project, phase, useSongPending(project.songAssetId))
+}
+
+/**
+ * Keeps focus in a tool after its Cancel. The running view goes away when the run ends, which drops focus to the
+ * page: it goes to the next view's main action (`target`) instead, unless something else took it meanwhile. Pass
+ * `cancelled` as the CancelButton's `onCancel`.
+ */
+export function useFocusAfterCancel(running: boolean) {
+  const pending = useRef(false)
+  const target = useRef<HTMLButtonElement>(null)
+  const wasRunning = useRef(running)
+  useEffect(() => {
+    const ended = wasRunning.current && !running
+    wasRunning.current = running
+    if (!ended || !pending.current) return
+    pending.current = false
+    if (!document.activeElement || document.activeElement === document.body) target.current?.focus()
+  }, [running])
+  const cancelled = () => {
+    pending.current = true
+  }
+  return { cancelled, target }
 }
 
 /** Returns a finished or failed tool view to idle. */

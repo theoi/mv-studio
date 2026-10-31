@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, type RefObject } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -43,7 +43,7 @@ import { JOB_KINDS } from '../../../state/jobs.ts'
 import { useProject } from '../../../state/project.ts'
 import { showClips } from '../../../state/reveal.ts'
 import { set, toast } from '../../../state/ui.ts'
-import { dismiss, pct, useJob } from './jobState.ts'
+import { dismiss, pct, useFocusAfterCancel, useJob } from './jobState.ts'
 import { CancelButton, Field, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -59,10 +59,11 @@ export function GenerateBadge() {
 
 export function GenerateView() {
   const { job, phase } = useJob(JOB_KINDS.generate)
-  if (phase === 'running') return <Running job={job} />
+  const focus = useFocusAfterCancel(phase === 'running')
+  if (phase === 'running') return <Running job={job} onCancel={focus.cancelled} />
   if (phase === 'done') return <Done job={job} />
   if (phase === 'failed') return <Failed job={job} />
-  return <Setup />
+  return <Setup actionRef={focus.target} />
 }
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
@@ -123,7 +124,8 @@ function useStartGenerate(): { start: (at?: number) => void; starting: boolean; 
   return { start, starting, dialog }
 }
 
-function Setup() {
+/** `actionRef` is the Generate button, which takes focus after a Cancel. */
+function Setup({ actionRef }: { actionRef: RefObject<HTMLButtonElement | null> }) {
   const cloud = useCloud()
   const project = useProject()
   const f = useGenerateForm()
@@ -145,6 +147,7 @@ function Setup() {
         connected ? (
           <>
             <Button
+              ref={actionRef}
               variant="primary"
               block
               icon={<Sparkles />}
@@ -257,10 +260,13 @@ const STEP_OF_STAGE: Record<string, number> = {
   generate: 2,
   download: 3,
   store: 3,
+  stopping: 3,
 }
 
-function Running({ job }: { job?: JobSnapshot }) {
+function Running({ job, onCancel }: { job?: JobSnapshot; onCancel: () => void }) {
   const run = generateRun(job?.id)
+  // After a Cancel, a result fal.ai already made is still downloading, to be kept in Media.
+  const stopping = job?.progress.stage === 'stopping'
   const upload = run?.task === 'image-to-video'
   const steps = [
     ...(upload ? ['Upload the image'] : []),
@@ -273,11 +279,11 @@ function Running({ job }: { job?: JobSnapshot }) {
   return (
     <ToolView
       title="Generate"
-      subtitle={job?.title.split(' · ')[0] ?? 'Generating'}
+      subtitle={stopping ? 'Stopping…' : (job?.title.split(' · ')[0] ?? 'Generating')}
       footer={
         <>
-          <CancelButton job={job} />
-          {generateCancelNotice() && (
+          <CancelButton job={job} disabled={stopping} onCancel={onCancel} />
+          {!stopping && generateCancelNotice() && (
             <div className={styles.costLine}>
               <Info /> {generateCancelNotice()}
             </div>
@@ -285,11 +291,21 @@ function Running({ job }: { job?: JobSnapshot }) {
         </>
       }
     >
-      <RunCard job={job} label="Generation progress" />
+      <RunCard
+        job={job}
+        label="Generation progress"
+        note={
+          stopping
+            ? `Keeping 1 ${run?.task === 'text-to-image' ? 'image' : 'video'} that is downloading`
+            : undefined
+        }
+      />
       <Steps steps={steps} active={active} />
-      <p className={styles.muted}>
-        Keep editing. The result lands at {formatTime(run?.start ?? 0)} on the timeline when it’s ready.
-      </p>
+      {!stopping && (
+        <p className={styles.muted}>
+          Keep editing. The result lands at {formatTime(run?.start ?? 0)} on the timeline when it’s ready.
+        </p>
+      )}
     </ToolView>
   )
 }

@@ -297,14 +297,16 @@ describe('a Cancel after fal.ai made something', () => {
     await vi.waitFor(() => expect(release).toHaveLength(1))
     jobs.cancel(job.id)
     // The Cancel took: the job's line says so while the paid video lands.
-    expect(jobs.list().find((j) => j.id === job.id)?.progress.message).toBe(
-      'Stopping… keeping 1 video that is downloading',
-    )
+    expect(jobs.list().find((j) => j.id === job.id)?.progress).toMatchObject({
+      stage: 'stopping',
+      message: 'Stopping…',
+    })
     release[0]!()
     await vi.waitFor(() => expect(statusOf(job.id)).toBe('cancelled'))
-    expect(jobs.list().find((j) => j.id === job.id)?.progress.message).toBe(
-      'Stopping… keeping 1 video that is downloading',
-    )
+    expect(jobs.list().find((j) => j.id === job.id)?.progress).toMatchObject({
+      stage: 'stopping',
+      message: 'Stopping…',
+    })
     expect(generatedAssets()).toHaveLength(1)
     expect(generatedClips()).toEqual([])
     expect(editor.undoLabel()).toBe('Generate video')

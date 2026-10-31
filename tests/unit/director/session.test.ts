@@ -254,7 +254,7 @@ describe('DirectorSession', () => {
     expect(applied.failedShots).toBe(1)
     // One note for the failure, pointing at Retry; fal.ai's own words go to the Retry button's tooltip.
     expect(applied.warnings).toContain(
-      '1 clip couldn’t be generated. Retry it below; a dark placeholder marks its place.',
+      '1 clip couldn’t be generated. Retry it below; a dark placeholder marks its\u00a0place.',
     )
     expect(applied.warnings.filter((w) => w.includes('placeholder'))).toHaveLength(1)
     expect(applied.failedReason).toBe('fal.ai said: HTTP 500')

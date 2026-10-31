@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, type RefObject } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -42,7 +42,7 @@ import {
 import { useJobs } from '../../../state/jobs.ts'
 import { sectionName, sectionsOf, useProject } from '../../../state/project.ts'
 import { set } from '../../../state/ui.ts'
-import { pct } from './jobState.ts'
+import { pct, useFocusAfterCancel } from './jobState.ts'
 import { CancelButton, Elapsed, Field, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -327,7 +327,14 @@ function PlanningView({ state }: { state: StateOf<'planning'> | StateOf<'ready'>
   )
 }
 
-function ReadyView({ state }: { state: StateOf<'ready'> }) {
+function ReadyView({
+  state,
+  actionRef,
+}: {
+  state: StateOf<'ready'>
+  /** The Generate button, which takes focus after a Cancel. */
+  actionRef: RefObject<HTMLButtonElement | null>
+}) {
   const description = useDirector((s) => s.description)
   const cost = paidCost(state.cost)
   const spend = useSpend(state.cost, state.confirmRequired, state.actionLabel, state.unit)
@@ -337,7 +344,13 @@ function ReadyView({ state }: { state: StateOf<'ready'> }) {
       subtitle={cost ? 'Plan ready · check the cost' : 'Plan ready'}
       footer={
         <>
-          <Button variant="primary" block icon={cost ? <Sparkles /> : <Clapperboard />} onClick={spend.start}>
+          <Button
+            ref={actionRef}
+            variant="primary"
+            block
+            icon={cost ? <Sparkles /> : <Clapperboard />}
+            onClick={spend.start}
+          >
             {state.actionLabel}
           </Button>
           {cost && (
@@ -372,7 +385,7 @@ function ReadyView({ state }: { state: StateOf<'ready'> }) {
   )
 }
 
-function GeneratingView({ state }: { state: StateOf<'generating'> }) {
+function GeneratingView({ state, onCancel }: { state: StateOf<'generating'>; onCancel: () => void }) {
   const job = useJobs().find((j) => j.id === state.jobId)
   const notice = useDirector((s) => s.cancelNotice)
   const { unit, failed, stopping } = state
@@ -384,7 +397,7 @@ function GeneratingView({ state }: { state: StateOf<'generating'> }) {
           ? 'Stopping…'
           : `Generating ${unit} ${Math.min(state.done + 1, state.total)} of ${state.total}`
       }
-      footer={<CancelButton job={job} disabled={Boolean(stopping)} />}
+      footer={<CancelButton job={job} disabled={Boolean(stopping)} onCancel={onCancel} />}
     >
       <RunCard
         job={job}
@@ -404,9 +417,12 @@ function GeneratingView({ state }: { state: StateOf<'generating'> }) {
           </div>
         </div>
       )}
-      <p className={styles.muted}>
-        {notice} {capitalized(unit)}s already made are kept.
-      </p>
+      {/* Once the Cancel is taken, the card says what is kept. */}
+      {!stopping && (
+        <p className={styles.muted}>
+          {notice} {capitalized(unit)}s already made are kept.
+        </p>
+      )}
     </ToolView>
   )
 }
@@ -580,13 +596,14 @@ function ErrorView({ state }: { state: StateOf<'error'> }) {
 export function DirectorView() {
   const state = useDirector((s) => s.state)
   const applying = useDirector((s) => s.applying)
+  const focus = useFocusAfterCancel(state.status === 'generating')
   switch (state.status) {
     case 'planning':
       return <PlanningView state={state} />
     case 'ready':
-      return applying ? <PlanningView state={state} /> : <ReadyView state={state} />
+      return applying ? <PlanningView state={state} /> : <ReadyView state={state} actionRef={focus.target} />
     case 'generating':
-      return <GeneratingView state={state} />
+      return <GeneratingView state={state} onCancel={focus.cancelled} />
     case 'applied':
       return <DoneView state={state} />
     case 'error':
