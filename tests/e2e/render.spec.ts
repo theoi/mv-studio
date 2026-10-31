@@ -438,3 +438,75 @@ test('renders text with karaoke highlighting and restricts layers to a matte', a
   expectColor(r.matte.outside[1], [255, 0, 0])
   expect(errors).toEqual([])
 })
+
+test('a matte applies only while its footage is on screen', async ({ page }) => {
+  const errors = collectErrors(page)
+  await openHarness(page)
+  const r = await page.evaluate(async () => {
+    const { model, media, testing } = window.mvStudio
+    const W = 320
+    const H = 180
+    const { compositor } = testing.createCompositor('export', W, H)
+    const image = async (name: string, draw: (ctx: OffscreenCanvasRenderingContext2D) => void) => {
+      const canvas = new OffscreenCanvas(W, H)
+      const ctx = canvas.getContext('2d')!
+      draw(ctx)
+      const blob = await canvas.convertToBlob({ type: 'image/png' })
+      return media.mediaStore.storeBlob(blob, { kind: 'image', name, origin: { type: 'generated' } })
+    }
+    // The subject fills the left half of shot A; shot B has no subject.
+    const mask = await image('mask.png', (ctx) => {
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, W, H)
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, W / 2, H)
+    })
+    const fill = (color: string) => (ctx: OffscreenCanvasRenderingContext2D) => {
+      ctx.fillStyle = color
+      ctx.fillRect(0, 0, W, H)
+    }
+    const shotA = await image('a.png', fill('#00ff00'))
+    const shotB = await image('b.png', fill('#0000ff'))
+
+    const p = model.createProject({ name: 'matte across shots' })
+    for (const a of [mask, shotA, shotB]) p.assets[a.id] = a
+    const lyrics = model.createTrack('visual', 'Lyrics')
+    const shots = model.createTrack('visual', 'Shots')
+    p.tracks.unshift(lyrics, shots)
+    for (const [asset, start] of [
+      [shotA, 0],
+      [shotB, 2],
+    ] as const) {
+      const clip = model.createImageClip({ trackId: shots.id, assetId: asset.id, start, duration: 2 })
+      clip.fit = 'stretch'
+      p.clips[clip.id] = clip
+    }
+    // Stands in for a lyric line that spans both shots, set behind shot A's subject.
+    const line = model.createSolidClip({ trackId: lyrics.id, color: '#ff0000', start: 0, duration: 4 })
+    line.matte = { maskAssetId: mask.id, sourceAssetId: shotA.id, mode: 'outside', feather: 0 }
+    p.clips[line.id] = line
+
+    const sample = async (project: typeof p, t: number) => {
+      await compositor.render(project, t)
+      const d = testing.readPixels(compositor.canvas, W, H)
+      const at = (x: number): Rgb => {
+        const i = (90 * W + x) * 4
+        return [d[i], d[i + 1], d[i + 2]]
+      }
+      return [at(60), at(260)]
+    }
+    const withA = await sample(p, 1)
+    const withB = await sample(p, 3)
+    const hidden = structuredClone(p)
+    for (const t of hidden.tracks) if (t.id === shots.id) t.hidden = true
+    const shotsHidden = await sample(hidden, 1)
+    compositor.dispose()
+    return { withA, withB, shotsHidden }
+  })
+  // Over shot A the line goes behind the subject on the left.
+  expectColor(r.withA[0], [0, 255, 0])
+  expectColor(r.withA[1], [255, 0, 0])
+  // Over shot B, and with shot A's track hidden, the subject is not on screen, so the whole line shows.
+  for (const px of [...r.withB, ...r.shotsHidden]) expectColor(px, [255, 0, 0])
+  expect(errors).toEqual([])
+})

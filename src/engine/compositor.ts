@@ -141,6 +141,10 @@ interface GpuState {
   textures: Map<string, { texture: WebGLTexture; version: unknown; lastUsed: number }>
 }
 
+/**
+ * A clip's matte with the on-screen clip of its source footage, which the mask follows in time and transform. Null when
+ * that footage is not on screen at `time`: the mask only describes that footage, so the clip then draws unmasked.
+ */
 function matteSource(project: Project, clip: VisualClip, time: Seconds) {
   const matte = clip.matte
   const maskAsset = matte ? project.assets[matte.maskAssetId] : undefined
@@ -149,19 +153,23 @@ function matteSource(project: Project, clip: VisualClip, time: Seconds) {
     (c.type === 'video' || c.type === 'image') && c.assetId === matte.sourceAssetId
   let host: VideoClip | ImageClip | undefined = isHost(clip) ? clip : undefined
   if (!host) {
+    const hidden = new Set(project.tracks.filter((t) => t.hidden).map((t) => t.id))
     for (const c of Object.values(project.clips)) {
-      if (c.enabled && isHost(c) && time >= c.start && time < c.start + c.duration) {
+      if (
+        c.enabled &&
+        isHost(c) &&
+        !hidden.has(c.trackId) &&
+        time >= c.start &&
+        time < c.start + c.duration
+      ) {
         host = c
         break
       }
     }
   }
-  const sourceTime = host
-    ? host.type === 'video'
-      ? host.sourceStart + (time - host.start) * host.playbackRate
-      : 0
-    : time - clip.start
-  const rate = host?.type === 'video' ? host.playbackRate : host ? 0 : 1
+  if (!host) return null
+  const sourceTime = host.type === 'video' ? host.sourceStart + (time - host.start) * host.playbackRate : 0
+  const rate = host.type === 'video' ? host.playbackRate : 0
   return { matte, maskAsset, host, sourceTime, rate }
 }
 
@@ -605,21 +613,16 @@ export class WebGLCompositor implements Compositor {
       frame.source,
       info.maskAsset.kind === 'image' ? frame.source : undefined,
     )
-    let m: Mat2D
-    if (info.host) {
-      const src = s.project.assets[info.host.assetId]
-      const [bw, bh] = fitSize(
-        info.host.fit,
-        src?.width ?? frame.width,
-        src?.height ?? frame.height,
-        s.width,
-        s.height,
-      )
-      m = layerMatrix(info.host, s.time - info.host.start, s.time, bw, bh, s.width, s.height, s.audio)
-    } else {
-      const [bw, bh] = fitSize('cover', frame.width, frame.height, s.width, s.height)
-      m = [bw, 0, 0, bh, (s.width - bw) / 2, (s.height - bh) / 2]
-    }
+    const { host } = info
+    const src = s.project.assets[host.assetId]
+    const [bw, bh] = fitSize(
+      host.fit,
+      src?.width ?? frame.width,
+      src?.height ?? frame.height,
+      s.width,
+      s.height,
+    )
+    const m = layerMatrix(host, s.time - host.start, s.time, bw, bh, s.width, s.height, s.audio)
     this.drawQuad(gpu, target, m, { texture, flipY: false }, 1, s)
     return { target, mode: info.matte.mode, feather: info.matte.feather }
   }
