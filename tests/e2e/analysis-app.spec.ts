@@ -258,3 +258,68 @@ test('Assist › Song analysis says the bars are not found yet after the refinem
   await expect(page.getByText(/^Bars not found yet\. The model could not be downloaded\./)).toBeVisible()
   await shot(page, 'analysis-bars-not-found')
 })
+
+/**
+ * The preview's position readout counts bars only from bars that were found: while they are being found it shows the
+ * section alone and says why, then counts from the found bars (here starting on the second beat).
+ */
+test('the preview’s position readout counts bars only once they are found', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem('mv-studio.background-analysis', 'on')
+    const { app, shared } = window.mvStudio
+    const w = window as unknown as { finishBars?: () => void }
+    app.songAnalysis.setSongAnalysisServiceForTests({
+      refine: () =>
+        shared.jobs.run({
+          kind: 'analysis.downbeats',
+          title: 'Finding bars and refining beats',
+          run: () =>
+            new Promise((resolve) => {
+              w.finishBars = () => {
+                const project = app.project.editor.getProject()
+                const a = project.analysis.audio[project.songAssetId]
+                resolve({
+                  tempo: a.tempo,
+                  beats: a.beats,
+                  downbeats: a.beats.filter((_: number, i: number) => i % 4 === 1),
+                })
+              }
+            }),
+        }),
+      release: async () => true,
+    })
+    window.location.hash = '#/editor?t=73.6'
+  })
+  const readout = page.locator('span[class*="posSection"]').locator('..')
+  const tooltip = async () => {
+    await page.mouse.move(0, 0)
+    await readout.hover()
+    return page.getByRole('tooltip')
+  }
+  await expect(readout).toContainText(/Bar \d+/)
+  const beats = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    return project.analysis.audio[project.songAssetId].beats as number[]
+  })
+
+  // The bars no longer fit the beats (as after a tapped tempo), so the background step looks for them again.
+  await page.evaluate(() => {
+    const editor = window.mvStudio.app.project.editor
+    const project = editor.getProject()
+    editor.dispatch(
+      { type: 'analysis.setGrid', assetId: project.songAssetId, grid: { downbeats: undefined } },
+      { history: 'skip' },
+    )
+  })
+  await expect(readout).not.toContainText('Bar')
+  await expect(await tooltip()).toContainText('Finding bars…')
+  await shot(page, 'position-finding-bars')
+
+  await page.evaluate(() => (window as unknown as { finishBars: () => void }).finishBars())
+  const k = beats.filter((b) => b <= 73.6).length - 2
+  await expect(readout).toContainText(`Bar ${Math.floor(k / 4) + 1}`)
+  await expect(await tooltip()).toContainText(`Bar ${Math.floor(k / 4) + 1}, beat ${(k % 4) + 1}`)
+  await shot(page, 'position-bars-found')
+})

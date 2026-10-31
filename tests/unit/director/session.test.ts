@@ -9,9 +9,20 @@ import {
   type DirectorState,
   type Planner,
 } from '../../../src/director/index.ts'
+import type { DirectorDeps } from '../../../src/director/session.ts'
+import { BARS_NOTES } from '../../../src/model/queries.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
-import { badKey, fakeProvider, makeProject, memoryStore, type FakeProvider } from './fixtures.ts'
+import {
+  analysis,
+  badKey,
+  DOWNBEATS,
+  fakeProvider,
+  makeProject,
+  memoryStore,
+  SONG_ID,
+  type FakeProvider,
+} from './fixtures.ts'
 
 function setup(o: { provider?: FakeProvider; videos?: number; confirmAboveUsd?: number } = {}) {
   const project = makeProject({ videos: o.videos ?? 4 })
@@ -258,5 +269,78 @@ describe('DirectorSession with an AI planner', () => {
     expect(local.plan.planner).toBe('local')
     await first
     expect(session.getState()).toBe(local)
+  })
+})
+
+describe('DirectorSession and the song’s bars', () => {
+  function withoutBars() {
+    const project = makeProject()
+    delete project.analysis.audio[SONG_ID]!.downbeats
+    return new ProjectEditor(project)
+  }
+  const planWith = (editor: ProjectEditor, ensureBars?: DirectorDeps['ensureBars'], jobs = new JobRunner()) =>
+    new DirectorSession({ editor, jobs, ...(ensureBars ? { ensureBars } : {}) }).plan({
+      kind: 'beat-cut',
+      seed: 4,
+    })
+  /** The stages and fractions the plan job reports, in order. */
+  function progressOf(jobs: JobRunner): [string | undefined, number | undefined][] {
+    const seen: [string | undefined, number | undefined][] = []
+    jobs.subscribe((list) => {
+      const p = list.find((s) => s.kind === 'director.plan')?.progress
+      const last = seen[seen.length - 1]
+      if (p && (last?.[0] !== p.stage || last?.[1] !== p.fraction)) seen.push([p.stage, p.fraction])
+    })
+    return seen
+  }
+
+  const cuts = (state: DirectorState) => ready(state).plan.shots.map((s) => [s.start, s.end])
+
+  it('waits for the bars before planning and cuts on them', async () => {
+    const onBars = cuts(await planWith(new ProjectEditor(makeProject())))
+    expect(cuts(await planWith(withoutBars()))).not.toEqual(onBars)
+
+    const editor = withoutBars()
+    const found = await planWith(editor, () => {
+      editor.dispatch(
+        { type: 'analysis.setAudio', analysis: analysis({ downbeats: DOWNBEATS }) },
+        { history: 'skip' },
+      )
+      return Promise.resolve(true)
+    })
+    expect(cuts(found)).toEqual(onBars)
+    expect(ready(found).preview.warnings).not.toContain(BARS_NOTES.beatsOnly)
+  })
+
+  it('gives finding the bars half of the progress bar, and only when it runs', async () => {
+    const editor = withoutBars()
+    const jobs = new JobRunner()
+    const seen = progressOf(jobs)
+    await planWith(
+      editor,
+      ({ progress }) => {
+        progress(0.6)
+        editor.dispatch(
+          { type: 'analysis.setAudio', analysis: analysis({ downbeats: DOWNBEATS }) },
+          { history: 'skip' },
+        )
+        return Promise.resolve(true)
+      },
+      jobs,
+    )
+    expect(seen).toContainEqual(['bars', 0.3])
+    expect(seen).toContainEqual(['gather', 0.525])
+    expect(seen).toContainEqual(['plan', 0.65])
+
+    const quick = new JobRunner()
+    const quickSeen = progressOf(quick)
+    await planWith(new ProjectEditor(makeProject()), () => Promise.resolve(true), quick)
+    expect(quickSeen.map(([stage]) => stage)).not.toContain('bars')
+    expect(quickSeen).toContainEqual(['gather', 0.05])
+  })
+
+  it('says the cuts follow the beats when the bars could not be found', async () => {
+    const planned = ready(await planWith(withoutBars(), () => Promise.resolve(false)))
+    expect(planned.preview.warnings).toContain(BARS_NOTES.beatsOnly)
   })
 })

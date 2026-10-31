@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RefinedFields } from '../../../src/analysis/song.ts'
+import { lyricChorusCommand } from '../../../src/analysis/structure/chorus.ts'
 import {
   createAudioClip,
   createProject,
   createTrack,
   type Asset,
   type AudioAnalysis,
+  type LyricLine,
+  type LyricsDoc,
   type Project,
+  type SongSection,
 } from '../../../src/model/index.ts'
 import { JobError, jobs, type JobContext } from '../../../src/shared/jobs.ts'
 import { editor } from '../../../src/app/state/project.ts'
 import {
+  barPosition,
   barsState,
   ensureBars,
   findBars,
@@ -92,6 +97,8 @@ describe('bars state', () => {
   it('is ready only with found bars, given in timeline time', () => {
     expect(barsState(createProject())).toEqual({ status: 'none' })
     expect(barsState(project({}))).toEqual({ status: 'unavailable' })
+    // One bar start alone gives no bar length.
+    expect(barsState(project({ downbeats: [1] }))).toEqual({ status: 'unavailable' })
     // The song plays from 1 s into the file at 2 s on the timeline, for 9 s: a bar at 10.5 s in the file is cut off.
     expect(barsState(project({ downbeats: [1, 3, 10.5] }))).toEqual({ status: 'ready', downbeats: [2, 4] })
   })
@@ -175,5 +182,126 @@ describe('ensureBars', () => {
     expect(stored()?.beats).toEqual(halved)
     expect(stored()?.downbeats).toEqual(bars)
     expect(editor.undoLabel()).toBe('Set tempo')
+  })
+})
+
+describe('barPosition', () => {
+  it('counts bars from the first bar found and beats from its downbeat, and nothing before it', () => {
+    const grid = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4]
+    const downbeats = [0.5, 2.5]
+    expect(barPosition(downbeats, grid, 0.2)).toBeNull()
+    expect(barPosition(downbeats, grid, 0.5)).toEqual({ bar: 1, beat: 1 })
+    expect(barPosition(downbeats, grid, 1.7)).toEqual({ bar: 1, beat: 3 })
+    expect(barPosition(downbeats, grid, 3.9)).toEqual({ bar: 2, beat: 3 })
+  })
+})
+
+const section = (
+  id: string,
+  start: number,
+  end: number,
+  label: string,
+  confidence?: number,
+): SongSection => ({
+  id,
+  start,
+  end,
+  label,
+  repeatGroup: 0,
+  energy: 0.5,
+  ...(confidence ? { confidence } : {}),
+})
+
+/** Words one after another from `start`, `step` seconds each. */
+const words = (text: string, start: number, step: number) =>
+  text.split(' ').map((w, i) => ({ text: w, start: start + i * step, end: start + (i + 1) * step }))
+const line = (id: string, text: string, start: number, step: number): LyricLine => {
+  const ws = words(text, start, step)
+  return { id, text, start: ws[0]!.start, end: ws.at(-1)!.end, words: ws }
+}
+/** A chorus sung at 0.6-2.4 s and 4.6-6.4 s, each followed by verse words. */
+const LYRICS: LyricsDoc = {
+  source: 'pasted',
+  lines: [
+    line('c1', 'we sing all', 0.6, 0.3),
+    line('c2', 'night long tonight', 1.5, 0.3),
+    line('v1', 'woke up late on sunday morning', 2.6, 0.2),
+    line('c3', 'we sing all', 4.6, 0.3),
+    line('c4', 'night long tonight', 5.5, 0.3),
+    line('v2', 'streets are empty shops are closed', 6.6, 0.2),
+  ],
+}
+const choruses = () =>
+  stored()
+    ?.sections?.filter((s) => s.label === 'chorus')
+    .map((s) => [s.start, s.end])
+
+describe('the lyrics’ chorus once bars are found', () => {
+  it('is found again on the refined sections and put on the bars, when it was set on beats meanwhile', async () => {
+    const p = project({ sections: [section('a', 0, 4, 'verse'), section('b', 4, 8, 'verse')] })
+    p.lyrics = LYRICS
+    editor.load(p)
+    const found = findBars(songId(), { sections: true })
+    await vi.waitFor(() => expect(runs).toHaveLength(1))
+    editor.dispatch(lyricChorusCommand(stored()!, LYRICS)!, { history: 'skip' })
+    expect(
+      choruses()
+        ?.flat()
+        .every((t) => bars.includes(t)),
+    ).toBe(false)
+    runs[0]?.resolve({ ...refined(), sections: [section('r1', 0, 4, 'verse'), section('r2', 4, 8, 'verse')] })
+    expect(await found).toBe(true)
+    expect(choruses()).toEqual([
+      [0, 2],
+      [4, 6],
+    ])
+    expect(stored()?.sections?.[0]?.id).toBe('r1')
+  })
+
+  it('keeps the sections, ids and label of a section the user renamed while the bars were being found', async () => {
+    const p = project({ sections: [section('a', 0, 4, 'verse'), section('b', 4, 8, 'verse')] })
+    p.lyrics = LYRICS
+    editor.load(p)
+    const found = findBars(songId(), { sections: true })
+    await vi.waitFor(() => expect(runs).toHaveLength(1))
+    editor.dispatch({
+      type: 'analysis.updateSection',
+      assetId: songId(),
+      sectionId: 'b',
+      patch: { label: 'bridge' },
+    })
+    runs[0]?.resolve({
+      ...refined(),
+      sections: [section('r1', 0, 4, 'verse'), section('r2', 4, 8, 'chorus')],
+    })
+    expect(await found).toBe(true)
+    expect(stored()?.downbeats).toEqual(bars)
+    expect(stored()?.sections?.map((s) => [s.id, s.label, s.start, s.end])).toEqual([
+      ['a', 'verse', 0, 4],
+      ['b', 'bridge', 4, 8],
+    ])
+  })
+
+  it('moves its edges onto the bars found later, keeping the sections', async () => {
+    const p = project({
+      sections: [
+        section('a', 0, 2.5, 'chorus', 0.8),
+        section('b', 2.5, 4, 'verse'),
+        section('c', 4, 6.5, 'chorus', 0.8),
+        section('d', 6.5, 8, 'verse'),
+      ],
+    })
+    p.lyrics = LYRICS
+    editor.load(p)
+    const found = findBars(songId())
+    await vi.waitFor(() => expect(runs).toHaveLength(1))
+    runs[0]?.resolve(refined())
+    expect(await found).toBe(true)
+    expect(stored()?.sections?.map((s) => [s.id, s.start, s.end])).toEqual([
+      ['a', 0, 2],
+      ['b', 2, 4],
+      ['c', 4, 6],
+      ['d', 6, 8],
+    ])
   })
 })

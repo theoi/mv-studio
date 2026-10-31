@@ -1,4 +1,5 @@
 /** Beat-grid math for planners: grids with fallbacks, section coverage, and beat- or bar-aligned cut points. */
+import { hasFoundBars } from '../model/queries.ts'
 import type { LyricLine, Seconds } from '../model/types.ts'
 import { meanOver, type EnergyAt, type SectionInfo, type SongInfo } from './inputs.ts'
 import type { Pace } from './plan.ts'
@@ -10,6 +11,7 @@ const EPS = 1e-3
 
 export interface BeatGrid {
   beats: Seconds[]
+  /** Bar starts; empty when the song's bars are not found (cuts then follow the beats). */
   downbeats: Seconds[]
   beatLength: Seconds
   bpm: number
@@ -39,8 +41,9 @@ export function beatGrid(song: SongInfo): BeatGrid {
   const diffs = beats.slice(1).map((b, i) => b - (beats[i] as number))
   const beatLength = median(diffs.filter((d) => d > 0.15 && d < 2)) ?? 60 / (song.bpm || FALLBACK_BPM)
   const bpm = song.bpm && song.bpm > 0 ? song.bpm : 60 / beatLength
-  const downbeats =
-    song.downbeats.length >= 2 && !estimated ? song.downbeats : beats.filter((_, i) => i % 4 === 0)
+  // Bars not found yet are not guessed from real beats: cuts then follow the beats. Synthesized beats (no beat
+  // analysis at all) get synthesized bars too.
+  const downbeats = estimated ? beats.filter((_, i) => i % 4 === 0) : hasFoundBars(song) ? song.downbeats : []
   return { beats, downbeats, beatLength, bpm, estimated }
 }
 

@@ -16,6 +16,7 @@ import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
 import { directorFootage } from './footage.ts'
 import { appMedia } from './media.ts'
 import { editor } from './project.ts'
+import { ensureBars } from './songAnalysis.ts'
 import { get as getUi, toast, type Kind } from './ui.ts'
 
 /*
@@ -76,6 +77,7 @@ function directorSession(): Promise<DirectorSession> {
       catalog: () => d.catalogFromPlugins(pluginRegistry.catalog()),
       spendPolicy: () => cloudSettings.get(),
       ledger: spendLedger,
+      ensureBars,
       planner: d.createDirectorPlanner({
         client: () => cloud.llm(),
         model: () => cloudSettings.get().llm?.model,

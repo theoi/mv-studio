@@ -14,6 +14,7 @@ import {
   type Seconds,
   type StemName,
 } from '../model/types.ts'
+import { hasFoundBars } from '../model/queries.ts'
 import type { AudioFrame } from './types.ts'
 
 export interface AudioSampler {
@@ -96,7 +97,7 @@ const barStartCache = new WeakMap<readonly number[], { first: number | undefined
  */
 function barStarts(analysis: AudioAnalysis): readonly number[] | undefined {
   const { beats, downbeats } = analysis
-  if (downbeats && downbeats.length >= 2) return downbeats
+  if (downbeats && hasFoundBars(analysis)) return downbeats
   if (!beats || beats.length === 0) return downbeats
   const first = downbeats?.[0]
   const cached = barStartCache.get(beats)

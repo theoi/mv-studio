@@ -1,14 +1,24 @@
-import { beforeEach, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RefinedFields } from '../../../src/analysis/song.ts'
 import { autoCut } from '../../../src/vision/autocut/index.ts'
 import {
   autoCutOptions,
   DEFAULT_AUTOCUT_CHOICES,
   matchesMood,
+  startAutoCut,
   unanalyzedClipCount,
   undoAutoCut,
   type AutoCutChoices,
 } from '../../../src/app/state/autocut.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
+import { barsState, setSongAnalysisServiceForTests } from '../../../src/app/state/songAnalysis.ts'
+import type * as Footage from '../../../src/app/state/footage.ts'
+import { JobError, jobs } from '../../../src/shared/jobs.ts'
+
+vi.mock('../../../src/app/state/footage.ts', async (original) => ({
+  ...(await original<typeof Footage>()),
+  visionService: () => Promise.resolve({ matcher: undefined }),
+}))
 
 const choices: AutoCutChoices = { ...DEFAULT_AUTOCUT_CHOICES, pace: 'beat', followEnergy: false }
 
@@ -89,4 +99,51 @@ it('passes the More options through: where cuts land, and story order over the m
   expect(matchesMood(choices)).toBe(true)
   expect(matchesMood(story)).toBe(false)
   expect(matchesMood({ ...choices, matchMood: false })).toBe(false)
+})
+
+describe('the auto-cut job', () => {
+  let refine: () => Promise<RefinedFields>
+  let found: RefinedFields
+
+  beforeEach(() => {
+    setSongAnalysisServiceForTests({
+      refine: () =>
+        jobs.run({
+          kind: 'analysis.downbeats',
+          title: 'Finding bars and refining beats',
+          run: () => refine(),
+        }),
+      release: async () => undefined,
+    })
+    const project = editor.getProject()
+    const { downbeats, ...analysis } = project.analysis.audio[project.songAssetId!]!
+    found = { tempo: analysis.tempo, beats: analysis.beats, downbeats }
+    editor.dispatch({ type: 'analysis.setAudio', analysis }, { history: 'skip' })
+  })
+
+  async function cut() {
+    const handle = startAutoCut({ pace: 'bar' })!
+    const stages = new Set<string | undefined>()
+    handle.subscribe((s) => stages.add(s.progress.stage))
+    return { result: await handle.promise, stages }
+  }
+
+  it('finds the song’s bars first when they are not found yet', async () => {
+    refine = () => Promise.resolve(found)
+    const { result, stages } = await cut()
+    expect(stages.has('bars')).toBe(true)
+    expect(barsState().status).toBe('ready')
+    expect(result.stats.cuts).toBeGreaterThan(0)
+    expect(result.warnings.join(' ')).not.toMatch(/Bars not found yet/)
+  })
+
+  it('cuts on the beats and says so when the bars cannot be found', async () => {
+    refine = () => Promise.reject(new JobError('model-load', 'The beat model could not load'))
+    const { result } = await cut()
+    expect(barsState().status).toBe('unavailable')
+    expect(result.stats.cuts).toBeGreaterThan(0)
+    expect(result.warnings).toContain(
+      'Bars not found yet, so the cuts follow the beats. Analyze again in Assist › Song analysis to look for them.',
+    )
+  })
 })

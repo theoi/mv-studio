@@ -98,3 +98,40 @@ test('each color adjustment can be keyframed and react to the music', async ({ p
   await page.keyboard.press('ArrowRight')
   expect((await adjustment(page, 'saturation')).value).toBeGreaterThan(before)
 })
+
+test('a downbeat swell picked before the bars are found follows every fourth beat and says so, then the bars', async ({
+  page,
+}, testInfo) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=70.4'
+  })
+  await waitForPreview(page)
+  const setBars = (bars: 'found' | 'none') =>
+    page.evaluate((bars) => {
+      const editor = window.mvStudio.app.project.editor
+      const project: Project = editor.getProject()
+      const id = project.songAssetId!
+      const beats = project.analysis.audio[id]!.beats!
+      const downbeats = bars === 'found' ? beats.filter((_, i) => i % 4 === 0) : undefined
+      editor.dispatch({ type: 'analysis.setGrid', assetId: id, grid: { downbeats } }, { history: 'skip' })
+    }, bars)
+  await setBars('none')
+
+  await page.getByRole('button', { name: 'React to music: Look intensity' }).click()
+  const panel = page.getByRole('dialog', { name: 'React to music: Look intensity' })
+  await panel.getByRole('combobox', { name: 'Reaction' }).click()
+  await page.getByRole('option', { name: /^Swell on downbeat/ }).click()
+  await expect(panel.getByText('Listens to: every fourth beat (bars not found yet).')).toBeVisible()
+  expect(await lookModulation(page)).toMatchObject([{ source: { kind: 'downbeat' } }])
+  await page.screenshot({ path: testInfo.outputPath('react-panel-bars-guessed.png') })
+
+  // Once the bars are found, the same mapping follows them: nothing is redone.
+  await setBars('found')
+  await expect(panel.getByText('Listens to: the song’s bar grid.')).toBeVisible()
+  expect(await lookModulation(page)).toMatchObject([{ source: { kind: 'downbeat' } }])
+  expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBe(
+    'React to music: Swell on downbeat',
+  )
+})

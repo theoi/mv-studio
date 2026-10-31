@@ -15,6 +15,7 @@ import {
   sectionsFor,
   type BeatGrid,
 } from '../../director/timing.ts'
+import { hasFoundBars } from '../../model/queries.ts'
 import type { Id, Seconds } from '../../model/types.ts'
 import type { TimeRange } from '../types.ts'
 
@@ -96,7 +97,7 @@ function splitLong(span: CutSpan, max: Seconds, grid: BeatGrid): CutSpan[] {
   const length = span.end - span.start
   if (!(length > max + EPS)) return [span]
   const parts = Math.ceil(length / max)
-  const lines = grid.downbeats.length ? grid.downbeats : grid.beats
+  const lines = hasFoundBars(grid) ? grid.downbeats : grid.beats
   const cuts = [span.start]
   for (let i = 1; i < parts; i++) {
     const ideal = span.start + (length * i) / parts
@@ -161,7 +162,7 @@ export function cutSpans(song: SongInfo, options: RhythmOptions): Rhythm {
     const cuts =
       options.cutOn === 'sections'
         ? [start]
-        : options.cutOn === 'downbeats'
+        : options.cutOn === 'downbeats' && hasFoundBars(grid)
           ? barCuts(start, end, k / 4, grid)
           : options.followEnergy
             ? phrasedCutTimes(start, end, k, grid, { ...(energyAt ? { energyAt } : {}), lift })

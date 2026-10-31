@@ -117,7 +117,7 @@ describe('refined bars', () => {
   })
 
   it('stores nothing when bars exist or the refined bars fit none of the beats', () => {
-    expect(refinedBarsCommand({ ...fast, downbeats: [0.5] }, fast, refined)).toBeNull()
+    expect(refinedBarsCommand({ ...fast, downbeats: [0.5, 2.5] }, fast, refined)).toBeNull()
     const offbeat: AudioAnalysis = {
       ...fast,
       tempo: { bpm: 120, confidence: 1 },

@@ -950,7 +950,10 @@ function VjPage() {
           />
         </Row>
       )}
-      <Row title="Quantize triggers" desc="Line up recorded pad hits with the nearest beat or bar.">
+      <Row
+        title="Quantize triggers"
+        desc="Line up recorded pad hits with the nearest beat or bar. Until a song’s bars are found, “Nearest bar” uses the nearest beat."
+      >
         <Select
           value={choice}
           onChange={choose}

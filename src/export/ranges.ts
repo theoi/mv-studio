@@ -2,7 +2,7 @@
  * Ranges for short exports, on the song's bar grid: the chorus teaser (15-30 s, starting on the strongest chorus)
  * and the Canvas-style loop (3-8 s, a whole number of bars).
  */
-import { projectDuration } from '../model/queries.ts'
+import { hasFoundBars, projectDuration } from '../model/queries.ts'
 import type { AudioAnalysis, AudioClip, Project, Seconds, SongSection } from '../model/types.ts'
 import { beatGridOf } from '../vj/quantize.ts'
 
@@ -56,13 +56,13 @@ function analysisOf(project: Project): AudioAnalysis | undefined {
   return project.songAssetId ? project.analysis.audio[project.songAssetId] : undefined
 }
 
-/** Bar starts on the timeline: analysed downbeats, else every fourth beat. Empty without a beat grid. */
+/**
+ * Bar starts on the timeline: the song's bars once found. Empty without them, so teasers and loops are then placed
+ * in seconds rather than on guessed bars.
+ */
 export function barTimes(project: Project): Seconds[] {
   const grid = beatGridOf(project)
-  if (!grid) return []
-  return grid.downbeats && grid.downbeats.length >= 2
-    ? grid.downbeats
-    : grid.beats.filter((_, i) => i % 4 === 0)
+  return grid?.downbeats && hasFoundBars(grid) ? grid.downbeats : []
 }
 
 function nearest(times: readonly Seconds[], t: Seconds): Seconds {

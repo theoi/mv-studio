@@ -43,6 +43,12 @@ describe('quantize', () => {
     expect(nearestGridTime(-0.4, grid, '1/4')).toBe(-0.5)
   })
 
+  it('snaps "bar" to the nearest beat while the bars are not found, not to a guessed bar', () => {
+    const beatsOnly: BeatGrid = { beats: grid.beats }
+    expect(nearestGridTime(1.2, beatsOnly, 'bar')).toBe(1)
+    expect(nearestGridTime(1.4, beatsOnly, 'bar')).toBe(1.5)
+  })
+
   it('moves part of the way with a lower strength', () => {
     expect(quantizeTime(0.6, grid, { enabled: true, grid: '1/4', strength: 0.5 })).toBeCloseTo(0.55, 9)
   })

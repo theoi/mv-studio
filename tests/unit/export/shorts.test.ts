@@ -164,6 +164,12 @@ describe('loopRange', () => {
     expect(loopRange(song().project, undefined, 0)).toMatchObject({ start: 2, end: 10, bars: 4 })
   })
 
+  it('offers loop lengths in seconds, not guessed bars, while the bars are not found', () => {
+    const { project } = song({ sections })
+    delete project.analysis.audio.song!.downbeats
+    expect(loopLengths(project, 12)).toEqual([4, 6, 8].map((seconds) => ({ bars: 0, seconds })))
+  })
+
   it('fits a chosen number of bars from the nearest bar, inside the timeline and after the crossfade room', () => {
     const { project } = song({ sections })
     expect(fitLoopRange(project, 21.2, 2)).toEqual({ start: 22, end: 26, bars: 2, crossfade: 0.5 })

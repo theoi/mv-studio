@@ -122,6 +122,36 @@ describe('choosing what to listen to', () => {
     expect(availableReactions(scene('unanalyzed').p).every((a) => !a.ready)).toBe(true)
   })
 
+  it('swells on every fourth beat until the bars are found, then on the bars without being redone', () => {
+    const s = scene('mix')
+    const analysis = s.p.analysis.audio[PREVIEW_SONG_ID]!
+    const bars = analysis.downbeats!
+    // One bar start alone gives no bar length: the bars are not found yet.
+    analysis.downbeats = bars.slice(0, 1)
+    const downbeat = availableReactions(s.p).find((a) => a.reaction.id === 'downbeat')
+    expect(downbeat).toMatchObject({
+      listensTo: 'Every fourth beat (bars not found yet)',
+      listening: 'every fourth beat (bars not found yet)',
+      ready: true,
+    })
+    const target: ReactionTarget = { clipId: s.img.id, property: 'opacity' }
+    const editor = new ProjectEditor(s.p)
+    applyReaction(editor, [target], 'downbeat')
+    expect((editor.getProject().clips[s.img.id] as ImageClip).opacity.modulation?.[0]?.source).toEqual({
+      kind: 'downbeat',
+    })
+    editor.dispatch(
+      { type: 'analysis.setAudio', analysis: { ...analysis, downbeats: bars } },
+      { history: 'skip' },
+    )
+    expect(describeReaction(editor.getProject(), target)).toMatchObject({
+      listensTo: 'Bar grid',
+      listening: 'the song’s bar grid',
+      canUpgrade: false,
+      exact: true,
+    })
+  })
+
   it('keeps the default band layout in step with the analysis', () => {
     expect(DEFAULT_BAND_EDGES_HZ).toEqual(BAND_EDGES_HZ)
   })
