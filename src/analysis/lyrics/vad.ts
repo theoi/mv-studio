@@ -15,9 +15,28 @@ export interface VoiceActivityOptions {
   minPause?: number
   /** Added before and after each region (seconds). */
   pad?: number
+  /**
+   * The song's mix, at the same sample rate and time as the stem. Frames where the stem is more than `mixRangeDb`
+   * below the mix count as silence: in loud instrumental stretches separation leaks enough of the band into the stem
+   * to pass the level threshold, but singing is rarely that far below the mix.
+   */
+  mix?: Float32Array
+  /** dB; default 25. */
+  mixRangeDb?: number
 }
 
 const FRAME_SECONDS = 0.02
+
+function frameDb(pcm: Float32Array, hop: number): Float32Array {
+  const frames = Math.floor(pcm.length / hop)
+  const db = new Float32Array(frames)
+  for (let f = 0; f < frames; f++) {
+    let sum = 0
+    for (let i = f * hop; i < (f + 1) * hop; i++) sum += (pcm[i] as number) ** 2
+    db[f] = 10 * Math.log10(sum / hop + 1e-12)
+  }
+  return db
+}
 
 /**
  * Sung regions of a vocals stem. Separation leaves the stem near silent between phrases, so a level threshold
@@ -32,14 +51,11 @@ export function voiceActivity(
   const minVoice = options.minVoice ?? 0.2
   const minPause = options.minPause ?? 0.6
   const pad = options.pad ?? 0.15
+  const mixRangeDb = options.mixRangeDb ?? 25
   const hop = Math.max(1, Math.round(sampleRate * FRAME_SECONDS))
-  const frames = Math.floor(pcm.length / hop)
-  const db = new Float32Array(frames)
-  for (let f = 0; f < frames; f++) {
-    let sum = 0
-    for (let i = f * hop; i < (f + 1) * hop; i++) sum += (pcm[i] as number) ** 2
-    db[f] = 10 * Math.log10(sum / hop + 1e-12)
-  }
+  const db = frameDb(pcm, hop)
+  const frames = db.length
+  const mixDb = options.mix ? frameDb(options.mix, hop) : undefined
   const audible = db.filter((v) => v > -80)
   if (audible.length === 0) return []
   const threshold = quantile(audible, 0.95) - rangeDb
@@ -47,7 +63,11 @@ export function voiceActivity(
   const raw: TimeRange[] = []
   let start = -1
   for (let f = 0; f <= frames; f++) {
-    const on = f < frames && (db[f] as number) > threshold
+    const level = db[f] as number
+    const on =
+      f < frames &&
+      level > threshold &&
+      !(mixDb && f < mixDb.length && level < (mixDb[f] as number) - mixRangeDb)
     if (on && start < 0) start = f
     if (!on && start >= 0) {
       raw.push({ start: start * fs, end: f * fs })

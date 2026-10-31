@@ -5,6 +5,7 @@ import { modelCache, type ModelDescriptor } from '../../shared/models.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../../shared/worker.ts'
 import type { DecodedAudio } from '../beats/fast.ts'
 import { decodeAudioFile } from '../decode.ts'
+import { mixToMono } from '../dsp/resample.ts'
 import { part } from '../jobContext.ts'
 import { DEMUCS_MODEL, WAV2VEC2_MODEL, WHISPER_MODELS, whisperFileUrls, type WhisperSize } from '../models.ts'
 import { StemSeparationService, type StemStore } from '../stems/client.ts'
@@ -145,7 +146,7 @@ export class LyricsService {
         if (request.kind === 'time' && lines.length === 0)
           throw new JobError('invalid-input', 'There are no lyrics to time')
         const duration = deps.editor.getProject().assets[songId]?.duration ?? 0
-        const { vocals, vocalsId, rest } = await this.vocals(
+        const { vocals, mix, vocalsId, rest } = await this.vocals(
           songId,
           deps,
           ctx,
@@ -155,7 +156,9 @@ export class LyricsService {
         if (request.kind === 'time') {
           const cached = this.emissions.get(songId)
           const emissions = cached?.vocalsId === vocalsId ? cached.em : undefined
-          const result = await this.call((c) => runWorkerCall(c, 'align', { vocals, lines, emissions }, rest))
+          const result = await this.call((c) =>
+            runWorkerCall(c, 'align', { vocals, mix, lines, emissions }, rest, buffers(vocals, mix)),
+          )
           this.emissions.set(songId, {
             em: result.emissions,
             vocab: result.vocab,
@@ -167,7 +170,13 @@ export class LyricsService {
         }
         const size = request.size ?? DRAFT_SIZE
         const result = await this.call((c) =>
-          runWorkerCall(c, 'transcribe', { vocals, language: request.language, size }, rest),
+          runWorkerCall(
+            c,
+            'transcribe',
+            { vocals, mix, language: request.language, size },
+            rest,
+            buffers(vocals, mix),
+          ),
         )
         this.emissions.set(songId, {
           em: result.emissions,
@@ -203,14 +212,16 @@ export class LyricsService {
         const current = vocalsAsset(deps.editor.getProject(), songId)
         if (current && this.emissions.get(songId)?.vocalsId === current.id) return
         const duration = deps.editor.getProject().assets[songId]?.duration ?? 0
-        const { vocals, vocalsId, rest } = await this.vocals(
+        const { vocals, mix, vocalsId, rest } = await this.vocals(
           songId,
           deps,
           ctx,
           SECONDS_PER_SECOND.align,
           lyricsSeconds(duration, 'time', await this.stems.slowdown()),
         )
-        const result = await this.call((c) => runWorkerCall(c, 'emissions', { vocals }, rest))
+        const result = await this.call((c) =>
+          runWorkerCall(c, 'emissions', { vocals, mix }, rest, buffers(vocals, mix)),
+        )
         this.emissions.set(songId, {
           em: result.emissions,
           vocab: result.vocab,
@@ -251,21 +262,26 @@ export class LyricsService {
     }
   }
 
-  /** The song's vocals at 16 kHz, from its stems or separated first; `rest` reports progress for what follows. */
+  /**
+   * The song's vocals and the song itself at 16 kHz mono, the vocals from its stems or separated first; `rest`
+   * reports progress for what follows.
+   */
   private async vocals(
     songId: Id,
     deps: LyricsDeps,
     ctx: JobContext,
     lyricsRate: number,
     lyricsSeconds: number,
-  ): Promise<{ vocals: DecodedAudio; vocalsId: Id; rest: JobContext }> {
+  ): Promise<{ vocals: DecodedAudio; mix: DecodedAudio; vocalsId: Id; rest: JobContext }> {
     const project = deps.editor.getProject()
-    songAsset(project, songId)
+    const song = songAsset(project, songId)
+    const read = async (file: Blob) => mono(await this.decode(file, CTC_SAMPLE_RATE))
+    const readMix = async () => read(await deps.store.getFile(song))
     const stored = vocalsAsset(project, songId)
     if (stored) {
       ctx.progress({ stage: 'decode', message: 'Reading the vocals' })
-      const vocals = await this.decode(await deps.store.getFile(stored), CTC_SAMPLE_RATE)
-      return { vocals, vocalsId: stored.id, rest: ctx }
+      const vocals = await read(await deps.store.getFile(stored))
+      return { vocals, mix: await readMix(), vocalsId: stored.id, rest: ctx }
     }
     const separate = await this.stems.rate()
     const split = separate / (separate + lyricsRate)
@@ -275,11 +291,8 @@ export class LyricsService {
     const vocalsId = deps.editor.getProject().analysis.audio[songId]?.stems?.vocals
     if (!stem || !vocalsId) throw new JobError('internal', 'Stem separation returned no vocals')
     ctx.progress({ stage: 'decode', fraction: split, message: 'Reading the vocals' })
-    const vocals = await this.decode(
-      new Blob([stem.audio.data], { type: stem.audio.mimeType }),
-      CTC_SAMPLE_RATE,
-    )
-    return { vocals, vocalsId, rest: part(ctx, split, 1) }
+    const vocals = await read(new Blob([stem.audio.data], { type: stem.audio.mimeType }))
+    return { vocals, mix: await readMix(), vocalsId, rest: part(ctx, split, 1) }
   }
 
   private async call<T>(run: (client: WorkerClient<LyricsWorkerApi>) => Promise<T>): Promise<T> {
@@ -291,6 +304,14 @@ export class LyricsService {
     }
   }
 }
+
+const mono = (audio: DecodedAudio): DecodedAudio =>
+  audio.channels.length === 1
+    ? audio
+    : { sampleRate: audio.sampleRate, channels: [mixToMono(audio.channels)] }
+
+/** Moved to the worker rather than copied: a long song and its vocals take tens of MB each, and neither is used after. */
+const buffers = (...audio: DecodedAudio[]) => audio.flatMap((a) => a.channels.map((c) => c.buffer))
 
 function chorusFor(deps: LyricsDeps, songId: Id, doc: LyricsDoc): EditCommand | null {
   const analysis = deps.editor.getProject().analysis.audio[songId]
