@@ -64,7 +64,7 @@ import {
   type WordEdge,
 } from '../../../state/lyricEdits.ts'
 import { lineTiming } from '../../../state/lyricTiming.ts'
-import { addTransitionAtCut, bareCuts } from '../../../state/transitions.ts'
+import { addTransitionAtCut, bareCuts, transitionMarkWidth } from '../../../state/transitions.ts'
 import {
   copySelection,
   cutSelection,
@@ -798,7 +798,10 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
-  const showLabel = width > (isMedia ? 36 : 54)
+  // A media clip's name sits beside its transition marks, which straddle its top edge where the name would be.
+  const inW = clip.transitionIn ? transitionMarkWidth(clip.transitionIn, pps) : 0
+  const outW = clip.transitionOut ? transitionMarkWidth(clip.transitionOut, pps) : 0
+  const showLabel = isMedia ? width - inW - outW > 36 : width > 54
   const label =
     clip.kind === 'look' && clip.amount !== undefined
       ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
@@ -855,7 +858,14 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
                 {showLabel && label}
               </span>
             )}
-            {isMedia && showLabel && <span className={styles.mediaLabel}>{clip.name}</span>}
+            {isMedia && showLabel && (
+              <span
+                className={styles.mediaLabel}
+                style={inW || outW ? { left: inW + 3, maxWidth: width - inW - outW - 6 } : undefined}
+              >
+                {clip.name}
+              </span>
+            )}
             <span
               className={[styles.handle, styles.handleL].join(' ')}
               onPointerDown={(e) => {

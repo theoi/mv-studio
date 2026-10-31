@@ -6,6 +6,7 @@ import {
   type Asset,
   type Project,
 } from '../../../src/model/index.ts'
+import { deleteSelection } from '../../../src/app/state/clipboard.ts'
 import { editor } from '../../../src/app/state/project.ts'
 import {
   addTransitionAtCut,
@@ -19,8 +20,9 @@ import {
 import { get, set } from '../../../src/app/state/ui.ts'
 
 beforeAll(() => {
-  // Toasts time out through window.setTimeout.
+  // Toasts time out through window.setTimeout, and removing a selected transition focuses its clip in the next frame.
   vi.stubGlobal('window', globalThis)
+  vi.stubGlobal('requestAnimationFrame', () => 0)
 })
 
 const asset = (id: string, kind: Asset['kind']): Asset => ({
@@ -113,6 +115,17 @@ describe('editing a transition', () => {
     removeTransition(s.b.id, 'in')
     expect(transitionIn(s.b.id)).toBeUndefined()
     expect(get().selection).toEqual({ type: 'clip', id: s.b.id })
+    editor.undo()
+    expect(transitionIn(s.b.id)).toMatchObject({ kind: 'fade' })
+  })
+
+  it('Delete removes the selected transition, not its clip, as one undo step', () => {
+    const s = scene()
+    addTransitionAtCut(s.b.id)
+    expect(deleteSelection()).toBe(true)
+    expect(transitionIn(s.b.id)).toBeUndefined()
+    expect(editor.getProject().clips[s.b.id]).toBeDefined()
+    expect(editor.undoLabel()).toBe('Remove transition: Fade')
     editor.undo()
     expect(transitionIn(s.b.id)).toMatchObject({ kind: 'fade' })
   })

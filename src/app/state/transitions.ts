@@ -85,6 +85,20 @@ export function bareCuts(project: Project, trackId: Id): { clipId: Id; time: num
     .map((c) => ({ clipId: c.id, time: c.start }))
 }
 
+/** How wide a transition's mark is on the timeline: its duration, and at least 24 px to click at any zoom. */
+export const transitionMarkWidth = (duration: number, pps: number) => Math.max(24, duration * pps)
+
+/** A transition's duration as the inspector and the mark's tooltip show it: "0.6 s". */
+export const transitionSeconds = (s: number) => `${Number(s.toFixed(2))} s`
+
+/**
+ * Focus goes to the clip on the timeline, which takes the selection when its transition is removed: the mark or
+ * button that had focus is gone, and focus would drop to the page.
+ */
+export function focusClip(clipId: Id): void {
+  requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-clip-id="${clipId}"]`)?.focus())
+}
+
 /** The longest a transition can be on this clip: half the clip, at most 4 s. */
 export function maxTransitionDuration(clip: Clip): number {
   return Math.max(0.1, Math.min(4, clip.duration / 2))
@@ -146,7 +160,9 @@ export function setTransitionEasing(clipId: Id, edge: TransitionEdge, easing: Ea
   setTransition(clipId, edge, { ...current, easing }, { label: 'Transition easing' })
 }
 
-/** Removes a transition as one undo step; when it was selected, its clip is selected instead. */
+/**
+ * Removes a transition as one undo step; when it was selected, its clip is selected and focused instead.
+ */
 export function removeTransition(clipId: Id, edge: TransitionEdge): void {
   const project = editor.getProject()
   const clip = project.clips[clipId]
@@ -156,7 +172,9 @@ export function removeTransition(clipId: Id, edge: TransitionEdge): void {
   const label = `Remove transition: ${name}`
   if (!setTransition(clipId, edge, undefined, { label })) return
   const selected = get().selection
-  if (selected.type === 'transition' && selected.id === clipId && selected.edge === edge)
+  if (selected.type === 'transition' && selected.id === clipId && selected.edge === edge) {
     select({ type: 'clip', id: clipId })
-  toast(`“${name}” removed from ${viewOf(project, clip).name}`, undoAction(label))
+    focusClip(clipId)
+  }
+  toast(`“${name}” removed from “${viewOf(project, clip).name}”`, undoAction(label))
 }

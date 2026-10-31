@@ -11,6 +11,7 @@ import {
   setTransitionDuration,
   setTransitionEasing,
   transitionOf,
+  transitionSeconds,
   transitionSpots,
   type TransitionEdge,
 } from '../../../state/transitions.ts'
@@ -29,8 +30,6 @@ const EASINGS: { value: EasingChoice; label: string }[] = [
 const easingChoice = (e: Easing): EasingChoice | 'custom' =>
   typeof e === 'string' && e !== 'hold' ? e : 'custom'
 
-const seconds = (s: number) => `${Number(s.toFixed(2))} s`
-
 /** Inspector › Transition: the transition at a cut, or into or out of a clip. */
 export function TransitionInspector({ clipId, edge }: { clipId: string; edge: TransitionEdge }) {
   const project = useProject()
@@ -40,11 +39,13 @@ export function TransitionInspector({ clipId, edge }: { clipId: string; edge: Tr
   const spot = transitionSpots(project, clip.trackId).find((s) => s.clipId === clipId && s.edge === edge)
   const from = spot?.fromId ? project.clips[spot.fromId] : undefined
   const name = viewOf(project, clip).name
+  // The two clips on lines of their own: on one line, the narrow inspector cut off the clip it belongs to.
   const meta = from
-    ? `Between “${viewOf(project, from).name}” and “${name}”`
+    ? `From “${viewOf(project, from).name}”`
     : edge === 'in'
       ? `Into “${name}”`
       : `Out of “${name}”`
+  const metaBelow = from ? `Into “${name}”` : undefined
   const kinds = pluginRegistry.catalog('transition').map((d) => ({ value: d.id, label: d.name }))
   const max = maxTransitionDuration(clip)
   const easing = easingChoice(transition.easing)
@@ -54,9 +55,10 @@ export function TransitionInspector({ clipId, edge }: { clipId: string; edge: Tr
         icon={<Blend />}
         title={pluginRegistry.get(transition.kind)?.name ?? 'Transition'}
         meta={meta}
+        metaBelow={metaBelow}
       />
       <Section title="Transition">
-        <FieldRow label="Type" trailing={<span className={styles.trailSpacer} />}>
+        <FieldRow label="Type">
           <Select
             value={transition.kind}
             onChange={(kind) => changeTransitionKind(clipId, edge, kind)}
@@ -73,11 +75,13 @@ export function TransitionInspector({ clipId, edge }: { clipId: string; edge: Tr
             onChange={(v) => setTransitionDuration(clipId, edge, v)}
             onCommit={() => editor.endGesture()}
             ariaLabel="Transition duration"
-            valueText={seconds(transition.duration)}
+            valueText={transitionSeconds(transition.duration)}
           />
-          <span className={`${styles.value} ${styles.valueUnit} tnum`}>{seconds(transition.duration)}</span>
+          <span className={`${styles.value} ${styles.valueUnit} tnum`}>
+            {transitionSeconds(transition.duration)}
+          </span>
         </FieldRow>
-        <FieldRow label="Easing" trailing={<span className={styles.trailSpacer} />}>
+        <FieldRow label="Easing">
           <Select
             value={easing}
             onChange={(v) => v !== 'custom' && setTransitionEasing(clipId, edge, v)}
