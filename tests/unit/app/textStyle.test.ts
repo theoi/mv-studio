@@ -132,10 +132,30 @@ describe('fonts', () => {
     const [anton] = addFonts('Anton.ttf')
     setFont(clip(a.id), `font:${anton}`)
     expect(fontChoice(clip(a.id).style, assets()).value).toBe(`font:${anton}`)
-    expect(weightChoice(clip(a.id).style).options).toHaveLength(9)
     setFont(clip(a.id), 'Anton')
     expect(clip(a.id).style.fontAssetId).toBeUndefined()
     expect(fontChoice(clip(a.id).style, assets()).value).toBe('Anton')
+  })
+
+  it('offers only Regular for an imported font, plus a weight the text already has', () => {
+    const { a } = scene()
+    const [arcade] = addFonts('Arcade.woff2')
+    setFont(clip(a.id), `font:${arcade}`)
+    expect(weightChoice(clip(a.id).style).options).toEqual([{ value: '400', label: 'Regular' }])
+    setWeight(clip(a.id), 700)
+    expect(weightChoice(clip(a.id).style).options.map((o) => o.label)).toEqual(['Regular', 'Bold'])
+  })
+
+  it('keeps commas out of an imported font’s family name, so switching to another drops all of it', () => {
+    const { a } = scene()
+    const [comma, arcade] = addFonts('My, Font.otf', 'Arcade.woff2')
+    expect(
+      fontChoice(clip(a.id).style, assets()).options.find((o) => o.value === `font:${comma}`)?.label,
+    ).toBe('My, Font')
+    setFont(clip(a.id), `font:${comma}`)
+    expect(clip(a.id).style.fontFamily).toBe(`"My Font", 'Inter Variable', Inter`)
+    setFont(clip(a.id), `font:${arcade}`)
+    expect(clip(a.id).style.fontFamily).toBe(`"Arcade", 'Inter Variable', Inter`)
   })
 
   it('keeps a removed imported font listed by name, disabled, while the text draws in the font before it', () => {

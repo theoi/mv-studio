@@ -56,6 +56,16 @@ test('an imported font is chosen in Font, draws the text in preview and export, 
   await page.waitForTimeout(500)
   const before = await previewFrame(page)
 
+  // A file the browser can't read as a font is refused, so it never shows in Font.
+  await page
+    .getByLabel('Import media files')
+    .setInputFiles({ name: 'Broken.woff2', mimeType: 'font/woff2', buffer: Buffer.from('not a font file') })
+  await expect(
+    page
+      .getByRole('status')
+      .getByText('Broken.woff2 was not imported: Broken.woff2 isn’t a font this browser can read'),
+  ).toBeVisible()
+
   // Imported fonts get a group of their own in Font, ahead of the bundled ones.
   await page.getByLabel('Import media files').setInputFiles(ARCADE)
   await expect(
@@ -72,6 +82,10 @@ test('an imported font is chosen in Font, draws the text in preview and export, 
   expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBe('Font: Arcade')
   await expect.poll(async () => diff(await previewFrame(page), before)).toBeGreaterThan(3)
   const arcade = await previewFrame(page)
+  // The file is one regular face, so Weight offers Regular only: other weights would be faked.
+  await weight.click()
+  await expect(page.getByRole('option')).toHaveText(['Regular'])
+  await page.keyboard.press('Escape')
 
   // Export draws it from the file stored with the project, glyph for glyph like the bundled copy.
   const exported = await page.evaluate(async () => {

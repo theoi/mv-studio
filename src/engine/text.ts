@@ -33,12 +33,14 @@ export function cssFont(style: TextStyle, fontPx: number): string {
 
 /**
  * The style text is drawn with: an imported font the project no longer has is left out, even when its face is still
- * loaded here, so the text falls back exactly as a fresh export would.
+ * loaded here, so the text falls back exactly as a fresh export would. Its name, first in the stack, goes too, so a
+ * system font that happens to share it doesn't stand in for the font the text had before.
  */
 function drawnStyle(style: TextStyle, project: Project): TextStyle {
   if (!style.fontAssetId || project.assets[style.fontAssetId]) return style
   const { fontAssetId: _missing, ...rest } = style
-  return rest
+  const fallback = style.fontFamily.split(',').slice(1).join(',').trim()
+  return fallback ? { ...rest, fontFamily: fallback } : rest
 }
 
 const fontMissing = (style: TextStyle, project: Project) =>

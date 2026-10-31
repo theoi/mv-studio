@@ -105,7 +105,8 @@ function setImportedFont(clip: TextClip, assetId: string): void {
       value: {
         ...clip.style,
         fontAssetId: assetId,
-        fontFamily: `"${name.replace(/["\\]/g, '')}", ${previous || 'Inter, system-ui, sans-serif'}`,
+        // Quotes and commas would break the family list when the name is read back or dropped.
+        fontFamily: `"${name.replace(/["\\,]/g, '')}", ${previous || 'Inter, system-ui, sans-serif'}`,
         fontWeight: 400,
         italic: false,
       },
@@ -264,12 +265,15 @@ const WEIGHTS: [number, string][] = [
 
 const weightName = (weight: number) => WEIGHTS.find(([w]) => w === weight)?.[1]
 
-/** The weights the style's font has (all of them for a font that isn't bundled), and the style's own. */
+/**
+ * The weights the style's font has, and the style's own: all of them for a system font, and only Regular for an
+ * imported one, whose file is loaded as a single regular face (other weights would be faked by the browser).
+ */
 export function weightChoice(style: TextStyle): {
   value: string
   options: { value: string; label: string; description?: string }[]
 } {
-  const [lightest, boldest] = bundledOf(style)?.weights ?? [100, 900]
+  const [lightest, boldest] = style.fontAssetId ? [400, 400] : (bundledOf(style)?.weights ?? [100, 900])
   const weights = WEIGHTS.map(([w]) => w).filter((w) => w >= lightest && w <= boldest)
   if (!weights.includes(style.fontWeight)) weights.push(style.fontWeight)
   return {

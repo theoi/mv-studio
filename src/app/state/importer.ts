@@ -114,6 +114,16 @@ async function analyze(song: Asset): Promise<boolean> {
   }
 }
 
+/** Refuses a font file this browser can't read: text in it would only ever draw in a fallback font. */
+async function checkFont(file: File): Promise<void> {
+  if (typeof FontFace === 'undefined') return
+  try {
+    await new FontFace('mvs-font-check', await file.arrayBuffer()).load()
+  } catch {
+    throw new JobError('unsupported', `${file.name} isn’t a font this browser can read`)
+  }
+}
+
 export interface StoredFiles {
   assets: Asset[]
   failed: { file: File; reason: string }[]
@@ -121,7 +131,10 @@ export interface StoredFiles {
 
 /** Copies files into browser storage, one import job each, without adding them to the project. */
 export async function storeFiles(files: File[]): Promise<StoredFiles> {
-  const { mediaStore } = await import('../../media/mediaStore.ts')
+  const [{ mediaStore }, { detectKind }] = await Promise.all([
+    import('../../media/mediaStore.ts'),
+    import('../../media/probe.ts'),
+  ])
   void mediaStore.requestPersistence().catch(() => false)
   const results = await Promise.allSettled(
     files.map(
@@ -129,10 +142,12 @@ export async function storeFiles(files: File[]): Promise<StoredFiles> {
         jobs.run({
           kind: JOB_KINDS.import,
           title: `Importing ${file.name}`,
-          run: (ctx) =>
-            isCubeFile(file)
-              ? importLut(file, mediaStore, Object.values(editor.getProject().assets))
-              : mediaStore.importFile(file, ctx),
+          run: async (ctx) => {
+            if (isCubeFile(file))
+              return importLut(file, mediaStore, Object.values(editor.getProject().assets))
+            if (detectKind(file) === 'font') await checkFont(file)
+            return mediaStore.importFile(file, ctx)
+          },
         }).promise,
     ),
   )
