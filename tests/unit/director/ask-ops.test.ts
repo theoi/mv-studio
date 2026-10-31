@@ -9,7 +9,7 @@ import {
   type Operation,
 } from '../../../src/director/index.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
-import type { Project, TextClip, VideoClip } from '../../../src/model/types.ts'
+import type { AudioClip, Project, TextClip, VideoClip } from '../../../src/model/types.ts'
 import { makeProject } from './fixtures.ts'
 
 /** A lyric draft: video shots, lyric text, a look layer and the song. */
@@ -117,6 +117,28 @@ describe('compileOperations', () => {
       [0.5, 1],
     ])
     expect(after.tracks[0]!.name).toBe('Text')
+  })
+
+  it('fades footage out at its end and fades audio by volume', async () => {
+    const { project, summary, short } = await draft()
+    const last = videos(project).sort((a, b) => b.start - a.start)[0]!
+    const song = Object.values(project.clips).find((c): c is AudioClip => c.type === 'audio')!
+    const { after } = run(
+      project,
+      [
+        { op: 'fade', clips: [short(last.id)], direction: 'out', duration: 2 },
+        { op: 'fade', clips: [short(song.id)], direction: 'both', duration: 3 },
+      ],
+      summary.ids,
+    )
+    const footage = (after.clips[last.id] as VideoClip).opacity.keyframes!
+    expect(footage.map((k) => k.value)).toEqual([1, 0])
+    expect(footage[0]!.time).toBeCloseTo(last.duration - 2, 3)
+    expect(footage[1]!.time).toBeCloseTo(last.duration, 3)
+    const audio = (after.clips[song.id] as AudioClip).volume.keyframes!
+    expect(audio.map((k) => k.value)).toEqual([0, song.volume.value, song.volume.value, 0])
+    expect(audio[1]!.time).toBe(3)
+    expect(audio[3]!.time).toBeCloseTo(song.duration, 3)
   })
 
   it('makes clips pulse with the beat through audio modulation', async () => {

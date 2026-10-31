@@ -4,7 +4,7 @@
  */
 import type { Clip, Id, Project, Seconds } from '../model/types.ts'
 import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
-import { directorMeta } from './compile.ts'
+import { directorMeta } from './meta.ts'
 
 export interface IdMap {
   /** Short id → real id. */

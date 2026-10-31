@@ -7,7 +7,7 @@
  * an adjustment clip with `meta.role === 'look'` and `meta.lookId`; applying another look replaces it, as it does the
  * look layer of a director draft.
  */
-import { directorMeta } from '../director/compile.ts'
+import { directorMeta } from '../director/meta.ts'
 import { pluginRegistry } from '../engine/registry.ts'
 import type { PluginRegistry } from '../engine/types.ts'
 import type { EditCommand } from '../model/commands.ts'

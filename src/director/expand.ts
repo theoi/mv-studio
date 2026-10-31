@@ -396,10 +396,14 @@ async function shotsForSection(section: SectionInfo, sb: BriefSection, ctx: Ctx)
     } else {
       const generator = findItem(ctx.input.catalog.generators, sb.generatorId)
       const params: Record<string, string | number | boolean> = {}
-      if (generator?.params?.some((p) => p.key === 'color')) {
+      const has = (key: string) => generator?.params?.some((p) => p.key === key)
+      const palette = ctx.look?.palette
+      if (has('color')) {
         params.color =
-          sb.intensity >= 0.7 ? (ctx.look?.accentColor ?? '#22d3ee') : (ctx.look?.textColor ?? '#ffffff')
+          palette?.primary ??
+          (sb.intensity >= 0.7 ? (ctx.look?.accentColor ?? '#22d3ee') : (ctx.look?.textColor ?? '#ffffff'))
       }
+      if (palette && has('color2')) params.color2 = palette.secondary
       shots.push({
         ...base,
         layer: withBackdrop ? 'overlay' : 'main',
@@ -547,10 +551,15 @@ function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, 
   const show = textBrief?.show ?? input.kind === 'lyric'
   const accent = textBrief?.accentColor ?? ctx.look?.accentColor ?? '#facc15'
   const baseSize = aspect === '16:9' ? 84 : aspect === '9:16' ? 76 : 80
+  const lookStyle = ctx.look?.text?.style
+  const lookUppercase =
+    lookStyle?.textTransform === undefined ? undefined : lookStyle.textTransform === 'uppercase'
+  const weight = lookStyle?.fontWeight ?? 700
   const base: TextStyleSpec = {
-    fontFamily: textBrief?.fontFamily ?? 'Inter, system-ui, sans-serif',
+    fontFamily: textBrief?.fontFamily ?? lookStyle?.fontFamily ?? 'Inter, system-ui, sans-serif',
     fontSize: baseSize,
-    fontWeight: 700,
+    fontWeight: weight,
+    ...(lookStyle?.letterSpacing !== undefined ? { letterSpacing: lookStyle.letterSpacing } : {}),
     color: textBrief?.color ?? ctx.look?.textColor ?? '#ffffff',
     align: 'center',
     maxWidth: aspect === '16:9' ? 0.8 : 0.86,
@@ -562,7 +571,9 @@ function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, 
   const sectionAt = (t: number) =>
     sections.find((s) => t >= s.start && t < s.end) ?? sections[sections.length - 1]
   const presetOf = (sb?: BriefSection) =>
-    sb?.textPresetId ?? findItem(input.catalog.textPresets, textBrief?.presetId)?.id
+    sb?.textPresetId ??
+    findItem(input.catalog.textPresets, textBrief?.presetId)?.id ??
+    findItem(input.catalog.textPresets, ctx.look?.text?.animation?.presetId)?.id
   const fade = transitionOf(ctx, 'fade', 0.15)
 
   const lines = input.lyrics?.lines.filter((l) => l.text.trim()) ?? []
@@ -582,10 +593,10 @@ function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, 
         ? {
             ...base,
             fontSize: Math.round(baseSize * 1.18),
-            fontWeight: 800,
-            uppercase: textBrief?.uppercase ?? true,
+            fontWeight: Math.min(900, weight + 100),
+            uppercase: textBrief?.uppercase ?? lookUppercase ?? true,
           }
-        : { ...base, uppercase: textBrief?.uppercase ?? false }
+        : { ...base, uppercase: textBrief?.uppercase ?? lookUppercase ?? false }
       const timedWords = item.line.words.length > 0 && item.line.words.every((w) => w.end > w.start)
       const preset = presetOf(sb)
       texts.push({
@@ -631,8 +642,8 @@ function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, 
       style: {
         ...base,
         fontSize: Math.round(baseSize * 1.3),
-        fontWeight: 800,
-        letterSpacing: 2,
+        fontWeight: Math.max(800, weight),
+        letterSpacing: 0.12,
         uppercase: true,
       },
       position: { x: 0.5, y: 0.5 },

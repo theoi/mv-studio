@@ -3,11 +3,13 @@ import {
   buildPlannerInput,
   DirectorError,
   estimatePlanCost,
+  expandBrief,
   generationOptionsFor,
   planLocally,
   shotsToGenerate,
   type EditPlan,
   type FootageMatcher,
+  type LookPreset,
   type MatchQuery,
   type PlanShot,
 } from '../../../src/director/index.ts'
@@ -217,5 +219,64 @@ describe('local planner', () => {
       // Video shots never exceed what one request can return.
       expect(s.end - s.start).toBeLessThanOrEqual(generation.maxVideoDuration + 1e-3)
     }
+  })
+})
+
+describe('looks', () => {
+  const look: LookPreset = {
+    id: 'test-look',
+    name: 'Test look',
+    tags: ['test'],
+    adjustments: { contrast: 0.1 },
+    effects: [],
+    textColor: '#fafafa',
+    accentColor: '#ff00ff',
+    promptStyle: 'test style',
+    palette: { primary: '#112233', secondary: '#445566' },
+    text: {
+      style: { fontWeight: 500, letterSpacing: 0.05, textTransform: 'uppercase' },
+      animation: { presetId: 'typewriter' },
+    },
+  }
+
+  it('colors visualizers with the look palette and styles text with its typography', async () => {
+    const input = await buildPlannerInput(makeProject({ videos: 0 }), { kind: 'visualizer', seed: 1 })
+    const p = await expandBrief(
+      {
+        title: 'Test',
+        concept: 'A test.',
+        lookId: look.id,
+        visual: 'visualizer',
+        text: { show: true },
+        sections: SECTIONS.map((s) => ({
+          sectionId: s.id,
+          mood: 'calm',
+          intensity: 0.4,
+          pace: 'slow' as const,
+          generatorId: 'visualizer.spectrum',
+        })),
+      },
+      { ...input, catalog: { ...input.catalog, looks: [look] } },
+      { planner: 'llm' },
+    )
+    expect(p.look?.name).toBe('Test look')
+    const visuals = main(p)
+    expect(visuals).toHaveLength(SECTIONS.length)
+    for (const s of visuals) {
+      expect(s.source).toMatchObject({ type: 'generator', params: { color: '#112233', color2: '#445566' } })
+    }
+    const lyrics = p.texts.filter((t) => t.role === 'lyric')
+    expect(lyrics).toHaveLength(LYRICS.length)
+    for (const t of lyrics) {
+      expect(t.animationPresetId).toBe('typewriter')
+      expect(t.style).toMatchObject({
+        fontWeight: 500,
+        letterSpacing: 0.05,
+        uppercase: true,
+        color: '#fafafa',
+      })
+    }
+    const title = p.texts.find((t) => t.role === 'title')!
+    expect(title.style.letterSpacing).toBeLessThan(0.5)
   })
 })

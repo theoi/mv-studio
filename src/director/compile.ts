@@ -29,6 +29,7 @@ import type {
   VisualClip,
 } from '../model/types.ts'
 import { DEFAULT_CATALOG, findItem, type DirectorCatalog } from './catalog.ts'
+import { DIRECTOR_META_KEY, directorMeta, type DirectorClipMeta, type DirectorTrackRole } from './meta.ts'
 import type {
   AudioBinding,
   EditPlan,
@@ -41,20 +42,6 @@ import type {
   TransitionSpec,
 } from './plan.ts'
 
-export const DIRECTOR_META_KEY = 'director'
-
-export type DirectorTrackRole = 'text' | 'look' | 'overlay' | 'shots'
-export type DirectorClipRole = DirectorTrackRole | 'song'
-
-export interface DirectorClipMeta {
-  planId: string
-  role: DirectorClipRole
-  shotId?: string
-  sectionId?: string
-  /** Set on placeholders for AI shots that have not been generated yet. */
-  pending?: { task: GenerateSource['task']; prompt: string; modelId: string; duration?: number }
-}
-
 /** Top to bottom. Text stays above the look layer so lyrics are not color graded. */
 const TRACK_ORDER: DirectorTrackRole[] = ['text', 'look', 'overlay', 'shots']
 
@@ -66,18 +53,6 @@ const TRACK_NAMES: Record<DirectorTrackRole, string> = {
 }
 
 const PLACEHOLDER_COLOR = '#1c1c28'
-
-export function directorMeta(clip: Clip): DirectorClipMeta | undefined {
-  const raw = clip.meta?.[DIRECTOR_META_KEY]
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
-  const meta = raw as Record<string, unknown>
-  if (typeof meta.planId !== 'string' || typeof meta.role !== 'string') return undefined
-  return meta as unknown as DirectorClipMeta
-}
-
-export function isDirectorClip(clip: Clip): boolean {
-  return directorMeta(clip) !== undefined
-}
 
 function metaObject(meta: DirectorClipMeta): JsonObject {
   return { [DIRECTOR_META_KEY]: JSON.parse(JSON.stringify(meta)) as JsonObject }

@@ -220,7 +220,8 @@ describe('LLM planner against OpenAI-compatible endpoints', () => {
     expect(plan.warnings).toEqual([])
     expect(plan.planner).toBe('llm')
     const body = server.chatBodies[0]!
-    expect((body.tool_choice as { function: { name: string } }).function.name).toBe('make_brief')
+    expect(body.tool_choice).toBe('required')
+    expect((body.tools as unknown[]).length).toBe(1)
     const tools = body.tools as { function: { parameters: Record<string, unknown> } }[]
     expect(tools[0]!.function.parameters.$schema).toBeUndefined()
   })

@@ -109,6 +109,14 @@ export const operationSchema = z.discriminatedUnion('op', [
     .describe('Add keyframes to a property'),
   z
     .object({
+      op: z.literal('fade'),
+      clips: targetSchema,
+      direction: z.enum(['in', 'out', 'both']),
+      duration: z.number().min(0.05).max(10).optional().describe('seconds, default 1'),
+    })
+    .describe('Fade clips in at their start and/or out at their end (opacity, or volume for audio)'),
+  z
+    .object({
       op: z.literal('react'),
       clips: targetSchema,
       property: z.enum(['opacity', 'x', 'y', 'scale', 'rotation', ...COLOR_KEYS]),
@@ -519,6 +527,29 @@ function animateOp(ctx: OpCtx, op: Extract<Operation, { op: 'animate' }>) {
   return apply(ctx, commands)
 }
 
+function fadeOp(ctx: OpCtx, op: Extract<Operation, { op: 'fade' }>) {
+  const commands: EditCommand[] = []
+  for (const clip of resolveClips(ctx, op.clips)) {
+    const path = [clip.type === 'audio' ? 'volume' : 'opacity']
+    const current = getAt(clip, path) as Animatable<number> | undefined
+    const full = typeof current?.value === 'number' ? current.value : 1
+    const room = op.direction === 'both' ? clip.duration / 2 : clip.duration
+    const length = r3(Math.min(op.duration ?? 1, room))
+    const keys: [number, number][] = []
+    if (op.direction !== 'out') keys.push([0, 0], [length, full])
+    if (op.direction !== 'in') keys.push([r3(clip.duration - length), full], [r3(clip.duration), 0])
+    for (const [time, value] of keys) {
+      commands.push({
+        type: 'keyframe.set',
+        clipId: clip.id,
+        path,
+        keyframe: { time, value, easing: 'linear' },
+      })
+    }
+  }
+  return apply(ctx, commands)
+}
+
 function reactOp(ctx: OpCtx, op: Extract<Operation, { op: 'react' }>) {
   const commands: EditCommand[] = []
   for (const { clip, target } of applicable(ctx, resolveClips(ctx, op.clips), op.property)) {
@@ -777,6 +808,8 @@ function runOperation(ctx: OpCtx): EditCommand[] {
       return setOp(ctx, op)
     case 'animate':
       return animateOp(ctx, op)
+    case 'fade':
+      return fadeOp(ctx, op)
     case 'react':
       return reactOp(ctx, op)
     case 'clear':

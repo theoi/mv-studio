@@ -6,13 +6,14 @@ draft. Everything it makes is ordinary project content created through `EditComm
 ## How it works
 
 1. **Planner input** (`inputs.ts`): `buildPlannerInput(project, options)` gathers song analysis (beats, bars,
-   sections, energy), lyrics, the user's clips and images, footage tags from `src/vision`, the plugin catalog and
-   generation settings.
+   sections, energy), lyrics, the user's clips and images, footage tags from `src/vision`, the plugin catalog, the
+   looks from the shared look registry (`src/plugins/looks.ts`) and generation settings.
 2. **Creative brief** (`brief.ts`): per-section mood, pace, look, effects, media queries and generation prompts.
    The local planner (`local-planner.ts`, rules in `rules.ts`) writes it with no keys and no network; the LLM
-   planner (next PR) asks the configured model for the same schema.
+   planner (`llm-planner.ts`) asks the configured model for the same schema.
 3. **Edit plan** (`plan.ts`, `expand.ts`): `expandBrief()` turns a brief into exact, beat-aligned shots, text,
-   effects, transitions, audio-reactive bindings and a look. Unknown ids fall back with a warning; the result is
+   effects, transitions, audio-reactive bindings and a look. The look also sets the text typography and animation
+   (unless the brief chooses them) and the visualizer palette. Unknown ids fall back with a warning; the result is
    validated with zod.
 4. **Cost** (`cost.ts`): one request per AI shot; repeated choruses reuse shots (`sameAs`), and media generated
    earlier from the same request is reused for free.
@@ -81,7 +82,7 @@ why. Without an LLM it is the local planner.
 
 `interpretRequest()` sends a compact project summary (`summarizeProject`, short ids, large projects trimmed around
 the playhead and selection) and three tools: `edit_project` (operations from `ask-ops.ts`), `ask_clarification`
-and `reply`. Operations are a small vocabulary (`set`, `animate`, `react`, `clear`, `move`, `trim`, `split`,
+and `reply`. Operations are a small vocabulary (`set`, `animate`, `fade`, `react`, `clear`, `move`, `trim`, `split`,
 `remove`, `duplicate`, `add_text`, `add_visualizer`, `add_effect`, `set_effect`, `remove_effect`, `transition`,
 markers, tracks, aspect, lyric text) that target clip ids or selectors such as `{"type":"text","section":"s3"}`.
 They are validated with zod and tried in order on a scratch editor; any error goes back to the model to fix (two
