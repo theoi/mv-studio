@@ -115,7 +115,13 @@ export function alignTranscript(
     const own = segments.filter((s) => s.chunk === k)
     if (own.length === 0) continue
     const split = own.map((s) => s.text.split(/\s+/).filter(Boolean))
-    const timed = alignWords(em, vocab, split.flat(), { ...options, from: chunk.start, to: chunk.end })
+    // No unlisted singing: the chunk holds what Whisper heard, and draft timing was measured without it.
+    const timed = alignWords(em, vocab, split.flat(), {
+      ...options,
+      from: chunk.start,
+      to: chunk.end,
+      unlistedCost: Infinity,
+    })
     let i = 0
     for (const segWords of split) {
       if (segWords.length && timed[i]) segmentStarts.push((timed[i] as LyricWord).start)
