@@ -14,7 +14,8 @@
  * The audio clock is the master: frames that cannot be drawn in time are skipped, never slowing the clock. While
  * playing, the preview never queues a frame on a busy GPU (that would block the main thread and the UI), and with
  * quality 'auto' it lowers the render resolution when frames come too slowly. Scrubbing that cannot keep up uses the
- * playback resolution too. Once paused and settled, frames always render at full resolution.
+ * playback resolution too, and lowers it the same way. Once paused and settled, frames always render at full
+ * resolution.
  *
  * Frames are drawn on this thread or, with renderer 'worker' (see PREVIEW_IN_WORKER), in the render worker: the canvas
  * moves there and is drawn by the same compositor as export, while this thread keeps the audio clock and the <video>
@@ -348,6 +349,8 @@ export class PreviewController {
   private viewport: { width: number; height: number; dpr: number } | null = null
   private quality: PreviewQuality = 'auto'
   private readonly auto = new AdaptiveScale()
+  /** The project and full-size frame auto quality last measured, as `checkAutoBasis()` writes it. */
+  private autoBasis = ''
   private scale = 1
   private snapshot: PreviewSnapshot = { state: 'stopped', time: 0, duration: 0, quality: 'auto', scale: 1 }
   private readonly listeners = new Set<() => void>()
@@ -424,6 +427,7 @@ export class PreviewController {
   setProject(project: Project): void {
     this.project = project
     this.clock.setProject(project)
+    this.checkAutoBasis()
     this.updateSnapshot()
     this.requestStill()
   }
@@ -431,7 +435,22 @@ export class PreviewController {
   /** The preview box in CSS pixels; the canvas renders at that size times devicePixelRatio, capped at project size. */
   setViewport(cssWidth: number, cssHeight: number, dpr = globalThis.devicePixelRatio || 1): void {
     this.viewport = { width: cssWidth, height: cssHeight, dpr }
+    this.checkAutoBasis()
     this.requestStill()
+  }
+
+  /**
+   * What auto quality learned (its limits and retry waits) holds for one full-size frame and one project: when either
+   * changes during playback or a scrub, it judges afresh. Other edits, which arrive on every change, keep it.
+   */
+  private checkAutoBasis(): void {
+    const project = this.project
+    if (!project) return
+    const { width, height } = this.frameSize(project, 1)
+    const basis = `${project.id} ${width}x${height}`
+    if (basis === this.autoBasis) return
+    this.autoBasis = basis
+    if (this.clock.state === 'playing' || this.scrubbing) this.auto.start(performance.now())
   }
 
   /**
@@ -461,7 +480,7 @@ export class PreviewController {
   }
 
   /** Canvas size for the next frame: the viewport (times DPR, capped at project size) times the current scale. */
-  private frameSize(project: Project): { width: number; height: number } {
+  private frameSize(project: Project, scale = this.scale): { width: number; height: number } {
     const { width, height } = project.settings
     let fit = 1
     if (this.viewport && this.viewport.width > 0 && this.viewport.height > 0) {
@@ -470,7 +489,7 @@ export class PreviewController {
         Math.min(this.viewport.width / width, this.viewport.height / height) * this.viewport.dpr,
       )
     }
-    const s = fit * this.scale
+    const s = fit * scale
     return { width: Math.max(2, Math.round(width * s)), height: Math.max(2, Math.round(height * s)) }
   }
 
@@ -683,25 +702,34 @@ export class PreviewController {
     if (this.raf || !this.project) return
     if (this.inFlight) {
       this.stillPending = true
-      if (!this.scrubbing) {
-        this.scrubbing = true
-        this.updateScale()
-      }
+      this.startScrub()
       return
     }
     // On the main-thread renderer a still right after the last one is a drag step too, and the drag settles only after
     // a pause: a full-size frame between two steps would hold up the next one.
     if (this.renderer?.inWorker === false && performance.now() - this.lastStillEnd < SCRUB_GAP_MS) {
-      if (!this.scrubbing) {
-        this.scrubbing = true
-        this.updateScale()
-      }
+      this.startScrub()
       this.cancelSettle()
       this.settleTimer = setTimeout(() => this.settle(), SCRUB_SETTLE_MS)
+    }
+    // A scrub's stills step the resolution down like playback frames, but only a still that waited for the one before
+    // it measures how fast stills are drawn: the others waited for the pointer.
+    if (this.scrubbing && this.quality === 'auto') {
+      const now = performance.now()
+      if (!this.stillPending) this.auto.skip(now)
+      else if (this.auto.frame(now)) this.updateScale()
     }
     this.stillPending = false
     void this.draw(this.clock.currentTime(), true)
     this.updateSnapshot()
+  }
+
+  /** Stills arrive faster than they are drawn: a scrub, judged from its own stills (the level carries over). */
+  private startScrub(): void {
+    if (this.scrubbing) return
+    this.scrubbing = true
+    this.auto.start(performance.now())
+    this.updateScale()
   }
 
   private cancelSettle(): void {

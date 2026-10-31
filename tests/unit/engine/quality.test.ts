@@ -48,31 +48,125 @@ describe('AdaptiveScale', () => {
     expect(auto.scale).toBe(1)
   })
 
-  it('undoes a step down that does not speed frames up', () => {
+  it('undoes a step down that does not speed frames up, and tries again later, less and less often', () => {
     const auto = new AdaptiveScale()
     auto.start(0)
-    let changes = 0
+    const stepsDown: number[] = []
+    let full = 0
+    let frames = 0
     let now = 0
-    while (now < 10_000) {
+    while (now < 30_000) {
       now += 40
-      if (auto.frame(now)) changes++
+      const level = auto.level
+      if (auto.frame(now) && auto.level > level) stepsDown.push(now)
+      frames++
+      if (auto.scale === 1) full++
     }
     expect(auto.scale).toBe(1)
-    expect(changes).toBe(2)
+    // Tried at about 0.5 s, then 4 s and 8 s after each failed try.
+    expect(stepsDown).toHaveLength(3)
+    const [a, b, c] = stepsDown as [number, number, number]
+    expect(b - a).toBeGreaterThan(4000)
+    expect(c - b).toBeGreaterThan(8000)
+    expect(full / frames).toBeGreaterThan(0.9)
   })
 
-  it('stops stepping up when full resolution is too slow again right away', () => {
+  it('judges a step down on frames drawn at the new scale, so slow frames keep stepping down', () => {
+    // As measured at 2560 × 1440 on a software GPU: a fast first frame, then 140 ms at full size and 117 ms at 0.75.
+    const intervals: Record<number, number> = { 1: 140, 0.75: 117, 0.5: 70, 0.33: 40 }
+    const auto = new AdaptiveScale()
+    auto.start(1000)
+    let now = 1033
+    auto.frame(1000)
+    auto.frame(now)
+    let left = false
+    let back = false
+    while (now < 7000) {
+      now += intervals[auto.scale] as number
+      auto.frame(now)
+      if (auto.scale < 1) left = true
+      else if (left) back = true
+    }
+    expect(left).toBe(true)
+    expect(back).toBe(false)
+    expect(auto.scale).toBeLessThanOrEqual(0.5)
+  })
+
+  it('tries a failed step down again, so one bad check does not keep full resolution for the whole playback', () => {
     const auto = new AdaptiveScale()
     auto.start(0)
-    let changes = 0
+    // For the first 2 s frames are slow whatever the scale (decoders warming up), then they depend on the pixels.
+    const now = run(auto, 0, 2000, () => 120)
+    expect(auto.scale).toBe(1)
+    run(auto, now, 13_000, (s) => 120 * s * s)
+    expect(auto.scale).toBeLessThan(1)
+  })
+
+  it('holds off stepping up after a step up is too slow right away, and tries again less and less often', () => {
+    const auto = new AdaptiveScale()
+    auto.start(0)
+    const stepsUp: number[] = []
     let now = 0
-    // 30 ms at full resolution, 17 ms at 0.75: stepping up keeps failing.
+    // 30 ms at full resolution, 17 ms at 0.75: every step up fails.
     while (now < 30_000) {
       now += 30 * auto.scale * auto.scale
-      if (auto.frame(now)) changes++
+      const level = auto.level
+      if (auto.frame(now) && auto.level < level) stepsUp.push(now)
     }
     expect(auto.scale).toBe(0.75)
-    expect(changes).toBe(3)
+    // After 3 s of headroom, then at least 4 s and 8 s after each failed try.
+    expect(stepsUp).toHaveLength(3)
+    const [a, b, c] = stepsUp as [number, number, number]
+    expect(b - a).toBeGreaterThan(4000)
+    expect(c - b).toBeGreaterThan(8000)
+  })
+
+  it('recovers full resolution after a heavy stretch, even when a step up failed in it', () => {
+    const auto = new AdaptiveScale()
+    auto.start(0)
+    // A heavy section (30 ms at full resolution, 17 ms at 0.75) where stepping up fails, then a light one.
+    const now = run(auto, 0, 6_000, (s) => 30 * s * s)
+    expect(auto.scale).toBe(0.75)
+    run(auto, now, 20_000, () => 10)
+    expect(auto.scale).toBe(1)
+  })
+
+  it('keeps a step down that raises the frame rate although most intervals stay the same (60 Hz steps)', () => {
+    // About 30 ms per frame at full size and 18 ms at 0.75. On a 60 Hz display full size shows a frame every 33.3 ms,
+    // and at 0.75 two of every three frames still take 33.3 ms: 36 fps instead of 30.
+    const auto = new AdaptiveScale()
+    auto.start(0)
+    let now = 0
+    let n = 0
+    let left = false
+    let back = false
+    while (now < 10_000) {
+      if (auto.scale === 1) now += 33.3
+      else if (auto.scale === 0.75) now += n++ % 3 === 2 ? 16.7 : 33.3
+      else now += 16.7
+      auto.frame(now)
+      if (auto.scale < 1) left = true
+      else if (left) back = true
+    }
+    expect(left).toBe(true)
+    expect(back).toBe(false)
+  })
+
+  it('counts a step down well after a step up as a failed step up, so a borderline level does not cycle', () => {
+    // Full size is too slow and 0.5 is always fast. 0.75 is fast too, but every 15 s a burst of frames that miss a
+    // vsync makes it read as too slow, long after the step up to it.
+    const auto = new AdaptiveScale()
+    auto.start(0)
+    let now = 0
+    let changes = 0
+    while (now < 300_000) {
+      if (auto.scale === 1) now += 30
+      else if (auto.scale === 0.75) now += now % 15_000 < 300 ? 33.3 : 16.7
+      else now += 16.7
+      if (auto.frame(now) && now > 120_000) changes++
+    }
+    // Each failed step up doubles the hold, so by then retries are minutes apart instead of a cycle every 15 s.
+    expect(changes).toBeLessThanOrEqual(6)
   })
 
   it('keeps its level for the next playback but ignores pauses between frames', () => {
