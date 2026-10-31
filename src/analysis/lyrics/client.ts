@@ -38,6 +38,8 @@ export interface LyricsResult {
    * nothing to change. Dispatch it with `{ history: 'skip' }` together with the lyrics.
    */
   chorus: EditCommand | null
+  /** Pasted lyrics: where the aligner heard singing they do not list and kept the lines out of (seconds). */
+  unlisted?: TimeRange[]
 }
 
 /** What `run` will download and roughly how long it will take, for the one confirmation before it starts. */
@@ -166,7 +168,7 @@ export class LyricsService {
             vocalsId,
           })
           const doc: LyricsDoc = { audioAssetId: songId, source: 'pasted', lines: result.lines }
-          return { doc, chorus: chorusFor(deps, songId, doc) }
+          return { doc, chorus: chorusFor(deps, songId, doc), unlisted: result.unlisted }
         }
         const size = request.size ?? DRAFT_SIZE
         const result = await this.call((c) =>

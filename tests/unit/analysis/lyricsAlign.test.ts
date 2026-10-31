@@ -11,7 +11,7 @@ import { alignmentKey, parseLyricsText } from '../../../src/analysis/lyrics/text
 import { ctcEmissions, type CtcModel } from '../../../src/analysis/lyrics/wav2vec2.ts'
 import { createLyricsApi } from '../../../src/analysis/lyrics/worker-api.ts'
 import type { DecodedAudio } from '../../../src/analysis/beats/fast.ts'
-import { timingLooksUncertain } from '../../../src/app/state/lyricChecks.ts'
+import { timingLooksUncertain, withTimingChecks } from '../../../src/app/state/lyricChecks.ts'
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ'"
 const vocab: CtcVocabulary = {
@@ -283,6 +283,34 @@ describe('alignLines with unlisted singing', () => {
     const aligned = alignLines(em, vocab, [{ text: 'no' }, { text: 'never sung' }, { text: 'go' }])
     expect(aligned.map(timingLooksUncertain)).toEqual([false, true, false])
     expect(aligned[1]?.words.every((w) => (w.confidence ?? 1) < 0.1)).toBe(true)
+  })
+
+  it('reports the unlisted singing, so the lines near it are to check until the missing lines are added and timed', async () => {
+    // "no" at 1 s and "go" at 16 s, with a line of twelve "hey"s from 4 to 13 s that the first paste leaves out.
+    const hey = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [200 + 40 * i, 'hey']))
+    const em = () => song(1000, { 50: 'no', ...hey, 800: 'go' })
+    const vocals: DecodedAudio = { sampleRate: 16000, channels: [new Float32Array(20 * 16000).fill(0.1)] }
+    const api = createLyricsApi({
+      ctcModel: async () => ({
+        model: { run: async () => ({ logits: new Float32Array(), frames: 0, vocab: V }) },
+        vocab,
+      }),
+      transcriber: async () => {
+        throw new Error('not used')
+      },
+    })
+    const ctx = { signal: new AbortController().signal, progress: () => {} }
+    const timed = async (lines: { text: string }[]) => {
+      const { value } = await api.align({ vocals, lines, emissions: em() }, ctx)
+      const checks = withTimingChecks({ source: 'pasted', lines: value.lines }, value.unlisted).lines
+      return { unlisted: value.unlisted, checks: checks.map((l) => l.check) }
+    }
+    const first = await timed(lines)
+    expect(first.unlisted).toEqual([{ start: expect.closeTo(4, 1), end: expect.closeTo(12.9, 1) }])
+    expect(first.checks).toEqual(['unlisted', 'unlisted'])
+    const again = await timed([{ text: 'no' }, { text: Array(12).fill('hey').join(' ') }, { text: 'go' }])
+    expect(again.unlisted).toEqual([])
+    expect(again.checks).toEqual([undefined, undefined, undefined])
   })
 
   it('puts no unlisted singing before a dragged word', () => {

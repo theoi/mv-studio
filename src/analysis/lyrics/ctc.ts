@@ -26,6 +26,8 @@ export interface Filler {
   at: ArrayLike<number>
   cost: number
   entry: number
+  /** When given, filled with the frames [start, end) (absolute) of each stretch the path spends here, latest first. */
+  used?: { start: number; end: number }[]
 }
 
 /**
@@ -136,12 +138,17 @@ export function forcedAlign(
   let inF = F && fK[F - 1] === L && (fPrev[F - 1] as number) > (prev[s] as number) ? F - 1 : -1
   if (inF < 0 && prev[s] === -Infinity) return null
   const fOf = (b: number) => fK.indexOf(b >> 1)
+  let fEnd = inF >= 0 ? from + T : -1
   const spans: TokenSpan[] = Array.from({ length: L }, () => ({ start: -1, end: -1, score: 0 }))
   for (let t = T - 1; t >= 0; t--) {
     if (inF >= 0) {
-      if (t === 0) break
+      if (t === 0) {
+        filler?.used?.push({ start: from, end: fEnd })
+        break
+      }
       const code = fBack[t * F + inF]
       if (code === 0) continue
+      filler?.used?.push({ start: from + t, end: fEnd })
       s = 2 * (fK[inF] as number) - (code === 1 ? 1 : 0)
       inF = -1
       continue
@@ -155,8 +162,10 @@ export function forcedAlign(
     if (t === 0) break
     const k = t * S + s
     const code = ((back[k >> 2] as number) >> ((k & 3) * 2)) & 3
-    if (code === 3) inF = fOf(s % 2 === 1 ? s - 1 : s)
-    else s -= code
+    if (code === 3) {
+      inF = fOf(s % 2 === 1 ? s - 1 : s)
+      fEnd = from + t
+    } else s -= code
   }
   for (const span of spans) span.score /= span.end - span.start
   return spans

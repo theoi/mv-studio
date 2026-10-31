@@ -80,7 +80,10 @@ export async function startLyrics(request: LyricsRequest): Promise<void> {
     const result = await lyrics.run(songId, request, deps).promise
     if (editor.getProject().songAssetId !== songId) return
     const label = request.kind === 'time' ? 'Time lyrics' : 'Draft lyrics'
-    const doc = request.kind === 'draft' ? asDraft(result.doc, result.language) : withTimingChecks(result.doc)
+    const doc =
+      request.kind === 'draft'
+        ? asDraft(result.doc, result.language)
+        : withTimingChecks(result.doc, result.unlisted)
     if (!dispatch(lyricsCommands(editor.getProject(), doc), { label })) return
     // Relabels sections from repeated lines; derived data, so it is not part of the undo step.
     if (result.chorus) dispatch(result.chorus, { history: 'skip' })

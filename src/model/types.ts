@@ -447,10 +447,11 @@ export interface LyricLine {
   words: LyricWord[]
   /**
    * Why the line is waiting for a look: 'words' when it was drafted from the vocals, 'timing' when the aligner could
-   * not place some of its words well. `lyrics.updateLine` drops it when the words are retyped (and, for 'timing', when
-   * the line or its words are re-timed), or when the patch sets it to undefined ("Mark as checked").
+   * not place some of its words well, 'unlisted' when singing the pasted lyrics do not list is near it, so its words
+   * may be timed wrong. `lyrics.updateLine` drops 'words' when the words are retyped, 'timing' and 'unlisted' when the
+   * line or its words are re-timed, and any of them when the patch sets it to undefined ("Mark as checked").
    */
-  check?: 'words' | 'timing'
+  check?: 'words' | 'timing' | 'unlisted'
 }
 
 export interface LyricsDoc {

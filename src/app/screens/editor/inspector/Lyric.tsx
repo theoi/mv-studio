@@ -114,7 +114,7 @@ function CheckNote({ line }: { line: LyricLine }) {
       <p className={styles.draftText}>
         {line.check === 'words'
           ? `Drafted from the vocals. Check the words.${underlined ? ' Uncertain ones are underlined.' : ''}`
-          : `Some words may be timed wrong. Play the line to check.${underlined ? ' Uncertain words are underlined.' : ''}`}
+          : `${line.check === 'unlisted' ? 'Singing near this line isn’t in the pasted lyrics, so its words may be timed wrong.' : 'Some words may be timed wrong.'} Play the line to check.${underlined ? ' Uncertain words are underlined.' : ''}`}
       </p>
       {line.words.length > 0 && (
         <p className={styles.draftWords}>
