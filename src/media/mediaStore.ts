@@ -62,12 +62,13 @@ export class OpfsMediaStore implements MediaStore {
     } catch (error) {
       throw JobError.from(error)
     }
-    const { mimeType: probedMime, videoCodec: _v, audioCodec: _a, ...meta } = probe
+    const { mimeType: probedMime, videoCodec: _v, audioCodec: _a, kind: probedKind, ...meta } = probe
     return {
       id,
-      kind: info.kind,
+      kind: probedKind ?? info.kind,
       name: info.name,
-      mimeType: mimeType || probedMime || 'application/octet-stream',
+      // When the tracks overrode the kind, the file's own type is the wrong one (video/webm for audio).
+      mimeType: (probedKind ? probedMime : mimeType || probedMime) || 'application/octet-stream',
       byteSize: data.size,
       storageKey,
       ...meta,

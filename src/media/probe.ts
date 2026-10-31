@@ -21,18 +21,25 @@ export type MediaProbe = Pick<
   Asset,
   'duration' | 'width' | 'height' | 'frameRate' | 'hasAudio' | 'sampleRate' | 'channels'
 > & {
+  /** Set when the tracks show the file is a different kind than its name or type suggested. */
+  kind?: AssetKind
   mimeType?: string
   videoCodec?: string
   audioCodec?: string
 }
 
-async function probeAv(file: Blob, kind: 'audio' | 'video'): Promise<MediaProbe> {
+async function probeAv(file: Blob, guess: 'audio' | 'video'): Promise<MediaProbe> {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS })
   try {
     const [video, audio] = await Promise.all([input.getPrimaryVideoTrack(), input.getPrimaryAudioTrack()])
+    // WebM, MP4 and Ogg files may hold only audio (e.g. a .webm voice recording, which browsers type video/webm).
+    const kind = guess === 'video' && !video && audio ? 'audio' : guess
     if (kind === 'video' && !video) throw new JobError('decode', 'This file has no video track')
     if (kind === 'audio' && !audio) throw new JobError('decode', 'This file has no audio track')
-    const out: MediaProbe = { duration: await input.computeDuration(), mimeType: await input.getMimeType() }
+    let mimeType = await input.getMimeType()
+    if (kind === 'audio') mimeType = mimeType.replace(/^video\//, 'audio/')
+    const out: MediaProbe = { duration: await input.computeDuration(), mimeType }
+    if (kind !== guess) out.kind = kind
     if (video && kind === 'video') {
       if (!(await video.canDecode()))
         throw new JobError('unsupported', `This browser cannot decode ${video.codec ?? 'this'} video`)
