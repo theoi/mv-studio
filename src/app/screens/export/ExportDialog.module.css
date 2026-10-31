@@ -405,11 +405,6 @@
   gap: var(--space-2);
 }
 
-.jobSpacer {
-  flex: none;
-  width: 28px;
-}
-
 .jobRow {
   display: flex;
   align-items: center;

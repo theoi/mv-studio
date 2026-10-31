@@ -31,8 +31,10 @@ export function ToolView({
           {subtitle && <div className={styles.viewSub}>{subtitle}</div>}
         </div>
       </div>
-      <div className={`${styles.viewBody} scroll`}>{children}</div>
-      {footer && <div className={styles.viewFooter}>{footer}</div>}
+      <div className={`${styles.viewScroll} scroll`}>
+        <div className={styles.viewBody}>{children}</div>
+        {footer && <div className={styles.viewFooter}>{footer}</div>}
+      </div>
     </div>
   )
 }

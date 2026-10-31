@@ -219,3 +219,214 @@ test('a long context menu or submenu fills the window’s height before it scrol
   await expect(menu.getByRole('menuitem')).toHaveCount(4)
   await fillsWindow(menu)
 })
+
+type Box = { x: number; y: number; width: number; height: number }
+const within = (inner: Box, outer: Box) =>
+  inner.y >= outer.y - 0.5 && inner.y + inner.height <= outer.y + outer.height + 0.5
+
+/** Assist › Director at its price step (Mix, with a fal.ai key whose calls fail), in a window of `size`. */
+async function openDirectorPrice(page: Page, size: { width: number; height: number }) {
+  await page
+    .context()
+    .route(/https:\/\/(queue\.)?fal\.run\/.*/, (route) =>
+      route.request().method() === 'OPTIONS'
+        ? route.fulfill({ status: 204, headers: CORS })
+        : route.fulfill({ status: 500, headers: CORS, body: '{}' }),
+    )
+  await small(page, size)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem(
+      'mv-studio.cloud.v1',
+      JSON.stringify({ falKey: 'key-id:key-secret', alwaysConfirmPaid: true }),
+    )
+  })
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate(() => (window.location.hash = '#/editor?kind=ai&tab=assist&assist=director'))
+  await page.getByRole('radio', { name: 'Mix' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  const generate = page.getByRole('button', { name: /^Generate \d+ shots? · about \$\d+\.\d\d$/ })
+  await expect(generate).toBeAttached({ timeout: 30_000 })
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  return { panel, generate, scroller: panel.locator('[class*="viewScroll"]') }
+}
+
+test('at 1280×720 the Director’s price view shows the plan first, with a fade until Tab or scrolling reaches its buttons', async ({
+  page,
+}) => {
+  const { panel, generate, scroller } = await openDirectorPrice(page, { width: 1280, height: 720 })
+  const view = (await scroller.boundingBox())!
+  for (const name of ['Intro', 'Verse 1'])
+    expect(within((await panel.getByText(name, { exact: true }).first().boundingBox())!, view)).toBe(true)
+  const fade = () => scroller.evaluate((el) => Number(getComputedStyle(el, '::after').opacity))
+  expect(await fade()).toBe(1)
+  expect(within((await generate.boundingBox())!, view)).toBe(false)
+
+  // Tab from the header reaches the primary button and scrolls it into view.
+  await panel.getByRole('button', { name: 'All tools' }).focus()
+  for (let i = 0; i < 40 && !(await generate.evaluate((el) => el === document.activeElement)); i++)
+    await page.keyboard.press('Tab')
+  await expect(generate).toBeFocused()
+  expect(within((await generate.boundingBox())!, view)).toBe(true)
+
+  // At the end of the scroll there is nothing more below, so no fade.
+  await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  await expect.poll(fade).toBe(0)
+})
+
+test('at 900 px tall the Director’s price footer stays pinned under the scrolling plan', async ({ page }) => {
+  const { generate, scroller } = await openDirectorPrice(page, { width: 1280, height: 900 })
+  const pinned = () =>
+    scroller.evaluate((el) => {
+      const footer = el.querySelector('[class*="viewFooter"]')!.getBoundingClientRect()
+      return {
+        overflows: el.scrollHeight > el.clientHeight,
+        gap: Math.round(el.getBoundingClientRect().bottom - footer.bottom),
+      }
+    })
+  expect(await pinned()).toEqual({ overflows: true, gap: 0 })
+  expect(within((await generate.boundingBox())!, (await scroller.boundingBox())!)).toBe(true)
+  await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight / 2))
+  expect(await pinned()).toEqual({ overflows: true, gap: 0 })
+})
+
+test('a section’s color swatches fit one line in the narrow inspector', async ({ page }) => {
+  await openEditor(page)
+  await waitForPreview(page)
+  await page.evaluate(() =>
+    window.mvStudio.app.ui.set({ selection: { type: 'section', id: 's-c1' }, rightTab: 'inspector' }),
+  )
+  const swatches = page.getByRole('radiogroup', { name: 'Section color' }).getByRole('radio')
+  await expect(swatches).toHaveCount(7)
+  const tops = await swatches.evaluateAll((els) =>
+    els.map((el) => Math.round(el.getBoundingClientRect().top)),
+  )
+  expect(new Set(tops).size).toBe(1)
+})
+
+test('Assist home shows a running song analysis once, in the song card', async ({ page }) => {
+  await openEditor(page, '#/editor?tab=assist&t=73.6')
+  await waitForPreview(page)
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(panel.getByText('Song analyzed')).toBeVisible()
+  await page.evaluate(() => {
+    window.mvStudio.shared.jobs.run({
+      kind: 'analysis.song',
+      title: 'Analyzing the song',
+      run: (ctx: { progress: (p: { fraction: number }) => void }) => {
+        ctx.progress({ fraction: 0.4 })
+        return new Promise<void>(() => {})
+      },
+    })
+  })
+  await expect(panel.getByText('40%', { exact: true })).toBeVisible()
+  await expect(panel.getByText('Running', { exact: true })).toHaveCount(0)
+  await expect(panel.getByText('Analyzing the song', { exact: true })).toHaveCount(0)
+})
+
+test('Ask’s Apply keeps its primary colors and Discard stays grey, though text actions in Assist take the accent', async ({
+  page,
+}) => {
+  // The language model answered at the network level, as Ollama answers, with an edit large enough to wait for review.
+  const dim = {
+    id: 'chatcmpl-1',
+    object: 'chat.completion',
+    model: 'qwen2.5:7b',
+    choices: [
+      {
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'edit_project',
+                arguments: JSON.stringify({
+                  summary: 'Dimmed the footage',
+                  operations: [{ op: 'set', clips: { type: 'video' }, property: 'opacity', value: 0.5 }],
+                }),
+              },
+            },
+          ],
+        },
+      },
+    ],
+  }
+  await page.context().route('http://localhost:11434/v1/chat/completions', (route) =>
+    route.request().method() === 'OPTIONS'
+      ? route.fulfill({ status: 204, headers: CORS })
+      : route.fulfill({
+          status: 200,
+          headers: CORS,
+          contentType: 'application/json',
+          body: JSON.stringify(dim),
+        }),
+  )
+  await small(page)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem(
+      'mv-studio.cloud.v1',
+      JSON.stringify({
+        llm: { preset: 'ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'qwen2.5:7b' },
+      }),
+    )
+  })
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate(() => (window.location.hash = '#/editor?kind=ai&tab=assist'))
+  const box = page.getByRole('textbox', { name: 'Ask Assist for a change' })
+  await box.fill('dim all the footage')
+  await box.press('Enter')
+  const apply = page.getByRole('button', { name: 'Apply', exact: true })
+  const discard = page.getByRole('button', { name: 'Discard', exact: true })
+  await expect(apply).toBeVisible()
+
+  /** WCAG contrast of a button's label against its own (opaque) background. */
+  const contrast = (button: Locator) =>
+    button.evaluate((el) => {
+      const rgb = (css: string) =>
+        css
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+      const lum = (c: number[]) => {
+        const [r, g, b] = c.map((v) => {
+          const s = v / 255
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+        })
+        return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+      }
+      const style = getComputedStyle(el)
+      const [a, b] = [lum(rgb(style.color)), lum(rgb(style.backgroundColor))].sort((x, y) => y - x)
+      return (a! + 0.05) / (b! + 0.05)
+    })
+  expect(await contrast(apply)).toBeGreaterThanOrEqual(4.5)
+  await apply.hover()
+  await expect.poll(() => contrast(apply)).toBeGreaterThanOrEqual(4.5)
+
+  // Discard dismisses the edit: grey, like the panel's other ghost buttons, not the accent of a forward action.
+  const accent = await page.evaluate(() => {
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--accent-text)'
+    document.body.append(probe)
+    const color = getComputedStyle(probe).color
+    probe.remove()
+    return color
+  })
+  await expect(discard).not.toHaveCSS('color', accent)
+
+  // At 1280 the three buttons don't fit one line: Discard wraps instead of running into the panel's padding.
+  const row = (await apply.locator('xpath=..').boundingBox())!
+  for (const button of [apply, page.getByRole('button', { name: 'Show where' }), discard]) {
+    const box = (await button.boundingBox())!
+    expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width + 0.5)
+  }
+})
