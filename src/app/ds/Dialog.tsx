@@ -2,6 +2,7 @@ import { Dialog as RDialog } from 'radix-ui'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { IconButton } from './Button.tsx'
+import { useReturnFocus } from './focus.ts'
 import styles from './Dialog.module.css'
 
 interface DialogProps {
@@ -29,6 +30,7 @@ export function Dialog({
   headerExtra,
   bare,
 }: DialogProps) {
+  const returnFocus = useReturnFocus()
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
@@ -42,6 +44,7 @@ export function Dialog({
           aria-describedby={description ? undefined : undefined}
           tabIndex={-1}
           onOpenAutoFocus={(e) => {
+            returnFocus.onOpenAutoFocus()
             e.preventDefault()
             ;(e.currentTarget as HTMLElement | null)?.focus()
           }}
@@ -50,6 +53,7 @@ export function Dialog({
           onInteractOutside={(e) => {
             if ((e.target as Element | null)?.closest?.('[data-toast]')) e.preventDefault()
           }}
+          onCloseAutoFocus={returnFocus.onCloseAutoFocus}
         >
           {bare ? (
             <RDialog.Title className="sr-only">{title}</RDialog.Title>
