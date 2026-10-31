@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AdaptiveScale, AUTO_SCALES } from '../../../src/engine/quality.ts'
+import { AdaptiveScale, AUTO_SCALES, scrubScale } from '../../../src/engine/quality.ts'
 
 /** Feeds frames for `ms` whose interval depends on the current scale (GPU-bound when it scales with pixel count). */
 function run(auto: AdaptiveScale, from: number, ms: number, interval: (scale: number) => number): number {
@@ -87,5 +87,15 @@ describe('AdaptiveScale', () => {
     auto.frame(102_100)
     run(auto, 102_100, 600, () => 16)
     expect(auto.level).toBe(level)
+  })
+})
+
+describe('scrubScale', () => {
+  it('keeps full size while a full-size still fits in a frame, else the largest step that would', () => {
+    expect(scrubScale(10)).toBe(1)
+    // 30 ms at 0.75 (56 % of the pixels) would still take 17 ms.
+    expect(scrubScale(30)).toBe(0.5)
+    expect(scrubScale(75)).toBe(0.33)
+    expect(scrubScale(500)).toBe(AUTO_SCALES[AUTO_SCALES.length - 1])
   })
 })

@@ -62,11 +62,6 @@ export function serveMedia(port: MessagePort, media: MediaFileSource): void {
   }
 }
 
-/** Longest wait for the GPU to finish the previous frame before drawing anyway. */
-const GPU_WAIT_MS = 1000
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
 export class WorkerPreview {
   private readonly compositor: WebGLCompositor
   private readonly frames: BridgedFrameProvider
@@ -91,8 +86,7 @@ export class WorkerPreview {
     const project = this.project
     if (!project) return null
     // More GL work on a GPU still busy with the last frame would stall this thread and show frames late.
-    const until = performance.now() + GPU_WAIT_MS
-    while (this.compositor.gpuBusy() && performance.now() < until) await sleep(1)
+    await this.compositor.gpuIdle()
     await this.compositor.render(project, request.time, { size: request.size })
     // In the drawing's task: without preserveDrawingBuffer, the frame is gone once the task ends.
     return request.capture ? createImageBitmap(this.compositor.canvas) : null

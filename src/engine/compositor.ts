@@ -443,6 +443,12 @@ export class WebGLCompositor implements Compositor {
     return false
   }
 
+  /** Resolves once the GPU has finished the last rendered frame, or after `timeoutMs` (a lost or hung GPU). */
+  async gpuIdle(timeoutMs = 1000): Promise<void> {
+    const until = performance.now() + timeoutMs
+    while (this.gpuBusy() && performance.now() < until) await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+
   /** Renders are serialized: each waits for the previous one, so overlapping calls never interleave GPU work. */
   render(project: Project, time: Seconds, options?: RenderOptions): Promise<void> {
     const run = this.queue.then(() => this.renderNow(project, time, options))
