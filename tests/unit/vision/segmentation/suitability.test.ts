@@ -34,7 +34,7 @@ describe('checkSuitability', () => {
     )
     const { source } = fakeSource({ duration: 2 })
     const report = await checkSuitability(seg, source)
-    expect(report).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+    expect(report).toMatchObject({ verdict: 'unsuitable', reasons: ['no-person-found'] })
   })
 
   it('judges the whole mask and says so when the person detector cannot be downloaded, asking for it once', async () => {
@@ -120,7 +120,7 @@ describe('checkSuitability', () => {
         fakeSource({ duration: 4 }).source,
       )
     expect((await shot(false)).verdict).toBe('good')
-    expect(await shot(true)).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+    expect(await shot(true)).toMatchObject({ verdict: 'unsuitable', reasons: ['no-person-found'] })
   })
 })
 

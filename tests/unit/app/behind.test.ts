@@ -180,6 +180,26 @@ describe('suitability', () => {
     )
   })
 
+  it('says no person was found where the cutout shape is large but not a person', () => {
+    expect(
+      suitabilityText({
+        status: 'checked',
+        verdict: 'unsuitable',
+        reasons: ['no-person-found', 'no-subject'],
+      }),
+    ).toEqual({ status: 'Not suitable', why: "Couldn't find a person to cut out in this shot.", ok: false })
+    expect(suitabilityText({ status: 'checked', verdict: 'marginal', reasons: ['no-person-found'] })).toEqual(
+      {
+        status: 'Person found',
+        why: "Works in parts of this shot. Couldn't find a person in the other parts.",
+        ok: true,
+      },
+    )
+    expect(refusalText({ status: 'checked', verdict: 'unsuitable', reasons: ['no-person-found'] })).toBe(
+      "On a closer look, couldn't find a person to cut out in this shot.",
+    )
+  })
+
   it('says why a failed check failed and that only video clips have people', () => {
     expect(suitabilityText({ status: 'failed', message: 'The clip could not be read.' })).toMatchObject({
       why: 'The clip could not be read.',

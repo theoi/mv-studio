@@ -102,7 +102,13 @@ export type SuitabilityVerdict = 'good' | 'marginal' | 'unsuitable'
 
 /** Machine-readable reasons; the UI maps them to translated explanations. */
 export type SuitabilityReason =
-  'no-subject' | 'subject-too-small' | 'subject-fills-frame' | 'many-small-subjects' | 'unstable-mask'
+  | 'no-subject'
+  /** The segmenter cut out a shape large enough, but no person was found there (an animal, or a missed person). */
+  | 'no-person-found'
+  | 'subject-too-small'
+  | 'subject-fills-frame'
+  | 'many-small-subjects'
+  | 'unstable-mask'
 
 export interface SuitabilityReport {
   verdict: SuitabilityVerdict

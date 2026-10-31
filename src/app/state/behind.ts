@@ -156,6 +156,7 @@ const REASONS: Record<SuitabilityReason, string> = {
   // The person segmenter finds nobody both in empty shots and in wide shots of small people, so this must not claim
   // the shot is empty.
   'no-subject': 'No one in this shot is large enough to cut out',
+  'no-person-found': "Couldn't find a person to cut out in this shot",
   'subject-too-small': 'People are too small in this wide shot',
   'subject-fills-frame': 'The person fills the frame, so text behind them would barely show',
   'many-small-subjects': 'Too many small people to cut out cleanly',
@@ -165,6 +166,7 @@ const REASONS: Record<SuitabilityReason, string> = {
 /** A marginal shot has a person in some parts, so a reason about the whole shot would contradict "Person found". */
 const MARGINAL_REASONS: Partial<Record<SuitabilityReason, string>> = {
   'no-subject': 'In the other parts, no one is large enough to cut out',
+  'no-person-found': "Couldn't find a person in the other parts",
 }
 
 /**
