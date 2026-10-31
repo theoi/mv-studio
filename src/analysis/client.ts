@@ -125,6 +125,7 @@ export {
   type LyricsResult,
   type WhisperSize,
 } from './lyrics/client.ts'
+export { lyricChorusCommand } from './structure/chorus.ts'
 export {
   STEM_MODEL_BYTES,
   StemSeparationService,
