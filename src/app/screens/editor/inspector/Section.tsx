@@ -24,12 +24,15 @@ export function SectionInspector({ id }: { id: string }) {
   const sec = sectionsOf(project).find((s) => s.id === id)
   const analysis = songAnalysis(project)
   if (!sec || !analysis) return <ProjectInspector />
-  const bars = Math.round((sec.end - sec.start) / ((60 / (bpmOf(project) ?? 120)) * 4))
+  const bpm = bpmOf(project)
+  const bars = bpm && Math.round((sec.end - sec.start) / ((60 / bpm) * 4))
   const plays =
     sec.repeatGroup === undefined
       ? 1
       : sectionsOf(project).filter((s) => s.repeatGroup === sec.repeatGroup).length
-  const span = `${formatTime(sec.start)} – ${formatTime(sec.end)} · ${bars} bars`
+  const span = [`${formatTime(sec.start)} – ${formatTime(sec.end)}`, bars && `${bars} bars`]
+    .filter(Boolean)
+    .join(' · ')
   const guess = sectionGuess(sec)
   return (
     <>

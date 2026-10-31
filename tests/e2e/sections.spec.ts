@@ -81,13 +81,31 @@ test('a guessed section header reads in full at 1280×720, the guess on its own 
     .getByText('Section: Pre-chorus', { exact: true })
   await expect(title).toBeVisible()
   // The lines under the title: none may end in an ellipsis, and the guess and the span each read whole.
-  const lines = await title.evaluate((el) =>
-    [...(el.parentElement?.children ?? [])]
-      .filter((line) => line !== el)
-      .map((line) => ({ text: line.textContent, cut: line.scrollWidth > line.clientWidth })),
-  )
-  expect(lines).toEqual([
+  const lines = () =>
+    title.evaluate((el) =>
+      [...(el.parentElement?.children ?? [])]
+        .filter((line) => line !== el)
+        .map((line) => ({ text: line.textContent, cut: line.scrollWidth > line.clientWidth })),
+    )
+  expect(await lines()).toEqual([
     { text: 'Probably the pre-chorus', cut: false },
     { text: '0:48 – 1:04 · 8 bars', cut: false },
+  ])
+
+  // Without a beat there are no bars to count.
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    editor.dispatch(
+      {
+        type: 'analysis.setGrid',
+        assetId: editor.getProject().songAssetId,
+        grid: { tempo: { bpm: 0, confidence: 0 }, beats: [], downbeats: [] },
+      },
+      { history: 'skip' },
+    )
+  })
+  await expect.poll(lines).toEqual([
+    { text: 'Probably the pre-chorus', cut: false },
+    { text: '0:48 – 1:04', cut: false },
   ])
 })
