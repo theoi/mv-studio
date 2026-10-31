@@ -82,6 +82,15 @@ describe('director footage matcher', () => {
     expect(ranked.map((r) => r.assetId).sort()).toEqual(['city', 'dance'])
   })
 
+  it('accepts moods outside the vision vocabulary', async () => {
+    const top = await director().rank({ text: 'rain on the window', mood: 'nostalgic' }, { limit: 1 })
+    expect(top[0]).toMatchObject({ assetId: 'rain' })
+    const unknown = await director().rank({ text: 'rain on the window', mood: 'not-a-mood' })
+    expect(unknown.map((r) => r.assetId)).toEqual(
+      (await director().rank('rain on the window')).map((r) => r.assetId),
+    )
+  })
+
   it('describes assets with standout labels and motion', async () => {
     const info = await director().info()
     const byId = Object.fromEntries(info.map((i) => [i.assetId, i]))

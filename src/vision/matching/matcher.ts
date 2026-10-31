@@ -1,7 +1,7 @@
 import type { EmbeddingModel, OnnxBackend } from '../backends.ts'
 import type { ClipMatch, ClipVisionIndex, MatchQuery, Mood } from '../types.ts'
 import { meanVector } from './embeddings.ts'
-import { MOOD_PROMPTS, queryVariants, REFERENCE_PROMPTS } from './prompts.ts'
+import { MOOD_PROMPTS, queryVariants, REFERENCE_PROMPTS, resolveMood } from './prompts.ts'
 import { rankClips, type RankInput } from './ranking.ts'
 
 export interface MatchOptions {
@@ -52,25 +52,27 @@ export function createFootageMatcher(deps: { onnx: OnnxBackend; model: Embedding
 
   const rankAll: FootageMatcher['rankAll'] = async (library, queries, options = {}) => {
     const compatible = library.filter((c) => c.model === model)
-    const allTexts = queries.flatMap((q) => [
-      ...(q.text ? queryVariants(q.text) : []),
-      ...(q.mood ? MOOD_PROMPTS[q.mood] : []),
-    ])
+    const moods = queries.map((q) => resolveMood(q.mood))
+    const allTexts = queries.flatMap((q, i) => {
+      const mood = moods[i]
+      return [...(q.text ? queryVariants(q.text) : []), ...(mood ? MOOD_PROMPTS[mood] : [])]
+    })
     await embed(allTexts, options.signal)
     const moodVectors = new Map<Mood, Float32Array | undefined>()
     return Promise.all(
-      queries.map(async (q) => {
+      queries.map(async (q, i) => {
         const textVector = q.text ? await vectorFor(queryVariants(q.text)) : undefined
+        const mood = moods[i]
         let moodVector: Float32Array | undefined
-        if (q.mood) {
-          if (!moodVectors.has(q.mood)) moodVectors.set(q.mood, await vectorFor(MOOD_PROMPTS[q.mood]))
-          moodVector = moodVectors.get(q.mood)
+        if (mood) {
+          if (!moodVectors.has(mood)) moodVectors.set(mood, await vectorFor(MOOD_PROMPTS[mood]))
+          moodVector = moodVectors.get(mood)
         }
         return rankClips({
           library: compatible,
           ...(textVector ? { textVector } : {}),
           ...(moodVector ? { moodVector } : {}),
-          ...(q.mood ? { mood: q.mood } : {}),
+          ...(mood ? { mood } : {}),
           ...(q.energy !== undefined ? { energy: q.energy } : {}),
           ...(q.duration !== undefined ? { duration: q.duration } : {}),
           ...(options.weights ? { weights: options.weights } : {}),

@@ -46,6 +46,20 @@ describe('footage matcher', () => {
     expect(ranked.map((m) => m.mediaId).sort()).toEqual(['other', 'party'])
   })
 
+  it('maps mood words to the nearest supported mood and ranks without unknown moods instead of throwing', async () => {
+    const { fakeOnnx } = await import('../segmentation/fakes.ts')
+    const matcher = createFootageMatcher({ onnx: fakeOnnx({ dim: DIM, textVector }), model: 'clipB32' })
+    const [calm, chill, unknown, none] = await matcher.rankAll(library(), [
+      { text: 'rain', mood: 'calm' },
+      { text: 'rain', mood: 'Chill vibes' },
+      { text: 'rain', mood: 'zorblax' },
+      { text: 'rain' },
+    ])
+    expect(calm).not.toEqual(none)
+    expect(chill).toEqual(calm)
+    expect(unknown).toEqual(none)
+  })
+
   it('provides one cached reference vector per hubness prompt', async () => {
     const { fakeOnnx } = await import('../segmentation/fakes.ts')
     const onnx = fakeOnnx({ dim: DIM })

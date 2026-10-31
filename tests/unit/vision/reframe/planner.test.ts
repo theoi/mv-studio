@@ -134,6 +134,15 @@ describe('planReframe', () => {
     expect(cropAt(plan, 3).x + cropAt(plan, 3).width / 2).toBeCloseTo(0.8)
   })
 
+  it('holds the old framing until a cut that falls between samples, then jumps', () => {
+    const samples = Array.from({ length: 21 }, (_, i) => point(i / 5, i / 5 < 1.9 ? 0.2 : 0.8, 0.5))
+    const plan = planReframe(track(samples), '9:16', { cuts: [1.9] })
+    const centre = (t: number) => cropAt(plan, t).x + cropAt(plan, t).width / 2
+    expect(centre(1.85)).toBeCloseTo(0.2)
+    expect(centre(1.9)).toBeCloseTo(0.8)
+    expect(centre(1.95)).toBeCloseTo(0.8)
+  })
+
   it('moves only vertically when reframing a vertical source to 16:9', () => {
     const samples = timeline(4, (t) => ({ x: 0.2 + 0.1 * t, y: 0.2 + 0.15 * t }))
     const plan = planReframe(track(samples, PORTRAIT), '16:9')

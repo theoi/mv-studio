@@ -1,7 +1,10 @@
-import type { Id, JsonObject, JsonValue, Project, VisualAnalysis } from '../model/types.ts'
+import type { Asset, Id, JsonObject, JsonValue, Project, VisualAnalysis } from '../model/types.ts'
+import { planReframe, type ReframeOptions } from './reframe/planner.ts'
 import type {
   ClipVisionIndex,
   MotionAnalysis,
+  ReframeAspect,
+  ReframePlan,
   Size,
   SubjectSample,
   SubjectTrack,
@@ -203,6 +206,32 @@ export function readSubjectTrack(analysis: VisualAnalysis | undefined): SubjectT
   }
 }
 
+function readCuts(analysis: VisualAnalysis | undefined): number[] {
+  if (analysis?.version !== VISION_ANALYSIS_VERSION) return []
+  const { motion } = analysis.data
+  return isObject(motion) && isNumbers(motion.cuts) ? motion.cuts : []
+}
+
+/**
+ * Virtual camera path that reframes an asset to `aspect` from its stored subject track; sample it with `cropAt` at
+ * the clip's source time. Shot changes found when the clip was indexed become hard cuts unless `options.cuts` is
+ * given. Without usable subject data (not analysed yet, or from another version) the plan is a static centred crop,
+ * and stretches where nobody was found hold the last framing, so callers need no fallback of their own.
+ */
+export function reframePlanFor(
+  asset: Pick<Asset, 'id' | 'width' | 'height'>,
+  analysis: VisualAnalysis | undefined,
+  aspect: ReframeAspect,
+  options: ReframeOptions = {},
+): ReframePlan {
+  const track: SubjectTrack = readSubjectTrack(analysis) ?? {
+    version: 1,
+    mediaId: asset.id,
+    sourceSize: { width: asset.width ?? 16, height: asset.height ?? 9 },
+    samples: [],
+  }
+  return planReframe(track, aspect, { ...options, cuts: options.cuts ?? readCuts(analysis) })
+}
 /** Matching indexes of every analysed asset in the project, for `FootageMatcher.rank`. */
 export function projectLibrary(project: Pick<Project, 'analysis'>): ClipVisionIndex[] {
   return Object.values(project.analysis.visual)

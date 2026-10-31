@@ -79,6 +79,94 @@ export const MOOD_PROMPTS: Record<Mood, readonly string[]> = {
   ],
 }
 
+/** Words that mean each mood, for queries written in another vocabulary (the director, LLM output). */
+const MOOD_WORDS: Record<Mood, readonly string[]> = {
+  calm: [
+    'calm',
+    'chill',
+    'relaxed',
+    'relaxing',
+    'peaceful',
+    'serene',
+    'mellow',
+    'tranquil',
+    'gentle',
+    'quiet',
+    'ambient',
+  ],
+  energetic: [
+    'energetic',
+    'upbeat',
+    'hype',
+    'intense',
+    'aggressive',
+    'party',
+    'fast',
+    'exciting',
+    'lively',
+    'euphoric',
+    'angry',
+  ],
+  dark: [
+    'dark',
+    'moody',
+    'ominous',
+    'sinister',
+    'mysterious',
+    'gritty',
+    'menacing',
+    'eerie',
+    'tense',
+    'haunting',
+    'spooky',
+  ],
+  bright: [
+    'bright',
+    'happy',
+    'joyful',
+    'cheerful',
+    'uplifting',
+    'sunny',
+    'playful',
+    'fun',
+    'optimistic',
+    'hopeful',
+  ],
+  melancholic: [
+    'melancholic',
+    'melancholy',
+    'sad',
+    'lonely',
+    'nostalgic',
+    'somber',
+    'sombre',
+    'wistful',
+    'bittersweet',
+    'heartbroken',
+  ],
+  romantic: ['romantic', 'love', 'loving', 'sensual', 'intimate', 'tender', 'passionate', 'sexy'],
+  epic: ['epic', 'grand', 'cinematic', 'triumphant', 'heroic', 'anthemic', 'powerful', 'dramatic'],
+  dreamy: ['dreamy', 'ethereal', 'hazy', 'psychedelic', 'surreal', 'floaty', 'atmospheric'],
+}
+
+const MOOD_BY_WORD = new Map(
+  (Object.entries(MOOD_WORDS) as [Mood, readonly string[]][]).flatMap(([mood, words]) =>
+    words.map((w) => [w, mood] as const),
+  ),
+)
+
+/**
+ * The supported mood for a mood word or short phrase ("Chill" -> calm, "dark and moody" -> dark): the first word
+ * that names or means a mood wins. Undefined when none does, so the caller can rank without a mood.
+ */
+export function resolveMood(value: string | undefined): Mood | undefined {
+  for (const word of value?.toLowerCase().match(/[a-z]+/g) ?? []) {
+    const mood = MOOD_BY_WORD.get(word)
+    if (mood) return mood
+  }
+  return undefined
+}
+
 /** Expected energy 0..1 for moods whose meaning implies an amount of motion; null where motion says little. */
 export const MOOD_ENERGY_PRIOR: Record<Mood, number | null> = {
   calm: 0.15,
