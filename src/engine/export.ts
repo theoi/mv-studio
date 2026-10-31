@@ -88,8 +88,9 @@ export async function exportSupport(
   return { video, audio }
 }
 
-function fileNameFor(project: Project): string {
-  const base = project.name
+/** A safe MP4 file name for a project or output name. */
+export function exportFileName(name: string): string {
+  const base = name
     .normalize('NFKD')
     .replace(/[^\w\s.-]+/g, '')
     .trim()
@@ -136,6 +137,10 @@ function toJobError(error: unknown): JobError {
 export interface ExportOptions {
   media?: MediaFileSource
   registry?: PluginRegistry
+  /** File name including the extension; defaults to the project name. */
+  fileName?: string
+  /** Earlier exports kept in browser storage (default 1); false keeps them all, e.g. for later files of one job. */
+  keepExports?: number | false
 }
 
 /** Exports the project to an MP4 file in browser storage. Run it as a job: jobs.run({ kind: 'export.mp4', ... }). */
@@ -175,9 +180,9 @@ export async function exportProject(
     ctx.throwIfCancelled()
   }
 
-  await pruneExports(1)
+  if (options.keepExports !== false) await pruneExports(options.keepExports ?? 1)
   const dir = `${EXPORT_ROOT}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
-  const fileName = fileNameFor(project)
+  const fileName = options.fileName ?? exportFileName(project.name)
   const { writable, handle } = await createOpfsWritable(`${dir}/${fileName}`)
   const output = new Output({
     format: new Mp4OutputFormat({ fastStart: false }),

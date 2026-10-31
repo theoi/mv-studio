@@ -29,6 +29,7 @@ Each area owns its folder. Touch another area's code only for minimal integratio
 | `src/analysis`                        | Audio intelligence in workers                                                      | audio                |
 | `src/vision`                          | Vision AI in workers                                                               | vision               |
 | `src/cloud`, `src/director`, `src/vj` | Cloud providers, AI director, live VJ mode                                         | assigned later       |
+| `src/export`                          | Output formats with auto-reframe, chorus teasers, Canvas-style loops               | exports              |
 | `public/`                             | Vendored isolation service worker, self-hosted models                              | engine               |
 | `tests/unit`, `tests/e2e`             | Vitest and Playwright                                                              | everyone             |
 
