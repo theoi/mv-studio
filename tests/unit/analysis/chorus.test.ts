@@ -104,6 +104,26 @@ describe('findLyricChorus', () => {
     expect(ranges(lines)?.map((r) => r.start)).toEqual([10, 30, 50])
   })
 
+  it.each([300, 2000])(
+    'stays quick when one word is chanted %i times, and still finds the chorus',
+    (count) => {
+      const chant = Array.from({ length: count / 10 }, () => Array<string>(10).fill('oh').join(' '))
+      const after = 35 + count * 0.5
+      const lines = [
+        ...say(CHORUS, 0),
+        ...say(['Verse one starts quietly here', 'walking down the empty road'], 10),
+        ...say(CHORUS, 20),
+        ...say(chant, 30),
+        ...say(CHORUS, after),
+      ]
+      const started = performance.now()
+      const found = ranges(lines)
+      // About 3 s for 2,000 words before the search was bounded; a few milliseconds since.
+      expect(performance.now() - started).toBeLessThan(250)
+      expect(found?.map((r) => r.start)).toEqual([0, 20, after])
+    },
+  )
+
   it('still finds a stanza when its only repeat is sung right after it', () => {
     const lines = [
       ...sing(['Verse one starts quietly here', 'walking down the empty road'], 0),
@@ -150,6 +170,31 @@ describe('withChorus', () => {
       ['b.1', 24.6, 40, 'chorus', 2],
       ['c', 40, 60, 'verse', 1],
       ['d', 60, 80, 'Hook', 1],
+    ])
+  })
+
+  it('never cuts or moves a section the user named, and gives new pieces ids no section has', () => {
+    const sections = [
+      section('a', 0, 10, 'verse', 0),
+      section('a.1', 10, 30, 'Big chorus', 1, 1),
+      section('b', 30, 50, 'verse', 0),
+    ]
+    // The lyrics' chorus is 0.3 s later than the section the user named, and also comes back at 40-45.
+    const next = withChorus(
+      sections,
+      [
+        { start: 10.3, end: 30.3 },
+        { start: 40, end: 45 },
+      ],
+      [],
+      0.8,
+    )
+    expect(next.map((s) => [s.id, s.start, s.end, s.label])).toEqual([
+      ['a', 0, 10, 'verse'],
+      ['a.1', 10, 30, 'Big chorus'],
+      ['b.1', 30, 40, 'verse'],
+      ['b.2', 40, 45, 'chorus'],
+      ['b.3', 45, 50, 'verse'],
     ])
   })
 
@@ -237,6 +282,32 @@ describe('lyricChorusRanges', () => {
       [15, 40, 0.8],
       [55, 80, 0.8],
       [100, 120, 0.4],
+    ])
+    // A detected chorus without a confidence stays an audio chorus.
+    const unscored = sections.map((s) => (s.id === 'f' ? { ...s, confidence: undefined } : s))
+    expect(chorusAt(unscored, lines).at(-1)).toEqual([100, 120, 0.4])
+  })
+
+  it('extends a detected chorus by a quarter of its length in all, shared between its two ends', () => {
+    const PRE = ['Here it comes again tonight', 'can you feel it rising']
+    const POST = ['and we will never let it go', 'until the morning light comes']
+    const sections = [
+      section('a', 0, 20, 'verse', 0),
+      section('b', 20, 40, 'chorus', 1, 0.4),
+      section('c', 40, 70, 'verse', 0),
+      section('d', 70, 90, 'chorus', 1, 0.4),
+      section('e', 90, 110, 'outro'),
+    ]
+    const lines = [
+      ...say(VERSE_1, 0),
+      ...say([...PRE, ...CHORUS, ...POST], 12, 1),
+      ...say(VERSE_2, 49, 1),
+      ...say([...PRE, ...CHORUS, ...POST], 62, 1),
+    ]
+    // The lyrics' chorus runs 8 s past each end of the 20 s choruses: 2.5 s are kept at each end.
+    expect(chorusAt(sections, lines)).toEqual([
+      [17.5, 42.5, 0.8],
+      [67.5, 92.5, 0.8],
     ])
   })
 

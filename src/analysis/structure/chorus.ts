@@ -15,8 +15,16 @@ export interface ChorusRange extends TimeRange {
 const BRIDGE = 2
 /** Fewest words in a repeated passage; shorter repeats are hooks or fillers, not a chorus. */
 const MIN_PASSAGE_WORDS = 6
-/** Most passage lengths tried from one word, which bounds the time spent on songs that chant one word for long. */
+/** Most passage lengths tried from one word. */
 const LENGTHS_TRIED = 24
+/**
+ * Bounds that keep the search well under 50 ms on the main thread when a song chants a few words hundreds of times.
+ * Lyrics stay far below both: the dev songs reach 12,000 pairs (528 words) and 42,000 steps. Over MAX_PAIRS (the sum
+ * of each word's count squared), the most frequent words match nothing; over MAX_WORK (partners times passage lengths
+ * tried, summed over starts), fewer lengths are tried from each start.
+ */
+const MAX_PAIRS = 100_000
+const MAX_WORK = 200_000
 /**
  * Occurrences with at least this many other words between them, or a pause this long (an instrumental stretch),
  * recur in different places of the song; otherwise they are sung back to back in one place.
@@ -33,7 +41,7 @@ const MAX_STRETCH = 1.25
 const COVERS_SECTION = 0.6
 /** Fewest words sung in a passage before the lyrics can say what it is; fewer is instrumental. */
 const MIN_SUNG_WORDS = 6
-/** How much the lyrics may extend a detected chorus they repeat in, as a share of its length. */
+/** How much the lyrics may extend a detected chorus they repeat in, at both ends together, as a share of its length. */
 const MAX_EXTENSION = 0.25
 /** How far a chorus edge may move to reach a downbeat (or a beat when bars are not found), in seconds. */
 const SNAP = 2
@@ -81,20 +89,30 @@ const overlap = (a: TimeRange, b: TimeRange) =>
 
 /**
  * The chorus from timed lyrics: the passage of at least six words that, sung again and again, covers the most of the
- * song (words times the places it recurs in, separated by other material; back-to-back repeats count a little). Passages match word by word, tolerating up to two changed, added or dropped words
- * in a row, so line breaks do not matter and lyrics broken differently from one chorus to the next still match.
+ * song (words times the places it recurs in, separated by other material; back-to-back repeats count a little).
+ * Passages match word by word, tolerating up to two changed, added or dropped words in a row, so line breaks do not
+ * matter and lyrics broken differently from one chorus to the next still match.
  * Null when nothing of six words or more is sung twice.
  */
 export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null {
   const words = sungWords(lines)
-  const keys = words.map((w) => w.key)
-  const n = keys.length
+  const n = words.length
+  // Where each word is sung, most frequent first. Words dropped to stay within MAX_PAIRS get an id of their own.
+  const at = new Map<string, number[]>()
+  words.forEach((w, i) => (at.get(w.key) ?? at.set(w.key, []).get(w.key)!).push(i))
+  const groups = [...at.values()].sort((a, b) => b.length - a.length)
+  let pairs = groups.reduce((sum, g) => sum + g.length ** 2, 0)
+  while (pairs > MAX_PAIRS) pairs -= groups.shift()!.length ** 2
+  const keys = Int32Array.from(words, (_, i) => -1 - i)
+  groups.forEach((g, id) => g.forEach((i) => (keys[i] = id)))
   // run[i * n + j]: words from i that match the words from j, in order, with small differences. After a difference
-  // the match picks up again only on two words in a row, so verses sharing a few common words do not match.
+  // the match picks up again only on two words in a row, so verses sharing a few common words do not match. Only
+  // equal words are compared.
   const run = new Uint16Array(n * n)
-  for (let i = n - 1; i >= 0; i--)
-    for (let j = n - 1; j >= 0; j--) {
-      if (i === j || keys[i] !== keys[j]) continue
+  for (let i = n - 1; i >= 0; i--) {
+    if (keys[i]! < 0) continue
+    for (const j of groups[keys[i]!]!) {
+      if (j === i) continue
       let best = 1
       for (let a = 1; a <= BRIDGE + 1; a++)
         for (let b = Math.max(1, a - 1); b <= Math.min(BRIDGE + 1, a + 1); b++) {
@@ -105,13 +123,14 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
         }
       run[i * n + j] = best
     }
+  }
   // Words sung again elsewhere, as part of a passage of six words or more.
   const repeated = new Uint8Array(n)
   const partnersOf: number[][] = []
   for (let i = 0; i < n; i++) {
     const partners: number[] = []
     let longest = 0
-    for (let j = 0; j < n; j++)
+    for (const j of keys[i]! < 0 ? [] : groups[keys[i]!]!)
       if (run[i * n + j]! >= MIN_PASSAGE_WORDS) {
         partners.push(j)
         longest = Math.max(longest, run[i * n + j]!)
@@ -136,30 +155,46 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
   }
   // The best passage recurring in two places or more; one sung only back to back in one place counts only when no
   // passage recurs (a song whose one repeat is a stanza sung twice).
-  let best = { score: 0, starts: [] as number[], length: 0 }
-  let single = best
+  // Starts to try, with the passage lengths where their set of matching partners changes.
+  const candidates: { i: number; lengths: number[] }[] = []
+  let work = 0
   for (let i = 0; i < n; i++) {
     const partners = partnersOf[i]!
     if (!partners.length) continue
     const lengths = [...new Set(partners.map((j) => run[i * n + j]!))].sort((a, b) => a - b)
-    // Passage lengths to try: where the set of matching partners changes, at most LENGTHS_TRIED of them, so songs
-    // that chant one word for minutes stay quick.
-    const step = Math.max(1, lengths.length / LENGTHS_TRIED)
+    candidates.push({ i, lengths })
+    work += partners.length * Math.min(lengths.length, LENGTHS_TRIED)
+  }
+  const share = Math.min(1, MAX_WORK / work)
+  let best = { score: 0, starts: [] as number[], length: 0 }
+  let single = best
+  for (const { i, lengths } of candidates) {
+    const partners = partnersOf[i]!
+    const step = lengths.length / Math.max(1, Math.round(Math.min(lengths.length, LENGTHS_TRIED) * share))
     for (let t = 0; t < lengths.length; t += step) {
       const k = lengths[Math.floor(t)]!
-      const starts = [i]
-      const matches = [i]
+      // Partners are in singing order, so both lists are too with i put in its place.
+      const starts: number[] = []
+      const matches: number[] = []
+      let placed = false
       let last = -Infinity
       for (const j of partners) {
         if (run[i * n + j]! < k) continue
+        if (!placed && j > i) {
+          starts.push(i)
+          matches.push(i)
+          placed = true
+        }
         matches.push(j)
         if (Math.abs(j - i) < k || j - last < k) continue
         starts.push(j)
         last = j
       }
+      if (!placed) {
+        starts.push(i)
+        matches.push(i)
+      }
       if (starts.length < 2) continue
-      starts.sort((x, y) => x - y)
-      matches.sort((x, y) => x - y)
       // A chorus recurs across the song with other material between; a couplet sung four times in one place does
       // not. Each place counts fully, repeats within a place a little.
       let places = 1
@@ -222,14 +257,16 @@ export function lyricChorusRanges(sections: readonly SongSection[], chorus: Lyri
     const hits = chorus.ranges.filter((r) => overlap(r, s) >= Math.min(1, (r.end - r.start) / 2))
     if (!hits.length) {
       if (sungIn(s).length >= MIN_SUNG_WORDS && !verse(s))
-        ranges.push({ start: s.start, end: s.end, confidence: s.confidence })
+        ranges.push({ start: s.start, end: s.end, confidence: s.confidence ?? AUDIO_CHORUS_CONFIDENCE })
       continue
     }
     hits.forEach((r) => used.add(r))
-    const reach = MAX_EXTENSION * (s.end - s.start)
+    const before = Math.max(0, s.start - Math.min(...hits.map((r) => r.start)))
+    const after = Math.max(0, Math.max(...hits.map((r) => r.end)) - s.end)
+    const scale = Math.min(1, (MAX_EXTENSION * (s.end - s.start)) / (before + after || 1))
     ranges.push({
-      start: Math.min(s.start, Math.max(s.start - reach, Math.min(...hits.map((r) => r.start)))),
-      end: Math.max(s.end, Math.min(s.end + reach, Math.max(...hits.map((r) => r.end)))),
+      start: s.start - before * scale,
+      end: s.end + after * scale,
       confidence: LYRIC_CHORUS_CONFIDENCE,
     })
   }
@@ -250,10 +287,11 @@ export function lyricChorusRanges(sections: readonly SongSection[], chorus: Lyri
 /**
  * The sections with `chorus` as their choruses: sections are cut at the chorus edges (moved to the nearest of
  * `grid`, downbeats or else beats, within 2 s), the pieces inside become one repeat group labeled chorus with the
- * range's confidence (default `confidence`), and detected choruses outside become verses. Labels the user entered
- * (any label with confidence 1, or one the analysis never assigns) are kept. Neighbours with the same label merge, as
- * in the section analysis. The chorus keeps the repeat group it mostly came from when no section outside it shares
- * that group.
+ * range's confidence (default `confidence`), and detected choruses outside become verses. Sections the user named
+ * (any label with confidence 1, or one the analysis never assigns) stay as they are: never cut, merged or relabeled.
+ * Neighbours with the same label merge, as in the section analysis, and a piece shorter than a second joins a
+ * detected neighbour. New pieces get ids no other section has. The chorus keeps the repeat group it mostly came from
+ * when no section outside it shares that group.
  */
 export function withChorus(
   sections: readonly SongSection[],
@@ -275,19 +313,23 @@ export function withChorus(
     .map((r) => ({ start: snap(r.start), end: snap(r.end), confidence: r.confidence ?? confidence }))
     .filter((r) => r.end > r.start)
   const rangeAt = (t: number) => ranges.find((r) => t >= r.start && t < r.end)
+  const ids = new Set(sections.map((s) => s.id))
+  const pieceId = (id: string) => {
+    let k = 1
+    while (ids.has(`${id}.${k}`)) k++
+    ids.add(`${id}.${k}`)
+    return `${id}.${k}`
+  }
   const cut: { piece: SongSection; range: ChorusRange | undefined }[] = []
   for (const s of sections) {
-    const cuts = [
-      s.start,
-      ...ranges.flatMap((r) => [r.start, r.end]).filter((t) => t > s.start && t < s.end),
-      s.end,
-    ]
+    const edges = isDetected(s) ? ranges.flatMap((r) => [r.start, r.end]) : []
+    const cuts = [s.start, ...edges.filter((t) => t > s.start && t < s.end), s.end]
       .sort((a, b) => a - b)
       .filter((t, i, all) => i === 0 || t > all[i - 1]!)
     for (let k = 0; k + 1 < cuts.length; k++) {
       const piece: SongSection = {
         ...s,
-        id: k === 0 ? s.id : `${s.id}.${k}`,
+        id: k === 0 ? s.id : pieceId(s.id),
         start: cuts[k]!,
         end: cuts[k + 1]!,
       }
@@ -304,7 +346,6 @@ export function withChorus(
     !cut.some(({ piece, range }) => !range && piece.repeatGroup === main && piece.end - piece.start >= 1)
       ? main
       : Math.max(-1, ...sections.map((s) => s.repeatGroup ?? -1)) + 1
-  const pieces: SongSection[] = []
   for (const { piece, range } of cut) {
     if (range) {
       piece.label = 'chorus'
@@ -314,12 +355,18 @@ export function withChorus(
       piece.label = 'verse'
       delete piece.confidence
     }
+  }
+  const pieces: SongSection[] = []
+  for (const [i, { piece }] of cut.entries()) {
     const last = pieces.at(-1)
+    const next = cut[i + 1]?.piece
+    const short = piece.end - piece.start < 1
     const sameKind =
       last?.label === piece.label &&
       last.confidence === piece.confidence &&
       (last.repeatGroup === piece.repeatGroup || piece.label !== 'chorus')
-    if (last && (piece.end - piece.start < 1 || sameKind)) last.end = piece.end
+    if (last && isDetected(last) && isDetected(piece) && (short || sameKind)) last.end = piece.end
+    else if (short && next && isDetected(next) && isDetected(piece)) next.start = piece.start
     else pieces.push(piece)
   }
   return pieces
