@@ -3,7 +3,7 @@ import type { AspectPreset } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { ColorField, FieldRow, Section, Segmented, Select } from '../../../ds/Fields.tsx'
 import { formatBpm, plural } from '../../../format.ts'
-import { bpmOf, dispatch, hasSong, sectionsOf, useProject } from '../../../state/project.ts'
+import { bpmOf, dispatch, editor, hasSong, sectionsOf, useProject } from '../../../state/project.ts'
 import { changeAspect } from '../../../state/reframe.ts'
 import { openAssist } from '../../../state/ui.ts'
 import { LookSection } from './Look.tsx'
@@ -41,7 +41,17 @@ export function ProjectInspector() {
           />
         </FieldRow>
         <FieldRow label="Background">
-          <ColorField value={project.settings.backgroundColor} ariaLabel="Background color" />
+          <ColorField
+            value={project.settings.backgroundColor}
+            ariaLabel="Background color"
+            onChange={(hex) =>
+              dispatch(
+                { type: 'project.updateSettings', settings: { backgroundColor: hex } },
+                { label: 'Change background color', coalesceKey: 'inspector:project:background' },
+              )
+            }
+            onCommit={() => editor.endGesture()}
+          />
         </FieldRow>
       </Section>
       {!empty && (
