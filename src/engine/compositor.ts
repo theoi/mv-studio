@@ -154,7 +154,8 @@ function matteSource(project: Project, clip: VisualClip, time: Seconds) {
       ? host.sourceStart + (time - host.start) * host.playbackRate
       : 0
     : time - clip.start
-  return { matte, maskAsset, host, sourceTime }
+  const rate = host?.type === 'video' ? host.playbackRate : host ? 0 : 1
+  return { matte, maskAsset, host, sourceTime, rate }
 }
 
 /** Averages analysis bands into the fixed-size u_bands uniform. */
@@ -357,7 +358,15 @@ export class WebGLCompositor implements Compositor {
       if (clip.type === 'video' || clip.type === 'image') {
         const asset = project.assets[clip.assetId]
         if (asset && clip.type === 'video')
-          want(clip.id, this.frames.videoFrame(asset, clip.sourceStart + local * clip.playbackRate, clip.id))
+          want(
+            clip.id,
+            this.frames.videoFrame(
+              asset,
+              clip.sourceStart + local * clip.playbackRate,
+              clip.id,
+              clip.playbackRate,
+            ),
+          )
         else if (asset) want(clip.id, this.frames.image(asset))
       } else if (clip.type === 'text') {
         tasks.push(this.text.prepare(clip, project))
@@ -369,7 +378,7 @@ export class WebGLCompositor implements Compositor {
           key,
           matte.maskAsset.kind === 'image'
             ? this.frames.image(matte.maskAsset)
-            : this.frames.videoFrame(matte.maskAsset, matte.sourceTime, key),
+            : this.frames.videoFrame(matte.maskAsset, matte.sourceTime, key, matte.rate),
         )
       }
     }

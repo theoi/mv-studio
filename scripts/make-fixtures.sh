@@ -10,5 +10,8 @@ ffmpeg $q -f lavfi -i "aevalsrc='0.6*sin(2*PI*(45+120*exp(-25*mod(t,0.5)))*t)*ex
 ffmpeg $q -i song.mp3 -c:a pcm_s16le song.wav
 # 4 s 640x360 30 fps H.264 clip with an AAC tone
 ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=30" -f lavfi -i "sine=frequency=440:sample_rate=48000" -t 4 -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -c:a aac -b:a 96k -shortest -movflags +faststart clip.mp4
+# 4 s 320x180 30 fps gray clip whose pixels encode the frame number N: left half (N mod 16)*16+8, right half
+# floor(N/16)*16+8. Gray survives any YUV matrix, so tests can read which source frame was shown.
+ffmpeg $q -f lavfi -i "color=c=black:s=320x180:r=30:d=4,format=gray,geq=lum='if(lt(X,W/2),mod(N,16)*16+8,floor(N/16)*16+8)'" -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -movflags +faststart frames.mp4
 ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=1" -frames:v 1 image.png
 ls -la

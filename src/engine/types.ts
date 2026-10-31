@@ -45,8 +45,12 @@ export interface FrameRef {
 
 /** Supplies media frames to the compositor: <video> elements for preview, WebCodecs decoding for export. */
 export interface FrameProvider {
-  /** Frame of a video asset at `sourceTime` (seconds into the asset). `key` identifies the requesting clip. */
-  videoFrame(asset: Asset, sourceTime: Seconds, key: string): Promise<FrameRef | null>
+  /**
+   * Frame of a video asset at `sourceTime` (seconds into the asset). `key` identifies the requesting clip. `rate` is
+   * how many source seconds pass per timeline second (the clip's playback rate, 0 for a freeze); real-time providers
+   * play the media at that speed. Defaults to 1.
+   */
+  videoFrame(asset: Asset, sourceTime: Seconds, key: string, rate?: number): Promise<FrameRef | null>
   image(asset: Asset): Promise<FrameRef | null>
   /** Called after each rendered frame so per-frame resources can be released. */
   endFrame?(): void

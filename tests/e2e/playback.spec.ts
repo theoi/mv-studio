@@ -228,3 +228,106 @@ test('a paused preview frame matches the export render of the same time', async 
   })
   for (const d of r) expect(d).toBeLessThan(0.5)
 })
+
+test('slow-motion and frozen clips show the same source frames in playing preview as in export', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.setInputFiles(
+    '#e2e-file-input',
+    ['song.mp3', 'frames.mp4'].map((f) => path.join(FIXTURE_DIR, f)),
+  )
+  const r = await page.evaluate(async () => {
+    const { model, media, engine, testing } = window.mvStudio
+    const [song, video] = await Promise.all(
+      window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
+    )
+    const p = model.createProject({ name: 'rates' })
+    p.assets[song.id] = song
+    p.assets[video.id] = video
+    p.songAssetId = song.id
+    const audioTrack = p.tracks.find((t: { kind: string }) => t.kind === 'audio')
+    const visualTrack = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    const songClip = model.createAudioClip({
+      trackId: audioTrack.id,
+      assetId: song.id,
+      start: 0,
+      duration: 4,
+    })
+    const slow = model.createVideoClip({
+      trackId: visualTrack.id,
+      assetId: video.id,
+      start: 0,
+      duration: 2.5,
+    })
+    slow.playbackRate = 0.5
+    const frozen = model.createVideoClip({
+      trackId: visualTrack.id,
+      assetId: video.id,
+      start: 2.5,
+      duration: 1.5,
+      sourceStart: 1,
+    })
+    frozen.playbackRate = 0
+    for (const c of [songClip, slow, frozen]) p.clips[c.id] = c
+
+    // frames.mp4 encodes its frame number N in gray levels: left half (N % 16) * 16 + 8, right half N / 16 likewise.
+    const W = 320
+    const H = 180
+    const reader = new OffscreenCanvas(W, H).getContext('2d', { willReadFrequently: true })!
+    const frameNumber = (source: CanvasImageSource) => {
+      reader.drawImage(source, 0, 0, W, H)
+      const d = reader.getImageData(0, 0, W, H).data
+      const gray = (x: number, y: number) => {
+        const i = (y * W + x) * 4
+        return (d[i] + d[i + 1] + d[i + 2]) / 3
+      }
+      return Math.round((gray(80, 90) - 8) / 16) + 16 * Math.round((gray(240, 90) - 8) / 16)
+    }
+
+    const canvas = document.createElement('canvas')
+    document.body.appendChild(canvas)
+    const preview = new engine.PreviewController({
+      canvas,
+      media: media.mediaStore,
+      preserveDrawingBuffer: true,
+    })
+    preview.setProject(p)
+    preview.setViewport(W, H, 1)
+    await preview.rendered()
+    const samples: { t: number; n: number }[] = []
+    preview.onFrame((t: number) => samples.push({ t, n: frameNumber(canvas) }))
+    await preview.play()
+    await new Promise((resolve) => setTimeout(resolve, 4300))
+    preview.dispose()
+
+    const exp = testing.createCompositor('export', W, H)
+    const compared: { t: number; preview: number; export: number }[] = []
+    for (const [i, s] of samples.entries()) {
+      if (i % 5 !== 0) continue
+      await exp.compositor.render(p, s.t)
+      compared.push({ t: s.t, preview: s.n, export: frameNumber(exp.compositor.canvas) })
+    }
+    exp.compositor.dispose()
+    return { samples, compared }
+  })
+
+  const expected = (t: number) => (t < 2.5 ? Math.floor(t * 0.5 * 30 + 1e-3) : 30)
+  const slow = r.samples.filter((s) => s.t > 0.2 && s.t < 2.45)
+  const frozen = r.samples.filter((s) => s.t > 2.55 && s.t < 4)
+  expect(slow.length).toBeGreaterThan(60)
+  expect(frozen.length).toBeGreaterThan(30)
+  // Slow motion advances smoothly: no frame steps backwards (re-seeks against the clip rate did that).
+  const backwards = slow.filter((s, i) => i > 0 && s.n < slow[i - 1].n)
+  expect(backwards, JSON.stringify(slow.map((s) => [s.t.toFixed(3), s.n]))).toEqual([])
+  for (const s of slow)
+    expect(Math.abs(s.n - expected(s.t)), `slow-motion frame at ${s.t}`).toBeLessThanOrEqual(3)
+  // A freeze holds exactly its frame.
+  expect(new Set(frozen.map((s) => s.n))).toEqual(new Set([30]))
+  // Export is frame-exact, and the playing preview stays within a few source frames of it.
+  expect(r.compared.length).toBeGreaterThan(15)
+  for (const c of r.compared) {
+    expect(c.export, `export frame at ${c.t}`).toBe(expected(c.t))
+    expect(Math.abs(c.preview - c.export), `preview vs export at ${c.t}`).toBeLessThanOrEqual(3)
+  }
+})
