@@ -72,6 +72,16 @@ describe('teaserRange', () => {
     expect(pick.confidence).toBeGreaterThan(0.5)
   })
 
+  it("reports the picked chorus's label confidence, 0.6 when the analysis gives none", () => {
+    const sure = song({
+      sections: sections.map((s) => (s.label === 'chorus' ? { ...s, confidence: 0.8 } : s)),
+    })
+    expect(teaserRange(sure.project)).toMatchObject({ start: 40, source: 'chorus', confidence: 0.8 })
+    expect(teaserRange(song({ sections }).project)?.confidence).toBe(0.6)
+    const repeated = song({ sections: sections.map((s) => ({ ...s, label: 'part', confidence: 0.9 })) })
+    expect(teaserRange(repeated.project)).toMatchObject({ source: 'section', confidence: 0.4 })
+  })
+
   it('extends a short chorus to 15 s and trims a long one to 30 s, on bars', () => {
     const short = song({
       sections: [

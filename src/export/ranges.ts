@@ -182,7 +182,8 @@ export function teaserRange(
     return {
       ...fit(pick.start, (pick.end ?? duration) - pick.start),
       source: ranked.chorus ? 'chorus' : 'section',
-      confidence: ranked.chorus ? 0.6 : 0.4,
+      // A chorus is as likely the highlight as its label is right (0.8 from repeated lyrics, 1 when typed).
+      confidence: ranked.chorus ? Math.min(1, Math.max(0, pick.section.confidence ?? 0.6)) : 0.4,
       label: pick.section.label,
     }
   const loud = analysis ? loudestStart(analysis) : null
