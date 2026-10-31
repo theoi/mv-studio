@@ -377,7 +377,8 @@ function freeSpot(spans: [number, number][], view: [number, number], width: numb
 
 /* ---------- toolbar ---------- */
 
-function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
+// Memoized, like TrackHeader: a drag re-renders the timeline on every pointer move, and neither depends on the clips.
+const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
   const snap = useUi((s) => s.snap)
   const beatSnap = useUi((s) => s.beatSnap)
   const showEnergy = useUi((s) => s.showEnergy)
@@ -492,7 +493,7 @@ function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
       </div>
     </div>
   )
-}
+})
 
 /* ---------- clips ---------- */
 
@@ -637,7 +638,15 @@ function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
 
 /* ---------- headers ---------- */
 
-function TrackHeader({ track, height, stems }: { track: Track; height: number; stems?: StemMix | null }) {
+const TrackHeader = memo(function TrackHeader({
+  track,
+  height,
+  stems,
+}: {
+  track: Track
+  height: number
+  stems?: StemMix | null
+}) {
   const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
     dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
   const isAudio = track.kind === 'audio'
@@ -710,7 +719,7 @@ function TrackHeader({ track, height, stems }: { track: Track; height: number; s
       )}
     </div>
   )
-}
+})
 
 /** A stem lane's header under the song track: mute and solo for that stem of the song. */
 function StemHeader({ name, track }: { name: StemName; track: Track | undefined }) {
@@ -1039,12 +1048,12 @@ export function Timeline() {
     [],
   )
 
-  const fit = () => {
+  const fit = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
     set({ pxPerSec: Math.max(MIN_PPS, (el.clientWidth - HEADER_W - 24) / duration) })
     requestAnimationFrame(() => (el.scrollLeft = 0))
-  }
+  }, [duration])
 
   const scrubFrom = (e: React.PointerEvent<HTMLDivElement>) => {
     const lane = e.currentTarget

@@ -7,6 +7,9 @@ import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
  * with the main thread measured during the drags.
  */
 
+// Trace recording snapshots the DOM on every pointer move, which the drag measurements would count as the app's work.
+test.use({ trace: 'off' })
+
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
 
 async function openEditor(page: Page, hash: string) {
