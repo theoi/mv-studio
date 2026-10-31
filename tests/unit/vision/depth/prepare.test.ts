@@ -95,6 +95,22 @@ describe('prepareDepthForParallax', () => {
     expect(ramped(both, 162, 178)).toBeGreaterThan(2 * ramped(shortOnly, 162, 178))
   })
 
+  it('ramps long around a thin structure running close beside a large near region', () => {
+    // A wide near diamond, and a near line 2 px wide running along its upper-right edge with a 2 px gap.
+    const m = depthMap(800, 400, (x, y) => {
+      const diamond = Math.abs(x - 250) + Math.abs(y - 200) <= 150
+      const line = x - y >= 203 && x - y <= 204 && x >= 300 && x <= 380
+      return diamond || line ? 230 : 20
+    })
+    const both = prepareDepthForParallax(m)
+    const shortOnly = prepareDepthForParallax(m, { thinRadius: 0 })
+    // 12 px beyond the line, away from the diamond: past the short ramp, within the long one.
+    expect(at(shortOnly, 352, 124)).toBe(0)
+    expect(at(both, 352, 124)).toBeGreaterThan(100)
+    // Beside the diamond's opposite edge, far from the line: still the short ramp.
+    expect(at(both, 163, 287)).toBe(at(shortOnly, 163, 287))
+  })
+
   it('rejects maps whose data does not match their size', () => {
     const m = depthMap(10, 10, () => 0)
     expect(() => prepareDepthForParallax({ ...m, width: 11 })).toThrow(/expected 110/)

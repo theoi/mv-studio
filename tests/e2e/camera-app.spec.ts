@@ -206,6 +206,58 @@ test('Inspector › Motion adds, changes, strengthens and removes a still’s 3D
   await expect(select).toHaveText('None')
 })
 
+test('a still whose depth image comes from an older preparation gets it prepared again from the cached estimate', async ({
+  page,
+}) => {
+  await openWithFakeDepth(page, '#/editor?t=28')
+  const target = (await stills(page)).clips[0]!
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?sel=clip:${id}&t=28`
+  }, target.id)
+  const camera = async () => (await stills(page)).clips.find((c) => c.id === target.id)?.camera
+  const depthImages = () =>
+    page.evaluate((clipId) => {
+      const project = window.mvStudio.app.project.editor.getProject()
+      const still = project.clips[clipId].assetId
+      return Object.values(project.assets as Record<string, Untyped>)
+        .filter((a) => a.origin.type === 'derived' && a.origin.parentAssetId === still)
+        .map((a) => ({ id: a.id as string, provider: a.origin.provider as string }))
+    }, target.id)
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await inspector.getByRole('button', { name: 'Motion', exact: true }).click()
+  const select = inspector.getByRole('combobox', { name: '3D camera move' })
+  await select.click()
+  await page.getByRole('option', { name: 'Drift' }).click()
+  await expect.poll(async () => (await camera())?.preset).toBe('pan-right')
+  const first = (await camera())!.depth
+  expect(await depthImages()).toEqual([{ id: first, provider: 'depth-anything-v2-small/parallax-2' }])
+
+  // As stored before preparations were recorded: the provider is the bare model id.
+  await page.evaluate((id) => {
+    const { editor } = window.mvStudio.app.project
+    const asset = editor.getProject().assets[id]
+    editor.dispatch([
+      { type: 'asset.remove', assetId: id },
+      {
+        type: 'asset.add',
+        asset: { ...asset, origin: { ...asset.origin, provider: 'depth-anything-v2-small' } },
+      },
+    ])
+  }, first)
+  await select.click()
+  await page.getByRole('option', { name: 'None' }).click()
+  await expect.poll(camera).toBeUndefined()
+  await select.click()
+  await page.getByRole('option', { name: 'Drift' }).click()
+  await expect.poll(async () => (await camera())?.preset).toBe('pan-right')
+
+  // A new depth image from the current preparation replaces the old one, which no move uses any more.
+  const again = (await camera())!.depth
+  expect(again).not.toBe(first)
+  expect(await depthImages()).toEqual([{ id: again, provider: 'depth-anything-v2-small/parallax-2' }])
+  expect(await page.evaluate(() => (window as Untyped).depthCalls.length)).toBe(1)
+})
+
 test('Inspector › Motion shows the chosen move while depth is estimated, cancels there, and explains a wait or a failure', async ({
   page,
 }) => {

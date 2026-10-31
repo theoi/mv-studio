@@ -6,6 +6,9 @@ import {
   addCameraMoves,
   cameraMoveCommands,
   cameraMoveEffect,
+  depthOrigin,
+  depthPreparation,
+  DEPTH_PREPARATION_VERSION,
   findDepthAsset,
 } from '../../../src/vision/cameraMove.ts'
 import { CAMERA_EFFECT_ID } from '../../../src/vision/render/cameraEffect.ts'
@@ -94,7 +97,7 @@ function imageClip(project: Project, id: string): ImageClip {
   return clip
 }
 
-const depthAsset = asset('depth', { type: 'derived', parentAssetId: 'still', provider: DEPTH_MODEL })
+const depthAsset = asset('depth', depthOrigin('still'))
 
 describe('3D camera move', () => {
   it('keyframes progress over the whole clip', () => {
@@ -152,6 +155,16 @@ describe('3D camera move', () => {
     expect(findDepthAsset({ assets }, 'still')?.id).toBe('depth')
     expect(findDepthAsset({ assets: { still: assets.still, mask: assets.mask } }, 'still')).toBeUndefined()
   })
+
+  it('knows which preparation made a depth image, and finds the latest', () => {
+    const older = asset('older', { type: 'derived', parentAssetId: 'still', provider: DEPTH_MODEL })
+    expect(depthPreparation(older)).toBe(1)
+    expect(depthPreparation(depthAsset)).toBe(DEPTH_PREPARATION_VERSION)
+    expect(depthPreparation(asset('still', { type: 'import' }))).toBeNull()
+    expect(findDepthAsset({ assets: { older, depth: depthAsset } }, 'still')?.id).toBe('depth')
+    expect(findDepthAsset({ assets: { depth: depthAsset, older } }, 'still')?.id).toBe('depth')
+    expect(findDepthAsset({ assets: { older } }, 'still')?.id).toBe('older')
+  })
 })
 
 describe('3D camera moves on several stills', () => {
@@ -160,11 +173,7 @@ describe('3D camera moves on several stills', () => {
     const { project, clipId } = setup()
     const track = project.tracks.find((t) => t.kind === 'visual')!
     project.assets.other = asset('other', { type: 'import' })
-    project.assets.otherDepth = asset('otherDepth', {
-      type: 'derived',
-      parentAssetId: 'other',
-      provider: DEPTH_MODEL,
-    })
+    project.assets.otherDepth = asset('otherDepth', depthOrigin('other'))
     const again = createImageClip({ trackId: track.id, assetId: 'still', start: 10, duration: 3 })
     const second = createImageClip({ trackId: track.id, assetId: 'other', start: 20, duration: 4 })
     project.clips[again.id] = again
@@ -223,6 +232,63 @@ describe('3D camera moves on several stills', () => {
       )
     vi.unstubAllGlobals()
   })
+
+  it('prepares a depth image from an older preparation again, and removes the old one once no move uses it', async () => {
+    stubCanvas()
+    const { project, clipId } = setup()
+    const track = project.tracks.find((t) => t.kind === 'visual')!
+    // Stored before preparations were recorded, and used by the camera move on a second clip of the still.
+    project.assets.oldDepth = asset('oldDepth', {
+      type: 'derived',
+      parentAssetId: 'still',
+      provider: DEPTH_MODEL,
+    })
+    const other = createImageClip({ trackId: track.id, assetId: 'still', start: 10, duration: 3 })
+    other.effects = [cameraMoveEffect(other, 'oldDepth', { focus: 0.5 })]
+    project.clips[other.id] = other
+    const editor = new ProjectEditor(project)
+    const estimated: string[] = []
+    const depth = {
+      async get(req: { mediaId: string; sourceSize: { width: number; height: number } }) {
+        estimated.push(req.mediaId)
+        return {
+          version: 1 as const,
+          width: 16,
+          height: 9,
+          data: new Uint8Array(16 * 9).map((_, i) => (i % 16) * 16),
+          sourceSize: req.sourceSize,
+          model: DEPTH_MODEL,
+          quality: 'full' as const,
+        }
+      },
+      peek: async () => null,
+    }
+    const stored: Array<Asset['origin']> = []
+    const media = {
+      getFile: fileOf,
+      storeBlob: async (_blob: Blob, info: { origin: Asset['origin'] }): Promise<Asset> => {
+        stored.push(info.origin)
+        return asset('newDepth', info.origin)
+      },
+    }
+
+    const first = await addCameraMoves({ editor, media, depth }, [clipId], { intensity: 0.3 })
+    expect(estimated).toEqual(['still'])
+    expect(stored).toEqual([depthOrigin('still')])
+    expect(first.moves[0]!.depthAssetId).toBe('newDepth')
+    // The second clip's move still renders the old image, so it stays.
+    expect(Object.keys(editor.getProject().assets).sort()).toEqual(['newDepth', 'oldDepth', 'still'])
+
+    const second = await addCameraMoves({ editor, media, depth }, [other.id], { intensity: 0.3 })
+    expect(estimated).toEqual(['still'])
+    expect(second.moves[0]!.depthAssetId).toBe('newDepth')
+    expect(Object.keys(editor.getProject().assets).sort()).toEqual(['newDepth', 'still'])
+    expect(editor.undo()).toBe(true)
+    expect(editor.getProject().assets.oldDepth).toBeDefined()
+    const restored = imageClip(editor.getProject(), other.id).effects[0]!
+    expect(restored.params.depth!.value).toBe('oldDepth')
+    vi.unstubAllGlobals()
+  })
 })
 
 describe('the amount of an automatic move', () => {
@@ -233,7 +299,7 @@ describe('the amount of an automatic move', () => {
     const { project, clipId } = setup()
     // A new id each time, as for a real depth image: predictions are cached per depth image.
     const id = `depth-${runs++}`
-    project.assets[id] = asset(id, { type: 'derived', parentAssetId: 'still', provider: DEPTH_MODEL })
+    project.assets[id] = asset(id, depthOrigin('still'))
     const editor = new ProjectEditor(project)
     const depth = {
       get: async (): Promise<never> => {
