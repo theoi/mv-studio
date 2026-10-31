@@ -126,11 +126,13 @@ import styles from './Timeline.module.css'
 
 const HEADER_W = 148
 const RULER_H = 24
-const SONG_H = 34
+const SONG_H = 30
 
 type LaneKind = 'video' | 'overlay' | 'lyrics' | 'look' | 'audio'
 
-const laneHeight: Record<LaneKind, number> = { video: 42, overlay: 30, lyrics: 28, look: 22, audio: 46 }
+// Lanes leave their clips at least 24 px tall (lane minus the 1 px border and 2 px above and below), so short clips
+// are easy to grab. The look lane stays compact: its one bar spans the song, so it is easy to hit anyway.
+const laneHeight: Record<LaneKind, number> = { video: 40, overlay: 29, lyrics: 29, look: 22, audio: 40 }
 
 /** The track lyric lines go on: the template's Lyrics track, or a track named Lyrics. */
 function isLyricsTrack(p: Project, t: Track): boolean {
