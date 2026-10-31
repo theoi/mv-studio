@@ -7,7 +7,7 @@ import type { GenerateSource } from './plan.ts'
 
 export const DIRECTOR_META_KEY = 'director'
 
-export type DirectorTrackRole = 'text' | 'look' | 'accent' | 'overlay' | 'shots'
+export type DirectorTrackRole = 'title' | 'text' | 'look' | 'accent' | 'overlay' | 'shots'
 export type DirectorClipRole = DirectorTrackRole | 'song'
 
 export interface DirectorClipMeta {

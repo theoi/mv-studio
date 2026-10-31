@@ -17,7 +17,7 @@ import { directorFootage } from './footage.ts'
 import { appMedia } from './media.ts'
 import { editor } from './project.ts'
 import { ensureBars } from './songAnalysis.ts'
-import { get as getUi, toast, type Kind } from './ui.ts'
+import { get as getUi, set as setUi, toast, type Kind } from './ui.ts'
 
 /*
  * Assist › Director: one DirectorSession for the app. The director code loads on first use. A draft that costs
@@ -158,6 +158,10 @@ export async function applyDraft(options: { confirmSpend?: boolean; skipGenerati
   try {
     const state = await s.apply(options)
     if (state.status !== 'applied') return
+    // Loaded with the session already.
+    const { openingFrame } = await import('../../director/index.ts')
+    const opening = openingFrame(state.plan)
+    if (getUi().playhead < opening) setUi({ playhead: opening })
     toast('Your draft is on the timeline', { label: 'Undo', run: () => void undoDraft() })
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error))

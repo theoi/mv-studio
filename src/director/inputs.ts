@@ -152,17 +152,31 @@ export function musicEnd(song: Pick<SongInfo, 'energy' | 'duration'>, minTail: S
   return song.duration - end >= minTail ? end : song.duration
 }
 
-/** Artist and title from a file name such as "Artist - Title.mp3" or "Artist_-_Title.mp3". */
+/** "Neon Skyline" for "neon skyline" or "NEON SKYLINE"; names in mixed case are kept as written. */
+function unshout(text: string): string {
+  if (text !== text.toLowerCase() && text !== text.toUpperCase()) return text
+  return text
+    .toLowerCase()
+    .replace(/(^|[\s(])(\p{L})/gu, (_, before: string, c: string) => before + c.toUpperCase())
+}
+
+/**
+ * Artist and title from a file name such as "Artist - Title.mp3", "Artist_-_Title.mp3" or "neon-skyline.wav" (a name
+ * without spaces reads its hyphens as spaces). All-lowercase and all-capitals names are title-cased.
+ */
 export function songTitleFromName(name: string): { title?: string; artist?: string } {
-  const base = name
+  let base = name
     .replace(/\.[a-z0-9]{2,5}$/i, '')
     .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^\d{1,2}\s*[.-]\s+/, '')
+  if (!base.includes(' ')) base = base.replace(/-+/g, ' ').trim()
   if (!base) return {}
   const m = /^(.+?)\s+[-–—]\s+(.+)$/.exec(base)
-  return m ? { artist: (m[1] as string).trim(), title: (m[2] as string).trim() } : { title: base }
+  return m
+    ? { artist: unshout((m[1] as string).trim()), title: unshout((m[2] as string).trim()) }
+    : { title: unshout(base) }
 }
 
 /** Rank-normalizes raw section energies to 0..1 so "the loudest part" is high even in a quiet song. */
