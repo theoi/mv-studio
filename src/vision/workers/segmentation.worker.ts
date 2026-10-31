@@ -351,7 +351,12 @@ const api = {
       const { mask, usedHq } = req.hq ? preferHq(standard, req.hq) : { mask: standard, usedHq: false }
       const found = await detections(bitmap, req, ctx)
       const rgba = pixels(bitmap)
-      const stats = builder.push({ mask, gray: luma(rgba), rgba })
+      const stats = builder.push({
+        mask,
+        gray: luma(rgba),
+        rgba,
+        ...(req.people ? { found: found.peopleUnavailable ? null : found } : {}),
+      })
       return { ...stats, usedHq, ...found }
     } catch (err) {
       throw visionError(err, 'internal')
@@ -361,10 +366,11 @@ const api = {
   },
 
   async endTrack(input: { id: number }) {
-    const track: PackedMaskTrack = trackBuilder(input.id).finish()
+    const builder = trackBuilder(input.id)
+    const track: PackedMaskTrack = builder.finish()
     tracks.delete(input.id)
     return transfer(
-      track,
+      { track, boxes: builder.boxes() },
       track.packed.map((p) => p.buffer as ArrayBuffer),
     )
   },

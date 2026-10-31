@@ -6,6 +6,7 @@ import {
   findTrackEvidence,
   trackSuitability,
 } from '../../../../src/vision/segmentation/personTrack.ts'
+import { checkSuitability } from '../../../../src/vision/segmentation/suitability.ts'
 import type { JobProgress as Progress } from '../../../../src/shared/jobs.ts'
 import { discMask, fakeBitmap, fakeOnnx, fakeSegmentation, fakeSource, timeOf } from './fakes.ts'
 
@@ -99,7 +100,7 @@ describe('buildPersonTrack', () => {
     expect(seg.calls).toContain('cancelTrack')
   })
 
-  it('looks for people 5 times a second and judges only the mask near them', async () => {
+  it('looks for people 5 times a second, judges only the mask near them and keeps only that for the cutout', async () => {
     const { source } = fakeSource({ duration: 2, frameRate: 25 })
     const withPeople = await buildPersonTrack({ segmentation: fakeSegmentation() }, source, { faceFps: 0 })
     expect(withPeople.people.map((p) => p.t)).toEqual(
@@ -112,12 +113,56 @@ describe('buildPersonTrack', () => {
       scores: [0.9],
     })
     expect(withPeople.suitability.verdict).toBe('good')
-    // The same masks with no one the detector calls a person.
+    // The same masks with no one the detector calls a person: nothing is kept for the cutout.
     const noOne = await buildPersonTrack({ segmentation: fakeSegmentation(undefined, () => []) }, source, {
       faceFps: 0,
     })
-    expect(noOne.track.packed).toEqual(withPeople.track.packed)
+    expect(withPeople.track.meta.coverage.every((c) => c > 0)).toBe(true)
+    expect(noOne.track.meta.coverage.every((c) => c === 0)).toBe(true)
     expect(noOne.suitability).toMatchObject({ verdict: 'unsuitable', reasons: ['no-person-found'] })
+  })
+
+  it('says no person was found in a shot of an animal, as the quick check does, although the cutout keeps nothing of it', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    // The detector takes the cat for a person in 1 of its 5 detections a second; the animal vote rules it out.
+    const cat = { box: { x: 0.3, y: 0.2, width: 0.4, height: 0.6 }, score: 0.8 }
+    const calledPerson = (t: number) => Math.round(t * 5) % 5 === 0
+    const seg = () =>
+      fakeSegmentation(undefined, (t) => (calledPerson(t) ? [cat] : []), {
+        animalsAt: (t) => (calledPerson(t) ? [] : [cat]),
+      })
+    const res = await buildPersonTrack({ segmentation: seg() }, source, { faceFps: 0 })
+    expect(res.people.some((p) => p.boxes.length)).toBe(true)
+    expect(res.track.meta.coverage.every((c) => c === 0)).toBe(true)
+    expect(res.suitability).toMatchObject({ verdict: 'unsuitable', reasons: ['no-person-found'] })
+    expect((await checkSuitability(seg(), source)).reasons).toEqual(res.suitability.reasons)
+  })
+  /** A person in the middle and, apart from them, a patch the segmenter also cuts out. */
+  const withPatch = (_t: number, s: { width: number; height: number }) => {
+    const person = discMask(s, s.width / 2, s.height / 2, s.height / 4)
+    const patch = discMask(s, s.width * 0.9, s.height * 0.2, s.height / 10)
+    return { ...person, data: person.data.map((v, i) => Math.max(v, patch.data[i]!)) }
+  }
+  const middle = () => [{ box: { x: 0.35, y: 0.2, width: 0.3, height: 0.6 }, score: 0.9 }]
+
+  it('keeps only the parts of the mask near the people found, and reframes on them', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const res = await buildPersonTrack({ segmentation: fakeSegmentation(withPatch, middle) }, source)
+    const frame = createTrackReader(res.track).frame(10)
+    const { width, height } = frame
+    expect(frame.data[Math.round(height * 0.2) * width + Math.round(width * 0.9)]).toBe(0)
+    expect(frame.data[Math.round(height / 2) * width + Math.round(width / 2)]).toBe(255)
+    expect(res.observations).toHaveLength(10)
+    for (const o of res.observations) expect(o.personBox!.x + o.personBox!.width).toBeLessThan(0.8)
+  })
+
+  it('keeps the whole mask when the person detector cannot be downloaded', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const res = await buildPersonTrack({ segmentation: fakeSegmentation(withPatch, () => null) }, source)
+    const frame = createTrackReader(res.track).frame(10)
+    const { width, height } = frame
+    expect(frame.data[Math.round(height * 0.2) * width + Math.round(width * 0.9)]).toBe(255)
+    for (const o of res.observations) expect(o.personBox!.x + o.personBox!.width).toBeGreaterThan(0.9)
   })
 
   it('cuts out without the detectors when they cannot be downloaded, judging the whole mask', async () => {

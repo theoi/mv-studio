@@ -102,6 +102,28 @@ const ANIMAL_VOTE_INTERVALS = 15
 /** Each side of a person box grows by this share of its size, for hair, raised arms and loose clothes. */
 export const PERSON_BOX_MARGIN = 0.15
 
+/**
+ * The cutout keeps the parts of the person mask near the people found (`keepPersonParts`), with boxes held this long
+ * (`peopleIndex`): longer than the verdict's `personHold`, since a person missing from the cutout for a moment pops
+ * in front of the text. On the dev set's tracks (65 clips, not in the repository), 0.5 s dropped an interviewee for
+ * 1.6 s and 2 s alone still dropped a dancer for 4 frames.
+ */
+export const CUTOUT_HOLD_SECONDS = 1
+/**
+ * Past the hold, a frame with no one found keeps the parts that overlap the previous frame's cutout, for up to this
+ * long after the last frame with people. Only in such frames: carried in every frame, a pillar that once touched a
+ * person box stayed in the cutout for the rest of the shot.
+ */
+export const CUTOUT_CARRY_SECONDS = 2
+
+/**
+ * How far after `t` (seconds) the detections can change `peopleIndex(people, hold)` at `t`, for detections `interval`
+ * seconds apart: the hold, plus the animal vote around the boxes in it.
+ */
+export function peopleIndexReach(hold: number, interval: number): number {
+  return hold + Math.max(ANIMAL_VOTE_SECONDS, ANIMAL_VOTE_INTERVALS * interval)
+}
+
 /** People found in one frame (boxes normalized to the frame). */
 export interface PeopleAt {
   t: number
@@ -240,15 +262,22 @@ export function peopleIndex(
   }
 }
 
+/** The pixels of a box grown by `margin` of its size on each side, clipped to a `w` × `h` mask (end exclusive). */
+function boxPixels(b: Rect, margin: number, w: number, h: number) {
+  return {
+    x0: Math.max(0, Math.floor((b.x - b.width * margin) * w)),
+    x1: Math.min(w, Math.ceil((b.x + b.width * (1 + margin)) * w)),
+    y0: Math.max(0, Math.floor((b.y - b.height * margin) * h)),
+    y1: Math.min(h, Math.ceil((b.y + b.height * (1 + margin)) * h)),
+  }
+}
+
 /** The mask with everything outside the (grown) boxes cleared. */
 export function keepPeople(mask: Mask, boxes: ReadonlyArray<Rect>, margin = PERSON_BOX_MARGIN): Mask {
   const { width: w, height: h } = mask
   const data = new Uint8Array(w * h)
   for (const b of boxes) {
-    const x0 = Math.max(0, Math.floor((b.x - b.width * margin) * w))
-    const x1 = Math.min(w, Math.ceil((b.x + b.width * (1 + margin)) * w))
-    const y0 = Math.max(0, Math.floor((b.y - b.height * margin) * h))
-    const y1 = Math.min(h, Math.ceil((b.y + b.height * (1 + margin)) * h))
+    const { x0, x1, y0, y1 } = boxPixels(b, margin, w, h)
     for (let y = y0; y < y1; y++) data.set(mask.data.subarray(y * w + x0, y * w + x1), y * w + x0)
   }
   return { width: w, height: h, data }
@@ -256,27 +285,128 @@ export function keepPeople(mask: Mask, boxes: ReadonlyArray<Rect>, margin = PERS
 
 /**
  * A frame judged on its mask inside the people found near it. With no one found there although the whole mask holds a
- * shape large enough for the effect (an animal, or a person the detector missed), the frame says no person was found
- * rather than that no one is large enough: the whole mask of an empty shot or of a wide shot of small people has no
- * such shape. People found elsewhere in the frame keep it at "no one large enough", since someone was found.
+ * shape large enough for the effect (an animal, or a person the detector missed), or held one before the cutout cut it
+ * down (`largeBeforeGate`), the frame says no person was found rather than that no one is large enough: the whole mask
+ * of an empty shot or of a wide shot of small people has no such shape. People found elsewhere in the frame keep it at
+ * "no one large enough", since someone was found.
  */
 function assessPeople(
-  t: number,
-  mask: Mask,
+  s: SuitabilitySample,
   boxes: ReadonlyArray<Rect>,
   o: Required<SuitabilityOptions>,
 ): FrameAssessment {
-  const inPeople = assessFrame(t, keepPeople(mask, boxes), o)
+  const inPeople = assessFrame(s.t, keepPeople(s.mask, boxes), o)
   if (inPeople.verdict !== 'no-subject' || boxes.length) return inPeople
-  const whole = assessFrame(t, mask, o).verdict
-  return whole === 'ok' || whole === 'subject-fills-frame'
+  return s.largeBeforeGate || holdsLargeShape(s.mask, o)
     ? { ...inPeople, verdict: 'no-person-found' }
     : inPeople
+}
+
+/** Whether a mask holds a shape large enough for the effect: one that passes the size rules, or fills the frame. */
+export function holdsLargeShape(mask: Mask, options: SuitabilityOptions = {}): boolean {
+  const { verdict } = assessFrame(0, mask, options)
+  return verdict === 'ok' || verdict === 'subject-fills-frame'
+}
+
+/** Soft edge pixels (under 128) this close to a kept part, in pixels, stay with it. */
+const PART_FRINGE = 2
+
+/**
+ * The mask with only its parts (4-connected regions of 128 and up) that reach into a (grown) person box, or that
+ * overlap `carry` (the previous frame's kept mask, for frames the detector missed). A part keeps all its pixels, so
+ * arms and hair outside the box stay with the person, while an animal or a patch of background apart from them goes.
+ * Soft edge pixels stay within `PART_FRINGE` of a kept part. Without boxes or `carry`, the mask is cleared. When every
+ * part is kept, the mask is returned as it is.
+ */
+export function keepPersonParts(
+  mask: Mask,
+  boxes: ReadonlyArray<Rect>,
+  carry: Mask | null = null,
+  margin = PERSON_BOX_MARGIN,
+): Mask {
+  const { width: w, height: h, data } = mask
+  const n = w * h
+  const inBoxes = new Uint8Array(n)
+  for (const b of boxes) {
+    const { x0, x1, y0, y1 } = boxPixels(b, margin, w, h)
+    for (let y = y0; y < y1; y++) inBoxes.fill(1, y * w + x0, y * w + x1)
+  }
+  // In most frames the whole mask is inside the boxes, so every part is kept.
+  let parts = 0
+  let inside = true
+  for (let i = 0; i < n; i++)
+    if (data[i]! >= 128) {
+      parts++
+      if (!inBoxes[i]) inside = false
+    }
+  if (parts && inside) return mask
+  // Otherwise the kept parts are flood-filled from their pixels in the boxes and under `carry`, so the parts that go
+  // are never labeled.
+  if (scratch?.length !== n) scratch = { kept: new Uint8Array(n), stack: new Int32Array(n), length: n }
+  const { kept, stack } = scratch
+  kept.fill(0)
+  let top = 0
+  for (let i = 0; i < n; i++)
+    if (data[i]! >= 128 && (inBoxes[i] || (carry && carry.data[i]! >= 128))) {
+      kept[i] = 1
+      stack[top++] = i
+    }
+  let count = top
+  while (top > 0) {
+    const p = stack[--top]!
+    const x = p % w
+    if (x > 0 && !kept[p - 1] && data[p - 1]! >= 128) {
+      kept[p - 1] = 1
+      stack[top++] = p - 1
+      count++
+    }
+    if (x < w - 1 && !kept[p + 1] && data[p + 1]! >= 128) {
+      kept[p + 1] = 1
+      stack[top++] = p + 1
+      count++
+    }
+    if (p >= w && !kept[p - w] && data[p - w]! >= 128) {
+      kept[p - w] = 1
+      stack[top++] = p - w
+      count++
+    }
+    if (p < n - w && !kept[p + w] && data[p + w]! >= 128) {
+      kept[p + w] = 1
+      stack[top++] = p + w
+      count++
+    }
+  }
+  if (parts && count === parts) return mask
+  const near = grow(kept, w, h, PART_FRINGE)
+  const out = new Uint8Array(n)
+  for (let i = 0; i < n; i++) if (data[i]! >= 128 ? kept[i] : near[i]) out[i] = data[i]!
+  return { width: w, height: h, data: out }
+}
+
+// Reused across calls (they never overlap: keepPersonParts is synchronous).
+let scratch: { kept: Uint8Array; stack: Int32Array; length: number } | null = null
+/** `bits` grown by `r` pixels in every direction (a square neighbourhood). */
+function grow(bits: Uint8Array, w: number, h: number, r: number): Uint8Array {
+  const across = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (bits[y * w + x]) across.fill(1, y * w + Math.max(0, x - r), y * w + Math.min(w, x + r + 1))
+  const out = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (across[y * w + x])
+        for (let yy = Math.max(0, y - r); yy <= Math.min(h - 1, y + r); yy++) out[yy * w + x] = 1
+  return out
 }
 
 export interface SuitabilitySample {
   t: number
   mask: Mask
+  /**
+   * The mask was cut down to the parts near the people found (`keepPersonParts`) from one that held a shape large
+   * enough for the effect, so a frame with no one near says no person was found, as on the uncut mask.
+   */
+  largeBeforeGate?: boolean
 }
 
 /**
@@ -299,8 +429,9 @@ export interface PopSeries {
  * nominal time between samples, used to turn usable samples into time ranges. Stability is the share of frames without
  * a visible pop, from the person track's per-frame `pops` (every frame, not just the samples); the quick check has
  * none and reports null. With `people`, each frame is judged only on its mask inside the people found near it
- * (`peopleNear`); flicker is still measured on the whole mask, since the export cuts out all of it. The report keeps
- * its evidence, so a part of the shot can be judged on its own (`suitabilityInRange`).
+ * (`peopleNear`); flicker is measured on the stored masks, which keep only the parts near the people
+ * (`keepPersonParts`), as the export cuts them out. The report keeps its evidence, so a part of the shot can be judged
+ * on its own (`suitabilityInRange`).
  */
 export function assessSuitability(
   samples: ReadonlyArray<SuitabilitySample>,
@@ -311,9 +442,7 @@ export function assessSuitability(
 ): SuitabilityReport {
   const o = { ...DEFAULTS, ...options }
   const near = people && peopleIndex(people, undefined, o.minPersonScore)
-  const frames = samples.map((s) =>
-    near ? assessPeople(s.t, s.mask, near(s.t), o) : assessFrame(s.t, s.mask, o),
-  )
+  const frames = samples.map((s) => (near ? assessPeople(s, near(s.t), o) : assessFrame(s.t, s.mask, o)))
   const popping: number[] = []
   pops?.shares.forEach((p, i) => {
     if (p >= POP_MIN_SHARE) popping.push(i)

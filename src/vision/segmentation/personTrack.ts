@@ -5,8 +5,11 @@ import { resizeMask } from '../mask/ops.ts'
 import { createPopMeter } from '../mask/pops.ts'
 import { createTrackReader } from '../mask/track.ts'
 import {
+  CUTOUT_CARRY_SECONDS,
+  CUTOUT_HOLD_SECONDS,
   assessSuitability,
   detectedPeople,
+  peopleIndexReach,
   type PeopleAt,
   type SuitabilityOptions,
   type SuitabilitySample,
@@ -14,8 +17,9 @@ import {
 import { fitSize, iterateFrames, prefetch, sampleTimes, type FrameSource } from '../runtime/frames.ts'
 import { createProgress, type TaskOptions } from '../runtime/tasks.ts'
 import type { FrameObservation } from '../reframe/track.ts'
-import type { MaskQuality, PackedMaskTrack, SuitabilityReport, TimeRange } from '../types.ts'
+import type { MaskQuality, PackedMaskTrack, Rect, SuitabilityReport, TimeRange } from '../types.ts'
 import { VISION_MODELS } from '../runtime/models.ts'
+import { createMaskTrackBuilder, type PersonGateConfig } from './trackBuilder.ts'
 
 export interface PersonTrackOptions extends TaskOptions {
   range?: TimeRange
@@ -59,8 +63,11 @@ export interface PersonTrackResult {
   facesSkipped?: boolean
 }
 
-/** Bumped whenever the processing changes in a way that invalidates cached tracks. */
-export const PERSON_TRACK_VERSION = 1
+/**
+ * Bumped whenever the processing changes in a way that invalidates cached tracks. 2: the masks keep only the parts near
+ * the people found (`keepPersonParts`).
+ */
+export const PERSON_TRACK_VERSION = 2
 const DEFAULT_MAX_SIDE = 512
 const MODEL_OUTPUT_SIDE = 256
 export const PEOPLE_FPS = 5
@@ -79,7 +86,8 @@ export function personTrackParams(
 
 /**
  * Segments the people in a clip into a stored mask track (export path): full clip at the
- * output frame rate, edge refinement against the frame, zero-lag temporal filtering, and an
+ * output frame rate, edge refinement against the frame, zero-lag temporal filtering, only the
+ * parts near the people the detector finds (the whole mask when it cannot be loaded), and an
  * optional high-quality matte where text overlaps the subject.
  */
 export async function buildPersonTrack(
@@ -117,11 +125,13 @@ export async function buildPersonTrack(
       refineFrom: MODEL_OUTPUT_SIDE,
       temporal: {},
       pops: true,
+      gate: personGate(fps, peopleEvery),
     },
     { signal },
   )
 
-  const observations: FrameObservation[] = []
+  // The person boxes and coverage come from the stored (gated) masks, once the track is finished.
+  const observations: { i: number; t: number; faces: FrameObservation['faces'] }[] = []
   const people: PeopleAt[] = []
   let peopleAvailable = true
   let facesAvailable = true
@@ -159,22 +169,21 @@ export async function buildPersonTrack(
       else if (withPeople) people.push(detectedPeople(t, res.people, res.animals))
       if (res.facesUnavailable) facesAvailable = false
       if (res.usedHq) hqFrames++
-      if (observe)
-        observations.push({ t, faces: res.faces ?? [], personBox: res.box, personCoverage: res.coverage })
+      if (observe) observations.push({ i, t, faces: res.faces ?? [] })
       i++
       progress(i / times.length, 'segmenting')
     }
     if (signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
     if (i < times.length)
       throw new JobError('decode', `Only ${i} of ${times.length} frames could be decoded.`)
-    const track = await seg.endTrack({ id }, { signal })
+    const { track, boxes } = await seg.endTrack({ id }, { signal })
     progress(1, 'done')
     return {
       track,
       suitability: peopleAvailable
         ? trackSuitability(track, people, options.suitability)
         : { ...trackSuitability(track, undefined, options.suitability), peopleSkipped: true },
-      observations,
+      observations: observationsOn(track, boxes, observations),
       hqFrames,
       people: peopleAvailable ? people : [],
       ...(facesAvailable ? {} : { facesSkipped: true }),
@@ -185,23 +194,63 @@ export async function buildPersonTrack(
   }
 }
 
+/** The cutout's gate (`keepPersonParts`) for a track at `fps` whose people are looked for every `peopleEvery` frames. */
+function personGate(fps: number, peopleEvery: number): PersonGateConfig {
+  return {
+    hold: CUTOUT_HOLD_SECONDS,
+    carry: CUTOUT_CARRY_SECONDS,
+    reach: peopleIndexReach(CUTOUT_HOLD_SECONDS, peopleEvery / fps),
+    judgeEvery: judgeStep(fps),
+  }
+}
+
+/** The track's verdict judges every this many frames, about 0.2 s apart. */
+function judgeStep(fps: number): number {
+  return Math.max(1, Math.round(fps * 0.2))
+}
+
+/** Observations with the person box and coverage of the stored mask at their time. */
+export function observationsOn(
+  track: PackedMaskTrack,
+  boxes: ReadonlyArray<Rect | null>,
+  observations: ReadonlyArray<Pick<FrameObservation, 't' | 'faces'>>,
+): FrameObservation[] {
+  const { start, fps, coverage } = track.meta
+  return observations.map(({ t, faces }) => {
+    const i = Math.round((t - start) * fps)
+    return { t, faces, personBox: boxes[i] ?? null, personCoverage: coverage[i] ?? 0 }
+  })
+}
+
 /**
  * What the report needs that a track stored by an older version may lack: the people in its frames (at `peopleFps`)
  * and each frame's pop share, which needs every frame's luma. Needs only the person detector and the decoder, not the
- * segmenter. When the detector cannot be downloaded, `peopleSkipped` is set instead of `people`.
+ * segmenter. When the detector cannot be downloaded, `peopleSkipped` is set instead of `people`. With `gate` (masks
+ * stored without the people, so whole), the masks are also cut down to the parts near the people found, as the build
+ * does, into `gated` (with its pops and each mask's box); not when the detector cannot be downloaded.
  */
 export async function findTrackEvidence(
   segmentation: SegmentationBackend,
   source: FrameSource,
   track: PackedMaskTrack,
-  need: { people: boolean; pops: boolean },
+  need: { people: boolean; pops: boolean; gate?: boolean },
   options: TaskOptions & { peopleFps?: number } = {},
-): Promise<{ people?: PeopleAt[]; pops?: number[]; peopleSkipped?: boolean }> {
+): Promise<{
+  people?: PeopleAt[]
+  pops?: number[]
+  peopleSkipped?: boolean
+  gated?: { track: PackedMaskTrack; boxes: ReadonlyArray<Rect | null> }
+}> {
   const { signal } = options
   const { meta } = track
   const every = Math.max(1, Math.round(meta.fps / (options.peopleFps ?? PEOPLE_FPS)))
+  const { frameCount: _, coverage: __, pops: ___, largeBeforeGate: ____, ...base } = meta
+  let builder =
+    need.gate && need.people
+      ? createMaskTrackBuilder({ meta: base, temporal: false, pops: true, gate: personGate(meta.fps, every) })
+      : null
   const indices: number[] = []
-  for (let i = 0; i < meta.frameCount; i += need.pops ? 1 : every) indices.push(i)
+  for (let i = 0; i < meta.frameCount; i += need.pops || builder ? 1 : every) indices.push(i)
   const progress = createProgress(options.onProgress)
   const people: PeopleAt[] = []
   let peopleAvailable = need.people
@@ -222,24 +271,31 @@ export async function findTrackEvidence(
       const i = indices[n++]!
       const withPeople = peopleAvailable && i % every === 0
       const res = await segmentation.analyze(
-        { bitmap, timestampMs: Math.round(t * 1000), people: withPeople, gray: !!meter },
+        { bitmap, timestampMs: Math.round(t * 1000), people: withPeople, gray: !!meter || !!builder },
         { signal, transfer: [bitmap] },
       )
       if (res.peopleUnavailable) {
         peopleAvailable = false
+        builder = null
         if (!meter) {
           stopped = true
           break
         }
       } else if (withPeople) people.push(detectedPeople(t, res.people, res.animals))
-      if (meter) {
+      if (meter || builder) {
         if (!res.gray) throw new JobError('internal', 'The frame luma is missing.')
         const gray =
           res.gray.width === width && res.gray.height === height
             ? res.gray
             : resizeMask(res.gray, width, height)
-        const share = meter.push(reader.frame(i), gray)
+        const mask = reader.frame(i)
+        const share = meter?.push(mask, gray) ?? null
         if (share !== null) pops.push(share)
+        builder?.push({
+          mask,
+          gray,
+          ...(withPeople ? { found: { people: res.people ?? [], animals: res.animals ?? [] } } : {}),
+        })
       }
       progress(n / indices.length, 'analyzing')
     }
@@ -247,9 +303,11 @@ export async function findTrackEvidence(
     if (n < indices.length && !stopped)
       throw new JobError('decode', `Only ${n} of ${indices.length} frames could be decoded.`)
     if (meter) pops.push(...meter.flush())
+    const gated = builder ? { track: builder.finish(), boxes: builder.boxes() } : null
     return {
       ...(need.people ? (peopleAvailable ? { people } : { peopleSkipped: true }) : {}),
       ...(meter ? { pops: pops.map((p) => Math.round(p * 1000) / 1000) } : {}),
+      ...(gated ? { gated } : {}),
     }
   } catch (err) {
     throw visionError(err, 'internal')
@@ -259,7 +317,8 @@ export async function findTrackEvidence(
 /**
  * Suitability of a stored track, judged on frames about 0.2 s apart, counting only the mask near the `people` found
  * (the whole mask without them), with its stability from every frame's pop share (`meta.pops`, or `pops` for a
- * track stored without them).
+ * track stored without them). A frame with no one near whose mask the cutout cut down from a large shape
+ * (`meta.largeBeforeGate`) says no person was found, as it would on the uncut mask.
  */
 export function trackSuitability(
   track: PackedMaskTrack,
@@ -268,11 +327,16 @@ export function trackSuitability(
   pops = track.meta.pops,
 ): SuitabilityReport {
   const { meta } = track
-  const step = Math.max(1, Math.round(meta.fps * 0.2))
+  const step = judgeStep(meta.fps)
   const reader = createTrackReader(track, 1)
+  const large = new Set(meta.largeBeforeGate)
   const samples: SuitabilitySample[] = []
   for (let i = 0; i < meta.frameCount; i += step)
-    samples.push({ t: meta.start + i / meta.fps, mask: reader.frame(i) })
+    samples.push({
+      t: meta.start + i / meta.fps,
+      mask: reader.frame(i),
+      ...(large.has(i) ? { largeBeforeGate: true } : {}),
+    })
   return assessSuitability(
     samples,
     step / meta.fps,

@@ -103,7 +103,10 @@ export function fakeSegmentation(
     animalsAt = () => [],
   }: { facesUnavailable?: boolean; animalsAt?: (t: number) => PersonDetection[] } = {},
 ) {
-  const detections = (req: { faces?: boolean; people?: boolean }, t: number) => {
+  const detections = (
+    req: { faces?: boolean; people?: boolean },
+    t: number,
+  ): Pick<FrameAnalysis, 'faces' | 'facesUnavailable' | 'people' | 'animals' | 'peopleUnavailable'> => {
     const people = req.people ? peopleAt(t) : undefined
     return {
       ...(req.faces
@@ -169,18 +172,20 @@ export function fakeSegmentation(
       const standard = personAt(t, size)
       req.bitmap.close()
       const { mask, usedHq } = req.hq ? preferHq(standard, req.hq) : { mask: standard, usedHq: false }
-      const stats = builder.push({ mask, gray: flatGray(size) })
-      return {
-        ...stats,
-        usedHq,
-        ...detections(req, t),
-      }
+      const found = detections(req, t)
+      const stats = builder.push({
+        mask,
+        gray: flatGray(size),
+        ...(req.people ? { found: found.peopleUnavailable ? null : found } : {}),
+      })
+      return { ...stats, usedHq, ...found }
     },
     async endTrack({ id }) {
       calls.push('endTrack')
-      const track = tracks.get(id)!.finish()
+      const builder = tracks.get(id)!
+      const track = builder.finish()
       tracks.delete(id)
-      return track
+      return { track, boxes: builder.boxes() }
     },
     async cancelTrack({ id }) {
       calls.push('cancelTrack')
