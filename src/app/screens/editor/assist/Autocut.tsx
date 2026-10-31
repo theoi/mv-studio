@@ -48,6 +48,9 @@ export function AutocutBadge() {
 }
 
 /** Bytes the matching model still needs to download when this cut starts footage analysis, else 0. */
+/** "Video track", or the name alone when it already ends in "track" ("Main track"). */
+const trackPhrase = (name: string) => (/\btrack$/i.test(name.trim()) ? name.trim() : `${name} track`)
+
 function useMatchingDownload(needed: boolean): number {
   const [bytes, setBytes] = useState(0)
   useEffect(() => {
@@ -187,7 +190,8 @@ export function AutocutView() {
                 : `Cut ${formatTime(start)}–${formatTime(end)} into ${plural(cuts, 'shot')}`}
             </div>
             <div className={styles.muted}>
-              On the Auto-cut track. Cutting again replaces only the clips you haven’t changed.
+              On the {trackPhrase(result.track.name)}. Cutting again replaces only the clips you haven’t
+              changed.
             </div>
           </div>
         </div>

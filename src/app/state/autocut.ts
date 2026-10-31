@@ -10,7 +10,8 @@ import type {
   IndexingState,
 } from '../../vision/index.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
-import { visionService } from './footage.ts'
+import { plural } from '../format.ts'
+import { analyzeFootageAndWait, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { editor, sectionAt, sectionsOf } from './project.ts'
 import type { Selection } from './ui.ts'
@@ -142,13 +143,23 @@ const STAGE_MESSAGES: Record<string, string> = {
   matching: 'Choosing a clip for each shot',
 }
 
+const analyzingMessage = (done: number, total: number) =>
+  `Analyzing your footage… ${done} of ${plural(total, 'clip')}`
+
 let runs = 0
 
 /**
  * Runs auto-cut as a job. Every run takes the next seed, so cutting again with the same choices gives a different
  * cut; either way only auto-cut clips nobody touched are replaced.
+ *
+ * With `analyzeFirst`, a cut that matches clips first analyzes the ones not analyzed yet (also where background
+ * analysis is off) and waits for them, as the job's `analyzing` stage, so every clip analysis can read is matched.
+ * Cancelling the job in that stage also stops the analysis if the job started it.
  */
-export function startAutoCut(options: Omit<AutoCutOptions, 'seed'>): JobHandle<AutoCutResult> | undefined {
+export function startAutoCut(
+  options: Omit<AutoCutOptions, 'seed'>,
+  { analyzeFirst = false }: { analyzeFirst?: boolean } = {},
+): JobHandle<AutoCutResult> | undefined {
   if (isRunning(JOB_KINDS.autocut)) return undefined
   const seed = ++runs
   let id = ''
@@ -156,14 +167,42 @@ export function startAutoCut(options: Omit<AutoCutOptions, 'seed'>): JobHandle<A
     kind: JOB_KINDS.autocut,
     title: 'Cutting to the beat',
     run: async (ctx) => {
-      ctx.progress({ fraction: 0, stage: 'planning', message: STAGE_MESSAGES.planning })
+      const matched = (options.order ?? 'matched') === 'matched'
+      const wanted = options.assetIds && new Set(options.assetIds)
+      const waiting = unanalyzed(editor.getProject())
+        .filter((a) => !wanted || wanted.has(a.id))
+        .map((a) => a.id)
+      const analyze = analyzeFirst && matched && waiting.length > 0
+      // The analyzing stage takes the first half of the bar, the cut the rest.
+      const scale = (f: number) => (analyze ? 0.5 + f / 2 : f)
+      if (analyze) {
+        ctx.progress({ fraction: 0, stage: 'analyzing', message: analyzingMessage(0, waiting.length) })
+        await analyzeFootageAndWait(waiting, {
+          signal: ctx.signal,
+          onProgress: (s) => {
+            if (s.status !== 'indexing' || !s.total) return
+            const fraction = Math.min(1, (s.done + (s.current?.fraction ?? 0)) / s.total)
+            ctx.progress({
+              fraction: fraction / 2,
+              stage: 'analyzing',
+              message: analyzingMessage(s.done, s.total),
+            })
+          },
+        })
+      }
+      ctx.progress({ fraction: scale(0), stage: 'planning', message: STAGE_MESSAGES.planning })
       const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
       const result = await v.autoCut(
         { editor, matcher: vision.matcher },
         { ...options, seed },
         {
           signal: ctx.signal,
-          onProgress: (p) => ctx.progress({ ...p, message: STAGE_MESSAGES[p.stage ?? ''] ?? p.message }),
+          onProgress: (p) =>
+            ctx.progress({
+              ...p,
+              ...(p.fraction === undefined ? {} : { fraction: scale(p.fraction) }),
+              message: STAGE_MESSAGES[p.stage ?? ''] ?? p.message,
+            }),
         },
       )
       useAutoCut.setState((s) => ({ results: { ...s.results, [id]: result } }))

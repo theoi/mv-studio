@@ -1,7 +1,8 @@
 import { beforeEach, expect, it } from 'vitest'
-import { clipTags } from '../../../src/app/state/footage.ts'
+import { clipTags, waitForMatching } from '../../../src/app/state/footage.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import { VISION_ANALYSIS_VERSION } from '../../../src/vision/analysisData.ts'
+import type { AssetIndexStatus, IndexingState } from '../../../src/vision/index.ts'
 
 beforeEach(() => loadDemoProject())
 
@@ -43,4 +44,57 @@ it('has no tags for a clip of the user’s own until it is analyzed', () => {
   expect(clipTags(editor.getProject(), 'mine')).toEqual([])
   setTags('mine', ['city'])
   expect(clipTags(editor.getProject(), 'mine')).toEqual(['city'])
+})
+
+/** An indexer that updates only when the test says so. */
+function fakeIndexer(statuses: Record<string, AssetIndexStatus>) {
+  const listeners = new Set<(s: IndexingState) => void>()
+  const indexer = {
+    statuses,
+    cancelled: 0,
+    subscribe(listener: (s: IndexingState) => void) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    statusOf: (id: string) => statuses[id] ?? 'queued',
+    cancel() {
+      indexer.cancelled++
+    },
+    update(state: Partial<IndexingState> = {}) {
+      for (const l of [...listeners]) l({ status: 'indexing', total: 2, done: 0, failed: [], ...state })
+    },
+    listening: () => listeners.size,
+  }
+  return indexer
+}
+
+it('waits until every clip asked for is matched or failed, or analysis stops', async () => {
+  const indexer = fakeIndexer({ a: 'queued', b: 'queued', other: 'queued' })
+  let done = false
+  const wait = waitForMatching(indexer, ['a', 'b']).then(() => (done = true))
+  indexer.statuses.a = 'indexed'
+  indexer.update({ done: 1 })
+  await Promise.resolve()
+  expect(done).toBe(false)
+  indexer.statuses.b = 'failed'
+  indexer.update({ done: 1 })
+  await wait
+  expect(indexer.listening()).toBe(0)
+
+  const stopped = waitForMatching(indexer, ['other'])
+  indexer.update({ status: 'paused' })
+  await stopped
+  expect(indexer.listening()).toBe(0)
+})
+
+it('stops waiting on abort, and cancels the analysis only when the wait started it', async () => {
+  for (const cancelOnAbort of [true, false]) {
+    const indexer = fakeIndexer({ a: 'queued' })
+    const controller = new AbortController()
+    const wait = waitForMatching(indexer, ['a'], { signal: controller.signal, cancelOnAbort })
+    controller.abort()
+    await expect(wait).rejects.toMatchObject({ code: 'cancelled' })
+    expect(indexer.cancelled).toBe(cancelOnAbort ? 1 : 0)
+    expect(indexer.listening()).toBe(0)
+  }
 })

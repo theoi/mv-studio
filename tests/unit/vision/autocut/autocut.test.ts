@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { ProjectEditor } from '../../../../src/model/editor.ts'
 import { createTrack, createVideoClip } from '../../../../src/model/factory.ts'
-import type { Clip, Project } from '../../../../src/model/types.ts'
+import type { Clip, Project, Track } from '../../../../src/model/types.ts'
+import { TEMPLATE_EXTENSION } from '../../../../src/plugins/templates.ts'
 import { JobError } from '../../../../src/shared/jobs.ts'
 import { AUTOCUT_TRACK_NAME, autoCutMeta, isUntouchedAutoCut } from '../../../../src/vision/autocut/apply.ts'
 import { chooseClips, type ChooseInput, type ChooseSpan } from '../../../../src/vision/autocut/choose.ts'
@@ -223,7 +224,10 @@ describe('applying an auto-cut', () => {
     expect(p.tracks.indexOf(tracks[0]!)).toBeLessThan(p.tracks.findIndex((t) => t.id === locked.id))
     expect(tracks[1]!.id).toBe(locked.id)
     for (const c of lockedClips) expect(p.clips[c.id]).toEqual(c)
-    expect(result.warnings.join(' ')).toMatch(/locked/)
+    expect(result.warnings.filter((w) => w.includes('locked'))).toEqual([
+      'The Auto-cut track is locked, so the new cut is on a new track above it.',
+    ])
+    expect(result.track).toEqual({ id: tracks[0]!.id, name: AUTOCUT_TRACK_NAME })
   })
 
   it('never touches clips on other tracks, locked or not', async () => {
@@ -268,5 +272,73 @@ describe('applying an auto-cut', () => {
     const p = await plan(project)
     expect(() => applyAutoCut(editor, { ...p, shots: [] })).toThrow(/nothing to cut/)
     expect(durationOf(project, 'city')).toBe(20)
+  })
+})
+
+describe('auto-cut in a project made from a starter template', () => {
+  /** makeProject() with a template's Video track on top, as createFromTemplate('footage') records it. */
+  const templated = (patch: Partial<Track> = {}) => {
+    const base = makeProject()
+    const video: Track = { ...createTrack('visual', 'Video'), ...patch }
+    const project: Project = {
+      ...base,
+      tracks: [video, ...base.tracks],
+      extensions: {
+        ...base.extensions,
+        [TEMPLATE_EXTENSION]: { kind: 'footage', tracks: { video: video.id } },
+      },
+    }
+    return { project, video }
+  }
+
+  it('cuts on the template’s empty Video track, and cutting again replaces the cut there', async () => {
+    const { project, video } = templated()
+    const editor = new ProjectEditor(project)
+    const first = await autoCut({ editor, matcher })
+    let p = editor.getProject()
+    const firstClips = autoCutClips(p)
+    expect(first.track).toEqual({ id: video.id, name: 'Video' })
+    expect(first.stats.newTrack).toBe(false)
+    expect(p.tracks.map((t) => t.id)).toEqual(project.tracks.map((t) => t.id))
+    expect(firstClips).toHaveLength(first.stats.cuts)
+    expect(firstClips.every((c) => c.trackId === video.id)).toBe(true)
+
+    const second = await autoCut({ editor, matcher }, { seed: 2 })
+    p = editor.getProject()
+    expect(second.track.id).toBe(video.id)
+    expect(second.stats.replaced).toBe(first.stats.cuts)
+    expect(p.tracks.map((t) => t.id)).toEqual(project.tracks.map((t) => t.id))
+    expect(autoCutClips(p)).toHaveLength(second.stats.cuts)
+    expect(editor.undo()).toBe(true)
+    expect(autoCutClips(editor.getProject())).toEqual(firstClips)
+    expect(editor.undo()).toBe(true)
+    expect(editor.getProject()).toEqual(project)
+  })
+
+  it('names a track whose name already ends in “track” once', async () => {
+    const { project, video } = templated({ name: 'Main track' })
+    const editor = new ProjectEditor(project)
+    const first = await autoCut({ editor, matcher })
+    expect(first.track).toEqual({ id: video.id, name: 'Main track' })
+    const edited = autoCutClips(editor.getProject())[2]!
+    editor.dispatch({ type: 'clip.set', clipId: edited.id, path: ['opacity', 'value'], value: 0.5 })
+    const second = await autoCut({ editor, matcher }, { seed: 2 })
+    expect(second.warnings).toContain('Kept 1 clip you made or edited on the Main track.')
+  })
+
+  it.each([
+    ['holds a clip of the user’s', {}, true],
+    ['is locked', { locked: true }, false],
+    ['is hidden', { hidden: true }, false],
+  ])('adds its own Auto-cut track when the template’s Video track %s', async (_, patch, withClip) => {
+    const { project, video } = templated(patch)
+    const own = createVideoClip({ trackId: video.id, assetId: 'city', start: 0, duration: 4 })
+    const editor = new ProjectEditor(withClip ? { ...project, clips: { [own.id]: own } } : project)
+    const result = await autoCut({ editor, matcher })
+    const p = editor.getProject()
+    expect(result.track.name).toBe(AUTOCUT_TRACK_NAME)
+    expect(result.stats.newTrack).toBe(true)
+    expect(trackNamed(p, AUTOCUT_TRACK_NAME)).toHaveLength(1)
+    expect(autoCutClips(p).some((c) => c.trackId === video.id)).toBe(false)
   })
 })

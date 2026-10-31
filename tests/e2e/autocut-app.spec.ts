@@ -277,3 +277,145 @@ test('Assist › Auto-cut › More options cuts on bar lines only, with the clip
   expect(indices).toEqual([...indices].sort((a, b) => a - b))
   expect(new Set(indices).size).toBeGreaterThan(5)
 })
+
+test('in a project made from a starter template, Auto-cut cuts on the template’s empty Video track', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?kind=footage&tab=assist&assist=autocut&t=73.6'
+  })
+  await waitForPreview(page)
+  // A real footage template project with the sample's song and clips: Titles, Look, Video and Song tracks, nothing
+  // on the Video track yet.
+  const videoId = await page.evaluate(() => {
+    const { plugins, app } = window.mvStudio
+    const sample = app.project.editor.getProject()
+    const footage = Object.values(sample.assets as Record<string, Untyped>).filter(
+      (a) =>
+        (a.origin.type === 'import' || a.origin.type === 'generated') &&
+        (a.kind === 'video' || a.kind === 'image'),
+    )
+    const project = plugins.templates.createFromTemplate('footage', {
+      song: sample.assets[sample.songAssetId],
+      analysis: sample.analysis.audio[sample.songAssetId],
+      footage,
+    })
+    app.project.editor.load(project)
+    return plugins.templates.templateState(project).tracks.video as string
+  })
+  const tracks = () =>
+    page.evaluate(() =>
+      window.mvStudio.app.project.editor.getProject().tracks.map((t: Untyped) => t.name as string),
+    )
+  const before = await tracks()
+  expect(before).toEqual(['Titles', 'Look', 'Video', 'Song'])
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await assist.getByRole('switch', { name: 'Match clips to the mood' }).click()
+  await assist.getByRole('button', { name: 'Cut to the beat' }).click()
+  await expect(assist.getByRole('button', { name: /^Keep \d+ cuts$/ })).toBeVisible()
+  await expect(
+    assist.getByText('On the Video track. Cutting again replaces only the clips you haven’t changed.'),
+  ).toBeVisible()
+  const placed = await page.evaluate((id) => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const cut = Object.values(project.clips as Record<string, Untyped>).filter((c) => c.meta?.autocut)
+    return {
+      cut: cut.length,
+      onVideo: cut.filter((c) => c.trackId === id).length,
+      autoCutTrack: project.tracks.some((t: Untyped) => t.name === 'Auto-cut'),
+    }
+  }, videoId)
+  expect(placed.cut).toBeGreaterThan(20)
+  expect(placed.onVideo).toBe(placed.cut)
+  expect(placed.autoCutTrack).toBe(false)
+  expect(await tracks()).toEqual(before)
+})
+
+test('a cut that analyzes first waits for footage analysis and matches every clip; Cancel while it waits stops both', async ({
+  page,
+}) => {
+  test.setTimeout(180_000)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    const meanColor = (bitmap: ImageBitmap) => {
+      const ctx = new OffscreenCanvas(1, 1).getContext('2d') as OffscreenCanvasRenderingContext2D
+      ctx.drawImage(bitmap, 0, 0, 1, 1)
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data as unknown as number[]
+      const v = [r! / 255 + 0.01, g! / 255 + 0.01, b! / 255 + 0.01, 0.1]
+      const n = Math.hypot(...v)
+      return v.map((x) => x / n)
+    }
+    const onnx = {
+      async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        const w = window as Untyped
+        if (w.__embedGate) await w.__embedGate
+        const data = bitmaps.flatMap((b) => {
+          const v = meanColor(b)
+          b.close()
+          return v
+        })
+        return { dim: 4, data: new Float32Array(data) }
+      },
+      async embedTexts({ texts }: { texts: string[] }) {
+        return { dim: 4, data: new Float32Array(texts.flatMap((_, i) => [0.5, 0.5, 0.5, (i % 3) / 3])) }
+      },
+    }
+    ;(window as Untyped).mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => onnx,
+      segmentation: () => {
+        throw new Error('unused')
+      },
+    })
+    window.location.hash = '#/editor?kind=footage&tab=assist&assist=autocut&t=73.6'
+  })
+  await waitForPreview(page)
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const cutButton = assist.getByRole('button', { name: 'Cut to the beat' })
+  const start = () =>
+    page.evaluate(() => {
+      const { autocut, project } = window.mvStudio.app
+      const options = autocut.autoCutOptions(
+        autocut.useAutoCut.getState().choices,
+        project.editor.getProject(),
+        { type: 'none' },
+        0,
+      )
+      autocut.startAutoCut(options, { analyzeFirst: true })
+    })
+  const status = () => page.evaluate(() => window.mvStudio.app.footage.useFootage.getState().indexing?.status)
+
+  // Frame embeddings wait until released, so the cut is reliably still waiting for analysis.
+  await page.evaluate(() => {
+    const w = window as Untyped
+    w.__embedGate = new Promise<void>((resolve) => (w.__releaseEmbeds = resolve))
+  })
+  await start()
+  await expect(assist.getByText(/^Analyzing your footage… 0 of \d+ clips$/)).toBeVisible()
+  await assist.getByRole('button', { name: 'Cancel' }).click()
+  await expect(cutButton).toBeVisible()
+  await expect.poll(status).toBe('paused')
+  await expect(assist.getByRole('alert')).toHaveCount(0)
+  expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBeFalsy()
+
+  // Once released, the cut waits for every clip, then matches them all.
+  await page.evaluate(() => (window as Untyped).__releaseEmbeds())
+  await start()
+  await expect(assist.getByRole('button', { name: /^Keep \d+ cuts$/ })).toBeVisible({ timeout: 150_000 })
+  await expect(assist.getByText(/picked for variety|analyzed yet/)).toHaveCount(0)
+  const analyzed = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clips = Object.values(project.assets as Record<string, Untyped>).filter(
+      (a) =>
+        (a.origin.type === 'import' || a.origin.type === 'generated') &&
+        (a.kind === 'video' || a.kind === 'image'),
+    )
+    return {
+      clips: clips.length,
+      matched: clips.filter((a) => project.analysis.visual[a.id]?.data?.embedding).length,
+    }
+  })
+  expect(analyzed.matched).toBe(analyzed.clips)
+})
