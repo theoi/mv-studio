@@ -426,6 +426,14 @@
   background-color: var(--clip-overlay);
 }
 
+/* A clip over a lyric chip on its track keeps to the lower half, so the chip still shows and takes clicks above it.
+   It stays over the chip when the chip is selected (.selected lifts it to 2). */
+.overChip,
+.overChip.selected {
+  top: 50%;
+  z-index: 3;
+}
+
 .clip-look {
   top: 3px;
   bottom: 3px;

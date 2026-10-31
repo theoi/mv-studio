@@ -68,7 +68,14 @@ const placed = (page: Page) => page.getByText(/^Placed \d+ (shots|scenes)/)
 
 test('drafts a lyric video on this device, lists the plan, and undoes it', async ({ page }, testInfo) => {
   await openDirector(page, undefined, 'lyric')
-  await expect(page.getByText('The built-in planner writes the plan.', { exact: false })).toBeVisible()
+  const note = page.getByText('The built-in planner writes the plan.', { exact: false })
+  await expect(note).toBeVisible()
+  // The note wraps; its icon keeps its size and sits on the first line.
+  const icon = (await page.locator('[class*="plannerRow"] svg').boundingBox())!
+  const lines = (await note.boundingBox())!
+  expect(lines.height).toBeGreaterThan(24)
+  expect(icon.width).toBe(14)
+  expect(Math.abs(icon.y + icon.height / 2 - (lines.y + 8))).toBeLessThan(1.5)
   await expect(page.getByText('Runs on this device with your clips · free')).toBeVisible()
   const before = await draftState(page)
   expect(before.director).toBe(0)
@@ -262,6 +269,8 @@ test('shows the price of AI shots and asks before spending anything', async ({ p
   await generate.click()
   const dialog = page.getByRole('dialog', { name: /^Generate \d+ shots?\?$/ })
   await expect(dialog).toBeVisible()
+  // Its buttons are the dialog's own footer, laid out as in the other dialogs.
+  await expect(dialog.locator('footer > button')).toHaveText(['Cancel', /^Generate \d+ shots? · about/])
   await expect(dialog.getByText(/^Costs about \$\d+\.\d\d, charged by fal\.ai to your key\.$/)).toBeVisible()
   // One line per model, by its name, not one per shot. A single model's line has no price: it would repeat the total.
   const shots = Number(/\d+/.exec((await generate.textContent()) ?? '')?.[0])
@@ -370,4 +379,64 @@ test('a draft from the setup screen waits for the song analysis still running', 
   release()
   await expect(page.getByRole('button', { name: 'Undo draft' })).toBeVisible({ timeout: 30_000 })
   await expect(page.getByText('Song analysis isn’t finished', { exact: false })).toHaveCount(0)
+})
+
+test('a lyric chip takes clicks where the director’s emphasized word sits over it, and Delete takes the line out with the word', async ({
+  page,
+}, testInfo) => {
+  await openDirector(page, undefined, 'lyric')
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  // The first emphasized word, on the draft's text track over its line's chip.
+  const word = await page.evaluate(() => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    const clips = Object.values(p.clips) as {
+      id: string
+      type: string
+      start: number
+      trackId: string
+      lyricLineId?: string
+      meta?: { director?: { textRole?: string; lyricLineId?: string } }
+    }[]
+    const words = clips
+      .filter((c) => c.meta?.director?.textRole === 'emphasis')
+      .sort((a, b) => a.start - b.start)
+    const w = words.find((w) =>
+      clips.some((c) => c.trackId === w.trackId && c.lyricLineId === w.meta?.director?.lyricLineId),
+    )
+    return w ? { id: w.id, lineId: w.meta!.director!.lyricLineId!, start: w.start } : null
+  })
+  if (!word) throw new Error('The lyric draft has an emphasized word over its line')
+  await page.evaluate((t) => window.mvStudio.app.ui.set({ playhead: t }), word.start)
+  const clip = page.locator(`[data-clip-id="${word.id}"]`)
+  const chip = page
+    .getByRole('button', { name: /^Lyric: / })
+    .and(page.locator(`[data-lyric-line="${word.lineId}"]`))
+    .and(page.locator(':not([class*="rowHidden"] *)'))
+  await expect(clip).toBeVisible()
+  const c = (await clip.boundingBox())!
+  const l = (await chip.boundingBox())!
+  // The word keeps the lower half of the row, over the chip; the chip's upper half above it takes the click.
+  expect(c.y).toBeGreaterThan(l.y + l.height / 3)
+  await page.screenshot({ path: testInfo.outputPath('chip-under-word.png') })
+  await page.mouse.click(c.x + c.width / 2, l.y + 4)
+  await expect(chip).toHaveAttribute('aria-pressed', 'true')
+  // The selected chip stays under the word: the word still takes clicks.
+  await page.mouse.click(c.x + c.width / 2, c.y + c.height / 2)
+  await expect(clip).toHaveAttribute('aria-pressed', 'true')
+
+  await page.mouse.click(c.x + c.width / 2, l.y + 4)
+  await expect(chip).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('Delete')
+  await expect(chip).toHaveCount(0)
+  await expect(clip).toHaveCount(0)
+  expect((await draftState(page)).undo).toBe('Delete lyric line')
+  const lines = () =>
+    page.evaluate(() =>
+      (window.mvStudio.app.project.editor.getProject().lyrics?.lines ?? []).map((l: { id: string }) => l.id),
+    )
+  expect(await lines()).not.toContain(word.lineId)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+  await expect(clip).toBeVisible()
+  expect(await lines()).toContain(word.lineId)
 })

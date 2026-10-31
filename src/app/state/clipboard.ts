@@ -142,7 +142,7 @@ export function cutSelection(): boolean {
   return true
 }
 
-/** Removes the selected clips, or the selected transition; false when neither is selected. */
+/** Removes the selected clips, lyric line or transition; false when none is selected. */
 export function deleteSelection(): boolean {
   const selection = get().selection
   if (selection.type === 'transition') {
@@ -150,6 +150,12 @@ export function deleteSelection(): boolean {
     return true
   }
   const p = editor.getProject()
+  if (selection.type === 'lyric') {
+    const commands = removeLyricLinesCommands(p, [selection.id])
+    if (!commands.length) return false
+    if (dispatch(commands, { label: 'Delete lyric line' })) selectClips([])
+    return true
+  }
   const clips = selectedClips(p)
   if (!clips.length) return false
   remove(p, clips, 'Delete')

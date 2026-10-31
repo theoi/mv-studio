@@ -1,13 +1,15 @@
 /**
- * Keeps the director's unlinked lyric text in step with a re-timed lyrics doc. Emphasized words and next-line
- * previews are text clips of their own, not linked to the lyrics (see compile.ts), so re-timing the line clips
- * (src/plugins lyricClipCommands) leaves them where they were.
+ * Keeps lyric text clips in step with edited lyrics: the director's unlinked text with a re-timed lyrics doc, and the
+ * words every clip shows with a retyped line. Emphasized words and next-line previews are text clips of their own, not
+ * linked to the lyrics (see compile.ts), so re-timing the line clips (src/plugins lyricClipCommands) leaves them where
+ * they were.
  */
 import type { EditCommand } from '../model/commands.ts'
 import type { Id, LyricLine, LyricsDoc, Project, Seconds, TextClip } from '../model/types.ts'
 import { assetTimeToTimeline } from '../engine/text.ts'
 import { directorMeta } from './meta.ts'
 import { wordTime } from './timing.ts'
+import { balancedRows } from './typography.ts'
 
 const words = (text: string) => text.split(/\s+/).filter(Boolean)
 const key = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '')
@@ -90,4 +92,66 @@ export function retimeDirectorLyricCommands(project: Project, doc: LyricsDoc): E
     place(clip, clip.start + shiftStart, end + shiftEnd)
   }
   return [...(removed.length ? [{ type: 'clip.remove' as const, clipIds: removed }] : []), ...moves]
+}
+
+/**
+ * Commands that put a lyric line's new words (`text`) in the text clips that show its words before the edit (`from`,
+ * by default its current text), to dispatch with the `lyrics.updateLine` that retypes it: clips draw their own text, so retyping the line alone changes nothing on
+ * screen. A clip with the whole line gets the new one in as many rows. The director's line clip whose last words are
+ * emphasized below it keeps that split while the line still ends with those words; otherwise it shows the whole line
+ * and the emphasized clip is removed. Timing is left alone. Clips whose words were changed by hand, and clips on
+ * locked tracks, stay as they are.
+ */
+export function lyricTextCommands(
+  project: Project,
+  lineId: Id,
+  text: string,
+  from = project.lyrics?.lines.find((l) => l.id === lineId)?.text,
+): EditCommand[] {
+  if (from === undefined || from === text) return []
+  const locked = new Set(project.tracks.filter((t) => t.locked).map((t) => t.id))
+  const oldWords = words(from)
+  const newWords = words(text)
+  const shown = Object.values(project.clips).filter(
+    (c): c is TextClip =>
+      c.type === 'text' &&
+      !locked.has(c.trackId) &&
+      (c.lyricLineId ?? directorMeta(c)?.lyricLineId) === lineId,
+  )
+  const isEmphasis = (c: TextClip) => !c.lyricLineId && directorMeta(c)?.textRole === 'emphasis'
+  const emphasis = shown.filter(isEmphasis)
+  const sets: EditCommand[] = []
+  const removed: Id[] = []
+  const setText = (clip: TextClip, value: string) => {
+    if (value !== clip.text) sets.push({ type: 'clip.set', clipId: clip.id, path: ['text'], value })
+  }
+  const reflow = (clip: TextClip, shownWords: string[]) =>
+    balancedRows(shownWords, clip.text.split('\n').length)
+
+  // Where each kept emphasized clip's words start in the new line.
+  const kept = new Map<Id, number>()
+  for (const e of emphasis) {
+    const tail = words(e.text)
+    const at = newWords.length - tail.length
+    if (at >= 1 && sameWords(newWords.slice(at), tail)) {
+      kept.set(e.id, at)
+      setText(e, newWords.slice(at).join(' '))
+    } else removed.push(e.id)
+  }
+  for (const clip of shown) {
+    if (isEmphasis(clip)) continue
+    const clipWords = words(clip.text)
+    if (sameWords(clipWords, oldWords)) {
+      setText(clip, reflow(clip, newWords))
+      continue
+    }
+    // The director's line clip showing the words before its emphasized ones.
+    const split = clip.lyricLineId
+      ? emphasis.find((e) => sameWords([...clipWords, ...words(e.text)], oldWords))
+      : undefined
+    if (!split) continue
+    const at = kept.get(split.id)
+    setText(clip, reflow(clip, at === undefined ? newWords : newWords.slice(0, at)))
+  }
+  return [...sets, ...(removed.length ? [{ type: 'clip.remove' as const, clipIds: removed }] : [])]
 }

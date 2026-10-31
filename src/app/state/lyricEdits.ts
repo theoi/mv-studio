@@ -9,6 +9,7 @@ import type {
   Seconds,
   TextClip,
 } from '../../model/index.ts'
+import { lyricTextCommands } from '../../director/retime.ts'
 import { dispatch, editor } from './project.ts'
 import { toast } from './ui.ts'
 
@@ -235,4 +236,32 @@ export function setLineEdge(lineId: Id, edge: WordEdge, value: Seconds, coalesce
       : (t.line.end ?? (t.words[t.words.length - 1] as LyricWord).end)
   const commands = lineTimingCommands(project, lineId, edge, (value - current) / t.rate)
   return !!commands && dispatch(commands, { coalesceKey, label: TIMING_LABEL })
+}
+
+/** Lines being retyped in the inspector: the words each had when the typing began, which its clips still show. */
+const retyping = new Map<Id, string>()
+
+/** Retypes a line as the inspector's Words field changes; the typing is one undo step (`coalesceKey`). */
+export function typeLineText(lineId: Id, text: string, coalesceKey: string): void {
+  const line = editor.getProject().lyrics?.lines.find((l) => l.id === lineId)
+  if (!line) return
+  if (!retyping.has(lineId)) retyping.set(lineId, line.text)
+  dispatch({ type: 'lyrics.updateLine', lineId, patch: { text } }, { coalesceKey })
+}
+
+/**
+ * Ends the typing: the clips that show the line get its new words (lyricTextCommands), in the typing's undo step.
+ * Done once typing ends rather than per key, so a word half typed on the way to another does not cost the line the
+ * director's emphasized word.
+ */
+export function finishLineText(lineId: Id, coalesceKey: string): void {
+  const from = retyping.get(lineId)
+  retyping.delete(lineId)
+  const project = editor.getProject()
+  const text = project.lyrics?.lines.find((l) => l.id === lineId)?.text
+  if (from !== undefined && text !== undefined) {
+    const commands = lyricTextCommands(project, lineId, text, from)
+    if (commands.length) dispatch(commands, { coalesceKey })
+  }
+  editor.endGesture()
 }

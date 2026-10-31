@@ -37,14 +37,11 @@ import {
 import { editor, redo, undo, useProject } from '../../state/project.ts'
 import { set } from '../../state/ui.ts'
 import { enterVj, takeVjButtonFocus, useVjEntering } from '../../state/vj.ts'
+import { undoAction } from '../../format.ts'
 import { LogoMark } from '../common/Logo.tsx'
 import styles from './TopBar.module.css'
 
 const DOCS_URL = 'https://github.com/theoi/mv-studio#readme'
-
-/** "Remove Night city" → "remove Night city": only a leading capitalized word is lowered, so names keep their case. */
-const actionText = (label: string) =>
-  /^[A-Z][a-z]/.test(label) ? label[0]!.toLowerCase() + label.slice(1) : label
 
 function Activity() {
   const running = runningJobs(useJobs())
@@ -198,7 +195,7 @@ export function TopBar() {
         <SaveStatus />
         <span className={styles.divider} />
         <IconButton
-          label={undoLabel ? `Undo ${actionText(undoLabel)}` : 'Undo'}
+          label={undoLabel ? `Undo ${undoAction(undoLabel)}` : 'Undo'}
           shortcut="Mod Z"
           onClick={undo}
           disabled={!undoLabel}
@@ -206,7 +203,7 @@ export function TopBar() {
           <Undo2 />
         </IconButton>
         <IconButton
-          label={redoLabel ? `Redo ${actionText(redoLabel)}` : 'Redo'}
+          label={redoLabel ? `Redo ${undoAction(redoLabel)}` : 'Redo'}
           shortcut="Mod Shift Z"
           onClick={redo}
           disabled={!redoLabel}

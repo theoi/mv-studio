@@ -82,3 +82,12 @@ export function formatParam(spec: Extract<ParamSpec, { type: 'number' }>, n: num
   if (spec.min >= 0 && spec.max <= 4 && step < 1) return `${n.toFixed(1)}×`
   return text
 }
+
+/**
+ * An undo label as the Undo and Redo tooltips say it: "Remove Night city" → "Undo remove Night city". Only a leading
+ * verb is lowered: names keep their case ("VJ take 2"), and so do features naming their step ("Director: Rain run",
+ * "Ask: Made the lyrics bigger", "Auto-cut: 12 cuts").
+ */
+export function undoAction(label: string): string {
+  return /^[A-Z][a-z]/.test(label) && !/^\S+:/.test(label) ? label[0]!.toLowerCase() + label.slice(1) : label
+}

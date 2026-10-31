@@ -11,7 +11,7 @@ import type { Id } from '../../model/types.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import type { Project } from '../../model/index.ts'
-import { JobError, jobs } from '../../shared/jobs.ts'
+import { JobError, jobs, type JobSnapshot } from '../../shared/jobs.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
 import { directorFootage } from './footage.ts'
 import { appMedia } from './media.ts'
@@ -250,4 +250,14 @@ export function draftFromSetup(idea: string): void {
   const shots: ShotSource = cloudSettings.get().falKey ? 'mix' : 'mine'
   useDirector.setState({ idea, shots })
   void draftVideo(directorRequest(idea, shots))
+}
+
+/**
+ * The draft's job as the Director card shows it: while it waits for the song analysis, with that job's progress, as
+ * the top bar shows it, so the one wait has one number (the draft's own bar gives the wait only its first quarter).
+ */
+export function draftProgress(job: JobSnapshot | undefined, list: JobSnapshot[]): JobSnapshot | undefined {
+  if (job?.progress.stage !== 'song') return job
+  const analysis = list.find((j) => j.kind === JOB_KINDS.analysis && j.status === 'running')
+  return analysis ? { ...job, progress: { ...job.progress, fraction: analysis.progress.fraction } } : job
 }

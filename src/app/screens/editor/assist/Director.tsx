@@ -28,6 +28,7 @@ import {
   backToPlan,
   directorRequest,
   draftLocally,
+  draftProgress,
   draftVideo,
   paidCost,
   resetDirector,
@@ -112,13 +113,12 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
       description={`Costs ${formatEstimate(paid)}, charged by fal.ai to your key.`}
       width={440}
       footer={
-        <div className={styles.footerRow}>
+        <>
           <Button variant="secondary" onClick={() => setConfirming(false)}>
             Cancel
           </Button>
           <Button
             variant="primary"
-            className={styles.grow}
             onClick={() => {
               setConfirming(false)
               void applyDraft({ confirmSpend: true })
@@ -126,7 +126,7 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
           >
             {actionLabel}
           </Button>
-        </div>
+        </>
       }
     >
       <div className={styles.viewBody}>
@@ -263,7 +263,7 @@ function PlanningView({ state }: { state: StateOf<'planning'> | StateOf<'ready'>
   const active = !planning ? 2 : stage === 'plan' || stage === 'llm' ? 1 : 0
   return (
     <ToolView title="Director" subtitle="Drafting your video" footer={<CancelButton job={job} />}>
-      <RunCard job={job} label="Drafting progress" />
+      <RunCard job={draftProgress(job, list)} label="Drafting progress" />
       <Steps steps={STEPS} active={active} />
       {planning?.slow && (
         <div className={styles.callout}>

@@ -509,17 +509,21 @@
 
 .plannerRow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius);
   background: var(--bg-hover);
   font-size: var(--text-sm);
+  line-height: var(--lh-sm);
 }
 
+/* Full size beside a note that wraps (a flex item would shrink), centered on its first line. */
 .plannerRow svg {
+  flex: none;
   width: 14px;
   height: 14px;
+  margin-top: calc((var(--lh-sm) - 14px) / 2);
   color: var(--text-2);
 }
 

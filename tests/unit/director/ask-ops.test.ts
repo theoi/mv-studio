@@ -4,6 +4,7 @@ import {
   compileOperations,
   describeChanges,
   compilePlan,
+  directorMeta,
   OperationError,
   planLocally,
   summarizeProject,
@@ -294,6 +295,29 @@ describe('compileOperations', () => {
     expect(texts(after).some((t) => t.style.fontSize === 140)).toBe(true)
   })
 
+  it('changes the words of a lyric line on screen as well, and one undo restores them', async () => {
+    const { project, summary, short } = await draft()
+    const emphasized = texts(project).find((t) => directorMeta(t)?.textRole === 'emphasis')!
+    const lineId = directorMeta(emphasized)!.lyricLineId!
+    const line = project.lyrics!.lines.find((l) => l.id === lineId)!
+    const shown = texts(project).filter((t) => t.lyricLineId === lineId)
+    expect(shown.length).toBeGreaterThan(0)
+    const retyped = `${line.text.split(' ').slice(0, -1).join(' ')} again`
+    const { after, editor } = run(
+      project,
+      [{ op: 'edit_lyric', line: short(lineId), text: retyped }],
+      summary.ids,
+    )
+    expect(after.lyrics!.lines.find((l) => l.id === lineId)).toMatchObject({
+      text: retyped,
+      words: line.words,
+    })
+    // The line no longer ends with the emphasized word: it goes, and the line's clips show the whole new line.
+    expect(after.clips[emphasized.id]).toBeUndefined()
+    for (const c of shown) expect((after.clips[c.id] as TextClip).text.split(/\s+/).join(' ')).toBe(retyped)
+    editor.undo()
+    expect(editor.getProject()).toEqual(project)
+  })
   it('changes the aspect with matching canvas size', () => {
     const { after } = run(makeProject(), [{ op: 'set_aspect', aspect: '9:16' }])
     expect(after.settings).toMatchObject({ aspect: '9:16', width: 1080, height: 1920 })

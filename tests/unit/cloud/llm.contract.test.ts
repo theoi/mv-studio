@@ -384,6 +384,45 @@ describe('OpenAI-compatible client: structured calls', () => {
     expect(missing.steps[0]).toContain('ollama pull llama3.1')
   })
 
+  it('says what to check by where the model runs: no CORS or memory steps for a hosted provider', async () => {
+    const hosted = await failure(
+      client({}, { baseUrl: `${OPENAI}/v1`, apiKey: KEY, model: 'gpt-test', preset: 'openai' }).llm.callTools(
+        {
+          messages: [{ role: 'user', content: 'x' }],
+          tools,
+        },
+      ),
+    )
+    expect(hosted.kind).toBe('network')
+    expect(hosted.steps.join(' ')).not.toMatch(/CORS|base URL/)
+    const own = await failure(
+      client({}, { baseUrl: `${LMSTUDIO}/v1`, model: 'm', preset: 'custom' }).llm.callTools({
+        messages: [{ role: 'user', content: 'x' }],
+        tools,
+      }),
+    )
+    expect(own.steps.join(' ')).toMatch(/CORS/)
+
+    const chatError = { status: 500, body: { error: { message: 'Internal error' } } }
+    // A readable 500: OpenAI's own chat errors have no CORS headers, the mock's LM Studio ones do.
+    const openai = new MockLlmServer({ flavor: 'lmstudio', models: ['gpt-test'], chatError })
+    const busy = await failure(
+      client(
+        { [OPENAI]: openai.handler() },
+        { baseUrl: `${OPENAI}/v1`, apiKey: KEY, model: 'gpt-test', preset: 'openai' },
+      ).llm.callTools({ messages: [{ role: 'user', content: 'x' }], tools }),
+    )
+    expect(busy.kind).toBe('server')
+    expect(busy.steps).toEqual(['Try again in a moment.'])
+    const local = new MockLlmServer({ flavor: 'lmstudio', models: ['m'], chatError })
+    const memory = await failure(
+      client(
+        { [LMSTUDIO]: local.handler() },
+        { baseUrl: `${LMSTUDIO}/v1`, model: 'm', preset: 'lmstudio' },
+      ).llm.callTools({ messages: [{ role: 'user', content: 'x' }], tools }),
+    )
+    expect(memory.steps.join(' ')).toMatch(/enough memory/)
+  })
   it('times out slow models and honors cancellation', async () => {
     const hang: MockHandler = (request) =>
       new Promise((_resolve, reject) =>
