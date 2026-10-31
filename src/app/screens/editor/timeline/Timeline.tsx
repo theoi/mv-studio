@@ -129,7 +129,6 @@ import {
 } from '../../../state/library.ts'
 import { exportSectionTeaser } from '../../../state/exports.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
-import { templateState } from '../../../../plugins/templates.ts'
 import { addMarkerAtPlayhead } from '../../../state/markers.ts'
 import {
   EASINGS,
@@ -140,6 +139,16 @@ import {
   setKeyframeEasing,
   type KeyframeMark,
 } from '../../../state/keyframes.ts'
+import {
+  BUTT_PX,
+  dropShift,
+  isLyricsTrack,
+  refusalLabel,
+  refusalToast,
+  refuseTrack,
+  type DropRefusal,
+  type Span,
+} from '../../../state/clipDrag.ts'
 import { registerReveal } from '../../../state/reveal.ts'
 import {
   cutClipsToSection,
@@ -179,11 +188,6 @@ type LaneKind = 'video' | 'overlay' | 'lyrics' | 'look' | 'audio'
 // are easy to grab. The look lane stays compact: its one bar spans the song, so it is easy to hit anyway.
 const laneHeight: Record<LaneKind, number> = { video: 40, overlay: 29, lyrics: 29, look: 22, audio: 40 }
 
-/** The track lyric lines go on: the template's Lyrics track, or a track named Lyrics. */
-function isLyricsTrack(p: Project, t: Track): boolean {
-  return t.kind === 'visual' && (templateState(p)?.tracks.lyrics === t.id || t.name === 'Lyrics')
-}
-
 function laneKind(p: Project, t: Track): LaneKind {
   if (t.kind === 'audio') return 'audio'
   const clips = clipsOnTrack(p, t.id)
@@ -194,11 +198,20 @@ function laneKind(p: Project, t: Track): LaneKind {
   return clips.length ? 'overlay' : 'video'
 }
 
-/** Top and height of each track's row in the timeline content, below the ruler and the song lane. */
-function trackRows(p: Project, empty: boolean): { trackId: string; top: number; height: number }[] {
+interface TrackRow {
+  trackId: string
+  top: number
+  height: number
+}
+
+/**
+ * Top and height of each track's row in the timeline content, below the ruler and the song lane. `kinds` overrides
+ * the lane kinds (and so the heights) the clips would give.
+ */
+function trackRows(p: Project, empty: boolean, kinds?: ReadonlyMap<string, LaneKind>): TrackRow[] {
   let top = RULER_H + (empty ? 0 : SONG_H)
   return p.tracks.map((t) => {
-    const height = laneHeight[laneKind(p, t)]
+    const height = laneHeight[kinds?.get(t.id) ?? laneKind(p, t)]
     const row = { trackId: t.id, top, height }
     top += height
     return row
@@ -1376,6 +1389,12 @@ export function Timeline() {
   // Where a dragged section edge is, shown beside it.
   const [edgeTime, setEdgeTime] = useState<number | null>(null)
   const nudgeEnd = useRef(0)
+  // While a clip drag holds the lane heights, and where it can't drop.
+  const [frozenKinds, setFrozenKinds] = useState<ReadonlyMap<string, LaneKind> | null>(null)
+  const [refusedDrop, setRefusedDrop] = useState<{
+    label: string
+    boxes: { top: number; height: number; start: number; duration: number }[]
+  } | null>(null)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
@@ -1397,7 +1416,7 @@ export function Timeline() {
   const timingLyrics = runningJobs(useJobs()).some((j) => j.kind === JOB_KINDS.lyrics)
 
   const lanes = project.tracks.map((t) => {
-    const kind = laneKind(project, t)
+    const kind = frozenKinds?.get(t.id) ?? laneKind(project, t)
     return { track: t, kind, height: laneHeight[kind] }
   })
   const stemH = 24
@@ -1636,47 +1655,116 @@ export function Timeline() {
         return
       }
       const movingIds = new Set(moving.map((c) => c.id))
-      const bounds = (c: Clip) => {
-        const others = clipsOnTrack(p, c.trackId).filter((o) => !movingIds.has(o.id))
-        const end = c.start + c.duration
-        return {
-          min: others
-            .filter((o) => o.start + o.duration <= c.start + 0.001)
-            .reduce((a, o) => Math.max(a, o.start + o.duration), 0),
-          max: others.filter((o) => o.start >= end - 0.001).reduce((a, o) => Math.min(a, o.start), duration),
+      const spansOn = new Map<string, Span[]>()
+      /** The clips that stay on a track. */
+      const othersOn = (trackId: string) => {
+        let spans = spansOn.get(trackId)
+        if (!spans) {
+          spans = clipsOnTrack(p, trackId)
+            .filter((o) => !movingIds.has(o.id))
+            .map((o) => ({ start: o.start, end: o.start + o.duration }))
+          spansOn.set(trackId, spans)
         }
+        return spans
       }
-      const { min, max } = bounds(self)
-      // How far the whole selection can move before one of its clips meets a clip that stays.
-      let minShift = -Infinity
-      let maxShift = Infinity
-      for (const c of moving) {
-        const b = bounds(c)
-        minShift = Math.max(minShift, b.min - c.start)
-        maxShift = Math.min(maxShift, b.max - (c.start + c.duration))
-      }
-      const same = clipsOnTrack(p, clip.trackId).filter((c) => !movingIds.has(c.id))
-      const edges = same.flatMap((c) => [c.start, c.start + c.duration])
+      // A trim stops at the clip's neighbors.
+      const own = othersOn(clip.trackId)
+      const edges = own.flatMap((o) => [o.start, o.end])
+      const min = own.filter((o) => o.end <= self.start + 0.001).reduce((a, o) => Math.max(a, o.end), 0)
+      const max = own
+        .filter((o) => o.start >= self.start + self.duration - 0.001)
+        .reduce((a, o) => Math.min(a, o.start), duration)
+      const trackIndex = new Map(p.tracks.map((t, i) => [t.id, i]))
+      const rowOf = (c: Clip) => trackIndex.get(c.trackId) ?? 0
+      // A group keeps each clip's distance in tracks from the grabbed one, as far as the track list allows.
+      const minRows = -Math.min(...moving.map(rowOf))
+      const maxRows = p.tracks.length - 1 - Math.max(...moving.map(rowOf))
+      const lo = -Math.min(...moving.map((c) => c.start))
+      const hi = Math.max(0, duration - Math.max(...moving.map((c) => c.start + c.duration)))
+      const grabbedFirst = [self, ...moving.filter((c) => c !== self)]
       const sectionEdges = sectionsOf(p).flatMap((s) => [s.start, s.end])
       const key = `drag:${e.pointerId}:${clip.id}:${Date.now()}`
       const x0 = e.clientX
+      const y0 = e.clientY
       let moved = false
+      let rows: TrackRow[] = []
+      let refused: DropRefusal | null = null
       const target = e.currentTarget as HTMLElement
       target.setPointerCapture(e.pointerId)
       const move = (ev: PointerEvent) => {
         const dx = ev.clientX - x0
-        if (!moved && Math.abs(dx) < 3) return
+        if (!moved && Math.hypot(dx, ev.clientY - y0) < 3) return
         moved = true
         const scale = get().pxPerSec
         const dt = dx / scale
         if (mode === 'move') {
-          const r = snapTime(clip.start + dt, scale, grid, edges, sectionEdges)
-          const shift = Math.min(maxShift, Math.max(minShift, r.t - clip.start))
+          if (!rows.length) {
+            // Lane heights stay as they were until the drop, so a clip changing tracks never moves the lanes under
+            // the pointer.
+            const kinds = new Map(p.tracks.map((t) => [t.id, laneKind(p, t)]))
+            setFrozenKinds(kinds)
+            rows = trackRows(p, !hasSong(p), kinds)
+          }
+          const y = ev.clientY - (contentRef.current?.getBoundingClientRect().top ?? 0)
+          const under = rows.findIndex((r) => y < r.top + r.height)
+          const offset = Math.min(
+            maxRows,
+            Math.max(minRows, (under < 0 ? rows.length - 1 : under) - rowOf(self)),
+          )
+          const trackFor = (c: Clip) => p.tracks[rowOf(c) + offset] as Track
+          const near = othersOn(trackFor(self).id).flatMap((o) => [o.start, o.end])
+          const r = snapTime(clip.start + dt, scale, grid, near, sectionEdges)
+          let refusal: DropRefusal | null = null
+          for (const c of grabbedFirst) refusal ??= refuseTrack(p, c, trackFor(c))
+          const place = refusal
+            ? null
+            : dropShift(
+                moving.map((c) => ({
+                  start: c.start,
+                  end: c.start + c.duration,
+                  others: othersOn(trackFor(c).id),
+                })),
+                r.t - clip.start,
+                dt,
+                BUTT_PX / scale,
+                lo,
+                hi,
+              )
+          if (!place) {
+            // The clips go back to where they started until the pointer finds a place they can drop.
+            if (!refused) editor.cancelGesture(key)
+            refused = refusal ?? { reason: 'room' }
+            setSnapLine(null)
+            const shift = Math.min(hi, Math.max(lo, dt))
+            const label = refusalLabel(refused)
+            setRefusedDrop({
+              label,
+              boxes: grabbedFirst.map((c) => {
+                const row = rows[rowOf(c) + offset] as TrackRow
+                return { top: row.top, height: row.height, start: c.start + shift, duration: c.duration }
+              }),
+            })
+            return
+          }
+          if (refused) {
+            refused = null
+            setRefusedDrop(null)
+          }
           setSnapLine(
-            r.snapped !== null && Math.abs(r.snapped - (clip.start + shift)) < 0.001 ? r.snapped : null,
+            place.edge ??
+              (r.snapped !== null && Math.abs(r.snapped - (clip.start + place.shift)) < 0.001
+                ? r.snapped
+                : null),
           )
           dispatch(
-            { type: 'clip.move', moves: moving.map((c) => ({ clipId: c.id, start: c.start + shift })) },
+            {
+              type: 'clip.move',
+              moves: moving.map((c) => ({
+                clipId: c.id,
+                start: c.start + place.shift,
+                trackId: trackFor(c).id,
+              })),
+            },
             { coalesceKey: key },
           )
         } else if (mode === 'start') {
@@ -1698,17 +1786,22 @@ export function Timeline() {
         }
       }
       const up = () => {
-        editor.endGesture()
+        if (refused) {
+          setRefusedDrop(null)
+          toast(refusalToast(p, refused))
+        } else editor.endGesture()
+        if (rows.length) setFrozenKinds(null)
         setSnapLine(null)
         if (!moved && group) select({ type: 'clip', id: clip.id })
         // The chips didn't follow the drag, so say why they stayed.
-        if (moved && staying)
+        if (moved && staying && !refused)
           toast(`Moved ${plural(moving.length, 'clip')}. Lyric lines stay with the vocals.`)
-        target.removeEventListener('pointermove', move)
-        target.removeEventListener('pointerup', up)
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
       }
-      target.addEventListener('pointermove', move)
-      target.addEventListener('pointerup', up)
+      // On the window: a clip that changes tracks is drawn by a new element, and the old one loses the pointer.
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
     },
     [grid, duration],
   )
@@ -1979,6 +2072,7 @@ export function Timeline() {
           ref={contentRef}
           className={styles.content}
           style={{ width: HEADER_W + contentW, height: totalH }}
+          data-refused={refusedDrop ? '' : undefined}
         >
           <div className={styles.row} style={{ height: RULER_H }}>
             <div className={[styles.header, styles.corner].join(' ')} />
@@ -2384,6 +2478,19 @@ export function Timeline() {
               style={{ transform: `translateX(${HEADER_W + snapLine * pps}px)`, height: totalH }}
             />
           )}
+          {refusedDrop?.boxes.map((b, i) => (
+            <div
+              key={i}
+              className={styles.refusedDrop}
+              style={{
+                transform: `translate(${HEADER_W + b.start * pps}px, ${b.top + 3}px)`,
+                width: b.duration * pps,
+                height: b.height - 6,
+              }}
+            >
+              {i === 0 && <span className={styles.refusedLabel}>{refusedDrop.label}</span>}
+            </div>
+          ))}
           <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />
           <div ref={dropRef} className={styles.trackDrop} hidden aria-hidden />
           <div ref={announceRef} className="sr-only" aria-live="polite" />

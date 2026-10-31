@@ -1077,3 +1077,35 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* A clip drag that can't drop where the pointer is: an outline where it would go, with the reason. */
+.refusedDrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  pointer-events: none;
+}
+
+/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. */
+.refusedLabel {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-pop);
+  color: var(--danger-text);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
+.content[data-refused],
+.content[data-refused] * {
+  cursor: not-allowed !important;
+}
