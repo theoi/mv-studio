@@ -531,30 +531,6 @@ button.songRow:hover {
   -webkit-text-stroke: 1px #fff;
 }
 
-.ovBars {
-  position: absolute;
-  left: 10%;
-  right: 10%;
-  bottom: 12%;
-  height: 50%;
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-}
-
-.ovBars i {
-  flex: 1;
-  border-radius: 1px 1px 0 0;
-  background: rgb(255 255 255 / 0.9);
-}
-
-.ovSvg {
-  position: absolute;
-  inset: 18% 8%;
-  width: 84%;
-  height: 64%;
-}
-
 .emptyWrap {
   flex: 1;
   display: flex;

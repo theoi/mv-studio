@@ -102,7 +102,7 @@ test('hovering a visualizer tile plays it reacting to the sample song', async ({
   await waitForPreview(page)
   const tile = page
     .getByRole('tabpanel', { name: 'Visuals' })
-    .getByRole('button', { name: 'Spectrum bars', exact: true })
+    .getByRole('button', { name: 'Spectrum bars, reacts to the music', exact: true })
   expect(await motion(page, tile)).toBeLessThan(0.5)
   await tile.hover()
   await expect.poll(() => motion(page, tile)).toBeGreaterThan(1)

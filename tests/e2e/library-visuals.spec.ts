@@ -33,12 +33,20 @@ test('a visual from the library plays over the footage for the rest of the secti
   await waitForPreview(page)
   const preview = page.getByRole('img', { name: 'Video preview' })
   const library = page.getByRole('tabpanel', { name: 'Visuals' })
-  await expect(library.getByRole('button', { name: 'Spectrum bars', exact: true })).toBeVisible()
-  await expect(library.getByRole('button', { name: 'Nebula', exact: true })).toBeVisible()
+  await expect(
+    library.getByRole('button', { name: 'Spectrum bars, reacts to the music', exact: true }),
+  ).toBeVisible()
+  await expect(
+    library.getByRole('button', { name: 'Tunnel, reacts to the music', exact: true }),
+  ).toBeVisible()
+  await library.getByRole('button', { name: 'Show all 7' }).click()
+  await expect(
+    library.getByRole('button', { name: 'Nebula, reacts to the music', exact: true }),
+  ).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('visuals-tab.png') })
   const before = await preview.screenshot()
 
-  await library.getByRole('button', { name: 'Circle spectrum', exact: true }).click()
+  await library.getByRole('button', { name: 'Circle spectrum, reacts to the music', exact: true }).click()
   await expect(page.getByText(/^“Circle spectrum” added from 1:13 to \d+:\d\d$/)).toBeVisible()
   const added = await page.evaluate(() => {
     const project: Project = window.mvStudio.app.project.editor.getProject()
@@ -84,7 +92,7 @@ test('a visual dragged onto a free stretch of a track lands there, up to the nex
   const title = page.getByRole('button', { name: 'Title, 0:01.0 to 0:09.0', exact: true })
   const box = (await title.boundingBox())!
   await library
-    .getByRole('button', { name: 'Particles', exact: true })
+    .getByRole('button', { name: 'Particles, reacts to the music', exact: true })
     // The drop point is on the lane past the title, so skip the check that the title itself is hit.
     .dragTo(title, { targetPosition: { x: box.width + 40, y: box.height / 2 }, force: true })
   await expect(page.getByText(/^“Particles” added from 0:\d\d to \d+:\d\d$/)).toBeVisible()
@@ -100,4 +108,29 @@ test('a visual dragged onto a free stretch of a track lands there, up to the nex
   expect(added!.start).toBeGreaterThan(9)
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
   await expect(page.getByRole('button', { name: /^Particles, 0:/ })).toHaveCount(0)
+})
+
+test('visual groups show their counts; a group collapses only when it would hide two tiles or more', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?lib=visuals&t=4'
+  })
+  await waitForPreview(page)
+  const library = page.getByRole('tabpanel', { name: 'Visuals' })
+  const visualizers = library.getByRole('group', { name: 'Visualizers' })
+  const shaders = library.getByRole('group', { name: 'Shader visuals' })
+  await expect(library.getByText('Visualizers · 5')).toBeVisible()
+  const columns = await shaders.evaluate(
+    (grid) => getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+  )
+  expect(columns).toBe(2)
+  // Two rows hold four tiles: a "Show all 5" would reveal one, so all five show.
+  await expect(visualizers.getByRole('button')).toHaveCount(5)
+  await expect(library.getByRole('button', { name: 'Show all 5' })).toHaveCount(0)
+  await expect(shaders.getByRole('button')).toHaveCount(4)
+  await library.getByRole('button', { name: 'Show all 7' }).click()
+  await expect(shaders.getByRole('button')).toHaveCount(7)
 })
