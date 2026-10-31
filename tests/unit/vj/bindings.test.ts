@@ -7,8 +7,10 @@ import {
   keyForTarget,
   keyLabel,
   midiLabel,
+  midiPresetOf,
   targetForKey,
   targetsForMidi,
+  withMidiPreset,
   type MidiMessage,
 } from '../../../src/vj/index.ts'
 
@@ -78,5 +80,28 @@ describe('VJ bindings', () => {
     expect(midiLabel({ type: 'cc', number: 21, channel: 2 })).toBe('CC 21 \u00B7 ch 2')
     expect(['F5', 'F12', 'Tab', 'MetaLeft'].some(isBindableKey)).toBe(false)
     expect(isBindableKey('KeyM')).toBe(true)
+  })
+})
+
+describe('default MIDI mappings', () => {
+  it('maps pad controllers from note 36 and keyboards from middle C, and keeps the keys', () => {
+    const b = defaultBindings()
+    expect(midiPresetOf(b)).toBe('pads')
+    expect(targetsForMidi(b, note(36))).toEqual([{ kind: 'pad', row: 'clips', index: 0 }])
+    const keys = withMidiPreset(b, 'keys')
+    expect(midiPresetOf(keys)).toBe('keys')
+    expect(keys.keys).toEqual(b.keys)
+    expect(targetsForMidi(keys, note(60))).toEqual([{ kind: 'pad', row: 'clips', index: 0 }])
+    expect(targetsForMidi(keys, note(68))).toEqual([{ kind: 'pad', row: 'effects', index: 0 }])
+    expect(targetsForMidi(keys, note(36))).toEqual([])
+  })
+
+  it('is no default mapping once a control was mapped by hand', () => {
+    const b = bindMidi(
+      defaultBindings(),
+      { type: 'note', number: 99 },
+      { kind: 'pad', row: 'looks', index: 0 },
+    )
+    expect(midiPresetOf(b)).toBeNull()
   })
 })

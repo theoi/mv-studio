@@ -54,7 +54,7 @@ import {
   useProject,
 } from '../../state/project.ts'
 import { useThumbnail } from '../../state/thumbs.ts'
-import { setActiveVjSession } from '../../state/vj.ts'
+import { setActiveVjSession, vjMidi } from '../../state/vj.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
 import styles from './VjMode.module.css'
 
@@ -160,7 +160,7 @@ function useEngine(
     preview.setViewport(first.width, first.height)
     preview.seek(get().playhead)
     preview.setProject(project)
-    const session = new VjSession({ editor, preview, onExit: () => exitEvent(session) })
+    const session = new VjSession({ editor, preview, midi: vjMidi(), onExit: () => exitEvent(session) })
     // Each visit starts as a rehearsal: nothing lands on the timeline until Record is on.
     session.setArmed(false)
     const detach = session.attachKeyboard(window)

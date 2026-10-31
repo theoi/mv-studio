@@ -131,7 +131,7 @@ test('quantize set in Settings lines the next take up with the beats, and open m
   await page.keyboard.press('Control+Comma')
   const dialog = page.getByRole('dialog')
   await dialog.getByRole('button', { name: 'VJ and MIDI' }).click()
-  await expect(dialog.getByText('None connected')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Connect', exact: true })).toBeVisible()
   await dialog.getByRole('combobox', { name: 'Quantize' }).click()
   await page.getByRole('option', { name: 'Nearest beat' }).click()
   await expect(dialog.getByRole('combobox', { name: 'Quantize' })).toHaveText('Nearest beat')
@@ -244,4 +244,78 @@ test('pads are mapped to a key and to a MIDI pad by clicking them and pressing t
   await expect(page.getByText('Click a pad, then press a key or a MIDI pad to map it.')).toBeVisible()
   await page.getByRole('button', { name: 'Back to editor' }).click()
   await expect(page.getByRole('img', { name: 'Live output' })).toBeHidden()
+})
+
+test('Settings › VJ and MIDI connects a controller outside VJ mode and picks its default mapping', async ({
+  page,
+}) => {
+  await plugInMidiController(page)
+  await openApp(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=60'
+  })
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  await dialog.getByRole('button', { name: 'VJ and MIDI' }).click()
+  await dialog.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(dialog.getByText('E2E Pad Controller')).toBeVisible()
+  const mapping = dialog.getByRole('combobox', { name: 'MIDI mapping' })
+  await expect(mapping).toHaveText('Pad controller')
+  await expect(dialog.getByText(/^Notes 36–43 play the clip pads, 44–51 the effect pads\./)).toBeVisible()
+  await mapping.click()
+  await page.getByRole('option', { name: /^Keyboard/ }).click()
+  await expect(mapping).toHaveText('Keyboard')
+  await expect(dialog.getByText(/^Notes 60–67 play the clip pads, 68–75 the effect pads\./)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+
+  // VJ mode uses the same connection, with no second Connect, and the mapping picked in Settings.
+  await page.getByRole('button', { name: 'VJ', exact: true }).click()
+  await expect(page.getByRole('img', { name: 'Live output' })).toHaveAttribute('aria-busy', 'false', {
+    timeout: 30_000,
+  })
+  await expect(page.getByRole('button', { name: 'E2E Pad Controller' })).toBeVisible()
+  await expect(pad(page, 'Aurora over the city')).toHaveAttribute('title', 'MIDI Note 60')
+  await page.keyboard.press('Space')
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible()
+  await sendMidi(page, [0x90, 60, 100])
+  await expect(pad(page, 'Aurora over the city')).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('[ and ] page through the clip banks, and Backspace turns every effect off', async ({ page }) => {
+  await openVj(page)
+  const bank = (n: number) => page.getByText(`tap · bank ${n} of 3`)
+  await expect(bank(1)).toBeVisible()
+  await page.keyboard.press('BracketRight')
+  await expect(bank(2)).toBeVisible()
+  await expect(pad(page, 'Spectrum bars')).toBeVisible()
+  await expect(pad(page, 'Night city')).toHaveCount(0)
+  await page.keyboard.press('BracketRight')
+  await expect(bank(3)).toBeVisible()
+  // The ends stop: past the last bank, ] stays there, so one [ goes back to bank 2.
+  await page.keyboard.press('BracketRight')
+  await page.keyboard.press('BracketLeft')
+  await expect(bank(2)).toBeVisible()
+  await page.keyboard.press('BracketLeft')
+  await page.keyboard.press('BracketLeft')
+  await page.keyboard.press('BracketRight')
+  await expect(bank(2)).toBeVisible()
+  await page.keyboard.press('BracketLeft')
+  await expect(bank(1)).toBeVisible()
+  await expect(pad(page, 'Night city')).toBeVisible()
+
+  await page.keyboard.press('Space')
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible()
+  // Strobe (A) and RGB split (S) are held effects; Backspace lets go of both while the keys are still down.
+  await page.keyboard.down('KeyA')
+  await page.keyboard.down('KeyS')
+  await expect(pad(page, 'Strobe')).toHaveAttribute('aria-pressed', 'true')
+  await expect(pad(page, 'RGB split')).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('Backspace')
+  await expect(pad(page, 'Strobe')).toHaveAttribute('aria-pressed', 'false')
+  await expect(pad(page, 'RGB split')).toHaveAttribute('aria-pressed', 'false')
+  await page.keyboard.up('KeyA')
+  await page.keyboard.up('KeyS')
+  await expect(page.getByRole('img', { name: 'Live output' })).toBeVisible()
 })
