@@ -97,16 +97,16 @@ it('says why clips were cut without matching when footage analysis stopped, was 
     'Footage analysis ran out of memory, so your clips were picked for variety. Try again in Match footage, then cut again to match the mood.',
   )
   expect(unanalyzedWarning(['a'], true, stopped('network'))).toBe(
-    'Footage analysis couldn’t finish its download, so your clip was picked for variety. Check your connection, then try again in Match footage.',
+    'Footage analysis couldn’t finish its download, so your clip was picked for variety. Check your connection and try again in Match footage, then cut again to match the mood.',
   )
   expect(unanalyzedWarning(['a', 'b'], false, stopped('internal'))).toBe(
     'Footage analysis stopped, so 2 clips were picked for variety. Try again in Match footage, then cut again to match the mood.',
   )
   expect(unanalyzedWarning(['a'], false, state({ status: 'paused' }))).toBe(
-    'Footage analysis was cancelled, so 1 clip was picked for variety. Analyze it again in Match footage, then cut again to match the mood.',
+    'Footage analysis was cancelled, so 1 clip was picked for variety. Analyze your footage in Match footage, then cut again to match the mood.',
   )
   expect(unanalyzedWarning(['a'], true, stopped('storage-quota'))).toBe(
-    'Footage analysis ran out of browser storage, so your clip was picked for variety. Free space in Settings › Storage, then try again in Match footage.',
+    'Footage analysis ran out of browser storage, so your clip was picked for variety. Free space in Settings › Storage and try again in Match footage, then cut again to match the mood.',
   )
   expect(unanalyzedWarning(['a'], true, stopped('unsupported'))).toBe(
     'Footage analysis can’t run in this browser, so your clip was picked for variety.',

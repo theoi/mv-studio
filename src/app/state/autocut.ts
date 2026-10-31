@@ -107,13 +107,13 @@ const TRY_AGAIN = 'Try again in Match footage, then cut again to match the mood.
 const ANALYSIS_STOPPED: Partial<Record<JobErrorCode, { why: string; next?: string }>> = {
   network: {
     why: 'couldn’t finish its download',
-    next: 'Check your connection, then try again in Match footage.',
+    next: 'Check your connection and try again in Match footage, then cut again to match the mood.',
   },
   'model-load': { why: 'couldn’t start' },
   'out-of-memory': { why: 'ran out of memory' },
   'storage-quota': {
     why: 'ran out of browser storage',
-    next: 'Free space in Settings › Storage, then try again in Match footage.',
+    next: 'Free space in Settings › Storage and try again in Match footage, then cut again to match the mood.',
   },
   unsupported: { why: 'can’t run in this browser', next: '' },
 }
@@ -141,7 +141,7 @@ export function unanalyzedWarning(
     return `Footage analysis ${why}, so ${clips} picked for variety.${next ? ` ${next}` : ''}`
   }
   if (indexing.status === 'paused')
-    return `Footage analysis was cancelled, so ${clips} picked for variety. Analyze it again in Match footage, then cut again to match the mood.`
+    return `Footage analysis was cancelled, so ${clips} picked for variety. Analyze your footage in Match footage, then cut again to match the mood.`
   const ids = new Set(assetIds)
   const failed = indexing.failed.filter((f) => ids.has(f.assetId))
   if (failed.length < n) return undefined
