@@ -19,7 +19,10 @@ import {
   type SectionKind,
 } from '../../../state/project.ts'
 import { exportSectionTeaser } from '../../../state/exports.ts'
+import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { cutClipsToSection, moveBoundary, sectionEdge } from '../../../state/sections.ts'
+import { set } from '../../../state/ui.ts'
+import { InlineSuggestion } from '../Suggestion.tsx'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
 import styles from '../Inspector.module.css'
@@ -34,6 +37,26 @@ const colorNames: Record<SectionKind, string> = {
 }
 
 const kinds = Object.keys(colorNames) as SectionKind[]
+
+/** "N clips match this chorus" once footage analysis finds two or more strong matches for the section. */
+function SectionMatches({ id, label }: { id: string; label: string }) {
+  const strong = useFootage((s) => s.strongMatch)
+  const count = (useFootageResults('section', id) ?? []).filter((r) => r.score >= strong).length
+  if (count < 2) return null
+  return (
+    <InlineSuggestion
+      id={`match-${id}`}
+      action="Show"
+      onAction={() => {
+        revealSuggestions()
+        set({ libraryTab: 'media', libraryOpen: true })
+      }}
+    >
+      {/* "this verse", not "this verse 1". */}
+      {count} clips match this {label.replace(/\s*\d+$/, '').toLowerCase()}.
+    </InlineSuggestion>
+  )
+}
 
 export function SectionInspector({ id }: { id: string }) {
   const project = useProject()
@@ -82,6 +105,7 @@ export function SectionInspector({ id }: { id: string }) {
         meta={guess ?? span}
         metaBelow={guess && span}
       />
+      <SectionMatches id={sec.id} label={sec.label} />
       <Section title="Section">
         <FieldRow label="Name">
           <Input
