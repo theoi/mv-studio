@@ -45,7 +45,7 @@ import {
   timelineDuration,
   useProject,
 } from '../../state/project.ts'
-import { set, toast, useUi } from '../../state/ui.ts'
+import { get, set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
 import { changeAspect } from '../../state/reframe.ts'
@@ -222,6 +222,8 @@ export function Preview() {
   const project = useProject()
   const empty = !hasSong(project)
   const current = aspects.find((a) => a.value === project.settings.aspect) ?? aspects[0]!
+  // Playback goes on while the menu is open: Save frame saves the frame that was right-clicked.
+  const menuTime = useRef(0)
 
   return (
     <>
@@ -281,7 +283,7 @@ export function Preview() {
           />
         </div>
       ) : (
-        <ContextMenu>
+        <ContextMenu onOpenChange={(open) => open && (menuTime.current = get().playhead)}>
           {/* display: contents keeps the stage's layout; the menu opens where the pointer is. */}
           <ContextMenuTrigger style={{ display: 'contents' }}>
             <Stage ratio={current.ratio} />
@@ -289,8 +291,8 @@ export function Preview() {
           <ContextMenuContent>
             <ContextMenuItem
               icon={<ImageDown />}
-              description="PNG at the project's full size"
-              onSelect={() => void saveFrame()}
+              description={`PNG · ${project.settings.width} × ${project.settings.height}`}
+              onSelect={() => void saveFrame(menuTime.current)}
             >
               Save frame
             </ContextMenuItem>

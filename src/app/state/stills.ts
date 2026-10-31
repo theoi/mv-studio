@@ -5,7 +5,7 @@ import type { Project, Seconds } from '../../model/index.ts'
 import { downloadFile } from './exports.ts'
 import { appMedia } from './media.ts'
 import { editor } from './project.ts'
-import { get, toast } from './ui.ts'
+import { get, set, toast, useUi } from './ui.ts'
 
 /*
  * Still frames of projects that are not on the main preview, such as export outputs laid out for another format, and
@@ -157,22 +157,50 @@ export function frameFileName(projectName: string, time: Seconds): string {
   return `${base} - ${minutes}m${seconds}s.png`
 }
 
-/**
- * Downloads the project's frame at `time` (default: the playhead) as a PNG at the project's full size, drawn by the
- * same compositor as the preview and export.
- */
-export async function saveFrame(time: Seconds = get().playhead): Promise<void> {
+/** Shows a toast until the returned function removes it. */
+function progressToast(message: string): () => void {
+  toast(message)
+  const id = get().toasts.at(-1)?.id
+  return () => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
+}
+
+let saving: Promise<void> | null = null
+
+async function downloadFrame(time: Seconds): Promise<void> {
   const project = editor.getProject()
   const { width, height } = project.settings
   const name = frameFileName(project.name, time)
+  const dismiss = progressToast('Saving frame…')
   try {
     const blob = await enqueue(() => renderStill(project, time, width, height, 'image/png'))
     downloadFile(blob, name)
-    toast(`Saved ${name} (${width} × ${height}) to your Downloads folder.`)
+    dismiss()
+    toast(`Saved ${name} (${width} × ${height})`)
   } catch (error) {
     console.error('Save frame failed', error)
+    dismiss()
     toast('The frame could not be drawn, so nothing was downloaded. Try again in a moment.')
   } finally {
     if (get().dialog !== 'export') releaseStills()
   }
+}
+
+/**
+ * Downloads the project's frame at `time` (default: the playhead) as a PNG at the project's full size, drawn by the
+ * same compositor as the preview and export. A request while a frame is being saved joins that save.
+ */
+export function saveFrame(time: Seconds = get().playhead): Promise<void> {
+  saving ??= downloadFrame(time).finally(() => (saving = null))
+  return saving
+}
+
+// The palette is loaded on first open, so it can't watch for its own opening.
+let paletteOpenedAt: Seconds = get().playhead
+useUi.subscribe((s, prev) => {
+  if (s.paletteOpen && !prev.paletteOpen) paletteOpenedAt = s.playhead
+})
+
+/** Save frame from the command palette: the frame when the palette opened, as playback may have moved on since. */
+export function saveFrameFromPalette(): Promise<void> {
+  return saveFrame(paletteOpenedAt)
 }
