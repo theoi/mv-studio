@@ -1,8 +1,12 @@
 /** Color effects: color grading with LUTs, and duotone. */
+import { TONE_GLSL } from '../../engine/shaders.ts'
 import type { EffectDefinition } from '../../engine/types.ts'
 import { COMMON } from '../glsl.ts'
 
-/** Look presets of the color grade: ASC CDL slope, offset and power, then saturation, contrast and split toning. */
+/**
+ * Look presets of the color grade: ASC CDL slope, offset and power, then contrast, saturation and split toning. Contrast
+ * is an S-curve and out-of-range colors roll off toward their luma, so grades keep highlight and shadow detail.
+ */
 export const GRADE_LOOKS = [
   { value: 'natural', label: 'Natural' },
   { value: 'teal-orange', label: 'Teal and orange' },
@@ -16,6 +20,148 @@ export const GRADE_LOOKS = [
   { value: 'pastel', label: 'Pastel' },
   { value: 'golden', label: 'Golden hour' },
 ] as const
+
+type GradeLook = (typeof GRADE_LOOKS)[number]['value']
+type Vec3 = readonly [number, number, number]
+
+interface GradePreset {
+  slope: Vec3
+  offset: Vec3
+  power: Vec3
+  saturation: number
+  contrast: number
+  /** Split-tone colors and strength. */
+  shadow: Vec3
+  highlight: Vec3
+  split: number
+}
+
+const v3 = (x: number, y = x, z = x): Vec3 => [x, y, z]
+
+const GRADE_PRESETS: Record<GradeLook, GradePreset> = {
+  natural: {
+    slope: v3(1),
+    offset: v3(0),
+    power: v3(1),
+    saturation: 1,
+    contrast: 1,
+    shadow: v3(0.5),
+    highlight: v3(0.5),
+    split: 0,
+  },
+  'teal-orange': {
+    slope: v3(1.04, 1.0, 0.94),
+    offset: v3(0, 0, 0.01),
+    power: v3(1),
+    saturation: 1.08,
+    contrast: 1.12,
+    shadow: v3(0.1, 0.45, 0.55),
+    highlight: v3(1.0, 0.62, 0.32),
+    split: 0.6,
+  },
+  'warm-film': {
+    slope: v3(1.06, 1.0, 0.88),
+    offset: v3(0.02, 0.01, 0),
+    power: v3(0.95, 1.0, 1.06),
+    saturation: 0.9,
+    contrast: 1.05,
+    shadow: v3(0.45, 0.42, 0.5),
+    highlight: v3(1.0, 0.8, 0.55),
+    split: 0.35,
+  },
+  'cool-night': {
+    slope: v3(0.88, 0.96, 1.08),
+    offset: v3(0, 0.01, 0.035),
+    power: v3(1.08, 1.04, 0.96),
+    saturation: 0.78,
+    contrast: 1.1,
+    shadow: v3(0.2, 0.35, 0.6),
+    highlight: v3(0.6, 0.75, 0.95),
+    split: 0.45,
+  },
+  bleach: {
+    slope: v3(1.02),
+    offset: v3(0),
+    power: v3(1),
+    saturation: 0.45,
+    contrast: 1.35,
+    shadow: v3(0.5),
+    highlight: v3(0.5),
+    split: 0,
+  },
+  vintage: {
+    slope: v3(1.0, 0.95, 0.85),
+    offset: v3(0.07, 0.06, 0.08),
+    power: v3(0.95, 1.0, 1.08),
+    saturation: 0.72,
+    contrast: 0.88,
+    shadow: v3(0.35, 0.45, 0.55),
+    highlight: v3(1.0, 0.85, 0.6),
+    split: 0.4,
+  },
+  noir: {
+    slope: v3(1),
+    offset: v3(0),
+    power: v3(1),
+    saturation: 0,
+    contrast: 1.3,
+    shadow: v3(0.45, 0.48, 0.55),
+    highlight: v3(0.5),
+    split: 0.15,
+  },
+  cross: {
+    slope: v3(1.08, 1.02, 0.82),
+    offset: v3(-0.02, 0, 0.07),
+    power: v3(1.15, 0.92, 1.25),
+    saturation: 1.2,
+    contrast: 1.1,
+    shadow: v3(0.15, 0.3, 0.65),
+    highlight: v3(0.95, 0.95, 0.45),
+    split: 0.4,
+  },
+  neon: {
+    slope: v3(1.05, 0.98, 1.08),
+    offset: v3(0, -0.01, 0.02),
+    power: v3(1),
+    saturation: 1.45,
+    contrast: 1.18,
+    shadow: v3(0.3, 0.1, 0.65),
+    highlight: v3(0.2, 0.95, 1.0),
+    split: 0.5,
+  },
+  pastel: {
+    slope: v3(0.98, 0.96, 1.0),
+    offset: v3(0.09, 0.08, 0.1),
+    power: v3(0.9),
+    saturation: 0.62,
+    contrast: 0.85,
+    shadow: v3(0.55, 0.45, 0.65),
+    highlight: v3(1.0, 0.8, 0.85),
+    split: 0.35,
+  },
+  golden: {
+    slope: v3(1.12, 1.0, 0.82),
+    offset: v3(0.02, 0, -0.01),
+    power: v3(0.94, 1.0, 1.1),
+    saturation: 1.15,
+    contrast: 1.05,
+    shadow: v3(0.4, 0.35, 0.55),
+    highlight: v3(1.0, 0.72, 0.38),
+    split: 0.5,
+  },
+}
+
+/** The preset of a `look` param value (its option value, or its index as shaders see it). */
+function gradeLookAt(value: unknown): GradeLook {
+  if (typeof value === 'number') return GRADE_LOOKS[Math.round(value)]?.value ?? 'natural'
+  return GRADE_LOOKS.find((l) => l.value === value)?.value ?? 'natural'
+}
+
+/** Split-tone offset of a tint color: its chroma (color minus its luma), scaled by the split strength. */
+function tintOffset(c: Vec3, k: number): Vec3 {
+  const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+  return [(c[0] - l) * k, (c[1] - l) * k, (c[2] - l) * k]
+}
 
 export const colorGrade: EffectDefinition = {
   kind: 'effect',
@@ -59,42 +205,41 @@ export const colorGrade: EffectDefinition = {
       advanced: true,
     },
   ],
-  fragmentShader: `${COMMON}
-const vec3 SLOPE[11] = vec3[11](
-  vec3(1.0), vec3(1.04, 1.0, 0.94), vec3(1.06, 1.0, 0.88), vec3(0.88, 0.96, 1.08), vec3(1.02),
-  vec3(1.0, 0.95, 0.85), vec3(1.0), vec3(1.08, 1.02, 0.82), vec3(1.05, 0.98, 1.08), vec3(0.98, 0.96, 1.0),
-  vec3(1.12, 1.0, 0.82));
-const vec3 OFFSET[11] = vec3[11](
-  vec3(0.0), vec3(0.0, 0.0, 0.01), vec3(0.02, 0.01, 0.0), vec3(0.0, 0.01, 0.035), vec3(0.0),
-  vec3(0.07, 0.06, 0.08), vec3(0.0), vec3(-0.02, 0.0, 0.07), vec3(0.0, -0.01, 0.02), vec3(0.09, 0.08, 0.1),
-  vec3(0.02, 0.0, -0.01));
-const vec3 POWER[11] = vec3[11](
-  vec3(1.0), vec3(1.0), vec3(0.95, 1.0, 1.06), vec3(1.08, 1.04, 0.96), vec3(1.0),
-  vec3(0.95, 1.0, 1.08), vec3(1.0), vec3(1.15, 0.92, 1.25), vec3(1.0), vec3(0.9), vec3(0.94, 1.0, 1.1));
-const float SAT[11] = float[11](1.0, 1.08, 0.9, 0.78, 0.45, 0.72, 0.0, 1.2, 1.45, 0.62, 1.15);
-const float CONTRAST[11] = float[11](1.0, 1.12, 1.05, 1.1, 1.35, 0.88, 1.3, 1.1, 1.18, 0.85, 1.05);
-const vec3 SHADOW[11] = vec3[11](
-  vec3(0.5), vec3(0.1, 0.45, 0.55), vec3(0.45, 0.42, 0.5), vec3(0.2, 0.35, 0.6), vec3(0.5),
-  vec3(0.35, 0.45, 0.55), vec3(0.45, 0.48, 0.55), vec3(0.15, 0.3, 0.65), vec3(0.3, 0.1, 0.65),
-  vec3(0.55, 0.45, 0.65), vec3(0.4, 0.35, 0.55));
-const vec3 HIGHLIGHT[11] = vec3[11](
-  vec3(0.5), vec3(1.0, 0.62, 0.32), vec3(1.0, 0.8, 0.55), vec3(0.6, 0.75, 0.95), vec3(0.5),
-  vec3(1.0, 0.85, 0.6), vec3(0.5), vec3(0.95, 0.95, 0.45), vec3(0.2, 0.95, 1.0), vec3(1.0, 0.8, 0.85),
-  vec3(1.0, 0.72, 0.38));
-const float SPLIT[11] = float[11](0.0, 0.6, 0.35, 0.45, 0.0, 0.4, 0.15, 0.4, 0.5, 0.35, 0.5);
+  frameUniforms: ({ params }) => {
+    const p = GRADE_PRESETS[gradeLookAt(params.look)]
+    return {
+      slope: p.slope,
+      offset: p.offset,
+      power: p.power,
+      gradeSaturation: p.saturation,
+      gradeContrast: p.contrast,
+      shadowTint: tintOffset(p.shadow, p.split),
+      highlightTint: tintOffset(p.highlight, p.split),
+    }
+  },
+  fragmentShader: `${COMMON}${TONE_GLSL}
+uniform vec3 u_slope;
+uniform vec3 u_offset;
+uniform vec3 u_power;
+uniform float u_gradeSaturation;
+uniform float u_gradeContrast;
+uniform vec3 u_shadowTint;
+uniform vec3 u_highlightTint;
 
-vec3 splitTone(vec3 c, vec3 shadowTint, vec3 highlightTint, float k) {
+/**
+ * Adds tint offsets s and h to the shadows and highlights. The highlight tint peaks in the bright tones and eases off
+ * toward white, so whites stay clean rather than flat.
+ */
+vec3 splitTone(vec3 c, vec3 s, vec3 h) {
   float l = luma(c);
-  vec3 s = shadowTint - luma(shadowTint);
-  vec3 h = highlightTint - luma(highlightTint);
-  return c + (s * (1.0 - smoothstep(0.0, 0.6, l)) + h * smoothstep(0.35, 1.0, l)) * k;
+  float hw = smoothstep(0.35, 0.8, l) * (1.0 - 0.7 * smoothstep(0.8, 1.0, l));
+  return c + s * (1.0 - smoothstep(0.0, 0.6, l)) + h * hw;
 }
 
-vec3 gradeLook(vec3 c, int i) {
-  c = pow(max(c * SLOPE[i] + OFFSET[i], 0.0), POWER[i]);
-  c = (c - 0.45) * CONTRAST[i] + 0.45;
-  c = mix(vec3(luma(c)), c, SAT[i]);
-  return clamp(splitTone(c, SHADOW[i], HIGHLIGHT[i], SPLIT[i]), 0.0, 1.0);
+vec3 gradeLook(vec3 c, float knee) {
+  c = contrastCurve(pow(max(c * u_slope + u_offset, 0.0), u_power), u_gradeContrast, 0.45);
+  c = mix(vec3(luma(c)), c, u_gradeSaturation);
+  return fitGamut(splitTone(c, u_shadowTint, u_highlightTint), knee);
 }
 
 /** Strip LUT (size n: n*n x n, x = r + n * b, y = g), trilinear: bilinear within a blue slice, then across slices. */
@@ -112,8 +257,13 @@ vec4 mainImage(vec2 uv) {
   vec4 src = texture(u_input, uv);
   if (src.a <= 0.0) return src;
   vec3 c = src.rgb / src.a;
-  vec3 g = mix(c, gradeLook(c, int(u_look + 0.5)), u_amount);
-  g = splitTone(g, u_shadows.rgb, u_highlights.rgb, u_split);
+  float knee = gamutKnee(c);
+  vec3 g = mix(c, gradeLook(c, knee), u_amount);
+  if (u_split > 0.0) {
+    vec3 s = (u_shadows.rgb - luma(u_shadows.rgb)) * u_split;
+    vec3 h = (u_highlights.rgb - luma(u_highlights.rgb)) * u_split;
+    g = fitGamut(splitTone(g, s, h), knee);
+  }
   g = g * (1.0 - 0.18 * u_fade) + vec3(0.1, 0.09, 0.11) * u_fade;
   float n = u_lutSize.y;
   if (n >= 2.0 && abs(u_lutSize.x - n * n) < 0.5) g = mix(g, applyLut(g, n), u_lutAmount);

@@ -56,7 +56,61 @@ void main() {
   outColor = texture(u_tex, v_uv);
 }`
 
-/** Color adjustments, matte and opacity in one pass over a premultiplied layer. */
+/**
+ * Tone helpers shared by the finish pass and grading effects, so grades roll off instead of clipping:
+ * `contrastCurve` is an S-curve that keeps black and white fixed, and `fitGamut` brings a color into 0..1 by pulling
+ * its chroma toward its luma (hue and luma kept) instead of clamping channel by channel.
+ */
+export const TONE_GLSL = `
+const vec3 LUMA_709 = vec3(0.2126, 0.7152, 0.0722);
+
+/** How far the chroma of c reaches toward the edge of 0..1 from luma l (1 = on the edge). */
+float gamutReach(vec3 c, float l) {
+  float hi = max(c.r, max(c.g, c.b));
+  float lo = min(c.r, min(c.g, c.b));
+  return max(hi > l ? (hi - l) / max(1.0 - l, 1e-5) : 0.0, lo < l ? (l - lo) / max(l, 1e-5) : 0.0);
+}
+
+/**
+ * The reach where gamut roll-off starts for a pixel whose source color is src: at least the source's own reach, so a
+ * grade that does not push a color further leaves it untouched.
+ */
+float gamutKnee(vec3 src) {
+  vec3 s = clamp(src, 0.0, 1.0);
+  return clamp(gamutReach(s, dot(s, LUMA_709)), 0.9, 0.995);
+}
+
+vec3 fitGamut(vec3 c, float knee) {
+  float l0 = dot(c, LUMA_709);
+  float l = clamp(l0, 0.0, 1.0);
+  vec3 chroma = c - l0;
+  float r = gamutReach(l + chroma, l);
+  if (r <= knee) return l + chroma;
+  float x = (r - knee) / (1.0 - knee);
+  return l + chroma * ((knee + (1.0 - knee) * x / (1.0 + x)) / r);
+}
+
+/**
+ * Contrast k around pivot p. Above 1 it is an S-curve on luma with slope k at the pivot that flattens into black and
+ * white, so shadows and highlights compress instead of clipping; chroma scales with the curve's slope, as it would
+ * under a per-channel curve, but the hue is kept. Below 1 it fades linearly toward the pivot.
+ */
+vec3 contrastCurve(vec3 c, float k, float p) {
+  if (k <= 1.0) return (c - p) * k + p;
+  float l0 = dot(c, LUMA_709);
+  float l = clamp(l0, 0.0, 1.0);
+  float t = l < p ? l / p : (1.0 - l) / (1.0 - p);
+  float slope = pow(t, k - 1.0);
+  float curved = l < p ? p * t * slope : 1.0 - (1.0 - p) * t * slope;
+  return curved + (c - l0) * k * slope;
+}
+`
+
+/**
+ * Color adjustments, matte and opacity in one pass over a premultiplied layer. Contrast above 0 is an S-curve and
+ * below 0 a fade (to 40% at -1, so the extreme stays usable); out-of-range colors roll off toward their luma, so no
+ * setting clips channels or shifts hue, and neutral settings leave the layer unchanged.
+ */
 export const FINISH_FS = `#version 300 es
 precision highp float;
 in vec2 v_uv;
@@ -74,7 +128,7 @@ uniform float u_temperature;
 uniform float u_tint;
 uniform float u_hue;
 out vec4 outColor;
-
+${TONE_GLSL}
 vec3 hueRotate(vec3 c, float a) {
   const vec3 k = vec3(0.57735);
   float cosA = cos(a);
@@ -85,14 +139,16 @@ void main() {
   vec4 c = texture(u_tex, v_uv);
   if (u_adjust == 1 && c.a > 0.0) {
     vec3 rgb = c.rgb / c.a;
+    float knee = gamutKnee(rgb);
     rgb *= exp2(u_exposure * 2.0);
     rgb += u_brightness * 0.5;
-    rgb = (rgb - 0.5) * (1.0 + u_contrast) + 0.5;
+    if (u_contrast != 0.0)
+      rgb = contrastCurve(rgb, u_contrast > 0.0 ? 1.0 + u_contrast : 1.0 + 0.6 * u_contrast, 0.5);
     rgb += vec3(u_temperature, 0.0, -u_temperature) * 0.15 + vec3(0.0, u_tint, 0.0) * 0.15;
     if (u_hue != 0.0) rgb = hueRotate(rgb, u_hue * 3.14159265);
-    float l = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    float l = dot(rgb, LUMA_709);
     rgb = mix(vec3(l), rgb, 1.0 + u_saturation);
-    c = vec4(clamp(rgb, 0.0, 1.0) * c.a, c.a);
+    c = vec4(clamp(fitGamut(rgb, knee), 0.0, 1.0) * c.a, c.a);
   }
   if (u_matteMode != 0) {
     float m = texture(u_matte, v_uv).r;
