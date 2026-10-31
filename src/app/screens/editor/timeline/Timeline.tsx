@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AudioWaveform,
   ChevronDown,
@@ -905,6 +905,7 @@ export function Timeline() {
         : makeFlatWave('#7f91b3'),
     [features],
   )
+  // Directly under the song's track, so each stem's mute and solo sit by the song.
   const stemLanes = stems.length > 0 && (
     <StemLanes
       project={project}
@@ -1221,167 +1222,175 @@ export function Timeline() {
               .map((c) => viewOf(project, c))
               .filter((c) => inView(c.start, c.end))
             return (
-              <div
-                key={track.id}
-                className={[styles.row, track.hidden && styles.rowHidden].filter(Boolean).join(' ')}
-                style={{ height }}
-              >
-                <div className={styles.header}>
-                  <TrackHeader
-                    track={track}
-                    height={height}
-                    stems={track.id === stemTrack?.id ? mix : null}
-                  />
-                </div>
+              <Fragment key={track.id}>
                 <div
-                  className={[styles.lane, beatSnap && beat && styles.grid].filter(Boolean).join(' ')}
-                  style={{ width: contentW, ...gridStyle }}
-                  onPointerDown={(e) => {
-                    if (e.target === e.currentTarget) set({ selection: { type: 'none' } })
-                  }}
-                  onContextMenu={(e) =>
-                    openLaneMenu(
-                      e,
-                      track.id,
-                      (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps,
-                    )
-                  }
-                  onDragOver={(e) => {
-                    if (kind === 'audio' || !isLibraryDrag(e)) return
-                    const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
-                    const next = libraryDropHint(track.id, time)
-                    // A locked track takes no drop: without preventDefault the browser shows "not allowed".
-                    if (next && 'locked' in next) e.dataTransfer.dropEffect = 'none'
-                    else {
-                      e.preventDefault()
-                      e.dataTransfer.dropEffect = 'copy'
-                    }
-                    setDropHint((h) => (JSON.stringify(h) === JSON.stringify(next) ? h : next))
-                  }}
-                  onDragLeave={(e) => {
-                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHint(null)
-                  }}
-                  onDrop={(e) => {
-                    const item = kind === 'audio' ? null : droppedLibraryItem(e)
-                    if (!item) return
-                    e.preventDefault()
-                    setDropHint(null)
-                    const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
-                    dropLibraryItem(item, { trackId: track.id, time })
-                  }}
+                  className={[styles.row, track.hidden && styles.rowHidden].filter(Boolean).join(' ')}
+                  style={{ height }}
                 >
-                  {dropHint?.trackId === track.id &&
-                    ('locked' in dropHint ? (
-                      <div className={styles.dropLocked} style={{ left: dropHint.at * pps }}>
-                        Track is locked
-                      </div>
-                    ) : (
-                      <div
-                        className={dropHint.end > dropHint.start ? styles.dropClip : styles.dropCut}
-                        style={{
-                          left: dropHint.start * pps,
-                          width:
-                            dropHint.end > dropHint.start ? (dropHint.end - dropHint.start) * pps : undefined,
-                        }}
-                      />
-                    ))}
-                  {kind === 'lyrics' &&
-                    !empty &&
-                    !lines.length &&
-                    !clipsOnTrack(project, track.id).length && (
-                      <Tooltip label="Paste lyrics or draft them from the vocals">
-                        <button className={styles.laneEmpty} onClick={() => openAssist('lyrics')}>
-                          <Plus /> Add lyrics
-                        </button>
-                      </Tooltip>
-                    )}
-                  {kind === 'audio' &&
-                    clips.map((c) => (
-                      <div
-                        key={c.id}
-                        className={styles.audioClip}
-                        style={{ left: c.start * pps, width: (c.end - c.start) * pps }}
-                      >
-                        <ViewportCanvas height={height - 4} draw={songWave} />
-                        <span className={styles.audioLabel}>
-                          <Music4 /> {c.name}
-                        </span>
-                      </div>
-                    ))}
-                  {kind !== 'audio' &&
-                    clips.map((c) => {
-                      if (c.kind === 'lyric') {
-                        const lineId = c.lyricLineId
-                        const line = lines.find((l) => l.id === lineId)
-                        const w = (c.end - c.start) * pps
-                        const sel = selId === lineId
-                        const drag = (e: React.PointerEvent, d: LyricDrag) => {
-                          if (lineId) onLyricPointerDown(e, lineId, track.id, d)
-                          else e.stopPropagation()
+                  <div className={styles.header}>
+                    <TrackHeader
+                      track={track}
+                      height={height}
+                      stems={track.id === stemTrack?.id ? mix : null}
+                    />
+                  </div>
+                  <div
+                    className={[styles.lane, beatSnap && beat && styles.grid].filter(Boolean).join(' ')}
+                    style={{ width: contentW, ...gridStyle }}
+                    onPointerDown={(e) => {
+                      if (e.target === e.currentTarget) set({ selection: { type: 'none' } })
+                    }}
+                    onContextMenu={(e) =>
+                      openLaneMenu(
+                        e,
+                        track.id,
+                        (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps,
+                      )
+                    }
+                    onDragOver={(e) => {
+                      if (kind === 'audio' || !isLibraryDrag(e)) return
+                      const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
+                      const next = libraryDropHint(track.id, time)
+                      // A locked track takes no drop: without preventDefault the browser shows "not allowed".
+                      if (next && 'locked' in next) e.dataTransfer.dropEffect = 'none'
+                      else {
+                        e.preventDefault()
+                        e.dataTransfer.dropEffect = 'copy'
+                      }
+                      setDropHint((h) => (JSON.stringify(h) === JSON.stringify(next) ? h : next))
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHint(null)
+                    }}
+                    onDrop={(e) => {
+                      const item = kind === 'audio' ? null : droppedLibraryItem(e)
+                      if (!item) return
+                      e.preventDefault()
+                      setDropHint(null)
+                      const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
+                      dropLibraryItem(item, { trackId: track.id, time })
+                    }}
+                  >
+                    {dropHint?.trackId === track.id &&
+                      ('locked' in dropHint ? (
+                        <div className={styles.dropLocked} style={{ left: dropHint.at * pps }}>
+                          Track is locked
+                        </div>
+                      ) : (
+                        <div
+                          className={dropHint.end > dropHint.start ? styles.dropClip : styles.dropCut}
+                          style={{
+                            left: dropHint.start * pps,
+                            width:
+                              dropHint.end > dropHint.start
+                                ? (dropHint.end - dropHint.start) * pps
+                                : undefined,
+                          }}
+                        />
+                      ))}
+                    {kind === 'lyrics' &&
+                      !empty &&
+                      !lines.length &&
+                      !clipsOnTrack(project, track.id).length && (
+                        <Tooltip label="Paste lyrics or draft them from the vocals">
+                          <button className={styles.laneEmpty} onClick={() => openAssist('lyrics')}>
+                            <Plus /> Add lyrics
+                          </button>
+                        </Tooltip>
+                      )}
+                    {kind === 'audio' &&
+                      clips.map((c) => (
+                        <div
+                          key={c.id}
+                          className={styles.audioClip}
+                          style={{ left: c.start * pps, width: (c.end - c.start) * pps }}
+                        >
+                          <ViewportCanvas height={height - 4} draw={songWave} />
+                          <span className={styles.audioLabel}>
+                            <Music4 /> {c.name}
+                          </span>
+                        </div>
+                      ))}
+                    {kind !== 'audio' &&
+                      clips.map((c) => {
+                        if (c.kind === 'lyric') {
+                          const lineId = c.lyricLineId
+                          const line = lines.find((l) => l.id === lineId)
+                          const w = (c.end - c.start) * pps
+                          const sel = selId === lineId
+                          const drag = (e: React.PointerEvent, d: LyricDrag) => {
+                            if (lineId) onLyricPointerDown(e, lineId, track.id, d)
+                            else e.stopPropagation()
+                          }
+                          return (
+                            <div
+                              key={c.id}
+                              className={[styles.lyric, sel && styles.selected].filter(Boolean).join(' ')}
+                              style={{ transform: `translateX(${c.start * pps}px)`, width: w }}
+                              role="button"
+                              tabIndex={0}
+                              aria-label={`Lyric: ${c.name}`}
+                              onPointerDown={(e) => drag(e, { type: 'line', edge: 'move' })}
+                            >
+                              <LyricChipContent
+                                text={line?.text ?? c.name}
+                                words={line?.words ?? []}
+                                start={c.start}
+                                width={w}
+                                pps={pps}
+                                selected={sel}
+                                onWordEdge={(e, index, edge) => drag(e, { type: 'word', index, edge })}
+                              />
+                              {w >= 16 && (
+                                <>
+                                  <span
+                                    className={[styles.handle, styles.handleL].join(' ')}
+                                    onPointerDown={(e) => drag(e, { type: 'line', edge: 'start' })}
+                                  />
+                                  <span
+                                    className={[styles.handle, styles.handleR].join(' ')}
+                                    onPointerDown={(e) => drag(e, { type: 'line', edge: 'end' })}
+                                  />
+                                </>
+                              )}
+                              {sel && lineId && <LineMatches lineId={lineId} />}
+                            </div>
+                          )
                         }
                         return (
-                          <div
+                          <ClipBlock
                             key={c.id}
-                            className={[styles.lyric, sel && styles.selected].filter(Boolean).join(' ')}
-                            style={{ transform: `translateX(${c.start * pps}px)`, width: w }}
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`Lyric: ${c.name}`}
-                            onPointerDown={(e) => drag(e, { type: 'line', edge: 'move' })}
-                          >
-                            <LyricChipContent
-                              text={line?.text ?? c.name}
-                              words={line?.words ?? []}
-                              start={c.start}
-                              width={w}
-                              pps={pps}
-                              selected={sel}
-                              onWordEdge={(e, index, edge) => drag(e, { type: 'word', index, edge })}
-                            />
-                            {w >= 16 && (
-                              <>
-                                <span
-                                  className={[styles.handle, styles.handleL].join(' ')}
-                                  onPointerDown={(e) => drag(e, { type: 'line', edge: 'start' })}
-                                />
-                                <span
-                                  className={[styles.handle, styles.handleR].join(' ')}
-                                  onPointerDown={(e) => drag(e, { type: 'line', edge: 'end' })}
-                                />
-                              </>
-                            )}
-                            {sel && lineId && <LineMatches lineId={lineId} />}
-                          </div>
+                            clip={c}
+                            pps={pps}
+                            selected={selId === c.id}
+                            onPointerDown={onClipPointerDown}
+                          />
                         )
-                      }
-                      return (
-                        <ClipBlock
-                          key={c.id}
-                          clip={c}
-                          pps={pps}
-                          selected={selId === c.id}
-                          onPointerDown={onClipPointerDown}
-                        />
-                      )
-                    })}
-                  {suggestTiming && track.id === lyricsTrackId && (
-                    <div ref={measureSuggest} className={styles.untimedSuggest} style={{ left: suggestLeft }}>
-                      <InlineSuggestion
-                        id="time-lyrics"
-                        variant="chip"
-                        action="Time words to the vocals"
-                        onAction={() => openAssist('lyrics')}
+                      })}
+                    {suggestTiming && track.id === lyricsTrackId && (
+                      <div
+                        ref={measureSuggest}
+                        className={styles.untimedSuggest}
+                        style={{ left: suggestLeft }}
                       >
-                        {plural(untimed, 'line')} not timed yet
-                      </InlineSuggestion>
-                    </div>
-                  )}
+                        <InlineSuggestion
+                          id="time-lyrics"
+                          variant="chip"
+                          action="Time words to the vocals"
+                          onAction={() => openAssist('lyrics')}
+                        >
+                          {plural(untimed, 'line')} not timed yet
+                        </InlineSuggestion>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+                {track.id === stemTrack?.id && stemLanes}
+              </Fragment>
             )
           })}
 
-          {stemLanes}
+          {!stemTrack && stemLanes}
 
           {empty && (
             <div className={styles.dropHint} style={{ top: RULER_H, left: HEADER_W }}>
