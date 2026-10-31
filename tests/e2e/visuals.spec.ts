@@ -119,3 +119,60 @@ test('scenes lay over footage with a transparent background, and the circle show
   expect(brightness(r.artCenter) - brightness(r.plainCenter)).toBeGreaterThan(25)
   expect(errors).toEqual([])
 })
+
+test('spectrum bars keep the shape of a loud, compressed chorus and calm down in quiet parts', async ({
+  page,
+}) => {
+  const errors = collectErrors(page)
+  await openHarness(page)
+  const r = await page.evaluate(async () => {
+    const { plugins, testing } = window.mvStudio
+    const W = 256
+    const H = 144
+    const { compositor } = testing.createCompositor('export', W, H)
+    const { project, time } = plugins.preview.pluginPreview('visualizer.spectrum')
+    // Features of a compressed master: every band at about its loud level (0.9), or all quiet.
+    const withLevels = (loudness: number, bands: number[]) => {
+      const p: Project = structuredClone(project)
+      for (const analysis of Object.values(p.analysis.audio)) {
+        const features = analysis.features!
+        features.loudness = features.loudness.map(() => loudness)
+        features.bands = features.bands.map(() => [...bands])
+      }
+      return p
+    }
+    const barHeights = async (p: unknown) => {
+      await compositor.render(p, time)
+      const px = testing.readPixels(compositor.canvas, W, H)
+      return Array.from({ length: 32 }, (_, bar) => {
+        const x = Math.round((bar + 0.5) * (W / 32))
+        let top = H
+        for (let y = 0; y < H; y++) {
+          const i = (y * W + x) * 4
+          if (px[i]! + px[i + 1]! + px[i + 2]! > 200) {
+            top = y
+            break
+          }
+        }
+        return (H - top) / (0.6 * H)
+      })
+    }
+    const loud = await barHeights(withLevels(0.9, [0.95, 0.9, 0.88, 0.9, 0.86, 0.9, 0.84]))
+    const quiet = await barHeights(withLevels(0.4, [0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4]))
+    compositor.dispose()
+    return { loud, quiet }
+  })
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+  const spread = (xs: number[]) => Math.sqrt(mean(xs.map((x) => (x - mean(xs)) ** 2))) / mean(xs)
+  console.log(
+    'spectrum heights',
+    JSON.stringify({ loud: r.loud.map((h) => +h.toFixed(2)), quiet: mean(r.quiet) }),
+  )
+  // Loud: tall bars that still differ from one another instead of a flat wall at one height, few touching the top.
+  expect(mean(r.loud)).toBeGreaterThan(0.55)
+  expect(spread(r.loud)).toBeGreaterThan(0.1)
+  expect(r.loud.filter((h) => h >= 0.97).length).toBeLessThanOrEqual(8)
+  // Quiet: clearly lower.
+  expect(mean(r.quiet)).toBeLessThan(0.6 * mean(r.loud))
+  expect(errors).toEqual([])
+})

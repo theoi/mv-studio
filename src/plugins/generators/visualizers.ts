@@ -1,4 +1,5 @@
 /** Audio visualizers that sit over footage: a circular spectrum and a reactive orb. Output is premultiplied. */
+import { DISPLAY_LEVELS } from '../../engine/plugins/generators.ts'
 import type { GeneratorDefinition } from '../../engine/types.ts'
 import { AUDIO, COMMON, HASH, NOISE } from '../glsl.ts'
 
@@ -42,18 +43,18 @@ export const circle: GeneratorDefinition = {
       advanced: true,
     },
   ],
-  fragmentShader: `${COMMON}${AUDIO}
+  fragmentShader: `${COMMON}${AUDIO}${DISPLAY_LEVELS}
 vec4 mainImage(vec2 uv) {
   vec2 p = (uv - 0.5) * vec2(aspectRatio(), 1.0);
   float pix = 1.0 / u_resolution.y;
   float r = length(p);
-  float R = u_radius * (1.0 + 0.22 * u_pulse * bassLevel());
+  float R = u_radius * (1.0 + 0.22 * u_pulse * expandLevel(bassLevel()));
   float bars = floor(u_bars);
   float turn = fract(atan(p.x, p.y) / TAU + 1.0 - u_spin * musicTime());
   float idx = floor(turn * bars);
   // Mirrored: low frequencies at the top, highs meeting at the bottom.
   float x = abs((idx + 0.5) / bars * 2.0 - 1.0);
-  float h = max(bandAt(x) * u_height, 3.0 / 1080.0);
+  float h = max(spectrumLevel(x, floor(x * bars * 0.5)) * u_height, 3.0 / 1080.0);
   float w = max(0.5 * (1.0 - u_gap) * TAU / bars * R, 0.75 * pix);
   float tangential = (fract(turn * bars) - 0.5) * TAU / bars * r;
   float radial = r - R - w;
@@ -106,7 +107,7 @@ export const orb: GeneratorDefinition = {
       advanced: true,
     },
   ],
-  fragmentShader: `${HASH}${NOISE}${COMMON}${AUDIO}
+  fragmentShader: `${HASH}${NOISE}${COMMON}${AUDIO}${DISPLAY_LEVELS}
 vec4 mainImage(vec2 uv) {
   vec2 p = (uv - 0.5) * vec2(aspectRatio(), 1.0);
   float pix = 1.0 / u_resolution.y;
@@ -114,10 +115,11 @@ vec4 mainImage(vec2 uv) {
   float k = u_reactivity;
   float r = length(p);
   vec2 dir = r > 1e-5 ? p / r : vec2(0.0, 1.0);
-  float R = u_size * (1.0 + 0.16 * k * bassLevel() + 0.06 * k * drumHit());
+  float bass = expandLevel(bassLevel());
+  float R = u_size * (1.0 + 0.2 * k * bass + 0.06 * k * drumHit());
   float n1 = vnoise(dir * u_detail + vec2(0.6 * t, -0.4 * t)) - 0.5;
   float n2 = vnoise(dir * u_detail * 2.3 + vec2(-0.9 * t, 0.7 * t) + 7.0) - 0.5;
-  float edge = R * (1.0 + u_wobble * (0.38 * n1 * (0.5 + k * midLevel()) + 0.2 * n2 * (0.3 + k * highLevel())));
+  float edge = R * (1.0 + u_wobble * (0.38 * n1 * (0.4 + k * expandLevel(midLevel())) + 0.2 * n2 * (0.25 + k * expandLevel(highLevel()))));
   float d = r - edge;
   float body = 1.0 - smoothstep(-pix, pix, d);
   float rel = clamp(r / max(edge, 1e-4), 0.0, 1.0);
@@ -125,7 +127,7 @@ vec4 mainImage(vec2 uv) {
   vec3 core = mix(u_color2.rgb, u_color.rgb, smoothstep(0.05, 1.0, rel));
   core *= 0.7 + 0.45 * swirl + 0.35 * k * vocalLevel() * (1.0 - rel);
   core += u_color2.rgb * pow(rel, 8.0) * 0.5;
-  float halo = u_glow * exp(-max(d, 0.0) / (R * (0.25 + 0.2 * k * bassLevel()))) * 0.75 * (1.0 - body);
+  float halo = u_glow * exp(-max(d, 0.0) / (R * (0.25 + 0.2 * k * bass))) * 0.75 * (1.0 - body);
   float a = body * u_color.a;
   vec3 rgb = clamp(core, 0.0, 1.0) * a + mix(u_color.rgb, u_color2.rgb, 0.3) * halo;
   return vec4(clamp(rgb, 0.0, 1.0), clamp(a + halo, 0.0, 1.0));
