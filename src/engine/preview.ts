@@ -103,7 +103,8 @@ interface Size {
 /** Draws preview frames, on this thread or in the render worker. */
 interface FrameRenderer {
   readonly inWorker: boolean
-  draw(project: Project, time: Seconds, size: Size): Promise<void>
+  /** With `untilDrawn`, finishes only once the GPU has drawn the frame (a still), not when it is queued. */
+  draw(project: Project, time: Seconds, size: Size, untilDrawn?: boolean): Promise<void>
   /** The GPU is still drawing the last frame, so drawing another now would block the main thread. */
   busy(): boolean
   /** Draws a frame and returns it. */
@@ -123,11 +124,12 @@ class MainRenderer implements FrameRenderer {
     this.compositor = compositor
   }
 
-  async draw(project: Project, time: Seconds, size: Size): Promise<void> {
+  async draw(project: Project, time: Seconds, size: Size, untilDrawn = false): Promise<void> {
     await this.compositor.render(project, time, { size })
-    // More GL calls while the GPU is busy would block this thread until it caught up. Finishing only when the frame is
-    // drawn makes stills that arrive meanwhile wait and coalesce, and makes the draw time the frame's real cost.
-    await this.compositor.gpuIdle()
+    // More GL calls while the GPU is busy would block this thread until it caught up. A still finishes only when it
+    // is drawn, so stills that arrive meanwhile wait and coalesce, and its draw time is the frame's real cost.
+    // Playback frames don't wait: polling the fence is coarser than a display frame, and the loop checks busy().
+    if (untilDrawn) await this.compositor.gpuIdle()
   }
 
   busy(): boolean {
@@ -688,8 +690,8 @@ export class PreviewController {
     const renderer = this.renderer
     const run = (
       renderer
-        ? renderer.draw(project, time, size)
-        : this.rendererReady.then((r) => r.draw(project, time, size))
+        ? renderer.draw(project, time, size, still)
+        : this.rendererReady.then((r) => r.draw(project, time, size, still))
     )
       .then(
         () => {
