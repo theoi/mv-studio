@@ -148,6 +148,26 @@
   height: 10px;
 }
 
+.analyzingMark {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 16px;
+  padding: 0 5px 0 4px;
+  border-radius: var(--radius-xs);
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 10px;
+  font-weight: var(--weight-medium);
+}
+
+.genBadge ~ .analyzingMark {
+  top: 24px;
+}
+
 .genBadge {
   position: absolute;
   left: 4px;

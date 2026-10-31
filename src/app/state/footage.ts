@@ -130,6 +130,18 @@ export function analyzeImportsInBackground(): () => void {
   return editor.subscribe(check)
 }
 
+/**
+ * Whether footage analysis is running and has not made this clip searchable yet, so search and suggestions leave it
+ * out for now.
+ */
+export function useClipAnalyzing(assetId: Id): boolean {
+  return useFootage((s) => {
+    if (s.indexing?.status !== 'indexing' || !s.service) return false
+    const status = s.service.indexing.statusOf(assetId)
+    return status === 'queued' || status === 'indexing'
+  })
+}
+
 export type FootageQuery = 'search' | 'line' | 'section'
 
 /**
