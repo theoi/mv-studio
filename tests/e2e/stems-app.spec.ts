@@ -40,6 +40,7 @@ test('Assist › Stems separates the imported song on this device and shows its 
   // The 8 s fixture and a model this fresh profile has not downloaded yet.
   await expect(panel.getByText('Under a minute on this device')).toBeVisible()
   await expect(panel.getByText('181 MB once, then offline')).toBeVisible()
+  await expect(panel.getByText('About 2.6 GB while running')).toBeVisible()
   await shot(page, 'stems-idle')
 
   await panel.getByRole('button', { name: 'Separate stems' }).click()
@@ -66,8 +67,13 @@ test('Assist › Stems separates the imported song on this device and shows its 
   expect(r.undoLabel).toBe(undoLabel)
   // The fixture is kicks over a pad with no voice, so the drums waveform stands well above the vocals.
   expect(await waveHeight(page, 'Drums')).toBeGreaterThan((await waveHeight(page, 'Vocals')) + 20)
-  // The timeline lists the stems under the song.
+  // A flat waveform says why: the fixture has no voice.
+  const row = (stem: string) => panel.getByText(stem, { exact: true }).locator('xpath=..')
+  await expect(row('Vocals')).toContainText('Almost silent')
+  await expect(row('Drums')).not.toContainText('Almost silent')
+  // The timeline lists the stems under the song; the media library does not list them as clips.
   await expect(page.getByText('Vocals', { exact: true })).toHaveCount(2)
+  await expect(page.getByRole('tabpanel', { name: 'Media' }).getByText(/\(vocals\)/)).toHaveCount(0)
 })
 
 test('Assist › Stems shows progress, cancels, and explains an out-of-memory failure with a retry', async ({
@@ -81,7 +87,7 @@ test('Assist › Stems shows progress, cancels, and explains an out-of-memory fa
     w.starts = 0
     app.stems.setStemsServiceForTests({
       async estimate() {
-        return { downloadBytes: 180_534_758, seconds: 230, device: 'wasm' }
+        return { downloadBytes: 180_534_758, seconds: 230, memoryBytes: 2.6e9, device: 'wasm' }
       },
       separateSong(_songId: string, deps: unknown) {
         w.starts++

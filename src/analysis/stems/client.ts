@@ -23,6 +23,12 @@ export const STEM_MODEL_BYTES = DEMUCS_MODEL.files.model?.bytes ?? 0
  */
 const SEPARATE_SECONDS_PER_SECOND: Record<ModelDevice, number> = { wasm: 1.1, webgpu: 0.5 }
 
+/**
+ * How much more memory the tab holds at the peak of a separation with WASM threads: the renderer's resident memory
+ * rose by 2.5 GB for an 8 s song and 2.6 GB for a 3 min song (Chromium, 4 threads), so song length barely matters.
+ */
+const STEM_PEAK_MEMORY_BYTES = 2.6e9
+
 /** Separation seconds per second of song on this device. */
 export async function separateRate(): Promise<number> {
   return SEPARATE_SECONDS_PER_SECOND[stemDevice(await detectCapabilities())]
@@ -34,6 +40,8 @@ export interface StemsEstimate {
   downloadBytes: number
   /** Processing time on this device once the model is downloaded, in seconds. */
   seconds: number
+  /** Extra memory the tab needs at the peak of the separation. */
+  memoryBytes: number
   device: ModelDevice
 }
 
@@ -56,7 +64,7 @@ export interface StemSeparationOptions {
 
 /**
  * Opt-in stem separation (vocals, drums, bass, other) as a job. Each run uses a fresh worker that is terminated
- * afterwards, which frees the model's memory (over 1 GB) and makes cancelling immediate. Typical flow:
+ * afterwards, which frees the model's memory (about 2.6 GB at the peak) and makes cancelling immediate. Typical flow:
  *   const estimate = await service.estimate(project, songId)   // download size and time, for the confirmation
  *   await service.separateSong(songId, { editor, store }).promise
  */
@@ -85,6 +93,7 @@ export class StemSeparationService {
     return {
       downloadBytes: cached ? 0 : STEM_MODEL_BYTES,
       seconds: Math.ceil(duration * SEPARATE_SECONDS_PER_SECOND[device]),
+      memoryBytes: STEM_PEAK_MEMORY_BYTES,
       device,
     }
   }

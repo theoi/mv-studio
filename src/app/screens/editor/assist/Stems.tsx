@@ -6,7 +6,6 @@ import { formatBytes } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { hasSong, songAnalysis, useProject } from '../../../state/project.ts'
 import { estimateStems, startStems, stemBars } from '../../../state/stems.ts'
-import { set } from '../../../state/ui.ts'
 import { pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -17,6 +16,9 @@ const STEMS = [
   { name: 'bass', label: 'Bass' },
   { name: 'other', label: 'Other' },
 ] as const
+
+/** Below this peak loudness (relative to the mix) a stem's waveform is a flat line, so the row says why. */
+const ALMOST_SILENT = 0.05
 
 /** Status on the Stems row of Assist's tool list. */
 export function StemsBadge() {
@@ -90,19 +92,9 @@ export function StemsView() {
         title="Stems"
         subtitle="Separation stopped"
         footer={
-          <div className={styles.footerRow}>
-            <Button variant="secondary" onClick={() => set({ dialog: 'settings', settingsPage: 'local' })}>
-              Device settings
-            </Button>
-            <Button
-              variant="primary"
-              icon={<RotateCcw />}
-              className={styles.grow}
-              onClick={() => void startStems()}
-            >
-              Try again
-            </Button>
-          </div>
+          <Button variant="primary" block icon={<RotateCcw />} onClick={() => void startStems()}>
+            Try again
+          </Button>
         }
       >
         <div className={styles.failure} role="alert">
@@ -130,16 +122,20 @@ export function StemsView() {
   if (ready) {
     return (
       <ToolView title="Stems" subtitle="Ready · shown under the song track">
-        {STEMS.filter((s) => analysis?.stems?.[s.name]).map((s) => (
-          <div key={s.name} className={styles.stemRow}>
-            <span className={styles.stemName}>{s.label}</span>
-            <span className={styles.stemWave} aria-hidden>
-              {stemBars(analysis?.stemFeatures?.[s.name], 36).map((v, k) => (
-                <i key={k} style={{ height: `${10 + v * 90}%` }} />
-              ))}
-            </span>
-          </div>
-        ))}
+        {STEMS.filter((s) => analysis?.stems?.[s.name]).map((s) => {
+          const bars = stemBars(analysis?.stemFeatures?.[s.name], 36)
+          return (
+            <div key={s.name} className={styles.stemRow}>
+              <span className={styles.stemName}>{s.label}</span>
+              <span className={styles.stemWave} aria-hidden>
+                {bars.map((v, k) => (
+                  <i key={k} style={{ height: `${10 + v * 90}%` }} />
+                ))}
+              </span>
+              {Math.max(...bars) < ALMOST_SILENT && <span className={styles.muted}>Almost silent</span>}
+            </div>
+          )
+        })}
         <p className={styles.muted}>
           Effects and visualizers can now react to one stem, like the kick in Drums.
         </p>
@@ -180,7 +176,7 @@ export function StemsView() {
           <span>Download</span>
           <span>
             {!estimate
-              ? '…'
+              ? 'Working it out…'
               : download
                 ? `${formatBytes(download)} once, then offline`
                 : 'Already on this device'}
@@ -188,7 +184,9 @@ export function StemsView() {
         </div>
         <div>
           <span>Memory</span>
-          <span>Up to 4 GB while running</span>
+          <span>
+            {estimate ? `About ${formatBytes(estimate.memoryBytes)} while running` : 'Working it out…'}
+          </span>
         </div>
       </div>
     </ToolView>
