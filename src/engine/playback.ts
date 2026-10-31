@@ -94,7 +94,8 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     this.plainSignature = plainSignature
     this.wantedSignature = signature
     // The cache is shared by every clock and export on this media source, so it is never cleared, only trimmed to
-    // what this project can play.
+    // what this project can play. That assumes every preview on the source shows the current project or a copy of it:
+    // a clock holding an unrelated project would evict the audio the others play.
     const used = new Set(wanted.map((c) => c.assetId))
     this.buffers.evict(
       (asset) => !project.assets[asset.id] || (!stems && asset.origin.type === 'stem' && !used.has(asset.id)),
