@@ -155,8 +155,9 @@ out vec4 outColor;
 ${TONE_GLSL}
 /**
  * Rotates the hue of c by angle a in the BT.709 Cb/Cr plane, which keeps luma. Where the rotated color leaves 0..1
- * (beyond where c already was), it keeps its hue and chroma and gives up luma instead: lifted out of the negatives,
- * then scaled under the top. So a saturated blue turns violet, or yellow halfway round, instead of dark and gray.
+ * (beyond where c already was), it keeps its hue and gives up luma instead: shifted back into range, with its chroma
+ * scaled down only when its channels spread wider than the range. So a saturated blue turns violet, or yellow halfway
+ * round (and yellow turns blue), instead of dark and gray.
  */
 vec3 hueRotate(vec3 c, float a) {
   float lo0 = min(min(c.r, min(c.g, c.b)), 0.0);
@@ -166,8 +167,10 @@ vec3 hueRotate(vec3 c, float a) {
   float r = y + 1.5748 * cbcr.y;
   float b = y + 1.8556 * cbcr.x;
   c = vec3(r, (y - 0.2126 * r - 0.0722 * b) / 0.7152, b);
-  c -= min(min(c.r, min(c.g, c.b)) - lo0, 0.0);
-  return c * (hi0 / max(max(c.r, max(c.g, c.b)), hi0));
+  vec2 range = vec2(max(c.r, max(c.g, c.b)), min(c.r, min(c.g, c.b))) - y;
+  float fit = min((hi0 - lo0) / max(range.x - range.y, 1e-5), 1.0);
+  range = y + range * fit;
+  return y + (c - y) * fit + max(lo0 - range.y, 0.0) - max(range.x - hi0, 0.0);
 }
 
 void main() {

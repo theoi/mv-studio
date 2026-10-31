@@ -324,6 +324,8 @@ test('hue turns saturated colors instead of darkening them, exposure keeps them 
       blueA: await solid('#0000ff', { hue: 0.2 }),
       blueWithContrast: await solid('#0000ff', { hue: 0.2, contrast: 0.3 }),
       blueHalfway: await solid('#0000ff', { hue: 1 }),
+      yellowHalfway: await solid('#ffff00', { hue: 1 }),
+      cyanHalfway: await solid('#00ffff', { hue: 1 }),
       muted: await solid('#806060', { hue: 0.3 }),
       mutedSource: await solid('#806060', {}),
     }
@@ -356,9 +358,16 @@ test('hue turns saturated colors instead of darkening them, exposure keeps them 
     expect(g).toBeLessThanOrEqual(5)
     expect(b).toBeGreaterThanOrEqual(240)
   }
-  const [hr, hg, hb] = r.hue.blueHalfway
-  expect(Math.min(hr!, hg!)).toBeGreaterThan(200)
-  expect(hb).toBeLessThan(40)
+  // Halfway round, fully saturated colors turn into their complements at full strength: blue and yellow swap, cyan
+  // turns red.
+  for (const [[cr, cg, cb], want] of [
+    [r.hue.blueHalfway, [255, 255, 0]],
+    [r.hue.yellowHalfway, [0, 0, 255]],
+    [r.hue.cyanHalfway, [255, 0, 0]],
+  ] as const)
+    expect(Math.max(Math.abs(cr! - want[0]), Math.abs(cg! - want[1]), Math.abs(cb! - want[2]))).toBeLessThan(
+      15,
+    )
   // A color the turn keeps in range keeps its luma.
   expect(Math.abs(luma(r.hue.muted) - luma(r.hue.mutedSource))).toBeLessThan(3)
   expect(Math.abs(hueOf(r.hue.muted) - hueOf(r.hue.mutedSource))).toBeGreaterThan(20)
