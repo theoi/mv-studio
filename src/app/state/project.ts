@@ -7,6 +7,7 @@ import {
   createTextClip,
   createTrack,
   projectDuration,
+  type Asset,
   type AudioAnalysis,
   type Clip,
   type DispatchOptions,
@@ -17,8 +18,7 @@ import {
 } from '../../model/index.ts'
 import { directorMeta } from '../../director/meta.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
-import { TRACK_IDS, buildDemoProject, sceneOf } from '../mock/demoProject.ts'
-import type { SceneId } from '../mock/art.ts'
+import { TRACK_IDS, buildDemoProject } from '../mock/demoProject.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { get, select, set, toast } from './ui.ts'
 
@@ -204,7 +204,9 @@ export interface ClipView {
   name: string
   start: number
   end: number
-  scene?: SceneId
+  /** Video and image clips: the media, and where in it the clip starts (for its thumbnail). */
+  asset?: Asset
+  sourceStart?: number
   lyricLineId?: string
   /** Look layers: how strongly the look applies (the clip's opacity, 0..1). */
   amount?: number
@@ -216,7 +218,13 @@ export function viewOf(p: Project, c: Clip): ClipView {
     case 'video':
     case 'image': {
       const a = p.assets[c.assetId]
-      return { ...base, kind: c.type, name: c.name ?? a?.name ?? 'Clip', scene: sceneOf(a) }
+      return {
+        ...base,
+        kind: c.type,
+        name: c.name ?? a?.name ?? 'Clip',
+        ...(a ? { asset: a } : {}),
+        ...(c.type === 'video' ? { sourceStart: c.sourceStart } : {}),
+      }
     }
     case 'text':
       return c.lyricLineId

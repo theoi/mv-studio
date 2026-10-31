@@ -22,6 +22,9 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener)
 }
 
+/** For hooks without media to follow (e.g. timeline text clips), so thumbnail updates do not reach them. */
+const noUpdates = () => () => undefined
+
 /** A frame of the asset decoded at about thumbnail size, so drawing it on the page stays cheap. */
 async function frameOf(asset: Asset, file: Blob): Promise<ImageBitmap> {
   if (asset.kind === 'image') {
@@ -87,7 +90,9 @@ export async function thumbnailBlob(asset: Asset): Promise<Blob | null> {
 /** The thumbnail URL for an asset, or undefined while it is being made (or for audio). */
 export function useThumbnail(asset: Asset | undefined): string | undefined {
   const scene = sceneOf(asset)
-  const made = useSyncExternalStore(subscribe, () => (asset ? thumbs.get(asset.id) : undefined))
+  const made = useSyncExternalStore(asset && !scene ? subscribe : noUpdates, () =>
+    asset ? thumbs.get(asset.id) : undefined,
+  )
   useEffect(() => {
     if (asset && !scene) request(asset)
   }, [asset, scene])
@@ -105,7 +110,7 @@ const frames = createFrameThumbnails(appMedia)
 export function useFrameThumbnail(asset: Asset | undefined, sourceTime: number): string | undefined {
   const scene = sceneOf(asset)
   const whole = useThumbnail(asset)
-  const frame = useSyncExternalStore(frames.subscribe, () =>
+  const frame = useSyncExternalStore(asset && !scene ? frames.subscribe : noUpdates, () =>
     asset && !scene ? frames.get(asset, sourceTime) : undefined,
   )
   useEffect(() => (asset && !scene ? frames.want(asset, sourceTime) : undefined), [asset, scene, sourceTime])

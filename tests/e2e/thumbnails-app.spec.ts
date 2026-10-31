@@ -46,7 +46,7 @@ async function shown(target: Locator, reference?: string) {
   }, reference)
 }
 
-test('imported footage shows its own frames: the library card, and the inspector at the clip’s in-point', async ({
+test('imported footage shows its own frames: the library card, and the inspector and timeline at the clip’s in-point', async ({
   page,
 }) => {
   await openBlank(page)
@@ -68,13 +68,15 @@ test('imported footage shows its own frames: the library card, and the inspector
     .poll(async () => (await shown(imageThumb, imageUrl))?.diff, { timeout: 15_000 })
     .toBeLessThan(8)
 
-  // Added clips start at the in-point the inspector header shows.
+  // The inspector header and the clip on the timeline show the frame at the clip's in-point.
   await card.hover()
   await card.getByRole('button', { name: 'Add at playhead' }).click()
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   await expect(inspector.getByText('frames', { exact: true })).toBeVisible()
   const headerThumb = inspector.locator('[style*="background-image"]').first()
-  await expect.poll(async () => (await shown(headerThumb))?.frame, { timeout: 15_000 }).toBe(0)
+  const timelineClip = page.getByRole('button', { name: /^frames, 0:00\.0 to / })
+  const frames = async () => [(await shown(headerThumb))?.frame, (await shown(timelineClip))?.frame]
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([0, 0])
 
   const setInPoint = (sourceStart: number) =>
     page.evaluate((value) => {
@@ -88,24 +90,32 @@ test('imported footage shows its own frames: the library card, and the inspector
       ])
     }, sourceStart)
   await setInPoint(2)
-  await expect.poll(async () => (await shown(headerThumb))?.frame, { timeout: 15_000 }).toBe(60)
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([60, 60])
   await setInPoint(1)
-  await expect.poll(async () => (await shown(headerThumb))?.frame, { timeout: 15_000 }).toBe(30)
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([30, 30])
   expect(await shown(headerThumb)).toMatchObject({ url: 'blob:', width: 160, height: 90 })
+  expect(await shown(timelineClip)).toMatchObject({ url: 'blob:', width: 160, height: 90 })
 
-  // While the in-point is trimmed, the header keeps the last frame until the next one is made: it never shows the
-  // whole-clip thumbnail (the card's) or the icon in between.
+  // While the in-point is trimmed, both keep the last frame until the next one is made: neither shows the
+  // whole-clip thumbnail (the card's) or nothing in between.
   const wholeUrl = await cardThumb.evaluate((el) => (el as HTMLElement).style.backgroundImage)
   const header = await headerThumb.locator('..').elementHandle()
-  await page.evaluate((el) => {
-    const seen: string[] = []
-    const observer = new MutationObserver(() => {
-      const thumb = el!.querySelector<HTMLElement>('[style*="background-image"]')
-      seen.push(thumb ? thumb.style.backgroundImage : 'none')
-    })
-    observer.observe(el!, { subtree: true, childList: true, attributes: true, attributeFilter: ['style'] })
-    Object.assign(window, { trim: { seen, stop: () => observer.disconnect() } })
-  }, header)
+  const block = await timelineClip.elementHandle()
+  await page.evaluate(
+    ([headerEl, blockEl]) => {
+      const seen: string[] = []
+      const record = (el: HTMLElement | null) => seen.push(el?.style.backgroundImage || 'none')
+      const observers = [
+        new MutationObserver(() => record(headerEl!.querySelector('[style*="background-image"]'))),
+        new MutationObserver(() => record(blockEl as HTMLElement)),
+      ]
+      const watch = { subtree: true, childList: true, attributes: true, attributeFilter: ['style'] }
+      observers[0]!.observe(headerEl!, watch)
+      observers[1]!.observe(blockEl!, { attributes: true, attributeFilter: ['style'] })
+      Object.assign(window, { trim: { seen, stop: () => observers.forEach((o) => o.disconnect()) } })
+    },
+    [header, block] as const,
+  )
   await page.evaluate(async () => {
     const { editor } = window.mvStudio.app.project
     const clip = Object.values(editor.getProject().clips).find(
@@ -120,7 +130,7 @@ test('imported footage shows its own frames: the library card, and the inspector
     }
     editor.endGesture()
   })
-  await expect.poll(async () => (await shown(headerThumb))?.frame, { timeout: 15_000 }).toBe(75)
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([75, 75])
   const seen: string[] = await page.evaluate(() => {
     const { trim } = window as unknown as { trim: { seen: string[]; stop: () => void } }
     trim.stop()
