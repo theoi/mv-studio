@@ -13,7 +13,7 @@ import {
 } from '../../vj/index.ts'
 import { loadVjMode } from '../preload.ts'
 import { stagePreview } from '../screens/editor/stage.ts'
-import { get, set } from './ui.ts'
+import { get, set, toastLoadFailed } from './ui.ts'
 
 /** The VJ session while VJ mode is open, so Settings › VJ and MIDI changes reach it as well as the saved settings. */
 let active: VjSession | null = null
@@ -55,7 +55,8 @@ function setEntryFrame(frame: ImageBitmap | null) {
 /**
  * Opens VJ mode, capturing the editor's frame at the playhead on the way (its preview finishes the capture as it
  * closes) for the VJ stage to show while its own preview starts, which takes a second or two. The editor stays on
- * screen until VJ mode's code has loaded: until then the screen's loading fallback would blank the whole window.
+ * screen until VJ mode's code has loaded: until then the screen's loading fallback would blank the whole window. If
+ * the code can't load, the editor stays and says so; the next press tries again.
  */
 export function enterVj() {
   if (get().screen === 'vj' || entering) return
@@ -69,13 +70,18 @@ export function enterVj() {
     },
     () => undefined,
   )
-  void loadVjMode()
-    .catch(() => undefined)
-    .then(() => {
+  void loadVjMode().then(
+    () => {
       setEntering(false)
       if (get().screen === 'editor') set({ screen: 'vj' })
       else clearVjEntryFrame()
-    })
+    },
+    () => {
+      setEntering(false)
+      clearVjEntryFrame()
+      if (get().screen === 'editor') toastLoadFailed('VJ mode')
+    },
+  )
 }
 
 export function subscribeVjEntryFrame(listener: () => void): () => void {

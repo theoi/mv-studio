@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Upload } from 'lucide-react'
-import { useUi } from '../../state/ui.ts'
+import { closeWithToast, guideLoadFailed, set, useUi } from '../../state/ui.ts'
 import { TopBar } from './TopBar.tsx'
 import { Library, LibraryRail } from './Library.tsx'
 import { Preview } from './Preview.tsx'
@@ -172,13 +172,13 @@ export function Editor() {
         />
         <Timeline />
       </div>
-      <Deferred when={exportOpen}>
+      <Deferred when={exportOpen} onFail={closeWithToast('Export', () => set({ dialog: null }))}>
         <ExportDialog />
       </Deferred>
-      <Deferred when={paletteOpen}>
+      <Deferred when={paletteOpen} onFail={closeWithToast('Search', () => set({ paletteOpen: false }))}>
         <CommandPalette />
       </Deferred>
-      <Deferred when={guideOn}>
+      <Deferred when={guideOn} onFail={guideLoadFailed}>
         <FirstRunGuide />
       </Deferred>
       <DropImport />

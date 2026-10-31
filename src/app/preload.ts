@@ -15,7 +15,8 @@ export const loaders = {
 }
 
 export function preloadDeferred() {
-  for (const load of Object.values(loaders)) void load()
+  // A chunk that fails here loads again when its screen or dialog opens.
+  for (const load of Object.values(loaders)) load().catch(() => undefined)
 }
 
 let vjMode: ComponentType | null = null
