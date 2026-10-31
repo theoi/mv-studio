@@ -150,13 +150,13 @@ const QUICK_PARTS = 'The cutout takes a closer look and may still turn it down.'
 const QUICK_PARTS_BRIEF = 'Works in parts of this shot, may change on a closer look'
 
 const PEOPLE_SKIPPED =
-  "Couldn't check for people, so the cutout may include animals or objects. It checks again when you're back online."
+  'Couldn’t check for people, so the cutout may include animals or objects. It checks again when you’re back online.'
 
 const REASONS: Record<SuitabilityReason, string> = {
   // The person segmenter finds nobody both in empty shots and in wide shots of small people, so this must not claim
   // the shot is empty.
   'no-subject': 'No one in this shot is large enough to cut out',
-  'no-person-found': "Couldn't find a person to cut out in this shot",
+  'no-person-found': 'Couldn’t find a person to cut out in this shot',
   'subject-too-small': 'People are too small in this wide shot',
   'subject-fills-frame': 'The person fills the frame, so text behind them would barely show',
   'many-small-subjects': 'Too many small people to cut out cleanly',
@@ -166,7 +166,7 @@ const REASONS: Record<SuitabilityReason, string> = {
 /** A marginal shot has a person in some parts, so a reason about the whole shot would contradict "Person found". */
 const MARGINAL_REASONS: Partial<Record<SuitabilityReason, string>> = {
   'no-subject': 'In the other parts, no one is large enough to cut out',
-  'no-person-found': "Couldn't find a person in the other parts",
+  'no-person-found': 'Couldn’t find a person in the other parts',
 }
 
 /**
@@ -244,6 +244,7 @@ function checkedText(s: Extract<Suitability, { status: 'checked' }>): {
 export function refusalText(s: Suitability): string {
   const first = s.status === 'checked' ? s.reasons[0] : undefined
   if (!first || first === 'no-subject') return 'On a closer look, no one is large enough to cut out.'
+  if (first === 'no-person-found') return 'On a closer look, the cutout couldn’t find a person in this shot.'
   const reason = REASONS[first]
   return `On a closer look, ${reason.charAt(0).toLowerCase()}${reason.slice(1)}.`
 }

@@ -139,7 +139,7 @@ test('a clip is cut out when the person and face detectors cannot download, and 
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   const row = assist.getByText('people-interview', { exact: true }).locator('..').locator('..')
   const note =
-    "Couldn't check for people, so the cutout may include animals or objects. It checks again when you're back online."
+    'Couldn’t check for people, so the cutout may include animals or objects. It checks again when you’re back online.'
   await expect(row.getByText('Not checked for people · 1 clip', { exact: true })).toBeVisible({
     timeout: 90_000,
   })
@@ -184,7 +184,7 @@ test('Assist › Behind the subject does not offer a shot of an animal, which th
   await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   const row = assist.getByText('animal-horse', { exact: true }).locator('..').locator('..')
-  await expect(row.getByText("Couldn't find a person to cut out in this shot · 1 clip")).toBeVisible({
+  await expect(row.getByText('Couldn’t find a person to cut out in this shot · 1 clip')).toBeVisible({
     timeout: 90_000,
   })
   await expect(row.getByText('Not suitable')).toBeVisible()
@@ -295,7 +295,7 @@ test('a shot the check offers but the cutout turns down says why in the inspecto
   const toggle = inspector.getByRole('switch', { name: 'Put text and effects behind the subject' })
   await toggle.click()
   await expect(
-    page.getByRole('status').getByText("On a closer look, couldn't find a person to cut out in this shot."),
+    page.getByRole('status').getByText('On a closer look, the cutout couldn’t find a person in this shot.'),
   ).toBeVisible()
   await expect(toggle).not.toBeChecked()
   expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
@@ -311,7 +311,7 @@ test('Assist › Behind the subject lists a shot the cutout turned down, with wh
   await expect(row.getByText('Suitable', { exact: true })).toBeVisible()
   await assist.getByRole('button', { name: /^Apply to \d+ suitable clips?$/ }).click()
   await expect(
-    assist.getByText("people-interview: On a closer look, couldn't find a person to cut out in this shot."),
+    assist.getByText('people-interview: On a closer look, the cutout couldn’t find a person in this shot.'),
   ).toBeVisible()
   expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
 })
@@ -346,7 +346,7 @@ test('a shot the check finds a person in only in parts says the cutout may still
   await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
   await assist.getByRole('button', { name: /^Apply to \d+ suitable clips?$/ }).click()
   await expect(
-    assist.getByText("people-interview: On a closer look, couldn't find a person to cut out in this shot."),
+    assist.getByText('people-interview: On a closer look, the cutout couldn’t find a person in this shot.'),
   ).toBeVisible()
   expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
 })

@@ -162,6 +162,21 @@ describe('vision service', () => {
       expect((await setup(current.cache).service.personTrack(current.source)).suitability).toEqual(stale)
     })
 
+    it.runIf(PEOPLE_VERSION < SUITABILITY_VERSION)(
+      'is judged again from the stored masks and people, without segmenting or detecting, when only the judging changed',
+      async () => {
+        const { cache, source, storedVersion, storedMeta } = await storedWithReport(PEOPLE_VERSION)
+        const { people } = await storedMeta()
+        const later = setup(cache)
+        const judged = await later.service.personTrack(source)
+        expect(later.seg.calls).toEqual([])
+        expect(later.seg.analyzed).toEqual([])
+        expect(judged.suitability.verdict).toBe('good')
+        expect(judged.people).toEqual(people)
+        expect(await storedVersion()).toBe(SUITABILITY_VERSION)
+      },
+    )
+
     it('finds the people in a track stored before people detection, without segmenting, and writes them back', async () => {
       const { cache, source, storedMeta } = await storedWithReport(undefined, false)
       const old = setup(cache)
