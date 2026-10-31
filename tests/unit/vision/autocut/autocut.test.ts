@@ -81,7 +81,7 @@ describe('auto-cut plan', () => {
   it('picks for variety with a warning when the clips are not analyzed yet', async () => {
     const project = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) })
     const result = await plan(project)
-    expect(result.warnings.join(' ')).toMatch(/aren't analyzed yet/)
+    expect(result.warnings.join(' ')).toMatch(/aren’t analyzed yet/)
     expect(new Set(result.shots.map((s) => s.assetId)).size).toBe(CLIPS.length)
     expect(result.shots.every((s) => s.reason === 'variety')).toBe(true)
   })
@@ -98,7 +98,7 @@ describe('auto-cut plan', () => {
     expect(all.warnings.join(' ')).not.toMatch(/analyzed yet/)
     const some = makeProject({ clips: [...CLIPS.slice(0, 2), { ...CLIPS[2]!, indexed: false }] })
     const partial = await planAutoCut(some, {}, { matcher, unanalyzedWarning })
-    expect(partial.warnings.join(' ')).toMatch(/1 clip isn't analyzed yet/)
+    expect(partial.warnings.join(' ')).toMatch(/1 clip isn’t analyzed yet/)
     expect(calls).toEqual([
       [CLIPS.map((c) => c.id), true],
       [[CLIPS[2]!.id], false],

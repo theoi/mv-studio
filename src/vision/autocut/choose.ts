@@ -58,7 +58,7 @@ export interface ChooseInput {
   matcher?: Pick<FootageMatcher, 'model' | 'rankAll'>
   /**
    * Wording for the warning about clips used without a matching index (`assetIds`; `all` when no clip has one),
-   * from a caller that knows why they have none. Undefined keeps "…aren't analyzed yet".
+   * from a caller that knows why they have none. Undefined keeps "…aren’t analyzed yet".
    */
   unanalyzedWarning?: (assetIds: readonly Id[], all: boolean) => string | undefined
   seed: number
@@ -222,7 +222,7 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
     } catch (err) {
       if ((err instanceof JobError && err.code === 'cancelled') || input.signal?.aborted)
         throw cancelledError(err)
-      warnings.push("Footage matching wasn't available, so clips were picked for variety.")
+      warnings.push('Footage matching wasn’t available, so clips were picked for variety.')
     }
   }
   const unindexed = matcher
@@ -233,14 +233,14 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
     warnings.push(
       matcher
         ? (explained ??
-            "Your clips aren't analyzed yet, so they were picked for variety. Run auto-cut again once analysis finishes.")
+            'Your clips aren’t analyzed yet, so they were picked for variety. Run auto-cut again once analysis finishes.')
         : 'Footage matching is off, so clips were picked for variety.',
     )
   } else if (library.length < pool.length) {
     const n = pool.length - library.length
     warnings.push(
       explained ??
-        `${n} ${n === 1 ? "clip isn't" : "clips aren't"} analyzed yet, so ${n === 1 ? 'it was' : 'they were'} only used for variety.`,
+        `${n} ${n === 1 ? 'clip isn’t' : 'clips aren’t'} analyzed yet, so ${n === 1 ? 'it was' : 'they were'} only used for variety.`,
     )
   }
   const hasRanking = ranked.size > 0
