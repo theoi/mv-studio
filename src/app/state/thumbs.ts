@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { Asset } from '../../model/index.ts'
 import { coverJpeg, coverSide, createFrameThumbnails, openVideoFrames } from '../../vision/index.ts'
 import { sceneThumb } from '../mock/art.ts'
@@ -99,7 +99,8 @@ const frames = createFrameThumbnails(appMedia)
 
 /**
  * A 160×90 frame of a clip's video at `sourceTime` (usually the clip's in-point, `clip.sourceStart`), e.g. for a
- * timeline clip. Images, sample media and videos whose frame is still being made get the asset's thumbnail.
+ * timeline clip. While the frame for a new time is being made (the in-point is trimmed), the last frame shown stays.
+ * Images, sample media and videos with no frame made yet get the asset's thumbnail.
  */
 export function useFrameThumbnail(asset: Asset | undefined, sourceTime: number): string | undefined {
   const scene = sceneOf(asset)
@@ -108,6 +109,11 @@ export function useFrameThumbnail(asset: Asset | undefined, sourceTime: number):
     asset && !scene ? frames.get(asset, sourceTime) : undefined,
   )
   useEffect(() => (asset && !scene ? frames.want(asset, sourceTime) : undefined), [asset, scene, sourceTime])
+  const [last, setLast] = useState<{ assetId: string; time: number; url: string } | null>(null)
+  if (frame && asset && last?.url !== frame) setLast({ assetId: asset.id, time: sourceTime, url: frame })
+  const kept = !frame && asset && last?.assetId === asset.id ? last : null
+  // The kept frame is wanted until a new one replaces it, so the cache does not drop it (and revoke its URL) meanwhile.
+  useEffect(() => (asset && kept ? frames.want(asset, kept.time) : undefined), [asset, kept])
   if (scene) return sceneThumb(scene, 160, 90)
-  return frame ?? whole
+  return frame ?? kept?.url ?? whole
 }

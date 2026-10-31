@@ -92,4 +92,41 @@ test('imported footage shows its own frames: the library card, and the inspector
   await setInPoint(1)
   await expect.poll(async () => (await shown(headerThumb))?.frame, { timeout: 15_000 }).toBe(30)
   expect(await shown(headerThumb)).toMatchObject({ url: 'blob:', width: 160, height: 90 })
+
+  // While the in-point is trimmed, the header keeps the last frame until the next one is made: it never shows the
+  // whole-clip thumbnail (the card's) or the icon in between.
+  const wholeUrl = await cardThumb.evaluate((el) => (el as HTMLElement).style.backgroundImage)
+  const header = await headerThumb.locator('..').elementHandle()
+  await page.evaluate((el) => {
+    const seen: string[] = []
+    const observer = new MutationObserver(() => {
+      const thumb = el!.querySelector<HTMLElement>('[style*="background-image"]')
+      seen.push(thumb ? thumb.style.backgroundImage : 'none')
+    })
+    observer.observe(el!, { subtree: true, childList: true, attributes: true, attributeFilter: ['style'] })
+    Object.assign(window, { trim: { seen, stop: () => observer.disconnect() } })
+  }, header)
+  await page.evaluate(async () => {
+    const { editor } = window.mvStudio.app.project
+    const clip = Object.values(editor.getProject().clips).find(
+      (c) => (c as { type: string }).type === 'video',
+    ) as { id: string }
+    for (let i = 11; i <= 25; i++) {
+      editor.dispatch(
+        { type: 'clip.set', clipId: clip.id, path: ['sourceStart'], value: i / 10 },
+        { coalesceKey: 'e2e:trim' },
+      )
+      await new Promise(requestAnimationFrame)
+    }
+    editor.endGesture()
+  })
+  await expect.poll(async () => (await shown(headerThumb))?.frame, { timeout: 15_000 }).toBe(75)
+  const seen: string[] = await page.evaluate(() => {
+    const { trim } = window as unknown as { trim: { seen: string[]; stop: () => void } }
+    trim.stop()
+    return trim.seen
+  })
+  expect(seen.length).toBeGreaterThan(1)
+  expect(seen).not.toContain('none')
+  expect(seen).not.toContain(wholeUrl)
 })
