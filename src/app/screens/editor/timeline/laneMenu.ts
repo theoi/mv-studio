@@ -3,10 +3,12 @@ import { ClipboardPaste, Sparkles } from 'lucide-react'
 import { create } from 'zustand'
 import { clipsOnTrack, type Project } from '../../../../model/index.ts'
 import { formatTime } from '../../../format.ts'
-import { hasClipboard, pasteAt, pasteHereTarget } from '../../../state/clipboard.ts'
+import { hasClipboard, pasteAt, pasteHereOutcome, type PasteHereOutcome } from '../../../state/clipboard.ts'
 import { cloudSettings } from '../../../state/cloud.ts'
 import { gapAt, generateInGap, shotStart } from '../../../state/generate.ts'
-import { editor, isLookClip } from '../../../state/project.ts'
+import { editor, isLookClip, sectionsOf } from '../../../state/project.ts'
+import { get } from '../../../state/ui.ts'
+import { beatGridOf } from '../../../../vj/quantize.ts'
 
 /** Where a lane was right-clicked: the track and the time under the pointer. */
 export interface LaneSpot {
@@ -61,18 +63,52 @@ const generateShot: LaneItem = {
   run: (spot) => generateInGap(spot.trackId, spot.time),
 }
 
+/** Snapping distance on screen, as for dragged clips. */
+const SNAP_PX = 8
+
+/**
+ * Where Paste here puts the first copied clip: the right-clicked time, snapped like a dropped clip when snapping is on
+ * (to the track's clip edges, the playhead, section starts, and the song's beats with beat snapping).
+ */
+export function pasteHereTime(project: Project, spot: LaneSpot): number {
+  const { snap, beatSnap, playhead, pxPerSec } = get()
+  if (!snap) return spot.time
+  const targets = [
+    ...clipsOnTrack(project, spot.trackId).flatMap((c) => [c.start, c.start + c.duration]),
+    playhead,
+    ...sectionsOf(project).map((s) => s.start),
+    ...(beatSnap ? (beatGridOf(project)?.beats ?? []) : []),
+  ]
+  let best = spot.time
+  let distance = SNAP_PX / pxPerSec
+  for (const t of targets) {
+    if (Math.abs(t - spot.time) >= distance) continue
+    best = t
+    distance = Math.abs(t - spot.time)
+  }
+  return best
+}
+
+const WHERE: Record<PasteHereOutcome, string> = {
+  here: '',
+  own: ' · on their own tracks',
+  new: ' · on a new track',
+  'new-tracks': ' · on new tracks',
+  mixed: ' · on several tracks',
+}
+
 const pasteHere: LaneItem = {
   group: 'clipboard',
   label: 'Paste here',
   icon: ClipboardPaste,
   applies: () => true,
   description: (project, spot) => {
-    const target = pasteHereTarget(project, spot.trackId, spot.time)
-    if (!target) return 'Copy clips first'
-    return `At ${formatTime(spot.time, true)}${target === 'own' ? ' · on their own tracks' : ''}`
+    const time = pasteHereTime(project, spot)
+    const outcome = pasteHereOutcome(project, spot.trackId, time)
+    return outcome ? `At ${formatTime(time, true)}${WHERE[outcome]}` : 'Copy clips first'
   },
   disabled: () => !hasClipboard(),
-  run: (spot) => pasteAt(spot.trackId, spot.time),
+  run: (spot) => pasteAt(spot.trackId, pasteHereTime(editor.getProject(), spot)),
 }
 
 /** The lane menu's items, in order. Generate a shot here stays last. */

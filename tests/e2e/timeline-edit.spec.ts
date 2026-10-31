@@ -330,7 +330,8 @@ test('Paste here on an empty stretch of a lane pastes at that time, on that trac
   page,
 }) => {
   await openEditor(page, '#/editor?t=60')
-  await page.evaluate(() => window.mvStudio.app.ui.set({ review: false }))
+  // Snapping off first, so the copies land exactly at the right-clicked time; it is checked at the end.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ review: false, snap: false }))
   const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
   const spectrum = page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' })
   const box = (await spectrum.boundingBox())!
@@ -367,16 +368,33 @@ test('Paste here on an empty stretch of a lane pastes at that time, on that trac
   await page.keyboard.press(`${mod}+z`)
   await expect(pasted).toHaveCount(0)
 
-  // Where the spectrum is in the way, it pastes there by the usual rules, and says so.
+  // Where the spectrum is in the way, the usual rules apply. The clip's own Video track is full there too, so the copy
+  // goes on a new track, and the line says so.
   await rightClickOverlay(63.05)
-  await expect(item).toContainText(/At 1:03\.0 · on their own tracks$/)
+  await expect(item).toContainText(/At 1:03\.0 · on a new track$/)
   await item.click()
   const elsewhere = await page.evaluate(() => {
     const { ui, project } = window.mvStudio.app
     const [id] = ui.selectedClipIds(ui.get().selection)
-    const clip = project.editor.getProject().clips[id]
-    return { trackId: clip.trackId, start: Math.round(clip.start * 100) / 100 }
+    const p = project.editor.getProject()
+    const clip = p.clips[id]
+    return { track: p.tracks.find((t: { id: string }) => t.id === clip.trackId)?.name, start: clip.start }
   })
-  expect(elsewhere.trackId).not.toBe('t-overlay')
+  expect(elsewhere.track).toBe('Video 2')
   expect(elsewhere.start).toBeCloseTo(63.05, 1)
+  await page.keyboard.press(`${mod}+z`)
+
+  // With snapping on, the paste lands on the nearest beat, and the line shows that time.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ snap: true, beatSnap: true }))
+  await rightClickOverlay(61.37)
+  await expect(item).toContainText(/At 1:01\.5$/)
+  await item.click()
+  const snapped = await page.evaluate(() => {
+    const { ui, project } = window.mvStudio.app
+    const [id] = ui.selectedClipIds(ui.get().selection)
+    const p = project.editor.getProject()
+    return { start: p.clips[id].start, beats: p.analysis.audio[p.songAssetId].beats as number[] }
+  })
+  expect(snapped.start).not.toBeCloseTo(61.37, 2)
+  expect(snapped.beats.some((b) => Math.abs(b - snapped.start) < 1e-6)).toBe(true)
 })
