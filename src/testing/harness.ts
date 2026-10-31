@@ -2,6 +2,7 @@
  * Test harness for e2e tests and debugging: exposes engine modules on window.mvStudio. Loaded only when the URL has
  * an `e2e` query parameter, as a separate chunk.
  */
+import * as analysis from '../analysis/client.ts'
 import * as animation from '../engine/animation.ts'
 import * as audio from '../engine/audio.ts'
 import { createAudioSampler } from '../engine/audioFeatures.ts'
@@ -58,6 +59,7 @@ export function installHarness(): void {
       WebAudioPlaybackClock,
       PreviewController,
     },
+    analysis,
     shared: { jobs, detectCapabilities },
     testing: { createCompositor, readPixels },
     /** Files most recently set on #e2e-file-input (Playwright setInputFiles). */
