@@ -12,6 +12,7 @@ import { currentLook, ORIGINAL_LOOK } from '../../../src/plugins/looks.ts'
 import {
   addEffect,
   addTransition,
+  addVisual,
   chooseLook,
   chosenLookId,
   dropLibraryItem,
@@ -22,6 +23,7 @@ import {
   matchesQuery,
   startLibraryDrag,
   transitionTarget,
+  visualPlacement,
 } from '../../../src/app/state/library.ts'
 import { editor } from '../../../src/app/state/project.ts'
 import { get, set } from '../../../src/app/state/ui.ts'
@@ -225,5 +227,68 @@ describe('dropping library items on the timeline', () => {
     expect(libraryDropHint(s.b.trackId, 12)).toBeNull()
     endLibraryDrag()
     expect(libraryDropHint(s.b.trackId, 5)).toBeNull()
+  })
+})
+
+describe('adding visuals', () => {
+  beforeEach(() => set({ selection: { type: 'none' }, playhead: 1, toasts: [] }))
+
+  it('puts a visual on a new Visuals track right above the footage when no track there is free', () => {
+    const s = scene()
+    editor.load(s.p)
+    chooseLook('warm')
+    addVisual('visualizer.spectrum')
+    const p = editor.getProject()
+    // The locked track's image is the top footage.
+    expect(p.tracks.map((t) => t.name)).toEqual(['Lyrics', 'Look', 'Visuals', 'Locked', 'Video 1', 'Song'])
+    const clip = Object.values(p.clips).find((c) => c.type === 'generator')
+    // No song sections: it lasts 8 s from the playhead, in the look's visualizer colors.
+    expect(clip).toMatchObject({ trackId: p.tracks[2]!.id, start: 1, duration: 8, name: 'Spectrum bars' })
+    expect(clip?.type === 'generator' && clip.params.color?.value).toBe('#fde68a')
+    expect(editor.undoLabel()).toBe('Add visual: Spectrum bars')
+    expect(get().selection).toEqual({ type: 'clip', id: clip!.id })
+    expect(get().toasts.at(-1)?.message).toBe('“Spectrum bars” added from 0:01 to 0:09')
+    editor.undo()
+    expect(editor.getProject().tracks.map((t) => t.name)).toEqual([
+      'Lyrics',
+      'Look',
+      'Locked',
+      'Video 1',
+      'Song',
+    ])
+  })
+
+  it('uses a free unlocked track above the footage', () => {
+    const s = scene()
+    const overlay = createTrack('visual', 'Overlay')
+    s.p.tracks.splice(1, 0, overlay)
+    expect(visualPlacement(s.p, 1)).toEqual({ start: 1, duration: 8, trackId: overlay.id })
+    // Busy where the visual would go: a new track instead.
+    const title = createTextClip({ trackId: overlay.id, text: 'Title', start: 6, duration: 2 })
+    s.p.clips[title.id] = title
+    expect(visualPlacement(s.p, 1)).toEqual({ start: 1, duration: 8, newTrackIndex: 2 })
+  })
+
+  it('drops a visual on a free stretch of a track, up to the next clip there, and nowhere else', () => {
+    const s = scene()
+    editor.load(s.p)
+    const footage = s.a.trackId
+    startLibraryDrag({ dataTransfer: null }, { kind: 'visual', id: 'visualizer.spectrum' })
+    // The gap from 11 s ends where the next clip starts, at 14 s.
+    expect(libraryDropHint(footage, 11.5)).toEqual({ trackId: footage, start: 11.5, end: 14 })
+    expect(libraryDropHint(footage, 5)).toBeNull()
+    expect(libraryDropHint(s.line.trackId, 6)).toBeNull()
+    expect(libraryDropHint(s.top.trackId, 6)).toEqual({ trackId: s.top.trackId, locked: true, at: 6 })
+    endLibraryDrag()
+
+    dropLibraryItem({ kind: 'visual', id: 'visualizer.spectrum' }, { trackId: footage, time: 11.5 })
+    const clip = Object.values(editor.getProject().clips).find((c) => c.type === 'generator')
+    expect(clip).toMatchObject({ trackId: footage, start: 11.5, duration: 2.5, name: 'Spectrum bars' })
+    expect(get().selection).toEqual({ type: 'clip', id: clip!.id })
+    expect(editor.undoLabel()).toBe('Add visual: Spectrum bars')
+
+    dropLibraryItem({ kind: 'visual', id: 'visualizer.spectrum' }, { trackId: footage, time: 5 })
+    expect(Object.values(editor.getProject().clips).filter((c) => c.type === 'generator')).toHaveLength(1)
+    expect(get().toasts.at(-1)?.message).toBe('Drop “Spectrum bars” on an empty part of a track')
   })
 })

@@ -92,3 +92,18 @@ test('transition and effect tiles play their preview on hover, and a click still
   await library.getByRole('button', { name: 'RGB split', exact: true }).click()
   await expect(page.getByText(/^“RGB split” added to /)).toBeVisible()
 })
+
+test('hovering a visualizer tile plays it reacting to the sample song', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?lib=visuals&t=66.9'
+  })
+  await waitForPreview(page)
+  const tile = page
+    .getByRole('tabpanel', { name: 'Visuals' })
+    .getByRole('button', { name: 'Spectrum bars, reacts to the music', exact: true })
+  expect(await motion(page, tile)).toBeLessThan(0.5)
+  await tile.hover()
+  await expect.poll(() => motion(page, tile)).toBeGreaterThan(1)
+})
