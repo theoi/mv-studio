@@ -43,7 +43,14 @@ export {
 } from './render/maskShader.ts'
 export { baseCropSize, cropAt, planReframe, type ReframeOptions } from './reframe/planner.ts'
 export type { PersonTrackOptions, PersonTrackResult } from './segmentation/personTrack.ts'
-export type { SelectionTrackOptions, SelectionTrackResult } from './segmentation/selectionTrack.ts'
+export { selectionStateAt } from './segmentation/selectionTrack.ts'
+export type {
+  SelectionClick,
+  SelectionSpan,
+  SelectionState,
+  SelectionTrackOptions,
+  SelectionTrackResult,
+} from './segmentation/selectionTrack.ts'
 export type { LivePreviewSegmenter, LivePreviewOptions } from './segmentation/preview.ts'
 export type { FootageMatcher } from './matching/matcher.ts'
 export type { DepthService, DepthRequest } from './depth/service.ts'

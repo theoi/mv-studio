@@ -20,12 +20,35 @@ jobs.run({
 - `livePreview()`: person mask per playback frame (pass ~256 px frames; ~9 ms per frame). Drops stale frames instead of lagging.
 - `checkSuitability(source)`: `{ verdict, reasons, suitableRanges }` for the UI ("subject too small", "no subject", ...). Takes about 2–4 s per shot.
 - `personTrack(source, { hqRanges })`: export mask track (512 px, output fps, edge-refined, zero-lag temporal filter, MODNet matte inside `hqRanges`). Cached per media id and options.
-- `selectionTrack(source, { t, points })`: object the user clicked, followed through the clip.
+- `selectionTrack(source, { t, points }, { corrections })`: object the user clicked, followed through the clip, with per-frame states and correction clicks (see below).
 - `subjects(source)`: subject track for auto-reframe (see below).
 - `indexClip(source)` + `matcher.rank(library, { text, mood, energy })`: footage ranking for lyric lines. `createDirectorFootageMatcher` adapts this to the director's interface. For the app, `createFootageService` (below) analyzes imports in the background and searches the library.
 - `depth.get({ mediaId, quality, sourceSize, frame })`: Depth Anything V2 Small depth map, cached per media id and quality. `addCameraMove` builds on it (see below).
 
 Frames come from a `FrameSource` (`runtime/frames.ts`). Use `createAssetFrameSource(asset, mediaStore)` for stored assets: it decodes through the engine's export decoder, so analysis sees exactly the exported pixels, and it is about 4x faster than seeking a `<video>`. `createVideoElementSource` covers blobs that are not stored yet.
+
+## Click-to-select tracking
+
+```ts
+const first = { t: 2, points: [{ x: 0.19, y: 0.48 }] }
+const sel = await vision.selectionTrack(source, first, fromJob(ctx))
+// The user clicked the object again where it was lost:
+const fixed = await vision.selectionTrack(source, first, {
+  ...fromJob(ctx),
+  corrections: [{ t: 0.5, points }],
+})
+const blob = await encodeMaskVideo(fixed.track, { duration }) // then a clip matte, as for person masks
+```
+
+- Each mask frame (10 per second) predicts where the object is from the camera motion and the object's own speed, prompts MagicTouch on points inside that prediction (moved onto the object's own colours when something covers part of it) and keeps the result only if it agrees in place, size and colour with the clicked object. It does not slide onto a neighbour it merges with or onto someone who walks in front; those frames are `lost`, and the neighbour's colours count as background from then on. A lost object is searched for near where it should be and picked up again when it reappears. About 0.23 s per mask frame on CPU (an 8 s clip in about 19 s).
+- States per mask frame in `states` (with `confidence`, 0..1), as runs in `spans` (`{ start, end, state }` in media seconds, for a strip under the clip), and at a time with `selectionStateAt(result, t)`:
+  - `tracking`: found.
+  - `uncertain`: found, but partly hidden, just picked up again or a weak match.
+  - `lost`: expected in view but not found. The first 0.2 s keep the predicted mask so a dropout does not flicker; after that the mask is empty, so nothing is cut out where the object is not.
+  - `out-of-frame`: the object left the picture; empty mask. Nothing to fix.
+- Corrections: `needsCorrection` lists the times worth a second click (the start of each `lost` run and of `uncertain` runs of 0.5 s or more), e.g. "Lost at 0:01.1 · click it to fix". Pass every later click as `corrections`; each re-anchors the track: frames up to halfway to the neighbouring clicks follow from it, and further where the neighbour had lost the object. Results are cached per set of clicks.
+- Limits: prompts are positive points, so two objects touching at a click (two people walking together) are selected together, also by a correction.
+- Review on real footage: `SELECTION_QUALITY=1 npx playwright test tests/e2e/selection-quality.spec.ts` writes contact sheets (mask tinted by state, IoU between frames) and export renders with text behind the selection.
 
 ## Footage library: search, suggestions, background analysis
 
