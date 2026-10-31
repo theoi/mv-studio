@@ -91,6 +91,8 @@ export interface DirectorDeps {
 
 /** Share of the plan's progress spent finding the song's bars when they are not found yet (often the longest step). */
 const BARS_SHARE = 0.5
+/** Share for a pass of finding the bars that starts over from 0 (the beat model's download, then the song's analysis). */
+const BARS_PASS_SHARE = 0.2
 /** Share spent waiting for the song analysis, when the plan has to. */
 const SONG_SHARE = 0.25
 /** As the song's row in the Library says while it is analyzed. */
@@ -264,15 +266,21 @@ export class DirectorSession {
               ctx.progress({ stage: 'song', fraction: SONG_SHARE * f, message: SONG_NOTE })
             },
           })
-        const barsFrom = share
+        // Each pass that starts over gets the next band above the last, so the bar keeps moving through it.
+        let barsFrom = share
+        let barsTo = BARS_SHARE
+        let lastBars = 0
         const bars = this.deps.ensureBars
           ? await this.deps.ensureBars({
               signal: ctx.signal,
               progress: (f) => {
-                share = BARS_SHARE
+                // Planning keeps at least a tenth of the bar.
+                if (f < lastBars) [barsFrom, barsTo] = [barsTo, Math.min(0.9, barsTo + BARS_PASS_SHARE)]
+                lastBars = f
+                share = barsTo
                 ctx.progress({
                   stage: 'bars',
-                  fraction: barsFrom + (BARS_SHARE - barsFrom) * f,
+                  fraction: barsFrom + (barsTo - barsFrom) * f,
                   message: BARS_NOTES.finding,
                 })
               },

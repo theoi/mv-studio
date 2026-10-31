@@ -344,7 +344,7 @@ describe('DirectorSession and the song’s bars', () => {
     expect(planned.preview.warnings).toContain(BARS_NOTES.beatsOnly)
   })
 
-  it('never moves the bar back when finding the bars starts a second pass', async () => {
+  it('gives a second pass of finding the bars its own band above the first, so the bar keeps moving', async () => {
     const editor = withoutBars()
     const jobs = new JobRunner()
     const seen = progressOf(jobs)
@@ -361,7 +361,13 @@ describe('DirectorSession and the song’s bars', () => {
     const fractions = seen.flatMap(([, f]) => (f === undefined ? [] : [f]))
     expect(fractions.length).toBeGreaterThan(3)
     expect(fractions).toEqual([...fractions].sort((a, b) => a - b))
-    expect(seen).toContainEqual(['bars', 0.5])
+    const bars = seen.filter(([stage]) => stage === 'bars').map(([, f]) => f ?? 0)
+    expect(bars).toHaveLength(3)
+    expect(bars[0]).toBeCloseTo(0.5)
+    expect(bars[1]).toBeCloseTo(0.56)
+    expect(bars[2]).toBeCloseTo(0.62)
+    // Planning takes the rest of the bar after both passes.
+    expect(seen.find(([stage]) => stage === 'gather')?.[1]).toBeCloseTo(0.715)
   })
 })
 
@@ -458,7 +464,7 @@ describe('DirectorSession says it is slow only for the stage at hand', () => {
     ready(await planned)
   })
 
-  it('is not slow while a second pass of the bars moves, though the bar waits above it', async () => {
+  it('is not slow while a second pass of the bars moves', async () => {
     let seenSlow = false
     const session = new DirectorSession({
       editor: editor(),
