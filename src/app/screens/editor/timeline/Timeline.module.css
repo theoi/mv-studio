@@ -363,6 +363,14 @@
   pointer-events: none;
 }
 
+/* Footage clips also get a dark left edge, so back-to-back clips of similar frames stay apart. */
+.clip-video::after,
+.clip-image::after {
+  box-shadow:
+    inset 1px 0 0 rgb(0 0 0 / 0.55),
+    inset -1px 0 0 rgb(0 0 0 / 0.55);
+}
+
 .clip:hover {
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22);
 }
@@ -405,13 +413,16 @@
   opacity: 0.8;
 }
 
+/* A dark chip, so the name stays readable over bright frames. */
 .mediaLabel {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  padding: 2px 6px 6px;
-  background: linear-gradient(180deg, rgb(0 0 0 / 0.65), transparent);
+  left: 3px;
+  top: 3px;
+  width: fit-content;
+  max-width: calc(100% - 6px);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 0.6);
   color: #fff;
   font-size: 10px;
   font-weight: var(--weight-medium);

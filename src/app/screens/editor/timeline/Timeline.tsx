@@ -549,7 +549,7 @@ function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
-  const showLabel = width > 54
+  const showLabel = width > (isMedia ? 36 : 54)
   const label =
     clip.kind === 'look' && clip.amount !== undefined
       ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
