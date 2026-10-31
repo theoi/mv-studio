@@ -16,7 +16,14 @@ import {
 } from 'lucide-react'
 import { isLocalEndpoint } from '../../../../cloud/llm/presets.ts'
 import { formatEstimate } from '../../../../cloud/pricing.ts'
-import type { DirectorState, GeneratedUnit, PlanCost, PlanDescription } from '../../../../director/index.ts'
+import type {
+  DirectorRequest,
+  DirectorState,
+  GeneratedUnit,
+  PlanCost,
+  PlanDescription,
+} from '../../../../director/index.ts'
+import { NO_AI_SCENES } from '../../../../director/notes.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Dialog } from '../../../ds/Dialog.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
@@ -30,6 +37,7 @@ import {
   draftLocally,
   draftProgress,
   draftVideo,
+  draftWithAiShots,
   paidCost,
   resetDirector,
   showTracks,
@@ -68,14 +76,38 @@ function sentence(text: string): string {
   return /[.!?…]$/.test(t) ? t : `${t}.`
 }
 
-function Notes({ warnings }: { warnings: string[] }) {
-  if (!warnings.length) return null
+function Notes({ warnings, request }: { warnings: string[]; request: DirectorRequest }) {
+  // The draft was made without fal.ai, or with My clips. Once fal.ai is connected, the next step is drafting with AI shots.
+  const offerAi = Boolean(useCloud().falKey) && warnings.includes(NO_AI_SCENES)
+  const shown = offerAi ? warnings.filter((w) => w !== NO_AI_SCENES) : warnings
   return (
-    <ul className={styles.tips}>
-      {warnings.map((w) => (
-        <li key={w}>{w}</li>
-      ))}
-    </ul>
+    <>
+      {shown.length > 0 && (
+        <ul className={styles.tips}>
+          {shown.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+      {offerAi && (
+        <div className={styles.callout}>
+          <Sparkles />
+          <div>
+            <div>
+              This draft uses your media or visuals. With fal.ai connected, the director can add AI scenes.
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className={styles.calloutBtn}
+              onClick={() => draftWithAiShots(request)}
+            >
+              Draft again with AI shots
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -382,7 +414,7 @@ function ReadyView({
       }
     >
       <p className={styles.lede}>{state.preview.summary}</p>
-      <Notes warnings={state.preview.warnings} />
+      <Notes warnings={state.preview.warnings} request={state.request} />
       <PlanList description={description} />
       <div className={styles.rowActions}>
         <Button size="sm" variant="ghost" onClick={resetDirector}>
@@ -497,7 +529,7 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
           </div>
         </div>
       </div>
-      <Notes warnings={state.warnings} />
+      <Notes warnings={state.warnings} request={state.request} />
       {state.failedShots > 0 && (
         <div className={styles.rowActions}>
           <Button

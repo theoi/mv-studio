@@ -5,6 +5,9 @@ import { JobError, JobRunner, type JobContext, type JobProgress } from '../../..
 import { browserFetch } from './mocks/browser.ts'
 import { FAL_TEST_KEY, MockFalServer } from './mocks/fal-server.ts'
 
+const PNG_HEAD = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const JPEG_HEAD = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+
 function setup(key = FAL_TEST_KEY) {
   const server = new MockFalServer()
   const net = browserFetch(server.servers())
@@ -110,6 +113,41 @@ describe('fal.ai adapter against a mock fal queue', () => {
     expect(result.media[0]).toMatchObject({ kind: 'video', mimeType: 'video/mp4' })
     expect(result.estimate.usd).toBeCloseTo(0.56)
     expect(progress.some((p) => p.stage === 'upload')).toBe(true)
+  })
+
+  it.each([
+    {
+      what: 'an untyped image named after its asset, as browser storage returns a generated one',
+      still: () => new File([PNG_HEAD, 'rest'], 'AI image: neon city, rain', { type: '' }),
+      type: 'image/png',
+      name: 'AI-image-neon-city-rain.png',
+    },
+    {
+      what: 'a JPEG whose name and type say PNG',
+      still: () => new File([JPEG_HEAD, 'rest'], 'sunset.png', { type: 'image/png' }),
+      type: 'image/jpeg',
+      name: 'sunset.jpg',
+    },
+  ])('uploads $what with its real type and a matching extension', async ({ still, type, name }) => {
+    const { server, provider } = setup()
+    const url = server.file('clip.mp4', new Blob(['mp4'], { type: 'video/mp4' }))
+    server.script('minimax/h3-max-turbo/image-to-video', {
+      result: { video: { url, content_type: 'video/mp4' } },
+    })
+    await provider.generate(
+      {
+        task: 'image-to-video',
+        modelId: 'minimax/h3-max-turbo/image-to-video',
+        prompt: 'slow push in',
+        image: still(),
+        aspect: '16:9',
+      },
+      context().ctx,
+    )
+    expect(server.initiated).toEqual([{ file_name: name, content_type: type }])
+    expect([...server.uploadTypes.values()]).toEqual([type])
+    const input = [...server.queued.values()][0]?.input as Record<string, unknown>
+    expect(String(input.image_url).endsWith(`/${name}`)).toBe(true)
   })
 
   it('maps a rejected key to a bad-key error that never contains the key', async () => {

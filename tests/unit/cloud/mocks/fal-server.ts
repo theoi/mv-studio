@@ -32,6 +32,10 @@ export class MockFalServer {
   validKey = FAL_TEST_KEY
   readonly queued = new Map<string, QueuedRequest>()
   readonly uploads = new Map<string, Blob>()
+  /** Content-Type of each upload, by the same token as `uploads`. */
+  readonly uploadTypes = new Map<string, string>()
+  /** Bodies of upload initiations, in order. */
+  readonly initiated: { file_name: string; content_type: string }[] = []
   readonly files = new Map<string, Blob>()
   private scripts = new Map<string, FalScript>()
   private nextId = 1
@@ -130,6 +134,7 @@ export class MockFalServer {
     const url = new URL(request.url)
     if (request.method === 'POST' && url.pathname === '/storage/upload/initiate') {
       const body = (await request.json()) as { file_name: string; content_type: string }
+      this.initiated.push({ file_name: body.file_name, content_type: body.content_type })
       const token = `up${this.nextId++}`
       return json(
         {
@@ -148,6 +153,7 @@ export class MockFalServer {
     if (request.method === 'PUT' && url.pathname.startsWith('/upload/')) {
       const token = url.pathname.split('/')[2] ?? ''
       this.uploads.set(token, await request.blob())
+      this.uploadTypes.set(token, request.headers.get('content-type') ?? '')
       return new Response('', { status: 200, headers: corsAll })
     }
     const file = this.files.get(`${url.origin}${url.pathname}`)

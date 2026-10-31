@@ -36,6 +36,39 @@ export const FAL_CANCEL_NOTICE =
 
 const NIL_REQUEST_ID = '00000000-0000-0000-0000-000000000000'
 
+const ascii = (b: Uint8Array, from: number, to: number) => String.fromCharCode(...b.subarray(from, to))
+
+/** Image formats by their first bytes, with the extension that goes with each. */
+const IMAGE_FORMATS: readonly { type: string; ext: string; is: (head: Uint8Array) => boolean }[] = [
+  { type: 'image/png', ext: 'png', is: (b) => b[0] === 0x89 && ascii(b, 1, 4) === 'PNG' },
+  { type: 'image/jpeg', ext: 'jpg', is: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  { type: 'image/webp', ext: 'webp', is: (b) => ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP' },
+  { type: 'image/gif', ext: 'gif', is: (b) => ascii(b, 0, 4) === 'GIF8' },
+  {
+    type: 'image/avif',
+    ext: 'avif',
+    is: (b) => ascii(b, 4, 8) === 'ftyp' && /^avi[fs]$/.test(ascii(b, 8, 12)),
+  },
+]
+
+/**
+ * The image as a file with its real type and a name ending in the matching extension. Files read back from browser
+ * storage have no type, and a generated image's stored name has no extension, so fal.ai would otherwise keep it as
+ * application/octet-stream under a name without one.
+ */
+async function asImageFile(blob: Blob): Promise<Blob> {
+  const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer())
+  const format = IMAGE_FORMATS.find((f) => f.is(head)) ?? IMAGE_FORMATS.find((f) => f.type === blob.type)
+  if (!format) return blob
+  const name = blob instanceof File ? blob.name.replace(/\.[a-z0-9]{1,5}$/i, '') : ''
+  const base =
+    name
+      .replace(/[^\w.-]+/g, '-')
+      .replace(/^[-.]+|[-.]+$/g, '')
+      .slice(0, 60) || 'image'
+  return new File([blob], `${base}.${format.ext}`, { type: format.type })
+}
+
 export function humanDuration(seconds: number): string {
   if (seconds < 10) return 'a few seconds'
   if (seconds < 50) return `about ${Math.round(seconds / 5) * 5} s`
@@ -246,7 +279,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
       message: what === 'image' ? 'Uploading the image' : 'Uploading the audio',
     })
     try {
-      const url = await this.client.storage.upload(blob)
+      const url = await this.client.storage.upload(what === 'image' ? await asImageFile(blob) : blob)
       ctx.throwIfCancelled()
       return url
     } catch (error) {

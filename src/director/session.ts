@@ -22,7 +22,7 @@ import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
 import { compilePlan, type CompiledPlan } from './compile.ts'
 import { estimatePlanCost, requiresConfirmation, type PlanCost, type SpendPolicy } from './cost.ts'
 import { previewCommands, type ChangeItem } from './diff.ts'
-import { DirectorError } from './expand.ts'
+import { DirectorError, summaryLeft } from './expand.ts'
 import { generatePlanShots, generationOptionsFor, type GenerationChoice } from './generate.ts'
 import {
   buildPlannerInput,
@@ -441,12 +441,13 @@ export class DirectorSession {
     const { cost, confirmRequired, toMake } = this.spendFor(plan)
     const usd = cost?.usd ?? 0
     const unit = generatedUnit(plan)
+    const left = shotsToGenerate(plan).filter((s) => !done.has(s.id)).length
     return {
       status: 'ready',
       request,
       plan,
       preview: {
-        summary: plan.summary,
+        summary: summaryLeft(plan, left),
         changes: preview.ok ? preview.summary : preview.message,
         items: preview.ok ? preview.items : [],
         warnings: [...new Set([...plan.warnings, ...compiled.warnings])],

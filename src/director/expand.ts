@@ -10,6 +10,7 @@ import { chooseClips, type ChooseSpan, type PoolItem } from '../vision/index.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
 import { bestByTags, findItem, type CatalogItem, type LookPreset } from './catalog.ts'
 import type { BrightnessRequest } from './contrast.ts'
+import { NO_AI_SCENES } from './notes.ts'
 import {
   energyScale,
   musicEnd,
@@ -22,6 +23,7 @@ import {
 import {
   editPlanSchema,
   PACES,
+  shotsToGenerate,
   type AudioBinding,
   type EditPlan,
   type EffectSpec,
@@ -170,9 +172,7 @@ function resolveVisual(wanted: CreativeBrief['visual'], input: PlannerInput, war
     return hasGenerators ? 'visualizer' : 'solid'
   }
   if (wanted === 'generated' && !input.generation) {
-    warnings.push(
-      'This draft uses your media or visuals. To generate AI scenes, connect fal.ai in Settings and turn on AI shots.',
-    )
+    warnings.push(NO_AI_SCENES)
     return fallback()
   }
   if (wanted === 'footage' && !hasVideo && !hasImage) {
@@ -1451,16 +1451,25 @@ function clipLengths(shots: PlanShot[]): PlanShot[] {
   })
 }
 
+const toGenerate = (count: number) => `${count} to generate`
+
+/** The plan's summary counting only the AI shots still to generate, once some are made (kept after a Cancel). */
+export function summaryLeft(plan: Pick<EditPlan, 'summary' | 'shots'>, left: number): string {
+  const total = shotsToGenerate(plan).length
+  if (left >= total) return plan.summary
+  return plan.summary.replace(`, ${toGenerate(total)}`, left > 0 ? `, ${toGenerate(left)}` : '')
+}
+
 function summarize(plan: Omit<EditPlan, 'summary'>, ctx: Ctx): string {
   const main = plan.shots.filter((s) => s.layer === 'main')
   const mediaIds = new Set(main.flatMap((s) => (s.source.type === 'media' ? [s.source.assetId] : [])))
-  const toGenerate = plan.shots.filter((s) => s.source.type === 'generate' && !s.source.sameAs).length
+  const generated = shotsToGenerate(plan).length
   const lyricCount = plan.texts.filter((t) => t.role === 'lyric').length
   const parts = [`${KIND_NAME[plan.kind]} with ${plan.sections.length} sections`]
   if (ctx.visual === 'visualizer') parts.push('music-reactive visuals')
   else if (main.length) parts.push(`${main.length} shots`)
   if (mediaIds.size) parts.push(`${mediaIds.size} of your ${mediaIds.size === 1 ? 'clip' : 'clips'}`)
-  if (toGenerate) parts.push(`${toGenerate} to generate`)
+  if (generated) parts.push(toGenerate(generated))
   if (lyricCount) parts.push(`${lyricCount} lyric lines`)
   if (plan.look) parts.push(`${plan.look.name} look`)
   const pacing =

@@ -510,6 +510,9 @@ test('cancelling AI video clips stops the one underway at fal.ai, keeps the clip
   const again = page.getByRole('button', { name: /^Generate 1 clip · about \$\d+\.\d\d$/ })
   await expect(again).toBeFocused()
   await expect(again).toBeInViewport()
+  // The plan's summary counts what is left to generate, as the button does.
+  await expect(page.getByText(/, 1 to generate[,.]/)).toBeVisible()
+  await expect(page.getByText(new RegExp(`, ${count} to generate[,.]`))).toHaveCount(0)
   // A screen reader hears what the Cancel kept as focus lands on Generate.
   await expect(again).toHaveAccessibleDescription(
     `Generation stopped. ${count - 1} clips made so far are kept.`,
@@ -517,6 +520,54 @@ test('cancelling AI video clips stops the one underway at fal.ai, keeps the clip
   expect(fal.cancels).toEqual(['req-3'])
   expect(fal.submits).toHaveLength(count)
   expect((await draftState(page)).director).toBe(0)
+})
+
+test('a draft made without fal.ai offers to draft again with AI shots once fal.ai is connected', async ({
+  page,
+}, testInfo) => {
+  // fal.ai checks a key for free: a good key gets "not found" for a request that doesn't exist.
+  await page.context().route('https://queue.fal.run/**', (route) =>
+    route.request().method() === 'OPTIONS'
+      ? route.fulfill({ status: 204, headers: CORS })
+      : route.fulfill({
+          status: 404,
+          headers: CORS,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Request not found' }),
+        }),
+  )
+  await openDirector(page, undefined, 'ai')
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  const connectFirst = page.getByText(
+    'This draft uses your media or visuals. To generate AI scenes, connect fal.ai in Settings and turn on AI shots.',
+  )
+  await expect(connectFirst).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole('button', { name: 'Draft again with AI shots' })).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings
+    .getByRole('navigation', { name: 'Settings sections' })
+    .getByRole('button', { name: 'AI and cloud' })
+    .click()
+  await settings.getByLabel('fal.ai key').fill('key-id:key-secret')
+  await settings.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByText('Connected', { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(settings).toBeHidden()
+
+  // The draft stays as it was; its note now gives the step that's left.
+  await expect(connectFirst).toHaveCount(0)
+  await expect(
+    page.getByText(
+      'This draft uses your media or visuals. With fal.ai connected, the director can add AI scenes.',
+    ),
+  ).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('director-ai-scenes-connected.png') })
+  await page.getByRole('button', { name: 'Draft again with AI shots' }).click()
+  await expect(page.getByRole('button', { name: /^Generate \d+ shots · about \$\d+\.\d\d$/ })).toBeVisible({
+    timeout: 30_000,
+  })
 })
 
 test('a Cancel while a clip downloads says it is stopping, and keeps the clip fal.ai already made', async ({

@@ -9,6 +9,7 @@ import {
   type DirectorState,
   type Planner,
 } from '../../../src/director/index.ts'
+import { summaryLeft } from '../../../src/director/expand.ts'
 import type { DirectorDeps } from '../../../src/director/session.ts'
 import { BARS_NOTES } from '../../../src/model/queries.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
@@ -145,6 +146,12 @@ describe('DirectorSession', () => {
     const kept = after.generatedShots
     expect(kept).toBe(2)
     expect(after.cost?.count).toBe(total - kept)
+    // The summary counts what is left to generate, as the Generate button does.
+    expect(planned.preview.summary).toContain(`, ${total} to generate`)
+    expect(after.preview.summary).toBe(
+      planned.preview.summary.replace(`, ${total} to generate`, `, ${total - kept} to generate`),
+    )
+    expect(summaryLeft(planned.plan, 0)).toBe(planned.preview.summary.replace(`, ${total} to generate`, ''))
 
     provider.gate = undefined
     const callsBefore = provider.calls.length
