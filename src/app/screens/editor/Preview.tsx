@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   AudioLines,
   ChevronDown,
@@ -266,21 +266,30 @@ export function Preview() {
 
       {empty ? (
         <div className={styles.emptyStage}>
-          <EmptyState
-            icon={<AudioLines />}
-            title="Start with a song"
-            description="Drop a song file here. Its beats, sections and energy are found in a few seconds."
-            action={
-              <>
-                <Button variant="primary" icon={<Upload />} onClick={() => openImport('song')}>
-                  Import a song
-                </Button>
-                <Button variant="ghost" onClick={loadSample}>
-                  Use a sample
-                </Button>
-              </>
+          <div
+            className={styles.emptyFrame}
+            style={
+              { '--ratio': current.ratio, background: project.settings.backgroundColor } as CSSProperties
             }
+            aria-hidden
           />
+          <div className={styles.emptyCard}>
+            <EmptyState
+              icon={<AudioLines />}
+              title="Start with a song"
+              description="Drop a song file here. Its beats, sections and energy are found in a few seconds."
+              action={
+                <>
+                  <Button variant="primary" icon={<Upload />} onClick={() => openImport('song')}>
+                    Import a song
+                  </Button>
+                  <Button variant="ghost" onClick={loadSample}>
+                    Use a sample
+                  </Button>
+                </>
+              }
+            />
+          </div>
         </div>
       ) : (
         <ContextMenu onOpenChange={(open) => open && (menuTime.current = get().playhead)}>

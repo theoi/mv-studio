@@ -180,11 +180,35 @@
 }
 
 .emptyStage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  container-type: size;
+}
+
+/* The canvas in the project's background color, so a color picked before there is a song shows. */
+.emptyFrame {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(100cqw - 32px, (100cqh - 32px) * var(--ratio));
+  height: min(100cqh - 32px, (100cqw - 32px) / var(--ratio));
+  border-radius: 3px;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.05),
+    0 12px 40px rgb(0 0 0 / 0.5);
+}
+
+/* Readable over any background color; may be wider than a vertical frame. */
+.emptyCard {
+  position: relative;
+  max-width: calc(100% - 32px);
+  border-radius: var(--radius-lg);
+  background: rgb(17 18 22 / 0.9);
+  box-shadow: var(--shadow-pop);
 }
 
 .transport {
