@@ -4,7 +4,7 @@
  *   const project = useSyncExternalStore(editor.subscribe, editor.getProject)
  */
 import { applyPatches, enablePatches, produceWithPatches, type Patch } from 'immer'
-import { applyCommand, describeCommand, type EditCommand } from './commands.ts'
+import { applyCommand, describeCommand, EditError, type EditCommand } from './commands.ts'
 import type { Project } from './types.ts'
 
 enablePatches()
@@ -36,6 +36,18 @@ interface HistoryEntry {
 
 type Listener = (project: Project, change: EditChange) => void
 
+/**
+ * The project takes ownership of objects inside commands (e.g. the clip of clip.add) and immer deep-freezes them, so
+ * dispatch works on a copy: callers may reuse, re-dispatch or mutate their command objects afterwards.
+ */
+function cloneCommands(commands: EditCommand[]): EditCommand[] {
+  try {
+    return structuredClone(commands)
+  } catch {
+    throw new EditError('invalid', 'Edit commands must be plain, serializable data')
+  }
+}
+
 export class ProjectEditor {
   private project: Project
   private undoStack: HistoryEntry[] = []
@@ -60,7 +72,7 @@ export class ProjectEditor {
 
   /** Applies one or more commands as a single undo step. Throws EditError (and changes nothing) if any is invalid. */
   dispatch(commands: EditCommand | EditCommand[], options: DispatchOptions = {}): void {
-    const list = Array.isArray(commands) ? commands : [commands]
+    const list = cloneCommands(Array.isArray(commands) ? commands : [commands])
     if (list.length === 0) return
     const stamp = this.now().toISOString()
     const [next, patches, inversePatches] = produceWithPatches(this.project, (draft) => {
