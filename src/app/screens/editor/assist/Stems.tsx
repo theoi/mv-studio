@@ -1,14 +1,24 @@
+import { useEffect, useState } from 'react'
 import { AlertTriangle, Lock, RotateCcw } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
-import { startStems } from '../../../mock/actions.ts'
-import { peaks } from '../../../mock/song.ts'
-import { JOB_KINDS } from '../../../state/jobs.ts'
-import { songAnalysis, useProject } from '../../../state/project.ts'
-import { set } from '../../../state/ui.ts'
+import { formatBytes } from '../../../format.ts'
+import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
+import { hasSong, songAnalysis, useProject } from '../../../state/project.ts'
+import { estimateStems, startStems, stemBars } from '../../../state/stems.ts'
 import { pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
+
+const STEMS = [
+  { name: 'vocals', label: 'Vocals' },
+  { name: 'drums', label: 'Drums' },
+  { name: 'bass', label: 'Bass' },
+  { name: 'other', label: 'Other' },
+] as const
+
+/** Below this peak loudness (relative to the mix) a stem's waveform is a flat line, so the row says why. */
+const ALMOST_SILENT = 0.05
 
 /** Status on the Stems row of Assist's tool list. */
 export function StemsBadge() {
@@ -20,13 +30,39 @@ export function StemsBadge() {
   return null
 }
 
+function minutesText(seconds: number): string {
+  return seconds < 60 ? 'Under a minute' : `About ${Math.round(seconds / 60)} min`
+}
+
+/** The step a job stage belongs to: getting the model (after reading the song), separating, saving. */
+function stepOf(stage: string | undefined): number {
+  if (!stage || stage === 'decode' || stage === 'download') return 0
+  if (stage === 'encode' || stage === 'save') return 2
+  return 1
+}
+
 export function StemsView() {
   const project = useProject()
   const { job, phase } = useJob(JOB_KINDS.stems)
-  const ready = !!songAnalysis(project)?.stems
+  const analysis = songAnalysis(project)
+  const ready = !!analysis?.stems
+  // Timing lyrics separates the stems itself when the song has none; a second separation would double the memory.
+  const jobs = useJobs()
+  const lyricsSeparating = !ready && runningJobs(jobs).some((j) => j.kind === JOB_KINDS.lyrics)
+  const [estimate, setEstimate] = useState<Awaited<ReturnType<typeof estimateStems>>>(null)
+  useEffect(() => {
+    let live = true
+    estimateStems().then(
+      (value) => live && setEstimate(value),
+      () => undefined,
+    )
+    return () => {
+      live = false
+    }
+  }, [project.songAssetId, ready, phase])
+  const download = estimate?.downloadBytes ?? 0
+
   if (phase === 'running') {
-    const stage = job?.progress.stage
-    const active = stage === 'download' ? 0 : stage === 'save' ? 2 : 1
     return (
       <ToolView
         title="Stems"
@@ -35,8 +71,12 @@ export function StemsView() {
       >
         <RunCard job={job} label="Stem separation progress" />
         <Steps
-          steps={['Download the model (180 MB, once)', 'Separate the song', 'Save stems with the project']}
-          active={active}
+          steps={[
+            download ? `Download the model (${formatBytes(download)}, once)` : 'Load the model',
+            'Separate the song',
+            'Save stems with the project',
+          ]}
+          active={stepOf(job?.progress.stage)}
         />
         <p className={styles.muted}>
           Keep editing; you’ll get a notice when the stems are ready. Precise lyric timing and stem-driven
@@ -46,24 +86,15 @@ export function StemsView() {
     )
   }
   if (phase === 'failed') {
+    const memory = job?.error?.code === 'out-of-memory'
     return (
       <ToolView
         title="Stems"
         subtitle="Separation stopped"
         footer={
-          <div className={styles.footerRow}>
-            <Button variant="secondary" onClick={() => set({ dialog: 'settings', settingsPage: 'local' })}>
-              Device settings
-            </Button>
-            <Button
-              variant="primary"
-              icon={<RotateCcw />}
-              className={styles.grow}
-              onClick={() => startStems(job?.progress.fraction ?? 0)}
-            >
-              Try again
-            </Button>
-          </div>
+          <Button variant="primary" block icon={<RotateCcw />} onClick={() => void startStems()}>
+            Try again
+          </Button>
         }
       >
         <div className={styles.failure} role="alert">
@@ -73,39 +104,38 @@ export function StemsView() {
           <div>
             <div className={styles.successTitle}>{job?.error?.message ?? 'Something went wrong.'}</div>
             <div className={styles.muted}>
-              Your project is unchanged. The part already separated is kept, so trying again picks up at{' '}
-              {pct(job)}%.
+              Your project is unchanged. Trying again starts from the beginning.
             </div>
           </div>
         </div>
-        <div className={styles.groupLabelInset}>Things that help</div>
-        <ul className={styles.tips}>
-          <li>Close other browser tabs that play video</li>
-          <li>Use fewer threads in Settings › This device</li>
-          <li>Or separate stems with Replicate, about $0.02 per song</li>
-        </ul>
+        {memory && (
+          <>
+            <div className={styles.groupLabelInset}>Things that help</div>
+            <ul className={styles.tips}>
+              <li>Close other browser tabs that play video</li>
+            </ul>
+          </>
+        )}
       </ToolView>
     )
   }
   if (ready) {
     return (
       <ToolView title="Stems" subtitle="Ready · shown under the song track">
-        {['Vocals', 'Drums', 'Bass', 'Other'].map((s, i) => (
-          <div key={s} className={styles.stemRow}>
-            <span className={styles.stemName}>{s}</span>
-            <span className={styles.stemWave} aria-hidden>
-              {Array.from({ length: 36 }, (_, k) => (
-                <i
-                  key={k}
-                  style={{ height: `${10 + (peaks[(k * 280 + i * 977) % peaks.length] ?? 0) * 90}%` }}
-                />
-              ))}
-            </span>
-            <Button size="sm" variant="ghost">
-              Solo
-            </Button>
-          </div>
-        ))}
+        {STEMS.filter((s) => analysis?.stems?.[s.name]).map((s) => {
+          const bars = stemBars(analysis?.stemFeatures?.[s.name], 36)
+          return (
+            <div key={s.name} className={styles.stemRow}>
+              <span className={styles.stemName}>{s.label}</span>
+              <span className={styles.stemWave} aria-hidden>
+                {bars.map((v, k) => (
+                  <i key={k} style={{ height: `${10 + v * 90}%` }} />
+                ))}
+              </span>
+              {Math.max(...bars) < ALMOST_SILENT && <span className={styles.muted}>Almost silent</span>}
+            </div>
+          )
+        })}
         <p className={styles.muted}>
           Effects and visualizers can now react to one stem, like the kick in Drums.
         </p>
@@ -118,11 +148,17 @@ export function StemsView() {
       subtitle="Split the song into four parts"
       footer={
         <>
-          <Button variant="primary" block onClick={() => startStems()}>
+          <Button
+            variant="primary"
+            block
+            disabled={!hasSong(project) || lyricsSeparating}
+            onClick={() => void startStems()}
+          >
             Separate stems
           </Button>
           <div className={styles.costLine}>
-            <Lock /> Runs on this device · free
+            <Lock />{' '}
+            {lyricsSeparating ? 'Lyrics timing is separating the stems now' : 'Runs on this device · free'}
           </div>
         </>
       }
@@ -134,15 +170,23 @@ export function StemsView() {
       <div className={styles.facts}>
         <div>
           <span>Time</span>
-          <span>About 3–5 min on this computer</span>
+          <span>{estimate ? `${minutesText(estimate.seconds)} on this device` : 'Working it out…'}</span>
         </div>
         <div>
           <span>Download</span>
-          <span>180 MB once, then offline</span>
+          <span>
+            {!estimate
+              ? 'Working it out…'
+              : download
+                ? `${formatBytes(download)} once, then offline`
+                : 'Already on this device'}
+          </span>
         </div>
         <div>
           <span>Memory</span>
-          <span>Up to 4 GB while running</span>
+          <span>
+            {estimate ? `About ${formatBytes(estimate.memoryBytes)} while running` : 'Working it out…'}
+          </span>
         </div>
       </div>
     </ToolView>

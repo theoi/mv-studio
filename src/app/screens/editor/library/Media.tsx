@@ -37,7 +37,13 @@ interface LibraryItem {
 /** The project's media for the library: everything but the song, masks and fonts, newest imports first. */
 function libraryItems(project: Project): LibraryItem[] {
   return Object.values(project.assets)
-    .filter((a) => a.id !== project.songAssetId && a.origin.type !== 'derived' && a.kind !== 'font')
+    .filter(
+      (a) =>
+        a.id !== project.songAssetId &&
+        a.origin.type !== 'derived' &&
+        a.origin.type !== 'stem' &&
+        a.kind !== 'font',
+    )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((asset) => ({
       asset,

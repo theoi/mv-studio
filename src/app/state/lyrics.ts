@@ -11,6 +11,7 @@ import { lyricClipCommands } from '../../plugins/lyricClips.ts'
 import { starterTemplate, templateState } from '../../plugins/templates.ts'
 import { plural } from '../format.ts'
 import { dispatch, editor } from './project.ts'
+import { stemStore } from './stems.ts'
 import { toast } from './ui.ts'
 
 /*
@@ -38,8 +39,7 @@ export function lyricsService(): Promise<LyricsBackend> {
 
 /** The project and media the lyrics service reads and writes (stems it separates are stored with the project). */
 export async function lyricsDeps(): Promise<LyricsDeps> {
-  const { mediaStore } = await import('../../media/mediaStore.ts')
-  return { editor, store: mediaStore }
+  return { editor, store: await stemStore() }
 }
 
 /** For end-to-end tests: a stand-in for stem separation, alignment and transcription, which need large models. */
