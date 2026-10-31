@@ -41,7 +41,7 @@ function imageClip(project: Project, id: string): ImageClip {
 const depthAsset = asset('depth', { type: 'derived', parentAssetId: 'still', provider: DEPTH_MODEL })
 
 describe('3D camera move', () => {
-  it('keyframes progress over the whole clip and copies the clip fit so depth lines up', () => {
+  it('keyframes progress over the whole clip', () => {
     const { project, clipId } = setup()
     const effect = cameraMoveEffect(imageClip(project, clipId), 'depth', {
       focus: 1.37,
@@ -52,7 +52,6 @@ describe('3D camera move', () => {
       { time: 0, value: 0, easing: 'linear' },
       { time: 5, value: 1, easing: 'linear' },
     ])
-    expect(effect.params.fit!.value).toBe('contain')
     expect(effect.params.depth!.value).toBe('depth')
     expect(effect.params.preset!.value).toBe('orbit-left')
     expect(effect.params.focus!.value).toBe(1)

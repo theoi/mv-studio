@@ -438,3 +438,104 @@ test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyfr
   expect(r.stages).toContain('saving')
   expect(errors).toEqual([])
 })
+
+test('the 3D camera move follows a scaled, moved and rotated still, at any render size', async ({ page }) => {
+  test.setTimeout(180_000)
+  const errors = collectErrors(page)
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'image.png')])
+  const r = await page.evaluate(async () => {
+    const { model, media, testing, vision } = window.mvStudio
+    const still = await media.mediaStore.importFile(window.mvStudio.files()[0])
+    const dw = 160
+    const dh = 90
+    const data = new Uint8Array(dw * dh)
+    for (let y = 0; y < dh; y++)
+      for (let x = 0; x < dw; x++)
+        data[y * dw + x] = x > 50 && x < 110 && y > 25 && y < 65 ? 230 : Math.round(40 + (80 * y) / dh)
+    const depth = {
+      version: 1,
+      width: dw,
+      height: dh,
+      data,
+      sourceSize: { width: 640, height: 360 },
+      model: 'test',
+      quality: 'full',
+    }
+    const depthAsset = await media.mediaStore.storeBlob(await vision.encodeDepthImage(depth), {
+      kind: 'image',
+      name: 'depth.png',
+      origin: { type: 'derived', parentAssetId: still.id },
+    })
+    const camera = () => {
+      const effect = vision.cameraMoveEffect({ duration: 4 }, depthAsset.id, {
+        focus: 0.4,
+        preset: 'orbit-left',
+        intensity: 0.8,
+      })
+      effect.params.progress = { value: 1 }
+      return [effect]
+    }
+    const place = (clip: { transform: Record<string, unknown> }) => {
+      clip.transform.x = { value: 0.35 }
+      clip.transform.y = { value: 0.55 }
+      clip.transform.scaleX = { value: 0.6 }
+      clip.transform.scaleY = { value: 0.6 }
+      clip.transform.rotation = { value: 12 }
+    }
+    const build = (asset: { id: string }, transformed: boolean, effects: unknown[]) => {
+      const p = model.createProject({ name: 'placed' })
+      p.settings.backgroundColor = '#0000ff'
+      p.assets[asset.id] = asset
+      p.assets[depthAsset.id] = depthAsset
+      const track = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+      const clip = model.createImageClip({ trackId: track.id, assetId: asset.id, start: 0, duration: 4 })
+      if (transformed) place(clip)
+      clip.effects = effects
+      p.clips[clip.id] = clip
+      return p
+    }
+    const meanDiff = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
+      let s = 0
+      for (let i = 0; i < a.length; i += 4)
+        s += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])
+      return s / (a.length / 4) / 3
+    }
+
+    const W = 320
+    const H = 180
+    const { compositor } = testing.createCompositor('export', W, H)
+    const render = async (p: unknown) => {
+      await compositor.render(p, 1)
+      return testing.readPixels(compositor.canvas, W, H)
+    }
+    // The move on the untransformed still (16:9 on a 16:9 canvas, so the whole still is visible), stored as an image.
+    const reference = await render(build(still, false, camera()))
+    const canvas = new OffscreenCanvas(W, H)
+    canvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(reference), W, H), 0, 0)
+    const moved = await media.mediaStore.storeBlob(await canvas.convertToBlob({ type: 'image/png' }), {
+      kind: 'image',
+      name: 'moved.png',
+      origin: { type: 'generated' },
+    })
+    const expected = await render(build(moved, true, []))
+    const actualProject = build(still, true, camera())
+    const actual = await render(actualProject)
+    const placedStill = await render(build(still, true, []))
+    compositor.dispose()
+    const big = testing.createCompositor('export', W * 2, H * 2).compositor
+    await big.render(actualProject, 1)
+    const actualBig = testing.readPixels(big.canvas, W, H)
+    big.dispose()
+    return {
+      vsExpected: meanDiff(actual, expected),
+      vsPlacedStill: meanDiff(actual, placedStill),
+      vsDoubleSize: meanDiff(actual, actualBig),
+    }
+  })
+  console.log('camera on a transformed still', JSON.stringify(r))
+  expect(r.vsExpected).toBeLessThan(3)
+  expect(r.vsPlacedStill).toBeGreaterThan(3)
+  expect(r.vsDoubleSize).toBeLessThan(3)
+  expect(errors).toEqual([])
+})

@@ -130,3 +130,34 @@ export function layerMatrix(
 export function applyMat(m: Mat2D, u: number, v: number): [number, number] {
   return [m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]]
 }
+
+/**
+ * Effect uniforms for a layer drawn with `m` (see layerMatrix) into a width x height target: `layerToCanvas` maps
+ * layer uv (top-left, 0..1 over the layer) to effect uv (bottom-left, 0..1 over the canvas) and `canvasToLayer` is
+ * its inverse. Both are normalized, so they do not depend on the render resolution. Column-major for
+ * uniformMatrix3fv. Without a layer (adjustment clips) the layer is the whole canvas.
+ */
+export function layerUniforms(
+  m: Mat2D | null,
+  width: number,
+  height: number,
+): { layerToCanvas: Float32Array; canvasToLayer: Float32Array } {
+  const [a, b, c, d, e, f] = m ?? [width, 0, 0, height, 0, 0]
+  // u' = A u + C v + E, v' = B u + D v + F, with the y flip from top-left pixels to bottom-left uv.
+  const A = a / width
+  const C = c / width
+  const E = e / width
+  const B = -b / height
+  const D = -d / height
+  const F = 1 - f / height
+  const det = A * D - B * C
+  // A layer with no area: send every pixel outside the layer.
+  const inverse =
+    Math.abs(det) > 1e-12
+      ? [D / det, -B / det, 0, -C / det, A / det, 0, (C * F - D * E) / det, (B * E - A * F) / det, 1]
+      : [0, 0, 0, 0, 0, 0, -1, -1, 1]
+  return {
+    layerToCanvas: new Float32Array([A, B, 0, C, D, 0, E, F, 1]),
+    canvasToLayer: new Float32Array(inverse),
+  }
+}

@@ -201,7 +201,10 @@ export interface EffectFrameContext {
  * `texture(u_input, uv)`. Colors are premultiplied. Uniforms provided: u_resolution, u_time (clip-local), u_loudness,
  * u_beat, u_onset, u_downbeat, u_bands[16], u_bandCount, u_beatIndex, u_beatPhase, u_barIndex, u_barPhase, u_flow,
  * u_stems and u_stemOnsets (vec4: vocals, drums, bass, other), u_hasStems (0/1), and u_<key> per param (float; vec4
- * for colors; select = option index; boolean = 0/1; image = sampler2D plus vec2 u_<key>Size).
+ * for colors; select = option index; boolean = 0/1; image = sampler2D plus vec2 u_<key>Size). Effects run after the
+ * clip's fit and transform; mat3 u_canvasToLayer maps uv to the layer's own coordinates (top-left, 0..1 over the clip's
+ * media) and u_layerToCanvas maps back. For text clips the layer is the text canvas, including the padding around the
+ * words; for adjustment clips it is the whole canvas.
  */
 export interface EffectDefinition extends PluginBase {
   kind: 'effect'
@@ -211,7 +214,17 @@ export interface EffectDefinition extends PluginBase {
   passes?: EffectPass[]
   /** Passes the final shader samples (default: the last pass). */
   passInputs?: string[]
+  /**
+   * Values that depend only on the frame (params, time, audio), computed once per frame on the CPU instead of in every
+   * pixel. Each key is set as `u_<key>` in every pass: a number as `float`, 2 to 4 numbers as `vec2` to `vec4`.
+   * Declare these uniforms in the shader, with keys that do not clash with param keys. Must be a pure function of the
+   * frame, so preview equals export. `frame.width` and `frame.height` are the render size, which is smaller in
+   * reduced-size previews: use only their ratio, or scale pixel sizes by `height / 1080`.
+   */
+  frameUniforms?: (frame: EffectFrameContext) => Record<string, EffectUniformValue>
 }
+
+export type EffectUniformValue = number | readonly number[]
 
 /**
  * An intermediate pass of an effect: same uniforms as the effect (u_input is still the layer), plus the outputs of the

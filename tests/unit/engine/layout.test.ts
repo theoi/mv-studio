@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyMat, fitSize, layerMatrix, planFrame } from '../../../src/engine/layout.ts'
+import { applyMat, fitSize, layerMatrix, layerUniforms, planFrame } from '../../../src/engine/layout.ts'
 import { anim, createProject, createSolidClip, createTrack } from '../../../src/model/factory.ts'
 import type { Project, SolidClip, Track } from '../../../src/model/types.ts'
 
@@ -130,5 +130,64 @@ describe('layerMatrix', () => {
     const m = layerMatrix(c, 0.5, 0.5, 100, 50, 400, 200)
     expect(applyMat(m, 0, 0)).toEqual([100, 100])
     expect(applyMat(m, 1, 1)).toEqual([300, 150])
+  })
+})
+
+describe('layerUniforms', () => {
+  const apply = (m: Float32Array, u: number, v: number): [number, number] => [
+    m[0]! * u + m[3]! * v + m[6]!,
+    m[1]! * u + m[4]! * v + m[7]!,
+  ]
+
+  it('maps layer uv (top-left) to effect uv (bottom-left) and back, through scale, position and rotation', () => {
+    const { project, bottom } = setup()
+    const c = solid(project, bottom, 0, 1)
+    c.transform.x = anim(0.25)
+    c.transform.y = anim(0.25)
+    c.transform.scaleX = anim(0.5)
+    c.transform.scaleY = anim(0.5)
+    const { layerToCanvas, canvasToLayer } = layerUniforms(layerMatrix(c, 0, 0, 400, 200, 400, 200), 400, 200)
+    // The layer centre sits at a quarter of the canvas from the top-left, i.e. y = 0.75 from the bottom.
+    expect(apply(layerToCanvas, 0.5, 0.5)).toEqual([0.25, 0.75])
+    // The 200 x 100 px layer centred at (100, 50) px starts at the canvas's top-left corner.
+    expect(apply(layerToCanvas, 0, 0)).toEqual([0, 1])
+    c.transform.rotation = anim(30)
+    const rotated = layerUniforms(layerMatrix(c, 0, 0, 400, 200, 400, 200), 400, 200)
+    for (const [u, v] of [
+      [0, 0],
+      [1, 0.3],
+      [0.7, 1],
+    ] as const) {
+      const [x, y] = apply(rotated.layerToCanvas, u, v)
+      const back = apply(rotated.canvasToLayer, x, y)
+      expect(back[0]).toBeCloseTo(u, 5)
+      expect(back[1]).toBeCloseTo(v, 5)
+    }
+    expect(apply(canvasToLayer, 0.25, 0.75)).toEqual([0.5, 0.5])
+  })
+
+  it('does not depend on the render resolution', () => {
+    const { project, bottom } = setup()
+    const c = solid(project, bottom, 0, 1)
+    c.transform.x = anim(0.3)
+    c.transform.rotation = anim(-20)
+    c.transform.scaleY = anim(1.4)
+    const full = layerUniforms(layerMatrix(c, 0, 0, 640, 360, 1920, 1080), 1920, 1080)
+    const third = layerUniforms(layerMatrix(c, 0, 0, 640 / 3, 120, 640, 360), 640, 360)
+    for (let i = 0; i < 9; i++) {
+      expect(third.layerToCanvas[i]).toBeCloseTo(full.layerToCanvas[i]!, 5)
+      expect(third.canvasToLayer[i]).toBeCloseTo(full.canvasToLayer[i]!, 5)
+    }
+  })
+
+  it('treats the canvas as the layer without one, and sends everything outside a layer with no area', () => {
+    const canvas = layerUniforms(null, 400, 200)
+    expect(apply(canvas.canvasToLayer, 0, 1)).toEqual([0, 0])
+    expect(apply(canvas.canvasToLayer, 1, 0)).toEqual([1, 1])
+    const { project, bottom } = setup()
+    const c = solid(project, bottom, 0, 1)
+    c.transform.scaleX = anim(0)
+    const flat = layerUniforms(layerMatrix(c, 0, 0, 400, 200, 400, 200), 400, 200)
+    expect(apply(flat.canvasToLayer, 0.5, 0.5)).toEqual([-1, -1])
   })
 })

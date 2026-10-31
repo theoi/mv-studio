@@ -53,8 +53,9 @@ For a virtual camera, call `reframePlanFor(asset, analysis, aspect, options?)` o
 `addCameraMove({ editor, media: mediaStore, depth: vision.depth }, clipId, { preset, intensity, ...fromJob(ctx) })` is the "Add 3D camera move" action. It estimates the still's depth (Depth Anything V2 Small, cached; about 4–8 s on CPU the first time), stores it as a derived grayscale PNG (reused on later calls), and adds the `camera-3d` effect (`src/plugins/parallax.ts`) first on the clip with `progress` keyframed from 0 to 1 across the clip, replacing an earlier camera move. Everything lands in one dispatch, so it is one undo step.
 
 - Defaults: dolly in at amount 0.5, clean on every test still; edge stretching starts to show near amount 1. Presets: dolly in/out, pan left/right, tilt up/down, orbit left/right, crane up, Ken Burns. Each eases in and out and zooms just enough that no border shows.
-- The effect works on the fitted layer and reads depth through its `fit` param (set from the clip), so it assumes the clip has no position, scale or rotation transform. Without a depth map it still pans and zooms, with no parallax.
-- `createParallaxRenderer()` draws the same camera outside the compositor: it shares the shader's ray march, and `cameraPoseAt` (TS) and the shader compute identical poses (checked per preset in `tests/e2e/vision-media.spec.ts`).
+- The effect works in the still's own coordinates (`u_canvasToLayer`), so it follows the clip's fit and any position, scale or rotation, including keyframed ones; the camera frames the part of the still that is on the canvas. Without a depth map it still pans and zooms, with no parallax.
+- The pose depends only on the params and progress, so the effect computes it once per frame on the CPU with `cameraPoseAt` (`frameUniforms`) instead of in every pixel.
+- `createParallaxRenderer()` draws the same camera outside the compositor: it shares the shader's ray march and takes a `cameraPoseAt` pose (the effect and the renderer are compared per preset in `tests/e2e/vision-media.spec.ts`).
 - Known limits: some background bending at the ends of large moves and a faint halo around the subject. The ray march takes up to 48 depth reads per pixel.
 
 ## Benchmarks

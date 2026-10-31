@@ -3,10 +3,10 @@ import type { CameraPreset } from '../vision/types.ts'
 // The leaf module, not src/vision/index.ts: the registry also loads in workers and must not pull in the vision service.
 import { CAMERA_PRESETS } from '../vision/render/camera.ts'
 import {
-  CAMERA_EFFECT_FITS,
   CAMERA_EFFECT_GLSL,
   CAMERA_EFFECT_ID,
   DEFAULT_CAMERA_PRESET,
+  cameraEffectUniforms,
 } from '../vision/render/cameraEffect.ts'
 
 const PRESET_LABELS: Record<CameraPreset, string> = {
@@ -20,12 +20,6 @@ const PRESET_LABELS: Record<CameraPreset, string> = {
   'orbit-right': 'Orbit right',
   'crane-up': 'Crane up',
   'ken-burns': 'Ken Burns',
-}
-
-const FIT_LABELS: Record<(typeof CAMERA_EFFECT_FITS)[number], string> = {
-  cover: 'Cover',
-  contain: 'Contain',
-  stretch: 'Stretch',
 }
 
 /**
@@ -48,7 +42,6 @@ export const cameraMove3d: EffectDefinition = {
       label: 'Move',
       type: 'select',
       default: DEFAULT_CAMERA_PRESET,
-      // Option order is the preset index in the shader.
       options: CAMERA_PRESETS.map((value) => ({ value, label: PRESET_LABELS[value] })),
     },
     {
@@ -76,15 +69,7 @@ export const cameraMove3d: EffectDefinition = {
       description: 'Depth that stays in place during the move: 0 is the background, 1 the nearest object.',
     },
     { key: 'depth', label: 'Depth map', type: 'image', default: '', role: 'texture', advanced: true },
-    {
-      key: 'fit',
-      label: 'Image fit',
-      type: 'select',
-      default: 'cover',
-      advanced: true,
-      description: "Set to the clip's fit so the depth map lines up with the image.",
-      options: CAMERA_EFFECT_FITS.map((value) => ({ value, label: FIT_LABELS[value] })),
-    },
   ],
   fragmentShader: CAMERA_EFFECT_GLSL,
+  frameUniforms: ({ params }) => cameraEffectUniforms(params),
 }
