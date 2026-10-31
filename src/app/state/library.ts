@@ -240,9 +240,18 @@ function putTransition(
 
 /** What a library drag carries. */
 export interface LibraryItem {
-  kind: 'effect' | 'transition' | 'look'
+  kind: 'effect' | 'transition'
   id: string
 }
+
+/**
+ * What a dragged library item would land on, for the timeline to show: a clip's span for an effect, a cut (start
+ * equals end) for a transition, or a locked track where nothing lands (`at` is where to say so).
+ */
+export type LibraryDropHint =
+  { trackId: string; start: Seconds; end: Seconds } | { trackId: string; locked: true; at: Seconds }
+
+const isLocked = (project: Project, trackId: string) => !!project.tracks.find((t) => t.id === trackId)?.locked
 
 /** Drag data type of library items; drop targets check for it while dragging, when the data itself is not readable. */
 export const LIBRARY_DRAG_TYPE = 'application/x-mv-studio-library'
@@ -281,33 +290,30 @@ function clipAt(project: Project, trackId: string, time: Seconds): VisualClip | 
   )
 }
 
-/** Where a transition dropped on a track at `time` goes: the nearest cut, else the start of the clip there. */
+/**
+ * Where a transition dropped on a track at `time` goes: the cut at the start or the end of the clip there, whichever
+ * is nearer, else that clip's start. Nothing when no clip is there.
+ */
 function cutAt(
   project: Project,
   trackId: string,
   time: Seconds,
 ): { clip: VisualClip; cut: boolean } | undefined {
-  let best: { clip: VisualClip; distance: number } | undefined
-  for (const clip of Object.values(project.clips)) {
-    if (clip.trackId !== trackId || !isPicture(clip) || clip.type === 'adjustment') continue
-    const distance = Math.abs(clip.start - time)
-    if (best && distance >= best.distance) continue
-    if (clipBefore(project, clip)) best = { clip, distance }
-  }
-  if (best) return { clip: best.clip, cut: true }
   const under = clipAt(project, trackId, time)
-  return under && under.type !== 'adjustment' ? { clip: under, cut: false } : undefined
+  if (!under || under.type === 'adjustment') return undefined
+  const next = Object.values(project.clips).find(
+    (c): c is VisualClip =>
+      isPicture(c) && c.type !== 'adjustment' && clipBefore(project, c)?.id === under.id,
+  )
+  const cuts = [clipBefore(project, under) ? under : undefined, next].filter((c) => c !== undefined)
+  const nearest = cuts.sort((a, b) => Math.abs(a.start - time) - Math.abs(b.start - time))[0]
+  return nearest ? { clip: nearest, cut: true } : { clip: under, cut: false }
 }
 
-/**
- * What the item being dragged would land on at `time` on a track, for the timeline to highlight: a clip's span for
- * an effect, the cut (start equals end) for a transition. Null when it would land nowhere there.
- */
-export function libraryDropHint(
-  trackId: string,
-  time: Seconds,
-): { trackId: string; start: Seconds; end: Seconds } | null {
+/** What the item being dragged would land on at `time` on a track. Null when it would land nowhere there. */
+export function libraryDropHint(trackId: string, time: Seconds): LibraryDropHint | null {
   const project = editor.getProject()
+  if (dragging && isLocked(project, trackId)) return { trackId, locked: true, at: Math.floor(time) }
   if (dragging?.kind === 'effect') {
     const clip = clipAt(project, trackId, time)
     return clip ? { trackId, start: clip.start, end: clip.start + clip.duration } : null
@@ -322,8 +328,8 @@ export function libraryDropHint(
 /** Adds a dropped library item where it was dropped on the timeline, as one undo step. */
 export function dropLibraryItem(item: LibraryItem, at: { trackId: string; time: Seconds }): void {
   const project = editor.getProject()
-  if (item.kind === 'look') {
-    chooseLook(item.id)
+  if (isLocked(project, at.trackId)) {
+    toast('Track is locked')
     return
   }
   const def = pluginRegistry.get(item.id)
