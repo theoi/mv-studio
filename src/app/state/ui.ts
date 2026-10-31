@@ -31,6 +31,8 @@ export type LibraryTab = 'media' | 'text' | 'visuals' | 'effects'
 export type SettingsPage = 'general' | 'editing' | 'ai' | 'local' | 'shortcuts' | 'vj' | 'storage' | 'about'
 export type ExportPhase = 'setup' | 'exporting'
 export type TimelineTool = 'select' | 'split'
+/** The preview fitted to its area, or at a fraction of the project's pixels (1 = 100%). */
+export type PreviewZoom = 'fit' | number
 
 export interface Toast {
   id: number
@@ -59,6 +61,9 @@ export interface UiState {
   playing: boolean
   /** Play was pressed and the preview is still loading audio. */
   starting: boolean
+  /** Playback repeats the section under the playhead (see loopRange in ./previewControls.ts). */
+  loop: boolean
+  previewZoom: PreviewZoom
   pxPerSec: number
   tool: TimelineTool
   snap: boolean
@@ -96,6 +101,8 @@ export const initialUi: UiState = {
   playhead: 73.6,
   playing: false,
   starting: false,
+  loop: false,
+  previewZoom: 'fit',
   pxPerSec: 12,
   tool: 'select',
   snap: true,

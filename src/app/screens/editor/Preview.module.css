@@ -38,9 +38,32 @@
 }
 
 .zoom {
-  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px 0 8px;
+  border-radius: var(--radius);
   color: var(--text-3);
   font-size: var(--text-sm);
+  transition:
+    background-color var(--dur-fast),
+    color var(--dur-fast);
+}
+
+.zoom:hover:not(:disabled),
+.zoom[data-state='open'] {
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+
+.zoom:disabled {
+  opacity: 0.5;
+}
+
+.zoom .chev {
+  width: 13px;
+  height: 13px;
 }
 
 .headerSpacer {
@@ -64,13 +87,24 @@
   flex: 1;
   min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  outline: none;
 }
 
+/* Room for the handles of a clip at the frame's edge. */
+.zoomed {
+  overflow: auto;
+  padding: 32px;
+}
+
+.stage:fullscreen {
+  background: #000;
+}
+
+/* Auto margins center the frame and, unlike centering the flex items, let a zoomed frame scroll to every edge. */
 .frame {
   position: relative;
   flex: none;
+  margin: auto;
 }
 
 .canvas {
@@ -101,6 +135,30 @@
   fill: #fff;
   stroke: var(--accent-line);
   stroke-width: 1;
+}
+
+.selBody {
+  fill: transparent;
+  pointer-events: all;
+  cursor: move;
+}
+
+.selStem {
+  stroke: var(--accent-line);
+  stroke-width: 1;
+}
+
+.selHit {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.selRotate {
+  cursor: grab;
+}
+
+.overlay[data-dragging='rotate'] .selRotate {
+  cursor: grabbing;
 }
 
 .stageNote {
@@ -281,4 +339,18 @@
   display: flex;
   justify-content: flex-end;
   gap: 2px;
+}
+
+.volume {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-2);
+}
+
+.volumeValue {
+  width: 4ch;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  text-align: right;
 }

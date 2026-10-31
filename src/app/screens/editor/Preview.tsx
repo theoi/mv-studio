@@ -1,6 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
 import {
   AudioLines,
+  Check,
   ChevronDown,
   ImageDown,
   Maximize2,
@@ -13,12 +23,15 @@ import {
   SkipForward,
   Square,
   Upload,
+  Volume1,
   Volume2,
+  VolumeX,
 } from 'lucide-react'
 import type { PreviewController } from '../../../engine/preview.ts'
-import { BARS_NOTES, type AspectPreset } from '../../../model/index.ts'
+import { BARS_NOTES, type AspectPreset, type Project } from '../../../model/index.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
+import { Slider } from '../../ds/Fields.tsx'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -31,9 +44,20 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from '../../ds/Menu.tsx'
+import { Popover, PopoverContent, PopoverTrigger } from '../../ds/Popover.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
 import { formatTimecode } from '../../format.ts'
 import { jumpSection } from '../../state/playback.ts'
+import { setPref, usePrefs } from '../../state/prefs.ts'
+import {
+  isFullscreen,
+  PREVIEW_ZOOMS,
+  setFullscreenTarget,
+  subscribeFullscreen,
+  toggleFullscreen,
+  toggleLoop,
+  zoomLabel,
+} from '../../state/previewControls.ts'
 import { saveFrame } from '../../state/stills.ts'
 import {
   editor,
@@ -50,7 +74,8 @@ import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
 import { changeAspect } from '../../state/reframe.ts'
 import { PickOverlay } from './PickOverlay.tsx'
-import { connectPreview, fitStage, selectionOutline } from './stage.ts'
+import { SelectionOverlay } from './SelectionOverlay.tsx'
+import { connectPreview, fitStage } from './stage.ts'
 import styles from './Preview.module.css'
 
 const aspects: { value: AspectPreset; desc: string; icon: ReactNode; ratio: number }[] = [
@@ -60,23 +85,9 @@ const aspects: { value: AspectPreset; desc: string; icon: ReactNode; ratio: numb
   { value: '4:5', desc: 'Portrait · feeds', icon: <RectangleVertical />, ratio: 4 / 5 },
 ]
 
-function SelectionOverlay({ width, height }: { width: number; height: number }) {
-  const selection = useUi((s) => s.selection)
-  const t = useUi((s) => s.playhead)
-  const playing = useUi((s) => s.playing)
-  const picking = usePick((s) => !!s.request)
-  const project = useProject()
-  if (playing || picking || !width) return null
-  const corners = selectionOutline(project, selection, t, width, height)
-  if (!corners) return null
-  return (
-    <svg className={styles.overlay} width={width} height={height} aria-hidden>
-      <polygon className={styles.selBox} points={corners.map((c) => c.join(',')).join(' ')} />
-      {corners.map(([x, y], i) => (
-        <rect key={i} className={styles.selHandle} x={x - 3.5} y={y - 3.5} width={7} height={7} />
-      ))}
-    </svg>
-  )
+/** One value of the project, re-rendering only when it changes (not on every edit, such as each step of a drag). */
+function useProjectValue<T extends string | number | boolean>(select: (p: Project) => T): T {
+  return useSyncExternalStore(editor.subscribe, () => select(editor.getProject()))
 }
 
 type StageStatus = 'loading' | 'ready' | 'failed' | 'stopped'
@@ -85,16 +96,21 @@ type StageStatus = 'loading' | 'ready' | 'failed' | 'stopped'
 const MAX_RESTARTS = 3
 const RESTART_WINDOW_MS = 120_000
 
-function Stage({ ratio }: { ratio: number }) {
+function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const previewRef = useRef<PreviewController | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
+  const sizeRef = useRef(size)
   const [status, setStatus] = useState<StageStatus>('loading')
   // Each preview gets a fresh canvas (the canvas key): a canvas handed to a render worker that died can't draw again.
   const [generation, setGeneration] = useState(0)
   const restarts = useRef<number[]>([])
+  const centerNext = useRef(false)
   const picking = usePick((s) => !!s.request)
+  const zoom = useUi((s) => s.previewZoom)
+  const full = useSyncExternalStore(subscribeFullscreen, () => isFullscreen(wrapRef.current))
+  const zoomed = zoom !== 'fit' && !full
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -103,7 +119,9 @@ function Stage({ ratio }: { ratio: number }) {
     const { width, height } = editor.getProject().settings
     let connection: ReturnType<typeof connectPreview>
     try {
-      connection = connectPreview(canvas, fitStage(wrap, width / height))
+      // A restarted preview keeps the current size, which a zoom level or full screen may have set.
+      const viewport = sizeRef.current.width ? sizeRef.current : fitStage(wrap, width / height)
+      connection = connectPreview(canvas, viewport)
     } catch (error) {
       console.error('The preview could not start', error)
       void Promise.resolve().then(() => setStatus('failed'))
@@ -137,20 +155,42 @@ function Stage({ ratio }: { ratio: number }) {
   }, [generation])
 
   useEffect(() => {
+    setFullscreenTarget(wrapRef.current)
+    return () => setFullscreenTarget(null)
+  }, [])
+
+  useEffect(() => {
     const wrap = wrapRef.current
     if (!wrap) return
+    centerNext.current = zoomed
     const layout = () => {
-      const size = fitStage(wrap, ratio)
+      const size = zoomed
+        ? { width: Math.round(projectWidth * zoom), height: Math.round((projectWidth * zoom) / ratio) }
+        : fitStage(wrap, ratio, full ? 0 : undefined)
+      sizeRef.current = size
       setSize(size)
       previewRef.current?.setViewport(size.width, size.height)
     }
     const ro = new ResizeObserver(layout)
     ro.observe(wrap)
     return () => ro.disconnect()
-  }, [ratio])
+  }, [ratio, zoom, zoomed, projectWidth, full])
+
+  // A new zoom level opens on the middle of the frame.
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap || !centerNext.current) return
+    centerNext.current = false
+    wrap.scrollLeft = (wrap.scrollWidth - wrap.clientWidth) / 2
+    wrap.scrollTop = (wrap.scrollHeight - wrap.clientHeight) / 2
+  }, [size])
 
   return (
-    <div ref={wrapRef} className={styles.stage}>
+    <div
+      ref={wrapRef}
+      className={[styles.stage, zoomed && styles.zoomed].filter(Boolean).join(' ')}
+      tabIndex={-1}
+    >
       <div className={styles.frame} style={{ width: size.width, height: size.height }}>
         <canvas
           key={generation}
@@ -160,7 +200,7 @@ function Stage({ ratio }: { ratio: number }) {
           aria-busy={status === 'loading'}
           role="img"
         />
-        {status === 'ready' && <SelectionOverlay width={size.width} height={size.height} />}
+        {status === 'ready' && !full && <SelectionOverlay width={size.width} height={size.height} />}
         {status === 'ready' && picking && <PickOverlay width={size.width} height={size.height} />}
         {status === 'loading' && (
           <div className={styles.stageNote}>
@@ -190,11 +230,11 @@ function Stage({ ratio }: { ratio: number }) {
 
 function Timecode() {
   const t = useUi((s) => s.playhead)
-  const project = useProject()
+  const duration = useProjectValue(timelineDuration)
   return (
     <span className={`${styles.timecode} tnum`}>
       <span className={styles.tcNow}>{formatTimecode(t)}</span>
-      <span className={styles.tcTotal}> / {formatTimecode(timelineDuration(project))}</span>
+      <span className={styles.tcTotal}> / {formatTimecode(duration)}</span>
     </span>
   )
 }
@@ -228,12 +268,64 @@ function Position() {
   )
 }
 
+function ZoomMenu({ disabled }: { disabled: boolean }) {
+  const zoom = useUi((s) => s.previewZoom)
+  return (
+    <Menu>
+      <Tooltip label="Preview zoom">
+        <MenuTrigger asChild>
+          <button className={styles.zoom} disabled={disabled} aria-label={`Preview zoom: ${zoomLabel(zoom)}`}>
+            <span>{zoomLabel(zoom)}</span>
+            <ChevronDown className={styles.chev} />
+          </button>
+        </MenuTrigger>
+      </Tooltip>
+      <MenuContent width={150}>
+        <MenuLabel>Preview zoom</MenuLabel>
+        {(['fit', ...PREVIEW_ZOOMS] as const).map((z) => (
+          <MenuItem
+            key={z}
+            icon={z === zoom ? <Check /> : undefined}
+            onSelect={() => set({ previewZoom: z })}
+          >
+            {zoomLabel(z)}
+          </MenuItem>
+        ))}
+      </MenuContent>
+    </Menu>
+  )
+}
+
+function VolumeControl() {
+  const volume = usePrefs((p) => p.previewVolume)
+  const pct = Math.round(volume * 100)
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <IconButton label="Volume">
+          {pct === 0 ? <VolumeX /> : pct < 50 ? <Volume1 /> : <Volume2 />}
+        </IconButton>
+      </PopoverTrigger>
+      <PopoverContent title="Volume" side="top" align="end">
+        <div className={styles.volume}>
+          <Slider value={pct} onChange={(v) => setPref('previewVolume', v / 100)} ariaLabel="Volume" />
+          <span className={`${styles.volumeValue} tnum`}>{pct}%</span>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export function Preview() {
   const playing = useUi((s) => s.playing)
   const starting = useUi((s) => s.starting)
-  const project = useProject()
-  const empty = !hasSong(project)
-  const current = aspects.find((a) => a.value === project.settings.aspect) ?? aspects[0]!
+  const loop = useUi((s) => s.loop)
+  const empty = useProjectValue((p) => !hasSong(p))
+  const aspect = useProjectValue((p) => p.settings.aspect)
+  const width = useProjectValue((p) => p.settings.width)
+  const height = useProjectValue((p) => p.settings.height)
+  const background = useProjectValue((p) => p.settings.backgroundColor)
+  const current = aspects.find((a) => a.value === aspect) ?? aspects[0]!
   // Playback goes on while the menu is open: Save frame saves the frame that was right-clicked.
   const menuTime = useRef(0)
 
@@ -271,7 +363,7 @@ export function Preview() {
             </MenuItem>
           </MenuContent>
         </Menu>
-        <span className={styles.zoom}>Fit</span>
+        <ZoomMenu disabled={empty} />
         <div className={styles.headerSpacer} />
         {!empty && <Position />}
       </div>
@@ -280,9 +372,7 @@ export function Preview() {
         <div className={styles.emptyStage}>
           <div
             className={styles.emptyFrame}
-            style={
-              { '--ratio': current.ratio, background: project.settings.backgroundColor } as CSSProperties
-            }
+            style={{ '--ratio': current.ratio, background } as CSSProperties}
             aria-hidden
           />
           <div className={styles.emptyCard}>
@@ -307,12 +397,12 @@ export function Preview() {
         <ContextMenu onOpenChange={(open) => open && (menuTime.current = get().playhead)}>
           {/* display: contents keeps the stage's layout; the menu opens where the pointer is. */}
           <ContextMenuTrigger style={{ display: 'contents' }}>
-            <Stage ratio={current.ratio} />
+            <Stage ratio={current.ratio} projectWidth={width} />
           </ContextMenuTrigger>
           <ContextMenuContent>
             <ContextMenuItem
               icon={<ImageDown />}
-              description={`PNG · ${project.settings.width} × ${project.settings.height}`}
+              description={`PNG · ${width} × ${height}`}
               onSelect={() => void saveFrame(menuTime.current)}
             >
               Save frame
@@ -342,13 +432,17 @@ export function Preview() {
           </IconButton>
         </div>
         <div className={styles.transportRight}>
-          <IconButton label="Loop playback" shortcut="Mod L">
+          <IconButton
+            label="Loop playback"
+            shortcut="Mod L"
+            active={loop}
+            onClick={toggleLoop}
+            disabled={empty}
+          >
             <Repeat />
           </IconButton>
-          <IconButton label="Volume">
-            <Volume2 />
-          </IconButton>
-          <IconButton label="Full-screen preview" shortcut="F">
+          <VolumeControl />
+          <IconButton label="Full-screen preview" shortcut="F" onClick={toggleFullscreen} disabled={empty}>
             <Maximize2 />
           </IconButton>
         </div>

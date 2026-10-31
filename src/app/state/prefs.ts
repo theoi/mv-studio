@@ -17,6 +17,8 @@ export interface Prefs {
   imageBars: number
   /** Default length of added text, in bars. */
   textBars: number
+  /** Preview volume, 0 to 1. Exports are not affected. */
+  previewVolume: number
 }
 
 const KEY = 'mv-studio.prefs'
@@ -29,6 +31,7 @@ const DEFAULTS: Prefs = {
   beatSnap: true,
   imageBars: 2,
   textBars: 2,
+  previewVolume: 1,
 }
 
 function stored(): Prefs {
