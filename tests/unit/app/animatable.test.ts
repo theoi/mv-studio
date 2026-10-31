@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createEffectInstance, createGeneratorClip } from '../../../src/plugins/library.ts'
 import { createTextClip } from '../../../src/model/index.ts'
-import { reactionTarget, useAnimatable } from '../../../src/app/screens/editor/inspector/animatable.ts'
+import { animatableRow, reactionTarget } from '../../../src/app/screens/editor/inspector/animatable.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 
 describe('react button targets', () => {
@@ -50,10 +50,10 @@ describe('a row for a property the clip lacks', () => {
 
   it('creates the property on the first edit, which then coalesces into one undo step', () => {
     const clip = bareText()
-    const row = useAnimatable(clip, ['adjustments', 'contrast'], 0)
+    const row = animatableRow(clip, ['adjustments', 'contrast'], 0)
     expect(row.value).toBe(0)
     row.set(0.2)
-    useAnimatable(editor.getProject().clips[clip.id]!, ['adjustments', 'contrast'], 0).set(0.4)
+    animatableRow(editor.getProject().clips[clip.id]!, ['adjustments', 'contrast'], 0).set(0.4)
     row.commit()
     const after = editor.getProject().clips[clip.id]
     expect(after?.type === 'text' && after.adjustments?.contrast?.value).toBe(0.4)
@@ -64,7 +64,7 @@ describe('a row for a property the clip lacks', () => {
 
   it('creates the property with its fallback value when a keyframe is added', () => {
     const clip = bareText()
-    useAnimatable(clip, ['adjustments', 'contrast'], 0).key()
+    animatableRow(clip, ['adjustments', 'contrast'], 0).key()
     const after = editor.getProject().clips[clip.id]
     expect(after?.type === 'text' && after.adjustments?.contrast).toMatchObject({
       value: 0,

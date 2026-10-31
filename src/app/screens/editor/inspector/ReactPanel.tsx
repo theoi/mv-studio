@@ -40,7 +40,7 @@ export function ReactPanel({ target }: { target: ReactionTarget }) {
     ...choices.map((c) => ({
       value: c.reaction.id,
       label: c.reaction.name,
-      description: `${c.reaction.description} Listens to: ${c.listensTo}.`,
+      description: `${c.reaction.description} Listens to: ${c.listening}.`,
     })),
   ]
   const choose = (id: string) => {
@@ -59,7 +59,7 @@ export function ReactPanel({ target }: { target: ReactionTarget }) {
   const hints =
     active?.kind === 'reaction'
       ? [
-          `Listens to: ${active.listensTo}.`,
+          `Listens to: ${active.listening}.`,
           chosen?.betterWithStems ? 'Separate stems in Assist › Stems to follow the instrument alone.' : '',
           chosen && !chosen.ready ? 'It starts moving once the song is analyzed.' : '',
         ].filter(Boolean)

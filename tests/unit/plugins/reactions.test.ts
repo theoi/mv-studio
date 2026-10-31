@@ -100,10 +100,24 @@ describe('choosing what to listen to', () => {
 
   it('says what each reaction listens to and which ones get better with stems', () => {
     const mix = Object.fromEntries(availableReactions(scene('mix').p).map((a) => [a.reaction.id, a]))
-    expect(mix.kick).toMatchObject({ listensTo: 'Sub bass', betterWithStems: true, ready: true })
-    expect(mix.beat).toMatchObject({ listensTo: 'Beat grid', betterWithStems: false, ready: true })
+    expect(mix.kick).toMatchObject({
+      listensTo: 'Sub bass',
+      listening: 'the low end (sub bass), where the kick sits',
+      betterWithStems: true,
+      ready: true,
+    })
+    expect(mix.snare?.listening).toBe('every hit in the mix, snares and claps included')
+    expect(mix.beat).toMatchObject({
+      listensTo: 'Beat grid',
+      listening: 'the song’s beat grid',
+      betterWithStems: false,
+    })
     const stems = Object.fromEntries(availableReactions(scene('stems').p).map((a) => [a.reaction.id, a]))
-    expect(stems.kick).toMatchObject({ listensTo: 'Drums stem', betterWithStems: false })
+    expect(stems.kick).toMatchObject({
+      listensTo: 'Drums stem',
+      listening: 'the drums stem',
+      betterWithStems: false,
+    })
     expect(stems.vocals).toMatchObject({ listensTo: 'Vocals stem', betterWithStems: false })
     expect(availableReactions(scene('unanalyzed').p).every((a) => !a.ready)).toBe(true)
   })

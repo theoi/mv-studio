@@ -1,5 +1,12 @@
 import { createElement } from 'react'
-import type { Animatable, Clip, EditCommand, ParamValue, PropertyPath } from '../../../../model/index.ts'
+import type {
+  Animatable,
+  Clip,
+  EditCommand,
+  ParamValue,
+  Project,
+  PropertyPath,
+} from '../../../../model/index.ts'
 import {
   canReact,
   describeReaction,
@@ -9,7 +16,7 @@ import {
   type ReactiveClipProperty,
 } from '../../../../plugins/reactions.ts'
 import { formatTime } from '../../../format.ts'
-import { dispatch, editor } from '../../../state/project.ts'
+import { dispatch, editor, useProject } from '../../../state/project.ts'
 import { get, toast } from '../../../state/ui.ts'
 import { ReactPanel } from './ReactPanel.tsx'
 
@@ -61,15 +68,19 @@ const QUICK_REACTION = 'kick'
 
 /**
  * Binds one animatable clip property to the edit API: value edits coalesce per gesture, the keyframe button, and the
- * react button, which opens the music reactions for the property. Spread `buttons` into AnimateButtons. A clip that
- * lacks the property shows `fallback` and gets the property on its first edit.
+ * react button, which opens the music reactions for the property. A clip that lacks the property shows `fallback`
+ * and gets the property on its first edit.
  */
-export function useAnimatable(clip: Clip, path: PropertyPath, fallback?: ParamValue) {
+export function animatableRow(
+  clip: Clip,
+  path: PropertyPath,
+  fallback?: ParamValue,
+  project: Project = editor.getProject(),
+) {
   let node: unknown = clip
   for (const k of path) node = (node as Record<string | number, unknown> | undefined)?.[k]
   const anim = node as Animatable<ParamValue> | undefined
   const gesture = `inspector:${clip.id}:${path.join('.')}`
-  const project = editor.getProject()
   const found = reactionTarget(clip, path)
   const target = found && canReact(project, found) ? found : null
   const active = target ? describeReaction(project, target) : null
@@ -128,4 +139,12 @@ export function useAnimatable(clip: Clip, path: PropertyPath, fallback?: ParamVa
       reactPanel: target ? createElement(ReactPanel, { target }) : undefined,
     },
   }
+}
+
+/**
+ * animatableRow() for an inspector row, re-rendered by project changes that affect the react button, such as stems
+ * finishing separation. Spread `buttons` into AnimateButtons.
+ */
+export function useAnimatable(clip: Clip, path: PropertyPath, fallback?: ParamValue) {
+  return animatableRow(clip, path, fallback, useProject())
 }
