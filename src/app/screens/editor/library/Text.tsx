@@ -1,59 +1,80 @@
 import { Type } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
-import { toast } from '../../../state/ui.ts'
+import {
+  applyLibraryTextStyle,
+  applyTextAnimation,
+  textAnimationItems,
+  textStyleItems,
+  textTargetHint,
+} from '../../../state/library.ts'
+import { addTextAtPlayhead, useProject } from '../../../state/project.ts'
+import { useUi } from '../../../state/ui.ts'
+import { previewHandlers, type PreviewItem } from '../../../state/tilePreview.ts'
 import styles from '../Library.module.css'
+import { TileGroup } from './TileGroup.tsx'
+import { TilePreview } from './TilePreview.tsx'
 
-const kinetic = [
-  { id: 'rise', name: 'Rise', sample: 'Rise' },
-  { id: 'pop', name: 'Pop', sample: 'Pop!' },
-  { id: 'type', name: 'Typewriter', sample: 'Type_' },
-  { id: 'wave', name: 'Wave', sample: 'Wave' },
-  { id: 'glitch', name: 'Glitch', sample: 'Glitch' },
-  { id: 'sweep', name: 'Karaoke sweep', sample: 'Sweep' },
-]
+function Tile({
+  item,
+  name,
+  thumbnail,
+  onAdd,
+}: {
+  item: PreviewItem
+  name: string
+  thumbnail?: string
+  onAdd: () => void
+}) {
+  return (
+    <button className={styles.tile} onClick={onAdd} {...previewHandlers(item)}>
+      <span
+        className={styles.tileArt}
+        style={thumbnail ? { backgroundImage: `url(${thumbnail})` } : undefined}
+      >
+        <TilePreview item={item} />
+      </span>
+      <span className={styles.tileName}>{name}</span>
+    </button>
+  )
+}
 
-const textStyles = [
-  { id: 'title', name: 'Title', cls: 'tsTitle', sample: 'NEON' },
-  { id: 'subtitle', name: 'Subtitle', cls: 'tsSub', sample: 'Lumen Drive' },
-  { id: 'caption', name: 'Caption', cls: 'tsCaption', sample: 'Under the neon skyline' },
-  { id: 'outline', name: 'Outline', cls: 'tsOutline', sample: 'ALIVE' },
-]
+const styleTile = (t: ReturnType<typeof textStyleItems>[number]) => (
+  <Tile
+    key={t.id}
+    item={{ kind: 'text-style', id: t.id }}
+    name={t.name}
+    thumbnail={t.thumbnail}
+    onAdd={() => applyLibraryTextStyle(t.id)}
+  />
+)
 
 export function TextTab() {
+  const project = useProject()
+  const selection = useUi((s) => s.selection)
   return (
     <div className={`${styles.scroller} scroll`}>
       <div className={styles.padded}>
-        <Button
-          variant="secondary"
-          block
-          icon={<Type />}
-          onClick={() => toast('Text layer added at the playhead')}
-        >
+        <Button variant="secondary" block icon={<Type />} onClick={addTextAtPlayhead}>
           Add text
         </Button>
+        <p className={styles.targetNote}>{textTargetHint(project, selection)}</p>
       </div>
-      <div className={styles.groupLabel}>Kinetic presets · drop on lyrics or text</div>
-      <div className={styles.tiles}>
-        {kinetic.map((k) => (
-          <button key={k.id} className={styles.tile} draggable>
-            <span className={[styles.tileArt, styles.kinetic, styles[`k-${k.id}`]].join(' ')}>
-              <span>{k.sample}</span>
-            </span>
-            <span className={styles.tileName}>{k.name}</span>
-          </button>
-        ))}
-      </div>
-      <div className={styles.groupLabel}>Text styles</div>
-      <div className={styles.tiles}>
-        {textStyles.map((t) => (
-          <button key={t.id} className={styles.tile} draggable>
-            <span className={[styles.tileArt, styles.textStyle, styles[t.cls]].join(' ')}>
-              <span>{t.sample}</span>
-            </span>
-            <span className={styles.tileName}>{t.name}</span>
-          </button>
-        ))}
-      </div>
+      <TileGroup
+        group="kinetic"
+        name="Kinetic presets"
+        items={textAnimationItems()}
+        tile={(k) => (
+          <Tile
+            key={k.id}
+            item={{ kind: 'plugin', id: k.id }}
+            name={k.name}
+            thumbnail={k.thumbnail}
+            onAdd={() => applyTextAnimation(k.id)}
+          />
+        )}
+      />
+      <TileGroup group="karaoke" name="Karaoke styles" items={textStyleItems('karaoke')} tile={styleTile} />
+      <TileGroup group="text-styles" name="Text styles" items={textStyleItems('styles')} tile={styleTile} />
     </div>
   )
 }

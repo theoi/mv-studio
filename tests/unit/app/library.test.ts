@@ -7,12 +7,15 @@ import {
   createVideoClip,
   type Asset,
   type Project,
+  type TextClip,
 } from '../../../src/model/index.ts'
 import { currentLook, ORIGINAL_LOOK } from '../../../src/plugins/looks.ts'
 import {
   addEffect,
   addTransition,
   addVisual,
+  applyLibraryTextStyle,
+  applyTextAnimation,
   chooseLook,
   chosenLookId,
   dropLibraryItem,
@@ -24,6 +27,8 @@ import {
   mediaRemoval,
   removeMedia,
   startLibraryDrag,
+  textTargetHint,
+  textTargets,
   transitionTarget,
   visualPlacement,
 } from '../../../src/app/state/library.ts'
@@ -323,5 +328,139 @@ describe('removing a file from the library', () => {
     removeMedia('v')
     removeMedia('i')
     expect(Object.keys(editor.getProject().assets).sort()).toEqual(['i', 'v'])
+  })
+})
+
+describe('kinetic presets and text styles', () => {
+  beforeEach(() => set({ selection: { type: 'none' }, playhead: 1, toasts: [] }))
+
+  /** The scene plus a second lyric line, a lyric line on the locked track and a title on its own track. */
+  function textScene() {
+    const s = scene()
+    const [lyrics, locked] = s.p.tracks
+    const titles = createTrack('visual', 'Titles')
+    s.p.tracks.splice(1, 0, titles)
+    const line2 = {
+      ...createTextClip({ trackId: lyrics!.id, text: 'World', start: 4, duration: 4 }),
+      lyricLineId: 'l2',
+    }
+    const hidden = {
+      ...createTextClip({ trackId: locked!.id, text: 'Locked', start: 8, duration: 2 }),
+      lyricLineId: 'l3',
+    }
+    const title = {
+      ...createTextClip({ trackId: titles.id, text: 'Lumen Drive', start: 0, duration: 3 }),
+      name: 'Title',
+    }
+    for (const clip of [line2, hidden, title]) s.p.clips[clip.id] = clip
+    return { ...s, line2, hidden, title }
+  }
+
+  it('goes on the selected text or lyric line, or on every unlocked lyric line when nothing is selected', () => {
+    const s = textScene()
+    expect(textTargets(s.p, { type: 'clip', id: s.title.id })).toEqual({
+      clipIds: [s.title.id],
+      what: '“Title”',
+      scope: 'text',
+    })
+    expect(textTargets(s.p, { type: 'lyric', id: 'l2' })).toEqual({
+      clipIds: [s.line2.id],
+      what: 'this lyric line',
+      scope: 'line',
+    })
+    expect(textTargets(s.p, { type: 'none' })).toEqual({
+      clipIds: [s.line.id, s.line2.id],
+      what: '2 lyric lines',
+      scope: 'lyrics',
+    })
+  })
+
+  it('changes nothing and says why when the selection is not text it can change', () => {
+    const s = textScene()
+    expect(textTargets(s.p, { type: 'clip', id: s.a.id })).toEqual({
+      why: 'Select a text or lyric line first',
+    })
+    expect(textTargets(s.p, { type: 'lyric', id: 'l3' })).toEqual({
+      why: 'That track is locked. Unlock it to restyle this text.',
+    })
+    s.p.tracks[0] = { ...s.p.tracks[0]!, locked: true }
+    expect(textTargets(s.p, { type: 'none' })).toEqual({
+      why: 'The Lyrics track is locked. Unlock it to restyle the lyrics.',
+    })
+  })
+
+  it('says where a click goes before the click', () => {
+    const s = textScene()
+    expect(textTargetHint(s.p, { type: 'none' })).toBe('Click a style to use it on every lyric line')
+    expect(textTargetHint(s.p, { type: 'clip', id: s.title.id })).toBe('Click a style to use it on “Title”')
+    expect(textTargetHint(s.p, { type: 'lyric', id: 'l2' })).toBe(
+      'Click a style to use it on this lyric line',
+    )
+    expect(textTargetHint(s.p, { type: 'clip', id: s.a.id })).toBe(
+      'Select a text or lyric line to restyle it',
+    )
+  })
+
+  it('says to time the words when a word karaoke style lands on lines without word timings', () => {
+    const s = textScene()
+    editor.load(s.p)
+    applyLibraryTextStyle('karaoke')
+    expect(get().toasts.at(-1)?.message).toBe('“Karaoke” on 2 lyric lines · Time the words to see it')
+    const word = (text: string, start: number) => ({ text, start, end: start + 0.5 })
+    editor.load({
+      ...s.p,
+      lyrics: {
+        source: 'pasted',
+        lines: [
+          { id: 'l1', text: 'Hello', start: 0, end: 1, words: [word('Hello', 0)] },
+          { id: 'l2', text: 'World', start: 4, end: 5, words: [word('World', 4)] },
+        ],
+      },
+    })
+    applyLibraryTextStyle('karaoke')
+    expect(get().toasts.at(-1)?.message).toBe('“Karaoke” on 2 lyric lines')
+  })
+
+  it('gives every lyric line a kinetic preset as one undo step', () => {
+    const s = textScene()
+    editor.load(s.p)
+    applyTextAnimation('wave')
+    const p = editor.getProject()
+    expect(
+      [s.line, s.line2, s.hidden, s.title].map((c) => (p.clips[c.id] as TextClip).animation?.presetId),
+    ).toEqual(['wave', 'wave', undefined, undefined])
+    expect(editor.undoLabel()).toBe('Text animation: Wave')
+    expect(get().toasts.at(-1)?.message).toBe('“Wave” on 2 lyric lines')
+    editor.undo()
+    expect((editor.getProject().clips[s.line.id] as TextClip).animation).toBeUndefined()
+  })
+
+  it('gives the selected text a style with its kinetic preset and karaoke, keeping its words and place', () => {
+    const s = textScene()
+    s.title.transform.x.value = 0.3
+    editor.load(s.p)
+    set({ selection: { type: 'clip', id: s.title.id } })
+    applyLibraryTextStyle('karaoke')
+    const title = editor.getProject().clips[s.title.id] as TextClip
+    expect(title).toMatchObject({
+      text: 'Lumen Drive',
+      transform: { x: { value: 0.3 } },
+      style: { fontWeight: 800, stroke: { color: '#000000', width: 5 } },
+      karaoke: { highlightColor: '#facc15', mode: 'word' },
+      animation: { presetId: 'sweep' },
+    })
+    expect((editor.getProject().clips[s.line.id] as TextClip).karaoke).toBeUndefined()
+    expect(editor.undoLabel()).toBe('Text style: Karaoke')
+    expect(get().toasts.at(-1)?.message).toBe('“Karaoke” on “Title”')
+  })
+
+  it('says what to do when there is no text to change', () => {
+    const p = createProject({ name: 'empty' })
+    editor.load(p)
+    const before = editor.getProject()
+    applyTextAnimation('wave')
+    expect(editor.getProject()).toBe(before)
+    expect(editor.canUndo()).toBe(false)
+    expect(get().toasts.at(-1)?.message).toBe('Select a text or lyric line, or add text first')
   })
 })

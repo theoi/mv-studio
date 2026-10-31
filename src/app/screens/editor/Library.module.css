@@ -60,6 +60,14 @@
   padding-top: var(--space-3);
 }
 
+/* Under Add text: where a clicked style goes, following the selection. */
+.targetNote {
+  margin: var(--space-2) 2px 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+}
+
 .groupLabel {
   display: flex;
   align-items: center;
@@ -430,113 +438,6 @@ button.songRow:hover {
 .reactive svg {
   width: 10px;
   height: 10px;
-}
-
-.kinetic {
-  background: linear-gradient(160deg, #17151f, #0d0d12);
-  font-size: 17px;
-  font-weight: 750;
-  letter-spacing: -0.01em;
-  color: #fff;
-}
-
-.kinetic span {
-  display: inline-block;
-}
-
-.tile:hover .k-rise span {
-  animation: kRise 700ms var(--ease-out) infinite;
-}
-
-.tile:hover .k-pop span {
-  animation: kPop 600ms var(--ease-out) infinite;
-}
-
-.tile:hover .k-wave span {
-  animation: kWave 900ms var(--ease-in-out) infinite;
-}
-
-.tile:hover .k-glitch span {
-  animation: kGlitch 300ms steps(2) infinite;
-}
-
-.k-type span {
-  font-family: var(--font-mono);
-  font-weight: 600;
-}
-
-.k-sweep span {
-  background: linear-gradient(90deg, #ffd27a 55%, rgb(255 255 255 / 0.45) 55%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.k-glitch span {
-  text-shadow:
-    2px 0 #ff3d8b,
-    -2px 0 #5fd4ff;
-}
-
-@keyframes kRise {
-  from {
-    transform: translateY(10px);
-    opacity: 0;
-  }
-}
-
-@keyframes kPop {
-  0% {
-    transform: scale(0.6);
-  }
-  60% {
-    transform: scale(1.12);
-  }
-}
-
-@keyframes kWave {
-  50% {
-    transform: translateY(-4px) rotate(-3deg);
-  }
-}
-
-@keyframes kGlitch {
-  50% {
-    transform: translateX(2px);
-  }
-}
-
-.textStyle {
-  background: linear-gradient(160deg, #1a1a20, #0e0e12);
-  color: #fff;
-}
-
-.tsTitle span {
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-}
-
-.tsSub span {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  color: rgb(255 255 255 / 0.85);
-}
-
-.tsCaption span {
-  padding: 2px 5px;
-  border-radius: 3px;
-  background: rgb(0 0 0 / 0.65);
-  font-size: 9px;
-  font-weight: 600;
-}
-
-.tsOutline span {
-  font-size: 18px;
-  font-weight: 800;
-  color: transparent;
-  -webkit-text-stroke: 1px #fff;
 }
 
 .emptyWrap {
