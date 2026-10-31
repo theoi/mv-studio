@@ -282,15 +282,20 @@ function makeWave(color: string, scaleY: number, { values, rate }: FeatureSeries
 
 function makeEnergy(series: FeatureSeries | undefined): DrawFn {
   const at = energySampler(series)
+  const songEnd = series?.values.length ? series.values.length / series.rate : 0
   return (ctx, t0, pps, w, h) => {
-    if (!series?.values.length) return
+    // The curve stops where the song ends, on a timeline that runs longer than the song.
+    const last = Math.min(w, (songEnd - t0) * pps)
+    if (last <= 0) return
     // Each 2 px column averages at least its own time span, so every sample counts once when zoomed out.
+    const y = (x: number) => h - 2 - at(Math.min(songEnd, t0 + x / pps), 2 / pps) * (h - 8)
     const pts: [number, number][] = []
-    for (let x = 0; x <= w; x += 2) pts.push([x, h - 2 - at(t0 + x / pps, 2 / pps) * (h - 8)])
+    for (let x = 0; x < last; x += 2) pts.push([x, y(x)])
+    pts.push([last, y(last)])
     ctx.beginPath()
     ctx.moveTo(0, h)
-    for (const [x, y] of pts) ctx.lineTo(x, y)
-    ctx.lineTo(w, h)
+    for (const [x, py] of pts) ctx.lineTo(x, py)
+    ctx.lineTo(last, h)
     ctx.closePath()
     const g = ctx.createLinearGradient(0, 0, 0, h)
     g.addColorStop(0, 'rgba(255,255,255,0.16)')

@@ -200,8 +200,10 @@ export function energyAt(a: AudioAnalysis | undefined, t: number): number {
   return e.values[Math.max(0, Math.min(e.values.length - 1, Math.floor(t * e.rate)))] ?? 0.4
 }
 
+/** The song's tempo, or undefined when it has none: not analyzed, or no beat found (a silent song gives 0). */
 export function bpmOf(p: Project): number | undefined {
-  return songAnalysis(p)?.tempo?.bpm
+  const bpm = songAnalysis(p)?.tempo?.bpm
+  return bpm && bpm > 0 ? bpm : undefined
 }
 
 export function lyricLines(p: Project): LyricLine[] {

@@ -147,10 +147,8 @@ export async function chooseSong(file: File): Promise<void> {
   update({ song: ready })
   await loadDraft(asset, ready.title)
   const ok = await analyzeSong(asset)
-  // A silent or beatless file analyzes without error but finds no tempo.
-  const found = ok && (editor.getProject().analysis.audio[asset.id]?.tempo?.bpm ?? 0) > 0
   const now = useSetup.getState().song
-  if (now?.asset?.id === asset.id) update({ song: { ...now, analysis: found ? 'done' : 'failed' } })
+  if (now?.asset?.id === asset.id) update({ song: { ...now, analysis: ok ? 'done' : 'failed' } })
 }
 
 /** Uses the sample song, which is already analyzed. */

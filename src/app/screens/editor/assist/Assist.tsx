@@ -17,6 +17,7 @@ import { Kbd } from '../../../ds/Kbd.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { jobTarget, openJob, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { bpmOf, hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
+import { SONG_STATE_TEXT } from '../../../state/songAnalysis.ts'
 import { openAssist, useUi, type AssistView } from '../../../state/ui.ts'
 import { AnalysisBadge, AnalysisView } from './Analysis.tsx'
 import { AskBox } from './Ask.tsx'
@@ -25,7 +26,7 @@ import { BehindBadge, BehindView } from './Behind.tsx'
 import { CameraBadge, CameraView } from './Camera.tsx'
 import { DirectorBadge, DirectorView } from './Director.tsx'
 import { GenerateBadge, GenerateView } from './Generate.tsx'
-import { etaText, pct } from './jobState.ts'
+import { etaText, pct, useSongState } from './jobState.ts'
 import { LyricsBadge, LyricsView } from './Lyrics.tsx'
 import { MatchView } from './Match.tsx'
 import { StemsBadge, StemsView } from './Stems.tsx'
@@ -79,17 +80,26 @@ function SongStatus() {
   const list = sectionsOf(project)
   const chorus = list.find((s) => sectionKind(s) === 'chorus')
   const stems = !!songAnalysis(project)?.stems
+  const state = useSongState()
+  const bpm = bpmOf(project)
+  const analyzed = state === 'analyzed' || state === 'no-beat'
   return (
     <button className={styles.song} onClick={() => openAssist('analysis')}>
       <span className={styles.songIcon}>
         <AudioLines />
       </span>
       <span className={styles.songText}>
-        <span className={styles.songTitle}>Song analyzed</span>
+        <span className={styles.songTitle}>{analyzed ? 'Song analyzed' : SONG_STATE_TEXT[state]}</span>
         <span className={`${styles.songMeta} tnum`}>
-          {formatBpm(bpmOf(project) ?? 120)} · {plural(list.length, 'section')}
-          {chorus ? ` · chorus at ${formatTime(chorus.start)}` : ''}
-          {stems ? ' · stems ready' : ''}
+          {analyzed ? (
+            <>
+              {bpm ? formatBpm(bpm) : SONG_STATE_TEXT['no-beat']} · {plural(list.length, 'section')}
+              {chorus ? ` · chorus at ${formatTime(chorus.start)}` : ''}
+              {stems ? ' · stems ready' : ''}
+            </>
+          ) : (
+            'Beats, bars, sections and energy'
+          )}
         </span>
       </span>
       <AnalysisBadge />

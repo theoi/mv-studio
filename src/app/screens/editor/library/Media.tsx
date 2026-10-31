@@ -34,9 +34,11 @@ import {
   timelineDuration,
   useProject,
 } from '../../../state/project.ts'
+import { analyzeAgain, SONG_STATE_TEXT } from '../../../state/songAnalysis.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
 import { focusedWithRing } from '../../../state/focusRing.ts'
 import { useUi } from '../../../state/ui.ts'
+import { useSongState } from '../assist/jobState.ts'
 import styles from '../Library.module.css'
 
 const filters = ['All', 'Video', 'Images', 'Generated'] as const
@@ -240,8 +242,9 @@ function songBars(project: Project): number[] {
 function SongRow() {
   const project = useProject()
   const asset = project.songAssetId ? project.assets[project.songAssetId] : undefined
-  const analyzed = !!songAnalysis(project)
+  const state = useSongState()
   const bpm = bpmOf(project)
+  const unanalyzed = state === 'not-analyzed' || state === 'failed'
   return (
     <div className={styles.songRow} tabIndex={0}>
       <span className={styles.songIcon}>
@@ -250,23 +253,31 @@ function SongRow() {
       <span className={styles.songText}>
         <span className={styles.songName}>{asset?.name}</span>
         <span className={`${styles.songMeta} tnum`}>
-          {analyzed ? (
+          {state === 'analyzed' || state === 'no-beat' ? (
             <>
               {formatTime(timelineDuration(project))} · {bpm ? `${formatBpm(bpm)} · ` : ''}
               {plural(sectionsOf(project).length, 'section')}
             </>
-          ) : (
+          ) : state === 'analyzing' ? (
             <>
               <Spinner size={10} /> Finding beats and sections…
             </>
+          ) : (
+            SONG_STATE_TEXT[state]
           )}
         </span>
       </span>
-      <span className={styles.songWave} aria-hidden>
-        {songBars(project).map((v, i) => (
-          <i key={i} style={{ height: `${15 + v * 85}%` }} />
-        ))}
-      </span>
+      {unanalyzed ? (
+        <Button size="sm" variant="secondary" onClick={() => void analyzeAgain()}>
+          {state === 'failed' ? 'Try again' : 'Analyze'}
+        </Button>
+      ) : (
+        <span className={styles.songWave} aria-hidden>
+          {songBars(project).map((v, i) => (
+            <i key={i} style={{ height: `${15 + v * 85}%` }} />
+          ))}
+        </span>
+      )}
     </div>
   )
 }
