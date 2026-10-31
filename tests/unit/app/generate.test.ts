@@ -9,9 +9,14 @@ import { jobs } from '../../../src/shared/jobs.ts'
 import type * as cloudState from '../../../src/app/state/cloud.ts'
 import { cloudSettings, spendLedger } from '../../../src/app/state/cloud.ts'
 import {
+  animateImage,
+  gapAt,
+  generateForm,
+  generateInGap,
   generateOutcome,
   placementCommands,
   setGenerateForm,
+  shotStart,
   spendCheck,
   startGenerate,
   undoOutcome,
@@ -32,6 +37,7 @@ vi.mock('../../../src/app/state/ui.ts', () => ({
   toast: vi.fn(),
   editorPreset: vi.fn(),
   maybeStartGuide: vi.fn(),
+  openAssist: vi.fn(),
 }))
 
 vi.mock('../../../src/app/state/cloud.ts', async (original) => ({
@@ -201,5 +207,69 @@ describe('startGenerate', () => {
     await vi.waitFor(() => expect(jobs.list().find((j) => j.id === job?.id)?.status).toBe('failed'))
     expect(Object.keys(editor.getProject().clips)).toHaveLength(clipsBefore)
     expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
+  })
+})
+
+describe('a shot in a gap of the timeline', () => {
+  const overlay = () =>
+    Object.values(editor.getProject().clips).filter((c) => c.trackId === TRACK_IDS.overlay)
+
+  it('finds the empty stretch around a time, and none on a clip', () => {
+    const project = buildDemoProject()
+    // The title ends at 0:09 and the first spectrum starts at 1:04.
+    expect(gapAt(project, TRACK_IDS.overlay, 30)).toEqual({ start: 9, end: 64 })
+    expect(gapAt(project, TRACK_IDS.overlay, 70)).toBeNull()
+    expect(gapAt(project, TRACK_IDS.overlay, 300)).toMatchObject({ end: Infinity })
+  })
+
+  it('starts at the gap when right-clicked near its start, else on the nearest beat', () => {
+    const project = buildDemoProject()
+    const gap = { start: 9, end: 64 }
+    expect(shotStart(project, gap, 9.3)).toBe(9)
+    // The sample is at 120 BPM: beats every half second.
+    expect(shotStart(project, gap, 30.2)).toBeCloseTo(30, 6)
+    expect(shotStart(project, gap, 30.4)).toBeCloseTo(30.5, 6)
+  })
+
+  it('places results on the gap’s track trimmed to the gap, then on the first free track once the gap is full', () => {
+    const project = buildDemoProject()
+    const commands = placementCommands(project, [image('a'), image('b')], 61, {
+      trackId: TRACK_IDS.overlay,
+      end: 64,
+    })
+    const clips = commands.flatMap((c) => (c.type === 'clip.add' ? [c.clip] : []))
+    expect(clips[0]).toMatchObject({ trackId: TRACK_IDS.overlay, start: 61, duration: 3 })
+    expect(clips[1]?.start).toBe(64)
+    expect(clips[1]?.trackId).not.toBe(TRACK_IDS.overlay)
+  })
+
+  it('Generate a shot here lands the result in the gap, and the next run goes to the playhead again', async () => {
+    editor.load(buildDemoProject())
+    fake.provider = provider()
+    setGenerateForm({ kind: 'image', prompt: 'neon rain', count: 1 })
+    generateInGap(TRACK_IDS.overlay, 61.1)
+    expect(generateForm().target).toMatchObject({ start: 61, trackId: TRACK_IDS.overlay, end: 64 })
+    const before = overlay().length
+    await startGenerate()
+    await vi.waitFor(() => expect(generateForm().target).toBeNull())
+    const added = overlay().filter((c) => 'assetId' in c && c.assetId.startsWith('gen-'))
+    expect(overlay()).toHaveLength(before + 1)
+    expect(added).toMatchObject([{ start: 61, duration: 3 }])
+  })
+})
+
+describe('Animate with AI', () => {
+  it('makes a video from the image that lands at the image’s start', () => {
+    const project = buildDemoProject()
+    editor.load(project)
+    const clip = Object.values(project.clips).find((c) => c.type === 'image')
+    if (clip?.type !== 'image') throw new Error('The sample has no image clip')
+    setGenerateForm({ kind: 'image', startImageId: null })
+    animateImage(clip)
+    expect(generateForm()).toMatchObject({
+      kind: 'video',
+      startImageId: clip.assetId,
+      target: { start: clip.start },
+    })
   })
 })

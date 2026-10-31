@@ -5,7 +5,14 @@ import { storeGeneratedMedia } from '../../cloud/media.ts'
 import { formatEstimate, needsSpendConfirmation, roundUsd } from '../../cloud/pricing.ts'
 import type { GenerationRequest, GenerationTask } from '../../cloud/types.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
-import { applyCommand, type Asset, type EditCommand, type Project } from '../../model/index.ts'
+import {
+  applyCommand,
+  clipsOnTrack,
+  type Asset,
+  type EditCommand,
+  type ImageClip,
+  type Project,
+} from '../../model/index.ts'
 import { jobs, type JobContext, type JobProgress } from '../../shared/jobs.ts'
 import { formatTime } from '../format.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
@@ -13,7 +20,8 @@ import { assetPlacement } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { dispatch, editor } from './project.ts'
-import { get, set, toast } from './ui.ts'
+import { beatGridOf } from '../../vj/quantize.ts'
+import { get, openAssist, set, toast } from './ui.ts'
 
 /*
  * Assist › Generate: AI images and video clips with the user's fal.ai key. The form is kept here so a result or an
@@ -22,6 +30,17 @@ import { get, set, toast } from './ui.ts'
  */
 
 export type GenerateKind = 'image' | 'video'
+
+/** Where results land instead of the playhead: a gap picked on the timeline, or over the image being animated. */
+export interface GenerateTarget {
+  start: number
+  /** The track to put the result on while it is free there. */
+  trackId?: string
+  /** The end of the gap: results are trimmed to fit it. */
+  end?: number
+  /** "at 0:58 on Overlay, in the gap up to 1:04" */
+  where: string
+}
 
 export interface GenerateForm {
   kind: GenerateKind
@@ -34,6 +53,8 @@ export interface GenerateForm {
   duration: number
   /** Images per run. */
   count: number
+  /** Null puts results at the playhead. */
+  target: GenerateTarget | null
 }
 
 const DEFAULT_FORM: GenerateForm = {
@@ -43,6 +64,7 @@ const DEFAULT_FORM: GenerateForm = {
   models: {},
   duration: 5,
   count: 1,
+  target: null,
 }
 
 let form = DEFAULT_FORM
@@ -143,9 +165,14 @@ export function spendCheck(usd: number): { monthTotal: number; reminderUsd: numb
 
 /**
  * Commands that add the assets to the project and put them on the timeline one after another from `start`, each on
- * the first free track of its kind.
+ * the first free track of its kind, or in the target's gap (trimmed to fit) while there is room in it.
  */
-export function placementCommands(project: Project, assets: Asset[], start: number): EditCommand[] {
+export function placementCommands(
+  project: Project,
+  assets: Asset[],
+  start: number,
+  target?: Pick<GenerateTarget, 'trackId' | 'end'>,
+): EditCommand[] {
   const commands: EditCommand[] = []
   let working = project
   let at = start
@@ -157,7 +184,12 @@ export function placementCommands(project: Project, assets: Asset[], start: numb
   }
   for (const asset of assets) {
     apply([{ type: 'asset.add', asset }])
-    const placed = assetPlacement(working, asset, { start: at })
+    const room = target?.end !== undefined ? target.end - at : 0
+    const placed = assetPlacement(
+      working,
+      asset,
+      room > 0.25 ? { start: at, trackId: target?.trackId, maxDuration: room } : { start: at },
+    )
     if (!placed) continue
     apply(placed.commands)
     at += placed.clip.duration
@@ -240,7 +272,8 @@ export async function startGenerate(at?: number): Promise<void> {
   const model = modelOf(f)
   const count = model.output === 'image' ? f.count : 1
   const estimate = estimateOf(f, project)
-  const start = at ?? get().playhead
+  const target = at === undefined ? f.target : null
+  const start = at ?? target?.start ?? get().playhead
   const imageId = request.task === 'image-to-video' ? f.startImageId : null
   const what = model.output === 'video' ? 'a video' : count > 1 ? `${count} images` : 'an image'
   const label =
@@ -276,10 +309,14 @@ export async function startGenerate(at?: number): Promise<void> {
           )
         }
         ctx.throwIfCancelled()
-        // Placed against the project as it is now, at the playhead from when the user pressed Generate.
-        if (!dispatch(placementCommands(editor.getProject(), assets, start), { label })) {
+        // Placed against the project as it is now, where it was meant to go when the user pressed Generate.
+        if (
+          !dispatch(placementCommands(editor.getProject(), assets, start, target ?? undefined), { label })
+        ) {
           throw new Error('The result could not be added to the project.')
         }
+        // The next run goes to the playhead again, unless another place was picked meanwhile.
+        if (target && form.target === target) setGenerateForm({ target: null })
       } finally {
         // fal.ai bills every finished request, even when a later one fails or the run is cancelled.
         if (usd > 0) spendLedger.record(usd, label)
@@ -296,4 +333,62 @@ export async function startGenerate(at?: number): Promise<void> {
   })
   jobId = handle.id
   runs.set(jobId, { task: request.task, start })
+}
+
+/** Inspector › Animate with AI: Assist › Generate › Video clip from the image, landing over it. */
+export function animateImage(clip: ImageClip): void {
+  setGenerateForm({
+    kind: 'video',
+    startImageId: clip.assetId,
+    target: { start: clip.start, where: `at ${formatTime(clip.start)}, over the image` },
+  })
+  openAssist('generate')
+}
+
+/** The empty stretch of a track around `time`, or null when a clip is there. */
+export function gapAt(
+  project: Project,
+  trackId: string,
+  time: number,
+): { start: number; end: number } | null {
+  let start = 0
+  let end = Infinity
+  for (const clip of clipsOnTrack(project, trackId)) {
+    const clipEnd = clip.start + clip.duration
+    if (clip.start <= time && time < clipEnd) return null
+    if (clipEnd <= time) start = Math.max(start, clipEnd)
+    else end = Math.min(end, clip.start)
+  }
+  return { start, end }
+}
+
+/** Where a shot right-clicked at `time` starts: the gap's start when near it, else the nearest beat in the gap. */
+export function shotStart(project: Project, gap: { start: number; end: number }, time: number): number {
+  if (time - gap.start < 0.5) return gap.start
+  const beats = beatGridOf(project)?.beats.filter((b) => b >= gap.start && b < gap.end - 0.25) ?? []
+  const nearest = beats.reduce<number | null>(
+    (best, b) => (best === null || Math.abs(b - time) < Math.abs(best - time) ? b : best),
+    null,
+  )
+  return nearest !== null && Math.abs(nearest - time) < 1 ? nearest : time
+}
+
+/** Timeline › right-click an empty stretch › Generate a shot here: Assist › Generate, landing in that gap. */
+export function generateInGap(trackId: string, time: number): void {
+  const project = editor.getProject()
+  const gap = gapAt(project, trackId, time)
+  if (!gap) return
+  const start = shotStart(project, gap, time)
+  const track = project.tracks.find((t) => t.id === trackId)
+  const room = gap.end === Infinity ? '' : `, in the gap up to ${formatTime(gap.end)}`
+  setGenerateForm({
+    ...(gap.end === Infinity ? {} : { duration: gap.end - start }),
+    target: {
+      start,
+      trackId,
+      ...(gap.end === Infinity ? {} : { end: gap.end }),
+      where: `at ${formatTime(start)} on ${track?.name ?? 'this track'}${room}`,
+    },
+  })
+  openAssist('generate')
 }

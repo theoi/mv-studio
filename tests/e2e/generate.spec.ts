@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Page, Route } from '@playwright/test'
-import { expect, openApp, test, waitForPreview } from './fixtures.ts'
+import { expect, openApp, openHarness, test, waitForPreview } from './fixtures.ts'
 
 /*
  * Assist › Generate with the real fal.ai client. CI has no fal.ai key, so fal.ai's queue, storage and file hosts are
@@ -303,4 +303,87 @@ test('a video from one of your images uploads the image and lands as a video cli
     },
   ])
   await expect(timelineClip(page, 'AI video: Clouds drift past the sun', '0:12.0')).toHaveCount(1)
+})
+
+/** Opens the sample project at `hash` with the e2e harness, with a saved fal.ai key. */
+async function openWithKey(page: Page, hash: string) {
+  await page.addInitScript(
+    (saved) => {
+      localStorage.setItem('mv-studio.guide-seen', '1')
+      localStorage.setItem('mv-studio.cloud.v1', JSON.stringify(saved))
+    },
+    { falKey: KEY },
+  )
+  await openHarness(page)
+  await page.evaluate((h) => (window.location.hash = h), hash)
+  await waitForPreview(page)
+}
+
+/** The track of the clip named `name`, and whether it is layered above the footage track. */
+function trackOf(page: Page, name: string) {
+  return page.evaluate((n) => {
+    type Clip = { name?: string; trackId: string }
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clip = Object.values(project.clips as Record<string, Clip>).find((c) => c.name === n)
+    const index = (id: string | undefined) =>
+      (project.tracks as { id: string }[]).findIndex((t) => t.id === id)
+    return { trackId: clip?.trackId, above: index(clip?.trackId) < index('t-video') }
+  }, name)
+}
+
+test('Animate with AI in the image inspector makes a video from the still that lands over it', async ({
+  page,
+}) => {
+  const fal = await mockFal(page, { output: 'video' })
+  // A Rooftop sunset still at 0:28, with the playhead elsewhere.
+  await openWithKey(page, '#/editor?sel=clip:c-s-v1-3&t=12')
+  await page.getByRole('button', { name: 'Animate with AI' }).click()
+  await expect(page.getByText('AI images and clips with fal.ai')).toBeVisible()
+  await expect(page.getByRole('radio', { name: 'Video clip' })).toBeChecked()
+  await expect(page.getByRole('combobox', { name: 'Start image' })).toHaveText('Rooftop sunset (image)')
+  await expect(page.getByText('Results land in Media › Generated and at 0:28, over the image.')).toBeVisible()
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('The sun sinks behind the towers')
+  await page.getByRole('button', { name: /^Generate · / }).click()
+  const name = 'AI video: The sun sinks behind the towers'
+  await expect(page.getByText(`Added ${name}`, { exact: true })).toBeVisible({ timeout: 20_000 })
+  expect(fal.uploads).toHaveLength(1)
+  expect(fal.submits[0]?.endpoint).toMatch(/\/image-to-video$/)
+  await expect(timelineClip(page, name, '0:28.0')).toHaveCount(1)
+  expect((await trackOf(page, name)).above).toBe(true)
+})
+
+test('Generate a shot here: right-click an empty stretch of a track, and the shot lands there, trimmed to fit', async ({
+  page,
+}) => {
+  const fal = await mockFal(page)
+  await openWithKey(page, '#/editor?t=60')
+  const spectrum = timelineClip(page, 'Spectrum bars', '1:04.0')
+  const box = await spectrum.boundingBox()
+  if (!box) throw new Error('The spectrum clip is not on screen')
+
+  // A clip keeps its own menu.
+  await spectrum.click({ button: 'right' })
+  await expect(page.getByRole('menuitem', { name: /^Split at playhead/ })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: /^Generate a shot here/ })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  // The empty stretch of the Overlay track just before it, between the title and the spectrum.
+  await page.mouse.click(box.x - 20, box.y + box.height / 2, { button: 'right' })
+  const item = page.getByRole('menuitem', { name: /^Generate a shot here/ })
+  await expect(item).toContainText(/AI image or clip at 1:0\d/)
+  await item.click()
+  await expect(page.getByText('AI images and clips with fal.ai')).toBeVisible()
+  await expect(
+    page.getByText(/^Results land in Media › Generated and at 1:0\d on Overlay, in the gap up to 1:04\.$/),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Use the playhead instead' })).toBeVisible()
+  await page.getByRole('radio', { name: 'Image' }).click()
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Neon rain')
+  await page.getByRole('button', { name: /^Generate · / }).click()
+  const name = 'AI image: Neon rain'
+  await expect(page.getByText(`Added ${name}`, { exact: true })).toBeVisible({ timeout: 20_000 })
+  expect(fal.submits).toHaveLength(1)
+  // Trimmed to end where the spectrum starts, on the track that was right-clicked.
+  await expect(page.locator(`[aria-label^="${name}, 1:0"][aria-label$=" to 1:04.0"]`)).toHaveCount(1)
+  expect((await trackOf(page, name)).trackId).toBe('t-overlay')
 })

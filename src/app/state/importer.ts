@@ -181,6 +181,10 @@ export interface Placement {
   duration?: number
   /** Where in a video or audio file to start, in source seconds. */
   sourceStart?: number
+  /** The track to use while it is free there (default: the first free track of the asset's kind). */
+  trackId?: string
+  /** The longest the clip may be, to fit a gap. */
+  maxDuration?: number
 }
 
 /** Adds an asset on the first free track of its kind (footage tracks first), adding one if needed. */
@@ -208,12 +212,17 @@ export function assetPlacement(
   const sourceStart = asset.kind === 'image' ? 0 : Math.max(0, at.sourceStart ?? 0)
   const available = asset.kind === 'image' ? Infinity : Math.max(0.5, (asset.duration ?? 4) - sourceStart)
   const imageDuration = barsToSeconds(prefs().imageBars, bpmOf(project))
-  const duration = Math.min(available, at.duration ?? (asset.kind === 'image' ? imageDuration : available))
+  const duration = Math.min(
+    available,
+    at.duration ?? (asset.kind === 'image' ? imageDuration : available),
+    at.maxDuration ?? Infinity,
+  )
   const candidates = project.tracks
     .filter((t) => t.kind === kind && !t.locked && t.id !== TRACK_IDS.lyrics)
     .sort((a, b) => Number(isFootageTrack(project, b)) - Number(isFootageTrack(project, a)))
   const commands: EditCommand[] = []
-  let track = candidates.find((t) => !busyAt(project, t.id, start, start + duration))
+  const free = (t: Track) => !busyAt(project, t.id, start, start + duration)
+  let track = candidates.find((t) => t.id === at.trackId && free(t)) ?? candidates.find(free)
   if (!track) {
     track = createTrack(kind, kind === 'audio' ? 'Audio' : 'Video')
     const footage = project.tracks.findIndex((t) => isFootageTrack(project, t))

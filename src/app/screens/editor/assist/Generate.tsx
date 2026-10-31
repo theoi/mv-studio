@@ -232,7 +232,18 @@ function Setup() {
           )}
         </Field>
       </div>
-      <p className={styles.muted}>Results land in Media › Generated and at the playhead as normal clips.</p>
+      {f.target ? (
+        <>
+          <p className={styles.muted}>Results land in Media › Generated and {f.target.where}.</p>
+          <div className={styles.linkRow}>
+            <Button size="sm" variant="ghost" onClick={() => setGenerateForm({ target: null })}>
+              Use the playhead instead
+            </Button>
+          </div>
+        </>
+      ) : (
+        <p className={styles.muted}>Results land in Media › Generated and at the playhead as normal clips.</p>
+      )}
     </ToolView>
   )
 }
