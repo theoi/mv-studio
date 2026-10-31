@@ -159,9 +159,17 @@
 }
 
 .icon-xs {
+  position: relative;
   width: var(--control-xs);
   height: var(--control-xs);
   border-radius: var(--radius-sm);
+}
+
+/* The button looks 20 px but takes clicks over 24 px. Buttons beside it keep at least 4 px apart, so the areas don't overlap. */
+.icon-xs::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
 }
 
 .icon-xs svg {
@@ -202,6 +210,11 @@
 .icon-secondary {
   background: var(--bg-raised);
   border: 1px solid var(--border);
+}
+
+/* The click area is placed from inside the border. */
+.icon-xs.icon-secondary::before {
+  inset: -3px;
 }
 
 .active,
