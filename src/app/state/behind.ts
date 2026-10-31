@@ -101,25 +101,33 @@ const fromReport = (r: SuitabilityReport): Suitability => ({
 const REASONS: Record<SuitabilityReason, string> = {
   // The person segmenter finds nobody both in empty shots and in wide shots of small people, so this must not claim
   // the shot is empty.
-  'no-subject': 'No one here is large enough to cut out',
+  'no-subject': 'No one in this shot is large enough to cut out',
   'subject-too-small': 'People are too small in this wide shot',
   'subject-fills-frame': 'The person fills the frame, so text behind them would barely show',
   'many-small-subjects': 'Too many small people to cut out cleanly',
   'unstable-mask': 'The cutout flickers in this shot',
 }
 
+/** A marginal shot has a person in some parts, so a reason about the whole shot would contradict "Person found". */
+const MARGINAL_REASONS: Partial<Record<SuitabilityReason, string>> = {
+  'no-subject': 'In the other parts, no one is large enough to cut out',
+}
+
 /** What the inspector and Assist say about a shot: a short status and, when it matters, why. */
 export function suitabilityText(s: Suitability): { status: string; why?: string; ok: boolean } {
   switch (s.status) {
     case 'checked': {
-      const reason = s.reasons[0] ? REASONS[s.reasons[0]] : undefined
+      const first = s.reasons[0]
+      const reason = first ? REASONS[first] : undefined
       if (s.verdict === 'good') return { status: 'Person found', ok: true }
-      if (s.verdict === 'marginal')
+      if (s.verdict === 'marginal') {
+        const partly = first ? (MARGINAL_REASONS[first] ?? reason) : undefined
         return {
           status: 'Person found',
-          why: reason ? `Works in parts of this shot. ${reason}.` : undefined,
+          why: partly ? `Works in parts of this shot. ${partly}.` : undefined,
           ok: true,
         }
+      }
       return {
         status: 'Not suitable',
         why: `${reason ?? 'This shot has no clear person to cut out'}.`,

@@ -69,7 +69,13 @@ describe('suitability', () => {
     const city = assetSuitability(project.assets['m-city']!)
     expect(city).toMatchObject({ reasons: ['no-subject'] })
     // Nobody found can also mean people too small to find, so the text does not claim the shot is empty.
-    expect(suitabilityText(city).why).toBe('No one here is large enough to cut out.')
+    expect(suitabilityText(city).why).toBe('No one in this shot is large enough to cut out.')
+    // In a marginal shot the reason is about the parts without a person, so it must not contradict "Person found".
+    expect(suitabilityText({ status: 'checked', verdict: 'marginal', reasons: ['no-subject'] })).toEqual({
+      status: 'Person found',
+      why: 'Works in parts of this shot. In the other parts, no one is large enough to cut out.',
+      ok: true,
+    })
   })
 
   it('leaves imported footage unchecked until a check result is stored for it', () => {

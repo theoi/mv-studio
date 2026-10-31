@@ -113,7 +113,7 @@ test('a clip with no one in it says why it cannot be cut out', async ({ page }) 
   await toggle.click()
   await expect(
     inspector.getByText(
-      /^(No one here is large enough to cut out|People are too small in this wide shot)\.$/,
+      /^(No one in this shot is large enough to cut out|People are too small in this wide shot)\.$/,
     ),
   ).toBeVisible({
     timeout: 90_000,
