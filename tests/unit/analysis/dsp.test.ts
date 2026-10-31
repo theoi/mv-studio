@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ComplexFFT, RealFFT } from '../../../src/analysis/dsp/fft.ts'
-import { mixToMono, resample } from '../../../src/analysis/dsp/resample.ts'
+import { createStreamResampler, mixToMono, resample } from '../../../src/analysis/dsp/resample.ts'
 import { melFilterbank } from '../../../src/analysis/dsp/spectral.ts'
 import { rng, sine } from './synth.ts'
 
@@ -88,6 +88,31 @@ describe('resample', () => {
     const a = resample(x, 44100, 22050)
     expect(resample(x, 44100, 22050)).toEqual(a)
     expect(a[2000]).toBeCloseTo(0.25, 5)
+  })
+
+  it.each([
+    [44100, 48000],
+    [48000, 44100],
+    [44100, 16000],
+  ])('streams from %i Hz to %i Hz block by block with the same samples as one call', (from, to) => {
+    const r = rng(7)
+    const x = Float32Array.from({ length: 30_011 }, () => r() * 2 - 1)
+    const stream = createStreamResampler(from, to)
+    const parts: Float32Array[] = []
+    // Uneven blocks, including empty ones and ones shorter than the kernel.
+    for (let at = 0, k = 0; at < x.length; k++) {
+      const size = [0, 3, 1234, 7, 5000, 64][k % 6] as number
+      parts.push(stream.push(x.subarray(at, at + size)))
+      at += size
+    }
+    parts.push(stream.flush())
+    const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0))
+    let at = 0
+    for (const p of parts) {
+      out.set(p, at)
+      at += p.length
+    }
+    expect(out).toEqual(resample(x, from, to))
   })
 
   it('mixes channels to mono', () => {

@@ -10,7 +10,7 @@ import { ASPECT_PRESETS } from '../model/factory.ts'
 import { projectDuration } from '../model/queries.ts'
 import type { AspectPreset, Project, Seconds } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
-import { audibleClips, AudioBufferCache, renderMix } from './audio.ts'
+import { audibleClips, audioBufferCache, renderMix } from './audio.ts'
 import { AUDIO_SAMPLE_RATE, encodeExport, type EncodeJob, type EncodeResult } from './encode.ts'
 import { startRenderWorker } from './renderHost.ts'
 import type { ExportResult, ExportSettings, MediaFileSource, PluginRegistry } from './types.ts'
@@ -147,7 +147,7 @@ export async function exportProject(
   let audio: EncodeJob['audio'] = null
   if (options.audio !== 'none' && audibleClips(project).length > 0) {
     ctx.progress({ stage: 'mix', message: 'Mixing audio', fraction: 0.01 })
-    const cache = new AudioBufferCache(media)
+    const cache = audioBufferCache(media)
     const render = (r: { start: Seconds; end: Seconds }) => renderMix(project, cache, r, AUDIO_SAMPLE_RATE)
     const mix = typeof options.audio === 'function' ? await options.audio(render) : await render(range)
     audio = {

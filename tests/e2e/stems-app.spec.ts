@@ -65,7 +65,50 @@ test('Assist › Stems separates the imported song on this device and shows its 
   expect(r.origins).toEqual(['stem', 'stem', 'stem', 'stem'])
   // Stems are an analysis result: no undo step of their own.
   expect(r.undoLabel).toBe(undoLabel)
-  // The fixture is kicks over a pad with no voice, so the drums waveform stands well above the vocals.
+  // The stems must line up with the song sample for sample: the same start and length at 48 kHz, and their sum must
+  // match the song at lag 0 (an encoder priming delay or a container pre-skip shows up here).
+  const alignment = await page.evaluate(async () => {
+    const { app, media } = window.mvStudio
+    const project = app.project.editor.getProject()
+    const song = project.assets[project.songAssetId]
+    const stems = Object.values(project.analysis.audio[song.id].stems as Record<string, string>).map(
+      (id) => project.assets[id],
+    )
+    const decode = async (asset: object) =>
+      new OfflineAudioContext(2, 1, 48_000).decodeAudioData(
+        await (await media.mediaStore.getFile(asset)).arrayBuffer(),
+      )
+    const songBuffer = await decode(song)
+    const stemBuffers = await Promise.all(stems.map(decode))
+    const x = songBuffer.getChannelData(0)
+    const sum = new Float32Array(x.length)
+    for (const b of stemBuffers) {
+      const data = b.getChannelData(0)
+      for (let i = 0; i < Math.min(sum.length, data.length); i++) sum[i] += data[i]
+    }
+    const from = 2 * 48_000
+    const length = 3 * 48_000
+    let bestLag = 0
+    let best = -Infinity
+    for (let lag = -2048; lag <= 2048; lag++) {
+      let dot = 0
+      for (let i = from; i < from + length; i += 2) dot += x[i] * (sum[i + lag] ?? 0)
+      if (dot > best) {
+        best = dot
+        bestLag = lag
+      }
+    }
+    return {
+      mimeTypes: stems.map((s: { mimeType: string }) => s.mimeType),
+      songSeconds: songBuffer.duration,
+      stemSeconds: stemBuffers.map((b) => b.duration),
+      lag: bestLag,
+    }
+  })
+  console.log('stem alignment', JSON.stringify(alignment))
+  for (const seconds of alignment.stemSeconds)
+    expect(Math.abs(seconds - alignment.songSeconds)).toBeLessThan(1e-3)
+  expect(Math.abs(alignment.lag)).toBeLessThanOrEqual(1) // The fixture is kicks over a pad with no voice, so the drums waveform stands well above the vocals.
   expect(await waveHeight(page, 'Drums')).toBeGreaterThan((await waveHeight(page, 'Vocals')) + 20)
   // A flat waveform says why: the fixture has no voice.
   const row = (stem: string) => panel.getByText(stem, { exact: true }).locator('xpath=..')
