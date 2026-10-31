@@ -344,21 +344,21 @@
   flex: 1;
 }
 
+/* Inline text, not flex, so a wrapped line stays centered under the button with the icon leading the first line. */
 .costLine {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
   margin-top: var(--space-2);
   color: var(--text-3);
   font-size: var(--text-xs);
   text-align: center;
+  text-wrap: balance;
 }
 
 .costLine svg {
+  display: inline-block;
   width: 12px;
   height: 12px;
-  flex: none;
+  margin-right: 5px;
+  vertical-align: -2px;
 }
 
 .field {

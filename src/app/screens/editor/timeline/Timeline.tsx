@@ -10,6 +10,7 @@ import {
   Magnet,
   MousePointer2,
   Music4,
+  Palette,
   Scissors,
   SlidersHorizontal,
   Sparkles,
@@ -46,6 +47,7 @@ import {
   dispatch,
   editor,
   hasSong,
+  isLookClip,
   lyricLines,
   sectionColor,
   sectionKind,
@@ -69,15 +71,16 @@ const SONG_H = 34
 const MIN_PPS = 3
 const MAX_PPS = 80
 
-type LaneKind = 'video' | 'overlay' | 'lyrics' | 'audio'
+type LaneKind = 'video' | 'overlay' | 'lyrics' | 'look' | 'audio'
 
-const laneHeight: Record<LaneKind, number> = { video: 42, overlay: 30, lyrics: 28, audio: 46 }
+const laneHeight: Record<LaneKind, number> = { video: 42, overlay: 30, lyrics: 28, look: 22, audio: 46 }
 
 function laneKind(p: Project, t: Track): LaneKind {
   if (t.kind === 'audio') return 'audio'
   const clips = clipsOnTrack(p, t.id)
   if (clips.some((c) => c.type === 'video' || c.type === 'image')) return 'video'
   if (clips.length && clips.every((c) => c.type === 'text' && c.lyricLineId)) return 'lyrics'
+  if (clips.length && clips.every(isLookClip)) return 'look'
   return clips.length ? 'overlay' : 'video'
 }
 
@@ -415,6 +418,10 @@ function ClipBlock({
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
   const showLabel = width > 54
+  const label =
+    clip.kind === 'look' && clip.amount !== undefined
+      ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
+      : clip.name
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -423,13 +430,13 @@ function ClipBlock({
             .filter(Boolean)
             .join(' ')}
           style={{
-            transform: `translateX(${clip.start * pps}px)`,
+            left: clip.start * pps,
             width,
             backgroundImage: isMedia && clip.scene ? `url(${sceneThumb(clip.scene, 160, 90)})` : undefined,
           }}
           role="button"
           tabIndex={0}
-          aria-label={`${clip.name}, ${formatTime(clip.start, true)} to ${formatTime(clip.end, true)}`}
+          aria-label={`${label}, ${formatTime(clip.start, true)} to ${formatTime(clip.end, true)}`}
           aria-pressed={selected}
           onPointerDown={(e) => onPointerDown(e, clip, 'move')}
           onKeyDown={(e) => {
@@ -441,8 +448,8 @@ function ClipBlock({
         >
           {!isMedia && (
             <span className={styles.clipLabel}>
-              {clip.kind === 'text' ? <Type /> : <AudioWaveform />}
-              {showLabel && clip.name}
+              {clip.kind === 'text' ? <Type /> : clip.kind === 'look' ? <Palette /> : <AudioWaveform />}
+              {showLabel && label}
             </span>
           )}
           {isMedia && showLabel && <span className={styles.mediaLabel}>{clip.name}</span>}
@@ -498,7 +505,16 @@ function TrackHeader({ track, height }: { track: Track; height: number }) {
   const isAudio = track.kind === 'audio'
   return (
     <div className={styles.trackHeader} style={{ height }}>
-      <span className={styles.trackName}>{track.name}</span>
+      <span
+        className={styles.trackName}
+        onPointerEnter={(e) => {
+          // Names cut off by the narrow header get their full text as a tooltip.
+          const el = e.currentTarget
+          el.title = el.scrollWidth > el.clientWidth ? track.name : ''
+        }}
+      >
+        {track.name}
+      </span>
       <span className={styles.trackIcons}>
         {isAudio ? (
           <>
