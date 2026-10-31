@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Check, Mic2 } from 'lucide-react'
+import { AlertTriangle, Check, Mic2 } from 'lucide-react'
 import type { Clip, LyricLine } from '../../../../model/index.ts'
 import { jobs } from '../../../../shared/jobs.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
+import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBytes, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { lineTiming, retimeCost, retimeLine } from '../../../state/lyricTiming.ts'
@@ -27,11 +28,13 @@ function minutesText(seconds: number): string {
   return seconds < 60 ? 'under a minute' : `about ${Math.round(seconds / 60)} min`
 }
 
-/** The line under Re-time line: what it is doing, why it stopped, or what it costs before it can start. */
-function RetimeNote({ lyricsRunning }: { lyricsRunning: boolean }) {
+type RetimeCost = Awaited<ReturnType<typeof retimeCost>>
+
+/** What the first re-time after a reload costs, or null when re-timing runs at once. */
+function useRetimeCost(): RetimeCost {
   const project = useProject()
-  const { job, phase } = useJob(JOB_KINDS.realign)
-  const [cost, setCost] = useState<Awaited<ReturnType<typeof retimeCost>>>(null)
+  const { phase } = useJob(JOB_KINDS.realign)
+  const [cost, setCost] = useState<RetimeCost>(null)
   const stemsReady = !!songAnalysis(project)?.stems
   useEffect(() => {
     let live = true
@@ -43,6 +46,24 @@ function RetimeNote({ lyricsRunning }: { lyricsRunning: boolean }) {
       live = false
     }
   }, [project.songAssetId, stemsReady, phase])
+  return cost
+}
+
+function costText(cost: NonNullable<RetimeCost>): string {
+  const parts = [
+    cost.separatesStems ? 'separates the vocals first' : 'listens to the vocals first',
+    ...(cost.downloadBytes ? [`${formatBytes(cost.downloadBytes)} download, once`] : []),
+    `${minutesText(cost.seconds)} on this device`,
+  ]
+  return `Re-timing ${parts.join(' · ')}`
+}
+
+/**
+ * The line under Re-time line: what it is doing, why it stopped or cannot start, or, when the line needs
+ * re-timing, what that costs.
+ */
+function RetimeNote({ line, cost, busy }: { line: LyricLine; cost: RetimeCost; busy?: string }) {
+  const { job, phase } = useJob(JOB_KINDS.realign)
   if (phase === 'running')
     return (
       <p className={styles.note}>
@@ -52,19 +73,16 @@ function RetimeNote({ lyricsRunning }: { lyricsRunning: boolean }) {
   if (phase === 'failed' && job?.error?.code !== 'cancelled')
     return (
       <p className={styles.note} role="alert">
-        {job?.error?.message ?? 'Something went wrong'}
-        <br />
+        <span className={styles.noteDanger}>
+          <AlertTriangle aria-hidden />
+          {job?.error?.message ?? 'Something went wrong'}
+        </span>
         Your lyrics are unchanged.
       </p>
     )
-  if (lyricsRunning) return <p className={styles.note}>Lyrics are being timed now.</p>
-  if (!cost) return null
-  const parts = [
-    cost.separatesStems ? 'separates the vocals first' : 'listens to the vocals first',
-    ...(cost.downloadBytes ? [`${formatBytes(cost.downloadBytes)} download, once`] : []),
-    `${minutesText(cost.seconds)} on this device`,
-  ]
-  return <p className={styles.note}>Re-timing {parts.join(' · ')}</p>
+  if (busy) return <p className={styles.note}>{busy}</p>
+  if (!cost || lineTiming(line) === 'timed') return null
+  return <p className={styles.note}>{costText(cost)}</p>
 }
 
 function TimingBadge({ line }: { line: LyricLine }) {
@@ -86,6 +104,22 @@ function WordsSection({ line }: { line: LyricLine }) {
   const lyricsRunning = running.some((j) => j.kind === JOB_KINDS.lyrics)
   // Listening to the vocals separates stems when the song has none; a second separation would double the memory.
   const stemsRunning = !songAnalysis(project)?.stems && running.some((j) => j.kind === JOB_KINDS.stems)
+  const busy = lyricsRunning
+    ? 'Lyrics are being timed now.'
+    : stemsRunning
+      ? 'Stems are being separated now.'
+      : undefined
+  const cost = useRetimeCost()
+  const retime = (
+    <Button
+      size="sm"
+      variant="ghost"
+      disabled={!project.songAssetId || !line.text.trim() || !!busy}
+      onClick={() => void retimeLine(line.id)}
+    >
+      Re-time line
+    </Button>
+  )
   const updateLine = (patch: { text?: string; start?: number; end?: number }) =>
     dispatch(
       { type: 'lyrics.updateLine', lineId: line.id, patch },
@@ -106,19 +140,16 @@ function WordsSection({ line }: { line: LyricLine }) {
             <Button size="sm" variant="ghost" onClick={() => job && jobs.cancel(job.id)}>
               Cancel
             </Button>
+          ) : cost && !busy && lineTiming(line) === 'timed' ? (
+            <Tooltip label="Re-time line" description={costText(cost)}>
+              {retime}
+            </Tooltip>
           ) : (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={!project.songAssetId || !line.text.trim() || lyricsRunning || stemsRunning}
-              onClick={() => void retimeLine(line.id)}
-            >
-              Re-time line
-            </Button>
+            retime
           )}
         </div>
       </div>
-      <RetimeNote lyricsRunning={lyricsRunning} />
+      <RetimeNote line={line} cost={cost} busy={busy} />
       <FieldRow label="Start">
         <NumberField
           value={line.start ?? 0}

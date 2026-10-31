@@ -103,19 +103,37 @@ test('Re-time line listens to the vocals once, then re-times the line as one und
   await expect(inspector.getByText('Lyric line')).toBeVisible()
   const before = await selected(page)
   await expect(inspector.getByText(`${before.line.words.length} words timed to vocals`)).toBeVisible()
-  // Nothing has listened to the vocals in this session, so the first re-time says what it costs.
-  await expect(
-    inspector.getByText(
-      'Re-timing separates the vocals first · 276 MB download, once · about 4 min on this device',
-    ),
-  ).toBeVisible()
+  // Nothing has listened to the vocals in this session. For a line that is already timed, what the first re-time
+  // costs is in the button's tooltip rather than under it.
+  const cost = 'Re-timing separates the vocals first · 276 MB download, once · about 4 min on this device'
+  await expect(inspector.getByText(cost)).toHaveCount(0)
+  await inspector.getByRole('button', { name: 'Re-time line' }).hover()
+  await expect(page.getByRole('tooltip')).toContainText(cost)
   await shot(page, 'retime-idle')
+  await page.mouse.move(0, 0)
 
-  // A corrected line no longer matches its timed words.
+  // A corrected line no longer matches its timed words, so re-timing is suggested with its cost.
   const text = `${before.line.text} tonight`
   await inspector.getByRole('textbox', { name: 'Lyric text' }).fill(text)
   await inspector.getByRole('textbox', { name: 'Lyric text' }).blur()
   await expect(inspector.getByText('Text changed since timing')).toBeVisible()
+  await expect(inspector.getByText(cost)).toBeVisible()
+  await shot(page, 'retime-edited')
+
+  // While stems are being separated, re-timing waits and says why.
+  await page.evaluate(() => {
+    const { shared } = window.mvStudio
+    const w = window as unknown as { stopStems: () => void }
+    shared.jobs.run({
+      kind: 'analysis.stems',
+      title: 'Separating stems',
+      run: () => new Promise((resolve) => (w.stopStems = () => resolve(undefined))),
+    })
+  })
+  await expect(inspector.getByText('Stems are being separated now.')).toBeVisible()
+  await expect(inspector.getByRole('button', { name: 'Re-time line' })).toBeDisabled()
+  await page.evaluate(() => (window as unknown as { stopStems: () => void }).stopStems())
+  await expect(inspector.getByRole('button', { name: 'Re-time line' })).toBeEnabled()
 
   // Listening can be cancelled; the lyrics stay as they were.
   await inspector.getByRole('button', { name: 'Re-time line' }).click()
