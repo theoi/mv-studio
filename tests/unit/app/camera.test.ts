@@ -6,6 +6,8 @@ import {
   motionOf,
   removeCameraMove,
   setCameraMove,
+  smearNote,
+  smearingMoves,
   stillClips,
   undoCameraMoves,
 } from '../../../src/app/state/camera.ts'
@@ -55,6 +57,23 @@ const fullMove = (id: string) => ({
   },
 })
 
+it('says how many of the stills just given a move may smear', () => {
+  expect(smearNote(1, 0)).toBeNull()
+  expect(smearNote(4, 0)).toBeNull()
+  expect(smearNote(1, 1)).toBe(
+    'This image may smear behind foreground objects at this strength. Try a lower Strength.',
+  )
+  expect(smearNote(4, 1)).toBe(
+    '1 of 4 images may smear behind foreground objects at this strength. Try a lower Strength.',
+  )
+  expect(smearNote(4, 3)).toBe(
+    '3 of 4 images may smear behind foreground objects at this strength. Try a lower Strength.',
+  )
+  expect(smearNote(3, 3)).toBe(
+    'All 3 images may smear behind foreground objects at this strength. Try a lower Strength.',
+  )
+})
+
 describe('editing a move in Inspector › Motion', () => {
   const withMove = () => {
     const clipId = stillClips(editor.getProject())[0]!.id
@@ -100,6 +119,37 @@ describe('editing a move in Inspector › Motion', () => {
     expect(move(clipId)?.intensity).toBe(1)
     editor.undo()
     expect(move(clipId)?.intensity).toBe(0.4)
+  })
+
+  it('keeps a predicted smear only while the move keeps its preset and a strength above the safe amount', () => {
+    const clipId = withMove()
+    const other = stillClips(editor.getProject())[1]!.id
+    const at = (intensity: number) => ({
+      clipId,
+      effectInstanceId: 'move',
+      depthAssetId: 'depth-1',
+      intensity,
+    })
+    const result = {
+      moves: [
+        { ...at(0.4), safeIntensity: 0.15, smearRisk: true },
+        { ...at(0.4), clipId: other, safeIntensity: 0.15, smearRisk: true },
+      ],
+    }
+    const smearing = () => smearingMoves(editor.getProject(), result, 'dolly-in').map((m) => m.clipId)
+    // The second clip has no move, so it is left out.
+    expect(smearing()).toEqual([clipId])
+    expect(smearingMoves(editor.getProject(), result, 'orbit-right')).toEqual([])
+    setCameraMove(clipId, { intensity: 0.15 })
+    expect(smearing()).toEqual([])
+    setCameraMove(clipId, { intensity: 0.2 })
+    expect(smearing()).toEqual([clipId])
+    setCameraMove(clipId, { preset: 'orbit-right' })
+    expect(smearing()).toEqual([])
+    // Raised above the safe amount after it was added: the inspector's note covers that, not the result.
+    const safe = { moves: [{ ...at(0.3), safeIntensity: 0.3, smearRisk: false }] }
+    setCameraMove(clipId, { preset: 'dolly-in', intensity: 0.4 })
+    expect(smearingMoves(editor.getProject(), safe, 'dolly-in')).toEqual([])
   })
 
   it('removes only the camera move', () => {

@@ -1,6 +1,6 @@
 import { AlertTriangle, Box, Check, Lock, Play, RotateCcw, Undo2 } from 'lucide-react'
 import type { Asset, ImageClip } from '../../../../model/index.ts'
-import { useId, useRef } from 'react'
+import { useId, useRef, type ReactNode } from 'react'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Badge, EmptyState } from '../../../ds/Feedback.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
@@ -8,10 +8,13 @@ import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBytes, formatTime, plural } from '../../../format.ts'
 import {
   MOTION_PRESETS,
+  cameraMoveOf,
   cameraTargets,
   chosenIntensity,
   hasCameraMove,
   resetStrength,
+  smearNote,
+  smearingMoves,
   startCameraMoves,
   stillClips,
   undoCameraMoves,
@@ -21,6 +24,7 @@ import {
 } from '../../../state/camera.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
+import { showClips } from '../../../state/reveal.ts'
 import { set, toast, useUi } from '../../../state/ui.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
 import { dismiss, pct, useJob } from './jobState.ts'
@@ -35,18 +39,31 @@ export function CameraBadge() {
   return null
 }
 
-function StillRow({ clip, asset }: { clip: ImageClip; asset: Asset }) {
+function StillRow({
+  clip,
+  asset,
+  title,
+  detail,
+  action,
+}: {
+  clip: ImageClip
+  asset: Asset
+  title?: string
+  detail?: string
+  action?: ReactNode
+}) {
   const thumb = useThumbnail(asset)
   return (
     <div className={styles.suitRow}>
       <span className={styles.suitThumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined} />
       <span className={styles.suitText}>
-        <span className={styles.toolTitle}>{clip.name ?? asset.name}</span>
+        <span className={styles.toolTitle}>{title ?? clip.name ?? asset.name}</span>
         <span className={styles.muted}>
-          Image · on the timeline at {formatTime(clip.start)}
-          {hasCameraMove(clip) ? ' · replaces its camera move' : ''}
+          {detail ??
+            `Image · on the timeline at ${formatTime(clip.start)}${hasCameraMove(clip) ? ' · replaces its camera move' : ''}`}
         </span>
       </span>
+      {action}
     </div>
   )
 }
@@ -61,6 +78,7 @@ export function CameraView() {
   const slider = useRef<HTMLDivElement>(null)
   const strengthHint = useId()
   const result = useCamera((s) => (job ? s.results[job.id] : undefined))
+  const preset = useCamera((s) => (job ? s.presets[job.id] : undefined))
   const targets = cameraTargets(project, selection)
   const download = useDepthDownload(phase === 'idle' && targets.length > 0)
   const apply = () =>
@@ -107,6 +125,13 @@ export function CameraView() {
       .filter((c) => !!c)
       .sort((a, b) => a.start - b.start)[0]
     const canUndo = editor.undoLabel() === result.label
+    const smearing = smearingMoves(project, result, preset)
+    const smear = smearNote(result.moves.length, smearing.length)
+    const smearRows = smearing.flatMap((m) => {
+      const clip = project.clips[m.clipId]
+      const asset = clip?.type === 'image' ? project.assets[clip.assetId] : undefined
+      return clip?.type === 'image' && asset ? [{ m, clip, asset, name: clip.name ?? asset.name }] : []
+    })
     const undoButton = (
       <Button
         variant="secondary"
@@ -167,6 +192,37 @@ export function CameraView() {
             </div>
           </div>
         </div>
+        {smear && (
+          <div className={[styles.callout, styles.calloutWarning].join(' ')}>
+            <AlertTriangle />
+            <div>{smear}</div>
+          </div>
+        )}
+        {smearRows.map(({ m, clip, asset, name }) => {
+          const at = `${name} at ${formatTime(clip.start)}`
+          const strength = Math.round((cameraMoveOf(clip)?.intensity ?? m.intensity) * 100)
+          const safe = Math.round(m.safeIntensity * 100)
+          return (
+            <StillRow
+              key={m.clipId}
+              clip={clip}
+              asset={asset}
+              {...(smearRows.filter((r) => r.name === name).length > 1 ? { title: at } : {})}
+              // No-break spaces keep each fact whole, so a narrow panel breaks the line only after the dot.
+              detail={`Strength\u00a0${strength}%\u00a0· may\u00a0smear\u00a0above\u00a0${safe}%`}
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label={`Show ${at}`}
+                  onClick={() => showClips([m.clipId])}
+                >
+                  Show
+                </Button>
+              }
+            />
+          )
+        })}
       </ToolView>
     )
   }

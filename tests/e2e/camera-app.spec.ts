@@ -46,6 +46,49 @@ async function openWithFakeDepth(page: Page, hash: string, gated = false, fence 
   )
   await waitForPreview(page)
 }
+/** Imports a detailed still (a checkerboard that stays detailed at the depth map's size), adds it at the playhead and
+ * selects it. Returns its clip id. */
+async function addChecker(page: Page): Promise<string> {
+  const png = await page.evaluate(async () => {
+    const c = new OffscreenCanvas(960, 540)
+    const ctx = c.getContext('2d')!
+    for (let y = 0; y < 540; y += 20)
+      for (let x = 0; x < 960; x += 20) {
+        ctx.fillStyle = (x + y) % 40 ? '#c8c8c8' : '#3c3c3c'
+        ctx.fillRect(x, y, 20, 20)
+      }
+    const bytes = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer())
+    return Array.from(bytes)
+  })
+  await page
+    .getByLabel('Import media files')
+    .setInputFiles({ name: 'checker.png', mimeType: 'image/png', buffer: Buffer.from(png) })
+  const card = page.getByRole('tabpanel', { name: 'Media' }).getByLabel('checker, image')
+  await card.hover()
+  await card.getByRole('button', { name: 'Add at playhead' }).click()
+  const block = page.getByRole('button', { name: /^checker, \d/ })
+  await expect(block).toHaveCount(1)
+  await block.focus()
+  await page.keyboard.press('Enter')
+  return page.evaluate(
+    () =>
+      Object.values(window.mvStudio.app.project.editor.getProject().clips as Record<string, Untyped>).find(
+        (c) =>
+          c.type === 'image' &&
+          window.mvStudio.app.project.editor.getProject().assets[c.assetId]?.name.startsWith('checker'),
+      ).id as string,
+  )
+}
+
+/** The still's safe amount in percent for its current move, as vision predicts it from the stored depth image. */
+function safePercent(page: Page, clipId: string): Promise<number> {
+  return page.evaluate(async (id) => {
+    const { media, vision, app } = window.mvStudio
+    const safe = await vision.safeCameraIntensity(media.mediaStore, app.project.editor.getProject(), id)
+    return Math.round(safe * 100)
+  }, clipId)
+}
+
 interface Still {
   id: string
   camera?: { preset: string; intensity: number; depth: string; keyframes: { time: number; value: number }[] }
@@ -119,6 +162,8 @@ test('Assist › 3D camera adds a depth camera move to every still in one undo s
   await expect(reset).toBeVisible()
   await apply.click()
   await expect(assist.getByText(`Added a 3D camera move to ${before.clips.length} images`)).toBeVisible()
+  // The smooth depth smears nowhere, even at 60%.
+  await expect(assist.getByText(/may smear behind foreground objects/)).toHaveCount(0)
 
   const after = await stills(page)
   expect(after.depthAssets).toHaveLength(1)
@@ -165,6 +210,7 @@ test('the image inspector’s suggestion adds a 3D camera move to the selected s
     .toBe('dolly-in')
   expect((await stills(page)).clips.filter((c) => c.camera)).toHaveLength(1)
   await expect(inspector.getByRole('button', { name: 'Add 3D camera' })).toHaveCount(0)
+  await expect(page.getByRole('status').getByText('3D camera move added', { exact: true })).toBeVisible()
 })
 
 test('Inspector › Motion adds, changes, strengthens and removes a still’s 3D camera move', async ({
@@ -334,36 +380,7 @@ test('Inspector › Motion adds a smear-safe amount until Strength is set, and n
   page,
 }) => {
   await openWithFakeDepth(page, '#/editor?t=28', false, true)
-  // A detailed still: a checkerboard that stays detailed at the depth map's size.
-  const png = await page.evaluate(async () => {
-    const c = new OffscreenCanvas(960, 540)
-    const ctx = c.getContext('2d')!
-    for (let y = 0; y < 540; y += 20)
-      for (let x = 0; x < 960; x += 20) {
-        ctx.fillStyle = (x + y) % 40 ? '#c8c8c8' : '#3c3c3c'
-        ctx.fillRect(x, y, 20, 20)
-      }
-    const bytes = new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer())
-    return Array.from(bytes)
-  })
-  await page
-    .getByLabel('Import media files')
-    .setInputFiles({ name: 'checker.png', mimeType: 'image/png', buffer: Buffer.from(png) })
-  const card = page.getByRole('tabpanel', { name: 'Media' }).getByLabel('checker, image')
-  await card.hover()
-  await card.getByRole('button', { name: 'Add at playhead' }).click()
-  const block = page.getByRole('button', { name: /^checker, \d/ })
-  await expect(block).toHaveCount(1)
-  await block.focus()
-  await page.keyboard.press('Enter')
-  const clipId = await page.evaluate(
-    () =>
-      Object.values(window.mvStudio.app.project.editor.getProject().clips as Record<string, Untyped>).find(
-        (c) =>
-          c.type === 'image' &&
-          window.mvStudio.app.project.editor.getProject().assets[c.assetId]?.name.startsWith('checker'),
-      ).id as string,
-  )
+  const clipId = await addChecker(page)
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   await inspector.getByRole('button', { name: 'Motion', exact: true }).click()
   const select = inspector.getByRole('combobox', { name: '3D camera move' })
@@ -381,16 +398,9 @@ test('Inspector › Motion adds a smear-safe amount until Strength is set, and n
   expect(auto).toBeGreaterThanOrEqual(0.25)
   await expect(inspector.getByText(`${Math.round(auto * 100)}%`, { exact: true })).toBeVisible()
 
-  /** The still's safe amount for its current move, as the inspector reads it. */
-  const safePercent = () =>
-    page.evaluate(async (id) => {
-      const { media, vision, app } = window.mvStudio
-      const safe = await vision.safeCameraIntensity(media.mediaStore, app.project.editor.getProject(), id)
-      return Math.round(safe * 100)
-    }, clipId)
   const strength = inspector.getByRole('slider', { name: '3D camera strength' })
   const note = inspector.getByText(/^May smear behind foreground objects above \d+%\.$/)
-  const push = await safePercent()
+  const push = await safePercent(page, clipId)
   expect(push).toBeLessThan(100)
 
   // Above the safe amount the note shows, tied to the slider; the strength is kept as set.
@@ -416,11 +426,55 @@ test('Inspector › Motion adds a smear-safe amount until Strength is set, and n
         ),
     )
     .toBe('orbit-right')
-  const orbit = await safePercent()
+  const orbit = await safePercent(page, clipId)
   await strength.focus()
   await page.keyboard.press('End')
   if (orbit < 100) await expect(note).toHaveText(`May smear behind foreground objects above ${orbit}%.`)
   else await expect(note).toHaveCount(0)
+})
+
+test('a move added at a strength that may smear says so where it lands: in Assist with the image to show, in the suggestion’s toast', async ({
+  page,
+}) => {
+  await openWithFakeDepth(page, '#/editor?t=28', false, true)
+  const clipId = await addChecker(page)
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?tab=assist&assist=camera&sel=clip:${id}&t=28`
+  }, clipId)
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const advice = 'This image may smear behind foreground objects at this strength. Try a lower Strength.'
+  await assist.getByRole('slider', { name: 'Strength' }).focus()
+  await page.keyboard.press('End')
+  await expect(assist.getByText('100%', { exact: true })).toBeVisible()
+  await assist.getByRole('button', { name: 'Apply to 1 image' }).click()
+  await expect(assist.getByText('Added a 3D camera move to 1 image')).toBeVisible()
+  const safe = await safePercent(page, clipId)
+  expect(safe).toBeLessThan(100)
+  await expect(assist.getByText(advice)).toBeVisible()
+  await expect(assist.getByText(`Strength 100% · may smear above ${safe}%`)).toBeVisible()
+
+  // Show opens the image in the Inspector, where Motion has its strength and the same advice.
+  // Names repeat when a still is on the timeline more than once, so the button also says where the clip is.
+  await assist.getByRole('button', { name: /^Show checker at \d+:\d\d$/ }).click()
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  const note = inspector.getByText(`May smear behind foreground objects above ${safe}%.`)
+  await expect(note).toBeVisible()
+  // Lowered to the safe amount, the image no longer smears, and Assist stops listing it.
+  const strength = inspector.getByRole('slider', { name: '3D camera strength' })
+  await strength.focus()
+  await page.keyboard.press('Home')
+  await expect(note).toHaveCount(0)
+  await page.getByRole('tab', { name: 'Assist' }).click()
+  await expect(assist.getByText('Added a 3D camera move to 1 image')).toBeVisible()
+  await expect(assist.getByText(advice)).toHaveCount(0)
+  await expect(assist.getByRole('button', { name: /^Show checker/ })).toHaveCount(0)
+
+  // The Inspector's suggestion adds the move at the Strength set in Assist, 100%, and its toast gives the advice.
+  await page.getByRole('tab', { name: 'Inspector' }).click()
+  await inspector.getByRole('combobox', { name: '3D camera move' }).click()
+  await page.getByRole('option', { name: 'None' }).click()
+  await inspector.getByRole('button', { name: 'Add 3D camera' }).click()
+  await expect(page.getByRole('status').getByText(`3D camera move added. ${advice}`)).toBeVisible()
 })
 
 test('one inline suggestion at a time: a selected still’s suggestion takes the lyrics hint’s place, which comes back after', async ({
