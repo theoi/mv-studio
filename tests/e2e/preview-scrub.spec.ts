@@ -1,11 +1,18 @@
 import { expect, openHarness, test } from './fixtures.ts'
 
 /**
- * The main-thread preview draws each still synchronously, so stills never overlap the way they do in the render
- * worker. A drag there still has to draw smaller frames, or every step blocks the page for a full-size draw.
+ * The main-thread preview draws on the page's own thread. A drag there has to draw smaller frames when a full-size
+ * frame takes longer than a display frame, or every step holds up the page and the next step.
  */
 test('a drag on the main-thread preview draws smaller frames and settles at full size', async ({ page }) => {
   await openHarness(page)
+  const gpu = await page.evaluate(() => {
+    const gl = document.createElement('canvas').getContext('webgl2')
+    const info = gl?.getExtension('WEBGL_debug_renderer_info')
+    return gl ? String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER)) : ''
+  })
+  // On a real GPU a full-size frame of this project fits in a display frame, so drags rightly stay at full size.
+  test.skip(!/SwiftShader/i.test(gpu), `needs software GL (headless Chromium in CI), not ${gpu}`)
   const r = await page.evaluate(async () => {
     const { model, media, engine } = window.mvStudio
     const p = model.createProject({ name: 'scrub' })

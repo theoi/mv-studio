@@ -315,7 +315,11 @@ export class PreviewController {
   private stillPending = false
   /** Paused edits or seeks arrived faster than frames rendered; settles at full resolution afterwards. */
   private scrubbing = false
-  /** When the last still finished drawing, and how long the last full-size one took. */
+  /**
+   * When the last still finished drawing, and how long the last full-size one took. That time includes media waits
+   * (a seek, an image load), so a drag right after one can draw smaller than needed; the drag's settle frame measures
+   * again.
+   */
   private lastStillEnd = -Infinity
   private fullStillMs = 0
   /** Set while a scrub on the main-thread renderer waits to settle at full resolution. */
