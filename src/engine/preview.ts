@@ -29,7 +29,7 @@ import { videoRequests, visibleLayers, WebGLCompositor } from './compositor.ts'
 import { VideoElementFrameProvider, type BridgedVideo } from './frames.ts'
 import { planFrame } from './layout.ts'
 import { WebAudioPlaybackClock } from './playback.ts'
-import { AdaptiveScale, QUALITY_SCALES, type PreviewQuality } from './quality.ts'
+import { AdaptiveScale, QUALITY_SCALES, scrubScale, type PreviewQuality } from './quality.ts'
 import { startPreviewWorker, type PreviewWorker } from './renderHost.ts'
 import type { MediaFileSource, PlaybackState, PluginRegistry } from './types.ts'
 
@@ -103,7 +103,8 @@ interface Size {
 /** Draws preview frames, on this thread or in the render worker. */
 interface FrameRenderer {
   readonly inWorker: boolean
-  draw(project: Project, time: Seconds, size: Size): Promise<void>
+  /** With `untilDrawn`, finishes only once the GPU has drawn the frame (a still), not when it is queued. */
+  draw(project: Project, time: Seconds, size: Size, untilDrawn?: boolean): Promise<void>
   /** The GPU is still drawing the last frame, so drawing another now would block the main thread. */
   busy(): boolean
   /** Draws a frame and returns it. */
@@ -123,8 +124,12 @@ class MainRenderer implements FrameRenderer {
     this.compositor = compositor
   }
 
-  draw(project: Project, time: Seconds, size: Size): Promise<void> {
-    return this.compositor.render(project, time, { size })
+  async draw(project: Project, time: Seconds, size: Size, untilDrawn = false): Promise<void> {
+    await this.compositor.render(project, time, { size })
+    // More GL calls while the GPU is busy would block this thread until it caught up. A still finishes only when it
+    // is drawn, so stills that arrive meanwhile wait and coalesce, and its draw time is the frame's real cost.
+    // Playback frames don't wait: polling the fence is coarser than a display frame, and the loop checks busy().
+    if (untilDrawn) await this.compositor.gpuIdle()
   }
 
   busy(): boolean {
@@ -283,6 +288,11 @@ class WorkerRenderer implements FrameRenderer {
   }
 }
 
+/** On the main-thread renderer, a still requested within this long of the last one's end is a drag step. */
+const SCRUB_GAP_MS = 50
+/** A drag on the main-thread renderer settles at full resolution after this long without a new still. */
+const SCRUB_SETTLE_MS = 150
+
 /** Video clips starting within this many seconds get their media element loaded and seeked ahead of time. */
 const LOOKAHEAD = 1.5
 const WARM_EVERY_MS = 200
@@ -305,6 +315,15 @@ export class PreviewController {
   private stillPending = false
   /** Paused edits or seeks arrived faster than frames rendered; settles at full resolution afterwards. */
   private scrubbing = false
+  /**
+   * When the last still finished drawing, and how long the last full-size one took. That time includes media waits
+   * (a seek, an image load), so a drag right after one can draw smaller than needed; the drag's settle frame measures
+   * again.
+   */
+  private lastStillEnd = -Infinity
+  private fullStillMs = 0
+  /** Set while a scrub on the main-thread renderer waits to settle at full resolution. */
+  private settleTimer: ReturnType<typeof setTimeout> | undefined
   private viewport: { width: number; height: number; dpr: number } | null = null
   private quality: PreviewQuality = 'auto'
   private readonly auto = new AdaptiveScale()
@@ -328,6 +347,7 @@ export class PreviewController {
       this.frames.setPlaying(state === 'playing')
       if (state === 'playing') {
         this.scrubbing = false
+        this.cancelSettle()
         this.auto.start(performance.now())
         this.updateScale()
         this.startLoop()
@@ -406,7 +426,15 @@ export class PreviewController {
   }
 
   private updateScale(): void {
-    this.scale = this.clock.state === 'playing' || this.scrubbing ? this.playbackScale() : 1
+    if (this.clock.state === 'playing') this.scale = this.playbackScale()
+    else this.scale = this.scrubbing ? this.scrubbingScale() : 1
+  }
+
+  private scrubbingScale(): number {
+    const scale = this.playbackScale()
+    // The main-thread renderer blocks while it draws, so a slow still slows the drag itself: draw smaller to keep up.
+    if (this.quality !== 'auto' || this.renderer?.inWorker !== false || !this.fullStillMs) return scale
+    return Math.min(scale, scrubScale(this.fullStillMs))
   }
 
   /** Canvas size for the next frame: the viewport (times DPR, capped at project size) times the current scale. */
@@ -556,6 +584,7 @@ export class PreviewController {
     for (;;) {
       if (this.inFlight) await this.inFlight
       else if (this.stillPending && !this.raf) this.requestStill()
+      else if (this.settleTimer !== undefined) this.settle()
       else if (this.failure) throw this.failure
       else return
     }
@@ -624,27 +653,59 @@ export class PreviewController {
       }
       return
     }
+    // On the main-thread renderer a still right after the last one is a drag step too, and the drag settles only after
+    // a pause: a full-size frame between two steps would hold up the next one.
+    if (this.renderer?.inWorker === false && performance.now() - this.lastStillEnd < SCRUB_GAP_MS) {
+      if (!this.scrubbing) {
+        this.scrubbing = true
+        this.updateScale()
+      }
+      this.cancelSettle()
+      this.settleTimer = setTimeout(() => this.settle(), SCRUB_SETTLE_MS)
+    }
     this.stillPending = false
-    void this.draw(this.clock.currentTime())
+    void this.draw(this.clock.currentTime(), true)
     this.updateSnapshot()
   }
 
-  private draw(time: Seconds): Promise<void> {
+  private cancelSettle(): void {
+    clearTimeout(this.settleTimer)
+    this.settleTimer = undefined
+  }
+
+  /** Ends a scrub: the frame is drawn again at full resolution. */
+  private settle(): void {
+    this.cancelSettle()
+    // A draw in flight settles when it ends.
+    if (!this.scrubbing || this.raf || this.inFlight) return
+    this.scrubbing = false
+    this.updateScale()
+    // Not a drag step, however soon after the last still: this one draws at full resolution.
+    this.lastStillEnd = -Infinity
+    this.requestStill()
+  }
+
+  private draw(time: Seconds, still = false): Promise<void> {
     const project = this.project
     if (!project) return Promise.resolve()
     const started = performance.now()
     const size = this.frameSize(project)
+    const scale = this.scale
     const renderer = this.renderer
     const run = (
       renderer
-        ? renderer.draw(project, time, size)
-        : this.rendererReady.then((r) => r.draw(project, time, size))
+        ? renderer.draw(project, time, size, still)
+        : this.rendererReady.then((r) => r.draw(project, time, size, still))
     )
       .then(
         () => {
           this.lastSize = size
           const now = performance.now()
           this.frameLog.push({ at: now, ms: now - started })
+          if (still) {
+            this.lastStillEnd = now
+            if (scale === 1) this.fullStillMs = now - started
+          }
           while (this.frameLog.length > 0 && now - (this.frameLog[0] as { at: number }).at > 1000)
             this.frameLog.shift()
           for (const listener of this.frameListeners) listener(time)
@@ -662,12 +723,8 @@ export class PreviewController {
       .finally(() => {
         this.inFlight = null
         if (this.stillPending) this.requestStill()
-        else if (this.scrubbing && !this.raf) {
-          // Caught up: draw the settled frame at full resolution.
-          this.scrubbing = false
-          this.updateScale()
-          this.requestStill()
-        }
+        // Caught up, unless a scrub on the main-thread renderer waits for more steps.
+        else if (this.settleTimer === undefined) this.settle()
       })
     this.inFlight = run
     return run
@@ -675,6 +732,7 @@ export class PreviewController {
 
   dispose(): void {
     this.disposed = true
+    this.cancelSettle()
     this.stopLoop()
     this.unsubscribeClock()
     this.clock.dispose()

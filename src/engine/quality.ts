@@ -27,6 +27,16 @@ const STEP_UP_AFTER_MS = 3000
 const MAX_FRAME_GAP_MS = 1000
 
 /**
+ * The scale a scrub draws at on a renderer that draws synchronously (the main-thread preview), from how long a
+ * full-size still took: the largest of AUTO_SCALES whose frame fits in one display frame, since draw time grows with
+ * the pixel count.
+ */
+export function scrubScale(fullStillMs: number): number {
+  const fits = Math.sqrt(TARGET_FRAME_MS / fullStillMs)
+  return AUTO_SCALES.find((s) => s <= fits) ?? AUTO_SCALES[AUTO_SCALES.length - 1]
+}
+
+/**
  * Picks the playback render scale from the interval between preview frames. Steps down while frames come too slowly,
  * steps back up after a few seconds of headroom, undoes a step down that did not speed frames up (the bottleneck is
  * elsewhere, e.g. decoding), and stops stepping up when that keeps failing.
