@@ -304,7 +304,8 @@ test('slow-motion and frozen clips show the same source frames in playing previe
     const exp = testing.createCompositor('export', W, H)
     const compared: { t: number; preview: number; export: number }[] = []
     for (const [i, s] of samples.entries()) {
-      if (i % 5 !== 0) continue
+      // The final still at t = 4 (the project end) is past both clips.
+      if (i % 5 !== 0 || s.t >= 4) continue
       await exp.compositor.render(p, s.t)
       compared.push({ t: s.t, preview: s.n, export: frameNumber(exp.compositor.canvas) })
     }
@@ -312,7 +313,8 @@ test('slow-motion and frozen clips show the same source frames in playing previe
     return { samples, compared }
   })
 
-  const expected = (t: number) => (t < 2.5 ? Math.floor(t * 0.5 * 30 + 1e-3) : 30)
+  // Frame providers nudge source times 0.1 ms forward so float error never selects the previous frame.
+  const expected = (t: number) => (t < 2.5 ? Math.floor((t * 0.5 + 1e-4) * 30) : 30)
   const slow = r.samples.filter((s) => s.t > 0.2 && s.t < 2.45)
   const frozen = r.samples.filter((s) => s.t > 2.55 && s.t < 4)
   expect(slow.length).toBeGreaterThan(60)
