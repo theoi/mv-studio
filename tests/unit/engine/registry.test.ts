@@ -25,8 +25,8 @@ describe('plugin registry', () => {
     const spectrum = createPluginRegistry()
       .catalog('generator')
       .find((e) => e.id === 'visualizer.spectrum')
-    expect(spectrum?.animatable).toEqual(['height', 'gap'])
-    expect(spectrum?.modulatable).toEqual(['height', 'gap'])
+    expect(spectrum?.animatable).toEqual(['height', 'gap', 'glow'])
+    expect(spectrum?.modulatable).toEqual(['height', 'gap', 'glow'])
   })
 
   it('validates param keys, replaces plugins by id and notifies subscribers', () => {

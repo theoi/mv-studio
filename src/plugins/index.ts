@@ -5,7 +5,8 @@
  */
 import type { PluginDefinition } from '../engine/types.ts'
 import { EFFECTS } from './effects/index.ts'
+import { GENERATORS } from './generators/index.ts'
 import { cameraMove3d } from './parallax.ts'
 import { TRANSITIONS } from './transitions.ts'
 
-export const PLUGINS: PluginDefinition[] = [...EFFECTS, cameraMove3d, ...TRANSITIONS]
+export const PLUGINS: PluginDefinition[] = [...EFFECTS, cameraMove3d, ...TRANSITIONS, ...GENERATORS]
