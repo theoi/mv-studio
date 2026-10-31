@@ -108,7 +108,7 @@ test('tracks reorder by dragging the header grip, from the header menu and with 
   // The look is below tracks it colored before, and a toast says so.
   await expect(page.getByText('The look no longer colors the tracks above it.')).toBeVisible()
   await page.keyboard.press(`${mod}+z`)
-  await expect(page.getByText('Undid: Move track')).toBeVisible()
+  await expect(page.getByText('Undid: Move Look down')).toBeVisible()
 
   // The header menu: Overlay back up; Video is then the lowest visual track and can't move down.
   await header(page, 'Overlay').click({ button: 'right' })

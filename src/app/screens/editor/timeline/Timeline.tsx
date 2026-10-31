@@ -1061,13 +1061,17 @@ const TrackHeader = memo(function TrackHeader({
   )
 })
 
-/** A stem lane's header under the song track: mute and solo for that stem of the song. */
+/** A stem lane's header under the song track: mute and solo for that stem of the song, from its icons or its menu. */
 function StemHeader({ name, track }: { name: StemName; track: Track | undefined }) {
   const label = STEM_LABELS[name]
   const flags = track?.stems?.[name]
   const lower = label.toLowerCase()
-  return (
-    <div className={[styles.header, styles.stemHeader].join(' ')}>
+  const header = (
+    <div
+      className={[styles.header, styles.stemHeader].join(' ')}
+      // Without a song track there is nothing to offer, and the browser's page menu would open instead.
+      onContextMenu={track ? undefined : (e) => e.preventDefault()}
+    >
       <span className={styles.stemName}>{label}</span>
       {track && (
         <span className={styles.trackIcons}>
@@ -1093,6 +1097,23 @@ function StemHeader({ name, track }: { name: StemName; track: Track | undefined 
         </span>
       )}
     </div>
+  )
+  if (!track) return header
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{header}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          icon={flags?.muted ? <Volume2 /> : <VolumeX />}
+          onSelect={() => toggleStem(name, 'muted')}
+        >
+          {flags?.muted ? `Unmute ${lower}` : `Mute ${lower}`}
+        </ContextMenuItem>
+        <ContextMenuItem icon={<Headphones />} onSelect={() => toggleStem(name, 'solo')}>
+          {flags?.solo ? `Unsolo ${lower}` : `Solo ${lower}`}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
