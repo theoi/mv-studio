@@ -81,7 +81,13 @@ test('the Import picker offers font files, and a picked font lands where a dropp
   const accept = ((await picker.element().getAttribute('accept')) ?? '').split(',')
   expect(accept).toEqual(expect.arrayContaining(['.ttf', '.otf', '.woff', '.woff2']))
   await picker.setFiles(path.join(FONT_DIR, 'anton-latin-400-normal.woff2'))
-  await expect(page.getByText('Imported anton-latin-400-normal.woff2', { exact: true })).toBeVisible()
+  const note = page.getByText('Imported the font “anton-latin-400-normal”. Choose it in a text’s Font.', {
+    exact: true,
+  })
+  await expect(note).toBeVisible()
+  // The dropped file gives the same note, so this one goes first.
+  await page.getByRole('status').getByRole('button', { name: 'Dismiss' }).click()
+  await expect(note).toHaveCount(0)
 
   const woff = readFileSync(path.join(FONT_DIR, 'anton-latin-400-normal.woff')).toString('base64')
   await page.evaluate(async (b64) => {
@@ -91,7 +97,7 @@ test('the Import picker offers font files, and a picked font lands where a dropp
     window.dispatchEvent(new DragEvent('dragover', { dataTransfer: data, cancelable: true }))
     window.dispatchEvent(new DragEvent('drop', { dataTransfer: data, cancelable: true }))
   }, woff)
-  await expect(page.getByText('Imported anton-latin-400-normal.woff', { exact: true })).toBeVisible()
+  await expect(note).toBeVisible()
 
   // Both are font assets of the project, with no clip and no Media card.
   const project = await page.evaluate(() => {
