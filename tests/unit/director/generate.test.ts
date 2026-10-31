@@ -25,25 +25,50 @@ describe('estimatePlanCost by model', () => {
     const { provider, project, plan } = await aiPlan('images')
     const cost = estimatePlanCost(plan, provider, project)
     expect(cost.count).toBeGreaterThan(1)
+    const modelId = cost.requests[0]!.request.modelId
     expect(cost.byModel).toEqual([
-      {
-        modelId: cost.requests[0]!.request.modelId,
-        name: provider.getModel(cost.requests[0]!.request.modelId)!.name,
-        kind: 'image',
-        count: cost.count,
-        usd: cost.usd,
-      },
+      { name: provider.getModel(modelId)!.name, kind: 'image', count: cost.count, usd: cost.usd },
     ])
-    expect(cost.byModel[0]!.name).not.toBe(cost.byModel[0]!.modelId)
+    expect(cost.byModel[0]!.name).not.toBe(modelId)
+  })
+
+  it('puts a model’s text-to-video and image-to-video endpoints on one line', async () => {
+    const { provider, project, plan } = await aiPlan('video')
+    let n = 0
+    const kling = {
+      ...plan,
+      shots: plan.shots.map((s) => {
+        if (s.source.type !== 'generate' || s.source.task === 'text-to-image') return s
+        const task = n++ % 2 ? ('image-to-video' as const) : ('text-to-video' as const)
+        return { ...s, source: { ...s.source, task, modelId: `fal-ai/kling-video/v3/pro/${task}` } }
+      }),
+    }
+    const cost = estimatePlanCost(kling, provider, project)
+    expect(new Set(cost.requests.map((r) => r.request.modelId)).size).toBe(2)
+    expect(cost.byModel).toEqual([
+      { name: 'Kling 3 Pro', kind: 'clip', count: cost.count, usd: expect.closeTo(cost.usd, 2) as number },
+    ])
   })
 
   it('counts clips apart from images, the most expensive model first, adding up to the whole cost', async () => {
+    const images = await aiPlan('images')
     const { provider, project, plan } = await aiPlan('video')
-    const cost = estimatePlanCost(plan, provider, project)
-    expect(cost.byModel.some((m) => m.kind === 'clip')).toBe(true)
+    const imageSource = shotsToGenerate(images.plan)[0]!.source
+    let n = 0
+    // Every other clip becomes a still, starting with the first, so the cheaper images come first in the plan.
+    const mixed = {
+      ...plan,
+      shots: plan.shots.map((s) =>
+        s.source.type === 'generate' && n++ % 2 === 0
+          ? { ...s, source: { ...imageSource, prompt: s.source.prompt } }
+          : s,
+      ),
+    }
+    const cost = estimatePlanCost(mixed, provider, project)
+    expect(cost.byModel.map((m) => m.kind)).toEqual(['clip', 'image'])
     expect(cost.byModel.reduce((n, m) => n + m.count, 0)).toBe(cost.count)
     expect(cost.byModel.reduce((usd, m) => usd + m.usd, 0)).toBeCloseTo(cost.usd, 4)
-    expect(cost.byModel.map((m) => m.usd)).toEqual(cost.byModel.map((m) => m.usd).sort((a, b) => b - a))
+    expect(cost.byModel[0]!.usd).toBeGreaterThan(cost.byModel[1]!.usd)
   })
 })
 

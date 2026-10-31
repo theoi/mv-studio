@@ -14,9 +14,8 @@ export interface ShotRequest {
   reuse?: Asset
 }
 
-/** The paid shots made with one model. */
+/** The paid images or clips made with one model. */
 export interface ModelCost {
-  modelId: string
   /** The provider's name for it ("FLUX.1 schnell"), or its id when the provider doesn't know it. */
   name: string
   kind: 'image' | 'clip'
@@ -29,7 +28,7 @@ export interface PlanCost extends CostSummary {
   requests: ShotRequest[]
   /** Shots covered by media generated earlier. */
   reused: number
-  /** The paid shots by model, the most expensive first. */
+  /** The paid shots by model name and kind, the most expensive first. */
   byModel: ModelCost[]
 }
 
@@ -96,19 +95,17 @@ export function estimatePlanCost(
     label: r.shot.label ?? r.request.prompt.slice(0, 40),
     estimate: provider.estimate(r.request),
   }))
+  // By name, not id: a model's text-to-video and image-to-video endpoints have different ids and the same name.
   const byModel = new Map<string, ModelCost>()
   requests.forEach((r, i) => {
     const { modelId, task } = r.request
-    const group = byModel.get(modelId) ?? {
-      modelId,
-      name: provider.getModel?.(modelId)?.name ?? modelId,
-      kind: task === 'text-to-image' ? ('image' as const) : ('clip' as const),
-      count: 0,
-      usd: 0,
-    }
+    const name = provider.getModel?.(modelId)?.name ?? modelId
+    const kind = task === 'text-to-image' ? 'image' : 'clip'
+    const key = `${kind}:${name}`
+    const group = byModel.get(key) ?? { name, kind, count: 0, usd: 0 }
     group.count++
     group.usd = roundUsd(group.usd + (items[i]?.estimate.usd ?? 0))
-    byModel.set(modelId, group)
+    byModel.set(key, group)
   })
   return {
     ...sumCosts(items),

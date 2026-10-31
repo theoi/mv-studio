@@ -132,8 +132,10 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
       <div className={styles.viewBody}>
         <ul className={styles.tips}>
           {paid.byModel.map((m) => (
-            <li key={m.modelId}>
-              {plural(m.count, m.kind)} with {m.name} · {formatEstimate(m)}
+            <li key={`${m.kind}:${m.name}`}>
+              {plural(m.count, m.kind)} with {m.name}
+              {/* With one model its price is the total, already in the description and on the button. */}
+              {paid.byModel.length > 1 && ` · ${formatEstimate(m)}`}
             </li>
           ))}
         </ul>
