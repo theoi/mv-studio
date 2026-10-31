@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Activity, AlertTriangle, Check, RotateCcw } from 'lucide-react'
 import { MIN_TAPS, TAP_RESET_SECONDS, tapTempo } from '../../../../analysis/beats/tap.ts'
 import { BARS_NOTES } from '../../../../model/index.ts'
@@ -114,20 +114,35 @@ export function AnalysisView() {
   // Also while the song file loads before the first analysis starts (no job yet).
   const analyzing = phase === 'running' || state === 'analyzing'
   const finding = state === 'analyzing'
-  // The button that starts a run goes away with it, so focus moves to the status line that takes its place, not to
-  // Cancel, where a second Enter would stop the run.
-  const focusStatus = useRef(false)
+  const statusId = useId()
+  // The button that starts a run is hidden while it runs, so focus moves to the progress card at the top, not to
+  // Cancel, where a second Enter would stop the run. When a run started or cancelled here ends, focus goes to what
+  // comes next (Analyze again, Analyze or Try again) if nothing else took it meanwhile.
+  const focusCard = useRef(false)
+  const returnFocus = useRef(false)
+  const nextAction = useRef<HTMLButtonElement>(null)
+  const wasAnalyzing = useRef(analyzing)
+  useEffect(() => {
+    const ended = wasAnalyzing.current && !analyzing
+    wasAnalyzing.current = analyzing
+    if (!ended || !returnFocus.current) return
+    returnFocus.current = false
+    if (!document.activeElement || document.activeElement === document.body) nextAction.current?.focus()
+  }, [analyzing])
   const start = () => {
-    focusStatus.current = true
+    focusCard.current = true
+    returnFocus.current = true
     void analyzeAgain().finally(() => {
-      focusStatus.current = false
+      focusCard.current = false
     })
   }
   const focusOnMount = (el: HTMLElement | null) => {
-    if (!el || !focusStatus.current) return
-    focusStatus.current = false
+    if (!el || !focusCard.current) return
+    focusCard.current = false
     el.focus()
   }
+  const keepSpace = (className: string, hidden: boolean) =>
+    hidden ? `${className} ${styles.keepSpace}` : className
 
   if (phase === 'failed') {
     return (
@@ -139,7 +154,13 @@ export function AnalysisView() {
             <Button variant="secondary" onClick={() => dismiss(job)}>
               Back
             </Button>
-            <Button variant="primary" icon={<RotateCcw />} className={styles.grow} onClick={start}>
+            <Button
+              ref={nextAction}
+              variant="primary"
+              icon={<RotateCcw />}
+              className={styles.grow}
+              onClick={start}
+            >
               Try again
             </Button>
           </div>
@@ -164,7 +185,7 @@ export function AnalysisView() {
         title="Song analysis"
         subtitle={name}
         footer={
-          <Button variant="primary" block disabled={!hasSong(project)} onClick={start}>
+          <Button ref={nextAction} variant="primary" block disabled={!hasSong(project)} onClick={start}>
             Analyze
           </Button>
         }
@@ -190,16 +211,32 @@ export function AnalysisView() {
     <ToolView
       title="Song analysis"
       subtitle={name}
-      footer={running ? <CancelButton job={running} /> : undefined}
+      footer={
+        running ? <CancelButton job={running} onCancel={() => (returnFocus.current = true)} /> : undefined
+      }
     >
-      {phase === 'running' && <RunCard job={job} label="Song analysis progress" />}
+      {analyzing && (
+        <div
+          ref={focusOnMount}
+          tabIndex={-1}
+          role="group"
+          aria-labelledby={statusId}
+          className={styles.analysisRun}
+        >
+          <RunCard
+            job={phase === 'running' ? job : undefined}
+            label="Song analysis progress"
+            placeholder="Reading the song"
+          />
+        </div>
+      )}
       <div className={styles.facts}>
         <div>
           <span>Tempo</span>
           <span className={styles.tempoValue}>
             <span className="tnum">{tempoText}</span>
-            {bpm && analysis?.beats?.length && !taps.length && tempo.phase !== 'running' && !analyzing ? (
-              <span className={styles.tempoLevel}>
+            {bpm && analysis?.beats?.length && !taps.length && tempo.phase !== 'running' ? (
+              <span className={keepSpace(styles.tempoLevel, analyzing)}>
                 <TempoLevelButton factor={0.5} bpm={bpm} disabled={busy} />
                 <TempoLevelButton factor={2} bpm={bpm} disabled={busy} />
               </span>
@@ -236,20 +273,21 @@ export function AnalysisView() {
           <span>{finding ? FINDING : 'Shown in the song lane'}</span>
         </div>
       </div>
-      {bars.status === 'unavailable' && !analyzing && (
-        <div className={styles.muted}>
+      {bars.status === 'unavailable' && (
+        <div className={keepSpace(styles.muted, analyzing)}>
           {analysis?.tempo?.confidence === 1
             ? // Analyze again would replace the tempo the user set.
               `${BARS_NOTES.notFound} at this tempo. Set first beat to start them on the beat at the playhead.`
             : `${BARS_NOTES.notFound}. Analyze again to look for them.`}
         </div>
       )}
-      {analyzing ? (
-        <p ref={focusOnMount} tabIndex={-1} role="status" className={styles.lede}>
-          {SONG_STATE_TEXT.analyzing}
-        </p>
-      ) : (
-        <div className={styles.linkRow}>
+      <div className={styles.analysisActions}>
+        {analyzing && (
+          <p id={statusId} role="status" className={styles.lede}>
+            {SONG_STATE_TEXT.analyzing}
+          </p>
+        )}
+        <div className={keepSpace(styles.linkRow, analyzing)}>
           <Tooltip
             label="Tap tempo"
             description={`Play the song and tap along with the beat, at least ${MIN_TAPS} times, or press Space or T while the button is focused. Stop for ${TAP_RESET_SECONDS} seconds to use the tempo.`}
@@ -290,12 +328,18 @@ export function AnalysisView() {
             label="Analyze again"
             description="Finds the beats, bars and sections again. Undo brings back your corrections."
           >
-            <Button size="sm" variant="ghost" disabled={!hasSong(project) || busy} onClick={start}>
+            <Button
+              ref={nextAction}
+              size="sm"
+              variant="ghost"
+              disabled={!hasSong(project) || busy}
+              onClick={start}
+            >
               Analyze again
             </Button>
           </Tooltip>
         </div>
-      )}
+      </div>
       <p className={styles.muted}>
         Section names are best guesses. Rename them by double-clicking on the timeline.
       </p>

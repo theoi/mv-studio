@@ -83,11 +83,20 @@ export function Steps({ steps, active }: { steps: string[]; active: number }) {
   )
 }
 
-export function RunCard({ job, label }: { job?: JobSnapshot; label: string }) {
+/** A job's step and progress. `placeholder` names the first step until the job reports one (`label` names the bar). */
+export function RunCard({
+  job,
+  label,
+  placeholder,
+}: {
+  job?: JobSnapshot
+  label: string
+  placeholder?: string
+}) {
   return (
     <div className={styles.runCard}>
       <div className={styles.jobTop}>
-        <span>{job?.progress.message ?? label}</span>
+        <span>{job?.progress.message ?? placeholder ?? label}</span>
         <span className={`${styles.jobPct} tnum`}>{pct(job)}%</span>
       </div>
       <ProgressBar value={job?.progress.fraction ?? 0} label={label} />

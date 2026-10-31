@@ -1,5 +1,5 @@
 import type { AudioAnalysis } from '../model/types.ts'
-import { JobError } from '../shared/jobs.ts'
+import { JobError, type JobProgress } from '../shared/jobs.ts'
 import type { WorkerCallContext } from '../shared/worker.ts'
 import type { BeatThisLogits, BeatThisModel } from './beats/beatThis.ts'
 import type { DecodedAudio } from './beats/fast.ts'
@@ -10,6 +10,16 @@ import {
   type RefinedFields,
   type SongState,
 } from './song.ts'
+
+/**
+ * Share of refineBeats' progress for downloading the Beat This! model when it is not loaded yet; running it takes the
+ * rest. Both report 0..1 of their own, so sharing the bar would send it back from 100% after the download.
+ */
+const MODEL_DOWNLOAD_SHARE = 0.5
+
+/** `p` with its fraction moved into from..to. */
+const within = (p: JobProgress, from: number, to: number): JobProgress =>
+  p.fraction === undefined ? p : { ...p, fraction: from + p.fraction * (to - from) }
 
 export interface AnalysisWorkerDeps {
   beatThisModel(ctx: WorkerCallContext): Promise<BeatThisModel>
@@ -57,9 +67,17 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
         keep(args.assetId, state)
       }
       ctx.progress({ stage: 'downbeats', fraction: 0, message: 'Finding bars and refining beats' })
-      const { fields } = await refineSongBeats(state, () => deps.beatThisModel(ctx), {
+      let downloaded = false
+      const download = {
         signal: ctx.signal,
-        onProgress: ctx.progress,
+        progress: (p: JobProgress) => {
+          downloaded = true
+          ctx.progress(within(p, 0, MODEL_DOWNLOAD_SHARE))
+        },
+      }
+      const { fields } = await refineSongBeats(state, () => deps.beatThisModel(download), {
+        signal: ctx.signal,
+        onProgress: (p) => ctx.progress(downloaded ? within(p, MODEL_DOWNLOAD_SHARE, 1) : p),
       })
       remember(args.assetId, state)
       return fields
