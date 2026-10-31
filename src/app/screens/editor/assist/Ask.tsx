@@ -223,7 +223,8 @@ function statusText(state: AskState): string {
     case 'reply':
       return 'Assist answered'
     case 'error':
-      return `Failed: ${state.title}`
+      // A missing model is a setup step, not a failure.
+      return state.needsSetup ? `${state.title}. ${state.message}` : `Failed: ${state.title}`
     default:
       return ''
   }
