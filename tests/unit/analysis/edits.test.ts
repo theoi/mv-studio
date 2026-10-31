@@ -142,4 +142,26 @@ describe('keeping the sections the user named across a new analysis', () => {
       ['outro', 50, 60],
     ])
   })
+
+  it('gives a new piece an id no kept or new section has', () => {
+    const out = keepUserSections(fresh, [sec('f2.1', 15, 20, 'Spoken', { confidence: 1 })])
+    expect(out.map((s) => [s.id, s.label, s.start, s.end]).slice(1, 4)).toEqual([
+      ['f2', 'verse', 10, 15],
+      ['f2.1', 'Spoken', 15, 20],
+      ['f2.2', 'verse', 20, 30],
+    ])
+  })
+
+  it('keeps a section whose name the analysis never gives, also without a confidence (older projects)', () => {
+    const out = keepUserSections(fresh, [
+      sec('p', 15, 20, 'Hook'),
+      sec('q', 32, 40, 'chorus', { confidence: 0.8 }),
+    ])
+    expect(out.map((s) => [s.label, s.start, s.end]).slice(1, 4)).toEqual([
+      ['verse', 10, 15],
+      ['Hook', 15, 20],
+      ['verse', 20, 30],
+    ])
+    expect(out.some((s) => s.id === 'q')).toBe(false)
+  })
 })

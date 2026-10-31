@@ -389,4 +389,45 @@ describe('Analyze again', () => {
     editor.undo()
     expect(stored()?.sections).toEqual(before)
   })
+  it('keeps named sections, ids unique, when the pasted lyrics put a chorus edge inside one', async () => {
+    // "bridge" was picked from the menu (confidence 1); "Hook" was typed in a project from before confidences.
+    const picked = { id: 'mine', start: 2, end: 5, label: 'bridge', confidence: 1 }
+    const typed = { id: 'typed', start: 7, end: 9, label: 'Hook' }
+    const p = project({
+      sections: [{ id: 'old', start: 0, end: 2, label: 'intro', confidence: 0.4 }, picked, typed],
+    })
+    p.lyrics = LYRICS
+    editor.load(p)
+    const fresh: AudioAnalysis = {
+      assetId: songId(),
+      version: 'test',
+      tempo: { bpm: 120, confidence: 0.9 },
+      beats,
+      sections: [
+        { id: 'n1', start: 0, end: 4, label: 'verse', repeatGroup: 0 },
+        { id: 'n2', start: 4, end: 10, label: 'chorus', repeatGroup: 1, confidence: 0.4 },
+      ],
+    }
+    setSongAnalysisServiceForTests({
+      analyzeAgain: () =>
+        jobs.run({ kind: 'analysis.song', title: 'Analyzing the song', run: async () => fresh }),
+    })
+    await analyzeAgain()
+    const sections = stored()?.sections ?? []
+    // The lyrics' second chorus starts at 4.6 s, inside "bridge": the chorus starts after it instead.
+    expect(sections.map((s) => [s.label, s.start, s.end])).toEqual([
+      ['chorus', 0, 2],
+      ['bridge', 2, 5],
+      ['chorus', 5, 7],
+      ['Hook', 7, 9],
+      ['verse', 9, 10],
+    ])
+    expect(sections.find((s) => s.id === 'mine')).toEqual({ ...picked, repeatGroup: 0 })
+    expect(sections.find((s) => s.id === 'typed')).toEqual({ ...typed, repeatGroup: 1 })
+    expect(new Set(sections.map((s) => s.id)).size).toBe(sections.length)
+    expect(toast).toHaveBeenCalledWith(
+      'Found 120 BPM and 5 sections. Kept 2 sections you named.',
+      expect.objectContaining({ label: 'Undo' }),
+    )
+  })
 })

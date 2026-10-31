@@ -5,6 +5,7 @@
 import type { EditCommand } from '../model/commands.ts'
 import type { AudioAnalysis, SongSection } from '../model/types.ts'
 import { barsOfFour, type BeatGrid, makeGrid, rescaleGrid, setDownbeat } from './beats/grid.ts'
+import { isUserSection } from './structure/sections.ts'
 
 export type GridEdit = Extract<EditCommand, { type: 'analysis.setGrid' }>
 
@@ -95,25 +96,27 @@ export function moveDownbeat(analysis: AudioAnalysis, beatIndex: number, beatsPe
   return gridEdit(analysis.assetId, setDownbeat(grid, beatIndex, beatsPerBar ?? grid.beatsPerBar))
 }
 
-/** A section the user named. */
-export function userSection(section: SongSection): boolean {
-  return section.confidence === 1
-}
-
 /** Fresh pieces shorter than this join a fresh neighbour instead of standing alone. */
 const MIN_PIECE_SECONDS = 1
 
 /**
- * The sections of a new analysis with the sections the user named in `previous` kept as they were (times, name, id):
- * fresh sections are cut around them. A kept section takes the repeat group of the fresh section it mostly covers,
- * since the old groups mean nothing in the new analysis.
+ * The sections of a new analysis with the sections the user named in `previous` (`isUserSection`) kept as they were
+ * (times, name, id): fresh sections are cut around them, and new pieces get ids no other section has. A kept section
+ * takes the repeat group of the fresh section it mostly covers, since the old groups mean nothing in the new analysis.
  */
 export function keepUserSections(
   fresh: readonly SongSection[],
   previous: readonly SongSection[],
 ): SongSection[] {
-  const kept = previous.filter(userSection)
+  const kept = previous.filter(isUserSection)
   if (kept.length === 0) return [...fresh]
+  const ids = new Set([...fresh, ...kept].map((s) => s.id))
+  const pieceId = (id: string) => {
+    let k = 1
+    while (ids.has(`${id}.${k}`)) k++
+    ids.add(`${id}.${k}`)
+    return `${id}.${k}`
+  }
   const out: { section: SongSection; kept: boolean }[] = []
   for (const s of fresh) {
     let pieces = [{ start: s.start, end: s.end }]
@@ -127,7 +130,7 @@ export function keepUserSections(
             ],
       )
     pieces.forEach((p, i) =>
-      out.push({ section: { ...s, id: i === 0 ? s.id : `${s.id}.${i}`, ...p }, kept: false }),
+      out.push({ section: { ...s, id: i === 0 ? s.id : pieceId(s.id), ...p }, kept: false }),
     )
   }
   for (const k of kept) {

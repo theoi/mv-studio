@@ -2,13 +2,8 @@ import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { nearestBeatIndex } from '../../analysis/beats/grid.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
-import {
-  fitTappedTempo,
-  keepUserSections,
-  moveDownbeat,
-  rescaleTempo,
-  userSection,
-} from '../../analysis/edits.ts'
+import { fitTappedTempo, keepUserSections, moveDownbeat, rescaleTempo } from '../../analysis/edits.ts'
+import { isUserSection } from '../../analysis/structure/sections.ts'
 import {
   BARS_NOTES,
   hasFoundBars,
@@ -187,7 +182,7 @@ export async function analyzeAgain(): Promise<void> {
     if (project.songAssetId !== songId) return
     const { lyricChorusCommand, setAnalysisCommand } = await import('../../analysis/client.ts')
     const previous = project.analysis.audio[songId]?.sections ?? []
-    const kept = previous.filter(userSection).length
+    const kept = previous.filter(isUserSection).length
     const merged = kept
       ? { ...analysis, sections: keepUserSections(analysis.sections ?? [], previous) }
       : analysis
