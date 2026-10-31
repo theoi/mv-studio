@@ -39,7 +39,10 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
 - **Pace by section role** (`paceFor`): choruses cut fastest, verses a step slower, intros, bridges and outros
   slowest. Energy alone can't tell verses from choruses (normalized within a song they often measure the same), so
   it moves a section one step at most. Lyric and AI videos, generated shots and tempos of 150 BPM or more are a step
-  slower. A preferred pace shifts every section by the same steps, so the contrast stays.
+  slower. A preferred pace shifts every section by the same steps, so the contrast stays. A chorus label guessed
+  from the audio alone (`SongSection.confidence` below 0.6) on a section no louder than the rest of the song is
+  treated as a verse (`roleOf`): no chorus pace, particles, emphasis or behind-subject lines staked on a guess. The
+  LLM brief marks such labels `labelGuessed`.
 - **Phrasing inside a section** (`phrasedCutTimes`): bars clearly louder than the rest of their section cut twice as
   often, clearly quieter bars half as often, and the last bar before a faster section speeds up into it.
 - **Lyric timing**: a line shows up to 0.3 s before it is sung and holds up to 1 s after (longer for long lines,

@@ -41,6 +41,21 @@ export function normalizedLabel(label: string): string {
   return l
 }
 
+/** Chorus labels less sure than this (about 0.4 from the audio alone) need the energy to agree. */
+export const SURE_LABEL = 0.6
+/** Energy an unsure chorus label needs to be treated as a chorus. */
+const UNSURE_CHORUS_ENERGY = 0.6
+
+/**
+ * A section's role from its label. A chorus label the analysis is unsure of, on a section no louder than the rest of
+ * the song, is treated as a verse, so the video's biggest moments are not staked on a guess.
+ */
+export function roleOf(section: Pick<SectionInfo, 'label' | 'energy' | 'confidence'>): string {
+  const label = normalizedLabel(section.label)
+  const unsure = (section.confidence ?? 1) < SURE_LABEL && section.energy < UNSURE_CHORUS_ENERGY
+  return label === 'chorus' && unsure ? 'verse' : label
+}
+
 /**
  * Beat-cut pace by a section's role. Energy alone can't tell verses from choruses: once normalized within a song
  * they often measure the same, and a stripped-back chorus can measure quieter than its verse.
@@ -54,8 +69,11 @@ const ROLE_PACE: Record<string, Pace> = {
   outro: 'slow',
 }
 
-export function moodFor(section: Pick<SectionInfo, 'label' | 'energy'>): { mood: string; tags: string[] } {
-  const label = normalizedLabel(section.label)
+export function moodFor(section: Pick<SectionInfo, 'label' | 'energy' | 'confidence'>): {
+  mood: string
+  tags: string[]
+} {
+  const label = roleOf(section)
   const e = section.energy
   if (label === 'chorus' || (e >= 0.8 && !(label in ROLE_PACE)))
     return { mood: 'euphoric, peak', tags: ['peak', 'energetic'] }
@@ -98,12 +116,12 @@ export function footageMood(mood: string, intensity: number): FootageMood | unde
  */
 export function paceFor(
   kind: VideoKind,
-  section: Pick<SectionInfo, 'label' | 'energy'>,
+  section: Pick<SectionInfo, 'label' | 'energy' | 'confidence'>,
   bpm: number,
   generated: boolean,
   preferred?: Pace,
 ): Pace {
-  const label = normalizedLabel(section.label)
+  const label = roleOf(section)
   const e = section.energy
   let pace: Pace = ROLE_PACE[label] ?? (e >= 0.75 ? 'fast' : e >= 0.4 ? 'medium' : 'slow')
   if (label === 'chorus' && e < 0.4) pace = 'medium'
@@ -119,8 +137,8 @@ export function paceFor(
 }
 
 /** Whether a section is a peak of the song: a chorus, or a loud section with no role. */
-export function isPeak(section: Pick<SectionInfo, 'label' | 'energy'>): boolean {
-  const label = normalizedLabel(section.label)
+export function isPeak(section: Pick<SectionInfo, 'label' | 'energy' | 'confidence'>): boolean {
+  const label = roleOf(section)
   return label === 'chorus' ? section.energy >= 0.4 : !(label in ROLE_PACE) && section.energy >= 0.75
 }
 
@@ -146,9 +164,9 @@ const TIER_TAGS = {
 export type SectionTier = keyof typeof TIER_TAGS
 
 /** Peaks, quiet parts (intro, bridge, outro, quiet sections) and everything in between. */
-export function sectionTier(section: Pick<SectionInfo, 'label' | 'energy'>): SectionTier {
+export function sectionTier(section: Pick<SectionInfo, 'label' | 'energy' | 'confidence'>): SectionTier {
   if (isPeak(section)) return 'peak'
-  const label = normalizedLabel(section.label)
+  const label = roleOf(section)
   const quiet = label === 'intro' || label === 'bridge' || label === 'outro' || section.energy < 0.4
   return quiet ? 'calm' : 'mid'
 }
@@ -282,7 +300,7 @@ export function defaultSectionBrief(
   const { mood, tags } = moodFor(section)
   const intensity = section.energy
   const catalog = input.catalog
-  const label = normalizedLabel(section.label)
+  const label = roleOf(section)
   const effects: string[] = []
   if (isPeak(section)) {
     const glow =

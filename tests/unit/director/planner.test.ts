@@ -194,6 +194,22 @@ describe('local planner', () => {
     expect(p.texts.find((t) => t.role === 'title')?.text).toBeTruthy()
   })
 
+  it('treats a chorus label guessed from the audio as a verse unless the energy agrees', async () => {
+    const particlesOn = async (confidence: number) => {
+      const project = makeProject({ videos: 0 })
+      // The first chorus is no louder than the verse; the second is the loudest part of the song.
+      project.analysis.audio.song!.sections = SECTIONS.map((s) => ({
+        ...s,
+        confidence,
+        ...(s.id === 's-chorus1' ? { energy: 0.45 } : {}),
+      }))
+      const p = await planLocally(await buildPlannerInput(project, { kind: 'visualizer', seed: 7 }))
+      return p.shots.filter((s) => s.layer === 'accent').map((s) => s.sectionId)
+    }
+    expect(await particlesOn(0.4)).toEqual(['s-chorus2'])
+    expect(await particlesOn(0.8)).toEqual(['s-chorus1', 's-chorus2'])
+  })
+
   it('rests the visualizer every other 16-bar phrase of a long section, over one unbroken scene', async () => {
     const project = makeProject({ videos: 0 })
     // A 30-bar verse (2 s bars).

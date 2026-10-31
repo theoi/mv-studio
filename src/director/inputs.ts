@@ -33,6 +33,8 @@ export interface SectionInfo {
   /** 0..1 relative to the rest of the song. */
   energy: number
   repeatGroup?: number
+  /** How sure the label is: about 0.4 from the audio alone, 0.8 from repeated lyrics, 1 typed by the user. */
+  confidence?: number
 }
 
 export interface SongInfo {
@@ -192,6 +194,7 @@ export function songInfoFromProject(project: Project): SongInfo {
     end: Math.min(duration || s.end, s.end),
     energy: energies[i] ?? 0.5,
     repeatGroup: s.repeatGroup,
+    ...(s.confidence !== undefined ? { confidence: s.confidence } : {}),
   }))
   return {
     assetId,

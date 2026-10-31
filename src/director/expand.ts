@@ -48,6 +48,7 @@ import {
   overlayPool,
   PARTICLES_ID,
   pickLook,
+  roleOf,
   scenePool,
   sectionPrompts,
   sectionTier,
@@ -572,7 +573,7 @@ async function shotsForSection(
         })
     ctx.promptOffset += sectionSpans.length
     // Repeated choruses reuse their shots (the visual hook comes back with the musical one); verses get new ones.
-    const repeats = section.repeatGroup !== undefined && normalizedLabel(section.label) === 'chorus'
+    const repeats = section.repeatGroup !== undefined && roleOf(section) === 'chorus'
     const reuse = repeats ? ctx.groupShots.get(section.repeatGroup as number) : undefined
     const own: string[] = []
     for (const [i, span] of sectionSpans.entries()) {
