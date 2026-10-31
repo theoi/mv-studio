@@ -50,7 +50,11 @@ export function footageService(): Promise<FootageService> {
   return loading
 }
 
-function automatic(): boolean {
+/**
+ * Whether analysis that downloads models may run without being asked for (footage indexing, beat refinement). Off in
+ * automated browsers (end-to-end tests, the live smoke test) unless a test opts in.
+ */
+export function backgroundAnalysisOn(): boolean {
   try {
     const setting = localStorage.getItem(SETTING_KEY)
     if (setting === 'on') return true
@@ -58,7 +62,6 @@ function automatic(): boolean {
   } catch {
     // Storage blocked: fall through to the default.
   }
-  // Automated browsers (end-to-end tests, the live smoke test) do not download analysis models unless a test opts in.
   return !navigator.webdriver
 }
 
@@ -66,7 +69,7 @@ let started = false
 
 /** Analyzes the project's clips and stills in the background, and every clip imported later. */
 export function startFootageAnalysis(): void {
-  if (started || !automatic()) return
+  if (started || !backgroundAnalysisOn()) return
   started = true
   void footageService().then((service) => service.indexing.start())
 }
