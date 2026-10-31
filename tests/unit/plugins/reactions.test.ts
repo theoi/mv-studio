@@ -152,6 +152,43 @@ describe('choosing what to listen to', () => {
     })
   })
 
+  it('names the stem a visual follows for what would come from the mix, once that stem is separated', () => {
+    const s = scene('stems')
+    s.gen.audio = { stem: 'vocals' }
+    const onGen = Object.fromEntries(availableReactions(s.p, s.gen).map((a) => [a.reaction.id, a]))
+    expect(onGen.loudness).toMatchObject({
+      listensTo: 'Vocals stem',
+      listening: 'the loudness of the vocals stem',
+    })
+    // A reaction with a stem of its own keeps it, and the beat grid stays the song's.
+    expect(onGen.kick?.listening).toBe('the drums stem')
+    expect(onGen.beat?.listening).toBe('the song’s beat grid')
+    expect(availableReactions(s.p, s.img).find((a) => a.reaction.id === 'loudness')?.listening).toBe(
+      'the loudness of the whole mix',
+    )
+
+    const editor = new ProjectEditor(s.p)
+    const height: ReactionTarget = { clipId: s.gen.id, param: 'height' }
+    applyReaction(editor, [height], 'loudness')
+    expect(describeReaction(editor.getProject(), height)).toMatchObject({
+      listensTo: 'Vocals stem',
+      listening: 'the loudness of the vocals stem',
+    })
+
+    // The other instruments stem is not separated in this scene, so the visual still hears the mix.
+    const other = scene('stems')
+    other.gen.audio = { stem: 'other' }
+    expect(availableReactions(other.p, other.gen).find((a) => a.reaction.id === 'loudness')).toMatchObject({
+      listensTo: 'Loudness',
+      listening: 'the loudness of the whole mix',
+    })
+
+    const mix = scene('mix')
+    mix.gen.audio = { stem: 'drums' }
+    expect(availableReactions(mix.p, mix.gen).find((a) => a.reaction.id === 'kick')?.listening).toBe(
+      'the low end (sub bass), where the kick sits',
+    )
+  })
   it('keeps the default band layout in step with the analysis', () => {
     expect(DEFAULT_BAND_EDGES_HZ).toEqual(BAND_EDGES_HZ)
   })

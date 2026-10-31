@@ -85,6 +85,27 @@ test('a visualizer follows one stem once stems are separated, and says how to ge
   await expect.poll(async () => (await spectrum(page))?.audio).toBeNull()
 })
 
+test('a visual that follows a stem says its reactions listen to that stem', async ({ page }) => {
+  await openVisualizer(page)
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    const project: Project = structuredClone(editor.getProject())
+    const analysis = project.analysis.audio[project.songAssetId!]!
+    analysis.stemFeatures = { drums: analysis.features! }
+    const clip = project.clips['o-spec1']
+    if (clip?.type === 'generator') clip.audio = { stem: 'drums' }
+    editor.load(project)
+    window.location.hash = '#/editor?sel=clip:o-spec1&t=70.4'
+  })
+  await page.getByRole('button', { name: 'React to music: Height' }).click()
+  const panel = page.getByRole('dialog', { name: 'React to music: Height' })
+  await panel.getByRole('combobox', { name: 'Reaction' }).click()
+  const loudness = page.getByRole('option', { name: /^Follow loudness/ })
+  await expect(loudness).toContainText('Listens to: the loudness of the drums stem.')
+  await loudness.click()
+  await expect(panel.getByText('Listens to: the loudness of the drums stem.')).toBeVisible()
+})
+
 test('values read as percentages and multipliers, an edit names its setting, and Circle spectrum’s artwork is a project image', async ({
   page,
 }) => {
