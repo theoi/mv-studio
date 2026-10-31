@@ -9,12 +9,24 @@ import { JobError } from '../../shared/jobs.ts'
 import { cancelledError } from '../errors.ts'
 import { lineSpan } from '../footage/song.ts'
 import type { FootageMatcher } from '../matching/matcher.ts'
-import type { ClipMatch, ClipVisionIndex, MatchQuery, TimeRange } from '../types.ts'
-import type { CutSpan } from './rhythm.ts'
+import type { ClipMatch, ClipVisionIndex, MatchQuery, Mood, TimeRange } from '../types.ts'
 
 export type AutoCutOrder = 'matched' | 'shuffled' | 'chronological'
-/** Why a clip was chosen, for "Show why" in the UI. */
-export type PickReason = 'lyric' | 'energy' | 'variety' | 'story'
+/** Why a clip was chosen, for "Show why" in the UI. `brief`: the shot's text, mood or preferred clips. */
+export type PickReason = 'lyric' | 'brief' | 'energy' | 'variety' | 'story'
+
+/** A shot to fill. Auto-cut's `CutSpan`s qualify; a planner can add hints from its brief. */
+export interface ChooseSpan {
+  start: Seconds
+  end: Seconds
+  /** Music energy, 0..1 within the song, used when `energyAt` is not given. */
+  energy?: number
+  /** What the shot should show (a brief's media query), matched together with the lyric line sung then. */
+  text?: string
+  mood?: Mood
+  /** Clips the brief asks for. They score higher, but a clip still never plays twice in a row (matched order). */
+  prefer?: readonly Id[]
+}
 
 export interface PoolItem {
   assetId: Id
@@ -36,7 +48,7 @@ export interface ClipPick {
 }
 
 export interface ChooseInput {
-  spans: readonly CutSpan[]
+  spans: readonly ChooseSpan[]
   /** Candidate clips in a stable order (import order). */
   pool: readonly PoolItem[]
   order: AutoCutOrder
@@ -60,6 +72,11 @@ export const MIN_PLAYBACK_RATE = 0.5
 const STILL_STORY_SECONDS = 2
 /** Gap kept between two ranges taken from the same clip, so a repeat never shows the same frames. */
 const RANGE_GAP = 0.1
+/**
+ * Score bonus for a clip the shot's brief prefers. It outweighs an unused clip's bonus plus the penalty for a clip
+ * shown two shots ago, so preferred clips keep coming back instead of giving way to every clip not used yet.
+ */
+const PREFER_BONUS = 0.7
 const round3 = (t: number) => Math.round(t * 1000) / 1000
 
 function covers(item: PoolItem, length: Seconds): boolean {
@@ -174,10 +191,16 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
   const lines = input.spans.map((s) => lineDuring(input.lyrics, s.start, s.end))
   const queries = input.spans.map((s, i): MatchQuery => {
     const energy = input.energyAt?.(s.start, s.end) ?? s.energy
-    const text = lines[i]?.text
-    return { ...(text ? { text } : {}), energy, duration: round3(s.end - s.start) }
+    const text = [s.text?.trim(), lines[i]?.text].filter(Boolean).join(', ')
+    return {
+      ...(text ? { text } : {}),
+      ...(s.mood ? { mood: s.mood } : {}),
+      ...(energy !== undefined ? { energy } : {}),
+      duration: round3(s.end - s.start),
+    }
   })
-  const keyOf = (q: MatchQuery) => `${q.text ?? ''}|${(q.energy ?? 0).toFixed(2)}|${q.duration}`
+  const keyOf = (q: MatchQuery) =>
+    `${q.text ?? ''}|${q.mood ?? ''}|${q.energy === undefined ? '' : q.energy.toFixed(2)}|${q.duration}`
   const unique = new Map<string, MatchQuery>()
   for (const q of queries) unique.set(keyOf(q), q)
   const ranked = new Map<string, Map<Id, ClipMatch>>()
@@ -232,6 +255,7 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
       let score = match ? sigmoid(match.score) : hasRanking ? 0.35 : 0.5
       if (item.kind === 'image' && hasVideo) score -= 0.15
       if (item.assetId === saved) score -= 0.4
+      if (span.prefer?.includes(item.assetId)) score += PREFER_BONUS
       if (!u) score += 0.3
       else {
         const since = shot - u.lastShot
@@ -259,11 +283,20 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
     const u = usage.get(best.assetId) as Usage
     u.cursor = sourceStart + length * rate + RANGE_GAP
     const line = lines[shot]
+    const hinted = !!(span.text?.trim() || span.mood)
     return {
       assetId: best.assetId,
       sourceStart,
       playbackRate: rate,
-      reason: match ? (query.text ? 'lyric' : 'energy') : 'variety',
+      reason: span.prefer?.includes(best.assetId)
+        ? 'brief'
+        : match
+          ? line
+            ? 'lyric'
+            : hinted
+              ? 'brief'
+              : 'energy'
+          : 'variety',
       ...(match && line ? { lyricLineId: line.id } : {}),
       ...(match ? { score: Math.round(sigmoid(match.score) * 1000) / 1000 } : {}),
     }
@@ -284,11 +317,11 @@ function shuffle<T>(items: readonly T[], rng: () => number): T[] {
  * Maps each shot's place in the cut to the same place in the footage laid end to end in import order. Story order
  * wins over variety: when the cut is longer than the footage, neighbouring shots may share frames.
  */
-function chronological(spans: readonly CutSpan[], pool: readonly PoolItem[]): (ClipPick | undefined)[] {
+function chronological(spans: readonly ChooseSpan[], pool: readonly PoolItem[]): (ClipPick | undefined)[] {
   const lengths = pool.map((p) => (p.kind === 'video' ? (p.duration ?? 0) : STILL_STORY_SECONDS))
   const total = lengths.reduce((a, b) => a + b, 0)
-  const first = (spans[0] as CutSpan).start
-  const span = Math.max(1e-6, (spans[spans.length - 1] as CutSpan).end - first)
+  const first = (spans[0] as ChooseSpan).start
+  const span = Math.max(1e-6, (spans[spans.length - 1] as ChooseSpan).end - first)
   return spans.map((s) => {
     const length = s.end - s.start
     let pos = ((s.start - first) / span) * total

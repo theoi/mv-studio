@@ -4,12 +4,15 @@ import { createTrack, createVideoClip } from '../../../../src/model/factory.ts'
 import type { Clip, Project } from '../../../../src/model/types.ts'
 import { JobError } from '../../../../src/shared/jobs.ts'
 import { AUTOCUT_TRACK_NAME, autoCutMeta, isUntouchedAutoCut } from '../../../../src/vision/autocut/apply.ts'
+import { chooseClips, type ChooseInput, type ChooseSpan } from '../../../../src/vision/autocut/choose.ts'
 import {
   applyAutoCut,
   autoCut,
+  autoCutPool,
   planAutoCut,
   type AutoCutOptions,
 } from '../../../../src/vision/autocut/index.ts'
+import type { MatchQuery } from '../../../../src/vision/types.ts'
 import { BEATS, CLIPS, fakeMatcher, makeProject, SONG_LENGTH } from './fixtures.ts'
 
 const matcher = fakeMatcher()
@@ -94,6 +97,71 @@ describe('auto-cut plan', () => {
     expect(result.estimatedGrid).toBe(true)
     expect(result.bpm).toBe(120)
     expect(result.warnings[0]).toMatch(/even 120 BPM grid/)
+  })
+})
+
+describe('choosing clips for a planner', () => {
+  /** Eight 1.2 s mid-energy shots in the chorus after its lyric line. */
+  const shots = (hints: Omit<ChooseSpan, 'start' | 'end'> = {}): ChooseSpan[] =>
+    Array.from({ length: 8 }, (_, i) => ({ start: 36 + i * 1.2, end: 37.2 + i * 1.2, energy: 0.5, ...hints }))
+  const choose = (project: Project, spans: ChooseSpan[], m: ChooseInput['matcher'] = matcher) =>
+    chooseClips({
+      spans,
+      pool: autoCutPool(project),
+      order: 'matched',
+      lyrics: project.lyrics!,
+      matcher: m,
+      seed: 1,
+    })
+
+  it('lists the clips and stills in import order, with their analysis when there is one', () => {
+    const project = makeProject({
+      clips: [{ id: 'still', image: true }, ...CLIPS.slice(0, 2), { ...CLIPS[2]!, indexed: false }],
+    })
+    const pool = autoCutPool(project)
+    expect(pool.map((p) => [p.assetId, p.kind, !!p.index])).toEqual([
+      ['still', 'image', true],
+      ['city', 'video', true],
+      ['ocean', 'video', true],
+      ['crowd', 'video', false],
+    ])
+    expect(autoCutPool(project, ['ocean']).map((p) => p.assetId)).toEqual(['ocean'])
+  })
+
+  it("matches a shot's text and mood together with the lyric sung during it", async () => {
+    const project = makeProject()
+    const queries: MatchQuery[] = []
+    const recording = {
+      model: matcher.model,
+      rankAll: (...args: Parameters<typeof matcher.rankAll>) => {
+        queries.push(...args[1])
+        return matcher.rankAll(...args)
+      },
+    }
+    const ocean = (await choose(project, shots({ text: 'the ocean' }), recording)).picks
+    const plain = (await choose(project, shots())).picks
+    expect(ocean[0]).toMatchObject({ assetId: 'ocean', reason: 'brief' })
+    const count = (picks: typeof plain) => picks.filter((p) => p?.assetId === 'ocean').length
+    expect(count(ocean)).toBeGreaterThan(count(plain))
+    queries.length = 0
+    await choose(project, shots({ mood: 'dreamy' }), recording)
+    expect(queries[0]).toMatchObject({ mood: 'dreamy', energy: 0.5 })
+
+    queries.length = 0
+    const sung = await choose(project, [{ start: 10.2, end: 12, text: 'at sunset' }], recording)
+    expect(queries[0]?.text).toBe('at sunset, neon city lights at night')
+    expect(sung.picks[0]).toMatchObject({ assetId: 'city', reason: 'lyric', lyricLineId: 'l1' })
+  })
+
+  it('prefers the clips a brief asks for, without playing one twice in a row', async () => {
+    const project = makeProject()
+    const plain = await choose(project, shots())
+    const preferred = await choose(project, shots({ prefer: ['misc'] }))
+    const count = (picks: typeof plain.picks) => picks.filter((p) => p?.assetId === 'misc').length
+    expect(count(preferred.picks)).toBeGreaterThanOrEqual(4)
+    expect(count(preferred.picks)).toBeGreaterThan(count(plain.picks))
+    expect(preferred.picks.find((p) => p?.assetId === 'misc')?.reason).toBe('brief')
+    preferred.picks.slice(1).forEach((p, i) => expect(p?.assetId).not.toBe(preferred.picks[i]?.assetId))
   })
 })
 

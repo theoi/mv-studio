@@ -56,6 +56,7 @@ export {
   autoCut,
   applyAutoCut,
   autoCutCommands,
+  autoCutPool,
   planAutoCut,
   type AutoCutDeps,
   type AutoCutOn,
@@ -67,6 +68,16 @@ export {
   type AutoCutShot,
 } from './autocut/index.ts'
 export { AUTOCUT_TRACK_NAME, isUntouchedAutoCut } from './autocut/apply.ts'
+export {
+  chooseClips,
+  type ChooseInput,
+  type ChooseResult,
+  type ChooseSpan,
+  type ClipPick,
+  type PickReason,
+  type PoolItem,
+} from './autocut/choose.ts'
+export type { CutSpan } from './autocut/rhythm.ts'
 export {
   createFootageService,
   FOOTAGE_INDEX_JOB,

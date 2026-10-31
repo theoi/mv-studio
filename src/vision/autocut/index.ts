@@ -64,7 +64,8 @@ export const AUTOCUT_JOB = 'edit.autocut'
 
 const DEFAULTS = { pace: 'bar', followEnergy: true, cutOn: 'beats', order: 'matched', seed: 1 } as const
 
-function poolFor(project: Project, assetIds: Id[] | undefined): PoolItem[] {
+/** The clips and stills auto-cut can use (all, or `assetIds`), in import order, with their vision index if analyzed. */
+export function autoCutPool(project: Project, assetIds?: readonly Id[]): PoolItem[] {
   const wanted = assetIds ? new Set(assetIds) : undefined
   return mediaFromProject(project)
     .filter((m) => !wanted || wanted.has(m.assetId))
@@ -100,7 +101,7 @@ export async function planAutoCut(
   const song = songInfoFromProject(project)
   if (!song.assetId || !(song.duration > 0))
     throw new JobError('invalid-input', 'Add a song first: auto-cut cuts your clips to its beats.')
-  const pool = poolFor(project, options.assetIds)
+  const pool = autoCutPool(project, options.assetIds)
   if (!pool.length)
     throw new JobError(
       'invalid-input',
