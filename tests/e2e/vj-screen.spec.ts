@@ -205,10 +205,29 @@ test('a pad’s menu fits a 1280×720 window: media and visuals are submenus', a
   const visuals = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'Orb' }) })
   await expect(visuals.getByRole('menuitem')).toHaveCount(12)
   expect(await fits(visuals)).toBe(true)
+  // Esc closes only the submenu, back to its trigger.
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(1)
+  await expect(menu.getByRole('menuitem', { name: 'Visuals' })).toBeFocused()
+  await page.keyboard.press('ArrowRight')
   await visuals.getByRole('menuitem', { name: 'Orb' }).click()
   await expect(page.getByRole('menu')).toHaveCount(0)
   await expect(pad(page, 'Orb')).toBeVisible()
   await expect(pad(page, 'Night city')).toHaveCount(0)
+
+  // From a submenu it takes three presses of Esc to leave VJ: the submenu, the menu, then VJ mode.
+  await pad(page, 'Orb').click({ button: 'right' })
+  await page.mouse.move(5, 5)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowRight')
+  await expect(page.getByRole('menu')).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(1)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(page.getByRole('img', { name: 'Live output' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('img', { name: 'Live output' })).toBeHidden()
 })
 
 /**

@@ -397,7 +397,7 @@ test('LUT files shows a long file name in full as a tooltip, under a description
   const short = dialog.getByText('Cool', { exact: true })
   await short.hover()
   await expect(short).not.toHaveAttribute('title', /./)
-  const lines = await dialog.getByText(/^Removing one/).evaluate((el) => {
+  const lines = await dialog.getByText(/^Color grades that use a removed file/).evaluate((el) => {
     const range = document.createRange()
     range.selectNodeContents(el)
     return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size

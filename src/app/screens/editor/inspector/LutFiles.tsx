@@ -39,7 +39,7 @@ export function LutFilesDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="LUT files"
-      description="Removing one sets the color grades using it to no LUT."
+      description="Color grades that use a removed file go back to no LUT."
       width={420}
       footer={
         <Button ref={load} onClick={() => void loadFile()}>
