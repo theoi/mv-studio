@@ -142,7 +142,12 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     )
   }
 
-  /** Drops a stem's decoded audio, unless it still plays (the mix that plays while newly heard stems decode). */
+  /**
+   * Drops a stem's decoded audio, unless it still plays (the mix that plays while newly heard stems decode). This clock
+   * decides alone although the cache is shared: that relies on every clock on the media source showing the current
+   * project's stem flags (the stills and VJ previews do). A clock that heard other stems would evict one another
+   * clock plays.
+   */
   private release(id: Id): void {
     this.releases.delete(id)
     if (this.wanted.some((c) => c.assetId === id)) return

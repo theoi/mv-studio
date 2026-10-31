@@ -132,4 +132,64 @@ describe('WebAudioPlaybackClock', () => {
     expect(cache.error('stem-bass')).toBeUndefined()
     clock.dispose()
   })
+
+  it('keeps a stem that still plays while newly soloed stems decode, and releases it a minute after it stops', async () => {
+    vi.useFakeTimers()
+    let drumsDecoded: ((buffer: unknown) => void) | undefined
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        decodeAudioData(data: ArrayBuffer) {
+          if (new TextDecoder().decode(data) !== 'stem-drums') return Promise.resolve({ duration: 10 })
+          return new Promise((resolve) => (drumsDecoded = resolve))
+        }
+      },
+    )
+    const media = { getFile: async (asset: Asset) => new Blob([asset.id]) }
+    const clock = new WebAudioPlaybackClock(media)
+    const cache = audioBufferCache(media)
+    const song = songProject('song')
+    const playing = () => clock.scheduledClips.map((c) => c.stem ?? 'song')
+
+    clock.setProject(withStems(song, { vocals: { solo: true } }))
+    await vi.waitFor(() => expect(playing()).toEqual(['vocals']))
+    // The drums take longer than a minute to decode, so the vocals keep playing past their release time.
+    clock.setProject(withStems(song, { drums: { solo: true } }))
+    await vi.waitFor(() => expect(drumsDecoded).toBeDefined())
+    vi.advanceTimersByTime(STEM_RELEASE_MS)
+    expect(playing()).toEqual(['vocals'])
+    expect(cache.loaded.has('stem-vocals')).toBe(true)
+
+    drumsDecoded?.({ duration: 10 })
+    await vi.waitFor(() => expect(playing()).toEqual(['drums']))
+    vi.advanceTimersByTime(STEM_RELEASE_MS)
+    expect(cache.loaded.has('stem-vocals')).toBe(false)
+    clock.dispose()
+  })
+
+  it('leaves no release timer behind after switching to a project without those stems, or after dispose', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        decodeAudioData() {
+          return Promise.resolve({ duration: 10 })
+        }
+      },
+    )
+    const media = { getFile: async (asset: Asset) => new Blob([asset.id]) }
+    const clock = new WebAudioPlaybackClock(media)
+    const soloVocals = withStems(songProject('song'), { vocals: { solo: true } })
+
+    clock.setProject(soloVocals)
+    // Drums, bass and other are not heard.
+    expect(vi.getTimerCount()).toBe(3)
+    clock.setProject(songProject('other'))
+    expect(vi.getTimerCount()).toBe(0)
+
+    clock.setProject(soloVocals)
+    expect(vi.getTimerCount()).toBe(3)
+    clock.dispose()
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })
