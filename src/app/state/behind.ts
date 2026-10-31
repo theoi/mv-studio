@@ -46,6 +46,11 @@ export type Suitability =
       peopleSkipped?: boolean
       /** What a footage check judged, so each clip is judged on the part of the footage it shows. */
       evidence?: SuitabilityEvidence
+      /**
+       * From the quick check, not the cutout's person track, which judges again from its own masks: a shot that works
+       * only in parts can still be turned down then.
+       */
+      quick?: boolean
     }
   | { status: 'unchecked' }
   | { status: 'checking' }
@@ -141,6 +146,9 @@ const fromReport = (r: SuitabilityReport): Extract<Suitability, { status: 'check
   ...(r.evidence ? { evidence: r.evidence } : {}),
 })
 
+const QUICK_PARTS = 'The cutout takes a closer look and may still turn it down.'
+const QUICK_PARTS_BRIEF = 'Works in parts of this shot, may change on a closer look'
+
 const PEOPLE_SKIPPED =
   "Couldn't check for people, so the cutout may include animals or objects. It checks again when you're back online."
 
@@ -194,6 +202,7 @@ export function suitabilityText(s: Suitability): {
 function checkedText(s: Extract<Suitability, { status: 'checked' }>): {
   status: string
   why?: string
+  brief?: string
   ok: boolean
 } {
   const first = s.reasons[0]
@@ -208,11 +217,16 @@ function checkedText(s: Extract<Suitability, { status: 'checked' }>): {
         ok: true,
       }
     const partly = first ? (MARGINAL_REASONS[first] ?? reason) : undefined
-    return {
-      status: 'Person found',
-      why: partly ? `Works in parts of this shot. ${partly}.` : undefined,
-      ok: true,
-    }
+    const why = partly ? `Works in parts of this shot. ${partly}.` : undefined
+    // The person track sees other masks at other times, so a part just long enough by the check may be too short by it.
+    if (s.quick)
+      return {
+        status: 'Person found',
+        why: why ? `${why} ${QUICK_PARTS}` : QUICK_PARTS,
+        brief: QUICK_PARTS_BRIEF,
+        ok: true,
+      }
+    return { status: 'Person found', why, ok: true }
   }
   return {
     status: 'Not suitable',
@@ -252,7 +266,7 @@ export function usedRange(clip: VideoClip, asset: Asset): TimeRange {
 function clipSuitability(s: Suitability, clip: VideoClip, asset: Asset): Suitability {
   if (s.status !== 'checked' || !s.evidence) return s
   const { evidence: _, ...part } = fromReport(suitabilityInRange(s.evidence, usedRange(clip, asset)))
-  return s.peopleSkipped ? { ...part, peopleSkipped: true } : part
+  return { ...part, ...(s.peopleSkipped ? { peopleSkipped: true } : {}), ...(s.quick ? { quick: true } : {}) }
 }
 
 /** Whether the person in a video asset can be cut out, as far as is known. */
@@ -502,7 +516,7 @@ export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefin
             signal: ctx.signal,
             onProgress: (p) => ctx.progress({ fraction: (i + (p.fraction ?? 0)) / n, message }),
           })
-          setCheck(id, fromReport(report))
+          setCheck(id, { ...fromReport(report), quick: true })
         } catch (err) {
           if (ctx.signal.aborted) throw err
           setCheck(id, { status: 'failed', message: JobError.from(err).message })

@@ -278,6 +278,22 @@ describe('suitability', () => {
     expect(suitabilityInRange(evidence, { start: 0, end: 6 })).toEqual(whole)
   })
 
+  it('judges a part of the shot with the shortest suitable range the report was judged with', () => {
+    // 6 s at 5 judged frames a second, with a large person for 1 s (5 frames) from 2 s.
+    const samples = Array.from({ length: 30 }, (_, i) => ({
+      t: i * 0.2,
+      mask: i >= 10 && i < 15 ? big : tiny,
+    }))
+    const part = { start: 1, end: 4 }
+    expect(suitabilityInRange(assessSuitability(samples, 0.2).evidence!, part)).toMatchObject({
+      verdict: 'marginal',
+      suitableRanges: [{ start: expect.closeTo(1.9, 6), end: expect.closeTo(2.9, 6) }],
+    })
+    const strict = assessSuitability(samples, 0.2, { minRangeSeconds: 1.2 }).evidence!
+    expect(suitabilityInRange(strict, part)).toMatchObject({ verdict: 'unsuitable', suitableRanges: [] })
+    expect(suitabilityInRange(strict, part, { minRangeSeconds: 1 }).verdict).toBe('marginal')
+  })
+
   it('leaves stability to the person track, which measures pops on every frame', () => {
     const narrow = rectMask(W, H, 25, 6, 35, 36)
     const r = assessSuitability(

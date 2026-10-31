@@ -232,6 +232,7 @@ export function assessSuitability(
       pops: pops?.shares.length
         ? { start: pops.start, fps: pops.fps, count: pops.shares.length, popping }
         : null,
+      ...(o.minRangeSeconds !== DEFAULTS.minRangeSeconds ? { minRangeSeconds: o.minRangeSeconds } : {}),
     },
     o,
   )
@@ -239,7 +240,8 @@ export function assessSuitability(
 
 /**
  * The verdict for the part of a shot from `range.start` to `range.end` (media seconds), judged from a report's
- * evidence the same way as the whole shot, so a clip that shows only part of its footage is judged on that part.
+ * evidence the same way as the whole shot (with its `minRangeSeconds`), so a clip that shows only part of its footage
+ * is judged on that part.
  */
 export function suitabilityInRange(
   evidence: SuitabilityEvidence,
@@ -266,9 +268,10 @@ export function suitabilityInRange(
         popping: p.popping.filter((i) => i >= first && i < end).map((i) => i - first),
       }
   }
-  const o = { ...DEFAULTS, ...options }
+  const kept = evidence.minRangeSeconds === undefined ? {} : { minRangeSeconds: evidence.minRangeSeconds }
+  const o = { ...DEFAULTS, ...kept, ...options }
   return judge(
-    { frames, spacing: evidence.spacing, pops },
+    { frames, spacing: evidence.spacing, pops, ...kept },
     { ...o, minRangeSeconds: Math.min(o.minRangeSeconds, range.end - range.start) },
   )
 }

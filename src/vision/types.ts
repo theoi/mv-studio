@@ -140,6 +140,11 @@ export interface SuitabilityEvidence {
    * pops were not measured (the quick check).
    */
   pops: { start: number; fps: number; count: number; popping: number[] } | null
+  /**
+   * The shortest suitable range in seconds the frames were judged with, when not the default 1 s: the quick check
+   * asks for more (`CHECK_MIN_RANGE_SECONDS`), and a part of the shot is judged with it too.
+   */
+  minRangeSeconds?: number
 }
 
 // ---------------------------------------------------------------------------

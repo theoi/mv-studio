@@ -18,6 +18,14 @@ export interface SuitabilityCheckOptions extends TaskOptions {
   criteria?: SuitabilityOptions
 }
 
+/**
+ * The quick check offers a part of a shot only when its person is usable for this long, not the person track's 1 s:
+ * its masks are rougher and sampled at other times, so a part just over 1 s by the check is often under it by the
+ * track, and the offer would be followed by "Not suitable". On 2 to 4 s parts of the 65 dev clips (not in the
+ * repository), parts the check offers and the track then turns down go from 10 to 5 of 1413, and parts the track
+ * would offer but the check does not from 14 to 16. Whole clips: no verdict changes.
+ */
+export const CHECK_MIN_RANGE_SECONDS = 1.2
 /** The person track judges at the same rate, so both see the same moments. */
 const STABILITY_FPS = 5
 const ANALYSIS_SIDE = 256
@@ -68,9 +76,9 @@ export async function checkSuitability(
       progress(samples.length / times.length, 'analyzing')
     }
     if (signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
-    if (!peopleAvailable)
-      return { ...assessSuitability(samples, 1 / fps, options.criteria), peopleSkipped: true }
-    return assessSuitability(samples, 1 / fps, options.criteria, people)
+    const criteria = { minRangeSeconds: CHECK_MIN_RANGE_SECONDS, ...options.criteria }
+    if (!peopleAvailable) return { ...assessSuitability(samples, 1 / fps, criteria), peopleSkipped: true }
+    return assessSuitability(samples, 1 / fps, criteria, people)
   } catch (err) {
     throw visionError(err, 'internal')
   }
