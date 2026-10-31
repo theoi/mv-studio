@@ -52,8 +52,8 @@ test('timeline, inspector and library controls take clicks over at least 24 by 2
     ['Mute', page.getByRole('button', { name: 'Mute' }).first()],
     ['Solo', page.getByRole('button', { name: 'Solo' }).first()],
     ['Snapping options', page.getByRole('button', { name: 'Snapping options' })],
-    ['Select tool', page.getByRole('radio', { name: 'Select (V)' })],
-    ['Split tool', page.getByRole('radio', { name: 'Split (S)' })],
+    ['Select tool', page.getByRole('radio', { name: 'Select', exact: true })],
+    ['Split tool', page.getByRole('radio', { name: 'Split: click a clip to cut it' })],
     ['Add keyframe', page.locator('button[aria-label^="Add keyframe:"]').first()],
     [
       'Zoom slider',

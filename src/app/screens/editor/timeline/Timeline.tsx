@@ -87,6 +87,7 @@ import {
   sectionUnsure,
   songAnalysis,
   splitAtPlayhead,
+  splitClipAt,
   timelineDuration,
   useProject,
   viewOf,
@@ -419,8 +420,8 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
           onChange={(v) => set({ tool: v })}
           ariaLabel="Timeline tool"
           options={[
-            { value: 'select', label: <MousePointer2 />, title: 'Select (V)' },
-            { value: 'split', label: <Scissors />, title: 'Split (S)' },
+            { value: 'select', label: <MousePointer2 />, title: 'Select', shortcut: 'V' },
+            { value: 'split', label: <Scissors />, title: 'Split: click a clip to cut it' },
           ]}
         />
         <span className={styles.tbDivider} />
@@ -1135,6 +1136,7 @@ export function Timeline() {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
 
+  const tool = useUi((s) => s.tool)
   const empty = !hasSong(project)
   const analysis = songAnalysis(project)
   const bpm = bpmOf(project)
@@ -1350,6 +1352,19 @@ export function Timeline() {
     (e: React.PointerEvent, clip: ClipView, mode: DragMode) => {
       if (e.button !== 0) return
       e.preventDefault()
+      if (get().tool === 'split') {
+        const content = contentRef.current
+        if (!content) return
+        const scale = get().pxPerSec
+        const at = (e.clientX - content.getBoundingClientRect().left - HEADER_W) / scale
+        const p = editor.getProject()
+        const edges = clipsOnTrack(p, clip.trackId)
+          .filter((c) => c.id !== clip.id)
+          .flatMap((c) => [c.start, c.start + c.duration])
+        const sectionStarts = sectionsOf(p).map((s) => s.start)
+        splitClipAt(clip.id, snapTime(at, scale, edges, beat, sectionStarts).t)
+        return
+      }
       const picked = selectedClipIds(get().selection)
       if (mode === 'move' && (e.shiftKey || e.metaKey || e.ctrlKey)) {
         toggleInSelection(clip.id)
@@ -1645,7 +1660,7 @@ export function Timeline() {
   return (
     <div className={styles.root}>
       <Toolbar onFit={fit} bpm={bpm} />
-      <div ref={scrollRef} className={`${styles.scroller} scroll`} data-timeline-scroller>
+      <div ref={scrollRef} className={`${styles.scroller} scroll`} data-timeline-scroller data-tool={tool}>
         <div
           ref={contentRef}
           className={styles.content}
@@ -1765,6 +1780,7 @@ export function Timeline() {
                   <div
                     className={[styles.lane, beatSnap && beat && styles.grid].filter(Boolean).join(' ')}
                     style={{ width: contentW, ...gridStyle }}
+                    data-locked={track.locked || undefined}
                     onPointerDown={startMarquee}
                     onContextMenu={(e) =>
                       openLaneMenu(

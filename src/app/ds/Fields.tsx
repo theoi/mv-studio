@@ -390,7 +390,8 @@ export function Segmented<T extends string>({
 }: {
   value: T
   onChange: (v: T) => void
-  options: { value: T; label: ReactNode; title?: string }[]
+  /** `title` names an option shown only as an icon, in its tooltip with the `shortcut` that picks it. */
+  options: { value: T; label: ReactNode; title?: string; shortcut?: string }[]
   ariaLabel: string
   size?: 'sm' | 'md'
   block?: boolean
@@ -405,17 +406,26 @@ export function Segmented<T extends string>({
         .filter(Boolean)
         .join(' ')}
     >
-      {options.map((o) => (
-        <ToggleGroup.Item
-          key={o.value}
-          value={o.value}
-          className={styles.segment}
-          title={o.title}
-          aria-label={o.title}
-        >
-          {o.label}
-        </ToggleGroup.Item>
-      ))}
+      {options.map((o) => {
+        const item = (
+          <ToggleGroup.Item
+            key={o.value}
+            value={o.value}
+            className={styles.segment}
+            aria-label={o.title}
+            aria-keyshortcuts={o.shortcut}
+          >
+            {o.label}
+          </ToggleGroup.Item>
+        )
+        return o.title ? (
+          <Tooltip key={o.value} label={o.title} shortcut={o.shortcut}>
+            {item}
+          </Tooltip>
+        ) : (
+          item
+        )
+      })}
     </ToggleGroup.Root>
   )
 }

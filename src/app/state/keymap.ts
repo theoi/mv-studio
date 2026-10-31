@@ -150,7 +150,9 @@ export const SHORTCUTS = [
         return
       }
       stopShuttle()
-      set({ selection: { type: 'none' } })
+      // With the split tool in hand, Esc puts it down first; the next Esc deselects.
+      if (get().tool === 'split') set({ tool: 'select' })
+      else set({ selection: { type: 'none' } })
     },
   },
 

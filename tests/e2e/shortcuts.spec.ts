@@ -78,7 +78,7 @@ test('Space presses a control reached with the keyboard and plays after a click 
   await expect(play).toBeVisible()
 
   // After a click on a control, Space plays and pauses instead of pressing it again.
-  const splitTool = page.getByRole('radio', { name: 'Split (S)' })
+  const splitTool = page.getByRole('radio', { name: 'Split: click a clip to cut it' })
   await splitTool.click()
   await expect(splitTool).toBeFocused()
   await page.keyboard.press('Space')
@@ -133,11 +133,14 @@ test('Shift Z fits the whole song, V picks the select tool and Alt K keyframes t
   await page.keyboard.press('Shift+Z')
   await expect(zoom).toHaveAttribute('aria-valuenow', fitted ?? '')
 
-  const split = page.getByRole('radio', { name: 'Split (S)' })
+  const split = page.getByRole('radio', { name: 'Split: click a clip to cut it' })
   await split.click()
   await expect(split).toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('v')
-  await expect(page.getByRole('radio', { name: 'Select (V)' })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('radio', { name: 'Select', exact: true })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  )
 
   await expect(page.getByRole('button', { name: 'Add keyframe: Opacity' })).toBeVisible()
   await page.getByRole('slider', { name: 'Opacity' }).focus()

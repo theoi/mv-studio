@@ -130,7 +130,9 @@ removes clips whose line is gone or no longer has their words.
   after a few seconds. When `slow` turns true, show "Still working…" with the time since `startedAt` ("Still
   working… 1:12") and, when `canUseLocal` is true (the AI model is planning, never while the song analysis or the bars
   run), a "Use the local draft instead" button that calls `useLocalDraft()`. It stops waiting for the model and makes
-  the draft with the built-in planner. The job's progress never moves back, even when a stage starts a second pass.
+  the draft with the built-in planner. The job's progress never moves back. When finding the bars starts a second
+  pass (the beat model's download, then the song's analysis), that pass gets its own band above the first, so the bar
+  keeps moving.
 - `ready`: `preview.summary`, `preview.changes`, `preview.items` behind "Show changes", `preview.warnings` as
   notes, sections with mood and pace, "Try another version" (`tryAnother()`), and the main button labeled
   `actionLabel` ("Make video" or "Generate 12 shots · about $2.40"). When `confirmRequired` is true the button opens
