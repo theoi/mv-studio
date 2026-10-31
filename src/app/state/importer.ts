@@ -144,14 +144,25 @@ function isFootageTrack(project: Project, track: Track): boolean {
   )
 }
 
-/** Adds an asset at the playhead on the first free track of its kind (footage tracks first), adding one if needed. */
-export function addAssetAtPlayhead(assetId: string): void {
+export interface Placement {
+  /** Timeline start (default: the playhead). */
+  start?: number
+  /** Default: the whole clip, or 4 s for an image. */
+  duration?: number
+  /** Where in a video or audio file to start, in source seconds. */
+  sourceStart?: number
+}
+
+/** Adds an asset on the first free track of its kind (footage tracks first), adding one if needed. */
+export function addAsset(assetId: string, at: Placement = {}): void {
   const project = editor.getProject()
   const asset = project.assets[assetId]
   if (!asset || asset.kind === 'font') return
-  const start = get().playhead
+  const start = at.start ?? get().playhead
   const kind = asset.kind === 'audio' ? 'audio' : 'visual'
-  const duration = asset.kind === 'image' ? 4 : Math.max(0.5, asset.duration ?? 4)
+  const sourceStart = asset.kind === 'image' ? 0 : Math.max(0, at.sourceStart ?? 0)
+  const available = asset.kind === 'image' ? Infinity : Math.max(0.5, (asset.duration ?? 4) - sourceStart)
+  const duration = Math.min(available, at.duration ?? (asset.kind === 'image' ? 4 : available))
   const candidates = project.tracks
     .filter((t) => t.kind === kind && !t.locked)
     .sort((a, b) => Number(isFootageTrack(project, b)) - Number(isFootageTrack(project, a)))
@@ -169,9 +180,9 @@ export function addAssetAtPlayhead(assetId: string): void {
   const common = { trackId: track.id, assetId, start, duration }
   const clip: Clip =
     asset.kind === 'audio'
-      ? createAudioClip(common)
+      ? createAudioClip({ ...common, sourceStart })
       : asset.kind === 'video'
-        ? createVideoClip(common)
+        ? createVideoClip({ ...common, sourceStart })
         : createImageClip(common)
   commands.push({ type: 'clip.add', clip: { ...clip, name: baseName(asset.name) } })
   if (dispatch(commands, { label: `Add ${baseName(asset.name)}` })) select({ type: 'clip', id: clip.id })

@@ -9,6 +9,7 @@ import { Timeline } from './timeline/Timeline.tsx'
 import { CommandPalette, ExportDialog, FirstRunGuide } from '../../lazy.ts'
 import { Deferred } from '../common/Deferred.tsx'
 import { Splitter } from './Splitter.tsx'
+import { analyzeImportsInBackground } from '../../state/footage.ts'
 import { importFiles, registerImportInput } from '../../state/importer.ts'
 import styles from './Editor.module.css'
 
@@ -92,6 +93,15 @@ export function Editor() {
   const rightRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
   const [sizes, setSizes] = useState<PanelSizes>(storedSizes)
+  useEffect(() => {
+    // After the preview's first frames, so analysis does not compete with opening the editor.
+    let stop = () => {}
+    const timer = window.setTimeout(() => (stop = analyzeImportsInBackground()), 1500)
+    return () => {
+      window.clearTimeout(timer)
+      stop()
+    }
+  }, [])
   useEffect(() => {
     try {
       localStorage.setItem(SIZES_KEY, JSON.stringify(sizes))

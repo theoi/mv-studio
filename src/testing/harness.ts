@@ -31,6 +31,8 @@ import { jobs } from '../shared/jobs.ts'
 import * as vision from '../vision/index.ts'
 import * as vj from '../vj/index.ts'
 import * as bench from './bench.ts'
+import * as appFootage from '../app/state/footage.ts'
+import * as appProject from '../app/state/project.ts'
 
 /** A compositor whose canvas stays readable after render, fed by the preview or the export frame provider. */
 function createCompositor(mode: 'preview' | 'export', width: number, height: number) {
@@ -82,6 +84,8 @@ export function installHarness(): void {
     vision,
     vj,
     exporting,
+    /** The app's own state, for tests that drive the UI with test doubles (e.g. model-free vision backends). */
+    app: { footage: appFootage, project: appProject },
     /** Files most recently set on #e2e-file-input (Playwright setInputFiles). */
     files: (): File[] => Array.from(input.files ?? []),
     ready: true,

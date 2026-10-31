@@ -57,6 +57,7 @@ import {
   type ClipView,
 } from '../../../state/project.ts'
 import { get, openAssist, select, set, toast, useUi } from '../../../state/ui.ts'
+import { useFootage, useFootageResults } from '../../../state/footage.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import styles from './Timeline.module.css'
 
@@ -546,6 +547,25 @@ function TrackHeader({ track, height }: { track: Track; height: number }) {
 
 /* ---------- playhead ---------- */
 
+/** "3 clips match this line": shown on the selected lyric when footage analysis finds strong matches. */
+function LineMatches({ lineId }: { lineId: string }) {
+  const strong = useFootage((s) => s.strongMatch)
+  const count = (useFootageResults('line', lineId) ?? []).filter((r) => r.score >= strong).length
+  if (!count) return null
+  return (
+    <div className={styles.lyricSuggest}>
+      <InlineSuggestion
+        id={`match-${lineId}`}
+        variant="chip"
+        action="Show"
+        onAction={() => set({ libraryTab: 'media', libraryOpen: true })}
+      >
+        {count === 1 ? '1 clip matches this line' : `${count} clips match this line`}
+      </InlineSuggestion>
+    </div>
+  )
+}
+
 function Playhead({ height, head }: { height?: number; head?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -922,18 +942,7 @@ export function Timeline() {
                               width={w}
                               pps={pps}
                             />
-                            {sel && (
-                              <div className={styles.lyricSuggest}>
-                                <InlineSuggestion
-                                  id={`match-${c.lyricLineId}`}
-                                  variant="chip"
-                                  action="Show"
-                                  onAction={() => set({ libraryTab: 'media', libraryOpen: true })}
-                                >
-                                  3 clips match this line
-                                </InlineSuggestion>
-                              </div>
-                            )}
+                            {sel && c.lyricLineId && <LineMatches lineId={c.lyricLineId} />}
                           </div>
                         )
                       }

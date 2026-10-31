@@ -20,10 +20,12 @@ import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
 import { formatBpm, formatTime, plural } from '../../format.ts'
 import { sceneThumb, type SceneId } from '../../mock/art.ts'
-import { media, mediaById } from '../../mock/media.ts'
+import { mediaById } from '../../mock/media.ts'
 import { peaks } from '../../mock/song.ts'
 import type { Asset, Project } from '../../../model/index.ts'
-import { addAssetAtPlayhead, openImport } from '../../state/importer.ts'
+import type { FootageResult } from '../../../vision/index.ts'
+import { useFootage, useFootageResults } from '../../state/footage.ts'
+import { addAsset, openImport } from '../../state/importer.ts'
 import {
   bpmOf,
   hasSong,
@@ -94,7 +96,7 @@ function MediaCard({ item }: { item: LibraryItem }) {
             size="xs"
             variant="secondary"
             tooltipSide="top"
-            onClick={() => addAssetAtPlayhead(item.asset.id)}
+            onClick={() => addAsset(item.asset.id)}
           >
             <Plus />
           </IconButton>
@@ -167,16 +169,63 @@ function AddSongRow() {
   )
 }
 
+function SuggestionThumb({
+  asset,
+  result,
+  onUse,
+}: {
+  asset: Asset
+  result: FootageResult
+  onUse: () => void
+}) {
+  const thumb = useThumbnail(asset)
+  const name = asset.name.replace(/\.[^.]+$/, '')
+  return (
+    <Tooltip
+      label={name}
+      description={
+        asset.kind === 'video'
+          ? `Best part ${formatTime(result.range.start)}–${formatTime(result.range.end)}`
+          : undefined
+      }
+      side="top"
+    >
+      <button
+        className={styles.suggestThumb}
+        style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}
+        aria-label={`Use ${name}`}
+        onClick={onUse}
+      />
+    </Tooltip>
+  )
+}
+
+/** Clips that match the selected lyric line or section, from footage analysis; one click places the best part. */
 function Suggestions() {
   const selection = useUi((s) => s.selection)
   const project = useProject()
-  if (selection.type !== 'lyric' && selection.type !== 'section') return null
-  const label =
-    selection.type === 'lyric'
-      ? `“${lyricLines(project).find((l) => l.id === selection.id)?.text ?? ''}”`
-      : (sectionsOf(project).find((s) => s.id === selection.id)?.label ?? 'this section')
-  const picks = media.filter((m) => ['m-city', 'm-neon', 'm-crowd'].includes(m.id) && project.assets[m.id])
+  const strong = useFootage((s) => s.strongMatch)
+  const target = selection.type === 'lyric' || selection.type === 'section' ? selection : null
+  const results = useFootageResults(target?.type === 'section' ? 'section' : 'line', target?.id ?? null)
+  if (!target) return null
+  const line = target.type === 'lyric' ? lyricLines(project).find((l) => l.id === target.id) : undefined
+  const section = target.type === 'section' ? sectionsOf(project).find((s) => s.id === target.id) : undefined
+  const picks = (results ?? []).filter((r) => r.score >= strong && project.assets[r.assetId]).slice(0, 3)
   if (!picks.length) return null
+  const label = line ? `“${line.text}”` : (section?.label ?? 'this section')
+  const place = (r: FootageResult) => {
+    const lyric =
+      line && Object.values(project.clips).find((c) => c.type === 'text' && c.lyricLineId === line.id)
+    const best = r.range.end - r.range.start
+    if (lyric)
+      addAsset(r.assetId, { start: lyric.start, duration: lyric.duration, sourceStart: r.range.start })
+    else if (section)
+      addAsset(r.assetId, {
+        start: section.start,
+        duration: Math.min(section.end - section.start, Math.max(2, best)),
+        sourceStart: r.range.start,
+      })
+  }
   return (
     <div className={styles.suggest}>
       <div className={styles.suggestHead}>
@@ -184,20 +233,12 @@ function Suggestions() {
         <span className={styles.suggestTitle}>Suggested for {label}</span>
       </div>
       <div className={styles.suggestRow}>
-        {picks.map((m) => (
-          <Tooltip
-            key={m.id}
-            label={m.name}
-            description={`Matches: ${m.tags.slice(0, 2).join(', ')}`}
-            side="top"
-          >
-            <button
-              className={styles.suggestThumb}
-              style={{ backgroundImage: `url(${sceneThumb(m.scene)})` }}
-              aria-label={`Use ${m.name}`}
-            />
-          </Tooltip>
-        ))}
+        {picks.map((r) => {
+          const asset = project.assets[r.assetId]
+          return asset ? (
+            <SuggestionThumb key={r.assetId} asset={asset} result={r} onUse={() => place(r)} />
+          ) : null
+        })}
       </div>
     </div>
   )
@@ -209,15 +250,24 @@ function MediaTab() {
   const empty = !hasSong(project) && all.length === 0
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<(typeof filters)[number]>('All')
+  const q = query.trim()
+  const results = useFootageResults('search', q || null)
+  const analyzing = useFootage((s) => s.indexing?.status === 'indexing')
   const items = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return all.filter((m) => {
-      if (filter === 'Video' && m.type !== 'video') return false
-      if (filter === 'Images' && m.type !== 'image') return false
-      if (filter === 'Generated' && m.type !== 'generated') return false
-      return !q || m.name.toLowerCase().includes(q) || m.tags.some((t) => t.includes(q))
-    })
-  }, [all, query, filter])
+    const lower = q.toLowerCase()
+    const shown = (m: LibraryItem) =>
+      !(filter === 'Video' && m.type !== 'video') &&
+      !(filter === 'Images' && m.type !== 'image') &&
+      !(filter === 'Generated' && m.type !== 'generated')
+    if (!lower) return all.filter(shown)
+    const named = all.filter(
+      (m) => m.name.toLowerCase().includes(lower) || m.tags.some((t) => t.includes(lower)),
+    )
+    // Clips that match the description come first, best first; name matches follow.
+    const byId = new Map(all.map((m) => [m.asset.id, m]))
+    const ranked = (results ?? []).flatMap((r) => byId.get(r.assetId) ?? [])
+    return [...ranked, ...named.filter((m) => !ranked.includes(m))].filter(shown)
+  }, [all, q, filter, results])
 
   if (empty) {
     return (
@@ -275,6 +325,8 @@ function MediaTab() {
               <MediaCard key={m.asset.id} item={m} />
             ))}
           </div>
+        ) : analyzing ? (
+          <EmptyState compact title="Analyzing your footage…" description="Results appear as clips finish." />
         ) : (
           <EmptyState
             compact
