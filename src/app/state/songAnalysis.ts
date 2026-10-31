@@ -212,8 +212,8 @@ export function setFirstBeat(time: number): void {
 }
 
 /**
- * Analyzes the song again (beats, bars, sections, energy) as one undo step; the sections the user named and the lyrics'
- * chorus are kept.
+ * Analyzes the song again (beats, bars, sections, energy) as one undo step; the sections the user named or changed and
+ * the lyrics' chorus are kept.
  */
 export async function analyzeAgain(): Promise<void> {
   const songId = editor.getProject().songAssetId
@@ -224,12 +224,15 @@ export async function analyzeAgain(): Promise<void> {
     if (project.songAssetId !== songId) return
     const { lyricChorusCommand, setAnalysisCommand } = await import('../../analysis/client.ts')
     const previous = project.analysis.audio[songId]?.sections ?? []
-    const kept = previous.filter(isUserSection).length
-    const merged = kept
+    const kept = previous.filter(isUserSection)
+    const merged = kept.length
       ? { ...analysis, sections: keepUserSections(analysis.sections ?? [], previous) }
       : analysis
     const chorus = project.lyrics ? lyricChorusCommand(merged, project.lyrics) : null
-    const found = foundText(merged, ...(kept ? [`Kept ${plural(kept, 'section')} you named`] : []))
+    // Without its `edited` list, a kept section is the user's only by its name.
+    const named = kept.every((s) => isUserSection({ label: s.label, confidence: s.confidence }))
+    const keptText = `Kept ${plural(kept.length, 'section')} you ${named ? 'named' : 'edited'}`
+    const found = foundText(merged, ...(kept.length ? [keptText] : []))
     undoable('Analyze again', found, [setAnalysisCommand(merged), ...(chorus ? [chorus] : [])])
   } catch (error) {
     // Failures and their messages show in Assist › Song analysis, from the job.

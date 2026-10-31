@@ -10,6 +10,7 @@ import {
   type LyricLine,
   type LyricsDoc,
   type Project,
+  type SectionEdit,
   type SongSection,
 } from '../../../src/model/index.ts'
 import { JobError, jobs, type JobContext } from '../../../src/shared/jobs.ts'
@@ -304,29 +305,30 @@ describe('the lyrics’ chorus once bars are found', () => {
     expect(stored()?.sections?.[0]?.id).toBe('r1')
   })
 
-  it('keeps the sections, ids and label of a section the user renamed while the bars were being found', async () => {
-    const p = project({ sections: [section('a', 0, 4, 'verse'), section('b', 4, 8, 'verse')] })
-    p.lyrics = LYRICS
-    editor.load(p)
-    const found = findBars(songId(), { sections: true })
-    await vi.waitFor(() => expect(runs).toHaveLength(1))
-    editor.dispatch({
-      type: 'analysis.updateSection',
-      assetId: songId(),
-      sectionId: 'b',
-      patch: { label: 'bridge' },
-    })
-    runs[0]?.resolve({
-      ...refined(),
-      sections: [section('r1', 0, 4, 'verse'), section('r2', 4, 8, 'chorus')],
-    })
-    expect(await found).toBe(true)
-    expect(stored()?.downbeats).toEqual(bars)
-    expect(stored()?.sections?.map((s) => [s.id, s.label, s.start, s.end])).toEqual([
-      ['a', 'verse', 0, 4],
-      ['b', 'bridge', 4, 8],
-    ])
-  })
+  it.each([
+    ['renamed', { label: 'bridge' }, 'bridge'],
+    ['picked a color for', { color: 'bridge' }, 'verse'],
+  ])(
+    'keeps the sections and ids when the user %s a section while the bars were being found',
+    async (_, patch, label) => {
+      const p = project({ sections: [section('a', 0, 4, 'verse'), section('b', 4, 8, 'verse')] })
+      p.lyrics = LYRICS
+      editor.load(p)
+      const found = findBars(songId(), { sections: true })
+      await vi.waitFor(() => expect(runs).toHaveLength(1))
+      editor.dispatch({ type: 'analysis.updateSection', assetId: songId(), sectionId: 'b', patch })
+      runs[0]?.resolve({
+        ...refined(),
+        sections: [section('r1', 0, 4, 'verse'), section('r2', 4, 8, 'chorus')],
+      })
+      expect(await found).toBe(true)
+      expect(stored()?.downbeats).toEqual(bars)
+      expect(stored()?.sections?.map((s) => [s.id, s.label, s.start, s.end])).toEqual([
+        ['a', 'verse', 0, 4],
+        ['b', label, 4, 8],
+      ])
+    },
+  )
 
   it('moves its edges onto the bars found later, keeping the sections', async () => {
     const p = project({
@@ -347,6 +349,33 @@ describe('the lyrics’ chorus once bars are found', () => {
       ['a', 0, 2],
       ['b', 2, 4],
       ['c', 4, 6],
+      ['d', 6, 8],
+    ])
+  })
+
+  it.each([
+    ['dragged', { edited: ['start'] as SectionEdit[] }],
+    ['named', { label: 'Breakdown', confidence: 1 }],
+  ])('leaves the edges of a section the user %s where they are', async (_, user) => {
+    const p = project({
+      sections: [
+        section('a', 0, 2.5, 'chorus', 0.8),
+        { ...section('b', 2.5, 4.5, 'verse'), ...user },
+        section('c', 4.5, 6.5, 'chorus', 0.8),
+        section('d', 6.5, 8, 'verse'),
+      ],
+    })
+    p.lyrics = LYRICS
+    editor.load(p)
+    const found = findBars(songId())
+    await vi.waitFor(() => expect(runs).toHaveLength(1))
+    runs[0]?.resolve(refined())
+    expect(await found).toBe(true)
+    // Only the chorus edge between two detected sections moves onto the bar.
+    expect(stored()?.sections?.map((s) => [s.id, s.start, s.end])).toEqual([
+      ['a', 0, 2.5],
+      ['b', 2.5, 4.5],
+      ['c', 4.5, 6],
       ['d', 6, 8],
     ])
   })
@@ -388,6 +417,31 @@ describe('Analyze again', () => {
     )
     editor.undo()
     expect(stored()?.sections).toEqual(before)
+  })
+  it('keeps a section whose edges the user dragged, and says the kept section was edited', async () => {
+    const dragged = { ...section('mine', 2, 6, 'verse', 0.4), edited: ['start', 'end'] as SectionEdit[] }
+    editor.load(project({ sections: [section('old', 0, 2, 'intro', 0.4), dragged] }))
+    const fresh: AudioAnalysis = {
+      assetId: songId(),
+      version: 'test',
+      tempo: { bpm: 100, confidence: 0.9 },
+      beats,
+      sections: [section('n1', 0, 4, 'verse'), section('n2', 4, 10, 'chorus', 0.4)],
+    }
+    setSongAnalysisServiceForTests({
+      analyzeAgain: () =>
+        jobs.run({ kind: 'analysis.song', title: 'Analyzing the song', run: async () => fresh }),
+    })
+    await analyzeAgain()
+    expect(stored()?.sections?.map((s) => [s.id, s.start, s.end])).toEqual([
+      ['n1', 0, 2],
+      ['mine', 2, 6],
+      ['n2', 6, 10],
+    ])
+    expect(toast).toHaveBeenCalledWith(
+      'Found 100 BPM and 3 sections. Kept 1 section you edited.',
+      expect.objectContaining({ label: 'Undo' }),
+    )
   })
   it('keeps named sections, ids unique, when the pasted lyrics put a chorus edge inside one', async () => {
     // "bridge" was picked from the menu (confidence 1); "Hook" was typed in a project from before confidences.

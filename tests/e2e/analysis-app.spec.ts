@@ -284,6 +284,78 @@ test('Assist › Song analysis goes back from a failed run and cancels re-tracki
 })
 
 /**
+ * A section whose name came from the analysis but whose color the user picked is theirs too: with a stand-in for
+ * analysis on the real job runner, Analyze again cuts the new sections around it and says it kept a section you
+ * edited.
+ */
+test('Analyze again keeps a section whose color the user picked', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    const { app, shared } = window.mvStudio
+    const beats = Array.from({ length: 16 }, (_, i) => i * 0.5)
+    const found = (assetId: string, sections: object[]) =>
+      shared.jobs.run({
+        kind: 'analysis.song',
+        title: 'Analyzing the song',
+        run: async () => ({
+          assetId,
+          version: 'test',
+          tempo: { bpm: 120, confidence: 0.9 },
+          beats,
+          sections,
+        }),
+      })
+    app.songAnalysis.setSongAnalysisServiceForTests({
+      analyze: (songId: string) =>
+        found(songId, [
+          { id: 'a', start: 0, end: 4, label: 'verse', repeatGroup: 0, confidence: 0.4 },
+          { id: 'b', start: 4, end: 8, label: 'chorus', repeatGroup: 1, confidence: 0.4 },
+        ]),
+      analyzeAgain: (songId: string) =>
+        found(songId, [{ id: 'n', start: 0, end: 8, label: 'verse', repeatGroup: 0, confidence: 0.4 }]),
+      refine: () =>
+        shared.jobs.run({
+          kind: 'analysis.downbeats',
+          title: 'Finding bars and refining beats',
+          run: () => Promise.reject(new shared.JobError('cancelled', 'Cancelled')),
+        }),
+      release: async () => true,
+    } as never)
+    window.location.hash = '#/editor?project=empty&kind=blank'
+  })
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Import a song' }).click()
+  await (await chooser).setFiles(path.join(FIXTURE_DIR, 'song.mp3'))
+  const chorus = page.getByRole('button', { name: /^Section chorus, 0:04 to 0:08/i })
+  await expect(chorus).toBeVisible({ timeout: 30_000 })
+  const sections = () =>
+    page.evaluate(() => {
+      const project = window.mvStudio.app.project.editor.getProject()
+      return (project.analysis.audio[project.songAssetId].sections as { id: string; color?: string }[]).map(
+        ({ id, color }) => [id, color ?? null],
+      )
+    })
+
+  // A mouse pointerdown: one without a pointer type counts as touch, whose long press opens the section menu.
+  await chorus.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
+  await page.getByRole('radio', { name: 'Bridge color' }).click()
+  await expect(chorus).toHaveAttribute('style', /--sec: var\(--section-bridge\)/)
+
+  await page.getByRole('tab', { name: 'Assist' }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  await panel.getByRole('button', { name: /^Song analyzed/ }).click()
+  await panel.getByRole('button', { name: 'Analyze again' }).click()
+  await expect(page.getByText('Found 120 BPM and 2 sections. Kept 1 section you edited.')).toBeVisible()
+  expect(await sections()).toEqual([
+    ['n', null],
+    ['b', 'bridge'],
+  ])
+  await expect(chorus).toHaveAttribute('style', /--sec: var\(--section-bridge\)/)
+  await shot(page, 'analysis-kept-edited-section')
+})
+
+/**
  * Bars come from the refinement step, which runs in the background: with a stand-in for it on the real job runner,
  * the Bar starts row says it is finding them until they are found.
  */

@@ -164,4 +164,16 @@ describe('keeping the sections the user named across a new analysis', () => {
     ])
     expect(out.some((s) => s.id === 'q')).toBe(false)
   })
+
+  it('keeps a section whose edges the user dragged, though its name came from the analysis', () => {
+    const moved = sec('p', 12, 27, 'verse', { confidence: 0.4, edited: ['start', 'end'] })
+    expect(keepUserSections(fresh, [moved]).map((s) => [s.id, s.label, s.start, s.end])).toEqual([
+      ['f1', 'intro', 0, 10],
+      ['f2', 'verse', 10, 12],
+      ['p', 'verse', 12, 27],
+      ['f2.1', 'verse', 27, 30],
+      ['f3', 'chorus', 30, 50],
+      ['f4', 'outro', 50, 60],
+    ])
+  })
 })

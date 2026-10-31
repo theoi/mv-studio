@@ -14,12 +14,12 @@ const SECTION_LABELS: ReadonlySet<string> = new Set<SectionLabel>([
 ])
 
 /**
- * Whether the user named this section, so analysis keeps it as it is (times, label, id): a label the user typed or
- * picked has confidence 1, and a label the analysis never assigns can only come from the user, also in projects from
- * before confidences.
+ * Whether the user named or changed this section, so analysis keeps it as it is (times, label, id): a label the user
+ * typed or picked has confidence 1, a label the analysis never assigns can only come from the user (also in projects
+ * from before confidences), and `edited` lists what the user changed by hand (its edges, color or name).
  */
-export function isUserSection(section: Pick<SongSection, 'label' | 'confidence'>): boolean {
-  return section.confidence === 1 || !SECTION_LABELS.has(section.label)
+export function isUserSection(section: Pick<SongSection, 'label' | 'confidence' | 'edited'>): boolean {
+  return section.confidence === 1 || !SECTION_LABELS.has(section.label) || !!section.edited?.length
 }
 
 export interface Section {
