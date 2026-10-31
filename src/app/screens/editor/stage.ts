@@ -4,7 +4,10 @@ import { cssFont, fontPxFor, layoutText } from '../../../engine/text.ts'
 import type { Clip, Project } from '../../../model/index.ts'
 import { appMedia } from '../../state/media.ts'
 import { editor } from '../../state/project.ts'
-import { get, set, useUi, type Selection } from '../../state/ui.ts'
+import { get, set, toast, useUi, type Selection } from '../../state/ui.ts'
+
+/** Assets whose audio failure was already shown, so a preview that fails again on them stays quiet. */
+const reportedAudio = new Set<string>()
 
 let current: PreviewController | null = null
 
@@ -59,6 +62,13 @@ export function connectPreview(
       if (preview.clock.state !== 'playing') return
       fromClock = time
       set({ playhead: time })
+    }),
+    preview.clock.onAudioError((error) => {
+      const details = error.details as { assetId?: string } | undefined
+      const key = details?.assetId ?? error.message
+      if (reportedAudio.has(key)) return
+      reportedAudio.add(key)
+      toast(`${error.message} Playing the full song instead.`)
     }),
   ]
   return {

@@ -101,8 +101,8 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   }
 
   /**
-   * Reports audio that cannot play, e.g. stems that could not be decoded ('out-of-memory' or 'decode'); the full mix
-   * plays instead.
+   * Reports audio that cannot play: stems that could not be decoded ('out-of-memory' or 'decode', with
+   * `details.assetId`). The full mix plays instead.
    */
   onAudioError(listener: (error: JobError) => void): () => void {
     this.errorListeners.add(listener)
@@ -117,10 +117,11 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     let clips = this.wanted
     const stems = clips.filter((c) => c.stem !== undefined && !loaded.has(c.assetId))
     if (stems.length > 0) {
-      const failure = stems.map((c) => this.buffers.error(c.assetId)).find((e) => e !== undefined)
-      if (!failure) return
+      const failed = stems.find((c) => this.buffers.error(c.assetId))
+      const failure = failed && this.buffers.error(failed.assetId)
+      if (!failed || !failure) return
       clips = audibleClips(project, { stems: false })
-      this.report(failure)
+      this.report(failure, failed.assetId)
     }
     const key = `${audioSignature(clips)}|${clips.map((c) => loaded.has(c.assetId)).join()}`
     if (key === this.scheduledKey) return
@@ -129,16 +130,14 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     this.switchMix()
   }
 
-  private report(failure: JobError): void {
+  private report(failure: JobError, assetId: string): void {
     if (this.reported.has(failure)) return
     this.reported.add(failure)
     const memory = failure.code === 'out-of-memory'
     const error = new JobError(
       memory ? 'out-of-memory' : 'decode',
-      memory
-        ? 'There is not enough memory to play the stems, so the full mix is playing. Close other tabs, then unmute and unsolo the stems and try again.'
-        : 'A stem could not be decoded, so the full mix is playing. Separate the stems again to fix it.',
-      { retryable: memory, cause: failure },
+      memory ? 'There is not enough memory to play the stems separately.' : 'A stem could not be decoded.',
+      { retryable: memory, cause: failure, details: { assetId } },
     )
     for (const listener of this.errorListeners) listener(error)
   }

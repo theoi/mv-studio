@@ -22,8 +22,15 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import type { FeatureSeries, LyricWord, Project, SongSection, Track } from '../../../../model/index.ts'
-import { clipsOnTrack } from '../../../../model/index.ts'
+import type {
+  FeatureSeries,
+  LyricWord,
+  Project,
+  SongSection,
+  StemName,
+  Track,
+} from '../../../../model/index.ts'
+import { clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
 import {
@@ -82,6 +89,15 @@ import {
 } from '../../../state/library.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
+import {
+  separatedStems,
+  songStemTrack,
+  STEM_LABELS,
+  stemBadgeText,
+  stemMix,
+  toggleStem,
+  type StemMix,
+} from '../../../state/stems.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { LaneMenu } from './LaneMenu.tsx'
 import { openLaneMenu } from './laneMenu.ts'
@@ -570,10 +586,11 @@ function ClipBlock({
 
 /* ---------- headers ---------- */
 
-function TrackHeader({ track, height }: { track: Track; height: number }) {
+function TrackHeader({ track, height, stems }: { track: Track; height: number; stems?: StemMix | null }) {
   const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
     dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
   const isAudio = track.kind === 'audio'
+  const badge = stems && stemBadgeText(stems)
   return (
     <div className={styles.trackHeader} style={{ height }}>
       <span
@@ -630,8 +647,104 @@ function TrackHeader({ track, height }: { track: Track; height: number }) {
           {track.locked ? <Lock /> : <LockOpen />}
         </IconButton>
       </span>
+      {stems && badge && (
+        <span
+          className={[styles.stemBadge, stems.solo.length > 0 && styles.stemBadgeSolo]
+            .filter(Boolean)
+            .join(' ')}
+          title={badge}
+        >
+          {badge}
+        </span>
+      )}
     </div>
   )
+}
+
+/** A stem lane's header under the song track: mute and solo for that stem of the song. */
+function StemHeader({ name, track }: { name: StemName; track: Track | undefined }) {
+  const label = STEM_LABELS[name]
+  const flags = track?.stems?.[name]
+  const lower = label.toLowerCase()
+  return (
+    <div className={[styles.header, styles.stemHeader].join(' ')}>
+      <span className={styles.stemName}>{label}</span>
+      {track && (
+        <span className={styles.trackIcons}>
+          <IconButton
+            label={flags?.muted ? `Unmute ${lower}` : `Mute ${lower}`}
+            size="xs"
+            active={!!flags?.muted}
+            onClick={() => toggleStem(name, 'muted')}
+            tooltipSide="top"
+          >
+            {flags?.muted ? <VolumeX /> : <Volume2 />}
+          </IconButton>
+          <Tooltip label={`Solo ${lower}`} side="top">
+            <button
+              className={[styles.solo, flags?.solo && styles.soloOn].filter(Boolean).join(' ')}
+              aria-label={`Solo ${lower}`}
+              aria-pressed={!!flags?.solo}
+              onClick={() => toggleStem(name, 'solo')}
+            >
+              S
+            </button>
+          </Tooltip>
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** The song's separated stems as lanes under the song track, each drawing that stem's loudness. */
+function StemLanes({
+  project,
+  names,
+  track,
+  mix,
+  height,
+  width,
+  clipWidth,
+  fallback,
+}: {
+  project: Project
+  names: StemName[]
+  track: Track | undefined
+  mix: StemMix | null
+  height: number
+  width: number
+  clipWidth: number
+  fallback: DrawFn
+}) {
+  const features = songAnalysis(project)?.stemFeatures
+  const draws = useMemo(
+    () =>
+      STEM_NAMES.map((name, i) => {
+        const f = features?.[name]
+        return f?.loudness.length
+          ? makeWave('#56658a', 0, 0.9, { rate: f.rate, values: f.loudness })
+          : (stemWaves[i] ?? fallback)
+      }),
+    [features, fallback],
+  )
+  return names.map((name) => {
+    const silent = !!mix && (mix.muted.includes(name) || (mix.solo.length > 0 && !mix.solo.includes(name)))
+    return (
+      <div
+        key={name}
+        className={[styles.row, silent && styles.rowHidden].filter(Boolean).join(' ')}
+        style={{ height }}
+        data-stem={name}
+      >
+        <StemHeader name={name} track={track} />
+        <div className={styles.lane} style={{ width }}>
+          <div className={styles.stemClip} style={{ width: clipWidth }}>
+            <ViewportCanvas height={height - 4} draw={draws[STEM_NAMES.indexOf(name)] ?? fallback} />
+          </div>
+        </div>
+      </div>
+    )
+  })
 }
 
 /* ---------- playhead ---------- */
@@ -745,14 +858,16 @@ export function Timeline() {
   const lines = lyricLines(project)
   const duration = empty ? 90 : timelineDuration(project)
   const contentW = duration * pps + 120
-  const stems = analysis?.stems ? Object.keys(analysis.stems) : []
+  const stems = separatedStems(project)
+  const stemTrack = songStemTrack(project)
+  const mix = stemMix(project)
   const timingLyrics = runningJobs(useJobs()).some((j) => j.kind === JOB_KINDS.lyrics)
 
   const lanes = project.tracks.map((t) => {
     const kind = laneKind(project, t)
     return { track: t, kind, height: laneHeight[kind] }
   })
-  const stemH = 22
+  const stemH = 24
   // Untimed lines have no clip yet, so the suggestion to time them sits in the Lyrics track itself.
   const untimed = lines.filter((l) => l.text.trim() && lineTiming(l) === 'untimed').length
   const lyricsTrackId =
@@ -1103,7 +1218,11 @@ export function Timeline() {
                 style={{ height }}
               >
                 <div className={styles.header}>
-                  <TrackHeader track={track} height={height} />
+                  <TrackHeader
+                    track={track}
+                    height={height}
+                    stems={track.id === stemTrack?.id ? mix : null}
+                  />
                 </div>
                 <div
                   className={[styles.lane, beatSnap && beat && styles.grid].filter(Boolean).join(' ')}
@@ -1253,18 +1372,18 @@ export function Timeline() {
             )
           })}
 
-          {stems.map((name, i) => (
-            <div key={name} className={styles.row} style={{ height: stemH }}>
-              <div className={[styles.header, styles.stemHeader].join(' ')}>
-                <span className={styles.stemName}>{name[0]?.toUpperCase() + name.slice(1)}</span>
-              </div>
-              <div className={styles.lane} style={{ width: contentW }}>
-                <div className={styles.stemClip} style={{ width: duration * pps }}>
-                  <ViewportCanvas height={stemH - 4} draw={stemWaves[i] ?? songWave} />
-                </div>
-              </div>
-            </div>
-          ))}
+          {stems.length > 0 && (
+            <StemLanes
+              project={project}
+              names={stems}
+              track={stemTrack}
+              mix={mix}
+              height={stemH}
+              width={contentW}
+              clipWidth={duration * pps}
+              fallback={songWave}
+            />
+          )}
 
           {empty && (
             <div className={styles.dropHint} style={{ top: RULER_H, left: HEADER_W }}>
