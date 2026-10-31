@@ -1,0 +1,84 @@
+import { create } from 'zustand'
+import {
+  BEAT_THIS_MODEL,
+  DEMUCS_MODEL,
+  WAV2VEC2_MODEL,
+  WHISPER_MODELS,
+  whisperFileUrls,
+} from '../../analysis/models.ts'
+import { modelCache, type ModelDescriptor } from '../../shared/models.ts'
+import { VISION_MODELS } from '../../vision/runtime/models.ts'
+
+/** A model a feature downloads on first use, as Settings › This device lists it. */
+export interface LocalModel {
+  id: string
+  title: string
+  desc: string
+  urls: string[]
+  bytes: number
+}
+
+function local(id: string, title: string, desc: string, ...models: ModelDescriptor[]): LocalModel {
+  const files = models.flatMap((m) => Object.values(m.files))
+  return {
+    id,
+    title,
+    desc,
+    urls: files.map((f) => f.url),
+    bytes: files.reduce((s, f) => s + (f.bytes ?? 0), 0),
+  }
+}
+
+const whisper = WHISPER_MODELS.small
+
+export const LOCAL_MODELS: LocalModel[] = [
+  local('beats', 'Beat and bar tracker', 'Tempo, beats and bar starts', BEAT_THIS_MODEL),
+  local('stems', 'Stem separator', 'Vocals, drums, bass and other', DEMUCS_MODEL),
+  {
+    id: 'transcriber',
+    title: 'Lyrics transcriber',
+    desc: 'Drafts lyrics from the vocals',
+    urls: whisperFileUrls(whisper),
+    bytes: whisper.bytes,
+  },
+  local('aligner', 'Word aligner', 'Times each word to the vocals', WAV2VEC2_MODEL),
+  local(
+    'cutout',
+    'Person cutout',
+    'Text behind the subject',
+    VISION_MODELS.selfieLandscape,
+    VISION_MODELS.faceShortRange,
+  ),
+  local('depth', 'Depth', '3D camera on stills', VISION_MODELS.depthAnythingSmall),
+  local('tagger', 'Footage tagger', 'Search and match clips', VISION_MODELS.clipB32),
+]
+
+interface ModelsState {
+  /** Whether every file of each model is in the browser's model cache (null until checked). */
+  cached: Record<string, boolean> | null
+  /** Bytes the model cache holds, every model included (null until checked). */
+  bytes: number | null
+}
+
+export const useModels = create<ModelsState>(() => ({ cached: null, bytes: null }))
+
+export async function refreshModels(): Promise<void> {
+  const [entries, usage] = await Promise.all([
+    Promise.all(
+      LOCAL_MODELS.map(
+        async (m) =>
+          [m.id, (await Promise.all(m.urls.map((u) => modelCache.has(u)))).every(Boolean)] as const,
+      ),
+    ),
+    modelCache.usage(),
+  ])
+  useModels.setState({ cached: Object.fromEntries(entries), bytes: usage.bytes })
+}
+
+/** Deletes every downloaded model; features download them again when next used. Returns the bytes freed. */
+export async function clearModels(): Promise<number> {
+  const { bytes } = await modelCache.usage()
+  await modelCache.clear()
+  await refreshModels()
+  return bytes
+}
