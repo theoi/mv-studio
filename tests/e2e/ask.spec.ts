@@ -115,7 +115,7 @@ test('applies a small edit right away, says what changed, and undoes it', async 
   await send(page, 'add a title at the start')
   const result = page.getByText('Added a title at the start', { exact: true }).first()
   await expect(result).toBeVisible()
-  await expect(page.getByText(/^Text "Neon Skyline"/)).toBeVisible()
+  await expect(page.getByText(/^Text “Neon Skyline” at 0:00\.0: added$/)).toBeVisible()
   expect(await projectState(page)).toMatchObject({
     clips: before.clips + 1,
     titles: 1,

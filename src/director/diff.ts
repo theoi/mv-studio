@@ -12,9 +12,9 @@ export interface ChangeItem {
   action: 'add' | 'remove' | 'change'
   target: ChangeTarget
   id?: Id
-  /** One line, e.g. 'Text "Hold on" at 0:42.1'. */
+  /** One line naming the thing as it was before a change, e.g. 'Text “Hold on” at 0:42.1'. */
   label: string
-  /** What changed, e.g. ['starts at 0:12.5 (was 0:10.0)']. Empty for adds and removes. */
+  /** What changed, e.g. ['starts at 0:12.5 (was 0:10.0)'], or ['added'] / ['removed']. */
   details: string[]
   /** Timeline span to highlight. */
   range?: { start: Seconds; end: Seconds }
@@ -53,14 +53,14 @@ const CLIP_KIND: Record<Clip['type'], string> = {
 function clipName(clip: Clip, project: Project): string {
   if (clip.type === 'text') {
     const t = clip.text.replace(/\s+/g, ' ').trim()
-    return `Text "${t.length > 32 ? `${t.slice(0, 31)}…` : t}"`
+    return `Text “${t.length > 32 ? `${t.slice(0, 31)}…` : t}”`
   }
-  if (clip.name) return `${CLIP_KIND[clip.type]} "${clip.name}"`
+  if (clip.name) return `${CLIP_KIND[clip.type]} “${clip.name}”`
   if ('assetId' in clip) {
     const asset = project.assets[clip.assetId]
-    if (asset) return `${CLIP_KIND[clip.type]} "${asset.name}"`
+    if (asset) return `${CLIP_KIND[clip.type]} “${asset.name}”`
   }
-  if (clip.type === 'generator') return `Visual "${clip.generatorId}"`
+  if (clip.type === 'generator') return `Visual “${clip.generatorId}”`
   return CLIP_KIND[clip.type]
 }
 
@@ -98,7 +98,7 @@ const FIELD_LABELS: Record<string, string> = {
 function short(value: unknown): string {
   if (value === undefined) return 'none'
   if (typeof value === 'number') return String(Math.round(value * 1000) / 1000)
-  if (typeof value === 'string') return value.length > 40 ? `"${value.slice(0, 39)}…"` : `"${value}"`
+  if (typeof value === 'string') return value.length > 40 ? `“${value.slice(0, 39)}…”` : `“${value}”`
   if (typeof value === 'boolean') return value ? 'on' : 'off'
   const json = JSON.stringify(value)
   return json.length > 40 ? `${json.slice(0, 39)}…` : json
@@ -148,7 +148,7 @@ function describeValue(path: string, value: unknown, tracks: Track[]): string {
   if ((path === 'start' || path === 'sourceStart') && typeof value === 'number') return formatTime(value)
   if (path === 'duration' && typeof value === 'number') return `${value.toFixed(1)} s`
   if (path === 'trackId' && typeof value === 'string')
-    return `"${tracks.find((t) => t.id === value)?.name ?? 'track'}"`
+    return `“${tracks.find((t) => t.id === value)?.name ?? 'track'}”`
   return short(value)
 }
 
@@ -164,6 +164,11 @@ function clipDetails(before: Clip, after: Clip, beforeProject: Project, afterPro
     const now = b.get(path)
     if (JSON.stringify(was) === JSON.stringify(now)) continue
     if (path === 'name') continue
+    // The item's label already names the old text.
+    if (path === 'text' && before.type === 'text') {
+      details.push(`now reads ${short(now)}`)
+      continue
+    }
     // A color adjustment created at neutral only to carry a music reaction is not a visible change by itself.
     if (was === undefined && now === 0 && path.startsWith('adjustments.')) continue
     details.push(
@@ -206,18 +211,24 @@ export function describeChanges(before: Project, after: Project): ChangeItem[] {
   for (const t of after.tracks) {
     const old = beforeTracks.get(t.id)
     if (!old)
-      items.push({ action: 'add', target: 'track', id: t.id, label: `Track "${t.name}"`, details: [] })
+      items.push({ action: 'add', target: 'track', id: t.id, label: `Track “${t.name}”`, details: ['added'] })
     else {
       const details = (['name', 'muted', 'solo', 'locked', 'hidden'] as const)
         .filter((k) => old[k] !== t[k])
         .map((k) => `${k} ${short(t[k])} (was ${short(old[k])})`)
       if (details.length)
-        items.push({ action: 'change', target: 'track', id: t.id, label: `Track "${t.name}"`, details })
+        items.push({ action: 'change', target: 'track', id: t.id, label: `Track “${t.name}”`, details })
     }
   }
   for (const t of before.tracks) {
     if (!afterTracks.has(t.id))
-      items.push({ action: 'remove', target: 'track', id: t.id, label: `Track "${t.name}"`, details: [] })
+      items.push({
+        action: 'remove',
+        target: 'track',
+        id: t.id,
+        label: `Track “${t.name}”`,
+        details: ['removed'],
+      })
   }
 
   for (const asset of Object.values(after.assets)) {
@@ -226,16 +237,16 @@ export function describeChanges(before: Project, after: Project): ChangeItem[] {
         action: 'add',
         target: 'asset',
         id: asset.id,
-        label: `Media "${asset.name}"`,
-        details: [],
+        label: `Media “${asset.name}”`,
+        details: ['added'],
       })
     else if (before.assets[asset.id]?.name !== asset.name) {
       items.push({
         action: 'change',
         target: 'asset',
         id: asset.id,
-        label: `Media "${asset.name}"`,
-        details: [`renamed (was "${before.assets[asset.id]?.name}")`],
+        label: `Media “${asset.name}”`,
+        details: [`renamed (was “${before.assets[asset.id]?.name}”)`],
       })
     }
   }
@@ -245,8 +256,8 @@ export function describeChanges(before: Project, after: Project): ChangeItem[] {
         action: 'remove',
         target: 'asset',
         id: asset.id,
-        label: `Media "${asset.name}"`,
-        details: [],
+        label: `Media “${asset.name}”`,
+        details: ['removed'],
       })
   }
 
@@ -261,7 +272,7 @@ export function describeChanges(before: Project, after: Project): ChangeItem[] {
         target: 'clip',
         id,
         label: clipLabel(now, after),
-        details: [],
+        details: ['added'],
         range: span(now),
       })
     else if (was && !now)
@@ -270,7 +281,7 @@ export function describeChanges(before: Project, after: Project): ChangeItem[] {
         target: 'clip',
         id,
         label: clipLabel(was, before),
-        details: [],
+        details: ['removed'],
         range: span(was),
       })
     else if (was && now && was !== now && JSON.stringify(was) !== JSON.stringify(now)) {
@@ -283,7 +294,7 @@ export function describeChanges(before: Project, after: Project): ChangeItem[] {
         action: 'change',
         target: 'clip',
         id,
-        label: clipLabel(now, after),
+        label: clipLabel(was, before),
         details: details.length ? details : ['settings changed'],
         range,
       })
@@ -294,14 +305,14 @@ export function describeChanges(before: Project, after: Project): ChangeItem[] {
   const afterMarkers = new Map(after.markers.map((m) => [m.id, m]))
   for (const m of after.markers) {
     const old = beforeMarkers.get(m.id)
-    const label = `Marker "${m.label}" at ${formatTime(m.time)}`
+    const label = `Marker “${m.label}” at ${formatTime(m.time)}`
     if (!old)
       items.push({
         action: 'add',
         target: 'marker',
         id: m.id,
         label,
-        details: [],
+        details: ['added'],
         range: { start: m.time, end: m.time + (m.duration ?? 0) },
       })
     else if (JSON.stringify(old) !== JSON.stringify(m))
@@ -309,25 +320,31 @@ export function describeChanges(before: Project, after: Project): ChangeItem[] {
   }
   for (const m of before.markers) {
     if (!afterMarkers.has(m.id))
-      items.push({ action: 'remove', target: 'marker', id: m.id, label: `Marker "${m.label}"`, details: [] })
+      items.push({
+        action: 'remove',
+        target: 'marker',
+        id: m.id,
+        label: `Marker “${m.label}”`,
+        details: ['removed'],
+      })
   }
 
   if (JSON.stringify(before.lyrics) !== JSON.stringify(after.lyrics)) {
     const was = before.lyrics?.lines.length ?? 0
     const now = after.lyrics?.lines.length ?? 0
     const action = !before.lyrics ? 'add' : !after.lyrics ? 'remove' : 'change'
-    items.push({
-      action,
-      target: 'lyrics',
-      label: 'Lyrics',
-      details: action === 'change' && was !== now ? [`${now} lines (was ${was})`] : [],
-    })
+    const details = {
+      add: ['added'],
+      remove: ['removed'],
+      change: was !== now ? [`${now} lines (was ${was})`] : [],
+    }
+    items.push({ action, target: 'lyrics', label: 'Lyrics', details: details[action] })
   }
   if (JSON.stringify(before.analysis) !== JSON.stringify(after.analysis)) {
     items.push({ action: 'change', target: 'analysis', label: 'Song analysis', details: [] })
   }
   const projectDetails: string[] = []
-  if (before.name !== after.name) projectDetails.push(`name "${after.name}" (was "${before.name}")`)
+  if (before.name !== after.name) projectDetails.push(`name “${after.name}” (was “${before.name}”)`)
   for (const key of Object.keys(after.settings) as (keyof Project['settings'])[]) {
     if (before.settings[key] !== after.settings[key])
       projectDetails.push(`${key} ${short(after.settings[key])} (was ${short(before.settings[key])})`)

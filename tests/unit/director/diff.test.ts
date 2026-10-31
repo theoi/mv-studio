@@ -25,10 +25,13 @@ describe('previewCommands', () => {
     if (!preview.ok) throw new Error(preview.message)
     expect(preview.summary).toBe('Adds 1 clip, changes 1 clip.')
     const change = preview.items.find((i) => i.action === 'change')!
-    expect(change.label).toBe('Text "Hello there" at 0:12.5')
-    expect(change.details).toEqual(['starts at 0:12.5 (was 0:10.0)', 'text color "#ff0000" (was "#ffffff")'])
+    expect(change.label).toBe('Text “Hello there” at 0:10.0')
+    expect(change.details).toEqual(['starts at 0:12.5 (was 0:10.0)', 'text color “#ff0000” (was “#ffffff”)'])
     expect(change.range).toEqual({ start: 10, end: 14.5 })
-    expect(preview.items.find((i) => i.action === 'add')?.label).toBe('Text "New line" at 0:20.0')
+    expect(preview.items.find((i) => i.action === 'add')).toMatchObject({
+      label: 'Text “New line” at 0:20.0',
+      details: ['added'],
+    })
     expect(project.clips[clip.id]?.start).toBe(10)
   })
 
@@ -40,6 +43,31 @@ describe('previewCommands', () => {
     ])
     expect(preview.ok).toBe(false)
     if (!preview.ok) expect(preview.error.code).toBe('not-found')
+  })
+
+  it('names a retyped text clip once, by its old text, and says which clips were removed', () => {
+    const project = makeProject()
+    const track = project.tracks.find((t) => t.kind === 'visual')!
+    const line = createTextClip({ trackId: track.id, text: 'Hold on,', start: 48.2, duration: 2 })
+    const word = createTextClip({ trackId: track.id, text: 'hold on', start: 50.2, duration: 1 })
+    const editor = new ProjectEditor(project)
+    editor.dispatch([
+      { type: 'clip.add', clip: line },
+      { type: 'clip.add', clip: word },
+    ])
+    const preview = previewCommands(editor.getProject(), [
+      { type: 'clip.set', clipId: line.id, path: ['text'], value: 'Hold on, hold tomorrow' },
+      { type: 'clip.remove', clipIds: [word.id] },
+    ])
+    if (!preview.ok) throw new Error(preview.message)
+    expect(preview.items.map(({ action, label, details }) => ({ action, label, details }))).toEqual([
+      {
+        action: 'change',
+        label: 'Text “Hold on,” at 0:48.2',
+        details: ['now reads “Hold on, hold tomorrow”'],
+      },
+      { action: 'remove', label: 'Text “hold on” at 0:50.2', details: ['removed'] },
+    ])
   })
 
   it('names effects, keyframes and audio reactions that change', () => {
