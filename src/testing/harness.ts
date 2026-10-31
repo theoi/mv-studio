@@ -38,8 +38,10 @@ import * as appLyrics from '../app/state/lyrics.ts'
 import * as appModels from '../app/state/models.ts'
 import * as appPersistence from '../app/state/persistence.ts'
 import * as appProject from '../app/state/project.ts'
+import * as appSongAnalysis from '../app/state/songAnalysis.ts'
 import * as appStems from '../app/state/stems.ts'
 import * as appStills from '../app/state/stills.ts'
+import * as appUi from '../app/state/ui.ts'
 
 /** A compositor whose canvas stays readable after render, fed by the preview or the export frame provider. */
 function createCompositor(mode: 'preview' | 'export', width: number, height: number) {
@@ -112,8 +114,10 @@ export function installHarness(): void {
       models: appModels,
       persistence: appPersistence,
       project: appProject,
+      songAnalysis: appSongAnalysis,
       stems: appStems,
       stills: appStills,
+      ui: appUi,
     },
     /** Files most recently set on #e2e-file-input (Playwright setInputFiles). */
     files: (): File[] => Array.from(input.files ?? []),

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { ANALYZER_VERSION, analyzeSongFast, sectionFields } from '../../../src/analysis/song.ts'
+import {
+  ANALYZER_VERSION,
+  analyzeSongFast,
+  sectionFields,
+  trackSongAtTempo,
+} from '../../../src/analysis/song.ts'
 import { JobError } from '../../../src/shared/jobs.ts'
 import { chordPad, concat, drumLoop, fmeasure, mix, SR } from './synth.ts'
 
@@ -87,6 +92,26 @@ describe('analyzeSongFast', () => {
     expect(() =>
       analyzeSongFast('x', { sampleRate: SR, channels: [mono] }, { signal: controller.signal }),
     ).toThrow('Cancelled')
+  })
+})
+
+describe('trackSongAtTempo', () => {
+  const { mono, beats } = song()
+  const { state } = analyzeSongFast('song-1', { sampleRate: SR, channels: [mono] })
+
+  it('corrects a slightly-off tapped tempo from the audio', () => {
+    const grid = trackSongAtTempo(state, 124)
+    expect(grid.tempo?.bpm).toBeCloseTo(BPM, 0)
+    expect(grid.tempo?.confidence).toBe(1)
+    expect(fmeasure(grid.beats ?? [], beats)).toBeGreaterThan(0.97)
+  })
+
+  it('follows a tapped half tempo on every other beat', () => {
+    const grid = trackSongAtTempo(state, 61)
+    expect(grid.tempo?.bpm).toBeCloseTo(BPM / 2, 0)
+    const even = beats.filter((_, i) => i % 2 === 0)
+    const odd = beats.filter((_, i) => i % 2 === 1)
+    expect(Math.max(fmeasure(grid.beats ?? [], even), fmeasure(grid.beats ?? [], odd))).toBeGreaterThan(0.95)
   })
 })
 

@@ -43,6 +43,7 @@ export const JOB_KINDS = {
   import: 'media.import',
   projectImport: 'project.import',
   projectExport: 'project.export',
+  tempo: 'analysis.tempo',
 } as const
 
 export type JobKind = (typeof JOB_KINDS)[keyof typeof JOB_KINDS]
@@ -67,6 +68,7 @@ const JOB_TARGETS: Record<JobKind, JobTarget> = {
   [JOB_KINDS.realign]: assist('lyrics'),
   [JOB_KINDS.analysis]: assist('analysis'),
   [JOB_KINDS.downbeats]: assist('analysis'),
+  [JOB_KINDS.tempo]: assist('analysis'),
   [JOB_KINDS.generate]: assist('generate'),
   [JOB_KINDS.export]: { type: 'export' },
   [JOB_KINDS.footage]: { type: 'media' },
