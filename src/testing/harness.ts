@@ -11,6 +11,7 @@ import { WebGLCompositor } from '../engine/compositor.ts'
 import { DecoderFrameProvider, VideoElementFrameProvider } from '../engine/frames.ts'
 import { planFrame } from '../engine/layout.ts'
 import { WebAudioPlaybackClock } from '../engine/playback.ts'
+import * as exporting from '../export/index.ts'
 import { PreviewController } from '../engine/preview.ts'
 import { pluginRegistry } from '../engine/registry.ts'
 import { mediaStore } from '../media/mediaStore.ts'
@@ -74,6 +75,7 @@ export function installHarness(): void {
     testing: { createCompositor, readPixels },
     vision,
     vj,
+    exporting,
     /** Files most recently set on #e2e-file-input (Playwright setInputFiles). */
     files: (): File[] => Array.from(input.files ?? []),
     ready: true,
