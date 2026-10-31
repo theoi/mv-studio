@@ -12,11 +12,14 @@ export function MenuContent({
   align = 'start',
   side = 'bottom',
   width,
+  onCloseAutoFocus,
 }: {
   children: ReactNode
   align?: 'start' | 'center' | 'end'
   side?: 'top' | 'bottom' | 'left' | 'right'
   width?: number
+  /** Call event.preventDefault() when an item moved focus elsewhere (e.g. into a rename field). */
+  onCloseAutoFocus?: (event: Event) => void
 }) {
   return (
     <RMenu.Portal>
@@ -27,6 +30,7 @@ export function MenuContent({
         sideOffset={6}
         collisionPadding={8}
         style={{ minWidth: width }}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         {children}
       </RMenu.Content>

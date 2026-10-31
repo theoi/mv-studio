@@ -12,10 +12,10 @@ import {
   Users,
   Wand2,
 } from 'lucide-react'
-import { EmptyState, ProgressBar } from '../../../ds/Feedback.tsx'
+import { EmptyState, ProgressBar, Spinner } from '../../../ds/Feedback.tsx'
 import { Kbd } from '../../../ds/Kbd.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
-import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
+import { jobTarget, openJob, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { bpmOf, hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
 import { openAssist, useUi, type AssistView } from '../../../state/ui.ts'
 import { AnalysisView } from './Analysis.tsx'
@@ -44,30 +44,27 @@ interface ToolDef {
   status?: ReactNode
 }
 
-/** The tool view that shows a running job of each kind, for the Running list. */
-const viewForKind: Record<string, AssistView> = {
-  [JOB_KINDS.stems]: 'stems',
-  [JOB_KINDS.director]: 'director',
-  [JOB_KINDS.directorShots]: 'director',
-  [JOB_KINDS.autocut]: 'autocut',
-  [JOB_KINDS.camera]: 'camera',
-  [JOB_KINDS.lyrics]: 'lyrics',
-  [JOB_KINDS.generate]: 'generate',
-  [JOB_KINDS.cutout]: 'behind',
-  [JOB_KINDS.suitability]: 'behind',
+/** Whether a tool view other than this home follows jobs of `kind`, so the Running list can link to it. */
+function hasToolView(kind: string): boolean {
+  const target = jobTarget(kind)
+  return target.type === 'assist' && target.view !== 'home'
 }
 
 function Running() {
-  const items = runningJobs(useJobs()).filter((j) => viewForKind[j.kind])
+  const items = runningJobs(useJobs()).filter((j) => hasToolView(j.kind))
   if (!items.length) return null
   return (
     <div className={styles.group}>
       <div className={styles.groupLabel}>Running</div>
       {items.map((j) => (
-        <button key={j.id} className={styles.job} onClick={() => openAssist(viewForKind[j.kind])}>
+        <button key={j.id} className={styles.job} onClick={() => openJob(j.kind)}>
           <div className={styles.jobTop}>
             <span>{j.title}</span>
-            <span className={`${styles.jobPct} tnum`}>{pct(j)}%</span>
+            {j.progress.fraction === undefined ? (
+              <Spinner size={12} />
+            ) : (
+              <span className={`${styles.jobPct} tnum`}>{pct(j)}%</span>
+            )}
           </div>
           <ProgressBar value={j.progress.fraction ?? 0} label={j.title} />
           <div className={styles.jobEta}>{etaText(j) ?? j.progress.message}</div>

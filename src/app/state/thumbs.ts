@@ -85,6 +85,13 @@ function request(asset: Asset): void {
     })
 }
 
+/** A thumbnail image of an image or video asset, e.g. for a project's card on the start screen. */
+export async function thumbnailBlob(asset: Asset): Promise<Blob | null> {
+  const scene = sceneOf(asset)
+  const url = scene ? sceneThumb(scene) : (thumbs.get(asset.id) ?? (await makeThumb(asset)))
+  return url ? (await fetch(url)).blob() : null
+}
+
 /** The thumbnail URL for an asset, or undefined while it is being made (or for audio). */
 export function useThumbnail(asset: Asset): string | undefined {
   const scene = sceneOf(asset)

@@ -22,6 +22,27 @@ export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
+/** When a project was last changed, as on its card: "Edited 5 minutes ago", "Edited yesterday", "Edited Oct 24". */
+export function editedAgo(iso: string, now = Date.now()): string {
+  const then = new Date(iso)
+  const seconds = Math.max(0, (now - then.getTime()) / 1000)
+  if (seconds < 60) return 'Edited just now'
+  if (seconds < 3600) return `Edited ${plural(Math.floor(seconds / 60), 'minute')} ago`
+  const today = new Date(now)
+  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString()
+  if (seconds < 12 * 3600 || sameDay(then, today))
+    return `Edited ${plural(Math.floor(seconds / 3600), 'hour')} ago`
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (sameDay(then, yesterday)) return 'Edited yesterday'
+  const date = then.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(then.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' }),
+  })
+  return `Edited ${date}`
+}
+
 /** Storage sizes as people read them: "83 MB", "1.2 GB". */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`

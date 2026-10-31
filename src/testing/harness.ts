@@ -36,6 +36,7 @@ import type { CrashTestApi } from './crash.worker.ts'
 import * as appFootage from '../app/state/footage.ts'
 import * as appLyrics from '../app/state/lyrics.ts'
 import * as appModels from '../app/state/models.ts'
+import * as appPersistence from '../app/state/persistence.ts'
 import * as appProject from '../app/state/project.ts'
 import * as appStems from '../app/state/stems.ts'
 import * as appStills from '../app/state/stills.ts'
@@ -109,6 +110,7 @@ export function installHarness(): void {
       footage: appFootage,
       lyrics: appLyrics,
       models: appModels,
+      persistence: appPersistence,
       project: appProject,
       stems: appStems,
       stills: appStills,

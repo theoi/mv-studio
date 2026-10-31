@@ -15,6 +15,7 @@ import type { SongAnalysisService } from '../../analysis/client.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
 import { TRACK_IDS } from '../mock/demoProject.ts'
 import { backgroundAnalysisOn } from './footage.ts'
+import { JOB_KINDS } from './jobs.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
 import { get, select, set, toast } from './ui.ts'
@@ -37,8 +38,6 @@ export function openImport(what: 'media' | 'song' = 'media'): void {
   fileInput.accept = what === 'song' ? 'audio/*' : 'audio/*,video/*,image/*'
   fileInput.click()
 }
-
-const IMPORT_JOB = 'media.import'
 
 function baseName(name: string): string {
   return name.replace(/\.[^.]+$/, '')
@@ -118,7 +117,7 @@ export async function importFiles(files: File[]): Promise<Asset[]> {
     files.map(
       (file) =>
         jobs.run({
-          kind: IMPORT_JOB,
+          kind: JOB_KINDS.import,
           title: `Importing ${file.name}`,
           run: (ctx) => mediaStore.importFile(file, ctx),
         }).promise,
