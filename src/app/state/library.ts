@@ -22,7 +22,7 @@ import {
   ORIGINAL_LOOK,
   removeLookCommands,
 } from '../../plugins/looks.ts'
-import { formatTime } from '../format.ts'
+import { formatTime, plural } from '../format.ts'
 import { dispatch, editor, sectionAt, timelineDuration, viewOf } from './project.ts'
 import { get, select, set, toast, type Selection } from './ui.ts'
 
@@ -61,7 +61,8 @@ export function chosenLookId(project: Project): string | undefined {
   return current ? current.lookId : ORIGINAL_LOOK.id
 }
 
-function undoAction(label: string) {
+/** A toast action that undoes the edit only while it is still the last one. */
+export function undoAction(label: string) {
   return {
     label: 'Undo',
     run: () => {
@@ -489,4 +490,46 @@ function putVisual(
     `“${def.name}” added from ${formatTime(place.start)} to ${formatTime(place.start + place.duration)}`,
     undoAction(label),
   )
+}
+
+/** Clips that show or play a file from the library. */
+export function clipsUsing(project: Project, assetId: Id): Clip[] {
+  return Object.values(project.clips).filter((c) => 'assetId' in c && c.assetId === assetId)
+}
+
+/** How many clips "Remove from project" takes off the timeline with the file, or why it can't remove it. */
+export function mediaRemoval(project: Project, assetId: Id): { clips: number } | { why: string } {
+  const clips = clipsUsing(project, assetId)
+  const locked = lockedTracks(project)
+  if (clips.some((c) => locked.has(c.trackId)))
+    return {
+      why: clips.length === 1 ? 'Its clip is on a locked track' : 'Some of its clips are on a locked track',
+    }
+  return { clips: clips.length }
+}
+
+/**
+ * Removes a file from the project with every clip that uses it, as one undo step. The song is not removed this way.
+ * The stored file stays in the browser, so Undo can bring it back. False when nothing was removed.
+ */
+export function removeMedia(assetId: Id): boolean {
+  const project = editor.getProject()
+  const asset = project.assets[assetId]
+  if (!asset || assetId === project.songAssetId) return false
+  const removal = mediaRemoval(project, assetId)
+  if ('why' in removal) {
+    toast(`${removal.why}. Unlock it to remove this file.`)
+    return false
+  }
+  const name = asset.name.replace(/\.[^.]+$/, '')
+  const label = `Remove ${name}`
+  if (!dispatch({ type: 'asset.remove', assetId }, { label })) return false
+  const selection = get().selection
+  if (selection.type === 'clip' && !editor.getProject().clips[selection.id])
+    set({ selection: { type: 'none' } })
+  toast(
+    `Removed “${name}”${removal.clips ? ` and its ${plural(removal.clips, 'clip')}` : ''}`,
+    undoAction(label),
+  )
+  return true
 }

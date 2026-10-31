@@ -114,10 +114,17 @@ export function MenuLabel({ children }: { children: ReactNode }) {
 export const ContextMenu = RContext.Root
 export const ContextMenuTrigger = RContext.Trigger
 
-export function ContextMenuContent({ children }: { children: ReactNode }) {
+export function ContextMenuContent({
+  children,
+  onCloseAutoFocus,
+}: {
+  children: ReactNode
+  /** Call preventDefault() to put focus somewhere else when the menu closes. */
+  onCloseAutoFocus?: (e: Event) => void
+}) {
   return (
     <RContext.Portal>
-      <RContext.Content className={styles.content} collisionPadding={8}>
+      <RContext.Content className={styles.content} collisionPadding={8} onCloseAutoFocus={onCloseAutoFocus}>
         {children}
       </RContext.Content>
     </RContext.Portal>

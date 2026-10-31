@@ -41,6 +41,10 @@ import styles from './TopBar.module.css'
 
 const DOCS_URL = 'https://github.com/theoi/mv-studio#readme'
 
+/** "Remove Night city" → "remove Night city": only a leading capitalized word is lowered, so names keep their case. */
+const actionText = (label: string) =>
+  /^[A-Z][a-z]/.test(label) ? label[0]!.toLowerCase() + label.slice(1) : label
+
 function Activity() {
   const running = runningJobs(useJobs())
   const first = running[0]
@@ -187,7 +191,7 @@ export function TopBar() {
         <SaveStatus />
         <span className={styles.divider} />
         <IconButton
-          label={undoLabel ? `Undo ${undoLabel.toLowerCase()}` : 'Undo'}
+          label={undoLabel ? `Undo ${actionText(undoLabel)}` : 'Undo'}
           shortcut="Mod Z"
           onClick={undo}
           disabled={!undoLabel}
@@ -195,7 +199,7 @@ export function TopBar() {
           <Undo2 />
         </IconButton>
         <IconButton
-          label={redoLabel ? `Redo ${redoLabel.toLowerCase()}` : 'Redo'}
+          label={redoLabel ? `Redo ${actionText(redoLabel)}` : 'Redo'}
           shortcut="Mod Shift Z"
           onClick={redo}
           disabled={!redoLabel}
