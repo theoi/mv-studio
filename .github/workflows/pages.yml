@@ -19,11 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
+      - uses: ./.github/actions/node-deps
       - run: npm run build
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
@@ -46,12 +42,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - uses: ./.github/actions/node-deps
+      - name: Install Chromium for Playwright
+        run: for attempt in 1 2 3; do npx playwright install --with-deps chromium && exit 0; sleep $((attempt * 20)); done; exit 1
       - name: Install ffmpeg (Playwright global setup generates the media fixtures)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Smoke test against the deployed site
