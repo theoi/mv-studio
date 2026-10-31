@@ -80,6 +80,7 @@ export function AutocutView() {
   const analyzing = indexing?.status === 'indexing'
   const willAnalyze = matchesMood(choices) && unanalyzed > 0 && !analyzing
   const story = choices.clipOrder === 'story'
+  const sectionsOnly = choices.cutOn === 'sections'
   // Open when a choice inside differs from the default, so a changed option never hides.
   const [more, setMore] = useState(
     () =>
@@ -230,7 +231,7 @@ export function AutocutView() {
           <div>{note}</div>
         </div>
       )}
-      <Field label="Cut every">
+      <Field label="Cut every" {...(sectionsOnly ? { hint: 'Not used while each section is one shot' } : {})}>
         <Segmented
           block
           value={choices.pace}
@@ -247,11 +248,16 @@ export function AutocutView() {
       <label className={styles.switchRow}>
         <span>
           <span className={styles.switchTitle}>Follow the song’s energy</span>
-          <span className={styles.fieldHint}>Faster cuts in choruses, slower in verses</span>
+          <span className={styles.fieldHint}>
+            {sectionsOnly
+              ? `Off while each section is one shot${more ? '' : ' (More options)'}`
+              : 'Faster cuts in choruses, slower in verses'}
+          </span>
         </span>
         <Switch
-          checked={choices.followEnergy}
+          checked={choices.followEnergy && !sectionsOnly}
           onCheckedChange={(followEnergy) => setAutoCutChoices({ followEnergy })}
+          disabled={sectionsOnly}
           ariaLabel="Follow the song’s energy"
         />
       </label>
@@ -259,7 +265,9 @@ export function AutocutView() {
         <span>
           <span className={styles.switchTitle}>Match clips to the mood</span>
           <span className={styles.fieldHint}>
-            {story ? 'Off while clips play in story order' : 'Uses footage tags, like “crowd” for choruses'}
+            {story
+              ? `Off while clips play in story order${more ? '' : ' (More options)'}`
+              : 'Uses footage tags, like “crowd” for choruses'}
           </span>
         </span>
         <Switch
@@ -335,7 +343,7 @@ export function AutocutView() {
                 {
                   value: 'downbeats',
                   label: 'Bar lines only',
-                  description: 'Every cut lands on the first beat of a bar',
+                  description: 'Every cut lands on the first beat of a bar, a bar or more apart',
                 },
                 {
                   value: 'sections',

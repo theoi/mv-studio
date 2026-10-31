@@ -223,8 +223,23 @@ test('Assist › Auto-cut › More options cuts on bar lines only, with the clip
   await expect(assist.getByRole('combobox', { name: 'Cut on' })).toHaveCount(0)
   await more.click()
   await expect(more).toHaveAttribute('aria-expanded', 'true')
+  expect((await more.boundingBox())!.height).toBeGreaterThanOrEqual(24)
+
+  // One shot per section: the pace and the energy switch have nothing to do, and say so.
+  const energy = assist.getByRole('switch', { name: 'Follow the song’s energy' })
+  await assist.getByRole('combobox', { name: 'Cut on' }).click()
+  await page.getByRole('option', { name: /Section changes only/ }).click()
+  await expect(energy).toBeDisabled()
+  await expect(assist.getByText('Off while each section is one shot', { exact: true })).toBeVisible()
+  await expect(assist.getByText('Not used while each section is one shot')).toBeVisible()
+  await more.click()
+  await expect(assist.getByText('Off while each section is one shot (More options)')).toBeVisible()
+  await more.click()
+
   await assist.getByRole('combobox', { name: 'Cut on' }).click()
   await page.getByRole('option', { name: /Bar lines only/ }).click()
+  await expect(energy).toBeEnabled()
+  await expect(assist.getByText('Not used while each section is one shot')).toHaveCount(0)
   await assist.getByRole('combobox', { name: 'Clip order' }).click()
   await page.getByRole('option', { name: /Story order/ }).click()
   const mood = assist.getByRole('switch', { name: 'Match clips to the mood' })

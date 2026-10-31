@@ -657,8 +657,9 @@
 
 /* "More options" disclosure: a ghost button aligned with the field labels. */
 .moreToggle {
+  flex: none;
   align-self: flex-start;
-  margin-left: -8px;
+  margin-left: calc(-1 * var(--space-2));
   color: var(--text-2);
 }
 
