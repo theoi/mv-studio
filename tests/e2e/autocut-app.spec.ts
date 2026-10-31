@@ -56,8 +56,9 @@ test('Assist › Auto-cut cuts the clips to the beat, cuts again around a clip t
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   const cut = assist.getByRole('button', { name: 'Cut to the beat' })
 
-  // Every bar, the same pace all through the song.
+  // Every bar, the same pace all through the song, clips picked for variety.
   await assist.getByRole('switch', { name: 'Follow the song’s energy' }).click()
+  await assist.getByRole('switch', { name: 'Match clips to the mood' }).click()
   await expect(assist.getByRole('radio', { name: 'Bar', exact: true })).toBeChecked()
   await cut.click()
   const keep = assist.getByRole('button', { name: /^Keep \d+ cuts$/ })
@@ -130,6 +131,7 @@ test('Assist › Auto-cut uses only the selected clip when asked to', async ({ p
   )
   await page.getByRole('tab', { name: /Assist/ }).click()
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await assist.getByRole('switch', { name: 'Match clips to the mood' }).click()
   await assist.getByRole('combobox', { name: 'Clips to use' }).click()
   await page.getByRole('option', { name: /Selected clips/ }).click()
   await assist.getByRole('button', { name: 'Cut to the beat' }).click()
@@ -139,14 +141,13 @@ test('Assist › Auto-cut uses only the selected clip when asked to', async ({ p
   expect(new Set(clips.map((c) => c.assetId))).toEqual(new Set([assetId]))
 })
 
-test('with matching on, the first cut starts footage analysis and a cut after it matches the clips', async ({
+test('with matching on, the first cut starts footage analysis (background analysis off) and a cut after it matches the clips', async ({
   page,
 }) => {
   test.setTimeout(180_000)
   await openHarness(page)
   await page.evaluate(() => {
     localStorage.setItem('mv-studio.guide-seen', '1')
-    localStorage.setItem('mv-studio.background-analysis', 'on')
     const meanColor = (bitmap: ImageBitmap) => {
       const ctx = new OffscreenCanvas(1, 1).getContext('2d') as OffscreenCanvasRenderingContext2D
       ctx.drawImage(bitmap, 0, 0, 1, 1)

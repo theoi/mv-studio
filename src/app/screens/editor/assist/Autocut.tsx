@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, Check, Info, Lock, RotateCcw, Scissors, Undo2, Upload } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
+import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { Segmented, Select, Switch } from '../../../ds/Fields.tsx'
 import { formatTime, plural } from '../../../format.ts'
 import {
@@ -16,7 +17,7 @@ import {
   undoAutoCut,
   useAutoCut,
 } from '../../../state/autocut.ts'
-import { backgroundAnalysisOn, startFootageAnalysis, useFootage } from '../../../state/footage.ts'
+import { analyzeFootageNow, useFootage } from '../../../state/footage.ts'
 import { openImport } from '../../../state/importer.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, sectionName, useProject } from '../../../state/project.ts'
@@ -64,10 +65,10 @@ export function AutocutView() {
   const range = choices.range === 'section' && section ? 'section' : 'all'
   const clips = choices.clips === 'selected' && asset ? 'selected' : 'all'
   const analyzing = indexing?.status === 'indexing'
-  const willAnalyze = choices.matchMood && unanalyzed > 0 && !analyzing && backgroundAnalysisOn()
+  const willAnalyze = choices.matchMood && unanalyzed > 0 && !analyzing
   const downloadMb = useMatchingDownload(willAnalyze)
   const cut = () => {
-    if (willAnalyze) startFootageAnalysis()
+    if (willAnalyze) analyzeFootageNow()
     startAutoCut(autoCutOptions({ ...choices, range, clips }, project, selection, playhead))
   }
 
@@ -85,14 +86,15 @@ export function AutocutView() {
         title="Auto-cut"
         subtitle="Cut stopped"
         footer={
-          <div className={styles.footerRow}>
-            <Button variant="secondary" icon={<Upload />} onClick={() => openImport('media')}>
-              Import clips
-            </Button>
-            <Button variant="primary" icon={<RotateCcw />} className={styles.grow} onClick={cut}>
+          clipCount ? (
+            <Button variant="primary" block icon={<RotateCcw />} onClick={cut}>
               Try again
             </Button>
-          </div>
+          ) : (
+            <Button variant="primary" block icon={<Upload />} onClick={() => openImport('media')}>
+              Import clips
+            </Button>
+          )
         }
       >
         <div className={styles.failure} role="alert">
@@ -112,23 +114,37 @@ export function AutocutView() {
     const { start, end } = result.plan.range
     const songEnd = project.songAssetId ? (project.assets[project.songAssetId]?.duration ?? end) : end
     const whole = start < 0.05 && end > songEnd - 0.05
+    const canUndo = editor.undoLabel() === result.label
+    const undoButton = (
+      <Button
+        variant="secondary"
+        icon={<Undo2 />}
+        disabled={!canUndo}
+        onClick={() => {
+          if (undoAutoCut(result)) toast('Cuts removed')
+          dismiss(job)
+        }}
+      >
+        Undo
+      </Button>
+    )
     return (
       <ToolView
         title="Auto-cut"
         subtitle="Cut ready"
         footer={
           <div className={styles.footerRow}>
-            <Button
-              variant="secondary"
-              icon={<Undo2 />}
-              disabled={editor.undoLabel() !== result.label}
-              onClick={() => {
-                if (undoAutoCut(result)) toast('Cuts removed')
-                dismiss(job)
-              }}
-            >
-              Undo
-            </Button>
+            {canUndo ? (
+              undoButton
+            ) : (
+              <Tooltip
+                label="You changed the project after this cut"
+                description="Step back through your changes with Undo in the top bar."
+                side="top"
+              >
+                <span tabIndex={0}>{undoButton}</span>
+              </Tooltip>
+            )}
             <Button variant="primary" className={styles.grow} icon={<Check />} onClick={() => dismiss(job)}>
               Keep {plural(cuts, 'cut')}
             </Button>

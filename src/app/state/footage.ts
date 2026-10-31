@@ -83,6 +83,18 @@ export function startFootageAnalysis(): void {
   void footageService().then((service) => service.indexing.start())
 }
 
+/**
+ * Analyzes footage now because the user asked for something that needs it (auto-cut's matching), also where
+ * background analysis is off. Picks up a run the user cancelled or one that failed.
+ */
+export function analyzeFootageNow(): void {
+  started = true
+  void footageService().then((service) => {
+    service.indexing.start()
+    service.indexing.resume()
+  })
+}
+
 const hasOwnFootage = (project: Project) =>
   Object.values(project.assets).some(
     (a) => a.origin.type === 'import' && (a.kind === 'video' || a.kind === 'image') && !isSampleAsset(a),
