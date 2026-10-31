@@ -317,7 +317,7 @@
 
 .padEmpty {
   background-color: transparent;
-  border: 1px dashed rgb(255 255 255 / 0.1);
+  border: 1px dashed var(--border-strong);
 }
 
 .padEmpty .padName {

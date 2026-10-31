@@ -41,7 +41,7 @@ import {
   MenuTrigger,
 } from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
-import { formatTime } from '../../format.ts'
+import { formatTime, plural } from '../../format.ts'
 import { appMedia } from '../../state/media.ts'
 import {
   editor,
@@ -79,10 +79,6 @@ function usePlaying(preview: PreviewController | undefined): boolean {
   return useSyncExternalStore(preview?.subscribe ?? noSubscribe, () => playingOf(preview))
 }
 
-function plural(n: number, one: string, many = `${one}s`) {
-  return `${n} ${n === 1 ? one : many}`
-}
-
 function midiChip(midi: VjSnapshot['midi'] | undefined): string {
   const status: MidiStatus = midi?.status ?? 'off'
   if (status === 'ready' && midi?.devices.length)
@@ -96,7 +92,8 @@ function midiChip(midi: VjSnapshot['midi'] | undefined): string {
   return 'No MIDI device'
 }
 
-function takeSummary(take: VjSnapshot['takes'][number], grid: QuantizeGrid): string {
+/** What a kept take added, or null when it changed nothing. */
+function takeSummary(take: VjSnapshot['takes'][number], grid: QuantizeGrid): string | null {
   const s = take.summary
   const parts = s
     ? [
@@ -105,8 +102,14 @@ function takeSummary(take: VjSnapshot['takes'][number], grid: QuantizeGrid): str
         s.looks ? plural(s.looks, 'look') : '',
       ].filter(Boolean)
     : [plural(take.presses, 'press', 'presses')]
-  const what = parts.join(', ') || 'no changes'
+  if (parts.length === 0) return null
+  const what = parts.join(', ')
   return take.quantized ? `${what}, lined up with the ${grid === 'bar' ? 'bars' : 'beats'}` : what
+}
+
+function failedTakeMessage(take: VjSnapshot['takes'][number]): string {
+  const why = take.error ? `: ${take.error.replace(/\.$/, '')}` : ''
+  return `Take ${take.number} could not be added${why}. The timeline is unchanged.`
 }
 
 /** Runs the engine preview and the VJ session on the stage while VJ mode is open. */
@@ -309,6 +312,7 @@ function SlotMenu({
               {a.name}
             </ContextMenuItem>
           ))}
+        {row === 'clips' && media.length > 0 && visuals.length > 0 && <ContextMenuSeparator />}
         {row === 'clips' &&
           visuals.map((v) => (
             <ContextMenuItem key={v.id} onSelect={() => put(clipPadForGenerator(v))}>
@@ -389,7 +393,7 @@ function Deck({
           {bank.count > 1 ? (
             <Tooltip label="Switch clip banks" shortcut="[ ]">
               <span>
-                bank {bank.index + 1} of {bank.count}
+                tap · bank {bank.index + 1} of {bank.count}
               </span>
             </Tooltip>
           ) : (
@@ -434,8 +438,9 @@ export function VjMode() {
   const [mapping, setMapping] = useState(false)
   const closed = useRef(false)
 
-  const exit = (session: VjSession | undefined) => {
-    if (mapping) {
+  /** Esc (or a control mapped to exit) leaves mapping mode first; Back to editor always leaves. */
+  const exit = (session: VjSession | undefined, fromSession = false) => {
+    if (fromSession && mapping) {
       setMapping(false)
       return
     }
@@ -449,7 +454,7 @@ export function VjMode() {
       })
   }
 
-  const { engine, size, drawn } = useEngine(canvasRef, stageRef, exit)
+  const { engine, size, drawn } = useEngine(canvasRef, stageRef, (s) => exit(s, true))
   const session = engine?.session
   const snapshot = useSnapshot(session)
   const playing = usePlaying(engine?.preview)
@@ -461,17 +466,24 @@ export function VjMode() {
     for (const take of snapshot?.takes ?? []) {
       if (announced.current.has(take.id)) continue
       announced.current.add(take.id)
-      if (take.status === 'failed')
-        toast(`Take ${take.number} could not be added: ${take.error ?? 'unknown error'}`)
-      else if (take.status === 'kept')
-        toast(`Take ${take.number} added to the timeline: ${takeSummary(take, grid)}`, {
-          label: 'Discard',
-          run: () => {
-            if (closed.current) return
-            session?.discardTake(take.id)
-            toast(`Take ${take.number} discarded`)
-          },
-        })
+      if (take.status === 'failed') {
+        toast(failedTakeMessage(take))
+        continue
+      }
+      if (take.status !== 'kept') continue
+      const added = takeSummary(take, grid)
+      if (!added) {
+        toast(`Take ${take.number} changed nothing`)
+        continue
+      }
+      toast(`Take ${take.number} added to the timeline: ${added}`, {
+        label: 'Discard',
+        run: () => {
+          if (closed.current) return
+          session?.discardTake(take.id)
+          toast(`Take ${take.number} discarded`)
+        },
+      })
     }
   }, [snapshot?.takes, session, grid])
 

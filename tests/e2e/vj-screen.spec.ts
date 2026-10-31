@@ -136,6 +136,7 @@ test('quantize set in Settings lines the next take up with the beats, and open m
 
 test('pads are changed from their menu and the layout is saved with the project', async ({ page }) => {
   await openVj(page)
+  await expect(page.getByText('tap · bank 1 of 3')).toBeVisible()
   await pad(page, 'Rain on glass').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Clear pad' }).click()
   await expect(pad(page, 'Rain on glass')).toHaveCount(0)
@@ -221,4 +222,11 @@ test('pads are mapped to a key and to a MIDI pad by clicking them and pressing t
   await expect(pad(page, 'Rain on glass')).toHaveAttribute('aria-pressed', 'true')
   await expect(pad(page, 'Ocean drive')).toHaveAttribute('aria-pressed', 'false')
   await page.keyboard.press('Space')
+
+  // Back to editor leaves even while mapping (only Esc ends mapping first).
+  await page.getByRole('button', { name: 'E2E Pad Controller' }).click()
+  await page.getByRole('menuitem', { name: /Map keys and MIDI pads/ }).click()
+  await expect(page.getByText('Click a pad, then press a key or a MIDI pad to map it.')).toBeVisible()
+  await page.getByRole('button', { name: 'Back to editor' }).click()
+  await expect(page.getByRole('img', { name: 'Live output' })).toBeHidden()
 })
