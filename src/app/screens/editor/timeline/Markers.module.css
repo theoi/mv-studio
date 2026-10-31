@@ -1,0 +1,72 @@
+/* Song markers on the timeline ruler: a pin at the marker's time with its name to the right. */
+.marker {
+  --marker: var(--warning);
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  margin-left: -4px;
+  padding: 0 0 3px 4px;
+  border: 0;
+  background: none;
+  color: var(--marker);
+  font: 500 10px var(--font-sans);
+  cursor: grab;
+}
+
+.marker::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: var(--marker);
+  opacity: 0.7;
+}
+
+.marker:active {
+  cursor: grabbing;
+}
+
+.marker:focus-visible {
+  outline: none;
+}
+
+.marker:focus-visible .flag {
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+
+.flag {
+  position: relative;
+  flex: none;
+  width: 8px;
+  height: 9px;
+  margin-left: 1px;
+  border-radius: 0 2px 2px 0;
+  background: var(--marker);
+}
+
+.label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: 10px;
+}
+
+.rename {
+  position: absolute;
+  top: 1px;
+  z-index: 5;
+  width: 120px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-1);
+  font: 500 var(--text-xs) var(--font-sans);
+}

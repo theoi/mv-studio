@@ -11,6 +11,7 @@ import { focusedWithRing } from './focusRing.ts'
 import { openImport } from './importer.ts'
 import { saveNow } from './persistence.ts'
 import { nudgeLine } from './lyricEdits.ts'
+import { addMarkerAtPlayhead } from './markers.ts'
 import { jumpSection, stepPlayhead } from './playback.ts'
 import { toggleFullscreen, toggleLoop } from './previewControls.ts'
 import {
@@ -273,6 +274,13 @@ export const SHORTCUTS = [
   { id: 'delete', label: 'Delete', group: 'Timeline', keys: ['Delete', 'Backspace'], run: deleteSelection },
   { id: 'selectAll', label: 'Select all on the track', group: 'Timeline', keys: ['Mod A'], run: selectAll },
   { id: 'text', label: 'Add text', group: 'Timeline', keys: ['T'], run: addTextAtPlayhead },
+  {
+    id: 'marker',
+    label: 'Add marker',
+    group: 'Timeline',
+    keys: ['M'],
+    run: () => void addMarkerAtPlayhead(),
+  },
   {
     id: 'keyframe',
     label: 'Add keyframe to the focused property',
