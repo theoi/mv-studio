@@ -1,8 +1,26 @@
+import type { SongSection } from '../../model/types.ts'
 import type { SpectralAnalysis } from '../frontend.ts'
 import type { BeatGrid } from '../beats/grid.ts'
 import { quantile } from '../dsp/stats.ts'
 
 export type SectionLabel = 'intro' | 'verse' | 'chorus' | 'bridge' | 'outro'
+
+const SECTION_LABELS: ReadonlySet<string> = new Set<SectionLabel>([
+  'intro',
+  'verse',
+  'chorus',
+  'bridge',
+  'outro',
+])
+
+/**
+ * Whether the user named this section, so analysis keeps it as it is (times, label, id): a label the user typed or
+ * picked has confidence 1, and a label the analysis never assigns can only come from the user, also in projects from
+ * before confidences.
+ */
+export function isUserSection(section: Pick<SongSection, 'label' | 'confidence'>): boolean {
+  return section.confidence === 1 || !SECTION_LABELS.has(section.label)
+}
 
 export interface Section {
   start: number

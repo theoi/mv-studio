@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { fitTappedTempo, moveDownbeat, rescaleTempo } from '../../../src/analysis/edits.ts'
-import type { AudioAnalysis } from '../../../src/model/types.ts'
+import { fitTappedTempo, keepUserSections, moveDownbeat, rescaleTempo } from '../../../src/analysis/edits.ts'
+import type { AudioAnalysis, SongSection } from '../../../src/model/types.ts'
 
 const beats = Array.from({ length: 16 }, (_, i) => 1 + i * 0.5)
 const analysis: AudioAnalysis = {
@@ -84,5 +84,84 @@ describe('beat grid corrections', () => {
     const gapped = [...beats.slice(0, 8), ...beats.slice(8).map((t) => t + 4)]
     const skipped = { ...analysis, tempo: { bpm: 96, confidence: 0.8 }, beats: gapped }
     expect(fitTappedTempo(skipped, 120)).toEqual({ kind: 'same' })
+  })
+})
+
+const sec = (id: string, start: number, end: number, label: string, extra: Partial<SongSection> = {}) => ({
+  id,
+  start,
+  end,
+  label,
+  ...extra,
+})
+
+describe('keeping the sections the user named across a new analysis', () => {
+  const fresh: SongSection[] = [
+    sec('f1', 0, 10, 'intro', { repeatGroup: 0 }),
+    sec('f2', 10, 30, 'verse', { repeatGroup: 1 }),
+    sec('f3', 30, 50, 'chorus', { repeatGroup: 2, confidence: 0.4 }),
+    sec('f4', 50, 60, 'outro', { repeatGroup: 3 }),
+  ]
+
+  it('returns the new sections when the user named none', () => {
+    const previous = [sec('p1', 0, 25, 'verse', { confidence: 0.4 }), sec('p2', 25, 60, 'chorus')]
+    expect(keepUserSections(fresh, previous)).toEqual(fresh)
+  })
+
+  it('keeps a named section as it was and cuts the new sections around it', () => {
+    const solo = sec('p2', 25, 42, 'Guitar solo', { repeatGroup: 7, confidence: 1, energy: 0.8 })
+    const out = keepUserSections(fresh, [sec('p1', 0, 25, 'verse'), solo])
+    expect(out.map((s) => [s.label, s.start, s.end])).toEqual([
+      ['intro', 0, 10],
+      ['verse', 10, 25],
+      ['Guitar solo', 25, 42],
+      ['chorus', 42, 50],
+      ['outro', 50, 60],
+    ])
+    // Its name, id and energy stay; it takes the group of the new section it mostly covers (the chorus, 12 s of 17).
+    expect(out[2]).toEqual({ ...solo, repeatGroup: 2 })
+    expect(new Set(out.map((s) => s.id)).size).toBe(out.length)
+  })
+
+  it('cuts a new section in two around a named section inside it, with distinct ids', () => {
+    const out = keepUserSections(fresh, [sec('p', 15, 20, 'Spoken', { confidence: 1 })])
+    expect(out.map((s) => [s.id, s.label, s.start, s.end]).slice(1, 4)).toEqual([
+      ['f2', 'verse', 10, 15],
+      ['p', 'Spoken', 15, 20],
+      ['f2.1', 'verse', 20, 30],
+    ])
+  })
+
+  it('joins a new piece shorter than a second to its new neighbour', () => {
+    // The named section ends 0.5 s before the chorus starts: that sliver of verse joins the chorus.
+    const out = keepUserSections(fresh, [sec('p', 5, 29.5, 'Story', { confidence: 1 })])
+    expect(out.map((s) => [s.label, s.start, s.end])).toEqual([
+      ['intro', 0, 5],
+      ['Story', 5, 29.5],
+      ['chorus', 29.5, 50],
+      ['outro', 50, 60],
+    ])
+  })
+
+  it('gives a new piece an id no kept or new section has', () => {
+    const out = keepUserSections(fresh, [sec('f2.1', 15, 20, 'Spoken', { confidence: 1 })])
+    expect(out.map((s) => [s.id, s.label, s.start, s.end]).slice(1, 4)).toEqual([
+      ['f2', 'verse', 10, 15],
+      ['f2.1', 'Spoken', 15, 20],
+      ['f2.2', 'verse', 20, 30],
+    ])
+  })
+
+  it('keeps a section whose name the analysis never gives, also without a confidence (older projects)', () => {
+    const out = keepUserSections(fresh, [
+      sec('p', 15, 20, 'Hook'),
+      sec('q', 32, 40, 'chorus', { confidence: 0.8 }),
+    ])
+    expect(out.map((s) => [s.label, s.start, s.end]).slice(1, 4)).toEqual([
+      ['verse', 10, 15],
+      ['Hook', 15, 20],
+      ['verse', 20, 30],
+    ])
+    expect(out.some((s) => s.id === 'q')).toBe(false)
   })
 })

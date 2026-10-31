@@ -1,5 +1,6 @@
 import type { AudioAnalysis, EditCommand, LyricLine, LyricsDoc, SongSection } from '../../model/index.ts'
 import { alignmentKey } from '../lyrics/text.ts'
+import { isUserSection } from './sections.ts'
 
 export interface TimeRange {
   start: number
@@ -45,8 +46,7 @@ const MIN_SUNG_WORDS = 6
 const MAX_EXTENSION = 0.25
 /** How far a chorus edge may move to reach a downbeat (or a beat when bars are not found), in seconds. */
 const SNAP = 2
-/** Labels the section analysis assigns; any other label was entered by the user and is kept. */
-const DETECTED = new Set(['intro', 'verse', 'chorus', 'bridge', 'outro'])
+
 /** `SongSection.confidence` of a chorus found from the audio alone. A label the user typed has confidence 1. */
 export const AUDIO_CHORUS_CONFIDENCE = 0.4
 /** `SongSection.confidence` of a chorus found from repeated lyrics. */
@@ -83,7 +83,7 @@ function sungWords(lines: readonly LyricLine[]): SungWord[] {
   return out.filter((w) => w.key.length > 0)
 }
 
-const isDetected = (s: SongSection) => DETECTED.has(s.label) && s.confidence !== 1
+const isDetected = (s: SongSection) => !isUserSection(s)
 const overlap = (a: TimeRange, b: TimeRange) =>
   Math.max(0, Math.min(a.end, b.end) - Math.max(a.start, b.start))
 

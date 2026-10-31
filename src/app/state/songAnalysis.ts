@@ -2,7 +2,8 @@ import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { nearestBeatIndex } from '../../analysis/beats/grid.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
-import { fitTappedTempo, moveDownbeat, rescaleTempo } from '../../analysis/edits.ts'
+import { fitTappedTempo, keepUserSections, moveDownbeat, rescaleTempo } from '../../analysis/edits.ts'
+import { isUserSection } from '../../analysis/structure/sections.ts'
 import {
   BARS_NOTES,
   hasFoundBars,
@@ -168,7 +169,10 @@ export function setFirstBeat(time: number): void {
   )
 }
 
-/** Analyzes the song again (beats, bars, sections, energy) as one undo step; the lyrics' chorus is kept. */
+/**
+ * Analyzes the song again (beats, bars, sections, energy) as one undo step; the sections the user named and the lyrics'
+ * chorus are kept.
+ */
 export async function analyzeAgain(): Promise<void> {
   const songId = editor.getProject().songAssetId
   if (!songId || isRunning(JOB_KINDS.analysis)) return
@@ -177,11 +181,17 @@ export async function analyzeAgain(): Promise<void> {
     const project = editor.getProject()
     if (project.songAssetId !== songId) return
     const { lyricChorusCommand, setAnalysisCommand } = await import('../../analysis/client.ts')
-    const chorus = project.lyrics ? lyricChorusCommand(analysis, project.lyrics) : null
-    const sections = analysis.sections?.length ?? 0
-    const bpm = analysis.tempo ? formatBpm(analysis.tempo.bpm) : 'the beat'
-    undoable('Analyze again', `Found ${bpm} and ${plural(sections, 'section')}`, [
-      setAnalysisCommand(analysis),
+    const previous = project.analysis.audio[songId]?.sections ?? []
+    const kept = previous.filter(isUserSection).length
+    const merged = kept
+      ? { ...analysis, sections: keepUserSections(analysis.sections ?? [], previous) }
+      : analysis
+    const chorus = project.lyrics ? lyricChorusCommand(merged, project.lyrics) : null
+    const sections = merged.sections?.length ?? 0
+    const bpm = merged.tempo ? formatBpm(merged.tempo.bpm) : 'the beat'
+    const found = `Found ${bpm} and ${plural(sections, 'section')}`
+    undoable('Analyze again', kept ? `${found}. Kept ${plural(kept, 'section')} you named.` : found, [
+      setAnalysisCommand(merged),
       ...(chorus ? [chorus] : []),
     ])
   } catch (error) {
