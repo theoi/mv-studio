@@ -115,20 +115,14 @@ test('Assist › Song analysis taps the tempo, sets the first beat and analyzes 
         (s: { label: string }) => s.label,
       )
     })
-  await page.evaluate(() => {
-    const { editor } = window.mvStudio.app.project
-    const project = editor.getProject()
-    const assetId = project.songAssetId ?? ''
-    const section = project.analysis.audio[assetId]?.sections?.[0]
-    if (section)
-      editor.dispatch({
-        type: 'analysis.updateSection',
-        assetId,
-        sectionId: section.id,
-        patch: { label: 'Hook' },
-      })
-  })
+  // Named on the song map, as a user would: renaming is what marks a section as the user's.
+  await page.getByRole('button', { name: /^Section .*, 0:00 to / }).dblclick()
+  await page.getByRole('textbox', { name: 'Rename section' }).fill('Hook')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: /^Section Hook, 0:00 to / })).toBeVisible()
   expect(await labels()).toEqual(['Hook'])
+  // Selecting the section opened the Inspector.
+  await page.getByRole('tab', { name: 'Assist' }).click()
   await panel.getByRole('button', { name: 'Analyze again' }).click()
   await expect(panel.getByRole('progressbar', { name: 'Song analysis progress' })).toBeVisible()
   await shot(page, 'analysis-running')
