@@ -6,10 +6,13 @@ import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
 import type {
   SelectionClick,
+  SuitabilityEvidence,
   SuitabilityReason,
   SuitabilityReport,
   SuitabilityVerdict,
+  TimeRange,
 } from '../../vision/index.ts'
+import { suitabilityInRange } from '../../vision/mask/suitability.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { mediaById } from '../mock/media.ts'
 import { maskStorageKey, sceneOf } from '../mock/demoProject.ts'
@@ -35,7 +38,15 @@ const PERSON_MASK = 'vision.person-mask'
 export type VideoClip = Extract<Clip, { type: 'video' }>
 
 export type Suitability =
-  | { status: 'checked'; verdict: SuitabilityVerdict; reasons: SuitabilityReason[] }
+  | {
+      status: 'checked'
+      verdict: SuitabilityVerdict
+      reasons: SuitabilityReason[]
+      /** Judged without the person detector, which could not be downloaded. */
+      peopleSkipped?: boolean
+      /** What a footage check judged, so each clip is judged on the part of the footage it shows. */
+      evidence?: SuitabilityEvidence
+    }
   | { status: 'unchecked' }
   | { status: 'checking' }
   | { status: 'failed'; message: string }
@@ -77,10 +88,11 @@ export interface CutoutResult {
    */
   refused?: Array<{ assetId: Id; name: string; why: string }>
   /**
-   * Clips cut out although the person track found that their cutout flickers, with why. Only the track can measure
-   * flicker, so the check could not warn before the cutout.
+   * Clips cut out with a warning, with why: the person track found that their cutout flickers (only the track can
+   * measure flicker, so the check could not warn before the cutout), or no one was looked for because the person
+   * detector could not be downloaded.
    */
-  flickers?: Array<{ assetId: Id; name: string; why: string }>
+  warnings?: Array<{ assetId: Id; name: string; why: string }>
   label: string
   /** Set when the cutout follows a picked object. */
   object?: ObjectPick
@@ -102,11 +114,15 @@ function setCheck(assetId: Id, check: Suitability) {
   useBehind.setState((s) => ({ checks: { ...s.checks, [assetId]: check } }))
 }
 
-const fromReport = (r: SuitabilityReport): Suitability => ({
+const fromReport = (r: SuitabilityReport): Extract<Suitability, { status: 'checked' }> => ({
   status: 'checked',
   verdict: r.verdict,
   reasons: r.reasons,
+  ...(r.peopleSkipped ? { peopleSkipped: true } : {}),
+  ...(r.evidence ? { evidence: r.evidence } : {}),
 })
+
+const PEOPLE_SKIPPED = 'People check skipped: the person detector could not download.'
 
 const REASONS: Record<SuitabilityReason, string> = {
   // The person segmenter finds nobody both in empty shots and in wide shots of small people, so this must not claim
@@ -127,29 +143,10 @@ const MARGINAL_REASONS: Partial<Record<SuitabilityReason, string>> = {
 export function suitabilityText(s: Suitability): { status: string; why?: string; ok: boolean } {
   switch (s.status) {
     case 'checked': {
-      const first = s.reasons[0]
-      const reason = first ? REASONS[first] : undefined
-      if (s.verdict === 'good') return { status: 'Person found', ok: true }
-      if (s.verdict === 'marginal') {
-        // Flicker alone makes a shot marginal with a person in all of it, so "works in parts" would be wrong.
-        if (first === 'unstable-mask')
-          return {
-            status: 'Person found',
-            why: 'The cutout flickers in places, so the lyrics can blink around the person for a moment.',
-            ok: true,
-          }
-        const partly = first ? (MARGINAL_REASONS[first] ?? reason) : undefined
-        return {
-          status: 'Person found',
-          why: partly ? `Works in parts of this shot. ${partly}.` : undefined,
-          ok: true,
-        }
-      }
-      return {
-        status: 'Not suitable',
-        why: `${reason ?? 'This shot has no clear person to cut out'}.`,
-        ok: false,
-      }
+      const text = checkedText(s)
+      // Without the detector an animal can pass for the person, so an offered shot says the check was partial.
+      if (!s.peopleSkipped || !text.ok) return text
+      return { ...text, why: text.why ? `${text.why} ${PEOPLE_SKIPPED}` : PEOPLE_SKIPPED }
     }
     case 'checking':
       return { status: 'Looking for people…', ok: false }
@@ -162,6 +159,36 @@ export function suitabilityText(s: Suitability): { status: string; why?: string;
   }
 }
 
+function checkedText(s: Extract<Suitability, { status: 'checked' }>): {
+  status: string
+  why?: string
+  ok: boolean
+} {
+  const first = s.reasons[0]
+  const reason = first ? REASONS[first] : undefined
+  if (s.verdict === 'good') return { status: 'Person found', ok: true }
+  if (s.verdict === 'marginal') {
+    // Flicker alone makes a shot marginal with a person in all of it, so "works in parts" would be wrong.
+    if (first === 'unstable-mask')
+      return {
+        status: 'Person found',
+        why: 'The cutout flickers in places, so the lyrics can blink around the person for a moment.',
+        ok: true,
+      }
+    const partly = first ? (MARGINAL_REASONS[first] ?? reason) : undefined
+    return {
+      status: 'Person found',
+      why: partly ? `Works in parts of this shot. ${partly}.` : undefined,
+      ok: true,
+    }
+  }
+  return {
+    status: 'Not suitable',
+    why: `${reason ?? 'This shot has no clear person to cut out'}.`,
+    ok: false,
+  }
+}
+
 export function footageOf(
   project: Project,
   clip: Clip | undefined,
@@ -171,14 +198,29 @@ export function footageOf(
   return asset?.kind === 'video' ? { clip, asset } : undefined
 }
 
-/** Whether the person in a clip's footage can be cut out, as far as is known. */
+/** Whether the person in a clip's footage can be cut out, as far as is known, in the part of it the clip shows. */
 export function suitabilityOf(
   project: Project,
   clip: Clip | undefined,
   checks: Record<Id, Suitability> = useBehind.getState().checks,
 ): Suitability {
   const footage = footageOf(project, clip)
-  return footage ? assetSuitability(footage.asset, checks) : { status: 'unsupported' }
+  if (!footage) return { status: 'unsupported' }
+  return clipSuitability(assetSuitability(footage.asset, checks), footage.clip, footage.asset)
+}
+
+/** The part of its footage a clip shows, in media seconds. */
+export function usedRange(clip: VideoClip, asset: Asset): TimeRange {
+  const rate = clip.playbackRate > 0 ? clip.playbackRate : 1
+  const end = clip.sourceStart + clip.duration * rate
+  return { start: Math.max(0, clip.sourceStart), end: asset.duration ? Math.min(asset.duration, end) : end }
+}
+
+/** A footage check judged again on the part a clip shows, when the check kept what it judged. */
+function clipSuitability(s: Suitability, clip: VideoClip, asset: Asset): Suitability {
+  if (s.status !== 'checked' || !s.evidence) return s
+  const { evidence: _, ...part } = fromReport(suitabilityInRange(s.evidence, usedRange(clip, asset)))
+  return s.peopleSkipped ? { ...part, peopleSkipped: true } : part
 }
 
 /** Whether the person in a video asset can be cut out, as far as is known. */
@@ -238,9 +280,11 @@ export function suitableClips(project: Project, checks?: Record<Id, Suitability>
 }
 
 export interface FootageRow {
+  /** Unique per row: a video whose clips show parts with different verdicts has a row for each verdict. */
+  key: string
   asset: Asset
   suitability: Suitability
-  /** Footage clips on the timeline showing this asset. */
+  /** Footage clips on the timeline showing this asset with this verdict. */
   clips: number
 }
 
@@ -248,26 +292,33 @@ const rowRank = (s: Suitability) =>
   s.status === 'checked' ? (s.verdict === 'unsuitable' ? 2 : 0) : s.status === 'unsupported' ? 3 : 1
 
 /**
- * One row per video on the timeline for Assist › Behind the subject: shots with a person first, then shots still
- * being checked, then the ones that are not suitable; in order of first use within each group.
+ * One row per video on the timeline for Assist › Behind the subject (one per verdict when its clips show parts that
+ * differ): shots with a person first, then shots still being checked, then the ones that are not suitable; in order
+ * of first use within each group.
  */
 export function footageRows(
   project: Project,
   checks: Record<Id, Suitability> = useBehind.getState().checks,
 ): FootageRow[] {
-  const seen = new Map<Id, { asset: Asset; start: number; clips: number }>()
+  const seen = new Map<string, FootageRow & { start: number }>()
   for (const c of Object.values(project.clips)) {
     const f = footageOf(project, c)
     if (!f) continue
-    const prev = seen.get(f.asset.id)
+    const suitability = suitabilityOf(project, c, checks)
+    const verdict =
+      suitability.status === 'checked'
+        ? `${suitability.verdict}:${suitability.reasons.join(',')}`
+        : suitability.status
+    const key = `${f.asset.id}:${verdict}`
+    const prev = seen.get(key)
     if (prev) {
       prev.clips++
       prev.start = Math.min(prev.start, c.start)
-    } else seen.set(f.asset.id, { asset: f.asset, start: c.start, clips: 1 })
+    } else seen.set(key, { key, asset: f.asset, suitability, start: c.start, clips: 1 })
   }
   return [...seen.values()]
     .sort((a, b) => a.start - b.start)
-    .map(({ asset, clips }) => ({ asset, clips, suitability: assetSuitability(asset, checks) }))
+    .map(({ start: _, ...row }) => row)
     .sort((a, b) => rowRank(a.suitability) - rowRank(b.suitability))
 }
 
@@ -438,7 +489,7 @@ export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefin
 
 /**
  * Cuts the subject out of each clip as one job and one undo step. Imported footage gets a person mask first
- * (cached per clip media); footage where the check finds no one to cut out is left as it is.
+ * (cached per clip media); a clip whose part of the footage has no one to cut out is left as it is.
  */
 export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> | undefined {
   if (isRunning(JOB_KINDS.cutout)) return undefined
@@ -448,20 +499,24 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
     title: 'Cutting out the subject',
     run: async (ctx) => {
       const start = editor.getProject()
+      const unsuitable = (s: Suitability) => s.status === 'checked' && s.verdict === 'unsuitable'
       const wanted = [...new Set(clipIds)].filter(
-        (id) => footageOf(start, start.clips[id]) && !hasCutout(start, id),
+        (id) =>
+          footageOf(start, start.clips[id]) &&
+          !hasCutout(start, id) &&
+          !unsuitable(suitabilityOf(start, start.clips[id])),
       )
       const needMask = new Map<Id, Asset>()
       for (const id of wanted) {
         const { asset } = footageOf(start, start.clips[id])!
         if (isSampleAsset(asset) || findPersonMask(start, asset.id)) continue
-        const check = useBehind.getState().checks[asset.id]
-        if (check?.status === 'checked' && check.verdict === 'unsuitable') continue
         needMask.set(asset.id, asset)
       }
       const newMasks = new Map<Id, Asset>()
       const refused: NonNullable<CutoutResult['refused']> = []
-      const flickers: NonNullable<CutoutResult['flickers']> = []
+      const warnings: NonNullable<CutoutResult['warnings']> = []
+      /** Clips the person track turned down for the part of the footage they show. */
+      const turnedDown = new Set<string>()
       if (needMask.size) {
         const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
         const assets = [...needMask.values()]
@@ -477,14 +532,24 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
             })
             const check = fromReport(person.suitability)
             setCheck(asset.id, check)
-            const { status, why } = suitabilityText(check)
             const name = asset.name.replace(/\.[^.]+$/, '')
-            if (person.suitability.verdict === 'unsuitable') {
-              refused.push({ assetId: asset.id, name, why: why ?? status })
-              continue
+            let kept = 0
+            for (const id of wanted) {
+              const footage = footageOf(start, start.clips[id])!
+              if (footage.asset.id !== asset.id) continue
+              const s = clipSuitability(check, footage.clip, asset)
+              const { status, why } = suitabilityText(s)
+              const note = { assetId: asset.id, name, why: why ?? status }
+              if (unsuitable(s)) {
+                turnedDown.add(id)
+                if (!refused.some((r) => r.assetId === asset.id)) refused.push(note)
+                continue
+              }
+              kept++
+              const warns = s.status === 'checked' && (s.reasons[0] === 'unstable-mask' || s.peopleSkipped)
+              if (warns && why && !warnings.some((w) => w.assetId === asset.id)) warnings.push(note)
             }
-            if (person.suitability.reasons[0] === 'unstable-mask' && why)
-              flickers.push({ assetId: asset.id, name, why })
+            if (!kept) continue
             const blob = await v.encodeMaskVideo(person.track, {
               duration: asset.duration ?? source.duration,
               signal: ctx.signal,
@@ -502,12 +567,16 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
         }
       }
       ctx.throwIfCancelled()
-      const { commands, count } = cutoutCommands(editor.getProject(), wanted, newMasks)
+      const { commands, count } = cutoutCommands(
+        editor.getProject(),
+        wanted.filter((id) => !turnedDown.has(id)),
+        newMasks,
+      )
       const result: CutoutResult = {
         count,
         skipped: clipIds.length - count,
         ...(refused.length ? { refused } : {}),
-        ...(flickers.length ? { flickers } : {}),
+        ...(warnings.length ? { warnings } : {}),
         label: CUTOUT_LABEL,
       }
       if (count && !dispatch(commands, { label: CUTOUT_LABEL }))

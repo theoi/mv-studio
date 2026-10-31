@@ -103,6 +103,30 @@ describe('suitability', () => {
     expect(suitableClips(project, { [asset.id]: { ...good, verdict: 'unsuitable' } })).not.toContain(clip.id)
   })
 
+  it('says when no one was looked for because the person detector could not download', () => {
+    const note = 'People check skipped: the person detector could not download.'
+    expect(suitabilityText({ status: 'checked', verdict: 'good', reasons: [], peopleSkipped: true })).toEqual(
+      { status: 'Person found', why: note, ok: true },
+    )
+    expect(
+      suitabilityText({
+        status: 'checked',
+        verdict: 'marginal',
+        reasons: ['unstable-mask'],
+        peopleSkipped: true,
+      }).why,
+    ).toBe(`The cutout flickers in places, so the lyrics can blink around the person for a moment. ${note}`)
+    // Without the detector more of the mask counts, so a shot turned down then would be turned down with it.
+    expect(
+      suitabilityText({
+        status: 'checked',
+        verdict: 'unsuitable',
+        reasons: ['subject-too-small'],
+        peopleSkipped: true,
+      }).why,
+    ).toBe('People are too small in this wide shot.')
+  })
+
   it('says why a failed check failed and that only video clips have people', () => {
     expect(suitabilityText({ status: 'failed', message: 'The clip could not be read.' })).toMatchObject({
       why: 'The clip could not be read.',
@@ -111,6 +135,84 @@ describe('suitability', () => {
     const project = editor.getProject()
     const text = Object.values(project.clips).find((c) => c.type === 'text')
     expect(suitabilityOf(project, text)).toEqual({ status: 'unsupported' })
+  })
+})
+
+describe('clips showing part of their footage', () => {
+  /**
+   * An imported 6 s video and three clips of it: its first 2.5 s, 2 s from 3.5 s on, and all of it at double speed.
+   */
+  function threeParts(): Asset {
+    const project = editor.getProject()
+    const host = clipsOf(project, 'm-singer')[0]!
+    const asset: Asset = {
+      ...project.assets['m-singer']!,
+      id: 'a-parts',
+      name: 'parts.webm',
+      storageKey: 'opfs/a-parts',
+      origin: { type: 'import' },
+      duration: 6,
+    }
+    const base = { ...structuredClone(host), assetId: asset.id, playbackRate: 1 } as Clip
+    const parts = [
+      { ...base, id: 'c-first', start: 0.5, sourceStart: 0, duration: 2.5 },
+      { ...base, id: 'c-last', start: 3.5, sourceStart: 3.5, duration: 2 },
+      { ...base, id: 'c-whole', start: 6, sourceStart: 0, duration: 3, playbackRate: 2 },
+    ]
+    editor.dispatch([
+      { type: 'asset.add', asset },
+      ...parts.map((clip) => ({ type: 'clip.add' as const, clip: clip as Clip })),
+    ])
+    return asset
+  }
+
+  /** The check of a shot with a large person in its first 3 s only, as the vision check reports it. */
+  const firstHalf: Suitability = {
+    status: 'checked',
+    verdict: 'marginal',
+    reasons: ['subject-too-small'],
+    evidence: {
+      frames: Array.from({ length: 30 }, (_, i) => ({
+        t: i * 0.2,
+        verdict: i < 15 ? ('ok' as const) : ('subject-too-small' as const),
+        coverage: 0.2,
+      })),
+      spacing: 0.2,
+      pops: null,
+    },
+  }
+
+  it('are judged on the part they show, in the inspector and in Assist', () => {
+    const asset = threeParts()
+    const project = editor.getProject()
+    const checks = { [asset.id]: firstHalf }
+    const first = suitabilityOf(project, project.clips['c-first'], checks)
+    expect(first).toMatchObject({ verdict: 'good', reasons: [] })
+    expect(suitabilityText(first)).toEqual({ status: 'Person found', ok: true })
+    const last = suitabilityOf(project, project.clips['c-last'], checks)
+    expect(suitabilityText(last)).toEqual({
+      status: 'Not suitable',
+      why: 'People are too small in this wide shot.',
+      ok: false,
+    })
+    expect(suitableClips(project, checks)).toContain('c-first')
+    expect(suitableClips(project, checks)).not.toContain('c-last')
+    const rows = footageRows(project, checks).filter((r) => r.asset.id === asset.id)
+    expect(rows.map((r) => [r.suitability.status === 'checked' && r.suitability.verdict, r.clips])).toEqual([
+      ['good', 1],
+      ['marginal', 1],
+      ['unsuitable', 1],
+    ])
+    expect(new Set(rows.map((r) => r.key)).size).toBe(3)
+  })
+
+  it('get the whole verdict when they show all of it, and keep the note that no one was looked for', () => {
+    const asset = threeParts()
+    const project = editor.getProject()
+    const whole = suitabilityOf(project, project.clips['c-whole'], {
+      [asset.id]: { ...firstHalf, peopleSkipped: true },
+    })
+    expect(whole).toMatchObject({ verdict: 'marginal', reasons: ['subject-too-small'], peopleSkipped: true })
   })
 })
 

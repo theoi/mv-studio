@@ -20,6 +20,7 @@ import {
   keepPeople,
   peopleNear,
   POP_MIN_SHARE,
+  suitabilityInRange,
 } from '../../../../src/vision/mask/suitability.ts'
 import {
   appendFrame,
@@ -184,6 +185,9 @@ describe('suitability', () => {
   const empty = rectMask(W, H, 0, 0, 0, 0)
   const full = rectMask(W, H, 0, 0, W, H)
 
+  /** Pop shares of consecutive frames at 25 fps from t = 0. */
+  const series = (shares: number[]) => ({ start: 0, fps: 25, shares })
+
   it('classifies single frames', () => {
     expect(assessFrame(0, big).verdict).toBe('ok')
     expect(assessFrame(0, tiny).verdict).toBe('subject-too-small')
@@ -211,7 +215,7 @@ describe('suitability', () => {
     const samples = Array.from({ length: 8 }, (_, i) => ({ t: i * 0.2, mask: big }))
     // 40 frames; every 5th pops by 8 % of the subject, the rest by a little.
     const often = Array.from({ length: 40 }, (_, i) => (i % 5 ? 0.01 : 0.08))
-    const r = assessSuitability(samples, 0.2, {}, undefined, often)
+    const r = assessSuitability(samples, 0.2, {}, undefined, series(often))
     expect(r.stability).toBeCloseTo(0.8, 6)
     expect(r).toMatchObject({ verdict: 'marginal', reasons: ['unstable-mask'] })
     const calm = assessSuitability(
@@ -219,13 +223,13 @@ describe('suitability', () => {
       0.2,
       {},
       undefined,
-      often.map(() => POP_MIN_SHARE - 0.001),
+      series(often.map(() => POP_MIN_SHARE - 0.001)),
     )
     expect(calm).toMatchObject({ verdict: 'good', stability: 1 })
   })
 
   it('names flicker first when it alone keeps a shot from good, after the frame reasons otherwise', () => {
-    const popping = Array.from({ length: 50 }, (_, i) => (i % 4 ? 0 : 0.2))
+    const popping = series(Array.from({ length: 50 }, (_, i) => (i % 4 ? 0 : 0.2)))
     const at = (masks: Mask[]) => masks.map((mask, i) => ({ t: i * 0.2, mask }))
     // 9 of 10 frames usable: good without the flicker.
     const mostly = assessSuitability(at([...Array(9).fill(big), tiny]), 0.2, {}, undefined, popping)
@@ -239,6 +243,37 @@ describe('suitability', () => {
       popping,
     )
     expect(half).toMatchObject({ verdict: 'marginal', reasons: ['subject-too-small', 'unstable-mask'] })
+  })
+
+  it('judges a part of the shot on its own frames and pops, from the report’s evidence', () => {
+    // 6 s at 5 judged frames a second: a large person for the first 3 s, then a small one; pops only in the first second.
+    const samples = Array.from({ length: 30 }, (_, i) => ({ t: i * 0.2, mask: i < 15 ? big : tiny }))
+    const pops = series(Array.from({ length: 150 }, (_, i) => (i < 25 && i % 3 === 0 ? 0.2 : 0)))
+    const whole = assessSuitability(samples, 0.2, {}, undefined, pops)
+    expect(whole).toMatchObject({ verdict: 'marginal', reasons: ['subject-too-small'] })
+    const evidence = whole.evidence!
+    expect(suitabilityInRange(evidence, { start: 1, end: 3 })).toMatchObject({
+      verdict: 'good',
+      stability: 1,
+      sampledFrames: 11,
+    })
+    expect(suitabilityInRange(evidence, { start: 3.2, end: 6 })).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['subject-too-small'],
+    })
+    // The first second pops in 9 of its 25 frames.
+    expect(suitabilityInRange(evidence, { start: 0, end: 1 })).toMatchObject({
+      verdict: 'marginal',
+      reasons: ['unstable-mask'],
+      stability: 16 / 25,
+    })
+    // A part shorter than the spacing is judged on the frame nearest its middle.
+    expect(suitabilityInRange(evidence, { start: 2.05, end: 2.15 })).toMatchObject({
+      verdict: 'good',
+      sampledFrames: 1,
+    })
+    // The whole range gives the whole verdict.
+    expect(suitabilityInRange(evidence, { start: 0, end: 6 })).toEqual(whole)
   })
 
   it('leaves stability to the person track, which measures pops on every frame', () => {
@@ -329,6 +364,19 @@ describe('person evidence for the verdict', () => {
       samples.map((s) => ({ t: s.t, boxes: [] })),
     )
     expect(noOne).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+  })
+
+  it('counts boxes from the minimum score, and can judge again at another limit from the stored scores', () => {
+    const samples = Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask: subject }))
+    const unsure = samples.map((s) => ({ t: s.t, boxes: [around], scores: [0.25] }))
+    expect(assessSuitability(samples, 0.2, {}, unsure)).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['no-subject'],
+    })
+    expect(assessSuitability(samples, 0.2, { minPersonScore: 0.2 }, unsure).verdict).toBe('good')
+    // Boxes stored without scores all passed the detector's former 0.3 floor.
+    const older = unsure.map(({ t, boxes }) => ({ t, boxes }))
+    expect(assessSuitability(samples, 0.2, {}, older).verdict).toBe('good')
   })
 
   it('keeps a person the detector sees in every other frame', () => {

@@ -36,6 +36,19 @@ describe('checkSuitability', () => {
     expect(report).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
   })
 
+  it('judges the whole mask and says so when the person detector cannot be downloaded, asking for it once', async () => {
+    // The subject the detector would not call a person in the test above.
+    const seg = fakeSegmentation(
+      (_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 3),
+      () => null,
+    )
+    const { source } = fakeSource({ duration: 2 })
+    const report = await checkSuitability(seg, source)
+    expect(report).toMatchObject({ verdict: 'good', peopleSkipped: true })
+    expect(seg.analyzed).toHaveLength(10)
+    expect(seg.analyzed.filter((a) => a.people)).toHaveLength(1)
+  })
+
   it('looks for people in every sample, on 512 px frames, and makes masks at 256 px', async () => {
     const seg = fakeSegmentation()
     const { source } = fakeSource({ duration: 2 })

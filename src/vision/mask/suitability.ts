@@ -1,4 +1,12 @@
-import type { Mask, Rect, SuitabilityReason, SuitabilityReport, TimeRange } from '../types.ts'
+import type {
+  Mask,
+  Rect,
+  SuitabilityEvidence,
+  SuitabilityFrameVerdict,
+  SuitabilityReason,
+  SuitabilityReport,
+  TimeRange,
+} from '../types.ts'
 import { components, coverage } from './ops.ts'
 
 export interface SuitabilityOptions {
@@ -21,6 +29,8 @@ export interface SuitabilityOptions {
   minStability?: number
   /** Ranges shorter than this (seconds) are dropped. */
   minRangeSeconds?: number
+  /** Person boxes count from this detector score, default `PERSON_MIN_SCORE`. */
+  minPersonScore?: number
 }
 
 const DEFAULTS: Required<SuitabilityOptions> = {
@@ -32,14 +42,13 @@ const DEFAULTS: Required<SuitabilityOptions> = {
   marginalFraction: 0.25,
   minStability: 0.9,
   minRangeSeconds: 1,
+  minPersonScore: 0.3,
 }
-
-type FrameVerdict = 'ok' | SuitabilityReason
 
 export interface FrameAssessment {
   t: number
   coverage: number
-  verdict: FrameVerdict
+  verdict: SuitabilityFrameVerdict
 }
 
 export function assessFrame(t: number, mask: Mask, options: SuitabilityOptions = {}): FrameAssessment {
@@ -56,14 +65,22 @@ export function assessFrame(t: number, mask: Mask, options: SuitabilityOptions =
   return { t, coverage: cov, verdict: 'ok' }
 }
 
-/** Bumped whenever the verdict for the same masks changes, so stored reports are judged again. */
-export const SUITABILITY_VERSION = 4
+/**
+ * Bumped whenever the verdict for the same masks changes, or the report gains what the app needs, so stored reports
+ * are judged again.
+ */
+export const SUITABILITY_VERSION = 5
 
 /**
  * The person segmenter also cuts out animals and some vehicles, so the verdict counts only the mask inside boxes an
  * object detector labels "person". These were chosen on the 65-clip dev set (see src/vision/README.md).
  */
-export const PERSON_MIN_SCORE = 0.3
+export const PERSON_MIN_SCORE = DEFAULTS.minPersonScore
+/**
+ * The detector keeps boxes down to this score and each box's score is stored, so a limit between this and
+ * `PERSON_MIN_SCORE` can be tried on stored tracks without detecting again.
+ */
+export const DETECTOR_MIN_SCORE = 0.2
 /** Shortest `personHold`, in seconds. */
 export const PERSON_HOLD_SECONDS = 0.5
 /** Each side of a person box grows by this share of its size, for hair, raised arms and loose clothes. */
@@ -73,6 +90,13 @@ export const PERSON_BOX_MARGIN = 0.15
 export interface PeopleAt {
   t: number
   boxes: Rect[]
+  /** Each box's detector score; missing in tracks stored before scores were kept, whose boxes all scored 0.3 or more. */
+  scores?: number[]
+}
+
+/** The people in a frame's detections, with each box's score to 3 decimals. */
+export function detectedPeople(t: number, found: ReadonlyArray<{ box: Rect; score: number }> = []): PeopleAt {
+  return { t, boxes: found.map((p) => p.box), scores: found.map((p) => Math.round(p.score * 1000) / 1000) }
 }
 
 /**
@@ -101,13 +125,20 @@ export function peopleNear(people: ReadonlyArray<PeopleAt>, t: number, hold = pe
   return peopleIndex(people, hold)(t)
 }
 
-/** `peopleNear` for many times: sorts the detections once, so each lookup is a binary search plus the hold window. */
+/**
+ * `peopleNear` for many times, counting boxes from `minScore`: sorts the detections once, so each lookup is a binary
+ * search plus the hold window.
+ */
 export function peopleIndex(
   people: ReadonlyArray<PeopleAt>,
   hold = personHold(people),
+  minScore = PERSON_MIN_SCORE,
 ): (t: number) => Rect[] {
   const eps = 1e-6
-  const hits = people.filter((p) => p.boxes.length).sort((a, b) => a.t - b.t)
+  const hits = people
+    .map((p) => ({ t: p.t, boxes: p.boxes.filter((_, i) => (p.scores?.[i] ?? 1) >= minScore) }))
+    .filter((p) => p.boxes.length)
+    .sort((a, b) => a.t - b.t)
   let first = Infinity
   let last = -Infinity
   for (const p of people) {
@@ -157,24 +188,90 @@ export interface SuitabilitySample {
  */
 export const POP_MIN_SHARE = 0.05
 
+/** Every frame's pop share from the person track: `shares[i]` is for the frame at `start + i / fps` (media time). */
+export interface PopSeries {
+  start: number
+  fps: number
+  shares: ReadonlyArray<number>
+}
+
 /**
  * Decides whether "text behind the subject" works for a shot, from masks sampled across it (ascending times). The
  * quick check and the stored person track both judge with this, so they agree on the same masks. `spacing` is the
  * nominal time between samples, used to turn usable samples into time ranges. Stability is the share of frames without
  * a visible pop, from the person track's per-frame `pops` (every frame, not just the samples); the quick check has
  * none and reports null. With `people`, each frame is judged only on its mask inside the people found near it
- * (`peopleNear`); flicker is still measured on the whole mask, since the export cuts out all of it.
+ * (`peopleNear`); flicker is still measured on the whole mask, since the export cuts out all of it. The report keeps
+ * its evidence, so a part of the shot can be judged on its own (`suitabilityInRange`).
  */
 export function assessSuitability(
   samples: ReadonlyArray<SuitabilitySample>,
   spacing: number,
   options: SuitabilityOptions = {},
   people?: ReadonlyArray<PeopleAt>,
-  pops?: ReadonlyArray<number>,
+  pops?: PopSeries,
 ): SuitabilityReport {
   const o = { ...DEFAULTS, ...options }
-  const near = people && peopleIndex(people)
+  const near = people && peopleIndex(people, undefined, o.minPersonScore)
   const frames = samples.map((s) => assessFrame(s.t, near ? keepPeople(s.mask, near(s.t)) : s.mask, o))
+  const popping: number[] = []
+  pops?.shares.forEach((p, i) => {
+    if (p >= POP_MIN_SHARE) popping.push(i)
+  })
+  return judge(
+    {
+      frames: frames.map((f) => ({
+        t: f.t,
+        verdict: f.verdict,
+        coverage: Math.round(f.coverage * 1e4) / 1e4,
+      })),
+      spacing,
+      pops: pops?.shares.length
+        ? { start: pops.start, fps: pops.fps, count: pops.shares.length, popping }
+        : null,
+    },
+    o,
+  )
+}
+
+/**
+ * The verdict for the part of a shot from `range.start` to `range.end` (media seconds), judged from a report's
+ * evidence the same way as the whole shot, so a clip that shows only part of its footage is judged on that part.
+ */
+export function suitabilityInRange(
+  evidence: SuitabilityEvidence,
+  range: TimeRange,
+  options: SuitabilityOptions = {},
+): SuitabilityReport {
+  const eps = 1e-6
+  let frames = evidence.frames.filter((f) => f.t >= range.start - eps && f.t <= range.end + eps)
+  // A part shorter than the spacing of the judged frames takes the one nearest its middle.
+  if (!frames.length && evidence.frames.length) {
+    const mid = (range.start + range.end) / 2
+    frames = [evidence.frames.reduce((a, b) => (Math.abs(b.t - mid) < Math.abs(a.t - mid) ? b : a))]
+  }
+  let pops: SuitabilityEvidence['pops'] = null
+  const p = evidence.pops
+  if (p) {
+    const first = Math.max(0, Math.ceil((range.start - p.start) * p.fps - eps))
+    const end = Math.min(p.count, Math.ceil((range.end - p.start) * p.fps - eps))
+    if (end > first)
+      pops = {
+        start: p.start + first / p.fps,
+        fps: p.fps,
+        count: end - first,
+        popping: p.popping.filter((i) => i >= first && i < end).map((i) => i - first),
+      }
+  }
+  const o = { ...DEFAULTS, ...options }
+  return judge(
+    { frames, spacing: evidence.spacing, pops },
+    { ...o, minRangeSeconds: Math.min(o.minRangeSeconds, range.end - range.start) },
+  )
+}
+
+function judge(evidence: SuitabilityEvidence, o: Required<SuitabilityOptions>): SuitabilityReport {
+  const { frames, spacing, pops } = evidence
   const n = frames.length
   if (n === 0) {
     return {
@@ -185,13 +282,14 @@ export function assessSuitability(
       stability: null,
       sampledFrames: 0,
       suitableRanges: [],
+      evidence,
     }
   }
   const usable = frames.filter((f) => f.verdict === 'ok').length
   const usableFraction = usable / n
   const meanCoverage = frames.reduce((a, f) => a + f.coverage, 0) / n
 
-  const stability = pops?.length ? 1 - pops.filter((p) => p >= POP_MIN_SHARE).length / pops.length : null
+  const stability = pops?.count ? 1 - pops.popping.length / pops.count : null
 
   const counts = new Map<SuitabilityReason, number>()
   for (const f of frames) if (f.verdict !== 'ok') counts.set(f.verdict, (counts.get(f.verdict) ?? 0) + 1)
@@ -215,10 +313,15 @@ export function assessSuitability(
     stability,
     sampledFrames: n,
     suitableRanges: verdict === 'unsuitable' ? [] : suitableRanges,
+    evidence,
   }
 }
 
-function usableRanges(frames: FrameAssessment[], spacing: number, minSeconds: number): TimeRange[] {
+function usableRanges(
+  frames: ReadonlyArray<{ t: number; verdict: SuitabilityFrameVerdict }>,
+  spacing: number,
+  minSeconds: number,
+): TimeRange[] {
   const ranges: TimeRange[] = []
   let start: number | null = null
   let end = 0

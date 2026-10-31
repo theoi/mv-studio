@@ -123,6 +123,44 @@ test('a clip with no one in it says why it cannot be cut out', async ({ page }) 
   expect(await cutouts(page)).toEqual([])
 })
 
+test('a clip is cut out when the person and face detectors cannot download, and says the people check was skipped', async ({
+  page,
+}) => {
+  test.setTimeout(150_000)
+  let blocked = 0
+  await page.context().route(/\/(efficientdet_lite0|blaze_face_short_range)\.tflite$/, (route) => {
+    blocked++
+    return route.abort('internetdisconnected')
+  })
+  await open(page, '#/editor?t=10')
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const row = assist.getByText('people-interview', { exact: true }).locator('..').locator('..')
+  const note = 'People check skipped: the person detector could not download.'
+  await expect(row.getByText(`${note.replace(/\.$/, '')} · 1 clip`)).toBeVisible({ timeout: 90_000 })
+  // The sample clips of the demo project are suitable too.
+  await assist.getByRole('button', { name: /^Apply to \d+ suitable clips$/ }).click()
+  await expect(assist.getByText(`people-interview: ${note}`)).toBeVisible({ timeout: 90_000 })
+  expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: true })])
+  const masks = (await cutouts(page)).filter((c) => c.mask?.provider === 'vision.person-mask')
+  expect(masks).toEqual([
+    expect.objectContaining({ track: 'Subject', mask: expect.objectContaining({ kind: 'video' }) }),
+  ])
+  expect(blocked).toBeGreaterThan(0)
+
+  const block = page.getByRole('button', { name: /^people-interview, \d/ })
+  await block.focus()
+  await page.keyboard.press('Enter')
+  await page.getByRole('tab', { name: 'Inspector' }).click()
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await inspector.getByRole('button', { name: 'Layering' }).click()
+  await expect(
+    inspector.getByRole('switch', { name: 'Put text and effects behind the subject' }),
+  ).toBeChecked()
+  await expect(inspector.getByText(note, { exact: true })).toBeVisible()
+})
+
 test('Assist › Behind the subject does not offer a shot of an animal, which the person segmenter cuts out', async ({
   page,
 }) => {
@@ -145,17 +183,24 @@ test('Assist › Behind the subject does not offer a shot of an animal, which th
 const offeredThenRefused = (page: Page) => modelFreeVision(page, { trackFindsPeople: false })
 
 /**
- * Model-free vision with a person in every frame of the quick check. The export track finds them too when
- * `trackFindsPeople`, and with `popEvery` its stored pops say the cutout pops in every nth frame.
+ * Model-free vision with a person in every frame of the quick check (before `personUntil` seconds of the footage
+ * when set). The export track finds them too when `trackFindsPeople`, and with `popEvery` its stored pops say the
+ * cutout pops in every nth frame.
  */
-async function modelFreeVision(page: Page, opts: { trackFindsPeople: boolean; popEvery?: number }) {
+async function modelFreeVision(
+  page: Page,
+  opts: { trackFindsPeople: boolean; popEvery?: number; personUntil?: number },
+) {
   await page.evaluate((opts) => {
     const { vision } = window.mvStudio
     const hang = () => new Promise(() => undefined)
+    const until = opts.personUntil ?? Infinity
+    let at = 0
     const person = (width: number, height: number) => {
       const data = new Uint8Array(width * height)
-      for (let y = Math.floor(height * 0.15); y < height; y++)
-        data.fill(255, y * width + Math.floor(width * 0.35), y * width + Math.floor(width * 0.65))
+      if (at < until)
+        for (let y = Math.floor(height * 0.15); y < height; y++)
+          data.fill(255, y * width + Math.floor(width * 0.35), y * width + Math.floor(width * 0.65))
       return { width, height, data }
     }
     let track: Untyped
@@ -165,10 +210,11 @@ async function modelFreeVision(page: Page, opts: { trackFindsPeople: boolean; po
       analyze: async (req) => {
         const size = req.maskSize ?? { width: req.bitmap.width, height: req.bitmap.height }
         req.bitmap.close()
+        at = req.timestampMs / 1000
         return {
           ...(req.mask ? { mask: person(size.width, size.height) } : {}),
           ...(req.people
-            ? { people: [{ box: { x: 0.3, y: 0.1, width: 0.4, height: 0.9 }, score: 0.9 }] }
+            ? { people: at < until ? [{ box: { x: 0.3, y: 0.1, width: 0.4, height: 0.9 }, score: 0.9 }] : [] }
             : {}),
           ...(req.faces ? { faces: [] } : {}),
         }
@@ -179,6 +225,7 @@ async function modelFreeVision(page: Page, opts: { trackFindsPeople: boolean; po
       },
       pushTrackFrame: async (req) => {
         req.bitmap.close()
+        at = req.timestampMs / 1000
         const { width, height } = track.meta.maskSize
         vision.appendFrame(track, person(width, height), 0.26)
         return {
@@ -188,9 +235,10 @@ async function modelFreeVision(page: Page, opts: { trackFindsPeople: boolean; po
           ...(req.faces ? { faces: [] } : {}),
           ...(req.people
             ? {
-                people: opts.trackFindsPeople
-                  ? [{ box: { x: 0.3, y: 0.1, width: 0.4, height: 0.9 }, score: 0.9 }]
-                  : [],
+                people:
+                  opts.trackFindsPeople && at < until
+                    ? [{ box: { x: 0.3, y: 0.1, width: 0.4, height: 0.9 }, score: 0.9 }]
+                    : [],
               }
             : {}),
         }
@@ -289,6 +337,51 @@ test('the inspector says a cutout flickers when it lands, and keeps saying so wh
   ).toBeVisible()
   await expect(toggle).toBeChecked()
   await expect(inspector.getByText(why, { exact: true })).toBeVisible()
+})
+
+test('a clip that shows part of its footage is judged on that part, in Assist and in the inspector', async ({
+  page,
+}) => {
+  await open(page, '#/editor?t=10')
+  // A person in the first half of the 3 s clip only.
+  await modelFreeVision(page, { trackFindsPeople: true, personUntil: 1.5 })
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  // Split it in the middle: the first part shows the person, the second shows no one.
+  const [host] = await uncut(page, 'people-interview')
+  await page.evaluate((id) => (window.location.hash = `#/editor?sel=clip:${id}&t=11.6`), host!.id)
+  await page.keyboard.press('s')
+  await expect(page.getByRole('button', { name: /^people-interview, \d/ })).toHaveCount(2)
+
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const rows = assist.getByText('people-interview', { exact: true }).locator('..').locator('..')
+  await expect(rows.getByText('Person found · 1 clip')).toBeVisible()
+  await expect(rows.getByText('No one in this shot is large enough to cut out · 1 clip')).toBeVisible()
+  await assist.getByRole('button', { name: /^Apply to \d+ suitable clips$/ }).click()
+  await expect(assist.getByText(/^Lyrics now sit behind the person on \d+ clips$/)).toBeVisible()
+  const parts = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clips = Object.values(project.clips as Record<string, Untyped>)
+    const hosts = new Set(clips.map((c) => c.meta?.behindSubjectOf).filter(Boolean))
+    return clips
+      .filter(
+        (c) => project.assets[c.assetId]?.name?.startsWith('people-interview') && !c.meta?.behindSubjectOf,
+      )
+      .sort((a, b) => a.start - b.start)
+      .map((c) => hosts.has(c.id))
+  })
+  expect(parts).toEqual([true, false])
+
+  const second = page.getByRole('button', { name: /^people-interview, \d/ }).nth(1)
+  await second.focus()
+  await page.keyboard.press('Enter')
+  await page.getByRole('tab', { name: 'Inspector' }).click()
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await inspector.getByRole('button', { name: 'Layering' }).click()
+  await expect(inspector.getByText('No one in this shot is large enough to cut out.')).toBeVisible()
+  await expect(
+    inspector.getByRole('switch', { name: 'Put text and effects behind the subject' }),
+  ).toBeDisabled()
 })
 
 test('while clips are being checked, the top bar opens Behind the subject, not Export', async ({ page }) => {
