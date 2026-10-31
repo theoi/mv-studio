@@ -6,6 +6,7 @@ import { formatBpm, plural } from '../../../format.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { dispatch, editor, hasSong, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
 import { changeAspect } from '../../../state/reframe.ts'
+import { useSongPending } from '../../../state/songAnalysis.ts'
 import { useJob } from '../assist/jobState.ts'
 import { openAssist } from '../../../state/ui.ts'
 import { LookSection } from './Look.tsx'
@@ -16,10 +17,11 @@ import styles from '../Inspector.module.css'
 function useSongFacts(): string {
   const project = useProject()
   const analysis = useJob(JOB_KINDS.analysis).phase
+  const pending = useSongPending(project.songAssetId)
   const tempo = songAnalysis(project)?.tempo
   if (tempo && tempo.bpm > 0)
     return `${formatBpm(tempo.bpm)} · 4/4 · ${plural(sectionsOf(project).length, 'section')}`
-  if (analysis === 'running') return 'Analyzing the song…'
+  if (analysis === 'running' || pending) return 'Analyzing the song…'
   if (analysis === 'failed') return 'Couldn’t analyze the song'
   return songAnalysis(project) ? 'No beat found' : 'Not analyzed yet'
 }

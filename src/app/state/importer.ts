@@ -16,7 +16,7 @@ import { backgroundAnalysisOn } from './footage.ts'
 import { JOB_KINDS } from './jobs.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
-import { analysisService, findBars } from './songAnalysis.ts'
+import { analysisService, findBars, markSongPending } from './songAnalysis.ts'
 import { get, select, set, toast } from './ui.ts'
 
 /*
@@ -142,12 +142,17 @@ export async function importFiles(files: File[]): Promise<Asset[]> {
   const song = project.songAssetId ? undefined : assets.find((a) => a.kind === 'audio')
   if (song) commands.push(...songCommands(project, song))
   const label = assets.length === 1 ? `Import ${assets[0]?.name}` : `Import ${assets.length} files`
-  if (!dispatch(commands, { label })) return []
+  // Before the song is in the project, so Inspector › Song never says "Not analyzed yet" while its file loads.
+  if (song) markSongPending(song.id, true)
+  if (!dispatch(commands, { label })) {
+    if (song) markSongPending(song.id, false)
+    return []
+  }
   const visual = assets.filter((a) => a.kind === 'video' || a.kind === 'image').length
   if (song) {
     set({ playhead: 0, selection: { type: 'none' } })
     toast(`Added “${baseName(song.name)}” as the song. Finding its beats and sections…`)
-    void analyzeSong(song)
+    void analyzeSong(song).finally(() => markSongPending(song.id, false))
   } else {
     toast(
       assets.length === 1
