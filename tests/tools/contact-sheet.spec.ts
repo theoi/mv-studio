@@ -13,14 +13,17 @@ test('contact sheet', async ({ page }) => {
   })
   await openHarness(page)
   const sheets: { name: string; data: string }[] = await page.evaluate(async (kind) => {
-    const { engine, media, model, plugins, testing } = window.mvStudio
+    const { engine, media, plugins, testing } = window.mvStudio
     const W = 384
     const H = 216
-    const image = await media.mediaStore.storeBlob(await plugins.preview.sampleSceneBlob(), {
-      kind: 'image',
-      name: 'scene.png',
-      origin: { type: 'generated' },
-    })
+    const store = async (mode: 'color' | 'depth') =>
+      media.mediaStore.storeBlob(await plugins.preview.sampleSceneBlob(640, 360, mode), {
+        kind: 'image',
+        name: `scene-${mode}.png`,
+        origin: { type: 'generated' },
+      })
+    const image = await store('color')
+    const depth = await store('depth')
     const { compositor } = testing.createCompositor('export', W, H)
     if (kind === 'look' || kind === 'text-style') {
       const items: { id: string; name: string; sample?: string }[] =
@@ -33,19 +36,11 @@ test('contact sheet', async ({ page }) => {
       ctx.fillStyle = '#111'
       ctx.fillRect(0, 0, sheet.width, sheet.height)
       for (const [cell, look] of items.entries()) {
-        const { project, time } = plugins.preview.pluginPreview('pop', { image })
-        const editor = new model.ProjectEditor(project)
-        if (kind === 'look' && look.id) plugins.looks.applyLook(editor, look.id)
-        if (kind === 'text-style') {
-          const text = Object.values(editor.getProject().clips).find(
-            (c: { type: string }) => c.type === 'text',
-          ) as {
-            id: string
-          }
-          editor.dispatch({ type: 'clip.set', clipId: text.id, path: ['text'], value: look.sample })
-          plugins.typography.styles.applyTextStyle(editor, [text.id], look.id)
-        }
-        await compositor.render(editor.getProject(), time + (kind === 'look' ? 0.6 : 2.5))
+        const { project, time } =
+          kind === 'look'
+            ? plugins.preview.lookPreview(look.id, { image })
+            : plugins.preview.textStylePreview(look.id, { image })
+        await compositor.render(project, time)
         const x = (cell % cols) * W
         const y = Math.floor(cell / cols) * (H + 18)
         ctx.drawImage(compositor.canvas, x, y, W, H)
@@ -71,7 +66,7 @@ test('contact sheet', async ({ page }) => {
     ctx.fillRect(0, 0, sheet.width, sheet.height)
     let cell = 0
     for (const def of defs) {
-      const { project, time } = plugins.preview.pluginPreview(def.id, { image })
+      const { project, time } = plugins.preview.pluginPreview(def.id, { image, depth })
       for (const o of offsets) {
         await compositor.render(project, time + o)
         const x = (cell % cols) * W

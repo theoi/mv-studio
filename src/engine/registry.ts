@@ -6,7 +6,7 @@ import type { Animatable, ParamValue, Seconds } from '../model/types.ts'
 import { evaluateParam } from './animation.ts'
 import type { AudioSampler } from './audioFeatures.ts'
 import { isHexColor } from './color.ts'
-import { PLUGINS } from '../plugins/index.ts'
+import { PLUGINS, withThumbnail } from '../plugins/index.ts'
 import { BUILTIN_PLUGINS } from './plugins/index.ts'
 import type {
   EffectDefinition,
@@ -103,7 +103,7 @@ class Registry implements PluginRegistry {
 export function createPluginRegistry(options: { builtins?: boolean } = {}): PluginRegistry {
   const registry = new Registry()
   if (options.builtins !== false)
-    for (const plugin of [...BUILTIN_PLUGINS, ...PLUGINS]) registry.register(plugin)
+    for (const plugin of [...BUILTIN_PLUGINS, ...PLUGINS]) registry.register(withThumbnail(plugin))
   return registry
 }
 
