@@ -28,6 +28,7 @@ import type {
 } from '../model/types.ts'
 import { createGeneratorClip } from './library.ts'
 import { applyLookCommands, currentLook, lookRegistry } from './looks.ts'
+import { addLyricClipCommands } from './lyricClips.ts'
 import {
   reactionCommands,
   type ReactionId,
@@ -461,29 +462,8 @@ export function templateCommands(
     const linked = new Set(
       Object.values(now().clips).flatMap((c) => (c.type === 'text' && c.lyricLineId ? [c.lyricLineId] : [])),
     )
-    const lyricsAsset = lyrics.audioAssetId ?? now().songAssetId
-    const audio = Object.values(now().clips).find(
-      (c): c is AudioClip => c.type === 'audio' && c.assetId === lyricsAsset,
-    )
-    const toTimeline = (t: Seconds) =>
-      audio ? audio.start + (t - audio.sourceStart) / audio.playbackRate : t
-    const added: Id[] = []
-    for (const line of lyrics.lines) {
-      const lineStart = line.start ?? line.words[0]?.start
-      const lineEnd = line.end ?? line.words[line.words.length - 1]?.end
-      if (linked.has(line.id) || lineStart === undefined || lineEnd === undefined || lineEnd <= lineStart)
-        continue
-      const clip = createTextClip({
-        trackId: lyricsTrack,
-        text: line.text,
-        start: toTimeline(lineStart),
-        duration: toTimeline(lineEnd) - toTimeline(lineStart),
-      })
-      clip.lyricLineId = line.id
-      run([{ type: 'clip.add', clip }])
-      added.push(clip.id)
-    }
-    run(textStyleCommands(now(), added, template.textStyleId))
+    const lines = lyrics.lines.filter((l) => !linked.has(l.id))
+    run(addLyricClipCommands(now(), lyrics, lines, lyricsTrack, { textStyleId: template.textStyleId }))
   }
   return out
 }
