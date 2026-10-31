@@ -138,4 +138,7 @@ test('export benchmark: speed and main-thread responsiveness', async ({ page }, 
     contentType: 'application/json',
   })
   expect(result.realtime).toBeGreaterThan(0.01)
+  // Rendering and encoding run in the render worker, so the page keeps handling input while exporting.
+  expect(result.main.inputDelayP95Ms).toBeLessThan(50)
+  expect(result.main.longTaskMaxMs).toBeLessThan(200)
 })

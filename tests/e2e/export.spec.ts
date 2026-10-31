@@ -57,6 +57,8 @@ test('exports an H.264/AAC MP4 whose frames and audio match the preview render a
       duration: 2,
     })
     title.animation = { presetId: 'fade-up', params: {} }
+    // A bundled script font, unlike any fallback: the render worker must load it like the page does.
+    title.style = { ...title.style, fontFamily: 'Pacifico, sans-serif', fontSize: 120 }
     for (const c of [songClip, shot, title]) p.clips[c.id] = c
 
     const settings = { ...engine.exporter.exportSize('16:9', '720p'), fps: 30, aspect: '16:9' }

@@ -100,6 +100,11 @@ export interface CallOptions {
   signal?: AbortSignal
   onProgress?: (progress: JobProgress) => void
   transfer?: Transferable[]
+  /**
+   * On abort, keep the call pending until the worker handler has stopped (it then rejects with 'cancelled'), so the
+   * caller can clean up after it, e.g. delete a file the worker was writing. By default the call rejects at once.
+   */
+  awaitCancel?: boolean
 }
 
 export interface WorkerClient<Api extends WorkerApi> {
@@ -151,6 +156,7 @@ export function createWorkerClient<Api extends WorkerApi>(endpoint: Endpoint | W
         }
         const onAbort = () => {
           ep.postMessage({ kind: 'cancel', id } satisfies Request)
+          if (options.awaitCancel) return
           pending.delete(id)
           reject(new JobError('cancelled', 'Cancelled'))
         }

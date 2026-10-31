@@ -13,12 +13,23 @@ const api = {
   waitForCancel(_args: undefined, ctx: { signal: AbortSignal }) {
     return new Promise((resolve) => ctx.signal.addEventListener('abort', () => resolve('saw abort')))
   },
+  stopSlowly(_args: undefined, ctx: { signal: AbortSignal }) {
+    return new Promise((resolve) =>
+      ctx.signal.addEventListener('abort', () =>
+        setTimeout(() => {
+          stopped = true
+          resolve('stopped')
+        }, 30),
+      ),
+    )
+  },
   async makeBuffer(args: { size: number }) {
     const buf = new ArrayBuffer(args.size)
     return transfer(buf, [buf])
   },
 }
 
+let stopped = false
 let channel: MessageChannel | undefined
 
 function connect() {
@@ -59,6 +70,17 @@ describe('worker RPC', () => {
     controller.abort()
     const error = (await pending.catch((e: unknown) => e)) as JobError
     expect(error.code).toBe('cancelled')
+  })
+
+  it('with awaitCancel, settles only after the worker handler has stopped', async () => {
+    const client = connect()
+    stopped = false
+    const controller = new AbortController()
+    const pending = client.call('stopSlowly', undefined, { signal: controller.signal, awaitCancel: true })
+    controller.abort()
+    const error = (await pending.catch((e: unknown) => e)) as JobError
+    expect(error.code).toBe('cancelled')
+    expect(stopped).toBe(true)
   })
 
   it('transfers buffers returned with transfer()', async () => {
