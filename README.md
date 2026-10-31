@@ -4,7 +4,7 @@ MV Studio turns a song into a finished music video in your browser. Make a lyric
 
 **Open it:** https://theoi.github.io/mv-studio/ (latest desktop Google Chrome or Microsoft Edge)
 
-> **Early version.** MV Studio is in active development, so expect rough edges. Projects save automatically in your browser. To keep a copy of your own, open the menu under the project name and choose **Download project file**.
+> **Early version.** MV Studio is in active development, so expect rough edges. Projects save automatically in your browser. To keep a copy of your own, click the project name at the top left and choose **Download project file**.
 
 <!-- Screenshot placeholder: the editor with a lyric video open (media library, preview, inspector, timeline). -->
 
@@ -13,7 +13,7 @@ MV Studio turns a song into a finished music video in your browser. Make a lyric
 | Kind                 | What it is                                                                                                                                    |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Lyric video**      | Your lyrics, timed to the vocals word by word, with kinetic typography and karaoke highlighting over footage, stills or visuals.              |
-| **Visualizer**       | Spectrum, waveform, particle and shader visuals that move with the song's loudness, beats and frequency bands.                                |
+| **Visualizer**       | Spectrum, waveform, particle and shader visuals that move with the song's loudness, beats and bass.                                           |
 | **Beat-cut footage** | Your own clips, cut automatically to the beats and sections of the song, ready to fine-tune by hand.                                          |
 | **AI music video**   | The AI director drafts a whole video from the song and an optional prompt. With a fal.ai key it can also generate the images and video clips. |
 
@@ -30,21 +30,21 @@ The Start screen has a starting point for each kind, plus a blank project and **
 
 ## Features
 
-**Start and import**
+### Start and import
 
 - Bring in a song (MP3, WAV, FLAC, M4A/AAC, OGG, Opus), video (MP4, MOV, WebM, MKV), images (PNG, JPEG, GIF, WebP, AVIF, SVG) and fonts (TTF, OTF, WOFF, WOFF2). A song's title and artist tags name the project and the director's title card.
 - Open a recent project, duplicate one, or open a project file. A short guide shows you around the editor on your first visit.
 
-**Edit**
+### Edit
 
 - Multi-track timeline with the song's waveform: move, trim, split, snap, zoom, multi-select, copy and paste, and markers. Reorder tracks, and mute, solo, lock or hide them.
-- Clip speed, and the framing of each clip for every aspect ratio.
+- Clip speed, and how each clip fills other aspect ratios: following the subject, fitted with bars, or cropped to the center.
 - Text with fonts and styling, transitions, keyframe animation, blend modes, color adjustments and filters.
 - Real-time preview in sync with the song: loop a section, set the volume, zoom or go full screen, and move, scale and rotate the selected clip with handles on the canvas.
 - Undo and redo with an edit history, autosave, and a portable project file.
-- The command palette (Ctrl+K, or ⌘K on a Mac) finds commands by name, and most have a keyboard shortcut. Press **?** to see them, or open **Settings › Shortcuts**.
+- The command palette (Ctrl+K, or ⌘K on a Mac) finds commands by name, and many have a keyboard shortcut. Press **?** to see them, or open **Settings › Shortcuts**.
 
-**Music-aware tools**
+### Music-aware tools
 
 - Tempo and beats within seconds, with snap to beats. Bar starts follow after a further analysis of about a minute. If the tempo comes out at twice or half the speed, **Half** and **Double** fix it.
 - Song sections, the repeated chorus and an energy curve on the timeline.
@@ -54,7 +54,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 - Lyrics: paste them, or start from an automatic draft and correct it. Every word is then timed to the vocals, with karaoke highlighting and kinetic typography presets.
 - Visualizer presets, generative shader visuals and one-click looks that restyle the whole video.
 
-**AI**
+### AI
 
 - AI director: drafts a complete, editable video. It works without any key. With an LLM it writes richer plans, and with fal.ai it can generate shots.
 - Plain-language edits ("make the chorus more intense") with any OpenAI-compatible LLM, including local ones.
@@ -63,12 +63,13 @@ The Start screen has a starting point for each kind, plus a blank project and **
 - Lyrics behind the subject: automatic cutout of people in footage, and click-to-select for other objects, so text sits between the subject and the background.
 - Smart footage matching: local AI tags your clips by content, mood and motion, lets you search them by text, and suggests clips for each lyric line or section.
 
-**Export and perform**
+### Export and perform
 
 - MP4 export (H.264 video with AAC audio) at 720p, 1080p, 1440p or 4K and 24, 25, 30 or 60 fps, in 16:9, 9:16, 1:1 or 4:5. Quality presets (High, Balanced, Small) show the estimated file size and render time before you start.
 - Several formats from one project in one run, with auto-reframe between 16:9, 9:16, 1:1 and 4:5 that follows the subject.
 - Chorus teasers (15 to 30 second highlights) and seamless looping clips in the style of Spotify Canvas.
-- Live VJ mode: trigger clips and effects from the keyboard or a MIDI controller during playback, quantized to the beat or bar if you like. The performance is recorded as editable timeline content. The default MIDI mapping is in **Settings › VJ and MIDI**.
+- Save frame: a full-size PNG of the current frame, from the preview's right-click menu or the command palette.
+- Live VJ mode: trigger clips, effects and looks from the keyboard or a MIDI controller during playback, quantized to the beat or bar if you like. The performance is recorded as editable timeline content. The default MIDI mapping is in **Settings › VJ and MIDI**.
 
 <!-- Screenshot placeholder: the Assist panel with the director, and VJ mode. -->
 
