@@ -22,10 +22,43 @@ jobs.run({
 - `personTrack(source, { hqRanges })`: export mask track (512 px, output fps, edge-refined, zero-lag temporal filter, MODNet matte inside `hqRanges`). Cached per media id and options.
 - `selectionTrack(source, { t, points })`: object the user clicked, followed through the clip.
 - `subjects(source)`: subject track for auto-reframe (see below).
-- `indexClip(source)` + `matcher.rank(library, { text, mood, energy })`: footage ranking for lyric lines. `createDirectorFootageMatcher` adapts this to the director's interface.
+- `indexClip(source)` + `matcher.rank(library, { text, mood, energy })`: footage ranking for lyric lines. `createDirectorFootageMatcher` adapts this to the director's interface. For the app, `createFootageService` (below) analyzes imports in the background and searches the library.
 - `depth.get({ mediaId, quality, sourceSize, frame })`: Depth Anything V2 Small depth map, cached per media id and quality. `addCameraMove` builds on it (see below).
 
 Frames come from a `FrameSource` (`runtime/frames.ts`). Use `createAssetFrameSource(asset, mediaStore)` for stored assets: it decodes through the engine's export decoder, so analysis sees exactly the exported pixels, and it is about 4x faster than seeking a `<video>`. `createVideoElementSource` covers blobs that are not stored yet.
+
+## Footage library: search, suggestions, background analysis
+
+```ts
+const footage = createFootageService({ editor, vision, media: mediaStore })
+footage.indexing.start() // analyzes clips and stills as they are imported
+const state = useSyncExternalStore(footage.indexing.subscribe, footage.indexing.getState)
+const results = await footage.search('night city')
+```
+
+- `search(text)`, `suggestForLine(lineId)` and `suggestForSection(sectionId)` return `{ assetId, name, kind, score, range }`, best first. `score` is 0..1; `score >= STRONG_MATCH` counts as a match ("3 clips match"). `range` is the best-matching part of the clip in source seconds, for the hover preview and for placing the clip. Line suggestions use the line's text and the song's energy while it is sung; section suggestions use the section's first lyric lines, its energy and a mood from it. Clips that are not analyzed yet are not returned.
+- Background analysis: one job (`FOOTAGE_INDEX_JOB`, "Analyzing footage", message "Clip 3 of 10 · name") analyzes imported and generated clips and stills one at a time, oldest first, and picks up clips imported while it runs. Each result is cached per clip and written to the project's visual analysis with `history: 'skip'`: saved and in the portable file, but never an undo step. The director and auto-cut read the same data.
+- Cancel (`indexing.cancel()`) pauses analysis until `resume()` or the next import. A clip that fails to decode is skipped and listed in `state.failed`; a failure that would hit every clip (model download, out of memory) stops the run with `status: 'error'`.
+- UI states. Library badge per clip from `statusOf(assetId)`: `queued`, `indexing`, `indexed` (searchable), `failed` (message in `state.failed`; "Retry" calls `resume({ retryFailed: true })`), `paused` ("Resume"), `unsupported` (audio, fonts, derived media). Search box: while nothing is analyzed, "Analyzing your footage… results appear as clips finish"; with no results, "No clips match". The activity tray shows the job with Cancel. `status: 'error'` shows `state.error.message` with Retry (`resume()`).
+
+## Auto-cut (Assist › Auto-cut)
+
+```ts
+const handle = jobs.run({
+  kind: AUTOCUT_JOB,
+  title: 'Cutting to the beat',
+  run: (ctx) =>
+    autoCut({ editor, matcher: vision.matcher }, { pace: 'bar', followEnergy: true }, fromJob(ctx)),
+})
+const { stats, warnings, label } = await handle.promise
+```
+
+- **Options:** `pace` ("Cut every": `beat`, `2-beats`, `bar`, `2-bars`, `phrase`); `followEnergy` (twice as many cuts in high-energy sections, half as many in calm ones); `cutOn` (`beats`, `downbeats` for bar starts only, `sections` for section boundaries only); `order` (`matched` for "Match clips to the mood", `shuffled`, `chronological` for story order); `range` (whole song, a section, or the timeline selection); `assetIds` (which clips; default all); `seed` ("Try another").
+- **Rhythm:** cuts come from the beat grid with the director's planner helpers (`src/director/timing.ts`), never shorter than 0.35 s. With `sections`, a section longer than any clip is split on bar lines.
+- **Clip choice (matched):** each shot is ranked for the lyric line sung during it and the song's energy at that moment. Variety comes next: no clip twice in a row, recently used clips score lower, unused ones higher, and the best match for a lyric that is about to start is kept for it. Each shot takes the clip's best-matching range and avoids ranges used before. A clip a bit shorter than its shot plays slower, down to 0.5x. Clips without analysis are still used, picked for variety, with a warning. The plan records why each clip was chosen (`reason`: `lyric`, `energy`, `variety`, `story`).
+- **Applying:** one dispatch, so one undo step labeled `Auto-cut: 72 cuts`. Clips go on an "Auto-cut" track above the topmost footage, are muted (the song is the soundtrack) and carry `meta.autocut` with a fingerprint. Running again replaces only auto-cut clips nobody touched in the range. The range grows to whole earlier auto-cut clips. Clips the user made or edited on the track stay, and the new cut goes around them. If the Auto-cut track is locked, it is kept and the new cut goes on a new track above it. No other track is touched.
+- **Deterministic:** the same project, options and seed give the same cut (`planAutoCut` returns the shots without applying them; `applyAutoCut` applies a plan).
+- **UI states:** `idle` shows the options. "Cut to the beat" is disabled with a hint when there is no song or no clips; while footage is still being analyzed, a note says matching improves when it finishes. `running` shows the job's progress (`planning`, then `matching`) with Cancel. `done` shows `stats.cuts` and `warnings`, with Undo (`editor.undo()` while `editor.undoLabel() === label`), Keep and Try another (next seed; replaces the untouched cuts). `error` shows the `JobError` message: no song, no clips, or nothing to cut in the range.
 
 ## Results in the project
 
