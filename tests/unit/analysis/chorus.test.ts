@@ -405,6 +405,20 @@ describe('lyricChorusRanges', () => {
     ])
   })
 
+  it('takes the short-line limit from sections of at most 40 s, so coarse sections do not hide a real chorus', () => {
+    const sections = [
+      section('a', 0, 100, 'verse', 0),
+      section('b', 100, 200, 'chorus', 1, 0.4),
+      section('c', 200, 300, 'verse', 0),
+    ]
+    const lines = [...say(CHORUS, 10, 1), ...say([...VERSE_1, ...VERSE_2], 110, 1), ...say(CHORUS, 210, 1)]
+    // The chorus is sung for 14 s, against 100 s sections: still a chorus, and b, where a verse is sung, is not one.
+    expect(chorusAt(sections, lines)).toEqual([
+      [10, 24, 0.8],
+      [210, 224, 0.8],
+    ])
+  })
+
   it('keeps a detected chorus where repeated words are sung and extends one by at most a tenth', () => {
     const PRE = ['Here it comes again tonight', 'can you feel it rising']
     const sections = [

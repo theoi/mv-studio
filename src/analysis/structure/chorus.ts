@@ -59,6 +59,11 @@ const MAX_EXTENSION = 0.1
  */
 const MIN_LYRIC_CHORUS_SHARE = 0.2
 /**
+ * The median section `MIN_LYRIC_CHORUS_SHARE` is taken of, at most (seconds): coarse sections (32 bars, 100 s or
+ * more) would otherwise set the bar above a real chorus. Dev songs' median sections are 37 s at most.
+ */
+const MAX_TYPICAL_SECTION = 40
+/**
  * A detected chorus whose repeat group the lyrics confirm elsewhere is a verse only when fewer than this share of its
  * words are sung elsewhere: a last chorus sung with new words still repeats some, a verse none.
  */
@@ -324,7 +329,7 @@ export function lyricChorusRanges(sections: readonly SongSection[], chorus: Lyri
   const median = (values: number[]) => values.sort((a, b) => a - b)[(values.length - 1) >> 1] ?? 0
   const repeatedLine =
     median(chorus.ranges.map((r) => r.end - r.start)) <
-    MIN_LYRIC_CHORUS_SHARE * median(sections.map((s) => s.end - s.start))
+    MIN_LYRIC_CHORUS_SHARE * Math.min(MAX_TYPICAL_SECTION, median(sections.map((s) => s.end - s.start)))
   const confirmedGroups = new Set(
     sections
       .filter((s) => s.label === 'chorus' && isDetected(s) && s.repeatGroup !== undefined && hitsIn(s).length)
