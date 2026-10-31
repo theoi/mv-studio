@@ -121,6 +121,9 @@ function resolve(
 
 const PROTECTED_CLIP_KEYS = new Set(['id', 'type', 'trackId'])
 
+/** Feature ids: lowercase words with hyphens, optionally dotted ('vj', 'audio.stems'). */
+const EXTENSION_KEY = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)*$/
+
 function moveInArray<T>(arr: T[], from: number, to: number) {
   const clamped = Math.max(0, Math.min(arr.length - 1, to))
   const [item] = arr.splice(from, 1)
@@ -146,7 +149,9 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
       else p.duration = Math.max(0, cmd.duration)
       return
     case 'project.setExtension':
-      if (!cmd.key) throw new EditError('invalid', 'Extension key is required')
+      // Also keeps out keys like __proto__, which would replace the prototype of extensions instead of adding a key.
+      if (!EXTENSION_KEY.test(cmd.key))
+        throw new EditError('invalid', `Invalid extension key "${cmd.key}": use a feature id such as "vj"`)
       if (cmd.value !== null) {
         p.extensions ??= {}
         p.extensions[cmd.key] = cmd.value
