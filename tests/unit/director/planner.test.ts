@@ -6,14 +6,13 @@ import {
   expandBrief,
   generationOptionsFor,
   planLocally,
+  ruleBrief,
   shotsToGenerate,
   type EditPlan,
-  type FootageMatcher,
   type LookPreset,
-  type MatchQuery,
   type PlanShot,
 } from '../../../src/director/index.ts'
-import { MOOD_PROMPTS } from '../../../src/vision/matching/prompts.ts'
+import { CLIPS, fakeMatcher, makeProject as visionProject } from '../vision/autocut/fixtures.ts'
 import {
   BEATS,
   fakeProvider,
@@ -100,29 +99,38 @@ describe('local planner', () => {
     expect(others.some((o) => JSON.stringify(strip(o)) !== JSON.stringify(strip(a)))).toBe(true)
   })
 
-  it('asks the footage matcher with moods it knows and uses its best clips and ranges', async () => {
-    const project = makeProject()
-    const queries: MatchQuery[] = []
-    const matcher: FootageMatcher = {
-      async rank(query) {
-        if (typeof query !== 'string') queries.push(query)
-        return [
-          { assetId: 'video4', score: 0.95, time: 7.5 },
-          { assetId: 'video2', score: 0.4 },
-        ]
-      },
-      info: async () => [],
-    }
-    const p = await planLocally(await buildPlannerInput(project, { kind: 'beat-cut', seed: 7, matcher }))
-    expect(queries).toHaveLength(SECTIONS.length)
-    for (const q of queries) if (q.mood) expect(Object.keys(MOOD_PROMPTS)).toContain(q.mood)
-    const loudest = queries.reduce((a, b) => ((b.energy ?? 0) > (a.energy ?? 0) ? b : a))
-    expect(loudest.mood).toBe('energetic')
-    const firstUse = main(p).find((s) => s.source.type === 'media' && s.source.assetId === 'video4')!
-    expect(firstUse.source.type === 'media' && firstUse.source.sourceStart).toBe(7.5)
+  it('chooses clips with the footage matcher for the line sung, the prompt and the brief', async () => {
+    const asset = (s: PlanShot) => (s.source.type === 'media' ? s.source.assetId : undefined)
+    // Without the fixture's topic-less clip, which the fake encoder makes match every mood prompt.
+    const project = () => visionProject({ clips: CLIPS.filter((c) => c.topic) })
+    const draft = async (prompt = '') =>
+      planLocally(
+        await buildPlannerInput(project(), { kind: 'beat-cut', seed: 7, prompt, footage: fakeMatcher() }),
+      )
+    const p = await draft()
+    const at = (plan: EditPlan, t: number) => main(plan).find((s) => s.start >= t - 1e-3)!
+    // "neon city lights at night", "waves on the ocean shore", "everybody dance with the crowd"
+    expect(asset(at(p, 9.6))).toBe('city')
+    expect(asset(at(p, 14.4))).toBe('ocean')
+    expect(asset(at(p, 28.8))).toBe('crowd')
     expect(p.warnings).toEqual([])
-  })
+    // No line is sung in the intro, so the prompt decides.
+    expect(asset(at(await draft('ocean at dawn'), 0))).toBe('ocean')
 
+    const input = await buildPlannerInput(project(), { kind: 'beat-cut', seed: 7, footage: fakeMatcher() })
+    const brief = ruleBrief(input)
+    const preferring = {
+      ...brief,
+      sections: brief.sections.map((s) => (s.sectionId === 'chorus' ? { ...s, assetIds: ['ocean'] } : s)),
+    }
+    const ocean = (plan: EditPlan) =>
+      main(plan).filter((s) => s.sectionId === 'chorus' && asset(s) === 'ocean').length
+    const preferred = await expandBrief(preferring, input, { planner: 'llm' })
+    const plain = await expandBrief(brief, input, { planner: 'llm' })
+    expect(ocean(preferred)).toBeGreaterThan(ocean(plain))
+    const chorus = main(preferred).filter((s) => s.sectionId === 'chorus')
+    for (let i = 1; i < chorus.length; i++) expect(asset(chorus[i]!)).not.toBe(asset(chorus[i - 1]!))
+  })
   it('places every timed lyric line with karaoke highlighting', async () => {
     const p = await plan('lyric')
     const lyricTexts = p.texts.filter((t) => t.role === 'lyric')

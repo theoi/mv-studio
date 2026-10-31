@@ -1,7 +1,7 @@
 /**
- * Everything a planner needs, as plain data plus the footage matcher. Song analysis comes from
- * project.analysis.audio (src/analysis); footage tags and matching come from src/vision
- * (createDirectorFootageMatcher), whose types are used as is.
+ * Everything a planner needs, as plain data plus the footage matchers. Song analysis comes from
+ * project.analysis.audio (src/analysis); footage tags (createDirectorFootageMatcher), clip indexes and the matcher
+ * that ranks clips per shot come from src/vision, whose types are used as is.
  */
 import type { AspectPreset, FeatureSeries, Id, LyricsDoc, Project, Seconds } from '../model/types.ts'
 import { projectDuration } from '../model/queries.ts'
@@ -10,14 +10,15 @@ import type { GenerationRequest, GenerationTier } from '../cloud/types.ts'
 import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
 import type { Pace } from './plan.ts'
 import type { DirectorFootageMatch, DirectorFootageMatcher, FootageInfo } from '../vision/director.ts'
+import { readClipIndex } from '../vision/analysisData.ts'
 import type { FootageMatcher as ClipMatcher } from '../vision/matching/matcher.ts'
-import type { MatchQuery, Mood } from '../vision/types.ts'
+import type { ClipVisionIndex, MatchQuery, Mood } from '../vision/types.ts'
 
 export type { FootageInfo, MatchQuery }
 export type FootageMood = Mood
 export type FootageMatch = DirectorFootageMatch
 export type FootageMatcher = DirectorFootageMatcher
-/** src/vision's own footage matcher (`vision.matcher`), for ranking clips shot by shot against lyric lines. */
+/** src/vision's own footage matcher (`vision.matcher`): ranks clips shot by shot against the line sung then. */
 export type FootageRanker = Pick<ClipMatcher, 'model' | 'rankAll'>
 
 export type VideoKind = 'lyric' | 'visualizer' | 'beat-cut' | 'ai'
@@ -56,6 +57,8 @@ export interface MediaItem {
   height?: number
   generated: boolean
   info?: FootageInfo
+  /** The clip's vision index (embeddings and motion), when src/vision has analyzed it. */
+  index?: ClipVisionIndex
 }
 
 export interface GenerationOptions {
@@ -205,16 +208,20 @@ export function mediaFromProject(project: Project, info: FootageInfo[] = []): Me
         (a.origin.type === 'import' || a.origin.type === 'generated'),
     )
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name))
-    .map((a) => ({
-      assetId: a.id,
-      kind: a.kind,
-      name: a.name,
-      duration: a.duration,
-      width: a.width,
-      height: a.height,
-      generated: a.origin.type === 'generated',
-      info: byId.get(a.id),
-    }))
+    .map((a) => {
+      const index = readClipIndex(project.analysis.visual[a.id])
+      return {
+        assetId: a.id,
+        kind: a.kind,
+        name: a.name,
+        duration: a.duration,
+        width: a.width,
+        height: a.height,
+        generated: a.origin.type === 'generated',
+        info: byId.get(a.id),
+        ...(index ? { index } : {}),
+      }
+    })
 }
 
 export interface BuildInputOptions {

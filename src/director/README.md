@@ -49,6 +49,11 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   (`songTitleFromName`), never the prompt or the kind of video.
 - **Opening and ending**: the first shot fades in from black and the last fades out, ending when the music does
   when the song has a silent tail (`musicEnd`).
+- **Clip choice** (`chooseFootage`): footage and stills come from src/vision's `chooseClips`, the chooser auto-cut
+  uses, for all shots at once. With `footage` (`vision.matcher`) and analyzed clips it ranks clips for the line
+  sung during each shot, the section's media query (the prompt, or the LLM brief's) and mood, and the music's energy,
+  and prefers the brief's `assetIds`. Without it clips are picked for variety. Either way a clip never plays twice in
+  a row and repeats avoid showing the same frames.
 - **Visualizers** (`visualizerPalette`): one for peaks, one for verses and one for quiet parts, kept for the whole
   video and matched to prompt words; the seed varies them.
 
@@ -60,8 +65,8 @@ const director = new DirectorSession({
   jobs,
   provider: () => cloud.generation(),
   store: mediaStore,
-  matcher: () => footageMatcher, // createDirectorFootageMatcher() from src/vision
-  footage: () => vision.matcher, // src/vision's FootageMatcher, for clip choice shot by shot
+  matcher: () => footageMatcher, // createDirectorFootageMatcher() from src/vision: footage tags for the LLM brief
+  footage: () => vision.matcher, // src/vision's FootageMatcher: clip choice shot by shot
   catalog: () => catalogFromPlugins(registry.catalog()),
   spendPolicy: () => cloud.settings.get(),
   ledger: spendLedger,

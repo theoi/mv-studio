@@ -56,8 +56,9 @@ export interface DirectorDeps {
   /** The configured generation provider, e.g. () => cloud.generation(). */
   provider?: () => MediaGenerationProvider | undefined
   store?: GeneratedMediaStore
+  /** Footage tags (labels, motion, mood) for the LLM brief: createDirectorFootageMatcher() from src/vision. */
   matcher?: () => FootageMatcher | undefined
-  /** src/vision's footage matcher, `() => vision.matcher`. */
+  /** src/vision's footage matcher, `() => vision.matcher`, for choosing a clip per shot. */
   footage?: () => FootageRanker | undefined
   catalog?: () => DirectorCatalog
   spendPolicy?: () => SpendPolicy
