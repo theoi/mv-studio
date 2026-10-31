@@ -261,4 +261,24 @@ test('with several clips selected, a style goes on the texts among them as one u
   expect(after).not.toEqual(before)
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
   await expect.poll(styleOf).toEqual(before)
+
+  // With the title's track locked, the title is left out, and the note and the toast say so.
+  await page
+    .locator('[class*="trackHeader"]')
+    .filter({ hasText: /^Overlay/ })
+    .getByRole('button', { name: 'Lock track' })
+    .click()
+  await page.evaluate((ids) => window.mvStudio.app.ui.selectClips(ids), ids)
+  await expect(
+    library.getByText('Click a style to use it on this lyric line. 1 text is on a locked track.'),
+  ).toBeVisible()
+  await library.getByRole('button', { name: 'Neon sign' }).first().click()
+  await expect(
+    page
+      .getByRole('status')
+      .getByText('“Neon sign” on this lyric line · 1 text on a locked track was left as is'),
+  ).toBeVisible()
+  const locked = await styleOf()
+  expect(locked[2]).toBe(before[2])
+  expect(locked[1]).not.toBe(before[1])
 })

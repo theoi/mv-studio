@@ -334,7 +334,9 @@ describe('removing a file from the library', () => {
 describe('kinetic presets and text styles', () => {
   beforeEach(() => set({ selection: { type: 'none' }, playhead: 1, toasts: [] }))
 
-  /** The scene plus a second lyric line, a lyric line on the locked track and a title on its own track. */
+  /**
+   * The scene plus a second lyric line, a lyric line and a text on the locked track, and a title on its own track.
+   */
   function textScene() {
     const s = scene()
     const [lyrics, locked] = s.p.tracks
@@ -352,8 +354,9 @@ describe('kinetic presets and text styles', () => {
       ...createTextClip({ trackId: titles.id, text: 'Lumen Drive', start: 0, duration: 3 }),
       name: 'Title',
     }
-    for (const clip of [line2, hidden, title]) s.p.clips[clip.id] = clip
-    return { ...s, line2, hidden, title }
+    const lockedText = createTextClip({ trackId: locked!.id, text: 'Credits', start: 10, duration: 2 })
+    for (const clip of [line2, hidden, title, lockedText]) s.p.clips[clip.id] = clip
+    return { ...s, line2, hidden, title, lockedText }
   }
 
   it('goes on the selected text or lyric line, or on every unlocked lyric line when nothing is selected', () => {
@@ -413,6 +416,7 @@ describe('kinetic presets and text styles', () => {
       clipIds: [s.line.id, s.line2.id],
       what: '2 lyric lines',
       scope: 'several',
+      skipped: { count: 1, noun: 'lyric line', tracks: 1 },
     })
     // A video in the selection is left out; one text left is named as when it is selected alone.
     expect(textTargets(s.p, several(s.a.id, s.title.id))).toMatchObject({
@@ -422,9 +426,50 @@ describe('kinetic presets and text styles', () => {
     expect(textTargetHint(s.p, several(s.line2.id, s.title.id))).toBe('Click a style to use it on 2 texts')
     expect(textTargets(s.p, several(s.a.id, s.b.id))).toEqual({ why: 'Select a text or lyric line first' })
     s.p.tracks[0] = { ...s.p.tracks[0]!, locked: true }
+    // Both on the Lyrics track, or on two locked tracks.
     expect(textTargets(s.p, several(s.line.id, s.line2.id))).toEqual({
+      why: 'Their track is locked. Unlock it to restyle these texts.',
+    })
+    expect(textTargets(s.p, several(s.line.id, s.hidden.id))).toEqual({
       why: 'Their tracks are locked. Unlock them to restyle these texts.',
     })
+  })
+
+  it('says which selected texts it leaves out because their tracks are locked', () => {
+    const s = textScene()
+    const several = (...ids: string[]): Selection => ({ type: 'clip', id: ids[ids.length - 1]!, ids })
+    expect(textTargets(s.p, several(s.a.id, s.lockedText.id, s.title.id))).toEqual({
+      clipIds: [s.title.id],
+      what: '“Title”',
+      scope: 'text',
+      skipped: { count: 1, noun: 'text', tracks: 1 },
+    })
+    expect(textTargetHint(s.p, several(s.a.id, s.lockedText.id, s.title.id))).toBe(
+      'Click a style to use it on “Title”. 1 text is on a locked track.',
+    )
+    expect(textTargetHint(s.p, several(s.line2.id, s.title.id, s.lockedText.id, s.hidden.id))).toBe(
+      'Click a style to use it on 2 texts. 2 texts are on a locked track.',
+    )
+    s.p.tracks[0] = { ...s.p.tracks[0]!, locked: true }
+    expect(textTargetHint(s.p, several(s.line.id, s.hidden.id, s.title.id))).toBe(
+      'Click a style to use it on “Title”. 2 lyric lines are on locked tracks.',
+    )
+  })
+
+  it('names the texts it left out in the toast', () => {
+    const s = textScene()
+    editor.load(s.p)
+    set({ selection: { type: 'clip', id: s.title.id, ids: [s.lockedText.id, s.title.id] } })
+    applyLibraryTextStyle('neon')
+    expect(get().toasts.at(-1)?.message).toBe(
+      '“Neon sign” on “Title” · 1 text on a locked track was left as is',
+    )
+    expect((editor.getProject().clips[s.lockedText.id] as TextClip).style).toEqual(s.lockedText.style)
+    set({
+      selection: { type: 'clip', id: s.title.id, ids: [s.line.id, s.lockedText.id, s.hidden.id, s.title.id] },
+    })
+    applyTextAnimation('wave')
+    expect(get().toasts.at(-1)?.message).toBe('“Wave” on 2 texts · 2 texts on a locked track were left as is')
   })
 
   it('restyles several selected texts as one undo step', () => {

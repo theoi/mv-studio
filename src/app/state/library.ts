@@ -569,19 +569,58 @@ export type TextTargets =
        * (nothing is selected).
        */
       scope: 'text' | 'line' | 'several' | 'lyrics'
+      /** Texts among several selected clips left out because their tracks are locked. */
+      skipped?: Skipped
     }
   | { why: string }
+
+interface Skipped {
+  count: number
+  noun: 'text' | 'lyric line'
+  tracks: number
+}
 
 const NO_TEXT = 'Select a text or lyric line, or add text first'
 const NOT_TEXT = 'Select a text or lyric line first'
 const LOCKED_TEXT = 'That track is locked. Unlock it to restyle this text.'
 const LOCKED_TEXTS = 'Their tracks are locked. Unlock them to restyle these texts.'
+const LOCKED_TEXTS_ONE_TRACK = 'Their track is locked. Unlock it to restyle these texts.'
 const LOCKED_LYRICS = 'The Lyrics track is locked. Unlock it to restyle the lyrics.'
 
 const one = (clip: TextClip): TextTargets =>
   clip.lyricLineId
     ? { clipIds: [clip.id], what: 'this lyric line', scope: 'line' }
     : { clipIds: [clip.id], what: `“${clip.name ?? clip.text}”`, scope: 'text' }
+
+function skippedOf(clips: TextClip[]): Skipped | undefined {
+  if (!clips.length) return undefined
+  return {
+    count: clips.length,
+    noun: clips.every((c) => c.lyricLineId) ? 'lyric line' : 'text',
+    tracks: new Set(clips.map((c) => c.trackId)).size,
+  }
+}
+
+const lockedTrackWords = (s: Skipped) => (s.tracks > 1 ? 'locked tracks' : 'a locked track')
+
+/** For the note: "1 text is on a locked track". */
+const skippedNote = (s: Skipped) =>
+  `${plural(s.count, s.noun)} ${s.count === 1 ? 'is' : 'are'} on ${lockedTrackWords(s)}`
+
+/** For the toast: "1 text on a locked track was left as is". */
+const skippedToast = (s: Skipped) =>
+  `${plural(s.count, s.noun)} on ${lockedTrackWords(s)} ${s.count === 1 ? 'was' : 'were'} left as is`
+
+/** The toast after a style went on the targets. */
+function appliedToast(
+  name: string,
+  targets: Extract<TextTargets, { clipIds: Id[] }>,
+  extra?: string,
+): string {
+  return [`“${name}” on ${targets.what}`, targets.skipped && skippedToast(targets.skipped), extra]
+    .filter(Boolean)
+    .join(' · ')
+}
 
 /**
  * The text clips a clicked kinetic preset or text style goes on: the selected text clip or lyric line, the texts
@@ -597,14 +636,19 @@ export function textTargets(project: Project, selection: Selection): TextTargets
     const chosen = picked.flatMap((id) => texts.filter((c) => c.id === id))
     if (!chosen.length) return { why: NOT_TEXT }
     const open = chosen.filter((c) => !locked.has(c.trackId))
-    if (!open.length) return { why: chosen.length > 1 ? LOCKED_TEXTS : LOCKED_TEXT }
+    if (!open.length) {
+      if (chosen.length === 1) return { why: LOCKED_TEXT }
+      return { why: new Set(chosen.map((c) => c.trackId)).size > 1 ? LOCKED_TEXTS : LOCKED_TEXTS_ONE_TRACK }
+    }
+    const skipped = skippedOf(chosen.filter((c) => locked.has(c.trackId)))
     const [first] = open
-    if (open.length === 1 && first) return one(first)
+    if (open.length === 1 && first) return { ...one(first), ...(skipped && { skipped }) }
     const lines = open.every((c) => c.lyricLineId)
     return {
       clipIds: open.map((c) => c.id),
       what: plural(open.length, lines ? 'lyric line' : 'text'),
       scope: 'several',
+      ...(skipped && { skipped }),
     }
   }
   if (selection.type === 'clip' || selection.type === 'lyric') {
@@ -628,7 +672,8 @@ export function textTargetHint(project: Project, selection: Selection): string {
   const t = textTargets(project, selection)
   if ('why' in t) return t.why === NOT_TEXT ? 'Select a text or lyric line to restyle it' : t.why
   if (t.scope === 'lyrics') return 'Click a style to use it on every lyric line'
-  return `Click a style to use it on ${t.what}`
+  const where = `Click a style to use it on ${t.what}`
+  return t.skipped ? `${where}. ${skippedNote(t.skipped)}.` : where
 }
 
 /** Gives the text targets a kinetic preset as one undo step. */
@@ -647,7 +692,7 @@ export function applyTextAnimation(presetId: string): void {
     path: ['animation'],
     value: { presetId, params: {} },
   }))
-  if (dispatch(commands, { label })) toast(`“${def.name}” on ${targets.what}`, undoAction(label))
+  if (dispatch(commands, { label })) toast(appliedToast(def.name, targets), undoAction(label))
 }
 
 /** Whether every one of the clips is a lyric line without word timings, so word karaoke has nothing to light up. */
@@ -674,7 +719,7 @@ export function applyLibraryTextStyle(styleId: string): void {
   const untimed = preset.karaoke?.mode === 'word' && wordsUntimed(project, targets.clipIds)
   if (dispatch(textStyleCommands(project, targets.clipIds, styleId), { label }))
     toast(
-      `“${preset.name}” on ${targets.what}${untimed ? ' · Time the words to see it' : ''}`,
+      appliedToast(preset.name, targets, untimed ? 'Time the words to see it' : undefined),
       undoAction(label),
     )
 }
