@@ -25,9 +25,12 @@ import { cutSpans, type AutoCutOn, type AutoCutPace } from './rhythm.ts'
 export type { AutoCutOn, AutoCutOrder, AutoCutPace, AutoCutShot, AutoCutCompiled }
 
 export interface AutoCutOptions {
-  /** Base cut interval (default 'bar'). */
+  /** Base cut interval, the verse pace when following the song (default 'bar'). */
   pace?: AutoCutPace
-  /** Cut twice as often in high-energy sections and half as often in calm ones (default true). */
+  /**
+   * Pace by song structure (choruses faster, intros, bridges and outros slower), bar by bar with the music's energy,
+   * speeding up into a faster section (default true).
+   */
   followEnergy?: boolean
   /** Grid lines cuts may land on (default 'beats'). */
   cutOn?: AutoCutOn

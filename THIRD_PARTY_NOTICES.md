@@ -72,3 +72,13 @@ The HTDemucs ONNX repository on Hugging Face has no license file of its own; the
 | Permanent Marker (@fontsource/permanent-marker)                    | https://fonts.google.com/specimen/Permanent+Marker      | Apache License 2.0 (Font Diner)                                                                                                    | As above. Latin only.                                                                                |
 
 The design preview's sample media (scenes, song data and lyrics) is drawn procedurally in `src/app/mock` and written for this project; no third-party media is included.
+
+## Test data
+
+`tests/unit/vision/autocut/songs/*.json` hold beat times, sections and a 10 Hz loudness curve measured by this app from three songs of the JamendoLyrics dataset (https://huggingface.co/datasets/jamendolyrics/jamendolyrics). They contain no audio.
+
+| Song                         | Source                                              | License  |
+| ---------------------------- | --------------------------------------------------- | -------- |
+| Rxbyn - Bad Side             | https://www.jamendo.com/track/1556580/bad-side      | CC BY    |
+| Cortez - Feel (Stripped)     | https://www.jamendo.com/track/1481500/feel-stripped | CC BY    |
+| Lower Loveday - Is It Right? | https://www.jamendo.com/track/1559614/is-it-right   | CC BY-SA |

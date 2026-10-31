@@ -1,9 +1,20 @@
 /**
- * Where auto-cut cuts: shot spans on the song's beat grid, with the pace following section energy. The grid,
- * section coverage and beat-aligned cut times come from the director's planner helpers, so both cut the same way.
+ * Where auto-cut cuts: shot spans on the song's beat grid, paced by the song's structure. The grid, section
+ * coverage, per-section pace and phrased cut times come from the director's planner helpers, so both cut the same
+ * way.
  */
-import type { SectionInfo, SongInfo } from '../../director/inputs.ts'
-import { beatGrid, cutTimes, MIN_SHOT, sectionsFor, type BeatGrid } from '../../director/timing.ts'
+import { energyScale, type SectionInfo, type SongInfo } from '../../director/inputs.ts'
+import type { Pace } from '../../director/plan.ts'
+import { paceFor } from '../../director/rules.ts'
+import {
+  beatGrid,
+  beatsPerCut,
+  cutTimes,
+  MIN_SHOT,
+  phrasedCutTimes,
+  sectionsFor,
+  type BeatGrid,
+} from '../../director/timing.ts'
 import type { Id, Seconds } from '../../model/types.ts'
 import type { TimeRange } from '../types.ts'
 
@@ -12,9 +23,14 @@ export type AutoCutPace = 'beat' | '2-beats' | 'bar' | '2-bars' | 'phrase'
 export type AutoCutOn = 'beats' | 'downbeats' | 'sections'
 
 const PACE_BEATS: Record<AutoCutPace, number> = { beat: 1, '2-beats': 2, bar: 4, '2-bars': 8, phrase: 16 }
-/** Section energy (0..1 within the song) above which cuts come twice as often, and below which half as often. */
-const HIGH_ENERGY = 0.7
-const LOW_ENERGY = 0.35
+/** The director's pace with the same beats per shot, which becomes the verse pace when following the song. */
+const DIRECTOR_PACE: Record<AutoCutPace, Pace> = {
+  beat: 'very-fast',
+  '2-beats': 'fast',
+  bar: 'medium',
+  '2-bars': 'slow',
+  phrase: 'very-slow',
+}
 const EPS = 1e-3
 
 export interface CutSpan {
@@ -27,6 +43,7 @@ export interface CutSpan {
 
 export interface RhythmOptions {
   pace: AutoCutPace
+  /** Pace by song structure and energy (see `beatsPerShot`), phrased bar by bar; else one even pace. */
   followEnergy: boolean
   cutOn: AutoCutOn
   range: TimeRange
@@ -42,20 +59,22 @@ export interface Rhythm {
   sections: SectionInfo[]
 }
 
-/** Beats per shot in a section: the chosen pace, twice as fast in high-energy sections and half in calm ones. */
+/**
+ * Beats per shot in a section. Following the song, it is the director's pace for the section's role with the chosen
+ * pace as the verse pace: choruses a step faster, intros, bridges and outros a step slower, other sections by their
+ * energy, and energy moves a role one step at most. Otherwise every section gets the chosen pace.
+ */
 export function beatsPerShot(
   pace: AutoCutPace,
-  energy: number,
-  options: { followEnergy: boolean; cutOn: AutoCutOn; beatLength: Seconds },
+  section: Pick<SectionInfo, 'label' | 'energy'>,
+  options: { followEnergy: boolean; cutOn: AutoCutOn; grid: Pick<BeatGrid, 'beatLength' | 'bpm'> },
 ): number {
-  let k = PACE_BEATS[pace]
-  if (options.followEnergy) {
-    if (energy >= HIGH_ENERGY) k /= 2
-    else if (energy < LOW_ENERGY) k *= 2
-  }
-  k = Math.max(1, k)
+  const { beatLength, bpm } = options.grid
+  let k = options.followEnergy
+    ? beatsPerCut(paceFor('beat-cut', section, bpm, false, DIRECTOR_PACE[pace]), beatLength)
+    : PACE_BEATS[pace]
   if (options.cutOn === 'downbeats') k = Math.max(4, Math.ceil(k / 4) * 4)
-  while (k * options.beatLength < MIN_SHOT) k *= 2
+  while (k * beatLength < MIN_SHOT) k *= 2
   return k
 }
 
@@ -127,22 +146,26 @@ export function cutSpans(song: SongInfo, options: RhythmOptions): Rhythm {
   const grid = beatGrid(song)
   const sections = sectionsFor(song, grid)
   const { range } = options
+  const energyAt = options.followEnergy ? energyScale(song) : undefined
+  const ks = sections.map((s) =>
+    beatsPerShot(options.pace, s, { followEnergy: options.followEnergy, cutOn: options.cutOn, grid }),
+  )
   let spans: CutSpan[] = []
-  for (const section of sections) {
+  for (const [i, section] of sections.entries()) {
     const start = Math.max(section.start, range.start)
     const end = Math.min(section.end, range.end)
     if (end - start < EPS) continue
-    const k = beatsPerShot(options.pace, section.energy, {
-      followEnergy: options.followEnergy,
-      cutOn: options.cutOn,
-      beatLength: grid.beatLength,
-    })
+    const k = ks[i] as number
+    // Speed up through the last bar when the next section cuts faster, as an editor leads into a chorus.
+    const lift = options.followEnergy && section.end <= range.end + EPS && (ks[i + 1] ?? k) < k
     const cuts =
       options.cutOn === 'sections'
         ? [start]
         : options.cutOn === 'downbeats'
           ? barCuts(start, end, k / 4, grid)
-          : cutTimes(start, end, k, grid)
+          : options.followEnergy
+            ? phrasedCutTimes(start, end, k, grid, { ...(energyAt ? { energyAt } : {}), lift })
+            : cutTimes(start, end, k, grid)
     cuts.forEach((t, i) => {
       spans.push({
         start: t,
