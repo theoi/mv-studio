@@ -133,6 +133,124 @@ test('the 3D camera move is set in Motion only, and a LUT choice lists LUT files
   await expect(lut).toHaveText('Neutral')
   await lut.click()
   const options = await page.getByRole('option').allInnerTexts()
-  expect(options.map((o) => o.split('\n')[0])).toEqual(['None', 'Neutral', 'No LUT files yet'])
+  expect(options.map((o) => o.split('\n')[0])).toEqual(['None', 'Neutral', 'Load a LUT file…'])
+  await page.keyboard.press('Escape')
+})
+
+/** A 2×2×2 .cube LUT that lifts the shadows toward teal. */
+const cubeFile = (name: string, title: string) => ({
+  name,
+  mimeType: 'text/plain',
+  buffer: Buffer.from(
+    [
+      `TITLE "${title}"`,
+      'LUT_3D_SIZE 2',
+      ...['0 0.1 0.1', '1 0 0', '0 1 0', '1 1 0', '0 0 1', '1 0 1', '0 1 1', '1 1 1'],
+    ].join('\n'),
+  ),
+})
+
+/** A PNG made in the page: a level-2 Hald CLUT (8×8, the identity) or, at another size, an ordinary image. */
+async function png(page: Page, name: string, side: number) {
+  const bytes = await page.evaluate(async (side) => {
+    const canvas = new OffscreenCanvas(side, side)
+    const ctx = canvas.getContext('2d')!
+    const image = ctx.createImageData(side, side)
+    for (let i = 0; i < side * side; i++)
+      image.data.set([(i % 4) * 85, (Math.floor(i / 4) % 4) * 85, (Math.floor(i / 16) % 4) * 85, 255], i * 4)
+    ctx.putImageData(image, 0, 0)
+    const blob = await canvas.convertToBlob({ type: 'image/png' })
+    return Array.from(new Uint8Array(await blob.arrayBuffer()))
+  }, side)
+  return { name, mimeType: 'image/png', buffer: Buffer.from(bytes) }
+}
+
+test('a LUT file loads from the LUT choice as one undo step, a Hald image too, and Import media takes .cube files', async ({
+  page,
+}) => {
+  await openWithEffects(page, ['Color grade'])
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  const lut = inspector.getByRole('combobox', { name: 'Color grade LUT' })
+  await expect(lut).toHaveText('None')
+  /** The color grade's LUT setting, and the name of the file it points to. */
+  const lutSetting = () =>
+    page.evaluate(() => {
+      const project: Project = window.mvStudio.app.project.editor.getProject()
+      for (const clip of Object.values(project.clips)) {
+        if (clip.type === 'audio') continue
+        const value = clip.effects.find((e) => e.effectId === 'color-grade')?.params.lut?.value
+        if (value !== undefined) return { value, file: project.assets[String(value)]?.name ?? null }
+      }
+      return null
+    })
+  const load = async (file: { name: string; mimeType: string; buffer: Buffer }) => {
+    await lut.click()
+    const chooser = page.waitForEvent('filechooser')
+    await page.getByRole('option', { name: /^Load a LUT file…/ }).click()
+    await (await chooser).setFiles(file)
+  }
+
+  await load(cubeFile('teal.cube', 'Teal push'))
+  await expect(lut).toHaveText('Teal push')
+  expect((await lutSetting())?.file).toBe('Teal push')
+  expect(await undoLabel(page)).toBe('Add LUT Teal push')
+  // Ctrl+Z stays with the focused LUT choice, so the toast offers Undo; it removes the file too.
+  await expect(page.getByRole('status').getByText('Added the LUT “Teal push”')).toBeVisible()
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).last().click()
+  await expect(lut).toHaveText('None')
+  expect(await lutSetting()).toEqual({ value: '', file: null })
+
+  await load(await png(page, 'identity-hald.png', 8))
+  await expect(lut).toHaveText('identity-hald')
+  await load(await png(page, 'photo.png', 10))
+  await expect(
+    page.getByRole('status').getByText(/^photo\.png was not loaded: This image is not a Hald CLUT/),
+  ).toBeVisible()
+  await expect(lut).toHaveText('identity-hald')
+
+  // A .cube file from Import media joins the LUT choice; it is not media, so the toast says where it went.
+  await page.getByLabel('Import media files').setInputFiles(cubeFile('warm.cube', 'Warm'))
+  await expect(
+    page.getByRole('status').getByText('Imported the LUT “Warm”. Choose it in a Color grade’s LUT.'),
+  ).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Effects', selected: true })).toBeVisible()
+
+  // Dropped on a track, a .cube file is a LUT too, and no clip.
+  const clipCount = () =>
+    page.evaluate(() => Object.keys(window.mvStudio.app.project.editor.getProject().clips).length)
+  const clips = await clipCount()
+  const cube = cubeFile('cool.cube', 'Cool').buffer.toString('base64')
+  await page
+    .locator('[data-timeline-scroller] div[class*="row"]')
+    .filter({ has: page.locator('span[class*="trackName"]', { hasText: /^Video$/ }) })
+    .locator('div[class*="lane"]')
+    .first()
+    .evaluate((el, b64) => {
+      const data = new DataTransfer()
+      data.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], 'cool.cube'))
+      const r = el.getBoundingClientRect()
+      const init = {
+        dataTransfer: data,
+        bubbles: true,
+        cancelable: true,
+        clientX: r.left + 40,
+        clientY: r.top + 10,
+      }
+      el.dispatchEvent(new DragEvent('dragover', init))
+      el.dispatchEvent(new DragEvent('drop', init))
+    }, cube)
+  await expect(
+    page.getByRole('status').getByText('Imported the LUT “Cool”. Choose it in a Color grade’s LUT.'),
+  ).toBeVisible()
+  expect(await clipCount()).toBe(clips)
+  await lut.click()
+  const options = await page.getByRole('option').allInnerTexts()
+  expect(options.map((o) => o.split('\n')[0])).toEqual([
+    'None',
+    'identity-hald',
+    'Warm',
+    'Cool',
+    'Load a LUT file…',
+  ])
   await page.keyboard.press('Escape')
 })

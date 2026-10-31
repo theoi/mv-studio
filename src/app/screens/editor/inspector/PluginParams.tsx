@@ -1,5 +1,5 @@
 import type { ParamSpec } from '../../../../engine/types.ts'
-import type { Clip, Project, PropertyPath } from '../../../../model/index.ts'
+import type { Clip, Id, Project, PropertyPath } from '../../../../model/index.ts'
 import {
   AnimateButtons,
   ColorField,
@@ -11,9 +11,13 @@ import {
   Switch,
 } from '../../../ds/Fields.tsx'
 import { formatParam } from '../../../format.ts'
-import { isLutAsset } from '../../../../plugins/lut.ts'
-import { useProject } from '../../../state/project.ts'
-import { settingName, useAnimatable } from './animatable.ts'
+import { importLut, isLutAsset } from '../../../../plugins/lut.ts'
+import { JobError, jobs } from '../../../../shared/jobs.ts'
+import { JOB_KINDS } from '../../../state/jobs.ts'
+import { undoAction } from '../../../state/library.ts'
+import { dispatch, editor, useProject } from '../../../state/project.ts'
+import { toast } from '../../../state/ui.ts'
+import { settingName, useAnimatable, valueAtCommands } from './animatable.ts'
 import styles from '../Inspector.module.css'
 
 const spacer = <span className={styles.trailSpacer} />
@@ -24,6 +28,8 @@ const stepOf = (spec: NumberSpec) => spec.step ?? (spec.max - spec.min) / 100
 
 /** Stands for no image: a select option can't have an empty value. */
 const NONE = 'none'
+/** The LUT choice's action that asks for a LUT file. */
+const LOAD_LUT = 'load-lut'
 
 /** A built-in file's name as a choice: "bundled:luts/neutral.png" reads "Neutral". */
 function builtInName(value: string): string {
@@ -52,13 +58,50 @@ function imageOptions(project: Project, value: string, role: 'lut' | 'texture' |
         ? { value, label: builtInName(value), description: 'Built in' }
         : { value, label: project.assets[value]?.name ?? 'Missing image' },
     )
-  if (!images.length)
-    options.push(
-      role === 'lut'
-        ? { value: 'no-images', label: 'No LUT files yet', disabled: true }
-        : { value: 'no-images', label: 'No images yet', description: 'Import one in Media', disabled: true },
-    )
+  if (role === 'lut')
+    options.push({ value: LOAD_LUT, label: 'Load a LUT file…', description: '.cube file or Hald CLUT image' })
+  else if (!images.length)
+    options.push({
+      value: 'no-images',
+      label: 'No images yet',
+      description: 'Import one in Media',
+      disabled: true,
+    })
   return options
+}
+
+/** Asks for a .cube file or Hald CLUT image, then adds it and makes it the clip's LUT at `path`, as one undo step. */
+function loadLutFile(clipId: Id, path: PropertyPath) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.cube,image/*'
+  input.addEventListener('change', () => {
+    const file = input.files?.[0]
+    if (file) void addLut(clipId, path, file)
+  })
+  input.click()
+}
+
+async function addLut(clipId: Id, path: PropertyPath, file: File) {
+  try {
+    const { mediaStore } = await import('../../../../media/mediaStore.ts')
+    const asset = await jobs.run({
+      kind: JOB_KINDS.import,
+      title: `Loading ${file.name}`,
+      run: () => importLut(file, mediaStore),
+    }).promise
+    const clip = editor.getProject().clips[clipId]
+    const label = `Add LUT ${asset.name}`
+    if (
+      dispatch([{ type: 'asset.add', asset }, ...(clip ? valueAtCommands(clip, path, asset.id, 0) : [])], {
+        label,
+      })
+    )
+      toast(`Added the LUT “${asset.name}”`, undoAction(label))
+  } catch (error) {
+    if (error instanceof JobError && error.code === 'cancelled') return
+    toast(`${file.name} was not loaded: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 /**
@@ -158,7 +201,7 @@ export function ParamRow({
         <FieldRow label={spec.label} trailing={spacer}>
           <Select
             value={value}
-            onChange={(v) => once(v === NONE ? '' : v)}
+            onChange={(v) => (v === LOAD_LUT ? loadLutFile(clip.id, path) : once(v === NONE ? '' : v))}
             ariaLabel={name}
             options={imageOptions(project, value, spec.role)}
           />

@@ -156,6 +156,9 @@ export function isLutAsset(asset: Asset): boolean {
   )
 }
 
+/** Whether a file is a .cube LUT, which Import media turns into a LUT rather than rejecting. */
+export const isCubeFile = (file: File): boolean => /\.cube$/i.test(file.name)
+
 async function readLut(file: Blob & { name?: string }): Promise<Lut3D> {
   if (/\.cube$/i.test(file.name ?? '') || file.type === 'text/plain' || file.type === '') {
     const text = await file.text()

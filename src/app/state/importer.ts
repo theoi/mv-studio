@@ -10,6 +10,7 @@ import {
   type Project,
   type Track,
 } from '../../model/index.ts'
+import { importLut, isCubeFile, isLutAsset } from '../../plugins/lut.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
 import { templateState } from '../../plugins/templates.ts'
 import { TRACK_IDS } from '../mock/demoProject.ts'
@@ -37,7 +38,7 @@ export function registerImportInput(input: HTMLInputElement | null): void {
 
 export function openImport(what: 'media' | 'song' = 'media'): void {
   if (!fileInput) return
-  fileInput.accept = what === 'song' ? 'audio/*' : 'audio/*,video/*,image/*'
+  fileInput.accept = what === 'song' ? 'audio/*' : 'audio/*,video/*,image/*,.cube'
   fileInput.click()
 }
 
@@ -125,7 +126,7 @@ export async function storeFiles(files: File[]): Promise<StoredFiles> {
         jobs.run({
           kind: JOB_KINDS.import,
           title: `Importing ${file.name}`,
-          run: (ctx) => mediaStore.importFile(file, ctx),
+          run: (ctx) => (isCubeFile(file) ? importLut(file, mediaStore) : mediaStore.importFile(file, ctx)),
         }).promise,
     ),
   )
@@ -165,7 +166,7 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
     ? placeAll(
         project,
         commands,
-        assets.filter((a) => a !== song),
+        assets.filter((a) => a !== song && !isLutAsset(a)),
         at,
       )
     : []
@@ -176,7 +177,8 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
     if (song) markSongPending(song.id, false)
     return []
   }
-  const visual = assets.filter((a) => a.kind === 'video' || a.kind === 'image').length
+  const visual = assets.filter((a) => (a.kind === 'video' || a.kind === 'image') && !isLutAsset(a)).length
+  const lut = assets.length === 1 && assets[0] && isLutAsset(assets[0]) ? assets[0] : undefined
   const first = placed[0]?.clip
   if (first) {
     select({ type: 'clip', id: first.id })
@@ -190,6 +192,9 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
     set({ playhead: 0, selection: { type: 'none' } })
     toast(`Added “${baseName(song.name)}” as the song. Finding its beats and sections…`)
     void analyzeSong(song).finally(() => markSongPending(song.id, false))
+  } else if (lut) {
+    // A LUT is not media, so the Media library doesn't list it: say where it went.
+    toast(`Imported the LUT “${lut.name}”. Choose it in a Color grade’s LUT.`)
   } else if (!first) {
     toast(
       assets.length === 1
