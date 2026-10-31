@@ -15,13 +15,23 @@ export interface PickPoint {
   time: number
 }
 
+/** What a click at a point would pick. */
+export interface PickTarget {
+  /** Its outline, as canvas corners 0..1. */
+  outline: [number, number][]
+  /** Its name, announced to screen readers as the aim moves onto it. */
+  name: string
+}
+
 export interface PickRequest {
   /** What to click, shown on the preview and used as its accessible name. */
   prompt: string
   onPick(point: PickPoint): void
   onCancel?(): void
-  /** Outline, as canvas corners 0..1, of what a click at this point would pick, or null. */
-  hover?(point: { x: number; y: number }): [number, number][] | null
+  /** What a click at this point would pick, or null. */
+  hover?(point: { x: number; y: number }): PickTarget | null
+  /** Announced when the aim is on nothing `hover` would pick. Default "Nothing to pick here". */
+  miss?: string
 }
 
 export const usePick = create<{ request: PickRequest | null }>(() => ({ request: null }))
