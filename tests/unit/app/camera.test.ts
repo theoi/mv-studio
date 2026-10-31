@@ -60,16 +60,18 @@ const fullMove = (id: string) => ({
   },
 })
 
-const smear = [{ risk: 'smear' as const, above: 30 }]
-const bend = [{ risk: 'bend' as const, above: 20 }]
+const at = (...risks: { risk: 'smear' | 'bend'; above: number }[]) => ({ risks, alwaysBends: false })
+const smear = at({ risk: 'smear', above: 30 })
+const bend = at({ risk: 'bend', above: 20 })
+const none = at()
 
 it('says how many of the stills just given a move may smear or bend, and what they may do', () => {
   expect(riskNote(1, [])).toBeNull()
-  expect(riskNote(4, [[], []])).toBeNull()
+  expect(riskNote(4, [none, none])).toBeNull()
   expect(riskNote(1, [smear])).toBe(
     'This image may smear behind foreground objects at this strength. Try a lower Strength.',
   )
-  expect(riskNote(4, [[], smear])).toBe(
+  expect(riskNote(4, [none, smear])).toBe(
     '1 of 4 images may smear behind foreground objects at this strength. Try a lower Strength.',
   )
   expect(riskNote(4, [smear, smear, smear])).toBe(
@@ -84,13 +86,36 @@ it('says how many of the stills just given a move may smear or bend, and what th
   expect(riskNote(3, [bend, smear])).toBe(
     '2 of 3 images may smear behind foreground objects or bend straight lines at this strength. Try a lower Strength.',
   )
-  // Bending at any strength: only another motion helps.
-  const always = [{ risk: 'bend' as const, above: 0 }]
+  // Bending at any strength, where another motion keeps the lines straight.
+  const always = at({ risk: 'bend', above: 0 })
   expect(riskNote(1, [always])).toBe(
     'This image may bend straight lines at this strength. Try another Motion.',
   )
   expect(riskNote(2, [always, smear])).toBe(
     'All 2 images may smear behind foreground objects or bend straight lines at this strength. Try a lower Strength.',
+  )
+})
+
+it('says once that straight lines bend with any motion where every motion bends them at the lowest strength', () => {
+  const everyMotion = (above: number) => ({ risks: [{ risk: 'bend' as const, above }], alwaysBends: true })
+  expect(riskNote(1, [everyMotion(10)])).toBe(
+    'Straight lines in this image bend with any Motion; a lower Strength makes it less visible.',
+  )
+  expect(riskNote(1, [everyMotion(0)])).toBe(
+    'Straight lines in this image bend with any Motion; a lower Strength makes it less visible.',
+  )
+  expect(riskNote(3, [everyMotion(10), none, everyMotion(0)])).toBe(
+    'Straight lines in 2 of 3 images bend with any Motion; a lower Strength makes it less visible.',
+  )
+  expect(riskNote(2, [everyMotion(10), everyMotion(5)])).toBe(
+    'Straight lines in all 2 images bend with any Motion; a lower Strength makes it less visible.',
+  )
+  // Another still that may smear, or bend only with this motion: the usual note, without "another Motion".
+  expect(riskNote(2, [everyMotion(0), at({ risk: 'bend', above: 0 })])).toBe(
+    'All 2 images may bend straight lines at this strength. Try a lower Strength.',
+  )
+  expect(riskNote(1, [{ ...everyMotion(10), risks: [...everyMotion(10).risks, ...smear.risks] }])).toBe(
+    'This image may smear behind foreground objects or bend straight lines at this strength. Try a lower Strength.',
   )
 })
 
@@ -111,16 +136,17 @@ it('lists what a move may do above which strength, the lowest first, from the sa
   expect(riskFacts(cameraRisks({ smear: 0.35, bend: 0.35 }, 50), 'short')).toEqual([
     'smear or bend lines above 35%',
   ])
+  // A no-break space keeps "any" with "strength" when the line wraps.
   expect(riskFacts(cameraRisks({ smear: 0.4, bend: 0 }, 25), 'long')).toEqual([
-    'bend straight lines at any strength',
+    'bend straight lines at any\u00a0strength',
   ])
   expect(riskFacts(cameraRisks({ smear: 0, bend: 0 }, 25), 'short')).toEqual([
-    'smear or bend lines at any strength',
+    'smear or bend lines at any\u00a0strength',
   ])
 })
 
 it('tells what moves may do at the strength they were added with', () => {
-  const move = (intensity: number, safe: { smear: number; bend: number }) => ({
+  const move = (intensity: number, safe: { smear: number; bend: number }, alwaysBends = false) => ({
     clipId: 'c',
     effectInstanceId: 'fx',
     depthAssetId: 'd',
@@ -129,10 +155,14 @@ it('tells what moves may do at the strength they were added with', () => {
     safe,
     smearRisk: intensity > safe.smear,
     bendRisk: intensity > safe.bend,
+    alwaysBends,
   })
   expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.25 })] })).toBeNull()
   expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.1 })] })).toBe(
     'This image may bend straight lines at this strength. Try a lower Strength.',
+  )
+  expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.1 }, true)] })).toBe(
+    'Straight lines in this image bend with any Motion; a lower Strength makes it less visible.',
   )
 })
 
@@ -195,6 +225,7 @@ describe('editing a move in Inspector › Motion', () => {
       safe,
       smearRisk: intensity > safe.smear,
       bendRisk: intensity > safe.bend,
+      alwaysBends: false,
     })
     const result = {
       moves: [at(0.4, { smear: 0.3, bend: 0.15 }), { ...at(0.4, { smear: 0.3, bend: 0.15 }), clipId: other }],

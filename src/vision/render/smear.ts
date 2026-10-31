@@ -210,9 +210,7 @@ export interface SafeAmounts {
 /**
  * Largest amounts (0.05 to 1 in steps of 0.05) at which `preset` stays under the smear limit and under the bend
  * limit (`BEND_LIMIT` in bend.ts) on this still, 0 when even 0.05 does not. Smear grows with the amount, so its amount
- * is a binary search. Bend mostly does, but a line that something in front crosses at one amount and not at the next
- * can drop out, so its amount is the last of the steps up from 0.05 that all stay under the limit (cheap: no ray
- * march). Without lines in the scene, `bend` is 1.
+ * is a binary search. Bend is `safeBend`. Without lines in the scene, `bend` is 1.
  */
 export function safeAmounts(
   scene: SmearScene,
@@ -220,15 +218,22 @@ export function safeAmounts(
   focus: number,
   limit = SMEAR_LIMIT,
 ): SafeAmounts {
-  const { lines } = scene
   return {
     smear: largest((intensity) => smearOf(scene, { preset, intensity, focus }) <= limit),
-    bend: lines
-      ? lastOf(
-          (intensity) => bendOf({ depth: scene.depth, lines }, { preset, intensity, focus }) <= BEND_LIMIT,
-        )
-      : 1,
+    bend: safeBend(scene, preset, focus),
   }
+}
+
+/**
+ * Largest amount (0.05 to `upTo` in steps of 0.05) at which `preset` stays under the bend limit on this still; 1
+ * without lines. Bend mostly grows with the amount, but a line that something in front crosses at one amount and not
+ * at the next can drop out, so this is the last of the steps up from 0.05 that all stay under the limit (cheap: no ray
+ * march).
+ */
+export function safeBend(scene: SmearScene, preset: CameraPreset, focus: number, upTo = 1): number {
+  const { depth, lines } = scene
+  if (!lines) return 1
+  return lastOf((intensity) => bendOf({ depth, lines }, { preset, intensity, focus }) <= BEND_LIMIT, upTo)
 }
 
 /** Largest amount at which `preset` neither smears nor bends this still: the smaller of `safeAmounts`. */
@@ -242,9 +247,10 @@ export function safeIntensity(
   return Math.min(safe.smear, safe.bend)
 }
 
-function lastOf(ok: (intensity: number) => boolean): number {
+function lastOf(ok: (intensity: number) => boolean, upTo: number): number {
+  const steps = Math.round(upTo * 20)
   let step = 0
-  while (step < 20 && ok((step + 1) / 20)) step++
+  while (step < steps && ok((step + 1) / 20)) step++
   return step / 20
 }
 

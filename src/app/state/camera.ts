@@ -134,6 +134,7 @@ export function startCameraMoves(
       const result = await v.addCameraMoves({ editor, media: depthMedia, depth: vision.depth }, clipIds, {
         preset,
         ...(intensity === undefined ? {} : { intensity }),
+        alternatives: Object.values(MOTION_PRESETS),
         signal: ctx.signal,
         onProgress: (p) => ctx.progress({ ...p, message: message(p.fraction ?? 0) }),
       })
@@ -174,7 +175,7 @@ const RISK_WORDS = {
 /** The risks as facts ("bend lines above 15%", "smear above 40%"), one fact when both start at the same strength. */
 export function riskFacts(risks: readonly CameraRiskAt[], words: keyof typeof RISK_WORDS): string[] {
   const w = RISK_WORDS[words]
-  const from = (above: number) => (above > 0 ? `above ${above}%` : 'at any strength')
+  const from = (above: number) => (above > 0 ? `above ${above}%` : 'at any\u00a0strength')
   const [first, second] = risks
   if (first && second && first.above === second.above) return [`${w.smear} or ${w.bend} ${from(first.above)}`]
   return risks.map((r) => `${w[r.risk]} ${from(r.above)}`)
@@ -202,26 +203,37 @@ export function riskyMoves(
 
 /**
  * What to tell the user when some of the `total` stills just given a move may smear or bend (`risks` lists what
- * each move may do); null when none may.
+ * each move may do, `alwaysBends` that every Motion bends its straight lines even at the lowest automatic strength);
+ * null when none may.
  */
-export function riskNote(total: number, risks: readonly (readonly CameraRiskAt[])[]): string | null {
-  const risky = risks.filter((r) => r.length)
+export function riskNote(
+  total: number,
+  moves: readonly { risks: readonly CameraRiskAt[]; alwaysBends: boolean }[],
+): string | null {
+  const risky = moves.filter((m) => m.risks.length)
   if (!risky.length) return null
-  const has = (risk: CameraRisk) => risky.some((r) => r.some((x) => x.risk === risk))
+  const count = risky.length === total ? `all ${total}` : `${risky.length} of ${total}`
+  // Neither another motion nor a strength that still shows keeps such lines straight.
+  if (risky.every((m) => m.alwaysBends && m.risks.every((r) => r.risk === 'bend')))
+    return `Straight lines in ${total === 1 ? 'this image' : `${count} images`} bend with any Motion; a lower Strength makes it less visible.`
+  const has = (risk: CameraRisk) => risky.some((m) => m.risks.some((x) => x.risk === risk))
   const { smear, bend } = RISK_WORDS.long
   const what = has('smear') && has('bend') ? `${smear} or ${bend}` : has('smear') ? smear : bend
-  // A still that may do it at any strength is helped only by another motion.
-  const lower = risky.some((r) => r[0]!.above > 0)
-  const rest = `may ${what} at this strength. ${lower ? 'Try a lower Strength.' : 'Try another Motion.'}`
+  // Only another motion helps a still that may do it at any strength, unless every motion bends its lines.
+  const other = risky.every((m) => m.risks[0]!.above === 0 && !m.alwaysBends)
+  const rest = `may ${what} at this strength. ${other ? 'Try another Motion.' : 'Try a lower Strength.'}`
   if (total === 1) return `This image ${rest}`
-  return `${risky.length === total ? `All ${total}` : `${risky.length} of ${total}`} images ${rest}`
+  return `${count[0]!.toUpperCase()}${count.slice(1)} images ${rest}`
 }
 
 /** `riskNote` for a result as it was added. */
 export function addedRiskNote(result: Pick<CameraMovesResult, 'moves'>): string | null {
   return riskNote(
     result.moves.length,
-    result.moves.map((m) => cameraRisks(m.safe, Math.round(m.intensity * 100))),
+    result.moves.map((m) => ({
+      risks: cameraRisks(m.safe, Math.round(m.intensity * 100)),
+      alwaysBends: m.alwaysBends,
+    })),
   )
 }
 

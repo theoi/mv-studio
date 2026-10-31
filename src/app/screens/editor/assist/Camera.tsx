@@ -128,7 +128,7 @@ export function CameraView() {
     const risky = riskyMoves(project, result, preset)
     const note = riskNote(
       result.moves.length,
-      risky.map((r) => r.risks),
+      risky.map((r) => ({ risks: r.risks, alwaysBends: r.move.alwaysBends })),
     )
     const riskRows = risky.flatMap((r) => {
       const clip = project.clips[r.move.clipId]

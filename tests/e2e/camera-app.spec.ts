@@ -544,7 +544,7 @@ test('a still whose straight lines a move may bend gets a lower automatic amount
   )
 })
 
-test('every wording of a still’s row in Assist › 3D camera stays inside its text column at 1280 × 720', async ({
+test('every wording of a still’s row in Assist › 3D camera stays inside its text column at 1280 × 720, and a still that bends with every Motion gets its own note', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
@@ -562,18 +562,9 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
   await expect(detail).toBeVisible()
   // The fake depths make a still that smears or one that bends, never both, so the move's safe amounts are set to
   // each case the row puts into words.
-  for (const [smear, bend, words] of [
-    [0.1, 1, 'may smear above 10%'],
-    [1, 0.45, 'may bend lines above 45%'],
-    [0.4, 0.15, 'may bend lines above 15% and smear above 40%'],
-    [0.35, 0.35, 'may smear or bend lines above 35%'],
-    [0, 1, 'may smear at any strength'],
-    [1, 0, 'may bend lines at any strength'],
-    [0.4, 0, 'may bend lines at any strength and smear above 40%'],
-    [0, 0, 'may smear or bend lines at any strength'],
-  ] as const) {
-    await page.evaluate(
-      ([s, b]) => {
+  const setSafe = (smear: number, bend: number, alwaysBends = false) =>
+    page.evaluate(
+      ([s, b, always]) => {
         const { useCamera } = window.mvStudio.app.camera
         useCamera.setState((state: Untyped) => ({
           results: Object.fromEntries(
@@ -587,14 +578,26 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
                   safeIntensity: Math.min(s, b),
                   smearRisk: m.intensity > s,
                   bendRisk: m.intensity > b,
+                  alwaysBends: always,
                 })),
               },
             ]),
           ),
         }))
       },
-      [smear, bend] as const,
+      [smear, bend, alwaysBends] as const,
     )
+  for (const [smear, bend, words] of [
+    [0.1, 1, 'may smear above 10%'],
+    [1, 0.45, 'may bend lines above 45%'],
+    [0.4, 0.15, 'may bend lines above 15% and smear above 40%'],
+    [0.35, 0.35, 'may smear or bend lines above 35%'],
+    [0, 1, 'may smear at any strength'],
+    [1, 0, 'may bend lines at any strength'],
+    [0.4, 0, 'may bend lines at any strength and smear above 40%'],
+    [0, 0, 'may smear or bend lines at any strength'],
+  ] as const) {
+    await setSafe(smear, bend)
     await expect(detail).toHaveText(`Strength 100% · ${words}`)
     const spill = await detail.evaluate((el) => {
       const column = el.parentElement!.getBoundingClientRect()
@@ -604,6 +607,17 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
     })
     expect(spill, words).toBeLessThanOrEqual(0)
   }
+
+  // Where every Motion bends the still's lines even at the lowest automatic strength, the note says so instead of
+  // advising another Motion or a lower Strength, and the row still says from which strength.
+  const note = assist.getByText(/may bend straight lines|Straight lines in/)
+  await setSafe(1, 0)
+  await expect(note).toHaveText('This image may bend straight lines at this strength. Try another Motion.')
+  await setSafe(1, 0.1, true)
+  await expect(note).toHaveText(
+    'Straight lines in this image bend with any Motion; a lower Strength makes it less visible.',
+  )
+  await expect(detail).toHaveText('Strength 100% · may bend lines above 10%')
 })
 
 test('one inline suggestion at a time: a selected still’s suggestion takes the lyrics hint’s place, which comes back after', async ({

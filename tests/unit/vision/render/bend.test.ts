@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BEND_LIMIT, BEND_PX, bendAt, bendOf, straightLines } from '../../../../src/vision/render/bend.ts'
+import { BEND_LIMIT, bendAt, bendOf, straightLines } from '../../../../src/vision/render/bend.ts'
 import { localContrast, safeAmounts, type DepthField } from '../../../../src/vision/render/smear.ts'
 import type { CameraPose, GrayImage } from '../../../../src/vision/types.ts'
 
@@ -48,8 +48,7 @@ describe('bendAt', () => {
   it('bends a line whose depth rises and falls along it, by more as the camera moves more', () => {
     const facade = field((_, y) => 128 + wave(y))
     expect(bendAt(sideways(0.03), edge, facade)).toBeGreaterThan(BEND_LIMIT)
-    // 0.005 × 30/255 × 1920 ≈ 1.1 px: under BEND_PX.
-    expect(BEND_PX).toBeGreaterThan(1.2)
+    // 0.005 × 30/255 × 1920 ≈ 1.1 px, well under BEND_PX (3 px), so nothing counts as bent.
     expect(bendAt(sideways(0.005), edge, facade)).toBe(0)
   })
 
