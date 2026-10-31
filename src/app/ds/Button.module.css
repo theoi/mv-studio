@@ -122,11 +122,11 @@
 
 .danger {
   background: var(--danger-soft);
-  color: #ff8a83;
+  color: var(--danger-text);
 }
 
 .danger:hover:not(:disabled) {
-  background: rgb(239 95 87 / 0.22);
+  background: rgb(236 90 114 / 0.22);
 }
 
 .iconButton {
