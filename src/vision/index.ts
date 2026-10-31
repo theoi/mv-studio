@@ -100,10 +100,12 @@ export {
 export { createImageFrameSource } from './runtime/imageSource.ts'
 export {
   addCameraMove,
+  addCameraMoves,
   cameraMoveCommands,
   cameraMoveEffect,
   encodeDepthImage,
   findDepthAsset,
   type CameraMoveDeps,
   type CameraMoveOptions,
+  type CameraMovesResult,
 } from './cameraMove.ts'

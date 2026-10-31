@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import { createImageClip, createProject } from '../../../src/model/factory.ts'
 import type { Asset, ImageClip, Project } from '../../../src/model/types.ts'
-import { cameraMoveCommands, cameraMoveEffect, findDepthAsset } from '../../../src/vision/cameraMove.ts'
+import {
+  addCameraMoves,
+  cameraMoveCommands,
+  cameraMoveEffect,
+  findDepthAsset,
+} from '../../../src/vision/cameraMove.ts'
 import { CAMERA_EFFECT_ID } from '../../../src/vision/render/cameraEffect.ts'
 import { VISION_MODELS } from '../../../src/vision/runtime/models.ts'
 
@@ -95,5 +100,72 @@ describe('3D camera move', () => {
     }
     expect(findDepthAsset({ assets }, 'still')?.id).toBe('depth')
     expect(findDepthAsset({ assets: { still: assets.still, mask: assets.mask } }, 'still')).toBeUndefined()
+  })
+})
+
+describe('3D camera moves on several stills', () => {
+  it('adds every move in one undo step and estimates each still’s depth once', async () => {
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 64, height: 36, close: () => undefined }))
+    const { project, clipId } = setup()
+    const track = project.tracks.find((t) => t.kind === 'visual')!
+    project.assets.other = asset('other', { type: 'import' })
+    project.assets.depth = depthAsset
+    project.assets.otherDepth = asset('otherDepth', {
+      type: 'derived',
+      parentAssetId: 'other',
+      provider: DEPTH_MODEL,
+    })
+    const again = createImageClip({ trackId: track.id, assetId: 'still', start: 10, duration: 3 })
+    const second = createImageClip({ trackId: track.id, assetId: 'other', start: 20, duration: 4 })
+    project.clips[again.id] = again
+    project.clips[second.id] = second
+    const editor = new ProjectEditor(project)
+    const estimated: string[] = []
+    const depth = {
+      async get(req: { mediaId: string; sourceSize: { width: number; height: number } }) {
+        estimated.push(req.mediaId)
+        const data = new Uint8Array(16 * 9).map((_, i) => (i % 16) * 16)
+        return {
+          version: 1 as const,
+          width: 16,
+          height: 9,
+          data,
+          sourceSize: req.sourceSize,
+          model: DEPTH_MODEL,
+          quality: 'full' as const,
+        }
+      },
+      peek: async () => null,
+    }
+    const media = {
+      getFile: async () => new Blob(),
+      storeBlob: async (): Promise<Asset> => {
+        throw new Error('depth images already stored')
+      },
+    }
+
+    const result = await addCameraMoves({ editor, media, depth }, [clipId, again.id, second.id], {
+      preset: 'pan-left',
+      intensity: 0.3,
+    })
+
+    expect(estimated).toEqual(['still', 'other'])
+    expect(result.label).toBe('Add 3D camera moves to 3 images')
+    expect(result.moves.map((m) => m.depthAssetId)).toEqual(['depth', 'depth', 'otherDepth'])
+    const after = editor.getProject()
+    for (const id of [clipId, again.id, second.id]) {
+      const camera = imageClip(after, id).effects[0]!
+      expect(camera.effectId).toBe(CAMERA_EFFECT_ID)
+      expect(camera.params.preset!.value).toBe('pan-left')
+      expect(camera.params.intensity!.value).toBe(0.3)
+    }
+    expect(editor.undoLabel()).toBe(result.label)
+    expect(editor.undo()).toBe(true)
+    expect(editor.canUndo()).toBe(false)
+    for (const id of [clipId, again.id, second.id])
+      expect(imageClip(editor.getProject(), id).effects.some((e) => e.effectId === CAMERA_EFFECT_ID)).toBe(
+        false,
+      )
+    vi.unstubAllGlobals()
   })
 })

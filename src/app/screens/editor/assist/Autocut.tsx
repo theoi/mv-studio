@@ -4,7 +4,7 @@ import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { Segmented, Select, Switch } from '../../../ds/Fields.tsx'
-import { formatTime, plural } from '../../../format.ts'
+import { formatBytes, formatTime, plural } from '../../../format.ts'
 import {
   autoCutClipCount,
   autoCutOptions,
@@ -34,7 +34,7 @@ export function AutocutBadge() {
   return null
 }
 
-/** Megabytes the matching model still needs to download when this cut starts footage analysis, else 0. */
+/** Bytes the matching model still needs to download when this cut starts footage analysis, else 0. */
 function useMatchingDownload(needed: boolean): number {
   const [bytes, setBytes] = useState(0)
   useEffect(() => {
@@ -47,7 +47,7 @@ function useMatchingDownload(needed: boolean): number {
       live = false
     }
   }, [needed])
-  return needed ? Math.round(bytes / 1_000_000) : 0
+  return needed ? bytes : 0
 }
 
 export function AutocutView() {
@@ -66,7 +66,7 @@ export function AutocutView() {
   const clips = choices.clips === 'selected' && asset ? 'selected' : 'all'
   const analyzing = indexing?.status === 'indexing'
   const willAnalyze = choices.matchMood && unanalyzed > 0 && !analyzing
-  const downloadMb = useMatchingDownload(willAnalyze)
+  const download = useMatchingDownload(willAnalyze)
   const cut = () => {
     if (willAnalyze) analyzeFootageNow()
     startAutoCut(autoCutOptions({ ...choices, range, clips }, project, selection, playhead))
@@ -197,7 +197,7 @@ export function AutocutView() {
             Cut to the beat
           </Button>
           <div className={styles.costLine}>
-            <Lock /> Runs on this device · free{downloadMb ? ` · ${downloadMb} MB download, once` : ''}
+            <Lock /> Runs on this device · free{download ? ` · ${formatBytes(download)} download, once` : ''}
           </div>
         </>
       }

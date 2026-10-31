@@ -31,6 +31,12 @@ export interface CameraMoveOptions extends TaskOptions {
   intensity?: number
 }
 
+export interface CameraMovesResult {
+  moves: { clipId: Id; effectInstanceId: Id; depthAssetId: Id }[]
+  /** Undo label of the dispatch that added them. */
+  label: string
+}
+
 /**
  * "Add 3D camera move" on an image clip: estimates the still's depth (cached), stores it as a derived image asset
  * (reused when the project already has one for this still) and adds the camera effect with its progress keyframed
@@ -42,52 +48,92 @@ export async function addCameraMove(
   clipId: Id,
   options: CameraMoveOptions = {},
 ): Promise<{ effectInstanceId: Id; depthAssetId: Id }> {
+  const { moves } = await addCameraMoves(deps, [clipId], options)
+  return moves[0]!
+}
+
+/**
+ * `addCameraMove` on several image clips at once, all in one dispatch (one undo step). Progress runs through the
+ * clips in order; clips of the same still share its depth map.
+ */
+export async function addCameraMoves(
+  deps: CameraMoveDeps,
+  clipIds: readonly Id[],
+  options: CameraMoveOptions = {},
+): Promise<CameraMovesResult> {
   const { signal } = options
   const progress = createProgress(options.onProgress)
+  const ids = [...new Set(clipIds)]
   try {
-    const still = stillOf(deps.editor.getProject(), clipId).asset
-    progress(0, 'loading')
-    const image = await createImageBitmap(await deps.media.getFile(still))
-    let depth: DepthMap
-    try {
-      depth = await deps.depth.get(
-        {
-          mediaId: still.id,
-          quality: 'full',
-          sourceSize: { width: image.width, height: image.height },
-          frame: (maxSide) => {
-            const size = fitSize({ width: image.width, height: image.height }, maxSide)
-            return createImageBitmap(image, {
-              resizeWidth: size.width,
-              resizeHeight: size.height,
-              resizeQuality: 'high',
-            })
-          },
-        },
-        { signal, onProgress: (p) => progress(0.05 + 0.85 * (p.fraction ?? 0), p.stage) },
-      )
-    } finally {
-      image.close()
+    if (!ids.length) throw new JobError('invalid-input', 'Select an image clip for the 3D camera move.')
+    const stills = new Map<Id, { depthAsset: Asset; newAsset: Asset | null; focus: number }>()
+    for (const [i, clipId] of ids.entries()) {
+      const still = stillOf(deps.editor.getProject(), clipId).asset
+      if (stills.has(still.id)) continue
+      const step = (f: number, stage?: string) => progress((i + f) / ids.length, stage)
+      step(0, 'loading')
+      const prepared = prepareDepthForParallax(await estimateDepth(deps, still, signal, step))
+      let newAsset: Asset | null = null
+      let depthAsset = findDepthAsset(deps.editor.getProject(), still.id)
+      if (!depthAsset) {
+        newAsset = await storeDepth(deps, still, prepared, step)
+        depthAsset = newAsset
+      }
+      stills.set(still.id, { depthAsset, newAsset, focus: suggestFocus(prepared) })
+      throwIfAborted(signal)
     }
-    const prepared = prepareDepthForParallax(depth)
-    let newAsset: Asset | null = null
-    let depthAsset = findDepthAsset(deps.editor.getProject(), still.id)
-    if (!depthAsset) {
-      newAsset = await storeDepth(deps, still, prepared, progress)
-      depthAsset = newAsset
+    const project = deps.editor.getProject()
+    const commands: EditCommand[] = []
+    const moves: CameraMovesResult['moves'] = []
+    const added = new Set<Id>()
+    for (const clipId of ids) {
+      const { clip, asset } = stillOf(project, clipId)
+      const still = stills.get(asset.id)
+      if (!still) continue
+      const effect = cameraMoveEffect(clip, still.depthAsset.id, {
+        focus: still.focus,
+        preset: options.preset,
+        intensity: options.intensity,
+      })
+      commands.push(...cameraMoveCommands(clip, effect, added.has(asset.id) ? null : still.newAsset))
+      added.add(asset.id)
+      moves.push({ clipId, effectInstanceId: effect.id, depthAssetId: still.depthAsset.id })
     }
-    throwIfAborted(signal)
-    const { clip } = stillOf(deps.editor.getProject(), clipId)
-    const effect = cameraMoveEffect(clip, depthAsset.id, {
-      focus: suggestFocus(prepared),
-      preset: options.preset,
-      intensity: options.intensity,
-    })
-    deps.editor.dispatch(cameraMoveCommands(clip, effect, newAsset))
+    const label = moves.length === 1 ? 'Add 3D camera move' : `Add 3D camera moves to ${moves.length} images`
+    deps.editor.dispatch(commands, { label })
     progress(1)
-    return { effectInstanceId: effect.id, depthAssetId: depthAsset.id }
+    return { moves, label }
   } catch (err) {
     throw visionError(err, 'internal')
+  }
+}
+
+async function estimateDepth(
+  deps: CameraMoveDeps,
+  still: Asset,
+  signal: AbortSignal | undefined,
+  progress: (f: number, stage?: string) => void,
+): Promise<DepthMap> {
+  const image = await createImageBitmap(await deps.media.getFile(still))
+  try {
+    return await deps.depth.get(
+      {
+        mediaId: still.id,
+        quality: 'full',
+        sourceSize: { width: image.width, height: image.height },
+        frame: (maxSide) => {
+          const size = fitSize({ width: image.width, height: image.height }, maxSide)
+          return createImageBitmap(image, {
+            resizeWidth: size.width,
+            resizeHeight: size.height,
+            resizeQuality: 'high',
+          })
+        },
+      },
+      { signal, onProgress: (p) => progress(0.05 + 0.85 * (p.fraction ?? 0), p.stage) },
+    )
+  } finally {
+    image.close()
   }
 }
 
