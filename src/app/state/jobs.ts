@@ -29,6 +29,7 @@ export const JOB_KINDS = {
   camera: 'vision.camera',
   export: 'export.outputs',
   footage: 'vision.index',
+  lyrics: 'analysis.lyrics',
 } as const
 
 interface MockJobOptions {

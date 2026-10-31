@@ -27,13 +27,14 @@ import * as templates from '../plugins/templates.ts'
 import * as thumbnails from '../plugins/thumbnails.ts'
 import * as typography from '../plugins/typography/index.ts'
 import { detectCapabilities } from '../shared/capabilities.ts'
-import { jobs } from '../shared/jobs.ts'
+import { JobError, jobs } from '../shared/jobs.ts'
 import { createWorkerClient } from '../shared/worker.ts'
 import * as vision from '../vision/index.ts'
 import * as vj from '../vj/index.ts'
 import * as bench from './bench.ts'
 import type { CrashTestApi } from './crash.worker.ts'
 import * as appFootage from '../app/state/footage.ts'
+import * as appLyrics from '../app/state/lyrics.ts'
 import * as appModels from '../app/state/models.ts'
 import * as appProject from '../app/state/project.ts'
 
@@ -95,14 +96,14 @@ export function installHarness(): void {
     },
     analysis,
     director,
-    shared: { jobs, detectCapabilities },
+    shared: { jobs, JobError, detectCapabilities },
     plugins: { library, looks, lut, preview, reactions, templates, thumbnails, typography },
     testing: { createCompositor, readPixels, bench, crashTestClient },
     vision,
     vj,
     exporting,
     /** The app's own state, for tests that drive the UI with test doubles (e.g. model-free vision backends). */
-    app: { footage: appFootage, models: appModels, project: appProject },
+    app: { footage: appFootage, lyrics: appLyrics, models: appModels, project: appProject },
     /** Files most recently set on #e2e-file-input (Playwright setInputFiles). */
     files: (): File[] => Array.from(input.files ?? []),
     ready: true,
