@@ -6,6 +6,7 @@ import * as analysis from '../analysis/client.ts'
 import * as animation from '../engine/animation.ts'
 import * as audio from '../engine/audio.ts'
 import { createAudioSampler } from '../engine/audioFeatures.ts'
+import * as exporter from '../engine/export.ts'
 import { WebGLCompositor } from '../engine/compositor.ts'
 import { DecoderFrameProvider, VideoElementFrameProvider } from '../engine/frames.ts'
 import { planFrame } from '../engine/layout.ts'
@@ -50,6 +51,7 @@ export function installHarness(): void {
     engine: {
       animation,
       audio,
+      exporter,
       createAudioSampler,
       planFrame,
       pluginRegistry,
