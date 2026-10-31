@@ -15,7 +15,9 @@ import {
   transitionItems,
 } from '../../../state/library.ts'
 import { useProject } from '../../../state/project.ts'
+import { previewHandlers } from '../../../state/tilePreview.ts'
 import styles from '../Library.module.css'
+import { TilePreview } from './TilePreview.tsx'
 
 function Pills({
   label,
@@ -83,11 +85,14 @@ export function EffectsTab() {
                     className={[styles.tile, chosen === l.id && styles.tileOn].filter(Boolean).join(' ')}
                     aria-pressed={chosen === l.id}
                     onClick={() => chooseLook(l.id)}
+                    {...previewHandlers({ kind: 'look', id: l.id })}
                   >
                     <span
                       className={styles.tileArt}
                       style={l.thumbnail ? { backgroundImage: `url(${l.thumbnail})` } : undefined}
-                    />
+                    >
+                      <TilePreview item={{ kind: 'look', id: l.id }} />
+                    </span>
                     <span className={styles.tileName}>{l.name}</span>
                   </button>
                 ))}
