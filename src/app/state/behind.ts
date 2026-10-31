@@ -135,7 +135,7 @@ export function suitabilityText(s: Suitability): { status: string; why?: string;
         if (first === 'unstable-mask')
           return {
             status: 'Person found',
-            why: 'The cutout flickers in places, so what is behind the person can show through for a moment.',
+            why: 'The cutout flickers in places, so the lyrics can blink around the person for a moment.',
             ok: true,
           }
         const partly = first ? (MARGINAL_REASONS[first] ?? reason) : undefined

@@ -267,10 +267,28 @@ test('Assist › Behind the subject cuts out a shot whose cutout flickers, and t
   await assist.getByRole('button', { name: /^Apply to \d+ suitable clips?$/ }).click()
   await expect(
     assist.getByText(
-      'people-interview: The cutout flickers in places, so what is behind the person can show through for a moment.',
+      'people-interview: The cutout flickers in places, so the lyrics can blink around the person for a moment.',
     ),
   ).toBeVisible()
   expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: true })])
+})
+
+test('the inspector says a cutout flickers when it lands, and keeps saying so while the clip is behind', async ({
+  page,
+}) => {
+  await open(page, '#/editor?t=10')
+  await modelFreeVision(page, { trackFindsPeople: true, popEvery: 4 })
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await inspector.getByRole('button', { name: 'Layering' }).click()
+  const toggle = inspector.getByRole('switch', { name: 'Put text and effects behind the subject' })
+  await toggle.click()
+  const why = 'The cutout flickers in places, so the lyrics can blink around the person for a moment.'
+  await expect(
+    page.getByRole('status').getByText(`Lyrics now sit behind the person on this clip. ${why}`),
+  ).toBeVisible()
+  await expect(toggle).toBeChecked()
+  await expect(inspector.getByText(why, { exact: true })).toBeVisible()
 })
 
 test('while clips are being checked, the top bar opens Behind the subject, not Export', async ({ page }) => {

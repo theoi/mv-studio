@@ -129,6 +129,8 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
   const { hostId, host, assetId, behind, object, suitability, busy, cutting, failure, objectFailure } =
     useBehindState(clip)
   const text = suitabilityText(suitability)
+  // Flicker is known only once the cutout exists, so its warning stays while the clip is behind.
+  const flickers = suitability.status === 'checked' && suitability.reasons[0] === 'unstable-mask'
   const unchecked = suitability.status === 'unchecked'
   useEffect(() => {
     if (unchecked && assetId && backgroundAnalysisOn()) checkFootage([assetId])
@@ -160,7 +162,7 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
       ) : behind && object && host ? (
         <ObjectTracking host={host} pick={object} disabled={busy} />
       ) : (
-        !behind && text.why && <p className={styles.note}>{text.why}</p>
+        (!behind || flickers) && text.why && <p className={styles.note}>{text.why}</p>
       )}
       {host && (
         <div className={styles.inlineActions}>
