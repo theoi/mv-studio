@@ -32,9 +32,14 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   /** What the project asks to hear. */
   private wanted: AudibleClip[] = []
   private wantedSignature = ''
+  /** The project's mix without stem mute and solo. */
+  private plain: AudibleClip[] = []
+  private plainSignature = ''
   private loadRequest = 0
   /** What is scheduled: `wanted` once its stems are decoded, the mix before them until then. */
   private clips: AudibleClip[] = []
+  /** `plainSignature` when `clips` was chosen, to tell whether the project changed beyond stem flags since. */
+  private clipsPlain = ''
   /** The scheduled clips and which of their buffers were decoded, to reschedule only when that changes. */
   private scheduledKey = ''
   private readonly reported = new WeakSet<JobError>()
@@ -79,18 +84,23 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     this.project = project
     const wanted = audibleClips(project)
     const stems = wanted.some((c) => c.stem !== undefined)
-    // With stems, the plain mix is the fallback when they cannot be decoded, so its changes matter too.
-    const signature =
-      audioSignature(wanted) + (stems ? audioSignature(audibleClips(project, { stems: false })) : '')
+    const plain = stems ? audibleClips(project, { stems: false }) : wanted
+    // With stems, the plain mix plays while they decode and when they cannot be, so its changes matter too.
+    const plainSignature = audioSignature(plain)
+    const signature = audioSignature(wanted) + (stems ? plainSignature : '')
     if (signature === this.wantedSignature) return
     this.wanted = wanted
+    this.plain = plain
+    this.plainSignature = plainSignature
     this.wantedSignature = signature
-    if (!stems) {
-      const used = new Set(wanted.map((c) => c.assetId))
-      this.buffers.evict((asset) => asset.origin.type === 'stem' && !used.has(asset.id))
-    }
+    // The cache is shared by every clock and export on this media source, so it is never cleared, only trimmed to
+    // what this project can play.
+    const used = new Set(wanted.map((c) => c.assetId))
+    this.buffers.evict(
+      (asset) => !project.assets[asset.id] || (!stems && asset.origin.type === 'stem' && !used.has(asset.id)),
+    )
     const request = ++this.loadRequest
-    for (const id of new Set(wanted.map((c) => c.assetId))) {
+    for (const id of new Set([...wanted, ...plain].map((c) => c.assetId))) {
       const asset = project.assets[id]
       if (!asset || this.buffers.loaded.has(id)) continue
       void this.buffers.get(asset).then(() => {
@@ -115,17 +125,24 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     if (!project) return
     const loaded = this.buffers.loaded
     let clips = this.wanted
-    const stems = clips.filter((c) => c.stem !== undefined && !loaded.has(c.assetId))
-    if (stems.length > 0) {
-      const failed = stems.find((c) => this.buffers.error(c.assetId))
+    const pending = clips.filter((c) => c.stem !== undefined && !loaded.has(c.assetId))
+    if (pending.length > 0) {
+      const failed = pending.find((c) => this.buffers.error(c.assetId))
       const failure = failed && this.buffers.error(failed.assetId)
-      if (!failed || !failure) return
-      clips = audibleClips(project, { stems: false })
-      this.report(failure, failed.assetId)
+      if (failed && failure) this.report(failure, failed.assetId)
+      else if (
+        this.clips.length > 0 &&
+        this.clipsPlain === this.plainSignature &&
+        this.clips.every((c) => loaded.has(c.assetId))
+      )
+        // Stems that already play (another solo, say) keep playing until the newly needed ones are decoded.
+        return
+      clips = this.plain
     }
     const key = `${audioSignature(clips)}|${clips.map((c) => loaded.has(c.assetId)).join()}`
     if (key === this.scheduledKey) return
     this.clips = clips
+    this.clipsPlain = this.plainSignature
     this.scheduledKey = key
     this.switchMix()
   }
@@ -172,13 +189,16 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     return this.ctx
   }
 
-  /** Starts playback; call from a user gesture (browsers block audio otherwise). Waits for audio to decode. */
+  /**
+   * Starts playback; call from a user gesture (browsers block audio otherwise). Waits for the song to decode, but not
+   * for stems: until they are decoded the plain mix plays, then it switches to them on the same sample.
+   */
   async play(): Promise<void> {
     if (this.playState === 'playing') return
     const request = ++this.playRequest
     const ctx = this.ensureContext()
     const resumed = ctx.resume()
-    if (this.project) await this.buffers.load(this.project, this.wanted)
+    if (this.project) await this.buffers.load(this.project, this.plain)
     await resumed
     if (request !== this.playRequest) return
     this.refresh()
@@ -335,7 +355,6 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     void this.ctx?.close()
     this.ctx = null
     this.master = null
-    this.buffers.clear()
     this.listeners.clear()
     this.errorListeners.clear()
   }

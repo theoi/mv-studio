@@ -360,3 +360,46 @@ test('playback keeps the mix while stems decode, then switches without a jump; a
   expect(r.fallback).toEqual([r.badClipId])
   expect(r.state).toBe('playing')
 })
+
+test('Play starts at once on the song while newly soloed stems decode, then switches to them', async ({
+  page,
+}) => {
+  await setupStems(page)
+  const r = await page.evaluate(async () => {
+    const { engine, media } = window.mvStudio
+    const t = window.stemTest
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+    // Stems take 1.5 s to arrive, like the stems of a long song decoding.
+    const slow = {
+      getFile: async (asset: { origin: { type: string } }) => {
+        if (asset.origin.type === 'stem') await sleep(1500)
+        return media.mediaStore.getFile(asset)
+      },
+    }
+    const clock = new engine.WebAudioPlaybackClock(slow)
+    const ids = () => clock.scheduledClips.map((c: { clipId: string }) => c.clipId)
+    const { project, clipId } = t.project({})
+    clock.setProject(project)
+    // The song is decoded and the audio running, as after editing for a while; then the user solos the vocals.
+    await clock.play()
+    clock.pause()
+    const soloed = structuredClone(project)
+    for (const track of soloed.tracks) if (track.kind === 'audio') track.stems = { vocals: { solo: true } }
+    clock.setProject(soloed)
+    const t0 = performance.now()
+    await clock.play()
+    const startMs = performance.now() - t0
+    const atStart = ids()
+    const state = clock.state
+    const deadline = performance.now() + 5000
+    while (!ids().some((id: string) => id.includes(':stem:')) && performance.now() < deadline) await sleep(20)
+    const after = ids()
+    clock.dispose()
+    return { clipId, startMs, atStart, state, after }
+  })
+  console.log('play while stems decode', JSON.stringify(r))
+  expect(r.state).toBe('playing')
+  expect(r.startMs).toBeLessThan(100)
+  expect(r.atStart).toEqual([r.clipId])
+  expect(r.after).toEqual([`${r.clipId}:stem:vocals`])
+})
