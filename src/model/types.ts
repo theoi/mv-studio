@@ -422,12 +422,20 @@ export interface LyricLine {
   start?: Seconds
   end?: Seconds
   words: LyricWord[]
+  /**
+   * Why the line is waiting for a look: 'words' when it was drafted from the vocals, 'timing' when the aligner could
+   * not place some of its words well. `lyrics.updateLine` drops it when the words are retyped (and, for 'timing', when
+   * the line or its words are re-timed), or when the patch sets it to undefined ("Mark as checked").
+   */
+  check?: 'words' | 'timing'
 }
 
 export interface LyricsDoc {
   audioAssetId?: Id
   source: 'pasted' | 'transcribed' | 'mixed'
   lines: LyricLine[]
+  /** Drafts: the language the transcriber heard or was told (Whisper code, e.g. 'sv'). */
+  language?: string
 }
 
 // ---------------------------------------------------------------------------------------------------------------

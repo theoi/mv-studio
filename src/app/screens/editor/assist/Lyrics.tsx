@@ -1,10 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Info, RotateCcw } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
-import { Segmented, TextArea } from '../../../ds/Fields.tsx'
+import { Segmented, Select, TextArea } from '../../../ds/Fields.tsx'
 import { plural } from '../../../format.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
+import {
+  DRAFT_LANGUAGES,
+  draftLooksUnreliable,
+  languageName,
+  linesToCheck,
+  lyricsResultKind,
+  markAllChecked,
+  showFirstToCheck,
+} from '../../../state/lyricChecks.ts'
 import { estimateLyrics, lastLyricsRequest, lyricsCost, startLyrics } from '../../../state/lyrics.ts'
 import {
   hasSong,
@@ -33,6 +42,100 @@ type LyricsMode = 'paste' | 'draft'
 
 const lyricsKind = (mode: LyricsMode) => (mode === 'paste' ? 'time' : 'draft')
 
+const DETECTED = 'detected'
+
+let languageOptions: { value: string; label: string }[] | undefined
+
+/** Whisper's languages by name, for drafting again in another language. */
+function draftLanguageOptions() {
+  languageOptions ??= DRAFT_LANGUAGES.map((code) => ({ value: code, label: languageName(code) })).sort(
+    (a, b) => a.label.localeCompare(b.label),
+  )
+  return languageOptions
+}
+
+/**
+ * After a draft or timing: how many lines there are and how many are left to check, with Show on timeline and Mark
+ * all as checked, then, for a draft that is probably mostly wrong, a warning with other ways to get the lyrics (and
+ * no Mark all as checked: confirming such a draft is the wrong nudge).
+ */
+function LyricsResult({ onPaste }: { onPaste: () => void }) {
+  const project = useProject()
+  // Radix Select takes no empty value, so the detected language has a value of its own.
+  const [language, setLanguage] = useState(DETECTED)
+  const kind = lyricsResultKind(project)
+  const doc = project.lyrics
+  if (!kind || !doc) return null
+  const toCheck = linesToCheck(project).length
+  const detected = doc.language ? languageName(doc.language) : undefined
+  // A pick that the last draft already used is the detected language now.
+  const picked = language === doc.language ? DETECTED : language
+  const count = toCheck ? `${toCheck} to check` : 'all checked'
+  const summary =
+    kind === 'draft'
+      ? `Drafted ${plural(doc.lines.length, 'line')} from the vocals · ${count}`
+      : `Timed ${plural(doc.lines.filter((l) => l.start !== undefined).length, 'line')} · ${count}`
+  const unreliable = kind === 'draft' && toCheck > 0 && draftLooksUnreliable(doc)
+  return (
+    <div className={styles.draftResult}>
+      <div className={styles.draftSummary}>{summary}</div>
+      {toCheck > 0 && (
+        <div className={styles.linkRow}>
+          <Button size="sm" variant="ghost" onClick={showFirstToCheck}>
+            Show on timeline
+          </Button>
+          {!unreliable && (
+            <Button size="sm" variant="ghost" onClick={markAllChecked}>
+              Mark all as checked
+            </Button>
+          )}
+        </div>
+      )}
+      {unreliable && (
+        <div className={[styles.callout, styles.calloutWarning].join(' ')}>
+          <AlertTriangle />
+          <div className={styles.warningBody}>
+            <div className={styles.warningTitle}>Most of this draft is probably wrong</div>
+            <div>
+              {detected
+                ? `The vocals were hard to make out, or the song isn’t in ${detected}. Paste the lyrics if you have them, or pick the song’s language and draft again.`
+                : 'The vocals were hard to make out. Paste the lyrics if you have them, or pick the song’s language and draft again.'}
+            </div>
+            <div>
+              <Button size="sm" variant="secondary" onClick={onPaste}>
+                Paste lyrics
+              </Button>
+            </div>
+            <div className={styles.languageRow}>
+              <Select
+                size="sm"
+                ariaLabel="Language"
+                value={picked}
+                onChange={setLanguage}
+                options={[
+                  { value: DETECTED, label: detected ? `Detected: ${detected}` : 'Detected automatically' },
+                  ...draftLanguageOptions().filter((o) => o.value !== doc.language),
+                ]}
+              />
+              {picked !== DETECTED && (
+                <div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void startLyrics({ kind: 'draft', language: picked })}
+                  >
+                    Draft again in {languageName(picked)}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function LyricsView() {
   const project = useProject()
   const lines = lyricLines(project)
@@ -41,6 +144,12 @@ export function LyricsView() {
   const separating = useJob(JOB_KINDS.stems).phase === 'running'
   const [mode, setMode] = useState<LyricsMode>('paste')
   const [text, setText] = useState(() => lines.map((l) => l.text).join('\n'))
+  const textRef = useRef<HTMLTextAreaElement>(null)
+  const pasteInstead = () => {
+    setMode('paste')
+    setText('')
+    requestAnimationFrame(() => textRef.current?.focus())
+  }
   const [estimate, setEstimate] = useState<{
     mode: LyricsMode
     value: Awaited<ReturnType<typeof estimateLyrics>>
@@ -150,6 +259,7 @@ export function LyricsView() {
         </>
       }
     >
+      <LyricsResult onPaste={pasteInstead} />
       <Segmented
         block
         value={mode}
@@ -162,7 +272,13 @@ export function LyricsView() {
       />
       {mode === 'paste' ? (
         <Field label="Lyrics" hint="Each line becomes a lyric line on the Lyrics track.">
-          <TextArea rows={8} aria-label="Lyrics" value={text} onChange={(e) => setText(e.target.value)} />
+          <TextArea
+            ref={textRef}
+            rows={8}
+            aria-label="Lyrics"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
         </Field>
       ) : (
         <div className={styles.callout}>

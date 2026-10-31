@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, Mic2 } from 'lucide-react'
 import type { Clip, LyricLine } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
@@ -7,6 +7,7 @@ import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBytes, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
+import { isUncertain, markLineChecked } from '../../../state/lyricChecks.ts'
 import { nudgeLine, setLineEdge } from '../../../state/lyricEdits.ts'
 import { lineTiming, retimeCost, retimeLine } from '../../../state/lyricTiming.ts'
 import {
@@ -110,6 +111,42 @@ function TimingBadge({ line }: { line: LyricLine }) {
   )
 }
 
+/** A line to check: why, its words with the uncertain ones underlined, and Mark as checked. */
+function CheckNote({ line }: { line: LyricLine }) {
+  const underlined = line.words.some(isUncertain)
+  return (
+    <div className={styles.draft}>
+      <p className={styles.draftText}>
+        {line.check === 'words'
+          ? `Drafted from the vocals. Check the words.${underlined ? ' Uncertain ones are underlined.' : ''}`
+          : `Some words may be timed wrong. Play the line to check.${underlined ? ' Uncertain words are underlined.' : ''}`}
+      </p>
+      {line.words.length > 0 && (
+        <p className={styles.draftWords}>
+          {line.words.map((w, i) => (
+            <Fragment key={i}>
+              {i > 0 && ' '}
+              {isUncertain(w) ? (
+                <span className={styles.uncertain}>
+                  {w.text}
+                  <span className="sr-only"> (uncertain)</span>
+                </span>
+              ) : (
+                w.text
+              )}
+            </Fragment>
+          ))}
+        </p>
+      )}
+      <span className={styles.draftAction}>
+        <Button size="sm" variant="ghost" onClick={() => markLineChecked(line.id)}>
+          Mark as checked
+        </Button>
+      </span>
+    </div>
+  )
+}
+
 /** A lyric line's words and timing. */
 function WordsSection({ line }: { line: LyricLine }) {
   const project = useProject()
@@ -171,6 +208,7 @@ function WordsSection({ line }: { line: LyricLine }) {
           )}
         </div>
       </div>
+      {line.check && <CheckNote line={line} />}
       <RetimeNote line={line} cost={cost} busy={busy} onCancel={() => (cancelled.current = true)} />
       <FieldRow label="Start">
         <NumberField

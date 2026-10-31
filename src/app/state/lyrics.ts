@@ -10,6 +10,7 @@ import { JobError } from '../../shared/jobs.ts'
 import { lyricClipCommands } from '../../plugins/lyricClips.ts'
 import { starterTemplate, templateState } from '../../plugins/templates.ts'
 import { formatBytes, plural } from '../format.ts'
+import { asDraft, withTimingChecks } from './lyricChecks.ts'
 import { dispatch, editor } from './project.ts'
 import { stemStore } from './stems.ts'
 import { toast } from './ui.ts'
@@ -82,14 +83,15 @@ export async function startLyrics(request: LyricsRequest): Promise<void> {
     const result = await lyrics.run(songId, request, deps).promise
     if (editor.getProject().songAssetId !== songId) return
     const label = request.kind === 'time' ? 'Time lyrics' : 'Draft lyrics'
-    if (!dispatch(lyricsCommands(editor.getProject(), result.doc), { label })) return
+    const doc = request.kind === 'draft' ? asDraft(result.doc, result.language) : withTimingChecks(result.doc)
+    if (!dispatch(lyricsCommands(editor.getProject(), doc), { label })) return
     // Relabels sections from repeated lines; derived data, so it is not part of the undo step.
     if (result.chorus) dispatch(result.chorus, { history: 'skip' })
     const lines = result.doc.lines.length
     toast(
       request.kind === 'time'
         ? `Timed ${plural(lines, 'line')} to the vocals`
-        : `Drafted ${plural(lines, 'line')}. Check each one; sung words are tricky.`,
+        : `Drafted ${plural(lines, 'line')} from the vocals`,
       {
         label: 'Undo',
         run: () => {

@@ -442,7 +442,21 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
     case 'lyrics.updateLine': {
       const line = p.lyrics?.lines.find((l) => l.id === cmd.lineId)
       if (!line) throw new EditError('not-found', 'Lyric line not found')
-      Object.assign(line, cmd.patch)
+      const { patch } = cmd
+      const textOf = (words: LyricLine['words']) => words.map((w) => w.text).join(' ')
+      const timesOf = (words: LyricLine['words']) => words.map((w) => `${w.start}-${w.end}`).join(' ')
+      // Retyping a line's words checks a drafted line; re-timing the line or its words checks its timing. Neither
+      // stands for the other.
+      const retyped =
+        (patch.text !== undefined && patch.text !== line.text) ||
+        (patch.words !== undefined && textOf(patch.words) !== textOf(line.words))
+      const retimed =
+        ('start' in patch && patch.start !== line.start) ||
+        ('end' in patch && patch.end !== line.end) ||
+        (patch.words !== undefined && timesOf(patch.words) !== timesOf(line.words))
+      const checked = (line.check === 'words' && retyped) || (line.check === 'timing' && retimed)
+      setFields(line, patch, Object.keys(patch) as (keyof typeof patch)[])
+      if (checked && !('check' in patch)) delete line.check
       return
     }
 

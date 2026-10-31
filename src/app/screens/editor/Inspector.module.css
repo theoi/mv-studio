@@ -178,6 +178,36 @@
   line-height: var(--lh-xs);
 }
 
+/* A lyric line drafted from the vocals and not checked yet (Words section) */
+.draft {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-2) var(--space-4);
+}
+
+.draftText {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+}
+
+.draftWords {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.uncertain {
+  text-decoration: underline dotted var(--warning);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+.draftAction {
+  margin-left: -8px;
+}
+
 .noteDanger {
   display: flex;
   align-items: flex-start;
