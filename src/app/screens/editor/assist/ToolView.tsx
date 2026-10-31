@@ -75,9 +75,28 @@ export function RunCard({ job, label }: { job?: JobSnapshot; label: string }) {
   )
 }
 
-export function CancelButton({ job }: { job?: JobSnapshot }) {
+/** Cancels a running job: full width in a panel footer, or `inline` at the end of a progress row. */
+export function CancelButton({
+  job,
+  inline = false,
+  onCancel,
+}: {
+  job?: JobSnapshot
+  inline?: boolean
+  /** After the cancel is requested, e.g. to move focus off the button before it goes away. */
+  onCancel?: () => void
+}) {
   return (
-    <Button variant="secondary" block icon={<X />} onClick={() => job && jobs.cancel(job.id)}>
+    <Button
+      variant={inline ? 'ghost' : 'secondary'}
+      size={inline ? 'sm' : 'md'}
+      block={!inline}
+      icon={<X />}
+      onClick={() => {
+        if (job) jobs.cancel(job.id)
+        onCancel?.()
+      }}
+    >
       Cancel
     </Button>
   )

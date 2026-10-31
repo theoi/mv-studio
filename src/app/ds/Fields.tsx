@@ -401,15 +401,17 @@ export function Select<T extends string>({
   options,
   ariaLabel,
   size = 'md',
+  disabled = false,
 }: {
   value: T
   onChange: (v: T) => void
   options: { value: T; label: string; description?: string }[]
   ariaLabel: string
   size?: 'sm' | 'md'
+  disabled?: boolean
 }) {
   return (
-    <RSelect.Root value={value} onValueChange={(v) => onChange(v as T)}>
+    <RSelect.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
       <RSelect.Trigger
         className={[styles.selectTrigger, size === 'sm' && styles.selectSm].filter(Boolean).join(' ')}
         aria-label={ariaLabel}

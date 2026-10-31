@@ -539,6 +539,12 @@
   background: var(--bg-active);
 }
 
+.selectTrigger[data-disabled] {
+  background: var(--bg-hover);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
 .selectSm {
   height: var(--control-sm);
   font-size: var(--text-sm);

@@ -154,6 +154,18 @@
   line-height: var(--lh-xs);
 }
 
+/* A job's progress with its Cancel at the right end (Motion). */
+.progressRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) 0 var(--space-4);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+}
+
 .noteDanger {
   display: flex;
   align-items: flex-start;

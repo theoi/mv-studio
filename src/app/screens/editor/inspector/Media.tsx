@@ -4,7 +4,7 @@ import { formatTime } from '../../../format.ts'
 import { sceneThumb } from '../../../mock/art.ts'
 import { sceneOf } from '../../../mock/demoProject.ts'
 import { dispatch, editor, useProject } from '../../../state/project.ts'
-import { CameraSuggestion } from './Camera.tsx'
+import { CameraSection, CameraSuggestion } from './Camera.tsx'
 import { ColorSection, EffectsSection } from './Effects.tsx'
 import { BehindSuggestion, LayeringSection } from './Layering.tsx'
 import { CompositingSection, Header, TransformSection } from './parts.tsx'
@@ -28,6 +28,7 @@ export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string 
       {isImage && <CameraSuggestion clip={clip} />}
       <TransformSection clip={clip} />
       <CompositingSection clip={clip} />
+      {isImage && <CameraSection clip={clip} />}
       <LayeringSection clip={clip} />
       <ColorSection clip={clip} />
       <EffectsSection clip={clip} />
