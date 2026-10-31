@@ -1,4 +1,5 @@
 import type { EmbeddingModel, VisionBackends } from './backends.ts'
+import { createDepthService, type DepthService } from './depth/service.ts'
 import {
   deserializeClipIndex,
   indexClip,
@@ -88,6 +89,8 @@ export interface VisionService {
   /** Footage-matching index of a clip (cached). */
   indexClip(source: FrameSource, options?: ClipIndexOptions): Promise<ClipVisionIndex>
   readonly matcher: FootageMatcher
+  /** Depth maps for 2.5D camera moves (cached; preview and full quality). */
+  readonly depth: DepthService
 }
 
 interface PersonTrackFileMeta {
@@ -258,5 +261,6 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
       )
     },
     matcher,
+    depth: createDepthService({ onnx: backends.onnx(), cache }),
   }
 }

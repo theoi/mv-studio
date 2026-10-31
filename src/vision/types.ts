@@ -208,7 +208,8 @@ export interface ClipVisionIndex {
 export interface MatchQuery {
   /** Free text such as a lyric line ("driving through the rain"). */
   text?: string
-  mood?: Mood
+  /** A `Mood`, or any mood word or phrase: it maps to the nearest `Mood` (`resolveMood`) and is ignored if none fits. */
+  mood?: string
   /** Desired energy 0..1 (for example the song section energy). */
   energy?: number
   /** Desired segment length in seconds, used to pick the best range inside a clip. */
@@ -261,6 +262,8 @@ export interface CropKeyframe {
   cy: number
   /** 1 = the largest crop of the target aspect that fits the source; > 1 zooms in. */
   zoom: number
+  /** First keyframe of a new shot, placed at the cut: the crop holds the previous keyframe until then and jumps. */
+  cut?: boolean
 }
 
 export interface ReframePlan {

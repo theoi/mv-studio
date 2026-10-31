@@ -84,17 +84,18 @@ interface DensePoint {
   t: number
   cx: number
   cy: number
+  cut?: boolean
 }
 
-/** Index of the first sample of each new shot (a cut lies in (t[i-1], t[i]]). */
-function cutStarts(samples: SubjectSample[], cuts: number[]): Set<number> {
-  const starts = new Set<number>()
+/** Cut time keyed by the index of the first sample of each new shot (a cut lies in (t[i-1], t[i]]). */
+function cutStarts(samples: SubjectSample[], cuts: number[]): Map<number, number> {
+  const starts = new Map<number, number>()
   for (const c of cuts) {
     for (let i = 1; i < samples.length; i++) {
       const prev = samples[i - 1]
       const cur = samples[i]
       if (prev && cur && prev.t < c && cur.t >= c) {
-        starts.add(i)
+        starts.set(i, Math.min(c, starts.get(i) ?? c))
         break
       }
     }
@@ -106,7 +107,7 @@ function simulateCamera(
   samples: SubjectSample[],
   w: number,
   h: number,
-  starts: Set<number>,
+  starts: Map<number, number>,
   opts: Required<Omit<ReframeOptions, 'cuts' | 'tolerance' | 'zoom'>>,
 ): DensePoint[] {
   const path: DensePoint[] = []
@@ -134,7 +135,10 @@ function simulateCamera(
         }),
       }
     }
-    path.push({ t: s.t, cx: cam.x, cy: cam.y })
+    const cutAt = starts.get(i)
+    path.push(
+      cutAt === undefined ? { t: s.t, cx: cam.x, cy: cam.y } : { t: cutAt, cx: cam.x, cy: cam.y, cut: true },
+    )
   })
   return path
 }
@@ -178,10 +182,10 @@ function simplifyRange(
   }
 }
 
-function simplify(path: DensePoint[], starts: Set<number>, tolerance: number): DensePoint[] {
+function simplify(path: DensePoint[], starts: Map<number, number>, tolerance: number): DensePoint[] {
   if (path.length <= 1) return [...path]
   const keep = path.map(() => false)
-  const bounds = [0, ...[...starts].sort((a, b) => a - b), path.length]
+  const bounds = [0, ...[...starts.keys()].sort((a, b) => a - b), path.length]
   for (let k = 0; k + 1 < bounds.length; k++) {
     const lo = bounds[k] ?? 0
     const hi = (bounds[k + 1] ?? path.length) - 1
@@ -214,6 +218,7 @@ export function planReframe(
     cx: p.cx,
     cy: p.cy,
     zoom,
+    ...(p.cut ? { cut: true } : {}),
   }))
 
   return {
@@ -241,6 +246,7 @@ function interpolate(keyframes: CropKeyframe[], t: number): { cx: number; cy: nu
   }
   const a = keyframes[lo] ?? first
   const b = keyframes[hi] ?? last
+  if (b.cut) return a
   const span = b.t - a.t
   const w = span > 0 ? (t - a.t) / span : 0
   return { cx: a.cx + (b.cx - a.cx) * w, cy: a.cy + (b.cy - a.cy) * w, zoom: a.zoom + (b.zoom - a.zoom) * w }
