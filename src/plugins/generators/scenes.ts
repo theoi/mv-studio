@@ -63,7 +63,7 @@ export const tunnel: GeneratorDefinition = {
   cost: 'low',
   params: [
     { key: 'color', label: 'Color', type: 'color', default: '#22d3ee' },
-    { key: 'color2', label: 'Second color', type: 'color', default: '#f472b6' },
+    { key: 'color2', label: 'Pulse color', type: 'color', default: '#f472b6' },
     background(),
     speed(1),
     {
@@ -109,10 +109,10 @@ vec4 mainImage(vec2 uv) {
   float hit = u_reactivity * drumHit();
   // A ring of light runs toward the camera on every beat.
   float pulse = exp(-pow((fract(depth * 0.25 - u_beatPhase) - 0.5) * 9.0, 2.0)) * (0.4 + hit);
-  vec3 tint = mix(u_color.rgb, u_color2.rgb, 0.5 + 0.5 * sin(depth * 0.7));
   float lines = max(rings, spokes * 0.7);
-  vec3 light = tint * (lines * (0.55 + 0.6 * hit + 0.8 * pulse) + pulse * 0.08) * near;
-  light += tint * 0.12 * exp(-r * 6.0) * (1.0 + hit);
+  // The color draws the tunnel's lines; the pulse color is the ring of light each beat sends down it.
+  vec3 light = (u_color.rgb * lines * (0.55 + 0.6 * hit) + u_color2.rgb * (lines * 0.8 + 0.08) * pulse) * near;
+  light += mix(u_color.rgb, u_color2.rgb, 0.3) * 0.12 * exp(-r * 6.0) * (1.0 + hit);
   return scene(light * (0.85 + 0.3 * u_reactivity * bassLevel()));
 }`,
 }

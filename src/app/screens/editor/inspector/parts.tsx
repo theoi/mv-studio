@@ -54,7 +54,7 @@ function NumberProp({
   step?: number
   prefix?: string
 }) {
-  const a = useAnimatable(clip, path)
+  const a = useAnimatable(clip, path, undefined, { label })
   return (
     <NumberField
       value={toView(Number(a.value ?? 0))}
@@ -121,7 +121,7 @@ export function TransformSection({ clip }: { clip: VisualClip }) {
                 { type: 'clip.set', clipId: clip.id, path: ['transform', 'scaleX', 'value'], value: v / 100 },
                 { type: 'clip.set', clipId: clip.id, path: ['transform', 'scaleY', 'value'], value: v / 100 },
               ],
-              { coalesceKey: `inspector:${clip.id}:scale` },
+              { coalesceKey: `inspector:${clip.id}:scale`, label: 'Change scale' },
             )
           }
           onCommit={scale.commit}
@@ -145,7 +145,7 @@ export function TransformSection({ clip }: { clip: VisualClip }) {
 }
 
 export function CompositingSection({ clip }: { clip: VisualClip }) {
-  const opacity = useAnimatable(clip, ['opacity'])
+  const opacity = useAnimatable(clip, ['opacity'], undefined, { label: 'Opacity' })
   const pct = Math.round(Number(opacity.value ?? 1) * 100)
   return (
     <Section title="Compositing">

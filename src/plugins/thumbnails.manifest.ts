@@ -51,7 +51,7 @@ export const THUMBNAILS: Record<string, Record<string, string>> = {
     'visualizer.particles': '4192e8e7e7',
     'visualizer.circle': 'e557631cae',
     'visualizer.orb': 'f41ca93b0a',
-    'generator.tunnel': '852c666170',
+    'generator.tunnel': '8d1e9772f2',
     'generator.starfield': '40bb3bfd15',
     'generator.synthwave': 'aa87debdda',
     'generator.geometry': 'd2a5e322d1',

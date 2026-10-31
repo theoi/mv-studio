@@ -75,6 +75,13 @@
   font-size: var(--text-sm);
 }
 
+/* A value with a unit ("0.02 turns/s") takes the width it needs instead of wrapping. */
+.valueUnit {
+  width: auto;
+  min-width: 36px;
+  white-space: nowrap;
+}
+
 .trailSpacer {
   display: block;
   width: 44px;

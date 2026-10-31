@@ -596,6 +596,10 @@
   background: var(--bg-active);
 }
 
+.selectItem[data-disabled] {
+  color: var(--text-disabled);
+}
+
 .selectDesc {
   color: var(--text-3);
   font-size: var(--text-xs);

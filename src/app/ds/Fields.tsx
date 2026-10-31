@@ -417,7 +417,7 @@ export function Select<T extends string>({
 }: {
   value: T
   onChange: (v: T) => void
-  options: { value: T; label: string; description?: string }[]
+  options: { value: T; label: string; description?: string; disabled?: boolean }[]
   ariaLabel: string
   size?: 'sm' | 'md'
   disabled?: boolean
@@ -444,7 +444,7 @@ export function Select<T extends string>({
         >
           <RSelect.Viewport>
             {options.map((o) => (
-              <RSelect.Item key={o.value} value={o.value} className={styles.selectItem}>
+              <RSelect.Item key={o.value} value={o.value} disabled={o.disabled} className={styles.selectItem}>
                 <RSelect.ItemText>{o.label}</RSelect.ItemText>
                 {o.description && <span className={styles.selectDesc}>{o.description}</span>}
                 <RSelect.ItemIndicator className={styles.selectCheck}>
@@ -485,7 +485,7 @@ function splitColor(value: string): { hex: string; alpha: string } | null {
 /** The color as shown: #RRGGBB, or #RRGGBBAA when it is see-through. */
 function shownColor(value: string): string {
   const c = splitColor(value)
-  return (c ? c.hex + c.alpha : value).toUpperCase()
+  return (c ? c.hex + (c.alpha === 'ff' ? '' : c.alpha) : value).toUpperCase()
 }
 
 /**
