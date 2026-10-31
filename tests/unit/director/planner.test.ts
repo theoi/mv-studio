@@ -236,7 +236,7 @@ describe('local planner', () => {
     const p = await plan('beat-cut', { analyzed: false })
     const shots = main(p)
     expectContiguous(shots, SONG_LENGTH)
-    expect(p.warnings[0]).toMatch(/analysis isn't finished/)
+    expect(p.warnings[0]).toMatch(/analysis isn’t finished/)
     // 120 BPM fallback grid: every cut lands on a multiple of half a second.
     for (const s of shots) expect(Math.abs(s.start * 2 - Math.round(s.start * 2))).toBeLessThan(1e-6)
   })

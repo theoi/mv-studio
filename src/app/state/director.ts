@@ -11,10 +11,12 @@ import type { Id } from '../../model/types.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import type { Project } from '../../model/index.ts'
-import { jobs } from '../../shared/jobs.ts'
+import { JobError, jobs } from '../../shared/jobs.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
 import { directorFootage } from './footage.ts'
 import { appMedia } from './media.ts'
+import { songAnalysisRunning } from './importer.ts'
+import { JOB_KINDS } from './jobs.ts'
 import { editor } from './project.ts'
 import { ensureBars } from './songAnalysis.ts'
 import { get as getUi, set as setUi, toast, type Kind } from './ui.ts'
@@ -78,6 +80,7 @@ function directorSession(): Promise<DirectorSession> {
       spendPolicy: () => cloudSettings.get(),
       ledger: spendLedger,
       ensureBars,
+      waitForSong,
       planner: d.createDirectorPlanner({
         client: () => cloud.llm(),
         model: () => cloudSettings.get().llm?.model,
@@ -96,6 +99,42 @@ function directorSession(): Promise<DirectorSession> {
     return s
   })
   return session
+}
+
+/** Waits for the song analysis still running (a draft right after the setup screen), with its job's progress. */
+async function waitForSong({
+  signal,
+  progress,
+}: {
+  signal: AbortSignal
+  progress: (fraction: number) => void
+}) {
+  const songId = editor.getProject().songAssetId
+  const run = songId ? songAnalysisRunning(songId) : undefined
+  if (!run) return
+  let last: number | undefined
+  const report = () => {
+    const job = jobs.list().find((j) => j.kind === JOB_KINDS.analysis && j.status === 'running')
+    const fraction = job?.progress.fraction ?? 0
+    // The plan's own progress also notifies job listeners: report only the analysis's changes, or this would loop.
+    if (fraction === last) return
+    last = fraction
+    progress(fraction)
+  }
+  report()
+  const unsubscribe = jobs.subscribe(report)
+  try {
+    await Promise.race([
+      run,
+      new Promise<never>((_, reject) => {
+        const stop = () => reject(new JobError('cancelled', 'Cancelled'))
+        if (signal.aborted) stop()
+        else signal.addEventListener('abort', stop, { once: true })
+      }),
+    ])
+  } finally {
+    unsubscribe()
+  }
 }
 
 /** The kind of video to draft for the project's kind (a blank project picks from what it has). */

@@ -347,3 +347,27 @@ test('a tagged song names the project, and the title card shows its title and ar
   })
   expect(titles).toEqual(['Neon Skyline', 'The Night Shift'])
 })
+
+test('a draft from the setup screen waits for the song analysis still running', async ({ page }) => {
+  // Holds the analysis worker's script back, so the song is still being analyzed when Draft my video is pressed.
+  let release: () => void = () => {}
+  const held = new Promise<void>((resolve) => (release = resolve))
+  await page.context().route(/analysis\.worker-[^/]*\.js$/, async (route) => {
+    await held
+    await route.continue()
+  })
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('textbox', { name: 'Describe your video' }).fill('a rainy city at dawn')
+  await page.getByLabel('Song file').setInputFiles(path.join(FIXTURE_DIR, 'song.mp3'))
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  await expect(
+    page.getByRole('tabpanel', { name: 'Assist' }).getByText('Finding beats and sections…'),
+  ).toBeVisible({
+    timeout: 15_000,
+  })
+  release()
+  await expect(page.getByRole('button', { name: 'Undo draft' })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('Song analysis isn’t finished', { exact: false })).toHaveCount(0)
+})

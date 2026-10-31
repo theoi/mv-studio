@@ -67,8 +67,13 @@ export interface DirectorDeps {
   ledger?: SpendLedgerLike
   /** Defaults to the local rule planner. */
   planner?: Planner
-  /** When the planning state turns slow (default 8000 ms). */
+  /** How long planning (after the song analysis and bars) may take before the state turns slow (default 8000 ms). */
   slowAfterMs?: number
+  /**
+   * How long waiting for the song analysis or the bars may go without progress before the state turns slow (default
+   * 15000 ms). While their progress moves they are not slow, however long they take.
+   */
+  stallAfterMs?: number
   readAsset?: (assetId: Id) => Promise<Blob>
   /** Reads stored media (`appMedia`), so the director can measure footage brightness under lyrics. */
   media?: MediaFileSource
@@ -77,10 +82,19 @@ export interface DirectorDeps {
    * them the plan cuts on beats and says so.
    */
   ensureBars?: (options: { signal: AbortSignal; progress: (fraction: number) => void }) => Promise<boolean>
+  /**
+   * Waits for a song analysis that is still running (beats, sections; an import or the setup screen started it), so
+   * the plan has them. Reports progress only while it waits.
+   */
+  waitForSong?: (options: { signal: AbortSignal; progress: (fraction: number) => void }) => Promise<void>
 }
 
 /** Share of the plan's progress spent finding the song's bars when they are not found yet (often the longest step). */
 const BARS_SHARE = 0.5
+/** Share spent waiting for the song analysis, when the plan has to. */
+const SONG_SHARE = 0.25
+/** As the song's row in the Library says while it is analyzed. */
+const SONG_NOTE = 'Finding beats and sections…'
 
 export interface PlanPreview {
   /** What the plan makes, e.g. "Beat-cut video with 6 sections, 48 shots, 5 of your clips, Vivid look." */
@@ -91,6 +105,8 @@ export interface PlanPreview {
   warnings: string[]
 }
 
+export type PlanStage = 'song' | 'bars' | 'plan'
+
 export type DirectorState =
   | { status: 'idle' }
   | {
@@ -98,9 +114,17 @@ export type DirectorState =
       request: DirectorRequest
       jobId: string
       message: string
+      /**
+       * What the draft is doing: waiting for the song analysis ('song') or the bars ('bars'), which report measured
+       * progress, or planning ('plan').
+       */
+      stage: PlanStage
       /** Still planning after a few seconds: show "Still working" with Cancel. */
       slow: boolean
-      /** The AI model is planning; offer "Use the local draft instead" (useLocalDraft()). */
+      /**
+       * The AI model is planning; offer "Use the local draft instead" (useLocalDraft()). Never while the song analysis
+       * or the bars are still running: the local draft would wait for them too.
+       */
       canUseLocal: boolean
       /** Date.now() when planning started, for an elapsed-time counter. */
       startedAt: number
@@ -210,18 +234,47 @@ export class DirectorSession {
     const provider = request.generate ? this.deps.provider?.() : undefined
     const local = (input: PlannerInput) => planLocally(input)
     const planner = options.local ? local : (this.deps.planner ?? local)
+    const aiPlanner = planner !== local
     const handle = this.deps.jobs.run({
       kind: 'director.plan',
-      title: 'Planning your video',
-      run: async (ctx) => {
-        // ensureBars reports progress only while it finds the bars; the rest of the plan then gets the rest of the bar.
+      // As the Director panel's subtitle says, so the top bar's job reads as the same job in every stage.
+      title: 'Drafting your video',
+      run: async (jobCtx) => {
+        // Each stage reports its own fraction, and finding the bars can start a second pass from 0: the bar never moves
+        // back, while the slow check sees each stage's own progress.
+        let shown = 0
+        const ctx: JobContext = {
+          signal: jobCtx.signal,
+          throwIfCancelled: () => jobCtx.throwIfCancelled(),
+          progress: (p) => {
+            if (p.stage !== undefined) onStage(p.stage, p.fraction)
+            if (p.fraction === undefined) return jobCtx.progress(p)
+            shown = Math.max(shown, p.fraction)
+            jobCtx.progress({ ...p, fraction: shown })
+          },
+        }
+        // The song analysis and the bars report progress only while they run; the rest of the plan then gets the rest
+        // of the bar.
         let share = 0
+        if (this.deps.waitForSong)
+          await this.deps.waitForSong({
+            signal: ctx.signal,
+            progress: (f) => {
+              share = SONG_SHARE
+              ctx.progress({ stage: 'song', fraction: SONG_SHARE * f, message: SONG_NOTE })
+            },
+          })
+        const barsFrom = share
         const bars = this.deps.ensureBars
           ? await this.deps.ensureBars({
               signal: ctx.signal,
               progress: (f) => {
                 share = BARS_SHARE
-                ctx.progress({ stage: 'bars', fraction: BARS_SHARE * f, message: BARS_NOTES.finding })
+                ctx.progress({
+                  stage: 'bars',
+                  fraction: barsFrom + (BARS_SHARE - barsFrom) * f,
+                  message: BARS_NOTES.finding,
+                })
               },
             })
           : true
@@ -265,18 +318,53 @@ export class DirectorSession {
       request,
       jobId: handle.id,
       message: 'Planning your video',
+      stage: 'plan',
       slow: false,
-      canUseLocal: planner !== local,
+      canUseLocal: aiPlanner,
       startedAt: Date.now(),
     })
-    const planning = (patch: { message?: string; slow?: boolean }) => {
+    const planning = (patch: {
+      message?: string
+      slow?: boolean
+      stage?: PlanStage
+      canUseLocal?: boolean
+    }) => {
       if (this.job === handle && this.state.status === 'planning') this.set({ ...this.state, ...patch })
     }
+    // Slow is judged per stage: waiting for the song analysis or the bars only when their progress stalls, planning
+    // when it runs past the time a plan usually takes. Each stage starts its own clock.
+    const slowAfter = this.deps.slowAfterMs ?? 8000
+    const stallAfter = this.deps.stallAfterMs ?? 15000
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const arm = (ms: number) => {
+      clearTimeout(timer)
+      timer = setTimeout(() => planning({ slow: true }), ms)
+    }
+    const notSlow = () => {
+      if (this.state.status === 'planning' && this.state.slow) planning({ slow: false })
+    }
+    let stage: PlanStage | undefined
+    let fraction: number | undefined
+    // Called from the job's progress with each stage's own fraction, before the bar's no-going-back clamp: a second
+    // pass that starts lower is still progress.
+    const onStage = (name: string, f: number | undefined) => {
+      const next: PlanStage = name === 'song' || name === 'bars' ? name : 'plan'
+      if (next !== stage) {
+        stage = next
+        fraction = f
+        planning({ stage: next, slow: false, canUseLocal: aiPlanner && next === 'plan' })
+        arm(next === 'plan' ? slowAfter : stallAfter)
+      } else if (next !== 'plan' && f !== fraction) {
+        fraction = f
+        notSlow()
+        arm(stallAfter)
+      }
+    }
     const unsubscribe = handle.subscribe((snapshot) => {
-      const message = snapshot.progress.message
+      const { message } = snapshot.progress
       if (message && this.state.status === 'planning' && message !== this.state.message) planning({ message })
     })
-    const timer = setTimeout(() => planning({ slow: true }), this.deps.slowAfterMs ?? 8000)
+    if (stage === undefined) arm(slowAfter)
     try {
       const plan = await handle.promise
       if (this.job !== handle) return this.state

@@ -343,4 +343,201 @@ describe('DirectorSession and the song’s bars', () => {
     const planned = ready(await planWith(withoutBars(), () => Promise.resolve(false)))
     expect(planned.preview.warnings).toContain(BARS_NOTES.beatsOnly)
   })
+
+  it('never moves the bar back when finding the bars starts a second pass', async () => {
+    const editor = withoutBars()
+    const jobs = new JobRunner()
+    const seen = progressOf(jobs)
+    await planWith(
+      editor,
+      ({ progress }) => {
+        progress(1)
+        progress(0.3)
+        progress(0.6)
+        return Promise.resolve(false)
+      },
+      jobs,
+    )
+    const fractions = seen.flatMap(([, f]) => (f === undefined ? [] : [f]))
+    expect(fractions.length).toBeGreaterThan(3)
+    expect(fractions).toEqual([...fractions].sort((a, b) => a - b))
+    expect(seen).toContainEqual(['bars', 0.5])
+  })
+})
+
+const REQUEST = { kind: 'beat-cut', seed: 4 } as const
+const cutsOf = (state: DirectorState) => ready(state).plan.shots.map((s) => [s.start, s.end])
+/** The stages and fractions a runner's plan job reports, in order. */
+function stagesOf(jobs: JobRunner): [string | undefined, number | undefined][] {
+  const seen: [string | undefined, number | undefined][] = []
+  jobs.subscribe((list) => {
+    const p = list.find((s) => s.kind === 'director.plan')?.progress
+    const last = seen[seen.length - 1]
+    if (p && (last?.[0] !== p.stage || last?.[1] !== p.fraction)) seen.push([p.stage, p.fraction])
+  })
+  return seen
+}
+
+describe('DirectorSession while the song is still being analyzed', () => {
+  it('waits for the song analysis before planning, and it gets a quarter of the progress bar', async () => {
+    const analyzed = cutsOf(
+      await new DirectorSession({ editor: new ProjectEditor(makeProject()), jobs: new JobRunner() }).plan(
+        REQUEST,
+      ),
+    )
+    const project = makeProject()
+    delete project.analysis.audio[SONG_ID]
+    const editor = new ProjectEditor(project)
+    const jobs = new JobRunner()
+    const seen = stagesOf(jobs)
+    const state = await new DirectorSession({
+      editor,
+      jobs,
+      waitForSong: ({ progress }) => {
+        progress(0.5)
+        editor.dispatch(
+          { type: 'analysis.setAudio', analysis: analysis({ downbeats: DOWNBEATS }) },
+          { history: 'skip' },
+        )
+        return Promise.resolve()
+      },
+    }).plan(REQUEST)
+    expect(seen).toContainEqual(['song', 0.125])
+    expect(cutsOf(state)).toEqual(analyzed)
+  })
+})
+
+describe('DirectorSession says it is slow only for the stage at hand', () => {
+  const editor = () => {
+    const project = makeProject()
+    delete project.analysis.audio[SONG_ID]!.downbeats
+    return new ProjectEditor(project)
+  }
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const slow = (session: DirectorSession) => (session.getState() as { slow?: boolean }).slow
+
+  it('is not slow while the bars’ progress keeps moving, however long it takes', async () => {
+    let seenSlow = false
+    const session = new DirectorSession({
+      editor: editor(),
+      jobs: new JobRunner(),
+      slowAfterMs: 30,
+      stallAfterMs: 150,
+      ensureBars: async ({ progress }) => {
+        for (let i = 1; i <= 12; i++) {
+          progress(i / 12)
+          await sleep(15)
+          seenSlow ||= slow(session) === true
+        }
+        return true
+      },
+    })
+    ready(await session.plan(REQUEST))
+    expect(seenSlow).toBe(false)
+  })
+
+  it('turns slow when the bars’ progress stalls, and not slow again when it moves', async () => {
+    let resume: () => void = () => {}
+    const session = new DirectorSession({
+      editor: editor(),
+      jobs: new JobRunner(),
+      slowAfterMs: 1000,
+      stallAfterMs: 30,
+      ensureBars: async ({ progress }) => {
+        progress(0.1)
+        await new Promise<void>((resolve) => (resume = resolve))
+        progress(0.5)
+        await sleep(10)
+        expect(slow(session)).toBe(false)
+        return true
+      },
+    })
+    const planned = session.plan(REQUEST)
+    await vi.waitFor(() => expect(slow(session)).toBe(true))
+    resume()
+    ready(await planned)
+  })
+
+  it('is not slow while a second pass of the bars moves, though the bar waits above it', async () => {
+    let seenSlow = false
+    const session = new DirectorSession({
+      editor: editor(),
+      jobs: new JobRunner(),
+      slowAfterMs: 1000,
+      stallAfterMs: 60,
+      ensureBars: async ({ progress }) => {
+        progress(0.9)
+        for (let i = 1; i <= 10; i++) {
+          progress(i / 20)
+          await sleep(20)
+          seenSlow ||= slow(session) === true
+        }
+        return true
+      },
+    })
+    ready(await session.plan(REQUEST))
+    expect(seenSlow).toBe(false)
+  })
+
+  it('offers the local draft only once the AI model is planning, not while the bars are found', async () => {
+    let resume: () => void = () => {}
+    const session = new DirectorSession({
+      editor: editor(),
+      jobs: new JobRunner(),
+      slowAfterMs: 5,
+      stallAfterMs: 5,
+      ensureBars: async ({ progress }) => {
+        progress(0.1)
+        await new Promise<void>((resolve) => (resume = resolve))
+        return true
+      },
+      planner: (_input, ctx) => {
+        ctx.progress({ stage: 'llm', message: 'Asking your AI model for ideas' })
+        return new Promise((_resolve, reject) =>
+          ctx.signal.addEventListener('abort', () => reject(new JobError('cancelled', 'Cancelled'))),
+        )
+      },
+    })
+    const planned = session.plan(REQUEST)
+    await vi.waitFor(() =>
+      expect(session.getState()).toMatchObject({ stage: 'bars', slow: true, canUseLocal: false }),
+    )
+    resume()
+    await vi.waitFor(() =>
+      expect(session.getState()).toMatchObject({ stage: 'plan', slow: true, canUseLocal: true }),
+    )
+    session.cancel()
+    await planned
+  })
+
+  it('gives planning its own clock after the bars', async () => {
+    const session = new DirectorSession({
+      editor: editor(),
+      jobs: new JobRunner(),
+      slowAfterMs: 150,
+      stallAfterMs: 1000,
+      ensureBars: async ({ progress }) => {
+        for (let i = 1; i <= 6; i++) {
+          progress(i / 6)
+          await sleep(40)
+        }
+        return true
+      },
+      planner: (_input, ctx) => {
+        ctx.progress({ stage: 'llm', message: 'Asking your AI model for ideas' })
+        return new Promise((_resolve, reject) =>
+          ctx.signal.addEventListener('abort', () => reject(new JobError('cancelled', 'Cancelled'))),
+        )
+      },
+    })
+    const planned = session.plan(REQUEST)
+    await vi.waitFor(() =>
+      expect(session.getState()).toMatchObject({ message: 'Asking your AI model for ideas' }),
+    )
+    // The draft has run longer than slowAfterMs, but the planning stage has only just started.
+    expect(slow(session)).toBe(false)
+    await vi.waitFor(() => expect(slow(session)).toBe(true))
+    session.cancel()
+    await planned
+  })
 })
