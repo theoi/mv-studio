@@ -110,7 +110,16 @@ export {
   cameraMoveEffect,
   encodeDepthImage,
   findDepthAsset,
+  safeCameraIntensity,
   type CameraMoveDeps,
   type CameraMoveOptions,
+  type CameraMoveResult,
   type CameraMovesResult,
 } from './cameraMove.ts'
+export {
+  SMEAR_LIMIT,
+  createParallaxSampler,
+  safeIntensity,
+  smearOf,
+  type SmearScene,
+} from './render/smear.ts'

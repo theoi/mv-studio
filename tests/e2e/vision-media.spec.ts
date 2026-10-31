@@ -385,6 +385,100 @@ test('the 3D camera move effect renders the parallax renderer’s camera for eve
   expect(errors).toEqual([])
 })
 
+test('the smear prediction follows the parallax renderer’s rays for every preset', async ({ page }) => {
+  test.setTimeout(120_000)
+  const errors = collectErrors(page)
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'image.png')])
+  const r = await page.evaluate(async () => {
+    const { vision } = window.mvStudio
+    const image = await createImageBitmap(window.mvStudio.files()[0])
+    const iw = image.width
+    const ih = image.height
+    const source = new OffscreenCanvas(iw, ih).getContext('2d')!
+    source.drawImage(image, 0, 0)
+    const rgb = source.getImageData(0, 0, iw, ih).data
+    // Thin near posts and a near box over a far ramp: occlusion edges everywhere.
+    const dw = 160
+    const dh = 90
+    const data = new Uint8Array(dw * dh)
+    for (let y = 0; y < dh; y++)
+      for (let x = 0; x < dw; x++)
+        data[y * dw + x] =
+          x % 20 < 3 || (x > 60 && x < 100 && y > 30 && y < 70) ? 230 : Math.round(30 + (60 * y) / dh)
+    const depth = vision.prepareDepthForParallax({
+      version: 1,
+      width: dw,
+      height: dh,
+      data,
+      sourceSize: { width: iw, height: ih },
+      model: 'test',
+      quality: 'full',
+    })
+    const renderer = vision.createParallaxRenderer()
+    renderer.setImage(image)
+    renderer.setDepth(depth)
+    const sampler = vision.createParallaxSampler(depth)
+    const W = 320
+    const H = 180
+    const cpu = (sample: (u: number, v: number) => readonly [number, number]) => {
+      const out = new Uint8ClampedArray(W * H * 4)
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const [qx, qy] = sample((x + 0.5) / W, (y + 0.5) / H)
+          const cx = Math.min(1, Math.max(0, qx)) * iw - 0.5
+          const cy = Math.min(1, Math.max(0, qy)) * ih - 0.5
+          const x0 = Math.floor(cx)
+          const y0 = Math.floor(cy)
+          const fx = cx - x0
+          const fy = cy - y0
+          const xa = Math.min(iw - 1, Math.max(0, x0))
+          const xb = Math.min(iw - 1, Math.max(0, x0 + 1))
+          const ya = Math.min(ih - 1, Math.max(0, y0))
+          const yb = Math.min(ih - 1, Math.max(0, y0 + 1))
+          for (let c = 0; c < 3; c++) {
+            const p = (yy: number, xx: number) => rgb[(yy * iw + xx) * 4 + c]
+            const top = p(ya, xa) + (p(ya, xb) - p(ya, xa)) * fx
+            const bottom = p(yb, xa) + (p(yb, xb) - p(yb, xa)) * fx
+            out[(y * W + x) * 4 + c] = top + (bottom - top) * fy
+          }
+        }
+      return out
+    }
+    const meanDiff = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
+      let s = 0
+      for (let i = 0; i < a.length; i += 4)
+        s += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])
+      return s / (a.length / 4) / 3
+    }
+    const results: { preset: string; progress: number; diff: number; shifted: number }[] = []
+    for (const preset of vision.CAMERA_PRESETS)
+      for (const progress of [0, 1]) {
+        const pose = vision.cameraPoseAt({ preset, intensity: 0.8, focus: 0.4 }, progress)
+        renderer.render(pose, { width: W, height: H })
+        const ctx = new OffscreenCanvas(W, H).getContext('2d')!
+        ctx.drawImage(renderer.canvas, 0, 0)
+        const gpu = ctx.getImageData(0, 0, W, H).data
+        const sample = sampler(pose)
+        // What sampling one output pixel off would cost, as the scale for an error.
+        const off = (u: number, v: number) => sample(u + 1 / W, v)
+        results.push({ preset, progress, diff: meanDiff(cpu(sample), gpu), shifted: meanDiff(cpu(off), gpu) })
+      }
+    renderer.dispose()
+    image.close()
+    return results
+  })
+  console.log(
+    'smear sampler vs renderer',
+    JSON.stringify(r.map((x) => [x.preset, x.progress, +x.diff.toFixed(2), +x.shifted.toFixed(2)])),
+  )
+  expect(r).toHaveLength(20)
+  for (const x of r) {
+    expect(x.diff, `${x.preset} at ${x.progress}`).toBeLessThan(1.5)
+    expect(x.diff, `${x.preset} at ${x.progress}`).toBeLessThan(x.shifted / 3)
+  }
+  expect(errors).toEqual([])
+})
 test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyframed camera effect', async ({
   page,
 }) => {
@@ -413,6 +507,13 @@ test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyfr
     const added = editor.getProject()
     const effects = added.clips[clip.id].effects
     const depthAsset = added.assets[first.depthAssetId]
+    const amount = {
+      intensity: first.intensity,
+      safeIntensity: first.safeIntensity,
+      smearRisk: first.smearRisk,
+      stored: effects[0].params.intensity.value,
+      fromStoredDepth: await vision.safeCameraIntensity(media.mediaStore, added, clip.id),
+    }
 
     const W = 320
     const H = 180
@@ -435,7 +536,7 @@ test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyfr
       canUndo: editor.canUndo(),
     }
     editor.redo()
-    const second = await vision.addCameraMove(deps, clip.id, { preset: 'orbit-left' })
+    const second = await vision.addCameraMove(deps, clip.id, { preset: 'orbit-left', intensity: 0.9 })
     const final = editor.getProject()
     backends.dispose()
     return {
@@ -462,6 +563,13 @@ test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyfr
         preset: final.clips[clip.id].effects[0].params.preset.value,
         assets: Object.keys(final.assets).length,
       },
+      secondAmount: {
+        intensity: second.intensity,
+        stored: final.clips[clip.id].effects[0].params.intensity.value,
+        smearRisk: second.smearRisk,
+        aboveSafe: second.intensity > second.safeIntensity,
+      },
+      amount,
     }
   })
   console.log('add camera move', JSON.stringify(r))
@@ -476,6 +584,16 @@ test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyfr
   expect(r.moved).toBeGreaterThan(2)
   expect(r.afterUndo).toEqual({ effects: 0, hasDepth: false, canUndo: false })
   expect(r.second).toEqual({ sameDepth: true, cameraEffects: 1, preset: 'orbit-left', assets: 2 })
+  // Left to the app, the amount is 0.5, or less where 0.5 is predicted to smear, but not below 0.25.
+  const { amount } = r
+  expect(amount.intensity).toBe(Math.max(0.25, Math.min(0.5, amount.safeIntensity)))
+  expect(amount.stored).toBe(amount.intensity)
+  expect(amount.smearRisk).toBe(amount.intensity > amount.safeIntensity)
+  // The prediction from the stored depth image (for the inspector's hint) agrees with the one made while adding.
+  expect(Math.abs(amount.fromStoredDepth! - amount.safeIntensity)).toBeLessThanOrEqual(0.1)
+  // An amount the user set is kept, with the risk flagged rather than lowered.
+  expect(r.secondAmount).toMatchObject({ intensity: 0.9, stored: 0.9 })
+  expect(r.secondAmount.smearRisk).toBe(r.secondAmount.aboveSafe)
   expect(r.stages).toContain('saving')
   expect(errors).toEqual([])
 })

@@ -6,14 +6,19 @@ import { JobError } from '../shared/jobs.ts'
 import { prepareDepthForParallax, suggestFocus } from './depth/prepare.ts'
 import type { DepthService } from './depth/service.ts'
 import { throwIfAborted, visionError } from './errors.ts'
+import { CAMERA_PRESETS } from './render/camera.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from './render/cameraEffect.ts'
+import { localContrast, safeIntensity, type SmearScene } from './render/smear.ts'
+import { rgbaToGrayFast, toRgba } from './runtime/canvas.ts'
 import { fitSize } from './runtime/frames.ts'
 import { VISION_MODELS } from './runtime/models.ts'
 import { createProgress, type TaskOptions } from './runtime/tasks.ts'
-import type { CameraPreset, DepthMap } from './types.ts'
+import type { CameraPreset, DepthMap, GrayImage } from './types.ts'
 
 const DEPTH_MODEL = VISION_MODELS.depthAnythingSmall.id
 const DEFAULT_INTENSITY = 0.5
+/** An automatic move goes no lower than this: below it the depth motion is hard to see. */
+const MIN_AUTO_INTENSITY = 0.25
 
 export interface CameraMoveDeps {
   editor: Pick<ProjectEditor, 'dispatch' | 'getProject'>
@@ -27,12 +32,27 @@ export interface CameraMoveDeps {
 
 export interface CameraMoveOptions extends TaskOptions {
   preset?: CameraPreset
-  /** 0..1, default 0.5. */
+  /**
+   * 0..1. A value set here is used as given, because the user chose it. Left out, each still gets 0.5, or less where
+   * 0.5 is predicted to smear the background (`safeIntensity` in render/smear.ts), but not below 0.25.
+   */
   intensity?: number
 }
 
+export interface CameraMoveResult {
+  clipId: Id
+  effectInstanceId: Id
+  depthAssetId: Id
+  /** The amount the move was added with. */
+  intensity: number
+  /** Largest amount predicted not to smear this still with this preset (0 to 1 in steps of 0.05). */
+  safeIntensity: number
+  /** `intensity` is above `safeIntensity`: the background next to foreground objects may smear. */
+  smearRisk: boolean
+}
+
 export interface CameraMovesResult {
-  moves: { clipId: Id; effectInstanceId: Id; depthAssetId: Id }[]
+  moves: CameraMoveResult[]
   /** Undo label of the dispatch that added them. */
   label: string
 }
@@ -47,14 +67,14 @@ export async function addCameraMove(
   deps: CameraMoveDeps,
   clipId: Id,
   options: CameraMoveOptions = {},
-): Promise<{ effectInstanceId: Id; depthAssetId: Id }> {
+): Promise<CameraMoveResult> {
   const { moves } = await addCameraMoves(deps, [clipId], options)
   return moves[0]!
 }
 
 /**
  * `addCameraMove` on several image clips at once, all in one dispatch (one undo step). Progress runs through the
- * clips in order; clips of the same still share its depth map.
+ * clips in order; clips of the same still share its depth map and its smear prediction.
  */
 export async function addCameraMoves(
   deps: CameraMoveDeps,
@@ -66,20 +86,32 @@ export async function addCameraMoves(
   const ids = [...new Set(clipIds)]
   try {
     if (!ids.length) throw new JobError('invalid-input', 'Select an image clip for the 3D camera move.')
-    const stills = new Map<Id, { depthAsset: Asset; newAsset: Asset | null; focus: number }>()
+    const preset = options.preset ?? DEFAULT_CAMERA_PRESET
+    const stills = new Map<
+      Id,
+      { depthAsset: Asset; newAsset: Asset | null; focus: number; safeIntensity: number }
+    >()
     for (const [i, clipId] of ids.entries()) {
       const still = stillOf(deps.editor.getProject(), clipId).asset
       if (stills.has(still.id)) continue
       const step = (f: number, stage?: string) => progress((i + f) / ids.length, stage)
       step(0, 'loading')
-      const prepared = prepareDepthForParallax(await estimateDepth(deps, still, signal, step))
+      const { depth, gray } = await estimateDepth(deps, still, signal, step)
+      const prepared = prepareDepthForParallax(depth)
+      const focus = suggestFocus(prepared)
+      const scene: SmearScene = { depth: prepared, contrast: localContrast(gray) }
       let newAsset: Asset | null = null
       let depthAsset = findDepthAsset(deps.editor.getProject(), still.id)
       if (!depthAsset) {
         newAsset = await storeDepth(deps, still, prepared, step)
         depthAsset = newAsset
       }
-      stills.set(still.id, { depthAsset, newAsset, focus: suggestFocus(prepared) })
+      stills.set(still.id, {
+        depthAsset,
+        newAsset,
+        focus,
+        safeIntensity: safeIntensity(scene, preset, focus),
+      })
       throwIfAborted(signal)
     }
     const project = deps.editor.getProject()
@@ -90,14 +122,19 @@ export async function addCameraMoves(
       const { clip, asset } = stillOf(project, clipId)
       const still = stills.get(asset.id)
       if (!still) continue
-      const effect = cameraMoveEffect(clip, still.depthAsset.id, {
-        focus: still.focus,
-        preset: options.preset,
-        intensity: options.intensity,
-      })
+      const intensity =
+        options.intensity ?? Math.max(MIN_AUTO_INTENSITY, Math.min(DEFAULT_INTENSITY, still.safeIntensity))
+      const effect = cameraMoveEffect(clip, still.depthAsset.id, { focus: still.focus, preset, intensity })
       commands.push(...cameraMoveCommands(clip, effect, added.has(asset.id) ? null : still.newAsset))
       added.add(asset.id)
-      moves.push({ clipId, effectInstanceId: effect.id, depthAssetId: still.depthAsset.id })
+      moves.push({
+        clipId,
+        effectInstanceId: effect.id,
+        depthAssetId: still.depthAsset.id,
+        intensity,
+        safeIntensity: still.safeIntensity,
+        smearRisk: intensity > still.safeIntensity,
+      })
     }
     const label = moves.length === 1 ? 'Add 3D camera move' : `Add 3D camera moves to ${moves.length} images`
     deps.editor.dispatch(commands, { label })
@@ -108,15 +145,16 @@ export async function addCameraMoves(
   }
 }
 
+/** The still's depth, and its luma at the depth map's size for the smear prediction. */
 async function estimateDepth(
   deps: CameraMoveDeps,
   still: Asset,
   signal: AbortSignal | undefined,
   progress: (f: number, stage?: string) => void,
-): Promise<DepthMap> {
+): Promise<{ depth: DepthMap; gray: GrayImage }> {
   const image = await createImageBitmap(await deps.media.getFile(still))
   try {
-    return await deps.depth.get(
+    const depth = await deps.depth.get(
       {
         mediaId: still.id,
         quality: 'full',
@@ -132,6 +170,7 @@ async function estimateDepth(
       },
       { signal, onProgress: (p) => progress(0.05 + 0.85 * (p.fraction ?? 0), p.stage) },
     )
+    return { depth, gray: rgbaToGrayFast(toRgba(image, { width: depth.width, height: depth.height })) }
   } finally {
     image.close()
   }
@@ -157,6 +196,61 @@ function stillOf(project: Project, clipId: Id): { clip: ImageClip; asset: Asset 
   const asset = project.assets[clip.assetId]
   if (!asset) throw new JobError('invalid-input', 'The image of this clip is missing.')
   return { clip, asset }
+}
+
+const scenes = new Map<Id, Promise<SmearScene>>()
+const SCENE_CACHE_SIZE = 4
+
+/**
+ * Largest amount predicted not to smear the background of a clip's still with `preset` (default: the clip's current
+ * move), from its stored depth image; null when the clip has no 3D camera move. For a hint when the user sets a
+ * stronger move than this. Same scale and steps as `CameraMoveResult.safeIntensity`.
+ */
+export async function safeCameraIntensity(
+  media: Pick<CameraMoveDeps['media'], 'getFile'>,
+  project: Pick<Project, 'assets' | 'clips'>,
+  clipId: Id,
+  preset?: CameraPreset,
+): Promise<number | null> {
+  const clip = project.clips[clipId]
+  if (clip?.type !== 'image') return null
+  const effect = clip.effects.find((e) => e.effectId === CAMERA_EFFECT_ID)
+  const depthId = effect?.params.depth?.value
+  const still = project.assets[clip.assetId]
+  const depthAsset = typeof depthId === 'string' ? project.assets[depthId] : undefined
+  if (!effect || !still || !depthAsset) return null
+  const focus = effect.params.focus?.value
+  const current = effect.params.preset?.value
+  const move = preset ?? CAMERA_PRESETS.find((p) => p === current) ?? DEFAULT_CAMERA_PRESET
+  let scene = scenes.get(depthAsset.id)
+  if (!scene) {
+    scene = loadScene(media, still, depthAsset)
+    scenes.set(depthAsset.id, scene)
+    scene.catch(() => scenes.delete(depthAsset.id))
+    if (scenes.size > SCENE_CACHE_SIZE) scenes.delete(scenes.keys().next().value!)
+  }
+  return safeIntensity(await scene, move, typeof focus === 'number' ? focus : 0.5)
+}
+
+async function loadScene(
+  media: Pick<CameraMoveDeps['media'], 'getFile'>,
+  still: Asset,
+  depthAsset: Asset,
+): Promise<SmearScene> {
+  const [depthImage, image] = await Promise.all([
+    createImageBitmap(await media.getFile(depthAsset)),
+    createImageBitmap(await media.getFile(still)),
+  ])
+  try {
+    const size = { width: depthImage.width, height: depthImage.height }
+    const rgba = toRgba(depthImage, size)
+    const data = new Uint8Array(size.width * size.height)
+    for (let i = 0; i < data.length; i++) data[i] = rgba.data[i * 4]!
+    return { depth: { ...size, data }, contrast: localContrast(rgbaToGrayFast(toRgba(image, size))) }
+  } finally {
+    depthImage.close()
+    image.close()
+  }
 }
 
 /** Depth image stored earlier for `stillId`, if the project still has it. */
