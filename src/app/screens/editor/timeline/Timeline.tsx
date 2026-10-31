@@ -26,15 +26,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import type {
-  Clip,
-  FeatureSeries,
-  LyricWord,
-  Project,
-  SongSection,
-  StemName,
-  Track,
-} from '../../../../model/index.ts'
+import type { Clip, FeatureSeries, LyricWord, Project, StemName, Track } from '../../../../model/index.ts'
 import { BARS_NOTES, clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
@@ -1307,46 +1299,6 @@ function LineMatches({ lineId }: { lineId: string }) {
   )
 }
 
-/**
- * The one suggestion under a selected section: "N clips match this chorus" when footage analysis finds two or more
- * strong matches, else "Re-cut this chorus to the beat". Dismissing either quiets the section.
- */
-function SectionSuggestion({ section }: { section: SongSection }) {
-  const strong = useFootage((s) => s.strongMatch)
-  const count = (useFootageResults('section', section.id) ?? []).filter((r) => r.score >= strong).length
-  const matchId = `match-${section.id}`
-  const cutId = `cut-${section.id}`
-  const quiet = useUi((s) => s.dismissed.includes(matchId) || s.dismissed.includes(cutId))
-  if (quiet) return null
-  // "this verse", not "this verse 1".
-  const label = section.label.replace(/\s*\d+$/, '').toLowerCase()
-  return (
-    <div className={styles.sectionSuggest}>
-      {count >= 2 ? (
-        <InlineSuggestion
-          id={matchId}
-          variant="chip"
-          action="Show"
-          onAction={() => {
-            revealSuggestions()
-            set({ libraryTab: 'media', libraryOpen: true })
-          }}
-        >
-          {count} clips match this {label}
-        </InlineSuggestion>
-      ) : (
-        <InlineSuggestion
-          id={cutId}
-          variant="chip"
-          action="Cut clips to it"
-          onAction={() => cutClipsToSection(section.id)}
-        >
-          Re-cut this {label} to the beat
-        </InlineSuggestion>
-      )}
-    </div>
-  )
-}
 function Playhead({ height, head }: { height?: number; head?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -2175,7 +2127,6 @@ export function Timeline() {
                               {sectionName(s)}
                             </span>
                           )}
-                          {sel && <SectionSuggestion section={s} />}
                         </div>
                       </ContextMenuTrigger>
                       <ContextMenuContent>

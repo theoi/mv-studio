@@ -1,5 +1,6 @@
 import { Film } from 'lucide-react'
 import { ToggleGroup } from 'radix-ui'
+import type { SongSection } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
@@ -19,7 +20,10 @@ import {
   type SectionKind,
 } from '../../../state/project.ts'
 import { exportSectionTeaser } from '../../../state/exports.ts'
+import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { cutClipsToSection, moveBoundary, sectionEdge } from '../../../state/sections.ts'
+import { set } from '../../../state/ui.ts'
+import { InlineSuggestion } from '../Suggestion.tsx'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
 import styles from '../Inspector.module.css'
@@ -34,6 +38,28 @@ const colorNames: Record<SectionKind, string> = {
 }
 
 const kinds = Object.keys(colorNames) as SectionKind[]
+
+/** "N clips match this chorus" once footage analysis finds two or more strong matches for the section. */
+function SectionMatches({ section }: { section: SongSection }) {
+  const strong = useFootage((s) => s.strongMatch)
+  const count = (useFootageResults('section', section.id) ?? []).filter((r) => r.score >= strong).length
+  if (count < 2) return null
+  // A name the user typed reads as typed ("this DJ break"); a found one reads "this verse", not "this Verse 1".
+  const name = section.confidence === 1 ? section.label : section.label.replace(/\s*\d+$/, '').toLowerCase()
+  return (
+    <InlineSuggestion
+      // Not now quiets the section wherever it repeats.
+      id={section.repeatGroup === undefined ? `match-${section.id}` : `match-repeat-${section.repeatGroup}`}
+      action="Show"
+      onAction={() => {
+        revealSuggestions()
+        set({ libraryTab: 'media', libraryOpen: true })
+      }}
+    >
+      {count} clips match this {name}.
+    </InlineSuggestion>
+  )
+}
 
 export function SectionInspector({ id }: { id: string }) {
   const project = useProject()
@@ -82,6 +108,7 @@ export function SectionInspector({ id }: { id: string }) {
         meta={guess ?? span}
         metaBelow={guess && span}
       />
+      <SectionMatches section={sec} />
       <Section title="Section">
         <FieldRow label="Name">
           <Input

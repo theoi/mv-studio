@@ -236,16 +236,32 @@ test('Assist › Match analyzes the clips on request, picks clips for each part 
   await expect(tooltip).toContainText(asset.tags.slice(0, 5).join(' · '))
 })
 
-test('a selected section suggests re-cutting it until its footage matches, then "N clips match this chorus"', async ({
+test('a selected section says "N clips match this chorus" in the Inspector once its footage matches, leaving the lyrics under it clear', async ({
   page,
 }) => {
   test.setTimeout(200_000)
+  await page.setViewportSize({ width: 1280, height: 720 })
   await openSample(page, '#/editor?t=73.6')
   const chorus = page.getByRole('button', { name: /^Section Chorus/ }).first()
   // A mouse pointerdown: one without a pointer type counts as touch, whose long press opens the section menu.
   await chorus.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
-  await expect(page.getByText('Re-cut this chorus to the beat')).toBeVisible()
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await expect(inspector.getByText('Section: Chorus')).toBeVisible()
   await expect(page.getByText(/clips match this chorus/)).toHaveCount(0)
+  await expect(page.getByText(/^Re-cut this chorus/)).toHaveCount(0)
+  // Nothing sits over the Lyrics lane under the selected section: its lyric chips take the click there.
+  const box = (await chorus.boundingBox())!
+  const under = await page.evaluate(
+    ([x, y]) => {
+      const el = document.elementFromPoint(x!, y!)
+      return {
+        note: !!el?.closest('[role="note"]'),
+        lyric: el?.closest('[aria-label]')?.getAttribute('aria-label'),
+      }
+    },
+    [box.x + 40, box.y + box.height + 14],
+  )
+  expect(under).toEqual({ note: false, lyric: expect.stringMatching(/^Lyric: /) })
 
   await page.evaluate(() => window.mvStudio.app.footage.analyzeFootageNow())
   await analysisDone(page)
@@ -259,20 +275,65 @@ test('a selected section suggests re-cutting it until its footage matches, then 
     return (await service.suggestForSection(id)).filter((r: Untyped) => r.score >= threshold).length
   }, sectionId)
   expect(strong).toBeGreaterThanOrEqual(2)
-  const chip = page.getByRole('note').filter({ hasText: `${strong} clips match this chorus` })
-  await expect(chip).toBeVisible()
-  await expect(page.getByText('Re-cut this chorus to the beat')).toHaveCount(0)
+  const card = inspector.getByRole('note').filter({ hasText: `${strong} clips match this chorus.` })
+  await expect(card).toBeVisible()
+  await expect(page.locator('[data-timeline-scroller]').getByRole('note')).toHaveCount(0)
+
+  // A name the user typed reads as typed, number and all.
+  await inspector.getByLabel('Section name').fill('Big chorus 2')
+  await expect(
+    inspector.getByRole('note').filter({ hasText: /^\d+ clips match this Big chorus 2\./ }),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    editor.endGesture()
+    editor.undo()
+  })
+  await expect(card).toBeVisible()
 
   // Show opens Library › Media with the section's suggestions in view.
   const media = page.getByRole('tabpanel', { name: 'Media' })
   await page.getByRole('tab', { name: 'Text' }).click()
-  await chip.getByRole('button', { name: 'Show' }).click()
+  await card.getByRole('button', { name: 'Show' }).click()
   await expect(media.getByText('Suggested for Chorus')).toBeInViewport()
 
-  // Dismissing it quiets the section: the re-cut suggestion does not come back.
-  await chip.getByRole('button', { name: 'Dismiss suggestion' }).click()
+  // Not now quiets the chorus wherever it repeats: a repeat whose own card showed before shows none after.
+  const repeat = await page.evaluate(async (id) => {
+    const { footage, project } = window.mvStudio.app
+    const p = project.editor.getProject()
+    const sections = p.analysis.audio[p.songAssetId].sections
+    const own = sections.find((s: Untyped) => s.id === id)
+    if (own.repeatGroup === undefined) return null
+    const service = await footage.footageService()
+    const threshold = footage.useFootage.getState().strongMatch
+    for (const s of sections) {
+      if (s.id === id || s.repeatGroup !== own.repeatGroup) continue
+      const strong = (await service.suggestForSection(s.id)).filter(
+        (r: Untyped) => r.score >= threshold,
+      ).length
+      if (strong >= 2)
+        return { id: s.id as string, start: s.start as number, strong, from: own.start as number }
+    }
+    return null
+  }, sectionId)
+  expect(repeat).not.toBeNull()
+  const select = async (id: string, start: number) => {
+    await page.evaluate((i) => window.mvStudio.app.ui.select({ type: 'section', id: i }), id)
+    await expect
+      .poll(async () => parseFloat(await inspector.getByLabel('Section start').inputValue()))
+      .toBeCloseTo(start, 1)
+  }
+  await select(repeat!.id, repeat!.start)
+  await expect(
+    inspector.getByRole('note').filter({ hasText: `${repeat!.strong} clips match this chorus.` }),
+  ).toBeVisible()
+  await select(sectionId, repeat!.from)
+  await card.getByRole('button', { name: 'Not now' }).click()
   await expect(page.getByText(/clips match this chorus/)).toHaveCount(0)
-  await expect(page.getByText('Re-cut this chorus to the beat')).toHaveCount(0)
+  await select(repeat!.id, repeat!.start)
+  // The card's matches load a moment after the selection changes, so a card that should be gone would show by now.
+  await page.waitForTimeout(1000)
+  await expect(page.getByText(/clips match this chorus/)).toHaveCount(0)
 })
 
 test('Cancel stops footage analysis silently in Match and Auto-cut; clips that fail show why and Try again retries them', async ({

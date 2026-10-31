@@ -282,13 +282,6 @@
   outline: none;
 }
 
-.sectionSuggest {
-  position: absolute;
-  left: 4px;
-  top: calc(100% + 6px);
-  z-index: 8;
-}
-
 /* The left padding makes room for the grip, which is out of the flow. */
 .trackHeader {
   position: relative;
