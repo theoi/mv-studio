@@ -98,6 +98,42 @@ export interface MovingSpan extends Span {
   others: readonly Span[]
 }
 
+/** A clip staying on a track, by id, for an insert drag that may push it. */
+export interface StayingSpan extends Span {
+  id: string
+}
+
+/** A dragged clip of an insert drag, with the clips that stay on the track it drops on. */
+export interface InsertSpan extends Span {
+  others: readonly StayingSpan[]
+}
+
+/**
+ * An insert drag: the moving clips go in at `shift`, and every clip staying on their tracks at or after the insert
+ * point (where the group starts) moves right by the group's length. A drop inside a clip on the first span's track (the
+ * grabbed clip's) goes in before or after that clip, whichever edge is nearer, rather than splitting it. Null when a
+ * clip on another of the tracks still straddles the insert point.
+ */
+export function insertPlan(
+  moving: readonly InsertSpan[],
+  shift: number,
+  lo: number,
+): { shift: number; at: number; pushes: { id: string; start: number }[] } | null {
+  const first = Math.min(...moving.map((c) => c.start))
+  const length = Math.max(...moving.map((c) => c.end)) - first
+  let at = first + Math.max(lo, shift)
+  const straddles = (o: Span) => o.start < at - EPS && o.end > at + EPS
+  const inside = moving[0]?.others.find(straddles)
+  if (inside) at = at - inside.start <= inside.end - at ? inside.start : inside.end
+  const pushes = new Map<string, number>()
+  for (const c of moving)
+    for (const o of c.others) {
+      if (straddles(o)) return null
+      if (o.start >= at - EPS) pushes.set(o.id, o.start + length)
+    }
+  return { shift: at - first, at, pushes: [...pushes].map(([id, start]) => ({ id, start })) }
+}
+
 /** The first of the moving clips that overlaps a clip staying on its track when they all shift by `shift`. */
 export function blockedAt(moving: readonly MovingSpan[], shift: number): number {
   return moving.findIndex((c) =>

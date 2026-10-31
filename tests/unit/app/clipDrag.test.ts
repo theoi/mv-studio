@@ -13,6 +13,7 @@ import {
 import {
   blockedAt,
   dropShift,
+  insertPlan,
   refusalLabel,
   refusalToast,
   refuseTrack,
@@ -57,6 +58,51 @@ describe('dropShift', () => {
 
   it('stays within the timeline', () => {
     expect(dropShift([at(1, 2)], -3, -3, 0.1, -1, 100)).toEqual({ shift: -1, edge: null })
+  })
+})
+
+describe('insertPlan', () => {
+  const on = (id: string, start: number, end: number) => ({ id, start, end })
+  // A 2 s clip at 20 s, onto a track holding 0..4, 6..8 and 8..12.
+  const clip = { start: 20, end: 22, others: [on('a', 0, 4), on('b', 6, 8), on('c', 8, 12)] }
+
+  it('puts the clip in at the drop point and pushes the later clips on the track right by its length', () => {
+    expect(insertPlan([clip], -14, -20)).toEqual({
+      shift: -14,
+      at: 6,
+      pushes: [
+        { id: 'b', start: 8 },
+        { id: 'c', start: 10 },
+      ],
+    })
+  })
+
+  it('goes in before or after a clip it is dropped inside, whichever edge is nearer, without splitting it', () => {
+    expect(insertPlan([clip], 8.5 - 20, -20)).toEqual({ shift: -12, at: 8, pushes: [{ id: 'c', start: 10 }] })
+    expect(insertPlan([clip], 11 - 20, -20)).toEqual({ shift: -8, at: 12, pushes: [] })
+  })
+
+  it('pushes by a group’s whole span on each of its tracks, and has no room when a clip on another track straddles the point', () => {
+    const top = { start: 20, end: 22, others: [on('x', 5, 7), on('y', 9, 10)] }
+    const bottom = { start: 23, end: 24, others: [on('z', 4, 6), on('w', 12, 13)] }
+    expect(insertPlan([top, bottom], -12, -20)).toEqual({
+      shift: -12,
+      at: 8,
+      pushes: [
+        { id: 'y', start: 13 },
+        { id: 'w', start: 16 },
+      ],
+    })
+    // Inside x on the grabbed clip's track, the drop goes in at 5, where z on the other track still straddles it.
+    expect(insertPlan([top, bottom], 5.5 - 20, -20)).toBeNull()
+  })
+
+  it('stays within the timeline', () => {
+    expect(insertPlan([{ start: 3, end: 5, others: [on('a', 0, 2)] }], -10, -3)).toEqual({
+      shift: -3,
+      at: 0,
+      pushes: [{ id: 'a', start: 2 }],
+    })
   })
 })
 

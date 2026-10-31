@@ -329,6 +329,18 @@ export const SHORTCUTS = [
 
 export type ShortcutId = (typeof SHORTCUTS)[number]['id']
 
+/** Keys held during a pointer gesture: listed in Settings › Shortcuts, never matched by the key handler. */
+export interface GestureShortcut {
+  id: string
+  label: string
+  group: ShortcutGroup
+  keys: readonly string[]
+}
+
+export const GESTURES: readonly GestureShortcut[] = [
+  { id: 'insertDrag', label: 'Insert while dragging a clip (hold)', group: 'Timeline', keys: ['Mod'] },
+]
+
 /** The keys tooltips and the palette show for a shortcut. */
 export function keysOf(id: ShortcutId): string {
   return SHORTCUTS.find((s) => s.id === id)?.keys[0] ?? ''

@@ -215,7 +215,7 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   await page.mouse.move(from.x, overlayY, { steps: 8 })
   const label = page.getByText('Looks only', { exact: true })
   await expect(label).toBeVisible()
-  const outline = (await label.locator('../..').boundingBox())!
+  const outline = (await label.locator('xpath=ancestor::div[1]').boundingBox())!
   const bars = (await spectrum.boundingBox())!
   expect(Math.abs(outline.x - bars.x)).toBeLessThan(2)
   // Its outline starts in view, so the label crosses the lane's top edge.
@@ -266,7 +266,7 @@ test('a refusal label stays in view at the left of the lanes, inside its outline
   const label = page.getByText('No looks here', { exact: true })
   await expect(label).toBeVisible()
   const pill = (await label.boundingBox())!
-  const outline = (await label.locator('../..').boundingBox())!
+  const outline = (await label.locator('xpath=ancestor::div[1]').boundingBox())!
   expect(outline.x).toBeLessThan(lanesLeft)
   expect(pill.x).toBeGreaterThanOrEqual(lanesLeft)
   expect(pill.x + pill.width).toBeLessThanOrEqual(
@@ -277,4 +277,85 @@ test('a refusal label stays in view at the left of the lanes, inside its outline
   expect(pill.y + pill.height).toBeLessThanOrEqual(outline.y + outline.height)
   await page.keyboard.press('Escape')
   await page.mouse.up()
+})
+
+test('Mod pressed during a clip drag inserts the clip, pushing the later clips on its track right; releasing Mod goes back to a move', async ({
+  page,
+}) => {
+  await openEditor(page)
+  await page.keyboard.press('n')
+  const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
+  /** The Video track's clips by id, with their starts rounded to the millisecond. */
+  const video = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        (
+          Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+            id: string
+            trackId: string
+            start: number
+          }[]
+        )
+          .filter((c) => c.trackId === 't-video')
+          .map((c) => [c.id, Math.round(c.start * 1000) / 1000]),
+      ),
+    )
+  const before = await video()
+  const id = Object.keys(before).find((k) => before[k] === 66)!
+  const later = Object.keys(before).filter((k) => before[k]! >= 68)
+  expect(later.length).toBeGreaterThan(1)
+  const inserted = { ...before, [id]: 68, ...Object.fromEntries(later.map((k) => [k, before[k]! + 2])) }
+  const singer = page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' })
+  const content = page.locator('[data-timeline-scroller] > div')
+  const insertPill = page.getByText('Insert', { exact: true })
+  const startLabel = await undoLabel(page)
+  const from = await center(singer)
+
+  // 2.5 s right lands inside Neon grid (1:08 to 1:10): no room, and the pill says how to insert.
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 2.5 * pps, from.y, { steps: 10 })
+  await expect(page.getByText('No room', { exact: true })).toBeVisible()
+  await expect(page.getByText(/^Hold (Ctrl|⌘) while dragging to insert$/)).toBeVisible()
+
+  // Mod during the drag: the clip goes in before Neon grid (the nearer edge), and every later Video clip moves right
+  // by its 2 s.
+  await page.keyboard.down(mod)
+  await expect(insertPill).toBeVisible()
+  await expect(page.getByText('No room', { exact: true })).toBeHidden()
+  await expect(content).not.toHaveAttribute('data-refused')
+  await expect.poll(video).toEqual(inserted)
+
+  // Releasing Mod goes back to a move, which has no room there.
+  await page.keyboard.up(mod)
+  await expect(page.getByText('No room', { exact: true })).toBeVisible()
+  await expect(insertPill).toBeHidden()
+  await expect.poll(video).toEqual(before)
+
+  // Mod again and drop: one undo step.
+  await page.keyboard.down(mod)
+  await expect(insertPill).toBeVisible()
+  await page.mouse.up()
+  await page.keyboard.up(mod)
+  await expect(insertPill).toBeHidden()
+  expect(await video()).toEqual(inserted)
+  expect(await undoLabel(page)).toBe('Insert clip')
+  await expect(page.getByText('No room there. Drop it on an empty stretch or another track.')).toHaveCount(0)
+  await page.keyboard.press(`${mod}+z`)
+  expect(await video()).toEqual(before)
+  expect(await undoLabel(page)).toBe(startLabel)
+
+  // Esc during an insert puts every clip back, with no undo step.
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 2 * pps, from.y, { steps: 10 })
+  await page.keyboard.down(mod)
+  await expect.poll(video).toEqual(inserted)
+  await page.keyboard.press('Escape')
+  await page.keyboard.up(mod)
+  expect(await video()).toEqual(before)
+  await expect(insertPill).toBeHidden()
+  await page.mouse.up()
+  expect(await video()).toEqual(before)
+  expect(await undoLabel(page)).toBe(startLabel)
 })
