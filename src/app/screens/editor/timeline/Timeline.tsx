@@ -230,11 +230,14 @@ function makeRuler(beat: number | null): DrawFn {
   }
 }
 
-/** A flat line where a song's waveform goes until its loudness is analyzed. */
-function makeFlatWave(color: string): DrawFn {
-  return (ctx, _t0, _pps, w, h) => {
+/** A flat line where a song's waveform goes until its loudness is analyzed, from 0 to the song's end. */
+function makeFlatWave(color: string, end: number): DrawFn {
+  return (ctx, t0, pps, w, h) => {
+    const left = Math.max(0, -t0 * pps)
+    const right = Math.min(w, (end - t0) * pps)
+    if (right <= left) return
     ctx.fillStyle = color
-    ctx.fillRect(0, Math.round(h / 2) - 1, w, 2)
+    ctx.fillRect(left, Math.round(h / 2) - 1, right - left, 2)
   }
 }
 
@@ -972,12 +975,13 @@ export function Timeline() {
   const ruler = useMemo(() => makeRuler(beat), [beat])
   const energyDraw = useMemo(() => makeEnergy(analysis?.energy), [analysis?.energy])
   const features = analysis?.features
+  const songEnd = (project.songAssetId && project.assets[project.songAssetId]?.duration) || duration
   const songWave = useMemo(
     () =>
       features?.loudness.length
         ? makeWave('#7f91b3', 1, { rate: features.rate, values: features.loudness })
-        : makeFlatWave('#7f91b3'),
-    [features],
+        : makeFlatWave('#7f91b3', songEnd),
+    [features, songEnd],
   )
   // Directly under the song's track, so each stem's mute and solo sit by the song.
   const stemLanes = stems.length > 0 && (
