@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { create } from 'zustand'
 import {
   Check,
@@ -33,6 +33,7 @@ import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select } from '../../ds/Fields.tsx'
 import { formatTime, plural } from '../../format.ts'
 import { downloadAgain, useExports, type ExportRow } from '../../state/exports.ts'
+import { startFootageAnalysis } from '../../state/footage.ts'
 import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
 import { sectionColor, sectionKind, sectionsOf, timelineDuration, useProject } from '../../state/project.ts'
 import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
@@ -53,6 +54,7 @@ import {
   specsLine,
   startOutputs,
   stillTime,
+  subjectCounts,
   timeLabel,
   withAspect,
   type OutputItem,
@@ -73,6 +75,7 @@ function stillKey(project: Project, planned: PlannedOutput, time: number): strin
 }
 
 function framingNote(
+  project: Project,
   planned: PlannedOutput,
   adjusted: boolean,
   indexing: JobSnapshot | undefined,
@@ -86,6 +89,11 @@ function framingNote(
   if (unanalysed)
     return `${plural(unanalysed, 'clip')} without subject analysis ${unanalysed === 1 ? 'is' : 'are'} centered. Drag the frame to adjust this shot.`
   if (reframe === 'fill') return 'Crops the center of each shot. Drag the frame to adjust this shot.'
+  const { clips, nobody } = subjectCounts(project, planned)
+  if (nobody && nobody === clips)
+    return 'No one is in these clips, so they stay centered. Drag the frame to adjust this shot.'
+  if (nobody)
+    return `Follows the subject. ${plural(nobody, 'clip')} with no one in ${nobody === 1 ? 'it stays' : 'them stay'} centered.`
   return (
     <>
       <Check /> Follows the subject in each shot. Drag the frame to adjust this shot.
@@ -264,7 +272,9 @@ function Frame({
       </div>
       {!same && (
         <div className={styles.frameNote}>
-          <span className={styles.noteText}>{framingNote(planned, Boolean(override), indexing)}</span>
+          <span className={styles.noteText}>
+            {framingNote(project, planned, Boolean(override), indexing)}
+          </span>
           {shots.length > 0 && (
             <span className={styles.shotStepper}>
               <IconButton
@@ -586,6 +596,8 @@ function ExportDialogBody() {
     edit((draft) => ({ items: change(draft.items) }))
   const setSelectedId = (selectedId: string) => edit(() => ({ selectedId }))
   const [candidates] = useState(() => candidateOutputs(project))
+  // Reframed outputs follow the subjects that footage analysis finds.
+  useEffect(startFootageAnalysis, [])
   /** The moment the preview shows once a shot is picked; otherwise each output's own moment. */
   const [viewTime, setViewTime] = useState<number | null>(null)
   const planned = useMemo(() => items.map((i) => planOutput(project, i.spec)), [project, items])

@@ -14,6 +14,7 @@ import {
 } from '../../../export/index.ts'
 import type { AspectPreset, ImageClip, Project, VideoClip } from '../../../model/index.ts'
 import { JobError, jobs } from '../../../shared/jobs.ts'
+import { readSubjectTrack } from '../../../vision/analysisData.ts'
 import { formatTime } from '../../format.ts'
 import { downloadFile, showExport, useExports } from '../../state/exports.ts'
 import { JOB_KINDS, runningJobs } from '../../state/jobs.ts'
@@ -188,6 +189,23 @@ export function shotsOf(project: Project, planned: PlannedOutput): Shot[] {
     )
     .sort((a, b) => a.start - b.start || (order.get(a.trackId) ?? 0) - (order.get(b.trackId) ?? 0))
     .map((c) => ({ clipId: c.id, start: Math.max(start, c.start), end: Math.min(end, c.start + c.duration) }))
+}
+
+/**
+ * The clips an output reframes, and how many of them subject analysis found no one in (auto framing keeps those
+ * centered).
+ */
+export function subjectCounts(project: Project, planned: PlannedOutput): { clips: number; nobody: number } {
+  const clips = new Set<string>()
+  const nobody = new Set<string>()
+  for (const { clipId } of shotsOf(project, planned)) {
+    const clip = project.clips[clipId]
+    if (clip?.type !== 'video' && clip?.type !== 'image') continue
+    clips.add(clip.assetId)
+    const track = readSubjectTrack(project.analysis.visual[clip.assetId])
+    if (track?.samples.every((s) => s.source === 'none')) nobody.add(clip.assetId)
+  }
+  return { clips: clips.size, nobody: nobody.size }
 }
 
 /** A moment inside a shot that shows it (just past its first frame). */
