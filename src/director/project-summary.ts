@@ -22,6 +22,8 @@ export interface ProjectSummary {
 
 export interface SummaryOptions {
   selection?: Id[]
+  /** A song section the user selected (on the Song map). */
+  section?: Id
   playhead?: Seconds
   catalog?: DirectorCatalog
   /** Most clips to describe individually (default 200). */
@@ -185,6 +187,9 @@ export function summarizeProject(project: Project, options: SummaryOptions = {})
     },
     playhead: r2(playhead),
     selection: [...selection].map((id) => ids.toShort.get(id)).filter(Boolean),
+    ...(options.section && ids.toShort.has(options.section)
+      ? { selectedSection: ids.toShort.get(options.section) }
+      : {}),
     tracks,
     clips,
     ...(all.length > kept.length ? { omittedClips: all.length - kept.length } : {}),

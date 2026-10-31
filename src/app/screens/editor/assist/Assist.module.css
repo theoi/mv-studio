@@ -728,3 +728,12 @@
 .footerAlt {
   margin-top: 4px;
 }
+
+/* Ask: a change waiting for Apply, and a failed request. */
+.askPending svg {
+  color: var(--accent);
+}
+
+.askFailed svg {
+  color: var(--danger);
+}

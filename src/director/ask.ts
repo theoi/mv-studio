@@ -81,7 +81,7 @@ export const ASK_SYSTEM_PROMPT = [
   'Guidelines:',
   '- Do what was asked and nothing more. Keep existing content unless asked to remove it.',
   '- When a request is vague but reasonable ("make the chorus more intense"), choose sensible concrete edits rather than asking: e.g. add a beat-reactive scale pulse, raise contrast and saturation, add glow driven by the bass.',
-  '- "selected" or "this" means the clips in selection; "here" or "now" means the playhead time.',
+  '- "selected" or "this" means the clips in selection, or the song section in selectedSection; "here" or "now" means the playhead time.',
   '- Lyrics and titles are text clips: target them with {"type":"text"}; their size is fontSize. Footage is type video or image.',
   '- Write the summary in plain words for a non-expert.',
   'Examples of operations:',
@@ -94,6 +94,8 @@ export const ASK_SYSTEM_PROMPT = [
 
 export interface AskContext {
   selection?: Id[]
+  /** A song section the user selected. */
+  section?: Id
   playhead?: Seconds
 }
 
@@ -569,12 +571,12 @@ export class AskSession {
     return this.state
   }
 
-  /** Undoes the applied edit if it is still the latest change. */
+  /** Undoes the last applied edit if it is still the latest change, also after its result was dismissed. */
   undo(): boolean {
-    if (this.state.status !== 'applied' || this.deps.editor.undoLabel() !== this.appliedLabel) return false
+    if (!this.appliedLabel || this.deps.editor.undoLabel() !== this.appliedLabel) return false
     this.deps.editor.undo()
     this.appliedLabel = undefined
-    this.set({ status: 'idle' })
+    if (this.state.status === 'applied') this.set({ status: 'idle' })
     return true
   }
 
