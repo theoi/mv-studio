@@ -2,8 +2,8 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { openHarness, test } from '../e2e/fixtures.ts'
 
-// Renders every plugin of a kind, or every look, into a labeled grid
-// (CONTACT_KIND=effect|transition|generator|text-animation|look).
+// Renders every plugin of a kind, every look or every text style into a labeled grid
+// (CONTACT_KIND=effect|transition|generator|text-animation|look|text-style).
 const OUT = process.env.CONTACT_OUT ?? '/tmp/mv-contact'
 
 test('contact sheet', async ({ page }) => {
@@ -22,18 +22,30 @@ test('contact sheet', async ({ page }) => {
       origin: { type: 'generated' },
     })
     const { compositor } = testing.createCompositor('export', W, H)
-    if (kind === 'look') {
-      const looks = [{ id: '', name: 'No look' }, ...plugins.looks.lookRegistry.list()]
+    if (kind === 'look' || kind === 'text-style') {
+      const items: { id: string; name: string; sample?: string }[] =
+        kind === 'look'
+          ? [{ id: '', name: 'No look' }, ...plugins.looks.lookRegistry.list()]
+          : plugins.typography.styles.TEXT_STYLES
       const cols = 4
-      const sheet = new OffscreenCanvas(cols * W, Math.ceil(looks.length / cols) * (H + 18))
+      const sheet = new OffscreenCanvas(cols * W, Math.ceil(items.length / cols) * (H + 18))
       const ctx = sheet.getContext('2d')!
       ctx.fillStyle = '#111'
       ctx.fillRect(0, 0, sheet.width, sheet.height)
-      for (const [cell, look] of looks.entries()) {
+      for (const [cell, look] of items.entries()) {
         const { project, time } = plugins.preview.pluginPreview('pop', { image })
         const editor = new model.ProjectEditor(project)
-        if (look.id) plugins.looks.applyLook(editor, look.id)
-        await compositor.render(editor.getProject(), time + 0.6)
+        if (kind === 'look' && look.id) plugins.looks.applyLook(editor, look.id)
+        if (kind === 'text-style') {
+          const text = Object.values(editor.getProject().clips).find(
+            (c: { type: string }) => c.type === 'text',
+          ) as {
+            id: string
+          }
+          editor.dispatch({ type: 'clip.set', clipId: text.id, path: ['text'], value: look.sample })
+          plugins.typography.styles.applyTextStyle(editor, [text.id], look.id)
+        }
+        await compositor.render(editor.getProject(), time + (kind === 'look' ? 0.6 : 2.5))
         const x = (cell % cols) * W
         const y = Math.floor(cell / cols) * (H + 18)
         ctx.drawImage(compositor.canvas, x, y, W, H)
