@@ -107,6 +107,8 @@ describe('text styles', () => {
     const style = (editor.getProject().clips[clip.id] as TextClip).style
     expect(style.fontAssetId).toBeUndefined()
     expect(style.fontFamily).toMatch(/^Inter,/)
+    editor.undo()
+    expect((editor.getProject().clips[clip.id] as TextClip).style).toEqual(clip.style)
   })
 })
 
