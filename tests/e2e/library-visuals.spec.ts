@@ -134,3 +134,21 @@ test('visual groups show their counts; a group collapses only when it would hide
   await library.getByRole('button', { name: 'Show all 7' }).click()
   await expect(shaders.getByRole('button')).toHaveCount(7)
 })
+
+test('a visual’s name cut off by its tile shows in full as a tooltip', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?lib=visuals&t=4'
+  })
+  await waitForPreview(page)
+  const library = page.getByRole('tabpanel', { name: 'Visuals' })
+  const name = (text: string) => library.getByRole('button').getByText(text, { exact: true })
+  const cut = name('Sacred geometry')
+  expect(await cut.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
+  await cut.hover()
+  await expect(cut).toHaveAttribute('title', 'Sacred geometry')
+  await name('Nebula').hover()
+  await expect(name('Nebula')).not.toHaveAttribute('title', /./)
+})

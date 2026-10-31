@@ -1,6 +1,6 @@
 import { ContextMenu as RContext, DropdownMenu as RMenu } from 'radix-ui'
-import type { ReactNode } from 'react'
-import { Check } from 'lucide-react'
+import { createContext, useContext, useRef, useState, type ReactNode } from 'react'
+import { Check, ChevronRight } from 'lucide-react'
 import { Kbd } from './Kbd.tsx'
 import styles from './Menu.module.css'
 
@@ -154,4 +154,52 @@ export function ContextMenuItem({ onSelect, disabled, danger, ...body }: ItemPro
 
 export function ContextMenuSeparator() {
   return <RContext.Separator className={styles.separator} />
+}
+
+const CloseSub = createContext<() => void>(() => undefined)
+
+/** A submenu. Esc in it closes only the submenu, back to its trigger, as Left does; the next Esc closes the menu. */
+export function ContextMenuSub({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <CloseSub.Provider value={() => setOpen(false)}>
+      <RContext.Sub open={open} onOpenChange={setOpen}>
+        {children}
+      </RContext.Sub>
+    </CloseSub.Provider>
+  )
+}
+
+export function ContextMenuSubTrigger({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
+  return (
+    <RContext.SubTrigger className={styles.item}>
+      <ItemBody icon={icon}>{children}</ItemBody>
+      <ChevronRight className={styles.subArrow} />
+    </RContext.SubTrigger>
+  )
+}
+
+export function ContextMenuSubContent({ children }: { children: ReactNode }) {
+  const close = useContext(CloseSub)
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <RContext.Portal>
+      <RContext.SubContent
+        ref={ref}
+        className={styles.content}
+        sideOffset={4}
+        alignOffset={-4}
+        collisionPadding={8}
+        onEscapeKeyDown={(e) => {
+          // Radix closes the whole menu on Esc; preventing that keeps the menu open, with focus back on the trigger.
+          e.preventDefault()
+          const trigger = ref.current?.getAttribute('aria-labelledby')
+          close()
+          if (trigger) document.getElementById(trigger)?.focus()
+        }}
+      >
+        {children}
+      </RContext.SubContent>
+    </RContext.Portal>
+  )
 }

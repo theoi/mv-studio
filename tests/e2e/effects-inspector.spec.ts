@@ -372,3 +372,35 @@ test('Manage LUT files lists what uses each LUT, and Remove puts those grades ba
   await expect(lut).toHaveText('None')
   expect(await options()).toEqual(['None', 'Neutral', 'Load a LUT file…'])
 })
+
+test('LUT files shows a long file name in full as a tooltip, under a description on one line', async ({
+  page,
+}) => {
+  await openWithEffects(page, ['Color grade'])
+  const { lut } = lutChoice(page)
+  const long = 'Warm sunset film emulation with lifted blacks and a long name'
+  for (const [file, title, lift] of [
+    ['warm.cube', long, 0.3],
+    ['cool.cube', 'Cool', 0.5],
+  ] as const) {
+    await page.getByLabel('Import media files').setInputFiles(cubeFile(file, title, lift))
+    await expect(
+      toastText(page, `Imported the LUT “${title}”. Choose it in a Color grade’s LUT.`),
+    ).toBeVisible()
+  }
+  await lut.click()
+  await page.getByRole('option', { name: 'Manage LUT files…' }).click()
+  const dialog = page.getByRole('dialog', { name: 'LUT files' })
+  const name = dialog.getByText(long, { exact: true })
+  await name.hover()
+  await expect(name).toHaveAttribute('title', long)
+  const short = dialog.getByText('Cool', { exact: true })
+  await short.hover()
+  await expect(short).not.toHaveAttribute('title', /./)
+  const lines = await dialog.getByText(/^Color grades that use a removed file/).evaluate((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size
+  })
+  expect(lines).toBe(1)
+})

@@ -37,7 +37,8 @@
   outline: none;
 }
 
-.item[data-highlighted] {
+.item[data-highlighted],
+.item[data-state='open'] {
   background: var(--bg-active);
 }
 
@@ -86,4 +87,11 @@
   color: var(--text-3);
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
+}
+
+.subArrow {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-3);
 }

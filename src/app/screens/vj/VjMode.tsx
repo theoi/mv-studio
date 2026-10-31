@@ -8,7 +8,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from 'react'
-import { ArrowLeft, Circle, Pause, Play, Square, Usb } from 'lucide-react'
+import { ArrowLeft, AudioWaveform, Circle, Film, Pause, Play, Square, Usb } from 'lucide-react'
 import { PreviewController } from '../../../engine/preview.ts'
 import { pluginRegistry } from '../../../engine/registry.ts'
 import type { Asset } from '../../../model/index.ts'
@@ -33,6 +33,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
   Menu,
   MenuContent,
@@ -338,19 +341,31 @@ function SlotMenu({
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent>
-        {row === 'clips' &&
-          media.map((a) => (
-            <ContextMenuItem key={a.id} onSelect={() => put(clipPadForAsset(a))}>
-              {a.name}
-            </ContextMenuItem>
-          ))}
-        {row === 'clips' && media.length > 0 && visuals.length > 0 && <ContextMenuSeparator />}
-        {row === 'clips' &&
-          visuals.map((v) => (
-            <ContextMenuItem key={v.id} onSelect={() => put(clipPadForGenerator(v))}>
-              {v.name}
-            </ContextMenuItem>
-          ))}
+        {/* Media and visuals in submenus: one flat list of both doesn't fit a 720 px window. */}
+        {row === 'clips' && media.length > 0 && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger icon={<Film />}>Media</ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              {media.map((a) => (
+                <ContextMenuItem key={a.id} onSelect={() => put(clipPadForAsset(a))}>
+                  {a.name}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
+        {row === 'clips' && visuals.length > 0 && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger icon={<AudioWaveform />}>Visuals</ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              {visuals.map((v) => (
+                <ContextMenuItem key={v.id} onSelect={() => put(clipPadForGenerator(v))}>
+                  {v.name}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
         {missing.map((p) => (
           <ContextMenuItem key={p.id} onSelect={() => put(p)}>
             {p.label}

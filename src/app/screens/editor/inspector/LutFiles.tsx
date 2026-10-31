@@ -1,10 +1,16 @@
 import { Trash2 } from 'lucide-react'
-import { useRef } from 'react'
+import { useRef, type PointerEvent } from 'react'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Dialog } from '../../../ds/Dialog.tsx'
 import { LUT_FILE_TYPES, loadLut, lutFiles, lutUsage, pickFile, removeLut } from '../../../state/luts.ts'
 import { useProject } from '../../../state/project.ts'
 import styles from './LutFiles.module.css'
+
+/** A long file name cut off by the dialog gets its full text as a tooltip. */
+function titleIfCut(e: PointerEvent<HTMLElement>) {
+  const el = e.currentTarget
+  el.title = el.scrollWidth > el.clientWidth ? (el.textContent ?? '') : ''
+}
 
 /** The LUT files imported into the project: which color grades use each, Remove, and Load a LUT file…. */
 export function LutFilesDialog({
@@ -33,7 +39,7 @@ export function LutFilesDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="LUT files"
-      description="Removing one puts the color grades that use it back to no LUT."
+      description="Color grades that use a removed file go back to no LUT."
       width={420}
       footer={
         <Button ref={load} onClick={() => void loadFile()}>
@@ -46,7 +52,9 @@ export function LutFilesDialog({
           {files.map((asset, i) => (
             <li key={asset.id} className={styles.row}>
               <span className={styles.text}>
-                <span className={styles.name}>{asset.name}</span>
+                <span className={styles.name} onPointerEnter={titleIfCut}>
+                  {asset.name}
+                </span>
                 <span className={styles.usage}>{lutUsage(project, asset.id)}</span>
               </span>
               <IconButton
