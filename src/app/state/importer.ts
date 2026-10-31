@@ -62,28 +62,43 @@ function songCommands(project: Project, song: Asset): EditCommand[] {
   return commands
 }
 
-async function analyzeSong(song: Asset, file: Blob): Promise<void> {
+/**
+ * Finds the song's beats, sections and energy, then bars in the background. The result goes into the open project
+ * if it has the song by then (the setup screen opens the editor while this runs). False when it failed.
+ */
+export async function analyzeSong(song: Asset): Promise<boolean> {
+  // The setup screen shows the progress and the result itself.
+  const say = (message: string) => get().screen === 'editor' && toast(message)
   try {
-    const client = await import('../../analysis/client.ts')
-    const audio = await client.decodeAudioFile(file)
+    const [{ mediaStore }, client] = await Promise.all([
+      import('../../media/mediaStore.ts'),
+      import('../../analysis/client.ts'),
+    ])
+    const audio = await client.decodeAudioFile(await mediaStore.getFile(song))
     const analysis = await (await analysisService()).analyze(song.id, audio).promise
-    if (!editor.getProject().assets[song.id]) return
+    if (!editor.getProject().assets[song.id]) return true
     dispatch(client.setAnalysisCommand(analysis), { history: 'skip' })
     const bpm = analysis.tempo ? `${Math.round(analysis.tempo.bpm)} BPM` : 'the beat'
     const sections = analysis.sections?.length ?? 0
-    toast(`Found ${bpm} and ${sections} ${sections === 1 ? 'section' : 'sections'}`)
+    say(`Found ${bpm} and ${sections} ${sections === 1 ? 'section' : 'sections'}`)
     // Bars and steadier beats from Beat This! (a model downloaded on first use), shown in the activity list while
     // it runs. Beats or sections the user corrected meanwhile are kept. If it fails, the fast analysis stays.
     if (backgroundAnalysisOn()) void findBars(song.id, { baseline: analysis, sections: true })
+    return true
   } catch (error) {
-    if (error instanceof JobError && error.code === 'cancelled') return
-    toast(`Could not analyze the song: ${error instanceof Error ? error.message : String(error)}`)
+    if (error instanceof JobError && error.code === 'cancelled') return false
+    say(`Could not analyze the song: ${error instanceof Error ? error.message : String(error)}`)
+    return false
   }
 }
 
-/** Imports files as one undo step. Unsupported or unreadable files are reported and skipped. */
-export async function importFiles(files: File[]): Promise<Asset[]> {
-  if (!files.length) return []
+export interface StoredFiles {
+  assets: Asset[]
+  failed: { file: File; reason: string }[]
+}
+
+/** Copies files into browser storage, one import job each, without adding them to the project. */
+export async function storeFiles(files: File[]): Promise<StoredFiles> {
   const { mediaStore } = await import('../../media/mediaStore.ts')
   void mediaStore.requestPersistence().catch(() => false)
   const results = await Promise.allSettled(
@@ -96,16 +111,25 @@ export async function importFiles(files: File[]): Promise<Asset[]> {
         }).promise,
     ),
   )
-  const assets = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
-  const failed = results.flatMap((r, i) =>
-    r.status === 'rejected' ? [{ file: files[i], error: r.reason }] : [],
-  )
+  return {
+    assets: results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : [])),
+    failed: results.flatMap((r, i) => {
+      const file = files[i]
+      if (r.status === 'fulfilled' || !file) return []
+      return [{ file, reason: r.reason instanceof Error ? r.reason.message : String(r.reason) }]
+    }),
+  }
+}
+
+/** Imports files as one undo step. Unsupported or unreadable files are reported and skipped. */
+export async function importFiles(files: File[]): Promise<Asset[]> {
+  if (!files.length) return []
+  const { assets, failed } = await storeFiles(files)
   if (failed[0]) {
-    const { file, error } = failed[0]
-    const reason = error instanceof Error ? error.message : String(error)
+    const { file, reason } = failed[0]
     toast(
       failed.length === 1
-        ? `${file?.name ?? 'A file'} was not imported: ${reason}`
+        ? `${file.name} was not imported: ${reason}`
         : `${failed.length} files were not imported. ${reason}`,
     )
   }
@@ -121,7 +145,7 @@ export async function importFiles(files: File[]): Promise<Asset[]> {
   if (song) {
     set({ playhead: 0, selection: { type: 'none' } })
     toast(`Added “${baseName(song.name)}” as the song. Finding its beats and sections…`)
-    void mediaStore.getFile(song).then((file) => analyzeSong(song, file))
+    void analyzeSong(song)
   } else {
     toast(
       assets.length === 1

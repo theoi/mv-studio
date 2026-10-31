@@ -107,9 +107,9 @@ test('drafts from the setup screen with the idea typed there', async ({ page }) 
   const first = await draftState(page)
   expect(first.undo).toBe('Director: a rainy city at dawn')
 
-  await page.getByRole('button', { name: 'Show them' }).click()
+  // The setup screen drafts into a new project, so there are no tracks of the user's to hide.
   await expect(page.getByText('Your own tracks are kept below the draft, hidden.')).toBeHidden()
-  expect((await draftState(page)).hiddenTracks).toBe(0)
+  expect(first.hiddenTracks).toBe(0)
 
   // The built-in planner only takes the mood from Refine, so it offers another version instead.
   await expect(

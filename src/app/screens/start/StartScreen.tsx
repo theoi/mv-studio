@@ -31,7 +31,7 @@ import {
   usePersistence,
   type RecentProject,
 } from '../../state/persistence.ts'
-import { openEditor } from '../../state/project.ts'
+import { openBlankProject, startSetup } from '../../state/setup.ts'
 import { set, toast, type Kind } from '../../state/ui.ts'
 import { Logo } from '../common/Logo.tsx'
 import styles from './Start.module.css'
@@ -60,7 +60,7 @@ const RECENT_LIMIT = 6
 export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   if (kind === 'lyric') {
     return (
-      <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('city')})` }}>
+      <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('city')})` }} aria-hidden>
         <div className={styles.artShade} />
         <div className={styles.lyricArt}>
           <span className={styles.lyricSung}>Under the </span>
@@ -72,7 +72,7 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   }
   if (kind === 'visualizer') {
     return (
-      <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('neon')})` }}>
+      <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('neon')})` }} aria-hidden>
         <div className={styles.artShade} />
         <div className={styles.bars}>
           {Array.from({ length: 22 }, (_, i) => (
@@ -91,7 +91,7 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   if (kind === 'footage') {
     const strip = ['crowd', 'portrait', 'tunnel', 'dancer'] as const
     return (
-      <div className={[styles.art, styles.footageArt].join(' ')}>
+      <div className={[styles.art, styles.footageArt].join(' ')} aria-hidden>
         <div className={styles.strip}>
           {strip.map((s) => (
             <span key={s} style={{ backgroundImage: `url(${sceneThumb(s)})` }} />
@@ -106,7 +106,7 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
     )
   }
   return (
-    <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('aurora')})` }}>
+    <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('aurora')})` }} aria-hidden>
       <div className={styles.artShade} />
       <div className={styles.prompt}>
         <Sparkles />
@@ -301,11 +301,7 @@ export function StartScreen() {
 
         <div className={styles.kinds}>
           {kinds.map((k) => (
-            <button
-              key={k.id}
-              className={styles.kind}
-              onClick={() => set({ screen: 'setup', kind: k.id, setupSong: false })}
-            >
+            <button key={k.id} className={styles.kind} onClick={() => startSetup(k.id)}>
               <KindArt kind={k.id} />
               <div className={styles.kindText}>
                 <span className={styles.kindTitle}>{k.title}</span>
@@ -315,7 +311,7 @@ export function StartScreen() {
           ))}
         </div>
 
-        <button className={styles.blank} onClick={() => openEditor('blank', true)}>
+        <button className={styles.blank} onClick={() => void openBlankProject()}>
           <span className={styles.blankIcon}>
             <Plus />
           </span>

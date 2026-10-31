@@ -223,10 +223,16 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
 }
 
 /** Jobs working on the open project; their results would land in the next one. Exports render a snapshot. */
-function cancelProjectJobs() {
+function cancelProjectJobs(keep: readonly string[] = []) {
   for (const job of jobs.list()) {
     const active = job.status === 'running' || job.status === 'queued'
-    if (active && job.kind !== JOB_KINDS.export && !job.kind.startsWith('project.')) jobs.cancel(job.id)
+    if (
+      active &&
+      job.kind !== JOB_KINDS.export &&
+      !job.kind.startsWith('project.') &&
+      !keep.includes(job.kind)
+    )
+      jobs.cancel(job.id)
   }
 }
 
@@ -247,6 +253,34 @@ const editorUi = {
   rightTab: 'inspector',
   assistView: 'home',
 } as const
+
+/**
+ * Loads the project the setup screen is building, after writing the open one, so the song's analysis has a project to
+ * land in. It is not kept. Files the setup screen is still copying into storage keep going.
+ */
+export async function loadSetupDraft(project: Project): Promise<void> {
+  await autosave?.flush()
+  cancelProjectJobs([JOB_KINDS.import])
+  editor.load(project)
+}
+
+/**
+ * Opens a project made on the setup screen. `keep` saves it right away, so it is in the recent projects and a reload
+ * reopens it. `fromDraft` keeps the jobs started for the setup draft (the song's analysis), whose results move over.
+ */
+export async function startProject(project: Project, options: { keep: boolean; fromDraft: boolean }) {
+  await autosave?.flush()
+  if (!options.fromDraft) cancelProjectJobs()
+  if (options.keep) {
+    try {
+      await writeProject(project)
+    } catch (error) {
+      toast(saveErrorMessage(error))
+    }
+  }
+  editor.load(project)
+  if (storedIds.has(project.id)) rememberLast(project.id)
+}
 
 /** Loads a kept project into the editor, after writing the open one. Returns false when it is not there. */
 export async function openStoredProject(id: Id): Promise<boolean> {

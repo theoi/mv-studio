@@ -39,7 +39,6 @@ export interface Toast {
 export interface UiState {
   screen: Screen
   kind: Kind
-  setupSong: boolean
   selection: Selection
   rightTab: RightTab
   assistView: AssistView
@@ -78,7 +77,6 @@ function storedLibraryOpen(): boolean {
 export const initialUi: UiState = {
   screen: 'start',
   kind: 'lyric',
-  setupSong: false,
   selection: { type: 'none' },
   rightTab: 'inspector',
   assistView: 'home',
@@ -133,7 +131,7 @@ export function openAssist(view: AssistView = 'home') {
 
 const GUIDE_SEEN_KEY = 'mv-studio.guide-seen'
 
-/** Opens the editor with the workspace preset for a video kind; first-time users get the guide. */
+/** The editor's workspace for a video kind: the library tab and the panel its next step is in. */
 export function editorPreset(kind: Kind): Partial<UiState> {
   const preset: Partial<UiState> = {
     screen: 'editor',
@@ -141,17 +139,12 @@ export function editorPreset(kind: Kind): Partial<UiState> {
     selection: { type: 'none' },
     dialog: null,
     paletteOpen: false,
-    playhead: 73.6,
+    playhead: 0,
+    playing: false,
   }
   if (kind === 'lyric')
     Object.assign(preset, { libraryTab: 'text', rightTab: 'assist', assistView: 'lyrics' })
-  if (kind === 'visualizer')
-    Object.assign(preset, {
-      libraryTab: 'visuals',
-      rightTab: 'inspector',
-      selection: { type: 'clip', id: 'o-spec1' },
-      playhead: 86.3,
-    })
+  if (kind === 'visualizer') Object.assign(preset, { libraryTab: 'visuals', rightTab: 'inspector' })
   if (kind === 'footage')
     Object.assign(preset, { libraryTab: 'media', rightTab: 'assist', assistView: 'autocut' })
   if (kind === 'ai')

@@ -302,3 +302,12 @@ export function buildDemoProject(): Project {
     duration: song.duration,
   }
 }
+
+/** The sample song ("Use a sample song" on the setup screen): its asset, its analysis and its timed lyrics. */
+export function sampleSong(): { title: string; asset: Asset; analysis: AudioAnalysis; lyrics: LyricsDoc } {
+  const demo = buildDemoProject()
+  const asset = demo.assets[SONG_ASSET_ID]
+  const analysis = demo.analysis.audio[SONG_ASSET_ID]
+  if (!asset || !analysis || !demo.lyrics) throw new Error('The sample project has no song')
+  return { title: song.title, asset, analysis, lyrics: demo.lyrics }
+}

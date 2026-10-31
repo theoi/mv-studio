@@ -16,10 +16,11 @@ import {
   type SongSection,
 } from '../../model/index.ts'
 import { directorMeta } from '../../director/meta.ts'
+import { pluginRegistry } from '../../engine/registry.ts'
 import { TRACK_IDS, buildDemoProject, sceneOf } from '../mock/demoProject.ts'
 import type { SceneId } from '../mock/art.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
-import { editorPreset, get, maybeStartGuide, select, set, toast, type Kind } from './ui.ts'
+import { get, select, set, toast } from './ui.ts'
 
 /** The app's single editor. The design preview starts it with the demo project. */
 export const editor = new ProjectEditor(buildDemoProject())
@@ -41,14 +42,6 @@ export function loadSample() {
   loadDemoProject()
   set({ playhead: 0, playing: false, selection: { type: 'none' } })
   toast(`Sample project loaded: “${editor.getProject().name}”`)
-}
-
-/** Opens the editor for a video kind with the demo project (or an empty one) and its workspace preset. */
-export function openEditor(kind: Kind, empty = false) {
-  if (empty) loadEmptyProject()
-  else loadDemoProject()
-  set({ ...editorPreset(kind), ...(empty ? { playhead: 0 } : {}) })
-  maybeStartGuide()
 }
 
 /** Dispatches through the editor and turns rejected edits (locked track, invalid input) into a toast. */
@@ -227,7 +220,11 @@ export function viewOf(p: Project, c: Clip): ClipView {
         ? { ...base, kind: 'lyric', name: c.text, lyricLineId: c.lyricLineId }
         : { ...base, kind: 'text', name: c.name ?? c.text }
     case 'generator':
-      return { ...base, kind: 'visualizer', name: c.name ?? c.generatorId }
+      return {
+        ...base,
+        kind: 'visualizer',
+        name: c.name ?? pluginRegistry.get(c.generatorId)?.name ?? 'Visual',
+      }
     case 'audio':
       return { ...base, kind: 'audio', name: c.name ?? p.assets[c.assetId]?.name ?? 'Audio' }
     case 'adjustment':

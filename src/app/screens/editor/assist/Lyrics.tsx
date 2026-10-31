@@ -3,9 +3,9 @@ import { AlertTriangle, Info, RotateCcw } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Segmented, TextArea } from '../../../ds/Fields.tsx'
-import { formatBytes, plural } from '../../../format.ts'
+import { plural } from '../../../format.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
-import { estimateLyrics, lastLyricsRequest, startLyrics } from '../../../state/lyrics.ts'
+import { estimateLyrics, lastLyricsRequest, lyricsCost, startLyrics } from '../../../state/lyrics.ts'
 import {
   hasSong,
   lyricLines,
@@ -32,22 +32,6 @@ export function LyricsBadge() {
 type LyricsMode = 'paste' | 'draft'
 
 const lyricsKind = (mode: LyricsMode) => (mode === 'paste' ? 'time' : 'draft')
-
-function minutesText(seconds: number): string {
-  return seconds < 60 ? 'under a minute' : `about ${Math.round(seconds / 60)} min`
-}
-
-/** The one line that says what pressing the button will do: separation, downloads and time on this device. */
-function lyricsCost(e: Awaited<ReturnType<typeof estimateLyrics>>): { text: string; detail?: string } {
-  if (!e) return { text: 'Uses the vocals stem for precise timing' }
-  const parts = [
-    ...(e.separatesStems ? ['Separates the vocals first'] : []),
-    ...(e.downloadBytes ? [`${formatBytes(e.downloadBytes)} download, once`] : []),
-    `${minutesText(e.seconds)} on this device`,
-  ]
-  const detail = e.downloads.map((d) => `${d.name} (${formatBytes(d.bytes)})`).join(', ')
-  return { text: parts.join(' · '), ...(detail ? { detail: `Downloads ${detail}` } : {}) }
-}
 
 export function LyricsView() {
   const project = useProject()
