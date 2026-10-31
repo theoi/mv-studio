@@ -26,12 +26,31 @@ draft. Everything it makes is ordinary project content created through `EditComm
 
 The four kinds:
 
-| Kind         | Main visual                                     | Text            | Pacing                         |
-| ------------ | ----------------------------------------------- | --------------- | ------------------------------ |
-| `lyric`      | User footage or stills, dimmed; else visualizer | Timed lyrics    | Slower; every 2–4 bars         |
-| `visualizer` | Visualizer per section, over user images        | Title           | Section-long, beat pulses      |
-| `beat-cut`   | User footage cut on beats and bars              | Lyrics if asked | Faster in high-energy sections |
-| `ai`         | Generated stills (camera moves) or clips        | Title           | One request-length per shot    |
+| Kind         | Main visual                                     | Text                     | Pacing                                    |
+| ------------ | ----------------------------------------------- | ------------------------ | ----------------------------------------- |
+| `lyric`      | User footage or stills, dimmed; else visualizer | Title card, timed lyrics | Choruses every bar, verses every 2 bars   |
+| `visualizer` | One visualizer per kind of section, over images | Title card               | Section-long, beat pulses                 |
+| `beat-cut`   | User footage cut on beats and bars              | Lyrics if asked          | Choruses every 2 beats, verses every bar  |
+| `ai`         | Generated stills (camera moves) or clips        | Title card               | Slower still; one request-length per shot |
+
+Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real songs with
+`tests/e2e/director-quality.spec.ts`:
+
+- **Pace by section role** (`paceFor`): choruses cut fastest, verses a step slower, intros, bridges and outros
+  slowest. Energy alone can't tell verses from choruses (normalized within a song they often measure the same), so
+  it moves a section one step at most. Lyric and AI videos, generated shots and tempos of 150 BPM or more are a step
+  slower. A preferred pace shifts every section by the same steps, so the contrast stays.
+- **Phrasing inside a section** (`phrasedCutTimes`): bars clearly louder than the rest of their section cut twice as
+  often, clearly quieter bars half as often, and the last bar before a faster section speeds up into it.
+- **Lyrics**: background cuts move out of sung lines to the nearest beat between lines. A line shows up to 0.3 s
+  before it is sung and holds up to 1 s after (longer for long lines, aiming at 17 characters per second), never
+  overlapping the next. Text over footage gets a thin dark outline unless the look styles its own.
+- **Title card** over the intro (not for beat cuts): the song's title and artist from its file name
+  (`songTitleFromName`), never the prompt or the kind of video.
+- **Opening and ending**: the first shot fades in from black and the last fades out, ending when the music does
+  when the song has a silent tail (`musicEnd`).
+- **Visualizers** (`visualizerPalette`): one for peaks, one for verses and one for quiet parts, kept for the whole
+  video and matched to prompt words; the seed varies them.
 
 ## Using it from the app
 
@@ -42,6 +61,7 @@ const director = new DirectorSession({
   provider: () => cloud.generation(),
   store: mediaStore,
   matcher: () => footageMatcher, // createDirectorFootageMatcher() from src/vision
+  footage: () => vision.matcher, // src/vision's FootageMatcher, for clip choice shot by shot
   catalog: () => catalogFromPlugins(registry.catalog()),
   spendPolicy: () => cloud.settings.get(),
   ledger: spendLedger,

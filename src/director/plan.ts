@@ -99,6 +99,8 @@ export const shotSchema = z
     fit: z.enum(['cover', 'contain']).optional(),
     motion: z.enum(MOTIONS).optional(),
     transitionIn: transitionSpecSchema.optional(),
+    /** Out to nothing (black), for the end of the video. */
+    transitionOut: transitionSpecSchema.optional(),
     effects: z.array(effectSpecSchema).optional(),
     reactive: z.array(audioBindingSchema).optional(),
     adjustments: adjustmentsSchema.optional(),

@@ -6,7 +6,7 @@ import type { CreativeBrief } from './brief.ts'
 import { expandBrief } from './expand.ts'
 import type { PlannerInput } from './inputs.ts'
 import type { EditPlan } from './plan.ts'
-import { DEFAULT_CONCEPT, defaultSectionBrief, defaultVisual, pickLook } from './rules.ts'
+import { DEFAULT_CONCEPT, defaultSectionBrief, defaultVisual, pickLook, visualizerPalette } from './rules.ts'
 import { beatGrid, sectionsFor } from './timing.ts'
 
 const TITLES = {
@@ -22,13 +22,20 @@ export function ruleBrief(input: PlannerInput): CreativeBrief {
   const visual = defaultVisual(input)
   const look = pickLook(input.prompt, input.kind, input.catalog)
   const generated = visual === 'generated'
+  const palette = visualizerPalette(sections, input)
   return {
     title: input.prompt ? input.prompt.slice(0, 60) : TITLES[input.kind],
     concept: input.prompt || DEFAULT_CONCEPT[input.kind],
     lookId: look?.id,
     visual,
     text: { show: input.kind === 'lyric', karaoke: true },
-    sections: sections.map((s) => defaultSectionBrief(s, input, grid.bpm, generated)),
+    sections: sections.map((s) => {
+      const generatorId = palette.get(s.id)
+      return {
+        ...defaultSectionBrief(s, input, grid.bpm, generated),
+        ...(generatorId ? { generatorId } : {}),
+      }
+    }),
   }
 }
 

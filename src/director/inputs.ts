@@ -10,12 +10,15 @@ import type { GenerationRequest, GenerationTier } from '../cloud/types.ts'
 import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
 import type { Pace } from './plan.ts'
 import type { DirectorFootageMatch, DirectorFootageMatcher, FootageInfo } from '../vision/director.ts'
+import type { FootageMatcher as ClipMatcher } from '../vision/matching/matcher.ts'
 import type { MatchQuery, Mood } from '../vision/types.ts'
 
 export type { FootageInfo, MatchQuery }
 export type FootageMood = Mood
 export type FootageMatch = DirectorFootageMatch
 export type FootageMatcher = DirectorFootageMatcher
+/** src/vision's own footage matcher (`vision.matcher`), for ranking clips shot by shot against lyric lines. */
+export type FootageRanker = Pick<ClipMatcher, 'model' | 'rankAll'>
 
 export type VideoKind = 'lyric' | 'visualizer' | 'beat-cut' | 'ai'
 
@@ -31,6 +34,9 @@ export interface SectionInfo {
 
 export interface SongInfo {
   assetId?: Id
+  /** From the song's file name ("Artist - Title.mp3"), for title cards. */
+  title?: string
+  artist?: string
   duration: Seconds
   bpm?: number
   beats: Seconds[]
@@ -73,6 +79,7 @@ export interface PlannerInput {
   lyrics?: LyricsDoc
   media: MediaItem[]
   matcher?: FootageMatcher
+  footage?: FootageRanker
   settings: { aspect: AspectPreset; width: number; height: number; fps: number }
   catalog: DirectorCatalog
   /** Present only when a generation provider is configured and the user chose to generate. */
@@ -99,6 +106,50 @@ export function meanOver(
   let sum = 0
   for (let i = a; i < b; i++) sum += series.values[i] ?? 0
   return b > a ? sum / (b - a) : undefined
+}
+
+export type EnergyAt = (start: Seconds, end: Seconds) => number | undefined
+
+/** Song energy over a span, 0..1 between the song's 10th and 90th percentile; undefined without an energy curve. */
+export function energyScale(song: Pick<SongInfo, 'energy'>): EnergyAt | undefined {
+  const series = song.energy
+  if (!series?.values.length || series.rate <= 0) return undefined
+  const sorted = [...series.values].sort((a, b) => a - b)
+  const lo = sorted[Math.floor(sorted.length * 0.1)] ?? 0
+  const hi = sorted[Math.floor(sorted.length * 0.9)] ?? 1
+  if (!(hi - lo > 1e-9)) return undefined
+  return (start, end) => {
+    const v = meanOver(series, start, end)
+    return v === undefined ? undefined : clamp01((v - lo) / (hi - lo))
+  }
+}
+
+/**
+ * When the music stops: the start of a trailing stretch of near-silence at least `minTail` long (a fade-out tail or
+ * silence after the last note), else the end of the song.
+ */
+export function musicEnd(song: Pick<SongInfo, 'energy' | 'duration'>, minTail: Seconds = 1.5): Seconds {
+  const series = song.energy
+  if (!series?.values.length || series.rate <= 0) return song.duration
+  const sorted = [...series.values].sort((a, b) => a - b)
+  const threshold = (sorted[Math.floor(sorted.length * 0.9)] ?? 0) * 0.05
+  let i = series.values.length - 1
+  while (i >= 0 && (series.values[i] ?? 0) <= threshold) i--
+  const end = Math.min(song.duration, (i + 1) / series.rate)
+  return song.duration - end >= minTail ? end : song.duration
+}
+
+/** Artist and title from a file name such as "Artist - Title.mp3" or "Artist_-_Title.mp3". */
+export function songTitleFromName(name: string): { title?: string; artist?: string } {
+  const base = name
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\d{1,2}\s*[.-]\s+/, '')
+  if (!base) return {}
+  const m = /^(.+?)\s+[-–—]\s+(.+)$/.exec(base)
+  return m ? { artist: (m[1] as string).trim(), title: (m[2] as string).trim() } : { title: base }
 }
 
 /** Rank-normalizes raw section energies to 0..1 so "the loudest part" is high even in a quiet song. */
@@ -133,6 +184,7 @@ export function songInfoFromProject(project: Project): SongInfo {
   }))
   return {
     assetId,
+    ...(asset ? songTitleFromName(asset.name) : {}),
     duration,
     bpm: analysis?.tempo?.bpm,
     beats,
@@ -170,6 +222,7 @@ export interface BuildInputOptions {
   prompt?: string
   catalog?: DirectorCatalog
   matcher?: FootageMatcher
+  footage?: FootageRanker
   generation?: GenerationOptions
   pace?: Pace
   seed?: number
@@ -193,6 +246,7 @@ export async function buildPlannerInput(project: Project, options: BuildInputOpt
     lyrics: project.lyrics,
     media: mediaFromProject(project, info),
     matcher: options.matcher,
+    ...(options.footage ? { footage: options.footage } : {}),
     settings: {
       aspect: project.settings.aspect,
       width: project.settings.width,

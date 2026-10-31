@@ -22,7 +22,13 @@ import { estimatePlanCost, requiresConfirmation, type PlanCost, type SpendPolicy
 import { previewCommands, type ChangeItem } from './diff.ts'
 import { DirectorError } from './expand.ts'
 import { generatePlanShots, generationOptionsFor, type GenerationChoice } from './generate.ts'
-import { buildPlannerInput, type FootageMatcher, type PlannerInput, type VideoKind } from './inputs.ts'
+import {
+  buildPlannerInput,
+  type FootageMatcher,
+  type FootageRanker,
+  type PlannerInput,
+  type VideoKind,
+} from './inputs.ts'
 import { planLocally } from './local-planner.ts'
 import { shotsToGenerate, type EditPlan, type Pace } from './plan.ts'
 
@@ -51,6 +57,8 @@ export interface DirectorDeps {
   provider?: () => MediaGenerationProvider | undefined
   store?: GeneratedMediaStore
   matcher?: () => FootageMatcher | undefined
+  /** src/vision's footage matcher, `() => vision.matcher`. */
+  footage?: () => FootageRanker | undefined
   catalog?: () => DirectorCatalog
   spendPolicy?: () => SpendPolicy
   ledger?: SpendLedgerLike
@@ -193,6 +201,7 @@ export class DirectorSession {
           useMedia: request.useMedia,
           catalog: this.catalog(),
           matcher: this.deps.matcher?.(),
+          footage: this.deps.footage?.(),
           generation:
             provider && request.generate ? generationOptionsFor(provider, request.generate) : undefined,
         })

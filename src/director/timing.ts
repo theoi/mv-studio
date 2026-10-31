@@ -1,6 +1,6 @@
 /** Beat-grid math for planners: grids with fallbacks, section coverage, and beat- or bar-aligned cut points. */
 import type { Seconds } from '../model/types.ts'
-import { meanOver, type SectionInfo, type SongInfo } from './inputs.ts'
+import { meanOver, type EnergyAt, type SectionInfo, type SongInfo } from './inputs.ts'
 import type { Pace } from './plan.ts'
 
 export const FALLBACK_BPM = 120
@@ -101,6 +101,75 @@ export function cutTimes(start: Seconds, end: Seconds, k: number, grid: BeatGrid
   for (let i = anchor; i < inside.length; i += k) {
     const t = inside[i] as number
     if (t - (cuts[cuts.length - 1] as number) >= minShot && end - t >= minShot) cuts.push(t)
+  }
+  return cuts
+}
+
+/** How much louder (or quieter) than the rest of its section a bar must be to cut twice (or half) as often. */
+const BAR_CONTRAST = 0.15
+
+export interface PhraseOptions {
+  /** Song energy over a span, 0..1 within the song (energyScale). */
+  energyAt?: EnergyAt
+  /** The next section cuts faster: speed up through the last bar into it. */
+  lift?: boolean
+}
+
+/**
+ * Cut times in [start, end) at about `k` beats per shot, phrased bar by bar the way an editor follows the music
+ * inside a section: a bar clearly louder than the rest of the section cuts twice as often, a clearly quieter one
+ * half as often, and with `lift` the last bar speeds up into the next section. Shots of 4 beats or more start on
+ * bar lines and 2-beat shots on beats 1 and 3. Without energy or a lift this is cutTimes().
+ */
+export function phrasedCutTimes(
+  start: Seconds,
+  end: Seconds,
+  k: number,
+  grid: BeatGrid,
+  options: PhraseOptions = {},
+): Seconds[] {
+  const bars = [start, ...grid.downbeats.filter((d) => d > start + EPS && d < end - EPS)]
+  const energies = bars.map((b, i) => options.energyAt?.(b, bars[i + 1] ?? end))
+  const known = energies.filter((e): e is number => e !== undefined)
+  const mean = known.length >= 3 ? known.reduce((a, b) => a + b, 0) / known.length : undefined
+  const lift = !!options.lift && bars.length > 1
+  if (mean === undefined && !lift) return cutTimes(start, end, k, grid)
+  const barK = bars.map((_, i) => {
+    let kk = k
+    const e = energies[i]
+    if (mean !== undefined && e !== undefined) {
+      if (e - mean >= BAR_CONTRAST) kk = k / 2
+      else if (mean - e >= BAR_CONTRAST) kk = k * 2
+    }
+    if (lift && i === bars.length - 1) kk = Math.min(kk, k / 2)
+    kk = Math.min(16, Math.max(1, kk))
+    while (kk * grid.beatLength < MIN_SHOT) kk *= 2
+    return kk
+  })
+
+  const minShot = Math.max(MIN_SHOT, Math.min(grid.beatLength * 0.75, (end - start) / 2))
+  const near = (list: Seconds[], t: Seconds) => list.some((b) => Math.abs(b - t) < grid.beatLength / 4)
+  const cuts = [start]
+  let bar = 0
+  // Beat position within the bar (0 = downbeat), unknown until the first bar line.
+  let pos = near(grid.downbeats, start) ? 0 : -1
+  // A section that starts between beats gets onto the grid at the first beat that fits.
+  let since = near(grid.beats, start) ? 0 : Infinity
+  for (const t of grid.beats) {
+    if (t <= start + EPS || t >= end - EPS) continue
+    if (bar + 1 < bars.length && t >= (bars[bar + 1] as number) - grid.beatLength / 4) {
+      bar++
+      pos = 0
+    } else if (pos >= 0) pos++
+    since++
+    const kk = barK[bar] as number
+    const aligned = kk >= 4 ? pos === 0 : kk === 2 ? pos < 0 || pos % 2 === 0 : true
+    // Back on bar lines after faster cuts, take the first bar line within half a bar of the pace.
+    const due = kk >= 4 ? since >= kk - 2 : since >= kk
+    if (due && aligned && t - (cuts[cuts.length - 1] as number) >= minShot && end - t >= minShot) {
+      cuts.push(t)
+      since = 0
+    }
   }
   return cuts
 }

@@ -438,6 +438,8 @@ function shotClip(
   clip.effects = effectsFor(shot.effects, ctx)
   const tIn = transition(shot.transitionIn, duration, ctx)
   if (tIn) clip.transitionIn = tIn
+  const tOut = transition(shot.transitionOut, duration, ctx)
+  if (tOut) clip.transitionOut = tOut
   applyMotion(clip, shot.motion)
   applyBindings(clip, shot.reactive, ctx)
   return clip

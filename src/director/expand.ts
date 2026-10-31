@@ -8,14 +8,25 @@ import type { LyricLine, Seconds } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
 import { bestByTags, findItem, type LookPreset } from './catalog.ts'
-import type { FootageMatch, MediaItem, PlannerInput, SectionInfo, VideoKind } from './inputs.ts'
+import {
+  energyScale,
+  musicEnd,
+  type EnergyAt,
+  type FootageMatch,
+  type MediaItem,
+  type PlannerInput,
+  type SectionInfo,
+  type VideoKind,
+} from './inputs.ts'
 import {
   editPlanSchema,
+  PACES,
   type AudioBinding,
   type EditPlan,
   type EffectSpec,
   type GenerateSource,
   type Motion,
+  type Pace,
   type PlanLook,
   type PlanSection,
   type PlanShot,
@@ -27,6 +38,7 @@ import {
   DEFAULT_CONCEPT,
   defaultSectionBrief,
   footageMood,
+  isPeak,
   linesIn,
   moodFor,
   normalizedLabel,
@@ -39,6 +51,8 @@ import {
   createRng,
   cutTimes,
   cutTimesByLength,
+  MIN_SHOT,
+  phrasedCutTimes,
   sectionsFor,
   spans,
   type BeatGrid,
@@ -89,6 +103,9 @@ interface Ctx {
   groupShots: Map<number, string[]>
   motionOffset: number
   promptOffset: number
+  energyAt?: EnergyAt
+  /** When each timed lyric line is sung. */
+  sung: { start: Seconds; end: Seconds }[]
 }
 
 function warn(ctx: Pick<Ctx, 'warnings'>, message: string) {
@@ -295,7 +312,7 @@ function videoWindow(
   ctx: Ctx,
 ) {
   const duration = item.duration ?? length
-  if (duration < length * 0.98) {
+  if (duration < length) {
     const rate = Math.max(0.5, Math.floor((duration / length) * 100) / 100)
     if (rate === 0.5 && duration < length * 0.5)
       warn(ctx, `"${item.name}" is shorter than some shots, so it is slowed down.`)
@@ -315,7 +332,37 @@ function nextMotion(sb: BriefSection, ctx: Ctx): Motion {
   return IMAGE_MOTIONS[(ctx.motionOffset + ctx.shotIndex) % IMAGE_MOTIONS.length] as Motion
 }
 
-function shotSpans(section: SectionInfo, sb: BriefSection, ctx: Ctx) {
+const paceIndex = (pace: Pace) => PACES.indexOf(pace)
+
+/**
+ * Moves cuts that would land in the middle of a sung line to the nearest beat where a line starts or between lines,
+ * within half a shot either way, so the background changes with the words instead of under them.
+ */
+function cutsBetweenLines(cuts: Seconds[], end: Seconds, k: number, ctx: Ctx): Seconds[] {
+  if (ctx.sung.length === 0) return cuts
+  const reach = (k * ctx.grid.beatLength) / 2
+  const gap = Math.max(MIN_SHOT, ctx.grid.beatLength * 2)
+  const free = (t: Seconds) => !ctx.sung.some((l) => t > l.start + 0.2 && t < l.end - 0.1)
+  const out = [cuts[0] as number]
+  for (let i = 1; i < cuts.length; i++) {
+    const t = cuts[i] as number
+    const prev = out[out.length - 1] as number
+    const next = cuts[i + 1] ?? end
+    if (free(t)) {
+      out.push(t)
+      continue
+    }
+    let best: Seconds | undefined
+    for (const b of ctx.grid.beats) {
+      if (Math.abs(b - t) > reach || b - prev < gap || next - b < gap || !free(b)) continue
+      if (best === undefined || Math.abs(b - t) < Math.abs(best - t)) best = b
+    }
+    out.push(best ?? t)
+  }
+  return out
+}
+
+function shotSpans(section: SectionInfo, sb: BriefSection, ctx: Ctx, next?: BriefSection) {
   if (ctx.visual === 'generated' && ctx.input.generation?.mode === 'video') {
     const g = ctx.input.generation
     return spans(
@@ -323,9 +370,14 @@ function shotSpans(section: SectionInfo, sb: BriefSection, ctx: Ctx) {
       section.end,
     )
   }
-  const pace = ctx.visual === 'generated' && sb.pace !== 'very-slow' && sb.pace !== 'slow' ? 'slow' : sb.pace
+  const cap = (pace: Pace): Pace =>
+    ctx.visual === 'generated' && paceIndex(pace) > paceIndex('slow') ? 'slow' : pace
+  const pace = cap(sb.pace)
   const k = beatsPerCut(pace, ctx.grid.beatLength)
-  return spans(cutTimes(section.start, section.end, k, ctx.grid), section.end)
+  const lift = next !== undefined && paceIndex(cap(next.pace)) > paceIndex(pace)
+  let cuts = phrasedCutTimes(section.start, section.end, k, ctx.grid, { energyAt: ctx.energyAt, lift })
+  if (ctx.input.kind === 'lyric') cuts = cutsBetweenLines(cuts, section.end, k, ctx)
+  return spans(cuts, section.end)
 }
 
 function generatedSource(
@@ -347,7 +399,12 @@ function generatedSource(
   }
 }
 
-async function shotsForSection(section: SectionInfo, sb: BriefSection, ctx: Ctx): Promise<PlanShot[]> {
+async function shotsForSection(
+  section: SectionInfo,
+  sb: BriefSection,
+  ctx: Ctx,
+  next?: BriefSection,
+): Promise<PlanShot[]> {
   const shots: PlanShot[] = []
   const base = { sectionId: section.id, layer: 'main' as const }
   const effects = effectSpecs(sb, ctx)
@@ -420,7 +477,7 @@ async function shotsForSection(section: SectionInfo, sb: BriefSection, ctx: Ctx)
     return shots
   }
 
-  const sectionSpans = shotSpans(section, sb, ctx)
+  const sectionSpans = shotSpans(section, sb, ctx, next)
   const calm = sb.intensity < 0.35 && (sb.pace === 'slow' || sb.pace === 'very-slow')
   const crossfade = calm ? transitionOf(ctx, 'fade', 0.4) : undefined
 
@@ -505,6 +562,40 @@ async function shotsForSection(section: SectionInfo, sb: BriefSection, ctx: Ctx)
   return shots
 }
 
+function sungSpans(input: PlannerInput): { start: Seconds; end: Seconds }[] {
+  return (input.lyrics?.lines ?? []).flatMap((l) => {
+    const start = l.start ?? l.words[0]?.start
+    const end = l.end ?? l.words[l.words.length - 1]?.end
+    return start !== undefined && end !== undefined && end > start ? [{ start, end }] : []
+  })
+}
+
+/**
+ * A designed opening and ending: the first shot fades in from black and the last fades out, ending when the music
+ * does when the song has a silent tail. Overlays fade with it.
+ */
+function openAndClose(shots: PlanShot[], ctx: Ctx): PlanShot[] {
+  const stop = musicEnd(ctx.input.song)
+  const kept = shots
+    .filter((s) => s.start < stop - MIN_SHOT)
+    .map((s) => (s.end > stop ? { ...s, end: stop } : s))
+  const main = kept.filter((s) => s.layer === 'main')
+  const first = main[0]
+  const last = main[main.length - 1]
+  const fadeIn = ctx.input.kind === 'beat-cut' ? 0.5 : 1
+  if (first && first.start < 0.05 && !first.transitionIn) {
+    const t = transitionOf(ctx, 'fade', fadeIn)
+    if (t) first.transitionIn = t
+  }
+  const fadeOut = Math.min(2.5, Math.max(1.2, ctx.grid.beatLength * 4))
+  for (const s of kept) {
+    if (s !== last && !(s.layer === 'overlay' && Math.abs(s.end - (last?.end ?? -1)) < 0.05)) continue
+    const t = transitionOf(ctx, 'fade', fadeOut)
+    if (t) s.transitionOut = t
+  }
+  return kept
+}
+
 interface TimedLine {
   line: LyricLine
   start: Seconds
@@ -543,7 +634,38 @@ function timedLines(lines: LyricLine[], sections: SectionInfo[], duration: Secon
   })
 }
 
-function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, ctx: Ctx): PlanText[] {
+/** Reading speed every lyric line gets when the gaps around it allow, in characters per second. */
+const READ_CPS = 17
+/** Most a line shows before it is sung, taken from the gap after the line before. */
+const LEAD = 0.3
+/** How long a line stays after it is sung, gaps allowing (longer when it needs more reading time). */
+const HOLD = 1
+
+/** When to show each line on screen: a little before it is sung until a while after, never overlapping. */
+function displayTimes(timed: TimedLine[], duration: Seconds): { start: Seconds; end: Seconds }[] {
+  const leads = timed.map((item, i) =>
+    Math.max(0, Math.min(LEAD, (item.start - (timed[i - 1]?.end ?? 0)) * 0.4)),
+  )
+  const out: { start: Seconds; end: Seconds }[] = []
+  for (const [i, item] of timed.entries()) {
+    const start = Math.max(out[out.length - 1]?.end ?? 0, item.start - (leads[i] as number))
+    const next = timed[i + 1]
+    const nextShown = next ? next.start - (leads[i + 1] as number) : duration
+    const need = Math.max(0.8, item.line.text.length / READ_CPS)
+    const hold = Math.max(HOLD, need - (item.end - start))
+    let end = Math.min(nextShown - 0.05, item.end + hold, duration)
+    if (end - start < 0.6) end = Math.min(duration, start + 0.6)
+    out.push({ start, end })
+  }
+  return out
+}
+
+function buildTexts(
+  sections: SectionInfo[],
+  briefs: Map<string, BriefSection>,
+  ctx: Ctx,
+  titleText: string,
+): PlanText[] {
   const { input, brief } = ctx
   const texts: PlanText[] = []
   const aspect = input.settings.aspect
@@ -555,6 +677,9 @@ function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, 
   const lookUppercase =
     lookStyle?.textTransform === undefined ? undefined : lookStyle.textTransform === 'uppercase'
   const weight = lookStyle?.fontWeight ?? 700
+  const backgroundBusy = ctx.visual === 'footage' || ctx.visual === 'stills' || ctx.visual === 'generated'
+  // Footage can be as bright as the text; a thin dark outline keeps every word readable over white skies and walls.
+  const stroke = lookStyle?.stroke ?? (backgroundBusy ? { color: '#000000b3', width: 4 } : undefined)
   const base: TextStyleSpec = {
     fontFamily: textBrief?.fontFamily ?? lookStyle?.fontFamily ?? 'Inter, system-ui, sans-serif',
     fontSize: baseSize,
@@ -563,9 +688,9 @@ function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, 
     color: textBrief?.color ?? ctx.look?.textColor ?? '#ffffff',
     align: 'center',
     maxWidth: aspect === '16:9' ? 0.8 : 0.86,
-    shadow: { color: '#000000b3', blur: 14, offsetX: 0, offsetY: 3 },
+    shadow: lookStyle?.shadow ?? { color: '#000000b3', blur: 14, offsetX: 0, offsetY: 3 },
+    ...(stroke ? { stroke } : {}),
   }
-  const backgroundBusy = ctx.visual === 'footage' || ctx.visual === 'stills' || ctx.visual === 'generated'
   const position = textBrief?.position ?? (backgroundBusy && input.kind !== 'lyric' ? 'lower' : 'center')
   const y = position === 'lower' ? 0.8 : position === 'upper' ? 0.2 : 0.5
   const sectionAt = (t: number) =>
@@ -579,16 +704,13 @@ function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, 
   const lines = input.lyrics?.lines.filter((l) => l.text.trim()) ?? []
   if (show && lines.length > 0) {
     const timed = timedLines(lines, sections, input.song.duration, ctx)
+    const shown = displayTimes(timed, input.song.duration)
     for (const [i, item] of timed.entries()) {
-      const prevEnd = texts[texts.length - 1]?.end ?? 0
-      const nextStart = timed[i + 1]?.start ?? input.song.duration
-      const start = Math.max(prevEnd, item.start - 0.15)
-      let end = Math.min(nextStart - 0.05, item.end + 0.5, input.song.duration)
-      if (end - start < 0.6) end = Math.min(input.song.duration, start + 0.6)
+      const { start, end } = shown[i] as { start: Seconds; end: Seconds }
       if (end <= start) continue
       const section = sectionAt(item.start)
       const sb = section ? briefs.get(section.id) : undefined
-      const peak = (sb?.intensity ?? section?.energy ?? 0.5) >= 0.7
+      const peak = !!section && isPeak(section) && (sb?.intensity ?? section.energy) >= 0.6
       const style: TextStyleSpec = peak
         ? {
             ...base,
@@ -624,34 +746,54 @@ function buildTexts(sections: SectionInfo[], briefs: Map<string, BriefSection>, 
     warn(ctx, 'Add lyrics in Assist › Lyrics, then run the director again to place them.')
   }
 
+  // A title card over the intro: the song's title (and artist), not the prompt or the kind of video.
   const first = sections[0]
   const firstLyric = texts[0]?.start ?? Infinity
-  const titleEnd = Math.min(first ? first.end : 0, 4, firstLyric - 0.2)
-  if (
-    (input.kind === 'visualizer' || input.kind === 'ai') &&
-    first &&
-    titleEnd >= 2.5 &&
-    brief.title.trim()
-  ) {
-    texts.unshift({
-      id: newId(),
-      sectionId: first.id,
-      start: 0.3,
-      end: round3(titleEnd),
-      text: brief.title.trim(),
-      style: {
-        ...base,
-        fontSize: Math.round(baseSize * 1.3),
-        fontWeight: Math.max(800, weight),
-        letterSpacing: 0.12,
-        uppercase: true,
+  const titleEnd = Math.min(first ? first.end : 0, 4.5, firstLyric - 0.2)
+  if (input.kind !== 'beat-cut' && first && titleEnd >= 2.5 && titleText) {
+    const fades = fade
+      ? { transitionIn: { kind: 'fade', duration: 0.6 }, transitionOut: { kind: 'fade', duration: 0.6 } }
+      : {}
+    const artist = input.song.title && titleText === input.song.title ? input.song.artist : undefined
+    const card: PlanText[] = [
+      {
+        id: newId(),
+        sectionId: first.id,
+        start: 0.5,
+        end: round3(titleEnd),
+        text: titleText,
+        style: {
+          ...base,
+          fontSize: Math.round(baseSize * 1.3),
+          fontWeight: Math.max(800, weight),
+          letterSpacing: 0.12,
+          uppercase: true,
+        },
+        position: { x: 0.5, y: artist ? 0.46 : 0.5 },
+        ...fades,
+        role: 'title',
       },
-      position: { x: 0.5, y: 0.5 },
-      ...(fade
-        ? { transitionIn: { kind: 'fade', duration: 0.6 }, transitionOut: { kind: 'fade', duration: 0.6 } }
-        : {}),
-      role: 'title',
-    })
+    ]
+    if (artist) {
+      card.push({
+        id: newId(),
+        sectionId: first.id,
+        start: 0.8,
+        end: round3(titleEnd),
+        text: artist,
+        style: {
+          ...base,
+          fontSize: Math.round(baseSize * 0.56),
+          fontWeight: weight,
+          letterSpacing: 0.3,
+          uppercase: true,
+        },
+        position: { x: 0.5, y: 0.58 },
+        ...fades,
+        role: 'title',
+      })
+    }
+    texts.unshift(...card)
   }
   return texts
 }
@@ -670,7 +812,7 @@ function summarize(plan: Omit<EditPlan, 'summary'>, ctx: Ctx): string {
   if (plan.look) parts.push(`${plan.look.name} look`)
   const pacing =
     ctx.visual === 'footage' || ctx.visual === 'stills'
-      ? ' Cuts land on the beat and speed up in high-energy sections.'
+      ? ' Cuts land on the beat, faster in choruses and loud passages and slower in quiet ones.'
       : ''
   return `${parts.join(', ')}.${pacing}`
 }
@@ -715,12 +857,13 @@ export async function expandBrief(
     groupShots: new Map(),
     motionOffset: Math.floor(rng() * IMAGE_MOTIONS.length),
     promptOffset: Math.floor(rng() * 6),
+    energyAt: energyScale(input.song),
+    sung: sungSpans(input),
   }
   const given = new Map(brief.sections.map((s) => [s.sectionId, s]))
   const briefs = new Map<string, BriefSection>()
   const planSections: PlanSection[] = []
-  const shots: PlanShot[] = []
-  for (const [i, section] of sections.entries()) {
+  for (const section of sections) {
     const raw = given.get(section.id) ?? defaultSectionBrief(section, input, grid.bpm, visual === 'generated')
     const sb = sanitizeSection(raw, section, ctx)
     briefs.set(section.id, sb)
@@ -733,7 +876,12 @@ export async function expandBrief(
       mood: sb.mood,
       pace: sb.pace,
     })
-    const sectionShots = await shotsForSection(section, sb, ctx)
+  }
+  let shots: PlanShot[] = []
+  for (const [i, section] of sections.entries()) {
+    const sb = briefs.get(section.id) as BriefSection
+    const next = sections[i + 1]
+    const sectionShots = await shotsForSection(section, sb, ctx, next ? briefs.get(next.id) : undefined)
     const firstMain = sectionShots.find((s) => s.layer === 'main')
     if (i > 0 && firstMain && !firstMain.transitionIn) {
       const t = boundaryTransition(sections[i - 1] as SectionInfo, section, sb, ctx)
@@ -741,7 +889,9 @@ export async function expandBrief(
     }
     shots.push(...sectionShots)
   }
-  const texts = buildTexts(sections, briefs, ctx)
+  shots = openAndClose(shots, ctx)
+  const titleText = input.song.title ?? (meta.planner === 'llm' ? brief.title.trim() : '')
+  const texts = buildTexts(sections, briefs, ctx, titleText)
   const draft: Omit<EditPlan, 'summary'> = {
     version: 1,
     id: newId(),
@@ -763,9 +913,10 @@ export async function expandBrief(
   }
   const result = editPlanSchema.safeParse({ ...draft, summary: summarize(draft, ctx) })
   if (!result.success) {
+    const issue = result.error.issues[0]
     throw new DirectorError(
       'invalid-plan',
-      `The director made an invalid plan: ${result.error.issues[0]?.message ?? 'unknown'}`,
+      `The director made an invalid plan: ${issue ? `${issue.path.join('.')}: ${issue.message}` : 'unknown'}`,
     )
   }
   return result.data
