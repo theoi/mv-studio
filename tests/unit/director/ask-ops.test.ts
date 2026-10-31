@@ -1,0 +1,249 @@
+import { describe, expect, it } from 'vitest'
+import {
+  buildPlannerInput,
+  compileOperations,
+  compilePlan,
+  OperationError,
+  planLocally,
+  summarizeProject,
+  type Operation,
+} from '../../../src/director/index.ts'
+import { ProjectEditor } from '../../../src/model/editor.ts'
+import type { Project, TextClip, VideoClip } from '../../../src/model/types.ts'
+import { makeProject } from './fixtures.ts'
+
+/** A lyric draft: video shots, lyric text, a look layer and the song. */
+async function draft() {
+  const base = makeProject()
+  const plan = await planLocally(await buildPlannerInput(base, { kind: 'lyric', seed: 1 }))
+  const editor = new ProjectEditor(base)
+  editor.dispatch(compilePlan(plan, base).commands)
+  const project = editor.getProject()
+  const summary = summarizeProject(project)
+  const short = (realId: string) => summary.ids.toShort.get(realId)!
+  return { project, summary, short, editor }
+}
+
+function run(project: Project, ops: Operation[], ids = summarizeProject(project).ids) {
+  const compiled = compileOperations(ops, project, ids)
+  const editor = new ProjectEditor(project)
+  editor.dispatch(compiled.commands)
+  return { ...compiled, after: editor.getProject(), editor }
+}
+
+const texts = (p: Project) => Object.values(p.clips).filter((c): c is TextClip => c.type === 'text')
+const videos = (p: Project) => Object.values(p.clips).filter((c): c is VideoClip => c.type === 'video')
+
+describe('compileOperations', () => {
+  it('sets a property on every clip a selector picks', async () => {
+    const { project, summary } = await draft()
+    const { after, warnings } = run(
+      project,
+      [{ op: 'set', clips: { type: 'text' }, property: 'fontSize', value: 120 }],
+      summary.ids,
+    )
+    expect(texts(after).length).toBeGreaterThan(0)
+    expect(texts(after).every((t) => t.style.fontSize === 120)).toBe(true)
+    expect(videos(after)).toEqual(videos(project))
+    expect(warnings).toEqual([])
+  })
+
+  it('limits a selector to a song section', async () => {
+    const { project, summary } = await draft()
+    const chorus = [...summary.ids.toShort.entries()].find(([realId]) => realId === 's-chorus1')![1]
+    const { after } = run(
+      project,
+      [{ op: 'set', clips: { type: 'text', section: chorus }, property: 'color', value: '#FF0000' }],
+      summary.ids,
+    )
+    for (const t of texts(after)) {
+      const inside = t.start < 40 && t.start + t.duration > 24
+      expect(t.style.color).toBe(inside ? '#ff0000' : texts(project).find((x) => x.id === t.id)!.style.color)
+    }
+    expect(texts(after).some((t) => t.style.color === '#ff0000')).toBe(true)
+  })
+
+  it('replaces animation when setting a value but keeps the music reaction', async () => {
+    const { project, summary, short } = await draft()
+    const clip = videos(project)[0]!
+    const withAnimation = run(
+      project,
+      [
+        {
+          op: 'animate',
+          clips: [short(clip.id)],
+          property: 'opacity',
+          keyframes: [
+            { time: 0, value: 0 },
+            { time: 1, value: 1 },
+          ],
+        },
+        { op: 'react', clips: [short(clip.id)], property: 'opacity', source: 'beat', amount: 0.2 },
+      ],
+      summary.ids,
+    ).after
+    const animated = withAnimation.clips[clip.id] as VideoClip
+    expect(animated.opacity.keyframes).toHaveLength(2)
+    expect(animated.opacity.modulation).toHaveLength(1)
+    const set = run(
+      withAnimation,
+      [{ op: 'set', clips: [short(clip.id)], property: 'opacity', value: 0.5 }],
+      summary.ids,
+    ).after
+    const result = set.clips[clip.id] as VideoClip
+    expect(result.opacity).toEqual({ value: 0.5, modulation: animated.opacity.modulation })
+  })
+
+  it('lets later operations use clips added earlier (n1, n2)', () => {
+    const project = makeProject()
+    const { after, added } = run(project, [
+      { op: 'add_text', text: 'THE END', start: 60, end: 64, y: 0.8, animation: 'pop' },
+      {
+        op: 'animate',
+        clips: ['n1'],
+        property: 'opacity',
+        keyframes: [
+          { time: 0, value: 0 },
+          { time: 0.5, value: 1 },
+        ],
+      },
+    ])
+    const clip = after.clips[added.get('n1')!] as TextClip
+    expect(clip.text).toBe('THE END')
+    expect(clip.transform.y.value).toBe(0.8)
+    expect(clip.animation?.presetId).toBe('pop')
+    expect(clip.opacity.keyframes?.map((k) => [k.time, k.value])).toEqual([
+      [0, 0],
+      [0.5, 1],
+    ])
+    expect(after.tracks[0]!.name).toBe('Text')
+  })
+
+  it('makes clips pulse with the beat through audio modulation', async () => {
+    const { project, summary, short } = await draft()
+    const clip = videos(project)[1]!
+    const { after } = run(
+      project,
+      [{ op: 'react', clips: [short(clip.id)], property: 'scale', source: 'beat', amount: 0.1 }],
+      summary.ids,
+    )
+    const result = after.clips[clip.id] as VideoClip
+    for (const axis of [result.transform.scaleX, result.transform.scaleY]) {
+      expect(axis.modulation?.at(-1)).toMatchObject({
+        source: { kind: 'beat' },
+        amount: 0.1,
+        mode: 'multiply',
+      })
+    }
+  })
+
+  it('creates color adjustments that did not exist yet', () => {
+    const project = makeProject()
+    const { after, added } = run(project, [
+      { op: 'add_text', text: 'Hi', start: 1, end: 3 },
+      { op: 'set', clips: ['n1'], property: 'contrast', value: 0.3 },
+    ])
+    expect((after.clips[added.get('n1')!] as TextClip).adjustments?.contrast).toEqual({ value: 0.3 })
+  })
+
+  it('adds catalog effects with music-driven params and rejects unknown params', async () => {
+    const { project, summary, short } = await draft()
+    const clip = videos(project)[0]!
+    const { after } = run(
+      project,
+      [
+        {
+          op: 'add_effect',
+          clips: [short(clip.id)],
+          effect: 'glow',
+          params: { intensity: 9 },
+          react: { param: 'radius', source: 'bass', amount: 0.25 },
+        },
+      ],
+      summary.ids,
+    )
+    const glow = (after.clips[clip.id] as VideoClip).effects.find((e) => e.effectId === 'glow')!
+    // Values are clamped to the engine's range (intensity 0..4).
+    expect(glow.params.intensity?.value).toBe(4)
+    expect(glow.params.radius?.modulation?.[0]?.amount).toBeCloseTo(0.25 * 79, 3)
+
+    expect(() =>
+      compileOperations(
+        [{ op: 'add_effect', clips: [short(clip.id)], effect: 'glow', params: { sparkle: 1 } }],
+        project,
+        summary.ids,
+      ),
+    ).toThrow(/glow has no param sparkle; it has intensity, radius, threshold, tint/)
+  })
+
+  it('moves several clips and keeps their spacing', async () => {
+    const { project, summary, short } = await draft()
+    const [a, b] = texts(project)
+    const { after } = run(
+      project,
+      [{ op: 'move', clips: [short(a!.id), short(b!.id)], to: a!.start + 1 }],
+      summary.ids,
+    )
+    expect(after.clips[a!.id]!.start).toBeCloseTo(a!.start + 1, 3)
+    expect(after.clips[b!.id]!.start).toBeCloseTo(b!.start + 1, 3)
+  })
+
+  it('removes transitions with kind none', async () => {
+    const { project, summary } = await draft()
+    const { after } = run(
+      project,
+      [{ op: 'transition', clips: { type: 'video' }, side: 'in', kind: 'none' }],
+      summary.ids,
+    )
+    expect(videos(after).every((c) => !c.transitionIn)).toBe(true)
+    expect(videos(project).some((c) => c.transitionIn)).toBe(true)
+  })
+
+  it('names the operation and the problem when something is wrong', async () => {
+    const { project, summary } = await draft()
+    const attempt = (ops: Operation[]) => {
+      try {
+        compileOperations(ops, project, summary.ids)
+      } catch (error) {
+        return error
+      }
+      throw new Error('expected an error')
+    }
+    const missing = attempt([
+      { op: 'set', clips: { type: 'text' }, property: 'opacity', value: 0.5 },
+      { op: 'remove', clips: ['c999'] },
+    ])
+    expect(missing).toBeInstanceOf(OperationError)
+    expect((missing as OperationError).message).toBe("Operation 2 (remove): clip c999 doesn't exist")
+    expect(
+      (attempt([{ op: 'set', clips: { type: 'audio' }, property: 'fontSize', value: 50 }]) as Error).message,
+    ).toMatch(/fontSize doesn't apply to that clip/)
+    expect(
+      (attempt([{ op: 'add_effect', clips: { type: 'video' }, effect: 'lens-flare' }]) as Error).message,
+    ).toMatch(/effect lens-flare isn't in the catalog/)
+  })
+
+  it('reports a locked track instead of editing it', async () => {
+    const { project, summary, short } = await draft()
+    const clip = videos(project)[0]!
+    const editor = new ProjectEditor(project)
+    editor.dispatch({ type: 'track.update', trackId: clip.trackId, patch: { locked: true } })
+    expect(() =>
+      compileOperations([{ op: 'remove', clips: [short(clip.id)] }], editor.getProject(), summary.ids),
+    ).toThrow(/that track is locked/)
+  })
+
+  it('warns when a property applies to only some of the clips', async () => {
+    const { project } = await draft()
+    const { warnings, after } = run(project, [
+      { op: 'set', clips: { from: 24, to: 26 }, property: 'fontSize', value: 140 },
+    ])
+    expect(warnings[0]).toMatch(/fontSize was skipped for \d+ clips/)
+    expect(texts(after).some((t) => t.style.fontSize === 140)).toBe(true)
+  })
+
+  it('changes the aspect with matching canvas size', () => {
+    const { after } = run(makeProject(), [{ op: 'set_aspect', aspect: '9:16' }])
+    expect(after.settings).toMatchObject({ aspect: '9:16', width: 1080, height: 1920 })
+  })
+})

@@ -67,3 +67,34 @@ director.undo()
 - `applied`: summary, warnings, Undo (`undo()`; only while the draft is still the latest change) and, when
   `failedShots > 0`, "Retry failed shots" (`apply()` again generates only those).
 - `error`: `title`, `message` and `steps` in place, with the plan kept so the user can retry.
+
+## LLM planner
+
+`createDirectorPlanner({ client: () => cloud.llm(), model: () => settings.llm?.model })` returns a `Planner` for
+`DirectorSession`. With an LLM it asks for the creative brief through `callTools` (native tools, JSON mode or a
+JSON reply, whichever the endpoint supports). The model sees short ids (`s1`, `m1`) and never computes timings;
+`expandBrief()` does. Sloppy answers are repaired field by field (`normalizeBrief`), an unusable answer gets one
+retry, and if the model is unreachable or still unusable the local planner makes the draft with a warning saying
+why. Without an LLM it is the local planner.
+
+## Plain-language edits (Assist › Ask)
+
+`interpretRequest()` sends a compact project summary (`summarizeProject`, short ids, large projects trimmed around
+the playhead and selection) and three tools: `edit_project` (operations from `ask-ops.ts`), `ask_clarification`
+and `reply`. Operations are a small vocabulary (`set`, `animate`, `react`, `clear`, `move`, `trim`, `split`,
+`remove`, `duplicate`, `add_text`, `add_visualizer`, `add_effect`, `set_effect`, `remove_effect`, `transition`,
+markers, tracks, aspect, lyric text) that target clip ids or selectors such as `{"type":"text","section":"s3"}`.
+They are validated with zod and tried in order on a scratch editor; any error goes back to the model to fix (two
+repair rounds), so nothing half-applies.
+
+`AskSession` (`useSyncExternalStore(ask.subscribe, ask.getState)`) states:
+
+- `idle`: the Ask box with placeholder examples ("Make the chorus more intense"). `ask(text, { selection, playhead })`.
+- `thinking`: inline progress with Cancel.
+- `question`: the model's question with `choices` as quick replies; `answer(text)` continues the same conversation.
+- `review`: `summary`, `changes` and `items` with Apply (`accept()`) and Discard (`reject()`). Used when
+  `reviewFirst` is on, and always for large deletions (4 or more clips, or any track or media).
+- `applied`: `summary` with Undo (`undo()`, only while it is the latest change) and "Show changes" (`items`, each
+  with a time `range` to highlight).
+- `reply`: the model's answer, no changes.
+- `error`: `title`, `message`, `steps`; `needsSetup` means no LLM is configured, so link to Settings.

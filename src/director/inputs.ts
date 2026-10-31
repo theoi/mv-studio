@@ -1,7 +1,7 @@
 /**
- * Everything a planner needs, as plain data plus two narrow interfaces. Song analysis comes from
- * project.analysis.audio (src/analysis); footage tags and matching come from src/vision, which provides an object
- * with the FootageMatcher shape (structural typing, so neither module imports the other).
+ * Everything a planner needs, as plain data plus the footage matcher. Song analysis comes from
+ * project.analysis.audio (src/analysis); footage tags and matching come from src/vision
+ * (createDirectorFootageMatcher), whose types are used as is.
  */
 import type { AspectPreset, FeatureSeries, Id, LyricsDoc, Project, Seconds } from '../model/types.ts'
 import { projectDuration } from '../model/queries.ts'
@@ -9,43 +9,15 @@ import type { CostEstimate } from '../cloud/pricing.ts'
 import type { GenerationRequest, GenerationTier } from '../cloud/types.ts'
 import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
 import type { Pace } from './plan.ts'
+import type { DirectorFootageMatch, DirectorFootageMatcher, FootageInfo } from '../vision/director.ts'
+import type { MatchQuery, Mood } from '../vision/types.ts'
+
+export type { FootageInfo, MatchQuery }
+export type FootageMood = Mood
+export type FootageMatch = DirectorFootageMatch
+export type FootageMatcher = DirectorFootageMatcher
 
 export type VideoKind = 'lyric' | 'visualizer' | 'beat-cut' | 'ai'
-
-/** Footage tags from src/vision (FootageInfo in src/vision/director.ts). */
-export interface FootageInfo {
-  assetId: Id
-  labels?: string[]
-  /** 0..1, absolute motion energy. */
-  motion?: number
-  /** Weak hints; prefer motion for energy. */
-  mood?: string[]
-  /** 0..1 share of the frame covered by people, once masks are analysed. */
-  subjectCoverage?: number
-}
-
-export interface MatchQuery {
-  text?: string
-  mood?: string
-  energy?: number
-  /** Sizes the best-matching range in the result. */
-  duration?: Seconds
-}
-
-export interface FootageMatch {
-  assetId: Id
-  /** 0..1, comparable only within one call. */
-  score: number
-  /** Start of the best-matching range, in source seconds. */
-  time?: Seconds
-  range?: { start: Seconds; end: Seconds }
-}
-
-/** Matches src/vision's DirectorFootageMatcher. Assets without a match index are left out of results. */
-export interface FootageMatcher {
-  rank(query: string | MatchQuery, options?: { assetIds?: Id[]; limit?: number }): Promise<FootageMatch[]>
-  info(assetIds?: Id[]): Promise<FootageInfo[]>
-}
 
 export interface SectionInfo {
   id: Id

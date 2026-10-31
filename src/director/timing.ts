@@ -1,5 +1,4 @@
 /** Beat-grid math for planners: grids with fallbacks, section coverage, and beat- or bar-aligned cut points. */
-import { newId } from '../model/factory.ts'
 import type { Seconds } from '../model/types.ts'
 import { meanOver, type SectionInfo, type SongInfo } from './inputs.ts'
 import type { Pace } from './plan.ts'
@@ -64,7 +63,8 @@ export function sectionsFor(song: SongInfo, grid: BeatGrid): SectionInfo[] {
     const start = (duration * i) / count
     const end = (duration * (i + 1)) / count
     const energy = meanOver(song.energy, start, end)
-    parts.push({ id: newId(), label: `Part ${i + 1}`, start, end, energy: energy ?? 0.5 })
+    // Stable ids, so a brief written against these parts still matches when the plan is expanded.
+    parts.push({ id: `part-${i + 1}`, label: `Part ${i + 1}`, start, end, energy: energy ?? 0.5 })
   }
   const values = parts.map((p) => p.energy)
   const min = Math.min(...values)

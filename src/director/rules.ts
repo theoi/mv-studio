@@ -5,7 +5,7 @@
 import type { LyricLine, LyricsDoc } from '../model/types.ts'
 import { bestByTags, type DirectorCatalog, type LookPreset } from './catalog.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
-import type { PlannerInput, SectionInfo, VideoKind } from './inputs.ts'
+import type { FootageMood, PlannerInput, SectionInfo, VideoKind } from './inputs.ts'
 import type { Pace } from './plan.ts'
 
 const PACE_ORDER: Pace[] = ['very-slow', 'slow', 'medium', 'fast', 'very-fast']
@@ -52,6 +52,27 @@ export function moodFor(section: SectionInfo): { mood: string; tags: string[] } 
   if (e >= 0.6) return { mood: 'driving, confident', tags: ['energetic', 'steady'] }
   if (e <= 0.3) return { mood: 'intimate, calm', tags: ['calm', 'soft'] }
   return { mood: 'steady, grounded', tags: ['steady'] }
+}
+
+const FOOTAGE_MOODS: [FootageMood, RegExp][] = [
+  ['romantic', /love|romantic|tender|intimate/],
+  ['dreamy', /dream|ethereal|hazy|float|open/],
+  ['melancholic', /sad|melanchol|lonely|reflective|fading|nostalg|wistful/],
+  ['dark', /dark|tense|moody|noir|ominous|menac/],
+  ['epic', /epic|triumph|anthem|dramatic|cinematic/],
+  ['energetic', /energetic|euphoric|peak|driving|rising|bold|hype|party|confident|punchy|fast/],
+  ['bright', /bright|happy|joy|sunny|playful|uplift/],
+  ['calm', /calm|quiet|gentle|soft|steady|grounded|building/],
+]
+
+/** The vision matcher's mood for a free-text section mood, falling back to the section's intensity. */
+export function footageMood(mood: string, intensity: number): FootageMood | undefined {
+  const text = mood.toLowerCase()
+  const match = FOOTAGE_MOODS.find(([, pattern]) => pattern.test(text))
+  if (match) return match[0]
+  if (intensity >= 0.7) return 'energetic'
+  if (intensity <= 0.3) return 'calm'
+  return undefined
 }
 
 /** Pace for a section: busier with more energy, adjusted for the video kind and tempo. */

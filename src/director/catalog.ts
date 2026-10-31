@@ -47,7 +47,7 @@ export interface DirectorCatalog {
   looks: LookPreset[]
 }
 
-/** Moods each built-in plugin suits. Plugins without tags here are tagged with their category. */
+/** Moods each built-in plugin suits. Other plugins use their own catalog tags, else their category. */
 export const DIRECTOR_TAGS: Record<string, string[]> = {
   glow: ['energetic', 'dreamy', 'neon', 'peak'],
   blur: ['dreamy', 'soft', 'background'],
@@ -166,7 +166,7 @@ function toItem(entry: PluginCatalogEntry): CatalogItem {
   return {
     id: entry.id,
     name: entry.name,
-    tags: DIRECTOR_TAGS[entry.id] ?? [entry.category.toLowerCase()],
+    tags: DIRECTOR_TAGS[entry.id] ?? (entry.tags?.length ? entry.tags : [entry.category.toLowerCase()]),
     ...(entry.description ? { description: entry.description } : {}),
     params: entry.params.map((p) =>
       p.type === 'number'
