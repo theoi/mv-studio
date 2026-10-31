@@ -174,7 +174,7 @@ export const colorGrade: EffectDefinition = {
   params: [
     {
       key: 'look',
-      label: 'Look',
+      label: 'Grade',
       type: 'select',
       default: 'teal-orange',
       options: GRADE_LOOKS.map((l) => ({ ...l })),

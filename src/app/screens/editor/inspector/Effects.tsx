@@ -8,6 +8,7 @@ import {
   Sparkles,
   Sun,
   Waves,
+  X,
   Zap,
   type LucideIcon,
 } from 'lucide-react'
@@ -15,9 +16,11 @@ import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { ColorAdjustmentKey, VisualClip } from '../../../../model/index.ts'
 import { IconButton } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
-import { AnimateButtons, FieldRow, Section, Slider } from '../../../ds/Fields.tsx'
+import { AnimateButtons, FieldRow, Section, Slider, Switch } from '../../../ds/Fields.tsx'
+import { dispatch } from '../../../state/project.ts'
 import { set } from '../../../state/ui.ts'
 import { useAnimatable } from './animatable.ts'
+import { PluginParams } from './PluginParams.tsx'
 import styles from '../Inspector.module.css'
 
 /** An effect row's icon, by the effect's library category. */
@@ -99,13 +102,44 @@ export function EffectsSection({ clip, defaultOpen = false }: { clip: VisualClip
       {clip.effects.length === 0 ? (
         <p className={styles.note}>No effects yet. Add one from Library › Effects.</p>
       ) : (
-        clip.effects.map((fx) => {
+        clip.effects.map((fx, index) => {
           const def = pluginRegistry.get(fx.effectId)
+          const name = def?.name ?? fx.effectId
           const Icon = CATEGORY_ICONS[def?.category ?? ''] ?? Sparkles
           return (
-            <div key={fx.id} className={styles.effectRow}>
-              <Icon className={styles.effectIcon} />
-              <span className={styles.effectName}>{def?.name ?? fx.effectId}</span>
+            <div key={fx.id}>
+              <div className={styles.effectRow}>
+                <Icon className={styles.effectIcon} />
+                <span className={styles.effectName}>{name}</span>
+                <Switch
+                  checked={fx.enabled}
+                  onCheckedChange={(on) =>
+                    dispatch(
+                      { type: 'clip.set', clipId: clip.id, path: ['effects', index, 'enabled'], value: on },
+                      { label: `${on ? 'Turn on' : 'Turn off'} effect: ${name}` },
+                    )
+                  }
+                  ariaLabel={`${name} on`}
+                />
+                <IconButton
+                  label={`Remove ${name}`}
+                  size="xs"
+                  tooltipSide="left"
+                  onClick={() =>
+                    dispatch(
+                      { type: 'effect.remove', clipId: clip.id, effectInstanceId: fx.id },
+                      { label: `Remove effect: ${name}` },
+                    )
+                  }
+                >
+                  <X />
+                </IconButton>
+              </div>
+              <PluginParams
+                clip={clip}
+                base={['effects', index, 'params']}
+                specs={(def?.params ?? []).filter((p) => !p.advanced)}
+              />
             </div>
           )
         })
