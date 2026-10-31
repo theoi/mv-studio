@@ -31,7 +31,7 @@
     "immer": "^11.2.9",
     "lucide-react": "^1.65.0",
     "mediabunny": "1.65.0",
-    "onnxruntime-web": "1.31.1",
+    "onnxruntime-web": "1.31.0-dev.20260914-8d85527a0",
     "radix-ui": "^1.8.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
