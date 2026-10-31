@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { SEGMENT, type DemucsModel } from '../../../src/analysis/stems/demucs.ts'
-import { STEM_MODEL_BYTES, StemSeparationService, stemEdits } from '../../../src/analysis/stems/client.ts'
+import {
+  STEM_MODEL_BYTES,
+  StemSeparationService,
+  stemEdits,
+  type PaceStore,
+} from '../../../src/analysis/stems/client.ts'
+import { stemJobSeconds, type MeasuredPace } from '../../../src/analysis/stems/device.ts'
 import { createStemsApi, type StemSeparationResult } from '../../../src/analysis/stems/worker-api.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import { createProject } from '../../../src/model/index.ts'
@@ -122,20 +128,24 @@ describe('StemSeparationService', () => {
     createdAt: new Date(0).toISOString(),
   }
 
-  function setup(whileSeparating?: (editor: ProjectEditor) => void) {
+  function setup(
+    whileSeparating?: (editor: ProjectEditor) => void,
+    options: { songSeconds?: number; separateSeconds?: number } = {},
+  ) {
     const editor = new ProjectEditor(createProject())
-    editor.dispatch({ type: 'asset.add', asset: song })
+    editor.dispatch({ type: 'asset.add', asset: { ...song, duration: options.songSeconds ?? song.duration } })
     const decoded: { file: string; sampleRate: number }[] = []
     const decode = async (file: Blob, sampleRate: number) => {
       decoded.push({ file: await file.text(), sampleRate })
-      return { sampleRate, channels: [new Float32Array(sampleRate)] }
+      return { sampleRate, channels: [new Float32Array(sampleRate * (options.songSeconds ?? 1))] }
     }
     const stemsApi = {
       async separate(_args: unknown, ctx: WorkerCallContext): Promise<StemSeparationResult> {
         ctx.progress({ stage: 'separate', fraction: 0.5 })
         whileSeparating?.(editor)
         const audio = { data: new ArrayBuffer(8), mimeType: 'audio/wav', extension: '.wav' }
-        return { device: 'wasm', seconds: 1, stems: [{ name: 'vocals', audio }], stemFeatures: {} }
+        const seconds = options.separateSeconds ?? 1
+        return { device: 'wasm', seconds, stems: [{ name: 'vocals', audio }], stemFeatures: {} }
       },
     }
     const ch = new MessageChannel()
@@ -146,12 +156,15 @@ describe('StemSeparationService', () => {
       storeBlob: async (_blob: Blob, info: Pick<Asset, 'kind' | 'name' | 'origin'>) =>
         ({ ...song, ...info, id: 'vocals-asset', storageKey: 'vocals' }) as Asset,
     }
+    let stored: MeasuredPace | undefined
+    const pace: PaceStore = { get: () => stored, set: (p) => (stored = p) }
     const service = new StemSeparationService({
       runner: new JobRunner(),
       decode,
       createWorker: () => ch.port2 as unknown as Worker,
+      pace,
     })
-    return { editor, service, store, decoded }
+    return { editor, service, store, decoded, pace }
   }
 
   it('separates the song from the store and attaches its stems without an undo step', async () => {
@@ -180,13 +193,34 @@ describe('StemSeparationService', () => {
     expect(editor.getProject().assets['vocals-asset']).toBeUndefined()
   })
 
-  it('estimates the model download until it is cached, and the time from the song length', async () => {
+  it('estimates the model download until it is cached, and the time from the song length and threads', async () => {
     const { editor, service } = setup()
     const estimate = await service.estimate(editor.getProject(), song.id)
     expect(estimate.downloadBytes).toBe(STEM_MODEL_BYTES)
     expect(estimate.device).toBe('wasm')
-    expect(estimate.seconds).toBeGreaterThanOrEqual(8)
-    expect(estimate.seconds).toBeLessThan(10)
+    // Tests are not cross-origin isolated, so ONNX Runtime would get one thread.
+    expect(estimate.seconds).toBe(stemJobSeconds(song.duration ?? 0, 'wasm', 1))
+    expect(estimate.seconds).toBeGreaterThan(stemJobSeconds(song.duration ?? 0, 'wasm', 3))
+  })
+
+  it('estimates later separations from the pace this device measured', async () => {
+    const { editor, service, store, pace } = setup(undefined, { songSeconds: 60, separateSeconds: 144 })
+    const before = await service.estimate(editor.getProject(), song.id)
+    await service.separateSong(song.id, { editor, store }).promise
+    expect(pace.get()).toEqual({ secondsPerSecond: 2.4, device: 'wasm', threads: 1 })
+    const after = await service.estimate(editor.getProject(), song.id)
+    expect(after.seconds).toBeLessThan(before.seconds)
+    // The separation stage at 2.4 s per second of song, plus reading and saving.
+    expect(after.seconds).toBeGreaterThanOrEqual(144)
+    expect(after.seconds).toBeLessThan(160)
+    expect(await service.slowdown()).toBeLessThan(1)
+  })
+
+  it('keeps the defaults after separating a song too short to measure a pace', async () => {
+    const { editor, service, store, pace } = setup(undefined, { songSeconds: 8, separateSeconds: 30 })
+    await service.separateSong(song.id, { editor, store }).promise
+    expect(pace.get()).toBeUndefined()
+    expect(await service.slowdown()).toBe(1)
   })
 })
 

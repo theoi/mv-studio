@@ -138,7 +138,7 @@ Developer notes on the providers, error states and model choice are in [src/clou
 ## Known limits
 
 - Automatic lyric transcription of sung vocals is a draft and needs correcting. For precise word timing, paste the lyrics and separate the stems.
-- On a 4-core computer without a capable GPU, stem separation (and so precise lyric timing) takes about 3 to 5 minutes per song and up to about 4 GB of memory. A capable GPU makes it faster.
+- On a 4-core computer without a capable GPU, stem separation (and so precise lyric timing) takes about 1.2 to 1.6 times the song's length, depending on the computer (3.5 to 8 minutes for a 3 to 5 minute song), and up to about 4 GB of memory. The studio shows an estimate before you start; after your first separation, it is based on how fast your computer was. A capable GPU makes it faster.
 - Word timing can drift in dense, layered vocals and may need touching up by hand.
 - Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable.
 - Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found. You can rename and adjust sections on the timeline.

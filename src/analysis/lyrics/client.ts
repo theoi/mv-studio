@@ -7,7 +7,7 @@ import type { DecodedAudio } from '../beats/fast.ts'
 import { decodeAudioFile } from '../decode.ts'
 import { part } from '../jobContext.ts'
 import { DEMUCS_MODEL, WAV2VEC2_MODEL, WHISPER_MODELS, whisperFileUrls, type WhisperSize } from '../models.ts'
-import { separateRate, StemSeparationService, type StemStore } from '../stems/client.ts'
+import { StemSeparationService, type StemStore } from '../stems/client.ts'
 import { lyricChorusCommand } from '../structure/chorus.ts'
 import { realignFrom, realignLine, type CtcVocabulary } from './align.ts'
 import type { CtcEmissions } from './ctc.ts'
@@ -62,8 +62,14 @@ export interface LyricsServiceOptions {
   decode?: (file: Blob, sampleRate: number) => Promise<DecodedAudio>
 }
 
-/** Processing seconds per second of song, measured with WASM threads on a 4-core laptop. */
-const SECONDS_PER_SECOND = { align: 0.25, transcribe: 0.8 }
+/**
+ * Processing seconds per second of song on WASM threads (4 cores), rounded up from held-out runs: timing took 1.20 to
+ * 1.25 times the earlier 0.25 s per second; drafts took 142 to 148 s for 3.3 to 4.2 minute songs, since Whisper only
+ * hears the sung passages.
+ */
+const SECONDS_PER_SECOND = { align: 0.32, transcribe: 0.42 }
+/** Reading the vocals and starting the cached models. */
+const SETUP_SECONDS = 5
 const DRAFT_SIZE: WhisperSize = 'small'
 
 interface Emissions {
@@ -114,12 +120,14 @@ export class LyricsService {
       models.map(async (m) => (await Promise.all(m.urls.map(isCached))).every(Boolean)),
     )
     const downloads = models.filter((_, i) => !cached[i]).map(({ name, bytes }) => ({ name, bytes }))
-    const separate = separatesStems ? await separateRate() : 0
+    const duration = song.duration ?? 0
+    const separate = separatesStems ? await this.stems.jobSeconds(duration) : 0
+    const slowdown = await this.stems.slowdown()
     return {
       separatesStems,
       downloads,
       downloadBytes: downloads.reduce((sum, d) => sum + d.bytes, 0),
-      seconds: Math.ceil((song.duration ?? 0) * (separate + lyricsRate(request.kind))),
+      seconds: separate + lyricsSeconds(duration, request.kind, slowdown),
     }
   }
 
@@ -133,7 +141,14 @@ export class LyricsService {
           request.kind === 'time' ? parseLyricsText(request.text).map((l) => ({ text: l.text })) : []
         if (request.kind === 'time' && lines.length === 0)
           throw new JobError('invalid-input', 'There are no lyrics to time')
-        const { vocals, vocalsId, rest } = await this.vocals(songId, deps, ctx, lyricsRate(request.kind))
+        const duration = deps.editor.getProject().assets[songId]?.duration ?? 0
+        const { vocals, vocalsId, rest } = await this.vocals(
+          songId,
+          deps,
+          ctx,
+          lyricsRate(request.kind),
+          lyricsSeconds(duration, request.kind, await this.stems.slowdown()),
+        )
         if (request.kind === 'time') {
           const cached = this.emissions.get(songId)
           const emissions = cached?.vocalsId === vocalsId ? cached.em : undefined
@@ -174,7 +189,14 @@ export class LyricsService {
       run: async (ctx) => {
         const current = vocalsAsset(deps.editor.getProject(), songId)
         if (current && this.emissions.get(songId)?.vocalsId === current.id) return
-        const { vocals, vocalsId, rest } = await this.vocals(songId, deps, ctx, SECONDS_PER_SECOND.align)
+        const duration = deps.editor.getProject().assets[songId]?.duration ?? 0
+        const { vocals, vocalsId, rest } = await this.vocals(
+          songId,
+          deps,
+          ctx,
+          SECONDS_PER_SECOND.align,
+          lyricsSeconds(duration, 'time', await this.stems.slowdown()),
+        )
         const result = await this.call((c) => runWorkerCall(c, 'emissions', { vocals }, rest))
         this.emissions.set(songId, { em: result.emissions, vocab: result.vocab, vocalsId })
       },
@@ -213,6 +235,7 @@ export class LyricsService {
     deps: LyricsDeps,
     ctx: JobContext,
     lyricsRate: number,
+    lyricsSeconds: number,
   ): Promise<{ vocals: DecodedAudio; vocalsId: Id; rest: JobContext }> {
     const project = deps.editor.getProject()
     songAsset(project, songId)
@@ -222,10 +245,10 @@ export class LyricsService {
       const vocals = await this.decode(await deps.store.getFile(stored), CTC_SAMPLE_RATE)
       return { vocals, vocalsId: stored.id, rest: ctx }
     }
-    const separate = await separateRate()
+    const separate = await this.stems.rate()
     const split = separate / (separate + lyricsRate)
     // Stored before the lyrics step, so the stems are kept even if it fails or is cancelled.
-    const result = await this.stems.separateSongIn(songId, deps, part(ctx, 0, split))
+    const result = await this.stems.separateSongIn(songId, deps, part(ctx, 0, split, lyricsSeconds))
     const stem = result.stems.find((s) => s.name === 'vocals')
     const vocalsId = deps.editor.getProject().analysis.audio[songId]?.stems?.vocals
     if (!stem || !vocalsId) throw new JobError('internal', 'Stem separation returned no vocals')
@@ -265,6 +288,15 @@ function vocalsAsset(project: Project, songId: Id): Asset | undefined {
 
 const lyricsRate = (kind: LyricsRequest['kind']) =>
   kind === 'time' ? SECONDS_PER_SECOND.align : SECONDS_PER_SECOND.transcribe + SECONDS_PER_SECOND.align
+
+/**
+ * Seconds timing or drafting the lyrics of a song of `duration` seconds takes once its vocals are separated.
+ * `slowdown` is how much longer than the defaults this device's stem separation took; the lyrics models run on the
+ * same WASM threads, so they scale with it.
+ */
+export function lyricsSeconds(duration: number, kind: LyricsRequest['kind'], slowdown = 1): number {
+  return Math.ceil(SETUP_SECONDS + duration * lyricsRate(kind) * slowdown)
+}
 
 function modelFiles(model: ModelDescriptor) {
   const files = Object.values(model.files)

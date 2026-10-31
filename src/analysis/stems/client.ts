@@ -9,7 +9,14 @@ import type { DecodedAudio } from '../beats/fast.ts'
 import { decodeAudioFile } from '../decode.ts'
 import { DEMUCS_MODEL } from '../models.ts'
 import { DEMUCS_SAMPLE_RATE } from './demucs.ts'
-import { stemDevice } from './device.ts'
+import {
+  deviceSlowdown,
+  separateSecondsPerSecond,
+  STEM_FINISH_SECONDS_PER_SECOND,
+  stemDevice,
+  stemJobSeconds,
+  type MeasuredPace,
+} from './device.ts'
 import type { StemSeparationResult, StemsWorkerApi } from './worker-api.ts'
 
 export type { StemSeparationResult }
@@ -18,21 +25,41 @@ export type { StemSeparationResult }
 export const STEM_MODEL_BYTES = DEMUCS_MODEL.files.model?.bytes ?? 0
 
 /**
- * Separation seconds per second of song, measured with WASM threads on a 4-core laptop. The hardware-GPU figure is an
- * estimate until measured on real GPUs.
+ * How much more memory the browser holds at the peak of a separation with WASM threads, rounded up: 3.2 to 3.7 GB
+ * above the editor through the UI for 3 to 5 minute songs (4 cores, 3 threads), 3.45 GB for a 5 minute song since
+ * the model's outputs are no longer copied. The model dominates, so song length barely matters.
  */
-const SEPARATE_SECONDS_PER_SECOND: Record<ModelDevice, number> = { wasm: 1.1, webgpu: 0.5 }
+const STEM_PEAK_MEMORY_BYTES = 4e9
 
-/**
- * How much more memory the tab holds at the peak of a separation with WASM threads: the renderer's resident memory
- * rose by 2.5 GB for an 8 s song and 2.6 GB for a 3 min song (Chromium, 4 threads), so song length barely matters.
- */
-const STEM_PEAK_MEMORY_BYTES = 2.6e9
-
-/** Separation seconds per second of song on this device. */
-export async function separateRate(): Promise<number> {
-  return SEPARATE_SECONDS_PER_SECOND[stemDevice(await detectCapabilities())]
+/** Where a device keeps its measured separation pace between sessions. */
+export interface PaceStore {
+  get(): MeasuredPace | undefined
+  set(pace: MeasuredPace): void
 }
+
+const PACE_KEY = 'mv-studio.stem-pace'
+
+/** The pace in this browser's localStorage; reads and writes that fail (no storage, private mode) are ignored. */
+export const localPaceStore: PaceStore = {
+  get() {
+    try {
+      const pace = JSON.parse(globalThis.localStorage?.getItem(PACE_KEY) ?? 'null') as MeasuredPace | null
+      return typeof pace?.secondsPerSecond === 'number' && typeof pace.threads === 'number' ? pace : undefined
+    } catch {
+      return undefined
+    }
+  },
+  set(pace) {
+    try {
+      globalThis.localStorage?.setItem(PACE_KEY, JSON.stringify(pace))
+    } catch {
+      // Estimates keep the defaults.
+    }
+  },
+}
+
+/** Below this, the first and last segments dominate a separation's time, so its pace says little. */
+const MIN_PACE_SONG_SECONDS = 30
 
 /** What separating a song's stems will download and roughly how long it takes, shown before it starts. */
 export interface StemsEstimate {
@@ -60,11 +87,13 @@ export interface StemSeparationOptions {
   createWorker?: () => Worker
   /** Decodes audio files; defaults to the browser's decoder (main thread only). */
   decode?: (file: Blob, sampleRate: number) => Promise<DecodedAudio>
+  /** Keeps the pace each separation measures, for later estimates. Defaults to localStorage. */
+  pace?: PaceStore
 }
 
 /**
  * Opt-in stem separation (vocals, drums, bass, other) as a job. Each run uses a fresh worker that is terminated
- * afterwards, which frees the model's memory (about 2.6 GB at the peak) and makes cancelling immediate. Typical flow:
+ * afterwards, which frees the model's memory (about 3.5 GB at the peak) and makes cancelling immediate. Typical flow:
  *   const estimate = await service.estimate(project, songId)   // download size and time, for the confirmation
  *   await service.separateSong(songId, { editor, store }).promise
  */
@@ -72,8 +101,10 @@ export class StemSeparationService {
   private readonly runner: JobRunner
   private readonly createWorker: () => Worker
   private readonly decode: (file: Blob, sampleRate: number) => Promise<DecodedAudio>
+  private readonly pace: PaceStore
 
   constructor(options: StemSeparationOptions = {}) {
+    this.pace = options.pace ?? localPaceStore
     this.runner = options.runner ?? jobs
     this.createWorker =
       options.createWorker ??
@@ -89,13 +120,32 @@ export class StemSeparationService {
     const duration = songAsset(project, songId).duration ?? 0
     const urls = Object.values(DEMUCS_MODEL.files).map((f) => f.url)
     const cached = (await Promise.all(urls.map((url) => modelCache.has(url)))).every(Boolean)
-    const device = stemDevice(await detectCapabilities())
+    const caps = await detectCapabilities()
+    const device = stemDevice(caps)
     return {
       downloadBytes: cached ? 0 : STEM_MODEL_BYTES,
-      seconds: Math.ceil(duration * SEPARATE_SECONDS_PER_SECOND[device]),
+      seconds: stemJobSeconds(duration, device, caps.wasmThreads, this.pace.get()),
       memoryBytes: STEM_PEAK_MEMORY_BYTES,
       device,
     }
+  }
+
+  /** Seconds separating the stems of a song of `duration` seconds takes on this device, rounded up. */
+  async jobSeconds(duration: number): Promise<number> {
+    const caps = await detectCapabilities()
+    return stemJobSeconds(duration, stemDevice(caps), caps.wasmThreads, this.pace.get())
+  }
+
+  /** Seconds a separation job takes per second of song on this device, for weighting progress. */
+  async rate(): Promise<number> {
+    const caps = await detectCapabilities()
+    const pace = this.pace.get()
+    return separateSecondsPerSecond(stemDevice(caps), caps.wasmThreads, pace) + STEM_FINISH_SECONDS_PER_SECOND
+  }
+
+  /** How many times longer than the defaults model work takes on this device (1 until it has separated a song). */
+  async slowdown(): Promise<number> {
+    return deviceSlowdown(stemDevice(await detectCapabilities()), this.pace.get())
   }
 
   /**
@@ -135,9 +185,11 @@ export class StemSeparationService {
   }
   /** Like `separate`, as a step of an existing job. */
   async separateIn(audio: DecodedAudio, ctx: JobContext): Promise<StemSeparationResult> {
+    const duration = (audio.channels[0]?.length ?? 0) / audio.sampleRate
     const client = createWorkerClient<StemsWorkerApi>(this.createWorker())
+    let result: StemSeparationResult
     try {
-      return await runWorkerCall(
+      result = await runWorkerCall(
         client,
         'separate',
         { audio },
@@ -147,6 +199,15 @@ export class StemSeparationService {
     } finally {
       client.terminate()
     }
+    if (duration >= MIN_PACE_SONG_SECONDS && result.seconds > 0) {
+      const { wasmThreads } = await detectCapabilities()
+      this.pace.set({
+        secondsPerSecond: result.seconds / duration,
+        device: result.device,
+        threads: wasmThreads,
+      })
+    }
+    return result
   }
 }
 

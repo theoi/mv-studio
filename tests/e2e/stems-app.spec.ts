@@ -40,7 +40,7 @@ test('Assist › Stems separates the imported song on this device and shows its 
   // The 8 s fixture and a model this fresh profile has not downloaded yet.
   await expect(panel.getByText('Under a minute on this device')).toBeVisible()
   await expect(panel.getByText('181 MB once, then offline')).toBeVisible()
-  await expect(panel.getByText('About 2.6 GB while running')).toBeVisible()
+  await expect(panel.getByText('About 4.0 GB while running')).toBeVisible()
   await shot(page, 'stems-idle')
 
   await panel.getByRole('button', { name: 'Separate stems' }).click()
@@ -155,7 +155,7 @@ test('Assist › Stems shows progress, cancels, and explains an out-of-memory fa
     w.starts = 0
     app.stems.setStemsServiceForTests({
       async estimate() {
-        return { downloadBytes: 180_534_758, seconds: 230, memoryBytes: 2.6e9, device: 'wasm' }
+        return { downloadBytes: 180_534_758, seconds: 230, memoryBytes: 4e9, device: 'wasm' }
       },
       separateSong(_songId: string, deps: unknown) {
         w.starts++
