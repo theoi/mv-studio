@@ -16,7 +16,7 @@ import {
 import type { AudioAnalysis, Id, Project, Seconds, TextClip, TextStyle } from '../model/types.ts'
 import { ProjectEditor } from '../model/editor.ts'
 import { createEffectInstance, createGeneratorClip, createTransition } from './library.ts'
-import { applyLookCommands, type LookRegistry } from './looks.ts'
+import { applyLookCommands, ORIGINAL_LOOK, type LookRegistry } from './looks.ts'
 import { textStyle, textStyleCommands } from './typography/styles.ts'
 
 /** Song asset id used by preview projects; the analysis is synthetic, so no audio file is needed. */
@@ -340,7 +340,7 @@ export function pluginPreview(pluginId: string, options: PreviewOptions = {}): P
   }
 }
 
-/** A preview project for a look: the image and a line of text, with the look applied. */
+/** A preview project for a look: the image and a line of text, with the look applied (none for ORIGINAL_LOOK). */
 export function lookPreview(
   lookId: string,
   options: PreviewOptions & { looks?: LookRegistry } = {},
@@ -348,7 +348,7 @@ export function lookPreview(
   const p = previewBase('Look preview')
   addPreviewText(p, options.image, PREVIEW_TEXT)
   const editor = new ProjectEditor(p)
-  if (lookId) {
+  if (lookId && lookId !== ORIGINAL_LOOK.id) {
     const commands = applyLookCommands(p, lookId, {
       ...(options.registry ? { registry: options.registry } : {}),
       ...(options.looks ? { looks: options.looks } : {}),

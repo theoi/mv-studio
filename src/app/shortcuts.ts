@@ -19,7 +19,9 @@ function isTyping(el: EventTarget | null) {
     node.isContentEditable ||
     node.tagName === 'INPUT' ||
     node.tagName === 'TEXTAREA' ||
-    node.getAttribute('role') === 'combobox'
+    node.getAttribute('role') === 'combobox' ||
+    // Sliders take the arrow keys, Home and End for their value.
+    node.getAttribute('role') === 'slider'
   )
 }
 

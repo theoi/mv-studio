@@ -89,6 +89,7 @@ export const THUMBNAILS: Record<string, Record<string, string>> = {
     vhs: '1245ad2830',
     ice: '8bdb2d8db0',
     ember: 'f64581f121',
+    original: '41b8730048',
   },
   'text-style': {
     title: '01c389cc06',

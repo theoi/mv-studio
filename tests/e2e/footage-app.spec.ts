@@ -81,7 +81,18 @@ test('the library searches and suggests footage that background analysis has ind
     .poll(async () => (await query(page, 'search', 'night city')).length, { timeout: 120_000 })
     .toBeGreaterThanOrEqual(8)
 
-  // Search ranks clips by what they show, as the footage service ranks them.
+  // Search ranks clips by what they show, as the footage service ranks them. Rank once every clip is analyzed, so a
+  // clip that finishes late cannot reorder the list after the ranking was taken.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const indexing = window.mvStudio.app.footage.useFootage.getState().indexing
+          return !!indexing && indexing.status !== 'indexing' && indexing.done === indexing.total
+        }),
+      { timeout: 120_000 },
+    )
+    .toBe(true)
   const ranked = (await query(page, 'search', 'night city')).map((r) => r.name)
   await search.fill('')
   await search.fill('night city')
