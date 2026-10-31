@@ -19,9 +19,11 @@ draft. Everything it makes is ordinary project content created through `EditComm
    earlier from the same request is reused for free. A video clip is requested as long as the longest shot that shows
    it, and `byModel` adds up the clips' seconds at the lengths the model makes (video is priced by the second).
 5. **Generation** (`generate.ts`): only after the user confirms. Each finished shot is kept immediately, so a
-   cancel or a later failure never loses paid results. A cancel stops a request at the provider only until its result
-   downloads: from then on the shot is billed, so it is kept. Each request's own progress moves the bar, `onProgress`
-   counts shots as they finish or fail, and clips (minutes each) report the time left.
+   cancel or a later failure never loses paid results. Requests go through `generateKeepingPaid()` (src/cloud): a
+   cancel stops a request at once only until fal.ai has finished (and billed) it; a result downloading by then gets
+   30 s more to land and is kept, while the progress line says "Stopping… keeping 2 clips that are downloading".
+   `onBilled` records each billed request once, even if its result is lost after. Each request's own progress
+   moves the bar, `onProgress` counts shots as they finish or fail, and clips (minutes each) report the time left.
 6. **Compile** (`compile.ts`): plan → `EditCommand`s on director tracks. Clips carry `meta.director`, so running
    the director again replaces the previous draft and leaves the user's clips alone.
 7. **Preview** (`diff.ts`): `previewCommands(project, commands)` dry-runs commands on a scratch editor and

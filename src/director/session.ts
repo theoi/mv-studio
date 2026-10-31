@@ -172,6 +172,8 @@ export type DirectorState =
       warnings: string[]
       /** AI shots that failed and show as placeholders; apply again to retry just those. */
       failedShots: number
+      /** The provider's own words for the first failure, for a tooltip; the warning stays plain. */
+      failedReason?: string
       /** What retrying the failed shots costs, and whether that needs the user's OK first. */
       cost: PlanCost | null
       confirmRequired: boolean
@@ -499,6 +501,7 @@ export class DirectorSession {
     }
 
     let failed = 0
+    let failedReason: string | undefined
     const warnings: string[] = []
     if (needsGeneration && provider && this.deps.store) {
       const store = this.deps.store
@@ -517,11 +520,11 @@ export class DirectorSession {
             project: this.deps.editor.getProject(),
             done,
             readAsset: this.deps.readAsset,
-            onShot: (shotId, asset, spent) => {
+            onShot: (shotId, asset) => {
               done.set(shotId, asset)
-              this.deps.ledger?.record(spent, `Director: ${plan.title}`)
               this.keep(asset)
             },
+            onBilled: (usd) => this.deps.ledger?.record(usd, `Director: ${plan.title}`),
             onProgress: (counts) => {
               if (this.job === handle && this.state.status === 'generating')
                 this.set({ ...this.state, done: counts.done, failed: counts.failed })
@@ -553,10 +556,12 @@ export class DirectorSession {
         const result = await handle.promise
         for (const [id, asset] of result.assets) done.set(id, asset)
         failed = result.failed.length
+        failedReason = result.failed[0]?.error.message
         if (failed) {
-          const reason = result.failed[0]?.error.message
           warnings.push(
-            `${plural(failed, unit)} couldn't be generated${reason ? ` (${reason})` : ''}. Apply again to retry just those.`,
+            failed === 1
+              ? `1 ${unit} couldn’t be generated. Retry it below; a dark placeholder marks where it goes.`
+              : `${plural(failed, unit)} couldn’t be generated. Retry them below; dark placeholders mark where they go.`,
           )
         }
       } catch (error) {
@@ -580,7 +585,11 @@ export class DirectorSession {
     const project = this.deps.editor.getProject()
     let compiled: CompiledPlan
     try {
-      compiled = compilePlan(plan, project, { catalog: this.catalog(), generated: done })
+      compiled = compilePlan(plan, project, {
+        catalog: this.catalog(),
+        generated: done,
+        ...(failed ? { placeholderNote: 'none' as const } : {}),
+      })
       this.deps.editor.dispatch(compiled.commands, { label: compiled.label })
     } catch (error) {
       this.failOrReset(error, request, plan)
@@ -596,6 +605,7 @@ export class DirectorSession {
       summary: plan.summary,
       warnings: [...new Set([...plan.warnings, ...compiled.warnings, ...warnings])],
       failedShots: failed,
+      ...(failed && failedReason ? { failedReason } : {}),
       cost: retry.cost,
       confirmRequired: retry.confirmRequired,
       hiddenTracks: compiled.stats.hiddenTracks,

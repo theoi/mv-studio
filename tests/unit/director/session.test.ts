@@ -251,9 +251,12 @@ describe('DirectorSession', () => {
     if (applied.status !== 'applied') throw new Error(`expected applied, got ${applied.status}`)
     expect(applied.unit).toBe('clip')
     expect(applied.failedShots).toBe(1)
+    // One note for the failure, pointing at Retry; fal.ai's own words go to the Retry button's tooltip.
     expect(applied.warnings).toContain(
-      "1 clip couldn't be generated (HTTP 500). Apply again to retry just those.",
+      '1 clip couldn’t be generated. Retry it below; a dark placeholder marks where it goes.',
     )
+    expect(applied.warnings.filter((w) => w.includes('placeholder'))).toHaveLength(1)
+    expect(applied.failedReason).toBe('HTTP 500')
     const done = [...new Set(seen.map((s) => s.done))]
     expect(done).toEqual(Array.from({ length: count + 1 }, (_, i) => i))
     expect(seen.at(-1)).toEqual({ done: count, failed: 1 })

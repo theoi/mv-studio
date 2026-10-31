@@ -173,7 +173,7 @@ function IdleView() {
       <>
         <Info />{' '}
         {aiShots === 'video'
-          ? 'Free to plan. Video clips cost more, and show their price before anything is generated'
+          ? 'Free to plan. Video clips cost more and show their price before anything is generated'
           : 'Free to plan. AI shots show their price before anything is generated'}
       </>
     )
@@ -236,7 +236,7 @@ function IdleView() {
           hint={
             aiShots === 'video'
               ? 'Clips with real motion. Each takes a few minutes to make.'
-              : 'Stills the director moves with the music. The cheapest.'
+              : 'Stills the director moves with the music. Costs the least.'
           }
         >
           <Segmented<AiShots>
@@ -463,7 +463,13 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
       <Notes warnings={state.warnings} />
       {state.failedShots > 0 && (
         <div className={styles.rowActions}>
-          <Button size="sm" variant="subtle" icon={<RotateCcw />} onClick={spend.start}>
+          <Button
+            size="sm"
+            variant="subtle"
+            icon={<RotateCcw />}
+            onClick={spend.start}
+            title={state.failedReason ? `fal.ai said: ${state.failedReason}` : undefined}
+          >
             {retryLabel}
           </Button>
         </div>

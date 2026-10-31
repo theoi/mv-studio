@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildPlannerInput,
   estimatePlanCost,
@@ -9,8 +9,12 @@ import {
   shotsToGenerate,
 } from '../../../src/director/index.ts'
 import { CloudError } from '../../../src/cloud/errors.ts'
+import { FalProvider } from '../../../src/cloud/fal/provider.ts'
+import { PAID_RESULT_GRACE_MS } from '../../../src/cloud/media.ts'
 import type { Asset, Project } from '../../../src/model/types.ts'
 import { JobError, type JobProgress } from '../../../src/shared/jobs.ts'
+import { browserFetch } from '../cloud/mocks/browser.ts'
+import { FAL_TEST_KEY, MockFalServer } from '../cloud/mocks/fal-server.ts'
 import { badKey, contentPolicy, fakeProvider, makeProject, memoryStore, testCtx } from './fixtures.ts'
 
 async function aiPlan(mode: 'images' | 'video' = 'images', maxShots?: number) {
@@ -309,26 +313,31 @@ describe('generatePlanShots', () => {
       },
     })
     const controller = new AbortController()
+    const ctx = testCtx(controller.signal)
     const store = memoryStore()
     const kept: string[] = []
+    const billed: number[] = []
     let settled = false
     const outcome = generatePlanShots({
       plan,
       provider,
       store,
       project,
-      ctx: testCtx(controller.signal),
+      ctx,
       onShot: (shotId) => kept.push(shotId),
+      onBilled: (usd) => billed.push(usd),
     })
       .catch((e: unknown) => e)
       .finally(() => (settled = true))
     await until(() => release.length === 2)
     controller.abort()
+    expect(ctx.updates.at(-1)).toBe('Stopping… keeping 2 clips that are downloading')
     release[0]!()
     await until(() => kept.length === 1)
     // The other clip is still downloading, so the run waits for it instead of ending at the cancel.
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(settled).toBe(false)
+    expect(ctx.updates.at(-1)).toBe('Stopping… keeping 1 clip that is downloading')
     release[1]!()
     const error = await outcome
     expect(error).toBeInstanceOf(JobError)
@@ -336,6 +345,97 @@ describe('generatePlanShots', () => {
     expect(kept).toHaveLength(2)
     expect(store.stored).toHaveLength(2)
     expect(provider.calls).toHaveLength(2)
+    expect(billed).toEqual(provider.calls.map((c) => provider.estimate(c).usd))
+  })
+
+  it('gives up on a download still stalled 30 s after Cancel, and still counts what fal.ai billed', async () => {
+    const { project, plan } = await aiPlan('video', 3)
+    const provider = fakeProvider({
+      gate: (_, ctx) => {
+        ctx.progress({ stage: 'download', fraction: 0.92, message: 'Downloading the video' })
+        return new Promise<void>(() => undefined)
+      },
+    })
+    vi.useFakeTimers()
+    try {
+      const controller = new AbortController()
+      const kept: string[] = []
+      const billed: number[] = []
+      let settled = false
+      const outcome = generatePlanShots({
+        plan,
+        provider,
+        store: memoryStore(),
+        project,
+        ctx: testCtx(controller.signal),
+        onShot: (shotId) => kept.push(shotId),
+        onBilled: (usd) => billed.push(usd),
+        concurrency: 1,
+      })
+        .catch((e: unknown) => e)
+        .finally(() => (settled = true))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(provider.calls).toHaveLength(1)
+      controller.abort()
+      await vi.advanceTimersByTimeAsync(PAID_RESULT_GRACE_MS - 1)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(settled).toBe(true)
+      expect(((await outcome) as JobError).code).toBe('cancelled')
+      expect(kept).toEqual([])
+      expect(provider.calls).toHaveLength(1)
+      expect(billed).toEqual([provider.estimate(provider.calls[0]!).usd])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a clip fal.ai finished when Cancel lands while its result is fetched', async () => {
+    const { project, plan } = await aiPlan('video', 3)
+    const server = new MockFalServer()
+    const servers = server.servers()
+    const queue = servers['https://queue.fal.run']!
+    const held: (() => void)[] = []
+    // fal.ai has billed the request once it says COMPLETED; the result fetch after that is held here.
+    servers['https://queue.fal.run'] = async (request) => {
+      if (request.method === 'GET' && /\/requests\/[^/]+$/.test(new URL(request.url).pathname))
+        await new Promise<void>((resolve) => held.push(resolve))
+      return queue(request)
+    }
+    const fal = new FalProvider({
+      getKey: () => FAL_TEST_KEY,
+      fetch: browserFetch(servers).fetch,
+      pollIntervalMs: 1,
+    })
+    const url = server.file('clip.mp4', new Blob(['mp4'], { type: 'video/mp4' }))
+    for (const shot of shotsToGenerate(plan)) {
+      if (shot.source.type !== 'generate') continue
+      server.script(shot.source.modelId, {
+        statuses: ['COMPLETED'],
+        result: { video: { url, content_type: 'video/mp4' } },
+      })
+    }
+    const controller = new AbortController()
+    const kept: string[] = []
+    const billed: number[] = []
+    const outcome = generatePlanShots({
+      plan,
+      provider: fal,
+      store: memoryStore(),
+      project,
+      ctx: testCtx(controller.signal),
+      onShot: (shotId) => kept.push(shotId),
+      onBilled: (usd) => billed.push(usd),
+      concurrency: 1,
+    }).catch((e: unknown) => e)
+    await until(() => held.length === 1)
+    controller.abort()
+    held[0]!()
+    expect(((await outcome) as JobError).code).toBe('cancelled')
+    expect(kept).toHaveLength(1)
+    expect(billed).toHaveLength(1)
+    expect(server.queued.size).toBe(1)
+    expect([...server.queued.values()].some((q) => q.cancelled)).toBe(false)
   })
 })
 

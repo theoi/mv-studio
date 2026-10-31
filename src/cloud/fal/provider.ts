@@ -318,6 +318,8 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
         }
         await sleep(this.options.pollIntervalMs, signal)
       }
+      // fal.ai bills a request once it is COMPLETED, so fetching the result already counts as its download.
+      ctx.progress({ stage: 'download', fraction: 0.9 })
       try {
         const result = await this.client.queue.result(endpointId, { requestId, abortSignal: signal })
         return { data: result.data, requestId }

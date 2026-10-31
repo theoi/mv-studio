@@ -89,8 +89,11 @@ export interface CompileOptions {
   generated?: ReadonlyMap<string, Asset>
   /** Remove clips from earlier director drafts (default true). */
   replacePrevious?: boolean
-  /** For a plan not applied yet: the placeholder note says what happens if AI shots are skipped. */
-  placeholderNote?: 'applied' | 'if-skipped'
+  /**
+   * For a plan not applied yet: the placeholder note says what happens if AI shots are skipped. 'none' leaves it to
+   * the caller (after failed shots, whose note says where they go).
+   */
+  placeholderNote?: 'applied' | 'if-skipped' | 'none'
 }
 
 export interface CompileStats {
@@ -880,7 +883,7 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     const clip = lookClip(plan.look, lookTrack, ctx)
     if (clip) clips.push(clip)
   }
-  if (stats.placeholders > 0) {
+  if (stats.placeholders > 0 && options.placeholderNote !== 'none') {
     // Counted like the plan summary and the price: a repeated chorus shot is one picture in several places.
     const pending = new Set(
       plan.shots.flatMap((s) =>

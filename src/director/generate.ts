@@ -5,7 +5,7 @@
  */
 import { CloudError } from '../cloud/errors.ts'
 import { DEFAULT_FAL_MODELS } from '../cloud/fal/catalog.ts'
-import { storeGeneratedMedia, type GeneratedMediaStore } from '../cloud/media.ts'
+import { generateKeepingPaid, storeGeneratedMedia, type GeneratedMediaStore } from '../cloud/media.ts'
 import type { GenerationModel, GenerationTier, MediaGenerationProvider } from '../cloud/types.ts'
 import type { Asset, Id, Project } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
@@ -84,7 +84,9 @@ export interface GeneratePlanOptions {
   done?: ReadonlyMap<string, Asset>
   /** Reads the still for image-to-video shots. */
   readAsset?: (assetId: Id) => Promise<Blob>
-  onShot?: (shotId: string, asset: Asset, usd: number) => void
+  onShot?: (shotId: string, asset: Asset) => void
+  /** Once per request the provider finished and billed, with its estimated cost, even if its result is lost after. */
+  onBilled?: (usd: number) => void
   /** After each shot settles: how many are finished (made or failed) and how many failed, of `total`. */
   onProgress?: (counts: { done: number; failed: number; total: number }) => void
   /** Requests in flight at once (default 2). */
@@ -95,8 +97,14 @@ export interface GeneratedShots {
   /** Generated or reused media by shot id, including `done`. */
   assets: Map<string, Asset>
   failed: { shotId: string; label: string; error: JobError }[]
-  /** Estimated spend of the requests that succeeded in this run. */
+  /** Estimated spend of the requests the provider finished (and billed) in this run. */
   spentUsd: number
+}
+
+interface Underway {
+  fraction: number
+  eta?: number
+  downloading: boolean
 }
 
 function isStopError(error: JobError): boolean {
@@ -116,8 +124,8 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
   const unit = generatedUnit(o.plan)
   const workers = Math.max(1, Math.min(o.concurrency ?? 2, total))
   const typical = (r: ShotRequest) => o.provider.getModel(r.request.modelId)?.typicalSeconds
-  /** Shots underway: their own progress, and the seconds they still need. */
-  const underway = new Map<ShotRequest, { fraction: number; eta?: number }>()
+  /** Shots underway: their own progress, the seconds they still need, and whether their result is downloading. */
+  const underway = new Map<ShotRequest, Underway>()
   let shown = 0
   const report = () => {
     // Shots underway count by their own progress, so the bar moves during a clip that takes minutes. Each one's
@@ -125,6 +133,19 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
     let partial = 0
     for (const u of underway.values()) partial += u.fraction
     shown = Math.max(shown, total ? Math.min(1, (finished + partial) / total) : 1)
+    if (o.ctx.signal.aborted) {
+      // After a Cancel the run still waits for the results that are downloading, so say the Cancel was received.
+      const keeping = [...underway.values()].filter((u) => u.downloading).length
+      o.ctx.progress({
+        fraction: shown,
+        stage: 'stopping',
+        message: keeping
+          ? `Stopping… keeping ${keeping} ${unit}${keeping === 1 ? ' that is' : 's that are'} downloading`
+          : 'Stopping…',
+        etaSeconds: undefined,
+      })
+      return
+    }
     const waiting = queue.reduce((sum, r) => sum + (typical(r) ?? 0), 0)
     const etas = [...underway.values()].map((u) => u.eta ?? 0)
     const etaSeconds = Math.round(Math.max(0, ...etas) + waiting / workers)
@@ -139,6 +160,7 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
     })
   }
   report()
+  o.ctx.signal.addEventListener('abort', report, { once: true })
 
   const runOne = async (r: ShotRequest) => {
     const request = { ...r.request }
@@ -149,42 +171,35 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
         throw new JobError('invalid-input', 'This shot needs a still image to animate.')
       request.image = await o.readAsset(still)
     }
-    const own = { fraction: 0, eta: typical(r) }
+    const own: Underway = { fraction: 0, eta: typical(r), downloading: false }
     underway.set(r, own)
-    // Once the provider downloads a result, the shot is finished and billed, so a cancel from then on keeps it:
-    // the job's abort reaches the request only until its download starts.
-    const abort = new AbortController()
-    const forward = () => abort.abort(o.ctx.signal.reason)
-    if (o.ctx.signal.aborted) forward()
-    else o.ctx.signal.addEventListener('abort', forward, { once: true })
     // A request's progress feeds the shot's share of the bar; its message stays its own, under the shot count.
     const shotCtx: JobContext = {
-      signal: abort.signal,
-      throwIfCancelled: () => {
-        if (abort.signal.aborted) throw new JobError('cancelled', 'Cancelled')
-      },
+      signal: o.ctx.signal,
+      throwIfCancelled: () => o.ctx.throwIfCancelled(),
       progress: (p) => {
-        if (p.stage === 'download') o.ctx.signal.removeEventListener('abort', forward)
+        if (p.stage === 'download') own.downloading = true
         if (p.fraction === undefined && p.etaSeconds === undefined) return
         if (p.fraction !== undefined) own.fraction = Math.max(own.fraction, Math.min(0.95, p.fraction))
         if (p.etaSeconds !== undefined) own.eta = p.etaSeconds
         report()
       },
     }
-    let result
-    try {
-      result = await o.provider.generate(request, shotCtx)
-    } finally {
-      o.ctx.signal.removeEventListener('abort', forward)
-    }
+    // A cancel stops the request only until the provider has finished (and billed) it; a result downloading by then
+    // is kept.
+    const result = await generateKeepingPaid(o.provider, request, shotCtx, {
+      onBilled: (usd) => {
+        spentUsd += usd
+        o.onBilled?.(usd)
+      },
+    })
     const [asset] = await storeGeneratedMedia(result, o.store, {
       prompt: request.prompt,
       name: r.shot.label ? `AI: ${r.shot.label}` : undefined,
     })
     if (!asset) throw new JobError('provider', 'The provider returned no media for this shot.')
     assets.set(r.shot.id, asset)
-    spentUsd += result.estimate.usd
-    o.onShot?.(r.shot.id, asset, result.estimate.usd)
+    o.onShot?.(r.shot.id, asset)
   }
 
   const worker = async () => {
@@ -210,7 +225,11 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
       o.onProgress?.({ done: finished, failed: failed.length, total })
     }
   }
-  await Promise.all(Array.from({ length: workers }, worker))
+  try {
+    await Promise.all(Array.from({ length: workers }, worker))
+  } finally {
+    o.ctx.signal.removeEventListener('abort', report)
+  }
   if (stop) throw stop
   if (total > 0 && failed.length === total) throw failed[0]?.error
   return { assets, failed, spentUsd }

@@ -334,14 +334,20 @@ test('a retry after failed AI shots shows its price and asks again; Back returns
  * with a video. Submits numbered in `failing` (from 1) answer HTTP 500; the `held` one stays in progress until
  * `release()`.
  */
-async function mockFalVideo(page: Page, o: { failing?: number[]; held?: number } = {}) {
+async function mockFalVideo(
+  page: Page,
+  o: { failing?: number[]; held?: number; heldDownload?: number } = {},
+) {
   const clip = readFileSync(path.join(FIXTURE_DIR, 'clip.mp4'))
   let released = false
+  const waiting: (() => void)[] = []
   const fal = {
     submits: [] as string[],
     cancels: [] as string[],
+    downloads: [] as string[],
     release: () => {
       released = true
+      for (const go of waiting.splice(0)) go()
     },
   }
   const json = (route: Route, status: number, body: unknown) =>
@@ -381,13 +387,13 @@ async function mockFalVideo(page: Page, o: { failing?: number[]; held?: number }
       video: { url: `https://v3.fal.media/files/mock/${id}.mp4`, content_type: 'video/mp4' },
     })
   })
-  await page
-    .context()
-    .route('https://v3.fal.media/**', (route) =>
-      route.request().method() === 'OPTIONS'
-        ? route.fulfill({ status: 204, headers: CORS })
-        : route.fulfill({ status: 200, headers: CORS, contentType: 'video/mp4', body: clip }),
-    )
+  await page.context().route('https://v3.fal.media/**', async (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    const id = /\/(req-\d+)\.mp4$/.exec(route.request().url())?.[1] ?? ''
+    fal.downloads.push(id)
+    if (id === `req-${o.heldDownload}` && !released) await new Promise<void>((go) => waiting.push(go))
+    return route.fulfill({ status: 200, headers: CORS, contentType: 'video/mp4', body: clip })
+  })
   return fal
 }
 
@@ -410,7 +416,7 @@ async function draftVideoClips(page: Page, testInfo?: TestInfo) {
   await page.getByRole('radio', { name: 'Generate' }).click()
   await page.getByRole('radio', { name: 'Video clips' }).click()
   await expect(
-    page.getByText('Free to plan. Video clips cost more, and show their price before anything is generated'),
+    page.getByText('Free to plan. Video clips cost more and show their price before anything is generated'),
   ).toBeVisible()
   await expect(page.getByText('Clips with real motion. Each takes a few minutes to make.')).toBeVisible()
   if (testInfo) await page.screenshot({ path: testInfo.outputPath('director-video-idle.png') })
@@ -468,8 +474,10 @@ test('drafts with AI video clips: priced per clip, each clip’s progress shows,
   const retry = page.getByRole('button', { name: /^Retry 1 failed clip · about \$\d+\.\d\d$/ })
   await expect(retry).toBeVisible({ timeout: 30_000 })
   await expect(
-    page.getByText(/^1 clip couldn't be generated \(.+\)\. Apply again to retry just those\.$/),
+    page.getByText('1 clip couldn’t be generated. Retry it below; a dark placeholder marks where it goes.'),
   ).toBeVisible()
+  await expect(page.getByText(/not generated yet/)).toHaveCount(0)
+  await expect(retry).toHaveAttribute('title', 'fal.ai said: Internal server error')
   const first = await directorClips(page)
   expect(first.videos).toBeGreaterThanOrEqual(count - 1)
   expect(first.pending).toBeGreaterThan(0)
@@ -502,6 +510,29 @@ test('cancelling AI video clips stops the one underway at fal.ai and keeps the c
   expect(fal.cancels).toEqual(['req-3'])
   expect(fal.submits).toHaveLength(count)
   expect((await draftState(page)).director).toBe(0)
+})
+
+test('a Cancel while a clip downloads says it is stopping, and keeps the clip fal.ai already made', async ({
+  page,
+}, testInfo) => {
+  // The third clip's download stalls until released; the fourth stays in progress at fal.ai.
+  const fal = await mockFalVideo(page, { heldDownload: 3, held: 4 })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  const count = await draftVideoClips(page)
+  await expect.poll(() => fal.downloads, { timeout: 60_000 }).toContain('req-3')
+  // The fourth clip starts only after the first two are made.
+  await expect.poll(() => fal.submits.length, { timeout: 30_000 }).toBe(4)
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await expect(page.getByText('Stopping… keeping 1 clip that is downloading')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('director-video-stopping.png') })
+  fal.release()
+  await expect(page.getByText('Generation stopped. 3 clips made so far are kept.')).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: new RegExp(`^Generate ${count - 3} clips · about \\$\\d+\\.\\d\\d$`) }),
+  ).toBeVisible()
+  expect(fal.cancels).toEqual(['req-4'])
+  expect(fal.submits).toHaveLength(4)
 })
 test('a tagged song names the project, and the title card shows its title and artist', async ({ page }) => {
   await openHarness(page)
