@@ -68,16 +68,86 @@ async function startKind(page: Page, kind: RegExp) {
 
 const fixture = (name: string) => path.join(FIXTURE_DIR, name)
 
-test('a lyric video from a song file and pasted lyrics is analyzed, kept and reopened', async ({ page }) => {
+/** A stand-in for stem separation and the aligner (about 280 MB of models); `finishLyrics()` lands timed lines. */
+async function fakeLyrics(page: Page) {
+  await page.evaluate(() => {
+    const { app, shared } = window.mvStudio
+    const w = window as unknown as { finishLyrics?: () => void }
+    app.lyrics.setLyricsServiceForTests({
+      async estimate() {
+        return {
+          separatesStems: true,
+          downloads: [{ name: 'Stems and aligner', bytes: 275_821_162 }],
+          downloadBytes: 275_821_162,
+          seconds: 230,
+        }
+      },
+      run(songId: string, request: { text: string }) {
+        return shared.jobs.run({
+          kind: 'analysis.lyrics',
+          title: 'Timing lyrics',
+          run: (ctx: { progress: (p: object) => void }) =>
+            new Promise((resolve) => {
+              ctx.progress({ fraction: 0.4, stage: 'align', message: 'Timing words' })
+              w.finishLyrics = () => {
+                const lines = request.text
+                  .split('\n')
+                  .filter((t: string) => t.trim())
+                  .map((text: string, i: number) => ({
+                    id: `timed-${i}`,
+                    text: text.trim(),
+                    start: 1 + i * 2,
+                    end: 2.5 + i * 2,
+                    words: [{ text: text.trim(), start: 1 + i * 2, end: 2.5 + i * 2 }],
+                  }))
+                resolve({ doc: { audioAssetId: songId, source: 'pasted', lines }, chorus: null })
+              }
+            }),
+        })
+      },
+    })
+  })
+}
+
+/** A WAV file of silence, which has no beat to find. */
+function silentWav(seconds: number): Buffer {
+  const rate = 8000
+  const data = rate * seconds * 2
+  const b = Buffer.alloc(44 + data)
+  b.write('RIFF', 0)
+  b.writeUInt32LE(36 + data, 4)
+  b.write('WAVEfmt ', 8)
+  b.writeUInt32LE(16, 16)
+  b.writeUInt16LE(1, 20)
+  b.writeUInt16LE(1, 22)
+  b.writeUInt32LE(rate, 24)
+  b.writeUInt32LE(rate * 2, 28)
+  b.writeUInt16LE(2, 32)
+  b.writeUInt16LE(16, 34)
+  b.write('data', 36)
+  b.writeUInt32LE(data, 40)
+  return b
+}
+
+test('a lyric video from a song file and pasted lyrics is analyzed, timed, kept and reopened', async ({
+  page,
+}) => {
   await startKind(page, /Lyric video/)
-  const open = page.getByRole('button', { name: 'Open the editor' })
-  await expect(open).toBeDisabled()
+  await fakeLyrics(page)
+  await expect(page.getByRole('button', { name: 'Open the editor' })).toBeDisabled()
   await page.getByLabel('Song file').setInputFiles(fixture('song.wav'))
   const status = page.getByRole('status')
   await expect(status.getByText(/^\d+ BPM$/)).toBeVisible({ timeout: 60_000 })
-  await expect(page.getByText('song · song.wav', { exact: false })).toBeVisible()
+  await expect(page.getByText('song · WAV · ', { exact: false })).toBeVisible()
+  // With a song on the card, Skip for now would drop it, so it is gone.
+  await expect(page.getByRole('button', { name: 'Skip for now' })).toHaveCount(0)
   await page.getByLabel('Lyrics').fill('Hello night\n\nNeon lights  ')
-  await open.click()
+  // Pasted lyrics are timed on open, and the cost is said first.
+  const time = page.getByRole('button', { name: 'Time my lyrics' })
+  await expect(
+    page.getByText('Separates the vocals first · 276 MB download, once · about 4 min on this device'),
+  ).toBeVisible()
+  await time.click()
 
   await waitForPreview(page)
   await expect(page).toHaveURL(/#\/editor\?.*project=/)
@@ -93,13 +163,18 @@ test('a lyric video from a song file and pasted lyrics is analyzed, kept and reo
     ],
   })
   expect(project.bpm).toBeGreaterThan(0)
-  // The next step for pasted lyrics is timing them, in Assist › Lyrics.
+  // Timing runs in Assist › Lyrics, and the timed lines replace the pasted ones.
   expect(project.panel).toBe('assist:lyrics')
+  await expect(page.getByText('Timing words to the vocals')).toBeVisible()
+  await page.evaluate(() => (window as unknown as { finishLyrics: () => void }).finishLyrics())
+  await expect.poll(async () => (await opened(page)).lyrics.every((l) => l.timed)).toBe(true)
+  const timed = await opened(page)
+  expect(timed.lyrics.map((l) => l.text)).toEqual(['Hello night', 'Neon lights'])
 
   await page.reload()
   await waitForPreview(page)
   const reopened = await opened(page)
-  expect(reopened).toMatchObject({ id: project.id, name: 'song', song: 'song.wav', lyrics: project.lyrics })
+  expect(reopened).toMatchObject({ id: project.id, name: 'song', song: 'song.wav', lyrics: timed.lyrics })
 })
 
 test('a visualizer with the sample song uses the chosen style and opens on its visualizer', async ({
@@ -108,6 +183,15 @@ test('a visualizer with the sample song uses the chosen style and opens on its v
   await startKind(page, /^Visualizer/)
   await page.getByRole('button', { name: 'Use a sample song' }).click()
   await expect(page.getByText('Chorus at 1:04')).toBeVisible()
+  // The song card replaces the buttons, so focus moves to its Replace button.
+  await expect(page.getByRole('button', { name: 'Replace' })).toBeFocused()
+  // The styles are one radio group: one Tab stop, arrow keys move the choice.
+  const spectrum = page.getByRole('radio', { name: 'Spectrum' })
+  await spectrum.focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(spectrum).not.toBeChecked()
+  await expect(page.getByRole('radio', { checked: true })).toBeFocused()
+  await expect(page.getByRole('radio', { name: 'Spectrum' })).toHaveAttribute('tabindex', '-1')
   await page.getByRole('radio', { name: 'Particles' }).click()
   await expect(page.getByRole('radio', { name: 'Particles' })).toBeChecked()
   await page.getByRole('button', { name: 'Open the editor' }).click()
@@ -132,21 +216,69 @@ test('a lyric video with the sample song gets its timed lyrics', async ({ page }
   expect(project.lyricClips).toBe(project.lyrics.length)
 })
 
-test('beat-cut footage keeps the chosen clips, and one can be removed first', async ({ page }) => {
+test('beat-cut footage keeps the chosen clips, one can be removed first, and they are cut on open', async ({
+  page,
+}) => {
   await startKind(page, /Beat-cut footage/)
-  await page.getByLabel('Clip files').setInputFiles([fixture('clip.mp4'), fixture('image.png')])
+  // Model-free footage analysis (mean color), so the cut downloads nothing.
+  await page.evaluate(() => {
+    const onnx = {
+      async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        for (const b of bitmaps) b.close()
+        return { dim: 2, data: new Float32Array(bitmaps.flatMap(() => [0.6, 0.8])) }
+      },
+      async embedTexts({ texts }: { texts: string[] }) {
+        return { dim: 2, data: new Float32Array(texts.flatMap(() => [0.6, 0.8])) }
+      },
+    }
+    window.mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => onnx,
+      segmentation: () => {
+        throw new Error('unused')
+      },
+    })
+  })
+  await page
+    .getByLabel('Clip files')
+    .setInputFiles([fixture('clip.mp4'), fixture('image.png'), fixture('song.mp3')])
   const clips = page.getByRole('list', { name: 'Your clips' })
   await expect(clips.getByRole('listitem')).toHaveCount(2, { timeout: 30_000 })
+  await expect(page.getByRole('alert')).toHaveText(
+    '“song.mp3” isn’t a video clip or image. Add it as your song in step 1.',
+  )
   await clips.getByRole('button', { name: 'Remove image.png' }).click()
   await expect(clips.getByRole('listitem')).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Cut my clips' })).toBeDisabled()
+
+  // Going back to pick another kind keeps what was given.
   await page.getByRole('button', { name: 'Use a sample song' }).click()
-  await page.getByRole('button', { name: 'Open the editor' }).click()
+  await page.getByRole('button', { name: 'All kinds' }).click()
+  await page.getByRole('button', { name: /^Visualizer/ }).click()
+  await expect(page.getByText('Neon Skyline · WAV', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'All kinds' }).click()
+  await page.getByRole('button', { name: /Beat-cut footage/ }).click()
+  await expect(clips.getByRole('listitem')).toHaveCount(1)
+
+  await expect(page.getByText(/Runs on this device · free · \d+ MB download, once/)).toBeVisible()
+  await page.getByRole('button', { name: 'Cut my clips' }).click()
 
   await waitForPreview(page)
   const project = await opened(page)
   expect(project.assets).toEqual(['clip.mp4', 'neon-skyline.wav'])
-  expect(project.tracks).toEqual(['Titles', 'Look', 'Video', 'Song'])
   expect(project.panel).toBe('assist:autocut')
+  // The clips are cut to the beat without another click.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            Object.values(
+              window.mvStudio.app.project.editor.getProject().clips as Record<string, { type: string }>,
+            ).filter((c) => c.type === 'video').length,
+        ),
+      { timeout: 60_000 },
+    )
+    .toBeGreaterThan(1)
 })
 
 test('a file that is not audio is refused as the song, and Skip for now opens the template without one', async ({
@@ -157,7 +289,13 @@ test('a file that is not audio is refused as the song, and Skip for now opens th
   await expect(page.getByRole('alert')).toHaveText(/“image\.png” isn’t an audio file/)
   await expect(page.getByRole('button', { name: 'Open the editor' })).toBeDisabled()
 
+  // A first visit: the guide skips "Your song, mapped" in a project without a song.
+  await page.evaluate(() => localStorage.removeItem('mv-studio.guide-seen'))
   await page.getByRole('button', { name: 'Skip for now' }).click()
+  const guide = page.getByRole('dialog', { name: 'Getting started guide' })
+  await expect(guide.getByText('Add anything')).toBeVisible()
+  await expect(guide.getByText('1 of 3')).toBeVisible()
+  await guide.getByRole('button', { name: 'Skip' }).click()
   await expect(page.getByText('Start with a song')).toBeVisible()
   const project = await opened(page)
   expect(project).toMatchObject({
@@ -166,6 +304,17 @@ test('a file that is not audio is refused as the song, and Skip for now opens th
     assets: [],
   })
   await expect(page).toHaveURL(/project=empty/)
+})
+
+test('a song without a beat says so instead of showing results', async ({ page }) => {
+  await startKind(page, /Lyric video/)
+  await page
+    .getByLabel('Song file')
+    .setInputFiles({ name: 'quiet.wav', mimeType: 'audio/wav', buffer: silentWav(20) })
+  await expect(
+    page.getByText('Couldn’t find the beat. You can analyze it again in Assist › Song analysis.'),
+  ).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByText(/BPM$/)).toHaveCount(0)
 })
 
 test('Blank project opens an empty timeline with a video and a song track', async ({ page }) => {

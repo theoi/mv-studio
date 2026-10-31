@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,6 +7,7 @@ import {
   Film,
   Image as ImageIcon,
   Info,
+  Lock,
   Music2,
   Sparkles,
   Upload,
@@ -18,8 +19,10 @@ import { thumbnailUrl } from '../../../plugins/thumbnails.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { TextArea } from '../../ds/Fields.tsx'
 import { Badge, Spinner } from '../../ds/Feedback.tsx'
-import { formatBpm, formatTime, plural } from '../../format.ts'
+import { formatBpm, formatBytes, formatTime, plural } from '../../format.ts'
+import { matchingDownloadBytes } from '../../state/autocut.ts'
 import { useCloud } from '../../state/cloud.ts'
+import { estimateLyrics, lyricsCost } from '../../state/lyrics.ts'
 import { useProject } from '../../state/project.ts'
 import {
   addFootage,
@@ -29,7 +32,9 @@ import {
   openFromSetup,
   removeFootage,
   setSetup,
+  setupAction,
   useSetup,
+  type SetupAction,
   type SetupSong,
 } from '../../state/setup.ts'
 import { set, useUi, type Kind } from '../../state/ui.ts'
@@ -91,6 +96,12 @@ function SongStatus({ song, analysis }: { song: SetupSong; analysis: AudioAnalys
         <Spinner size={12} /> Adding the song to this browser…
       </>
     )
+  if (song.analysis === 'failed')
+    return (
+      <span className={styles.songFailed}>
+        Couldn’t find the beat. You can analyze it again in Assist › Song analysis.
+      </span>
+    )
   if (analysis) {
     const sections = analysis.sections ?? []
     // "Pre-chorus" comes first and is not the chorus.
@@ -115,12 +126,6 @@ function SongStatus({ song, analysis }: { song: SetupSong; analysis: AudioAnalys
       </>
     )
   }
-  if (song.analysis === 'failed')
-    return (
-      <span className={styles.songFailed}>
-        Couldn’t find the beat. You can analyze it again in Assist › Song analysis.
-      </span>
-    )
   return (
     <>
       <Spinner size={12} /> Finding the beat and sections…
@@ -128,10 +133,19 @@ function SongStatus({ song, analysis }: { song: SetupSong; analysis: AudioAnalys
   )
 }
 
-function SongCard({ song, onReplace }: { song: SetupSong; onReplace: () => void }) {
+function SongCard({
+  song,
+  onReplace,
+  takeFocus,
+}: {
+  song: SetupSong
+  onReplace: () => void
+  takeFocus: boolean
+}) {
   const project = useProject()
   const analysis = song.asset ? project.analysis.audio[song.asset.id] : undefined
   const duration = song.asset?.duration
+  const format = /\.([a-z0-9]+)$/i.exec(song.name)?.[1]?.toUpperCase()
   return (
     <div className={styles.songCard}>
       <span className={styles.songIcon}>
@@ -141,7 +155,7 @@ function SongCard({ song, onReplace }: { song: SetupSong; onReplace: () => void 
         <div className={styles.songName}>
           {song.title}{' '}
           <span className={styles.songMeta}>
-            · {song.name}
+            {format ? ` · ${format}` : ''}
             {duration ? ` · ${formatTime(duration)}` : ''}
           </span>
         </div>
@@ -150,11 +164,42 @@ function SongCard({ song, onReplace }: { song: SetupSong; onReplace: () => void 
         </div>
       </div>
       <MiniWave analysis={analysis} />
-      <Button variant="ghost" size="sm" onClick={onReplace} disabled={song.status === 'adding'}>
+      <Button variant="ghost" size="sm" onClick={onReplace} autoFocus={takeFocus}>
         Replace
       </Button>
     </div>
   )
+}
+
+const ACTION_LABELS: Record<SetupAction, string> = {
+  draft: 'Draft my video',
+  time: 'Time my lyrics',
+  cut: 'Cut my clips',
+  open: 'Open the editor',
+}
+
+/** What timing the lyrics or cutting the clips will do on this device, said before the button is pressed. */
+function useActionCost(action: SetupAction, songKey: string): { text: string; detail?: string } | null {
+  const key = `${action}:${songKey}`
+  const [cost, setCost] = useState<{ key: string; text: string; detail?: string } | null>(null)
+  useEffect(() => {
+    if (action !== 'time' && action !== 'cut') return
+    let live = true
+    const load =
+      action === 'time'
+        ? estimateLyrics('time').then(lyricsCost)
+        : matchingDownloadBytes().then((bytes) => ({
+            text: `Runs on this device · free${bytes ? ` · ${formatBytes(bytes)} download, once` : ''}`,
+          }))
+    load.then(
+      (c) => live && setCost({ key, ...c }),
+      () => undefined,
+    )
+    return () => {
+      live = false
+    }
+  }, [action, key])
+  return cost?.key === key ? cost : null
 }
 
 function filesOf(input: HTMLInputElement): File[] {
@@ -172,7 +217,25 @@ export function SetupScreen() {
   const clipInput = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
   const [opening, setOpening] = useState(false)
+  // Choosing a song from the buttons replaces them with the song card; focus follows to its Replace button.
+  const [focusSong, setFocusSong] = useState(false)
   const t = titles[kind]
+  const action = setupAction(kind, { lyrics, footage })
+  const cost = useActionCost(
+    song?.status === 'ready' ? action : 'open',
+    `${song?.asset?.id ?? ''}:${song?.analysis ?? ''}`,
+  )
+  const onStyleKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key]
+    if (!step) return
+    e.preventDefault()
+    const n = VISUALIZER_STYLES.length
+    const i = VISUALIZER_STYLES.findIndex((v) => v.id === visualizerStyle)
+    const next = VISUALIZER_STYLES[(i + step + n) % n]
+    if (!next) return
+    setSetup({ visualizerStyle: next.id })
+    e.currentTarget.querySelector<HTMLElement>(`[data-style="${next.id}"]`)?.focus()
+  }
 
   const onDragOver = (e: DragEvent) => {
     if (!e.dataTransfer.types.includes('Files')) return
@@ -188,6 +251,7 @@ export function SetupScreen() {
     if (!files.length) return
     e.preventDefault()
     setDragging(false)
+    setFocusSong(false)
     const audio = files.find(isAudioFile)
     const others = files.filter((f) => !isAudioFile(f))
     if (audio) void chooseSong(audio)
@@ -246,7 +310,14 @@ export function SetupScreen() {
             <span className={styles.stepNum}>1</span> Your song
           </div>
           {song ? (
-            <SongCard song={song} onReplace={() => songInput.current?.click()} />
+            <SongCard
+              song={song}
+              takeFocus={focusSong}
+              onReplace={() => {
+                setFocusSong(true)
+                songInput.current?.click()
+              }}
+            />
           ) : (
             <div className={[styles.drop, dragging && styles.dropActive].filter(Boolean).join(' ')}>
               <span className={styles.dropIcon}>
@@ -255,10 +326,24 @@ export function SetupScreen() {
               <div className={styles.dropTitle}>Drop your song here</div>
               <div className={styles.dropHint}>MP3, WAV, FLAC, M4A or OGG</div>
               <div className={styles.dropActions}>
-                <Button variant="secondary" onClick={() => songInput.current?.click()}>
+                <Button
+                  variant="secondary"
+                  autoFocus={focusSong}
+                  onClick={() => {
+                    setFocusSong(true)
+                    songInput.current?.click()
+                  }}
+                >
                   Choose file
                 </Button>
-                <Button variant="ghost" icon={<AudioLines />} onClick={() => void chooseSampleSong()}>
+                <Button
+                  variant="ghost"
+                  icon={<AudioLines />}
+                  onClick={() => {
+                    setFocusSong(true)
+                    void chooseSampleSong()
+                  }}
+                >
                   Use a sample song
                 </Button>
               </div>
@@ -300,7 +385,12 @@ export function SetupScreen() {
             </>
           )}
           {kind === 'visualizer' && (
-            <div className={styles.styles} role="radiogroup" aria-label="Starting style">
+            <div
+              className={styles.styles}
+              role="radiogroup"
+              aria-label="Starting style"
+              onKeyDown={onStyleKey}
+            >
               {VISUALIZER_STYLES.map((v) => {
                 const thumb = thumbnailUrl('generator', v.visualizerId)
                 return (
@@ -308,6 +398,8 @@ export function SetupScreen() {
                     key={v.id}
                     role="radio"
                     aria-checked={visualizerStyle === v.id}
+                    tabIndex={visualizerStyle === v.id ? 0 : -1}
+                    data-style={v.id}
                     className={[styles.styleCard, visualizerStyle === v.id && styles.styleOn]
                       .filter(Boolean)
                       .join(' ')}
@@ -388,15 +480,25 @@ export function SetupScreen() {
           <Button
             variant="primary"
             size="lg"
-            iconEnd={kind === 'ai' ? <Sparkles /> : <ArrowRight />}
-            disabled={song?.status !== 'ready' || opening}
+            iconEnd={action === 'draft' ? <Sparkles /> : <ArrowRight />}
+            disabled={
+              song?.status !== 'ready' || opening || (action === 'cut' && song.analysis === 'running')
+            }
             onClick={() => void open(true)}
           >
-            {kind === 'ai' ? 'Draft my video' : 'Open the editor'}
+            {ACTION_LABELS[action]}
           </Button>
-          <Button variant="ghost" disabled={opening} onClick={() => void open(false)}>
-            Skip for now
-          </Button>
+          {/* With a song on the card, Skip would drop it; the main button already skips the optional step. */}
+          {!song && (
+            <Button variant="ghost" disabled={opening} onClick={() => void open(false)}>
+              Skip for now
+            </Button>
+          )}
+          {cost && (
+            <span className={styles.setupCost} title={cost.detail}>
+              <Lock /> {cost.text}
+            </span>
+          )}
         </div>
       </main>
     </div>

@@ -693,9 +693,25 @@
 
 .setupFooter {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   margin-top: clamp(20px, 4vh, 32px);
+}
+
+.setupCost {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.setupCost svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
 }
 
 .dropActive,

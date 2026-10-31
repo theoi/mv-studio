@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { Button } from '../../ds/Button.tsx'
 import { Kbd } from '../../ds/Kbd.tsx'
+import { hasSong, useProject } from '../../state/project.ts'
 import { set, useUi } from '../../state/ui.ts'
 import styles from './FirstRunGuide.module.css'
 
-const steps = [
+const allSteps = [
   {
     target: 'timeline',
     place: 'top' as const,
@@ -33,6 +34,8 @@ const steps = [
 
 export function FirstRunGuide() {
   const step = useUi((s) => s.guideStep)
+  // "Your song, mapped" only makes sense when there is a song.
+  const steps = hasSong(useProject()) ? allSteps : allSteps.slice(1)
   const [rect, setRect] = useState<DOMRect | null>(null)
   const current = step === null ? null : steps[step]
 
@@ -47,17 +50,17 @@ export function FirstRunGuide() {
     return () => window.removeEventListener('resize', measure)
   }, [current])
 
+  const count = steps.length
   useEffect(() => {
     if (step === null) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') set({ guideStep: null })
-      if (e.key === 'Enter' || e.key === 'ArrowRight')
-        set({ guideStep: step + 1 < steps.length ? step + 1 : null })
+      if (e.key === 'Enter' || e.key === 'ArrowRight') set({ guideStep: step + 1 < count ? step + 1 : null })
       if (e.key === 'ArrowLeft' && step > 0) set({ guideStep: step - 1 })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [step])
+  }, [step, count])
 
   if (!current || !rect || step === null) return null
   const pad = 4

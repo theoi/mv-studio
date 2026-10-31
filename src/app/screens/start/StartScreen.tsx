@@ -60,7 +60,7 @@ const RECENT_LIMIT = 6
 export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   if (kind === 'lyric') {
     return (
-      <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('city')})` }}>
+      <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('city')})` }} aria-hidden>
         <div className={styles.artShade} />
         <div className={styles.lyricArt}>
           <span className={styles.lyricSung}>Under the </span>
@@ -72,7 +72,7 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   }
   if (kind === 'visualizer') {
     return (
-      <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('neon')})` }}>
+      <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('neon')})` }} aria-hidden>
         <div className={styles.artShade} />
         <div className={styles.bars}>
           {Array.from({ length: 22 }, (_, i) => (
@@ -91,7 +91,7 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   if (kind === 'footage') {
     const strip = ['crowd', 'portrait', 'tunnel', 'dancer'] as const
     return (
-      <div className={[styles.art, styles.footageArt].join(' ')}>
+      <div className={[styles.art, styles.footageArt].join(' ')} aria-hidden>
         <div className={styles.strip}>
           {strip.map((s) => (
             <span key={s} style={{ backgroundImage: `url(${sceneThumb(s)})` }} />
@@ -106,7 +106,7 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
     )
   }
   return (
-    <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('aurora')})` }}>
+    <div className={styles.art} style={{ backgroundImage: `url(${sceneThumb('aurora')})` }} aria-hidden>
       <div className={styles.artShade} />
       <div className={styles.prompt}>
         <Sparkles />

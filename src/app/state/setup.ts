@@ -14,8 +14,11 @@ import {
   type VideoKind,
 } from '../../plugins/templates.ts'
 import { sampleSong } from '../mock/demoProject.ts'
+import { autoCutOptions, matchesMood, startAutoCut, unanalyzedClipCount, useAutoCut } from './autocut.ts'
 import { draftFromSetup } from './director.ts'
+import { analyzeFootageNow, useFootage } from './footage.ts'
 import { analyzeSong, storeFiles } from './importer.ts'
+import { startLyrics } from './lyrics.ts'
 import { loadSetupDraft, startProject } from './persistence.ts'
 import { editor } from './project.ts'
 import { editorPreset, get as getUi, maybeStartGuide, set as setUi, type Kind, type Selection } from './ui.ts'
@@ -71,9 +74,15 @@ export function setupFromLink(sample: boolean): void {
   if (sample) void chooseSampleSong()
 }
 
-/** Opens the setup screen for a kind of video, empty. */
+/**
+ * Opens the setup screen for a kind of video. What the user already gave (the song with its analysis, lyrics, clips,
+ * the idea) is kept when they go back and pick another kind, unless another project was opened since.
+ */
 export function startSetup(kind: Kind): void {
-  useSetup.setState(blank, true)
+  const s = useSetup.getState()
+  const id = s.song?.asset?.id
+  const draftKept = !id || id === loadingDraft || editor.getProject().assets[id] !== undefined
+  useSetup.setState(draftKept ? { ...s, songError: null, footageError: null } : blank, true)
   setUi({ screen: 'setup', kind })
 }
 
@@ -88,10 +97,26 @@ function baseName(name: string): string {
   return name.replace(/\.[^.]+$/, '')
 }
 
+const UNREADABLE = 'Could not read this media file.'
+
+function notAdded(name: string, reason: string | undefined): string {
+  return reason?.startsWith(UNREADABLE)
+    ? `“${name}” couldn’t be read. It may be damaged or in an unsupported format.`
+    : `“${name}” couldn’t be added: ${reason ?? 'unknown error'}`
+}
+
+/** The song whose draft project is being loaded. */
+let loadingDraft: string | null = null
+
 /** A draft project with the song, so its analysis runs now and is stored with the project opened later. */
 async function loadDraft(song: Asset, name: string, analysis?: TemplateInput['analysis']): Promise<void> {
   const kind = getUi().kind
-  await loadSetupDraft(createFromTemplate(kind, { name, song, ...(analysis ? { analysis } : {}) }))
+  loadingDraft = song.id
+  try {
+    await loadSetupDraft(createFromTemplate(kind, { name, song, ...(analysis ? { analysis } : {}) }))
+  } finally {
+    if (loadingDraft === song.id) loadingDraft = null
+  }
 }
 
 const isCurrent = (song: SetupSong) => useSetup.getState().song === song
@@ -115,7 +140,7 @@ export async function chooseSong(file: File): Promise<void> {
   if (!asset) {
     update({
       song: null,
-      songError: `“${file.name}” couldn’t be added: ${failed[0]?.reason ?? 'unknown error'}`,
+      songError: notAdded(file.name, failed[0]?.reason),
     })
     return
   }
@@ -123,8 +148,10 @@ export async function chooseSong(file: File): Promise<void> {
   update({ song: ready })
   await loadDraft(asset, ready.title)
   const ok = await analyzeSong(asset)
+  // A silent or beatless file analyzes without error but finds no tempo.
+  const found = ok && (editor.getProject().analysis.audio[asset.id]?.tempo?.bpm ?? 0) > 0
   const now = useSetup.getState().song
-  if (now?.asset?.id === asset.id) update({ song: { ...now, analysis: ok ? 'done' : 'failed' } })
+  if (now?.asset?.id === asset.id) update({ song: { ...now, analysis: found ? 'done' : 'failed' } })
 }
 
 /** Uses the sample song, which is already analyzed. */
@@ -140,8 +167,15 @@ export async function chooseSampleSong(): Promise<void> {
 /** Adds clips and images for a beat-cut video: copies them into browser storage. */
 export async function addFootage(files: File[]): Promise<void> {
   const visual = files.filter(isVisualFile)
-  const skipped = files.length - visual.length
-  update({ footageError: skipped ? 'Only video clips and images can be added here.' : null })
+  const skipped = files.filter((f) => !isVisualFile(f))
+  const only = skipped.length === 1 ? skipped[0] : undefined
+  update({
+    footageError: only
+      ? `“${only.name}” isn’t a video clip or image.${isAudioFile(only) ? ' Add it as your song in step 1.' : ''}`
+      : skipped.length
+        ? `${skipped.length} files aren’t video clips or images.`
+        : null,
+  })
   if (!visual.length) return
   update((s) => ({ adding: s.adding + visual.length }))
   const { assets, failed } = await storeFiles(visual)
@@ -152,7 +186,7 @@ export async function addFootage(files: File[]): Promise<void> {
       ? {
           footageError:
             failed.length === 1
-              ? `“${failed[0].file.name}” couldn’t be added: ${failed[0].reason}`
+              ? notAdded(failed[0].file.name, failed[0].reason)
               : `${failed.length} files couldn’t be added. ${failed[0].reason}`,
         }
       : {}),
@@ -204,14 +238,42 @@ function firstSelection(project: Project, kind: Kind): Selection {
 }
 
 /**
+ * What the setup screen's main button does besides opening the project: an AI video drafts its shots, pasted lyrics
+ * are timed to the vocals, and clips are cut to the beat. Each needs the song.
+ */
+export type SetupAction = 'draft' | 'time' | 'cut' | 'open'
+
+export function setupAction(kind: Kind, s: Pick<SetupState, 'lyrics' | 'footage'>): SetupAction {
+  if (kind === 'ai') return 'draft'
+  if (kind === 'lyric' && s.lyrics.trim()) return 'time'
+  if (kind === 'footage' && s.footage.length) return 'cut'
+  return 'open'
+}
+
+/** Auto-cut of the whole song with every clip, as Assist › Auto-cut's "Cut to the beat" with its default choices. */
+function cutEveryClip(): void {
+  const choices = useAutoCut.getState().choices
+  const project = editor.getProject()
+  if (
+    matchesMood(choices) &&
+    unanalyzedClipCount(project) &&
+    useFootage.getState().indexing?.status !== 'indexing'
+  )
+    analyzeFootageNow()
+  startAutoCut(autoCutOptions({ ...choices, range: 'all', clips: 'all' }, project, { type: 'none' }, 0))
+}
+
+/**
  * Opens the editor with a new project of the setup screen's kind, with the song unless `withSong` is false ("Skip for
- * now"). A project with a song, lyrics, an idea or clips is kept right away; an AI video starts its draft.
+ * now"). A project with a song, lyrics, an idea or clips is kept right away; then the setup action runs (drafting,
+ * timing or cutting, as a job shown in Assist).
  */
 export async function openFromSetup(withSong = true): Promise<void> {
   const kind = getUi().kind
   const s = useSetup.getState()
   const song = withSong && s.song?.status === 'ready' ? s.song : undefined
   const asset = song?.asset
+  const action = asset ? setupAction(kind, s) : 'open'
   const analysis = asset && editor.getProject().analysis.audio[asset.id]
   const input: SetupInput = {
     ...(song && asset ? { song: asset, name: song.title } : {}),
@@ -231,7 +293,9 @@ export async function openFromSetup(withSong = true): Promise<void> {
   setUi({ ...editorPreset(kind), selection: firstSelection(project, kind) })
   maybeStartGuide()
   useSetup.setState(blank, true)
-  if (kind === 'ai' && asset) draftFromSetup(s.idea)
+  if (action === 'draft') draftFromSetup(s.idea)
+  if (action === 'time') void startLyrics({ kind: 'time', text: s.lyrics })
+  if (action === 'cut') cutEveryClip()
 }
 
 /** The start screen's "Blank project". */
