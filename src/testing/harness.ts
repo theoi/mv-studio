@@ -18,6 +18,7 @@ import { projectStore } from '../media/projectStore.ts'
 import * as model from '../model/index.ts'
 import { detectCapabilities } from '../shared/capabilities.ts'
 import { jobs } from '../shared/jobs.ts'
+import * as vision from '../vision/index.ts'
 
 /** A compositor whose canvas stays readable after render, fed by the preview or the export frame provider. */
 function createCompositor(mode: 'preview' | 'export', width: number, height: number) {
@@ -64,6 +65,7 @@ export function installHarness(): void {
     analysis,
     shared: { jobs, detectCapabilities },
     testing: { createCompositor, readPixels },
+    vision,
     /** Files most recently set on #e2e-file-input (Playwright setInputFiles). */
     files: (): File[] => Array.from(input.files ?? []),
     ready: true,

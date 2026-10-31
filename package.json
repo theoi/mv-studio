@@ -23,7 +23,9 @@
   },
   "dependencies": {
     "@fal-ai/client": "~1.10.1",
+    "@huggingface/transformers": "^4.3.2",
     "@mediabunny/aac-encoder": "1.65.0",
+    "@mediapipe/tasks-vision": "^1.2.0",
     "immer": "^11.2.9",
     "mediabunny": "1.65.0",
     "onnxruntime-web": "1.31.1",
