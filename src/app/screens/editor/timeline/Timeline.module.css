@@ -384,7 +384,8 @@
   pointer-events: none;
 }
 
-.clipLayer > * {
+/* :where() keeps this at zero specificity, so a child's own pointer-events rule wins wherever it sits in the file. */
+:where(.clipLayer > *) {
   pointer-events: auto;
 }
 

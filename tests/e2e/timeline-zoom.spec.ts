@@ -54,3 +54,35 @@ test('wheel notches within one frame zoom once, around the pointer, and the clip
   expect(box.x - ruler.x).toBeCloseTo(64 * r.after, 0)
   expect(box.width).toBeCloseTo(32 * r.after, 0)
 })
+
+test('a short clip shows its name once a zoom makes it wide enough, and hides it again zooming out', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  await page.evaluate(() => {
+    const { app, plugins } = window.mvStudio
+    const project = app.project.editor.getProject()
+    const track = project.tracks.find((t: { name: string }) => t.name === 'Overlay')
+    const clip = plugins.library.createGeneratorClip({
+      trackId: track.id,
+      generatorId: 'visualizer.circle',
+      start: 66,
+      duration: 1.5,
+    })
+    app.project.editor.dispatch({ type: 'clip.add', clip: { ...clip, id: 'e2e-short' } })
+  })
+  const label = page.locator('[data-clip-id="e2e-short"] [class*="clipLabel"]')
+  const zoom = (pps: number) =>
+    page.evaluate(async (v) => {
+      window.mvStudio.app.ui.set({ pxPerSec: v })
+      await new Promise(requestAnimationFrame)
+      document.querySelector('[data-timeline-scroller]')!.scrollLeft = 66 * v - 200
+    }, pps)
+  // 1.5 s is 45 px at 30 px/s, too narrow for a name, and 60 px at 40 px/s.
+  await zoom(30)
+  await expect(label).toHaveText('')
+  await zoom(40)
+  await expect(label).toHaveText('Circle spectrum')
+  await zoom(30)
+  await expect(label).toHaveText('')
+})
