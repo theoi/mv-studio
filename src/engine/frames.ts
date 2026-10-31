@@ -649,7 +649,12 @@ export interface BridgedVideo {
   version?: number
   /** The frame is the one last sent for this key (same version), so it is not sent again. */
   same?: boolean
+  /** The frame went ahead of the request (BridgedFrameProvider.stage) with this version. */
+  staged?: boolean
 }
+
+/** A frame sent ahead is dropped when this many renders went by without one taking it (its request failed). */
+const STAGED_RENDERS = 8
 
 /**
  * Frame provider of the preview in the render worker: video frames arrive from the main thread with each render
@@ -659,18 +664,42 @@ export interface BridgedVideo {
 export class BridgedFrameProvider implements FrameProvider {
   private readonly latest = new Map<string, { frame: VideoFrame; ref: FrameRef }>()
   private current = new Map<string, FrameRef | null>()
+  /** Frames sent ahead of their render, by key and version, and the render count when each came. */
+  private readonly staged = new Map<string, { frame: VideoFrame; ref: FrameRef; at: number }>()
+  private renders = 0
   private readonly images: ImageCache
 
   constructor(media: MediaFileSource) {
     this.images = new ImageCache(media)
   }
 
+  /** Keeps a frame sent ahead of the render that will name it (`staged`) by its key and version. */
+  stage(v: BridgedVideo): void {
+    if (!v.frame) return
+    const id = `${v.key}@${String(v.version)}`
+    this.staged.get(id)?.frame.close()
+    this.staged.set(id, {
+      frame: v.frame,
+      ref: { source: v.frame, width: v.width, height: v.height, version: v.version },
+      at: this.renders,
+    })
+  }
+
   /** The video frames of the next render. Frames of keys missing from `videos` are closed. */
   set(videos: BridgedVideo[]): void {
+    this.renders++
     const current = new Map<string, FrameRef | null>()
     for (const v of videos) {
       let entry = this.latest.get(v.key)
-      if (v.frame) {
+      if (v.staged) {
+        const id = `${v.key}@${String(v.version)}`
+        const staged = this.staged.get(id)
+        this.staged.delete(id)
+        if (entry && entry.frame !== staged?.frame) entry.frame.close()
+        entry = staged && { frame: staged.frame, ref: staged.ref }
+        if (entry) this.latest.set(v.key, entry)
+        else this.latest.delete(v.key)
+      } else if (v.frame) {
         entry?.frame.close()
         entry = {
           frame: v.frame,
@@ -689,6 +718,11 @@ export class BridgedFrameProvider implements FrameProvider {
         entry.frame.close()
         this.latest.delete(key)
       }
+    for (const [id, staged] of this.staged)
+      if (this.renders - staged.at > STAGED_RENDERS) {
+        staged.frame.close()
+        this.staged.delete(id)
+      }
     this.current = current
   }
 
@@ -701,8 +735,9 @@ export class BridgedFrameProvider implements FrameProvider {
   }
 
   dispose(): void {
-    for (const entry of this.latest.values()) entry.frame.close()
+    for (const entry of [...this.latest.values(), ...this.staged.values()]) entry.frame.close()
     this.latest.clear()
+    this.staged.clear()
     this.current.clear()
     this.images.dispose()
   }

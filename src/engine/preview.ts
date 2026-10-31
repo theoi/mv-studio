@@ -33,7 +33,7 @@ import { WebAudioPlaybackClock } from './playback.ts'
 import { analysisPatches, type AnalysisPatch, type PreviewRenderRequest } from './previewWorker.ts'
 import { AdaptiveScale, QUALITY_SCALES, scrubScale, stillLevel, type PreviewQuality } from './quality.ts'
 import { startPreviewWorker, type PreviewWorker } from './renderHost.ts'
-import type { MediaFileSource, PlaybackState, PluginRegistry } from './types.ts'
+import type { FrameRef, MediaFileSource, PlaybackState, PluginRegistry } from './types.ts'
 
 export type { PreviewQuality } from './quality.ts'
 
@@ -182,6 +182,9 @@ class MainRenderer implements FrameRenderer {
   }
 }
 
+/** Versions of frames sent to the render worker ahead of their request: negative, unlike presented-frame serials. */
+let stagedSerial = 0
+
 function toVideoFrame(source: TexImageSource): VideoFrame | null {
   try {
     if (source instanceof VideoFrame) return source.clone()
@@ -290,14 +293,39 @@ class WorkerRenderer implements FrameRenderer {
     const plan = visibleLayers(planFrame(project, time), project, time, size, this.sampler(project))
     const requests = videoRequests(project, plan, time)
     this.frames.beginFrame(requests.map((r) => r.key))
+    // A seek's frame goes to the worker as soon as the seek ends, to be uploaded while slower seeks finish. The render
+    // follows once every frame is there and names the staged ones, so it draws with exactly these frames.
+    const staged = new Map<string, BridgedVideo>()
+    const stage = (key: string, ref: FrameRef | null) => {
+      if (requests.length < 2 || !ref || ref.version !== undefined) return
+      const frame = toVideoFrame(ref.source)
+      if (!frame) return
+      const video = { key, frame, width: ref.width, height: ref.height, version: -++stagedSerial }
+      this.worker.stage(video)
+      staged.set(key, { ...video, frame: null, staged: true })
+    }
     const refs = await Promise.all(
-      requests.map((r) => this.frames.videoFrame(r.asset, r.time, r.key, r.rate).catch(() => null)),
+      requests.map((r) =>
+        this.frames.videoFrame(r.asset, r.time, r.key, r.rate).then(
+          (ref) => {
+            stage(r.key, ref)
+            return ref
+          },
+          () => null,
+        ),
+      ),
     )
     const videos: BridgedVideo[] = []
     const transfer: VideoFrame[] = []
     const keys = new Set<string>()
     requests.forEach(({ key }, i) => {
       keys.add(key)
+      const ahead = staged.get(key)
+      if (ahead) {
+        this.sentVersions.set(key, ahead.version)
+        videos.push(ahead)
+        return
+      }
       const ref = refs[i]
       if (ref && ref.version !== undefined && this.sentVersions.get(key) === ref.version) {
         videos.push({

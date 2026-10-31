@@ -32,7 +32,13 @@ const worker = vi.hoisted(() => ({
   drawn: Promise.resolve<number | null>(null),
   requests: [] as { at: number; width: number; untilDrawn?: boolean; measure?: boolean }[],
   /** The video frames each request carried, and what it transferred. */
-  sent: [] as { videos: { key: string; frame: unknown }[]; transfer: unknown[] }[],
+  sent: [] as {
+    at: number
+    videos: { key: string; frame: unknown; version?: number; staged?: boolean }[]
+    transfer: unknown[]
+  }[],
+  /** Video frames sent ahead of their request. */
+  staged: [] as { at: number; key: string; frame: unknown; version?: number }[],
 }))
 
 vi.mock('../../../src/engine/renderHost.ts', async (importOriginal) => ({
@@ -43,11 +49,11 @@ vi.mock('../../../src/engine/renderHost.ts', async (importOriginal) => ({
         size: { width: number; height: number }
         untilDrawn?: boolean
         measure?: boolean
-        videos: { key: string; frame: unknown }[]
+        videos: { key: string; frame: unknown; version?: number; staged?: boolean }[]
       },
       transfer: unknown[],
     ) => {
-      worker.sent.push({ videos: request.videos, transfer })
+      worker.sent.push({ at: performance.now(), videos: request.videos, transfer })
       const now = performance.now()
       const { untilDrawn, measure } = request
       worker.requests.push({ at: now, width: request.size.width, untilDrawn, measure })
@@ -58,6 +64,8 @@ vi.mock('../../../src/engine/renderHost.ts', async (importOriginal) => ({
       if (measure && !untilDrawn) worker.drawn = at(start + ms).then(() => ms)
       return at(untilDrawn ? start + ms : start).then(() => null)
     },
+    stage: (video: { key: string; frame: unknown; version?: number }) =>
+      worker.staged.push({ at: performance.now(), ...video }),
     drawnMs: () => worker.drawn,
     capture: vi.fn(),
     failure: () => null,
@@ -380,6 +388,41 @@ describe('keeping media ready for a transition near the paused playhead', () => 
   })
 })
 
+/** A worker preview of a project where two clips of footage `v` are on screen together from 0 to 4 s. */
+async function twoLayers(): Promise<{ preview: PreviewController; lower: string; copy: string }> {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+  vi.stubGlobal('Worker', class {})
+  vi.stubGlobal('VideoFrame', class {})
+  vi.stubGlobal('ImageData', class {})
+  worker.sent = []
+  worker.staged = []
+  const project = createProject()
+  const asset = {
+    id: 'v',
+    kind: 'video',
+    name: 'v.mp4',
+    storageKey: 'v',
+    duration: 10,
+    origin: { type: 'import' },
+  } as Asset
+  project.assets.v = asset
+  const [visual] = project.tracks
+  const upper = { ...visual!, id: 'upper', name: 'Video 2' }
+  project.tracks = [upper, ...project.tracks]
+  const lower = createVideoClip({ trackId: visual!.id, assetId: 'v', start: 0, duration: 4 })
+  const copy = createVideoClip({ trackId: upper.id, assetId: 'v', start: 0, duration: 4 })
+  copy.opacity = { value: 0.5 }
+  project.clips = { [lower.id]: lower, [copy.id]: copy }
+  const preview = new PreviewController({
+    canvas: { transferControlToOffscreen: () => ({}) } as unknown as HTMLCanvasElement,
+    media: { getFile: async () => new Blob() },
+    renderer: 'worker',
+  })
+  preview.setViewport(640, 360, 1)
+  preview.setProject(project)
+  return { preview, lower: lower.id, copy: copy.id }
+}
+
 describe('sending the render worker a frame two clips share', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -388,45 +431,59 @@ describe('sending the render worker a frame two clips share', () => {
   })
 
   it('gives each clip its own VideoFrame, so the worker can close one without the other', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
-    vi.stubGlobal('Worker', class {})
-    vi.stubGlobal('VideoFrame', class {})
-    vi.stubGlobal('ImageData', class {})
-    worker.sent = []
-    const project = createProject()
-    const asset = {
-      id: 'v',
-      kind: 'video',
-      name: 'v.mp4',
-      storageKey: 'v',
-      duration: 10,
-      origin: { type: 'import' },
-    } as Asset
-    project.assets.v = asset
-    const [visual] = project.tracks
-    const upper = { ...visual!, id: 'upper', name: 'Video 2' }
-    project.tracks = [upper, ...project.tracks]
-    const lower = createVideoClip({ trackId: visual!.id, assetId: 'v', start: 0, duration: 4 })
-    const copy = createVideoClip({ trackId: upper.id, assetId: 'v', start: 0, duration: 4 })
-    copy.opacity = { value: 0.5 }
-    project.clips = { [lower.id]: lower, [copy.id]: copy }
     // The provider gives both clips the same frame, as for two clips showing one frame of the same footage.
-    const shared = { source: {}, width: 1920, height: 1080 }
-    frames.videoFrame.mockResolvedValue(shared)
-    const preview = new PreviewController({
-      canvas: { transferControlToOffscreen: () => ({}) } as unknown as HTMLCanvasElement,
-      media: { getFile: async () => new Blob() },
-      renderer: 'worker',
-    })
-    preview.setViewport(640, 360, 1)
-    preview.setProject(project)
+    frames.videoFrame.mockResolvedValue({ source: {}, width: 1920, height: 1080 })
+    const { preview } = await twoLayers()
     await vi.advanceTimersByTimeAsync(100)
-    const sent = worker.sent.find((s) => s.videos.length === 2)
-    expect(sent).toBeDefined()
-    const sentFrames = sent!.videos.map((v) => v.frame)
-    expect(sentFrames.every(Boolean)).toBe(true)
-    expect(sentFrames[0]).not.toBe(sentFrames[1])
-    expect(new Set(sent!.transfer).size).toBe(2)
+    const sent = worker.staged.map((v) => v.frame)
+    expect(sent).toHaveLength(2)
+    expect(sent.every(Boolean)).toBe(true)
+    expect(sent[0]).not.toBe(sent[1])
+    preview.dispose()
+  })
+})
+
+describe('sending the render worker the frames of a paused frame with several layers', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+    frames.videoFrame.mockReset()
+  })
+
+  it('sends each layer’s frame as its seek ends, and the render once all are there, naming exactly those frames', async () => {
+    // The lower clip's seek ends at 10 ms, its copy's at 50 ms.
+    const ids: string[] = []
+    frames.videoFrame.mockImplementation(
+      (_asset: unknown, _t: number, key: string) =>
+        new Promise((resolve) => {
+          ids.push(key)
+          setTimeout(() => resolve({ source: {}, width: 1920, height: 1080 }), ids.length === 1 ? 10 : 50)
+        }),
+    )
+    const { preview } = await twoLayers()
+    await vi.advanceTimersByTimeAsync(30)
+    expect(worker.staged.map((v) => v.key)).toEqual([ids[0]])
+    expect(worker.sent.filter((s) => s.videos.length)).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(40)
+    expect(worker.staged.map((v) => v.key)).toEqual(ids)
+    const render = worker.sent.find((s) => s.videos.length === 2)!
+    expect(render.at).toBeGreaterThanOrEqual(worker.staged[1]!.at)
+    expect(render.transfer).toEqual([])
+    expect(render.videos.map((v) => [v.key, v.staged, v.frame, v.version])).toEqual(
+      worker.staged.map((v) => [v.key, true, null, v.version]),
+    )
+    expect(new Set(render.videos.map((v) => v.version)).size).toBe(2)
+    preview.dispose()
+  })
+
+  it('sends playing frames with the render, as there is nothing to wait for', async () => {
+    frames.videoFrame.mockResolvedValue({ source: {}, width: 1920, height: 1080, version: 7 })
+    const { preview } = await twoLayers()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(worker.staged).toEqual([])
+    const render = worker.sent.find((s) => s.videos.length === 2)!
+    expect(render.transfer).toHaveLength(2)
     preview.dispose()
   })
 })

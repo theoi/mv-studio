@@ -50,7 +50,29 @@ test('draws the same frames in the render worker as on the main thread and in ex
     base.adjustments = { exposure: { value: 0.2 } }
     still.transform.x.value = 0.3
     const title = model.createTextClip({ trackId: top.id, text: 'WORKER', start: 0, duration: 4 })
-    for (const c of [base, still, title]) p.clips[c.id] = c
+    // More video layers: one a second further into the footage, one showing the base's own frame. On the worker,
+    // their frames go ahead of each still, and the copy shares the base's seek.
+    const pipTrack = model.createTrack('visual', 'PiP')
+    const copyTrack = model.createTrack('visual', 'Copy')
+    p.tracks.unshift(pipTrack, copyTrack)
+    const pip = model.createVideoClip({
+      trackId: pipTrack.id,
+      assetId: video.id,
+      start: 0,
+      duration: 4,
+      sourceStart: 1,
+    })
+    const copy = model.createVideoClip({ trackId: copyTrack.id, assetId: video.id, start: 0, duration: 4 })
+    for (const [clip, x, y] of [
+      [pip, 0.78, 0.25],
+      [copy, 0.22, 0.75],
+    ] as const) {
+      clip.transform.scaleX.value = 0.3
+      clip.transform.scaleY.value = 0.3
+      clip.transform.x.value = x
+      clip.transform.y.value = y
+    }
+    for (const c of [base, still, title, pip, copy]) p.clips[c.id] = c
 
     const meanDiff = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
       let sum = 0

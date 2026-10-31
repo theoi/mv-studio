@@ -6,6 +6,7 @@
 import { JobError } from '../shared/jobs.ts'
 import { createWorkerClient, type CallOptions } from '../shared/worker.ts'
 import type { EncodeJob, EncodeResult } from './encode.ts'
+import type { BridgedVideo } from './frames.ts'
 import { serveMedia, type PreviewRenderRequest } from './previewWorker.ts'
 import type { RenderWorkerApi } from './render.worker.ts'
 import type { MediaFileSource } from './types.ts'
@@ -38,6 +39,8 @@ export function startRenderWorker(): RenderWorker {
 export interface PreviewWorker {
   /** Draws a frame; pass the request's VideoFrames in `transfer`. Resolves with the frame when `capture` is set. */
   render(request: PreviewRenderRequest, transfer: Transferable[]): Promise<ImageBitmap | null>
+  /** Sends a video frame of the next render ahead of it (WorkerPreview.stage), taking the frame. */
+  stage(video: BridgedVideo): void
   /** The frame drawn last; needs preserveDrawingBuffer. */
   capture(): Promise<ImageBitmap>
   /** How long the last frame rendered with `measure` took to draw, once the GPU has drawn it; null when unknown. */
@@ -141,6 +144,16 @@ export async function startPreviewWorker(
         drawn = true
         return bitmap
       })
+    },
+    stage: (video) => {
+      if (dead()) {
+        video.frame?.close()
+        return
+      }
+      // A failure shows in the render that names the frame.
+      void client
+        .call('previewStage', video, { transfer: video.frame ? [video.frame] : [] })
+        .catch(() => undefined)
     },
     capture: () => {
       const error = dead()
