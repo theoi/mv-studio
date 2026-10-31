@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   OpenAICompatibleClient,
   resetLlmCapabilities,
@@ -344,5 +344,85 @@ describe('Ask against OpenAI-compatible endpoints', () => {
     const { editor, ask } = session(client, await draft())
     expect((await ask.ask('make the lyrics bigger')).status).toBe('applied')
     expect(texts(editor.getProject()).every((t) => t.style.fontSize === 130)).toBe(true)
+  })
+})
+
+describe('AskSession feedback and review', () => {
+  const hanging: LlmToolClient = {
+    callTools: (request) =>
+      new Promise((_resolve, reject) =>
+        request.signal?.addEventListener('abort', () => reject(new JobError('cancelled', 'Cancelled'))),
+      ),
+  }
+
+  it('turns slow after a while and returns to idle on Cancel', async () => {
+    const editor = new ProjectEditor(await draft())
+    const ask = new AskSession({ editor, jobs: new JobRunner(), client: () => hanging, slowAfterMs: 5 })
+    const pending = ask.ask('bigger')
+    expect(ask.getState()).toMatchObject({ status: 'thinking', slow: false, message: 'Thinking' })
+    await vi.waitFor(() => expect(ask.getState()).toMatchObject({ status: 'thinking', slow: true }))
+    ask.cancel()
+    expect((await pending).status).toBe('idle')
+  })
+
+  it('shows which repair attempt is running', async () => {
+    const project = await draft()
+    const bad = {
+      name: 'edit_project',
+      args: { summary: 'x', operations: [{ op: 'remove', clips: ['c999'] }] },
+    }
+    const inner = scriptedClient(bad, bigger)
+    const seen: string[] = []
+    const ask: AskSession = new AskSession({
+      editor: new ProjectEditor(project),
+      jobs: new JobRunner(),
+      client: () => ({
+        callTools: (request) => {
+          const state = ask.getState()
+          if (state.status === 'thinking') seen.push(state.message)
+          return inner.callTools(request)
+        },
+      }),
+    })
+    expect((await ask.ask('bigger')).status).toBe('applied')
+    expect(seen).toEqual(['Thinking', 'Fixing the edit (attempt 2 of 3)'])
+  })
+
+  it('waits for Apply on large edits and says why', async () => {
+    const project = await draft()
+    const dim = {
+      name: 'edit_project',
+      args: {
+        summary: 'Dimmed everything',
+        operations: [
+          { op: 'set', clips: { type: 'video' }, property: 'opacity', value: 0.8 },
+          { op: 'set', clips: { type: 'text' }, property: 'opacity', value: 0.8 },
+        ],
+      },
+    }
+    const { editor, ask } = session(scriptedClient(dim), project)
+    const state = await ask.ask('dim everything')
+    if (state.status !== 'review') throw new Error(state.status)
+    expect(state.items.length).toBeGreaterThanOrEqual(8)
+    expect(state.reason).toBe('large')
+    expect(editor.getProject()).toBe(project)
+  })
+
+  it('reviews edits from a small model and suggests a bigger one when an edit fails', async () => {
+    const project = await draft()
+    const bad = { name: 'edit_project', args: { summary: 'x', operations: [{ op: 'explode' }] } }
+    const client = scriptedClient(bigger, bad, bad, bad)
+    const ask = new AskSession({
+      editor: new ProjectEditor(project),
+      jobs: new JobRunner(),
+      client: () => client,
+      smallModel: () => true,
+    })
+    const reviewed = await ask.ask('bigger')
+    expect(reviewed).toMatchObject({ status: 'review', reason: 'small-model' })
+    const failed = await ask.ask('do it')
+    if (failed.status !== 'error') throw new Error(failed.status)
+    expect(failed.title).toBe("Couldn't make that edit")
+    expect(failed.steps.join(' ')).toMatch(/7B or larger model, or a cloud model/)
   })
 })

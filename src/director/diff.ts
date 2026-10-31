@@ -164,6 +164,8 @@ function clipDetails(before: Clip, after: Clip, beforeProject: Project, afterPro
     const now = b.get(path)
     if (JSON.stringify(was) === JSON.stringify(now)) continue
     if (path === 'name') continue
+    // A color adjustment created at neutral only to carry a music reaction is not a visible change by itself.
+    if (was === undefined && now === 0 && path.startsWith('adjustments.')) continue
     details.push(
       `${pathLabel(path)} ${describeValue(path, now, tracks)} (was ${describeValue(path, was, tracks)})`,
     )

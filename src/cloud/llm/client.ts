@@ -13,7 +13,14 @@ import {
   type CloudErrorKind,
 } from '../errors.ts'
 import { extractJson, stripReasoning } from './json.ts'
-import { guessLocalRunner, isLoopbackHost, llmPreset, localSetupSteps, pageOrigin } from './presets.ts'
+import {
+  guessLocalRunner,
+  isLoopbackHost,
+  llmPreset,
+  llmTimeoutSeconds,
+  localSetupSteps,
+  pageOrigin,
+} from './presets.ts'
 
 export interface ToolCall {
   id: string
@@ -74,7 +81,7 @@ export interface LlmEndpoint {
 
 export interface LlmClientOptions {
   fetch?: typeof fetch
-  /** Per-request timeout. Local models can take a while on first load. */
+  /** Per-request timeout; defaults to llmTimeoutSeconds() for the endpoint. */
   timeoutMs?: number
   /** Overrides for tests; default to the current page. */
   pageOrigin?: string
@@ -139,7 +146,7 @@ export class OpenAICompatibleClient {
     this.endpoint = endpoint
     this.baseUrl = normalizeBaseUrl(endpoint.baseUrl, endpoint.preset)
     this.doFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
-    this.timeoutMs = options.timeoutMs ?? 180_000
+    this.timeoutMs = options.timeoutMs ?? llmTimeoutSeconds(endpoint) * 1000
     this.origin = options.pageOrigin ?? pageOrigin()
     this.protocol =
       options.pageProtocol ??
@@ -209,13 +216,26 @@ export class OpenAICompatibleClient {
     }
   }
 
-  /** One raw chat completion call. */
+  /** One raw chat completion call. Adapts or drops sampling parameters the model rejects. */
   async chat(body: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    return (await this.send('/chat/completions', {
-      method: 'POST',
-      body: { model: this.requireModel(), ...body },
-      signal,
-    })) as Record<string, unknown>
+    const model = this.requireModel()
+    let payload: Record<string, unknown> = { model, ...adaptForModel(body, model, this.isOpenAi()) }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return (await this.send('/chat/completions', { method: 'POST', body: payload, signal })) as Record<
+          string,
+          unknown
+        >
+      } catch (error) {
+        const next = attempt < 3 ? withoutRejectedParam(payload, error) : undefined
+        if (!next) throw error
+        payload = next
+      }
+    }
+  }
+
+  private isOpenAi(): boolean {
+    return this.endpoint.preset === 'openai' || /^https:\/\/api\.openai\.com\//.test(this.baseUrl)
   }
 
   /**
@@ -395,16 +415,7 @@ export class OpenAICompatibleClient {
       })
     } catch (error) {
       if (o.signal?.aborted) throw cancelledError('llm', error)
-      if (timeout.aborted) {
-        throw this.error('timeout', {
-          title: 'The model took too long to answer',
-          message: `No answer after ${Math.round(this.timeoutMs / 1000)} s.`,
-          steps: [
-            'Try again. Local models are slow the first time they load; a smaller model answers faster.',
-          ],
-          cause: error,
-        })
-      }
+      if (timeout.aborted) throw this.timeoutError(error)
       if (isFetchFailure(error)) throw await this.unreachable(base, path, error, o.signal)
       throw this.unknown(error)
     }
@@ -413,6 +424,7 @@ export class OpenAICompatibleClient {
       text = await response.text()
     } catch (error) {
       if (o.signal?.aborted) throw cancelledError('llm', error)
+      if (timeout.aborted) throw this.timeoutError(error)
       throw this.unknown(error)
     }
     let json: unknown
@@ -482,6 +494,29 @@ export class OpenAICompatibleClient {
       ],
       cause,
     })
+  }
+
+  private timeoutError(cause: unknown): CloudError {
+    const local = guessLocalRunner(this.baseUrl, this.endpoint.preset) !== 'other' || this.isLoopback()
+    return this.error('timeout', {
+      title: 'The model took too long to answer',
+      message: `No answer after ${Math.round(this.timeoutMs / 1000)} s, so MV Studio stopped waiting.`,
+      steps: [
+        local
+          ? 'Local models are slowest the first time they load, so try again. A smaller or faster model answers sooner.'
+          : 'Try again, or pick a faster model.',
+        'To wait longer, raise the answer time limit in Settings › AI and cloud.',
+      ],
+      cause,
+    })
+  }
+
+  private isLoopback(): boolean {
+    try {
+      return isLoopbackHost(new URL(this.baseUrl).hostname)
+    } catch {
+      return false
+    }
   }
 
   private httpError(status: number, json: unknown, text: string): CloudError {
@@ -639,6 +674,40 @@ export class OpenAICompatibleClient {
 function wireToolChoice(choice: ToolChoice, toolCount: number): unknown {
   if (typeof choice !== 'object') return choice
   return toolCount === 1 ? 'required' : { type: 'function', function: { name: choice.name } }
+}
+
+/** OpenAI reasoning models (o-series, GPT-5 except the chat variants) reject max_tokens and custom temperatures. */
+const OPENAI_REASONING = /^(o\d|gpt-5)(?!.*chat)/i
+
+function adaptForModel(
+  body: Record<string, unknown>,
+  model: string,
+  openai: boolean,
+): Record<string, unknown> {
+  if (!openai) return body
+  const { max_tokens: maxTokens, ...out } = body
+  if (maxTokens !== undefined) out.max_completion_tokens = maxTokens
+  if (OPENAI_REASONING.test(model)) {
+    delete out.temperature
+    out.reasoning_effort = 'low'
+  }
+  return out
+}
+
+/** The body without the parameter a 400 error names, or undefined when the error is about something else. */
+function withoutRejectedParam(
+  body: Record<string, unknown>,
+  error: unknown,
+): Record<string, unknown> | undefined {
+  if (!(error instanceof CloudError) || (error.status !== 400 && error.status !== 422)) return undefined
+  const key = ['max_tokens', 'temperature', 'reasoning_effort', 'max_completion_tokens'].find(
+    (k) => k in body && new RegExp(`\\b${k}\\b`).test(error.message),
+  )
+  if (!key) return undefined
+  const { [key]: value, ...rest } = body
+  return key === 'max_tokens' && /max_completion_tokens/.test(error.message)
+    ? { ...rest, max_completion_tokens: value }
+    : rest
 }
 
 function firstMessage(response: Record<string, unknown>): { content?: unknown; tool_calls?: unknown } {

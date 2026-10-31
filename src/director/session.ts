@@ -56,6 +56,8 @@ export interface DirectorDeps {
   ledger?: SpendLedgerLike
   /** Defaults to the local rule planner. */
   planner?: Planner
+  /** When the planning state turns slow (default 8000 ms). */
+  slowAfterMs?: number
   readAsset?: (assetId: Id) => Promise<Blob>
 }
 
@@ -70,7 +72,16 @@ export interface PlanPreview {
 
 export type DirectorState =
   | { status: 'idle' }
-  | { status: 'planning'; request: DirectorRequest; jobId: string; message: string }
+  | {
+      status: 'planning'
+      request: DirectorRequest
+      jobId: string
+      message: string
+      /** Still planning after a few seconds: show "Still working" with Cancel. */
+      slow: boolean
+      /** The AI model is planning; offer "Use the local draft instead" (useLocalDraft()). */
+      canUseLocal: boolean
+    }
   | {
       status: 'ready'
       request: DirectorRequest
@@ -161,11 +172,12 @@ export class DirectorSession {
   }
 
   /** Makes a plan. Costs nothing: generation only happens in apply(). */
-  async plan(request: DirectorRequest): Promise<DirectorState> {
+  async plan(request: DirectorRequest, options: { local?: boolean } = {}): Promise<DirectorState> {
     this.job?.cancel()
     const project = this.deps.editor.getProject()
     const provider = request.generate ? this.deps.provider?.() : undefined
-    const planner = this.deps.planner ?? ((input: PlannerInput) => planLocally(input))
+    const local = (input: PlannerInput) => planLocally(input)
+    const planner = options.local ? local : (this.deps.planner ?? local)
     const handle = this.deps.jobs.run({
       kind: 'director.plan',
       title: 'Planning your video',
@@ -188,7 +200,22 @@ export class DirectorSession {
       },
     })
     this.job = handle
-    this.set({ status: 'planning', request, jobId: handle.id, message: 'Planning your video' })
+    this.set({
+      status: 'planning',
+      request,
+      jobId: handle.id,
+      message: 'Planning your video',
+      slow: false,
+      canUseLocal: planner !== local,
+    })
+    const planning = (patch: { message?: string; slow?: boolean }) => {
+      if (this.job === handle && this.state.status === 'planning') this.set({ ...this.state, ...patch })
+    }
+    const unsubscribe = handle.subscribe((snapshot) => {
+      const message = snapshot.progress.message
+      if (message && this.state.status === 'planning' && message !== this.state.message) planning({ message })
+    })
+    const timer = setTimeout(() => planning({ slow: true }), this.deps.slowAfterMs ?? 8000)
     try {
       const plan = await handle.promise
       if (this.job !== handle) return this.state
@@ -197,8 +224,17 @@ export class DirectorSession {
     } catch (error) {
       if (this.job !== handle) return this.state
       this.failOrReset(error, request)
+    } finally {
+      clearTimeout(timer)
+      unsubscribe()
     }
     return this.state
+  }
+
+  /** While the AI model plans: stop waiting for it and make the draft with the built-in planner instead. */
+  useLocalDraft(): Promise<DirectorState> {
+    if (this.state.status !== 'planning' || !this.state.canUseLocal) return Promise.resolve(this.state)
+    return this.plan(this.state.request, { local: true })
   }
 
   /** Plans again with another seed: different clip picks, prompts and camera moves. */

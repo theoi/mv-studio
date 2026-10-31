@@ -14,6 +14,8 @@ export interface LlmSettings {
   /** Empty for local runners that need no key. */
   apiKey: string
   model: string
+  /** Seconds to wait for one answer (Settings › AI and cloud › Answer time limit); unset uses the default. */
+  timeoutSeconds?: number
 }
 
 export interface CloudSettings {

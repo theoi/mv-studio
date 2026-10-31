@@ -167,7 +167,10 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
   const ids = o.previous?.pendingCall ? o.previous.ids : summary.ids
   const maxRepairs = o.maxRepairs ?? 2
   for (let attempt = 0; ; attempt++) {
-    o.ctx.progress({ stage: 'llm', message: attempt === 0 ? 'Thinking' : 'Fixing the edit' })
+    o.ctx.progress({
+      stage: 'llm',
+      message: attempt === 0 ? 'Thinking' : `Fixing the edit (attempt ${attempt + 1} of ${maxRepairs + 1})`,
+    })
     const result = await o.client.callTools({
       messages,
       tools: ASK_TOOLS,
@@ -253,7 +256,15 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
 
 export type AskState =
   | { status: 'idle' }
-  | { status: 'thinking'; request: string; jobId: string }
+  | {
+      status: 'thinking'
+      request: string
+      jobId: string
+      /** Progress line, e.g. "Thinking" or "Fixing the edit (attempt 2 of 3)". */
+      message: string
+      /** Still waiting after a few seconds: show "Still working" with Cancel. */
+      slow: boolean
+    }
   | { status: 'question'; request: string; question: string; choices: string[] }
   | {
       status: 'review'
@@ -262,6 +273,8 @@ export type AskState =
       changes: string
       items: ChangeItem[]
       warnings: string[]
+      /** Why it waits for Apply: the review setting, a deletion, a large change, or a small model. */
+      reason: ReviewReason
     }
   | {
       status: 'applied'
@@ -285,6 +298,8 @@ export type AskState =
       needsSetup: boolean
     }
 
+export type ReviewReason = 'setting' | 'deletes' | 'large' | 'small-model'
+
 export interface AskDeps {
   editor: ProjectEditor
   jobs: JobRunner
@@ -292,15 +307,28 @@ export interface AskDeps {
   catalog?: () => DirectorCatalog
   /** Show changes for Apply or Discard before applying (default false: apply, with Undo). */
   reviewFirst?: () => boolean
+  /** True when the configured model is small (modelHint() in src/cloud returns a hint); its edits wait for review. */
+  smallModel?: () => boolean
+  /** When the thinking state turns slow (default 8000 ms). */
+  slowAfterMs?: number
 }
 
-/** Large deletions always wait for Apply, even when changes normally apply right away. */
-function needsReview(items: ChangeItem[]): boolean {
+const SLOW_AFTER_MS = 8000
+/** Edits that change this many clips or tracks wait for Apply. */
+const LARGE_EDIT_ITEMS = 8
+
+/** Deletions and large edits always wait for Apply, even when changes normally apply right away. */
+function reviewReason(items: ChangeItem[], deps: AskDeps): ReviewReason | undefined {
   const removedClips = items.filter((i) => i.action === 'remove' && i.target === 'clip').length
-  return (
+  if (
     removedClips >= 4 ||
     items.some((i) => i.action === 'remove' && (i.target === 'track' || i.target === 'asset'))
   )
+    return 'deletes'
+  if (items.length >= LARGE_EDIT_ITEMS) return 'large'
+  if (deps.smallModel?.()) return 'small-model'
+  if (deps.reviewFirst?.()) return 'setting'
+  return undefined
 }
 
 export class AskSession {
@@ -381,7 +409,21 @@ export class AskSession {
         }),
     })
     this.job = handle
-    this.set({ status: 'thinking', request: originalRequest, jobId: handle.id })
+    this.set({
+      status: 'thinking',
+      request: originalRequest,
+      jobId: handle.id,
+      message: 'Thinking',
+      slow: false,
+    })
+    const thinking = (patch: Partial<Extract<AskState, { status: 'thinking' }>>) => {
+      if (this.job === handle && this.state.status === 'thinking') this.set({ ...this.state, ...patch })
+    }
+    const unsubscribe = handle.subscribe((snapshot) => {
+      const message = snapshot.progress.message
+      if (message && this.state.status === 'thinking' && message !== this.state.message) thinking({ message })
+    })
+    const timer = setTimeout(() => thinking({ slow: true }), this.deps.slowAfterMs ?? SLOW_AFTER_MS)
     let turn: AskTurn
     try {
       turn = await handle.promise
@@ -392,17 +434,11 @@ export class AskSession {
         this.set({ status: 'idle' })
         return this.state
       }
-      const cloud = cloudErrorInfo(err)
-      this.set({
-        status: 'error',
-        request: originalRequest,
-        title: cloud?.title ?? "That didn't work",
-        message: err.message,
-        steps: cloud?.steps ?? [],
-        error: err.toJSON(),
-        needsSetup: false,
-      })
+      this.set({ status: 'error', request: originalRequest, ...this.errorView(err), needsSetup: false })
       return this.state
+    } finally {
+      clearTimeout(timer)
+      unsubscribe()
     }
     if (this.job !== handle) return this.state
     this.turn = turn
@@ -431,13 +467,40 @@ export class AskSession {
         items: outcome.items,
         warnings: outcome.warnings,
       }
-      if (this.deps.reviewFirst?.() || needsReview(outcome.items)) this.set({ status: 'review', ...review })
+      const reason = reviewReason(outcome.items, this.deps)
+      if (reason) this.set({ status: 'review', ...review, reason })
       else this.commit(review)
     }
     return this.state
   }
 
-  private commit(view: Omit<Extract<AskState, { status: 'review' }>, 'status'>) {
+  private errorView(
+    err: JobError,
+  ): Pick<Extract<AskState, { status: 'error' }>, 'title' | 'message' | 'steps' | 'error'> {
+    const cloud = cloudErrorInfo(err)
+    const details = err.details as { ask?: string } | undefined
+    if (details?.ask === 'invalid-edit') {
+      return {
+        title: "Couldn't make that edit",
+        message: err.message,
+        steps: [
+          'Try rephrasing it, or name the clips, the song section or the time.',
+          this.deps.smallModel?.()
+            ? 'Small models often struggle with edits. A 7B or larger model, or a cloud model, does better.'
+            : 'If it keeps happening, try a more capable model in Settings › AI and cloud.',
+        ],
+        error: err.toJSON(),
+      }
+    }
+    return {
+      title: cloud?.title ?? "That didn't work",
+      message: err.message,
+      steps: cloud?.steps ?? [],
+      error: err.toJSON(),
+    }
+  }
+
+  private commit(view: Omit<Extract<AskState, { status: 'review' }>, 'status' | 'reason'>) {
     const pending = this.pending
     if (!pending) return
     const editor = this.deps.editor
@@ -488,7 +551,7 @@ export class AskSession {
   /** Applies the changes shown for review. */
   accept(): AskState {
     if (this.state.status === 'review') {
-      const { status: _status, ...view } = this.state
+      const { status: _status, reason: _reason, ...view } = this.state
       this.commit(view)
     }
     return this.state

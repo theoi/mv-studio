@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPlannerInput,
   compileOperations,
+  describeChanges,
   compilePlan,
   OperationError,
   planLocally,
@@ -61,6 +62,35 @@ describe('compileOperations', () => {
       expect(t.style.color).toBe(inside ? '#ff0000' : texts(project).find((x) => x.id === t.id)!.style.color)
     }
     expect(texts(after).some((t) => t.style.color === '#ff0000')).toBe(true)
+  })
+
+  it('reads a lyric line given as a section as its time span, and lists the real sections otherwise', async () => {
+    const { project, summary } = await draft()
+    const line = summary.ids.toShort.get('l3')!
+    const { after } = run(
+      project,
+      [{ op: 'set', clips: { type: 'text', section: line }, property: 'color', value: '#00ff00' }],
+      summary.ids,
+    )
+    expect(
+      texts(after)
+        .filter((t) => t.style.color === '#00ff00')
+        .map((t) => t.text),
+    ).toEqual(['Hold on hold on tonight'])
+    expect(() =>
+      run(project, [{ op: 'set', clips: { section: 'x9' }, property: 'opacity', value: 0.5 }], summary.ids),
+    ).toThrow(/section x9 doesn't exist; the song sections are s\d+, s\d+/)
+  })
+
+  it('describes a new music reaction on a color adjustment without a neutral value change', async () => {
+    const { project, summary, short } = await draft()
+    const clip = videos(project)[0]!
+    const { after } = run(
+      project,
+      [{ op: 'react', clips: [short(clip.id)], property: 'saturation', source: 'bass', amount: 0.2 }],
+      summary.ids,
+    )
+    expect(describeChanges(project, after)[0]?.details).toEqual(['music reaction added to saturation'])
   })
 
   it('replaces animation when setting a value but keeps the music reaction', async () => {

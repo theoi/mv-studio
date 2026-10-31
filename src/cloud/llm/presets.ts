@@ -23,7 +23,7 @@ export const LLM_PRESETS: readonly LlmPreset[] = [
     local: false,
     keyUrl: 'https://platform.openai.com/api-keys',
     description: 'Uses your OpenAI API key. Billed by OpenAI per request.',
-    preferredModels: [/^gpt-5(\.\d+)?-mini$/, /^gpt-4\.1-mini$/, /^gpt-4o-mini$/, /^gpt-5/, /^gpt-4/],
+    preferredModels: [/^gpt-4\.1-mini$/, /^gpt-5(\.\d+)?-mini$/, /^gpt-4o-mini$/, /^gpt-5/, /^gpt-4/],
   },
   {
     id: 'openrouter',
@@ -34,8 +34,8 @@ export const LLM_PRESETS: readonly LlmPreset[] = [
     keyUrl: 'https://openrouter.ai/keys',
     description: 'One key for many models. Billed by OpenRouter per request.',
     preferredModels: [
-      /gpt-5(\.\d+)?-mini/,
       /gpt-4\.1-mini/,
+      /gpt-5(\.\d+)?-mini/,
       /gpt-4o-mini/,
       /claude.*(sonnet|haiku)/,
       /gemini.*flash/,
@@ -139,4 +139,88 @@ export function localSetupSteps(runner: 'ollama' | 'lmstudio' | 'other', origin 
     lna,
     'Choose Test connection again.',
   ]
+}
+
+/** Answer time limits in seconds. Local models get longer by default because the first request also loads the model. */
+export const LLM_TIMEOUT = { cloud: 90, local: 120, min: 20, max: 600 } as const
+
+/** True for local runners and other endpoints on this computer. */
+export function isLocalEndpoint(endpoint: { preset?: LlmPresetId; baseUrl: string }): boolean {
+  if (endpoint.preset && llmPreset(endpoint.preset).local) return true
+  try {
+    return isLoopbackHost(new URL(endpoint.baseUrl).hostname)
+  } catch {
+    return false
+  }
+}
+
+/** How long to wait for one answer: the user's setting (clamped), else the default for the endpoint. */
+export function llmTimeoutSeconds(settings: {
+  preset?: LlmPresetId
+  baseUrl: string
+  timeoutSeconds?: number
+}): number {
+  const t = settings.timeoutSeconds
+  if (typeof t === 'number' && Number.isFinite(t) && t > 0) {
+    return Math.min(LLM_TIMEOUT.max, Math.max(LLM_TIMEOUT.min, Math.round(t)))
+  }
+  return isLocalEndpoint(settings) ? LLM_TIMEOUT.local : LLM_TIMEOUT.cloud
+}
+
+export interface ModelRecommendation {
+  preset: LlmPresetId
+  /** Model id as the provider or runner names it. */
+  model: string
+  note: string
+}
+
+/** Shown in Settings next to the model picker. */
+export const RECOMMENDED_MODELS: readonly ModelRecommendation[] = [
+  {
+    preset: 'openai',
+    model: 'gpt-4.1-mini',
+    note: 'Recommended. Fast, inexpensive and reliable at edits.',
+  },
+  {
+    preset: 'openrouter',
+    model: 'openai/gpt-4.1-mini',
+    note: 'Recommended. Fast, inexpensive and reliable at edits.',
+  },
+  {
+    preset: 'ollama',
+    model: 'qwen2.5:7b',
+    note: 'Good local choice for computers with 8 GB of free memory. Larger models (qwen2.5:14b) make better edits.',
+  },
+  {
+    preset: 'lmstudio',
+    model: 'qwen2.5-7b-instruct',
+    note: 'Good local choice for computers with 8 GB of free memory. Larger models make better edits.',
+  },
+]
+
+/** Size in billions of parameters read from a model id ("qwen2.5:3b", "Llama-3.1-8B", "mixtral-8x7b"), if any. */
+export function modelSizeBillions(model: string): number | undefined {
+  let size: number | undefined
+  for (const m of model.toLowerCase().matchAll(/(?:^|[^a-z0-9.])(?:(\d+)x)?(\d+(?:\.\d+)?)b(?![a-z0-9])/g)) {
+    const n = Number(m[2]) * (m[1] ? Number(m[1]) : 1)
+    if (Number.isFinite(n)) size = Math.max(size ?? 0, n)
+  }
+  return size
+}
+
+/** Below this size, local models often misplace or skip edits. */
+export const SMALL_MODEL_BILLIONS = 7
+
+/** A gentle hint for Settings and Ask when the configured local model is small; undefined otherwise. */
+export function modelHint(
+  settings: { preset?: LlmPresetId; baseUrl: string; model: string } | null | undefined,
+): string | undefined {
+  if (!settings || !isLocalEndpoint(settings)) return undefined
+  const size = modelSizeBillions(settings.model)
+  if (size === undefined || size >= SMALL_MODEL_BILLIONS) return undefined
+  return (
+    `This is a small model (${size}B). It can be slow on long requests and sometimes misplaces edits. ` +
+    'For better results, use a 7B or larger model (for example qwen2.5:7b) or a cloud model. ' +
+    'Ask shows changes for review before applying them.'
+  )
 }

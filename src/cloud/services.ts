@@ -5,7 +5,7 @@
 import { FalProvider } from './fal/provider.ts'
 import type { CloudSettings, CloudSettingsStore } from './keys.ts'
 import { llmEndpointFromSettings, OpenAICompatibleClient } from './llm/client.ts'
-import { llmPreset } from './llm/presets.ts'
+import { llmPreset, llmTimeoutSeconds } from './llm/presets.ts'
 import type { GenerationModel, MediaGenerationProvider, TranscriptionProvider } from './types.ts'
 
 export interface ProviderDeps {
@@ -99,7 +99,10 @@ export class CloudServices {
     if (this.llmClient?.signature !== signature) {
       this.llmClient = {
         signature,
-        client: new OpenAICompatibleClient(llmEndpointFromSettings(s), { fetch: this.deps.fetch }),
+        client: new OpenAICompatibleClient(llmEndpointFromSettings(s), {
+          fetch: this.deps.fetch,
+          timeoutMs: llmTimeoutSeconds(s) * 1000,
+        }),
       }
     }
     return this.llmClient.client
