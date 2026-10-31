@@ -108,8 +108,9 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     const used = new Set(wanted.map((c) => c.assetId))
     this.buffers.evict(
       (asset) =>
-        (!project.assets[asset.id] && !this.buffers.heldElsewhere(asset.id, this)) ||
-        (!stems && asset.origin.type === 'stem' && !used.has(asset.id) && !!this.buffers.error(asset.id)),
+        !this.buffers.heldElsewhere(asset.id, this) &&
+        (!project.assets[asset.id] ||
+          (!stems && asset.origin.type === 'stem' && !used.has(asset.id) && !!this.buffers.error(asset.id))),
     )
     this.timeReleases(project, used)
     const request = ++this.loadRequest
