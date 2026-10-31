@@ -51,7 +51,6 @@ import {
   sectionName,
   sectionsOf,
   timelineDuration,
-  undo,
   useProject,
 } from '../../state/project.ts'
 import { useThumbnail } from '../../state/thumbs.ts'
@@ -105,6 +104,20 @@ function takeSummary(take: VjSnapshot['takes'][number], grid: QuantizeGrid): str
   if (parts.length === 0) return null
   const what = parts.join(', ')
   return take.quantized ? `${what}, lined up with the ${grid === 'bar' ? 'bars' : 'beats'}` : what
+}
+
+/**
+ * Each take is its own undo step ("VJ take N", and "Discard VJ take N" when discarded), so undoing a performance
+ * walks back over the visit's takes at the top of the history, stopping at any other edit.
+ */
+function undoTakes(kept: number): number {
+  let removed = 0
+  while (removed < kept) {
+    const step = /^(Discard )?VJ take \d+$/.exec(editor.undoLabel() ?? '')
+    if (!step || !editor.undo()) break
+    removed += step[1] ? -1 : 1
+  }
+  return removed
 }
 
 function failedTakeMessage(take: VjSnapshot['takes'][number]): string {
@@ -450,7 +463,10 @@ export function VjMode() {
     if (kept > 0)
       toast(`Performance added to the timeline: ${plural(kept, 'take')}, all editable`, {
         label: 'Undo',
-        run: undo,
+        run: () => {
+          const removed = undoTakes(kept)
+          toast(removed > 0 ? `Removed ${plural(removed, 'take')} from the timeline` : 'Nothing to undo')
+        },
       })
   }
 

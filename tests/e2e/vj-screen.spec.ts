@@ -24,7 +24,6 @@ test('keys played while recording land on the timeline as one take, and Esc brin
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
   await openVj(page, 64)
-  await page.waitForTimeout(500)
   await page.screenshot({ path: testInfo.outputPath('22-vj-mode-1440x900.png') })
   await page.setViewportSize({ width: 1280, height: 720 })
   await page.waitForTimeout(300)
@@ -69,7 +68,7 @@ test('keys played while recording land on the timeline as one take, and Esc brin
   expect(errors).toEqual([])
 })
 
-test('playing without Record is a rehearsal, and a take can be discarded from its message', async ({
+test('playing without Record is a rehearsal, a take can be discarded, and one Undo removes a performance', async ({
   page,
 }) => {
   await openVj(page)
@@ -94,10 +93,26 @@ test('playing without Record is a rehearsal, and a take can be discarded from it
   await page.getByRole('button', { name: 'Discard' }).click()
   await expect(page.getByText('Take 1 discarded')).toBeVisible()
 
+  // Two more takes: the performance's Undo removes both, walking back over the discard.
+  for (const [n, key] of [
+    [2, 'KeyW'],
+    [3, 'KeyE'],
+  ] as const) {
+    await page.keyboard.press('Space')
+    await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible()
+    await page.waitForTimeout(300)
+    await page.keyboard.press(key)
+    await page.waitForTimeout(400)
+    await page.keyboard.press('Space')
+    await expect(page.getByText(new RegExp(`^Take ${n} added to the timeline`))).toBeVisible()
+  }
   await page.getByRole('button', { name: 'Back to editor' }).click()
   await expect(page.getByRole('img', { name: 'Live output' })).toBeHidden()
+  await expect(page.getByText('Performance added to the timeline: 2 takes, all editable')).toBeVisible()
+  await expect(page.getByText('VJ clips', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect(page.getByText('Removed 2 takes from the timeline')).toBeVisible()
   await expect(page.getByText('VJ clips', { exact: true })).toHaveCount(0)
-  await expect(page.getByText(/^Performance added/)).toHaveCount(0)
 })
 
 test('quantize set in Settings lines the next take up with the beats, and open menus keep their keys', async ({
