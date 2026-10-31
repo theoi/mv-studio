@@ -89,7 +89,7 @@ export async function analyzeSong(song: Asset): Promise<boolean> {
     return true
   } catch (error) {
     if (error instanceof JobError && error.code === 'cancelled') return false
-    say(`Could not analyze the song: ${error instanceof Error ? error.message : String(error)}`)
+    say(`Couldn’t analyze the song: ${error instanceof Error ? error.message : String(error)}`)
     return false
   }
 }
