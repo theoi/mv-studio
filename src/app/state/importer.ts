@@ -9,14 +9,18 @@ import {
   type Project,
   type Track,
 } from '../../model/index.ts'
+import type { AudioAnalysis } from '../../model/index.ts'
+import type * as AnalysisClient from '../../analysis/client.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
+import { backgroundAnalysisOn } from './footage.ts'
 import { dispatch, editor } from './project.ts'
 import { get, select, set, toast } from './ui.ts'
 
 /*
  * Real media import: files are copied into browser storage (OPFS) by src/media and added to the project as assets.
- * The first song imported into a project without one becomes its song and is analyzed (beats, sections, energy).
+ * The first song imported into a project without one becomes its song and is analyzed (beats, sections, energy),
+ * then refined in the background (bars and steadier beats).
  */
 
 let fileInput: HTMLInputElement | null = null
@@ -72,9 +76,34 @@ async function analyzeSong(song: Asset, file: Blob): Promise<void> {
     const bpm = analysis.tempo ? `${Math.round(analysis.tempo.bpm)} BPM` : 'the beat'
     const sections = analysis.sections?.length ?? 0
     toast(`Found ${bpm} and ${sections} ${sections === 1 ? 'section' : 'sections'}`)
+    void refineSong(client, analysisService, analysis)
   } catch (error) {
     if (error instanceof JobError && error.code === 'cancelled') return
     toast(`Could not analyze the song: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/**
+ * Bars and steadier beats from Beat This! (a model downloaded on first use), shown in the activity list while it
+ * runs. Beats or sections the user corrected meanwhile are kept. If it fails, the fast analysis stays.
+ */
+async function refineSong(
+  client: typeof AnalysisClient,
+  service: SongAnalysisService,
+  fast: AudioAnalysis,
+): Promise<void> {
+  try {
+    if (!backgroundAnalysisOn()) return
+    const refined = await service.refine(fast.assetId).promise
+    if (editor.getProject().assets[fast.assetId])
+      dispatch(client.refinedAnalysisCommand(fast, refined), { history: 'skip' })
+  } catch (error) {
+    if (error instanceof JobError && error.code === 'cancelled') return
+    toast(
+      `Could not refine the beats, so the first analysis is kept. ${error instanceof Error ? error.message : ''}`,
+    )
+  } finally {
+    void service.release(fast.assetId).catch(() => undefined)
   }
 }
 
