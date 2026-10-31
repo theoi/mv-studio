@@ -190,6 +190,63 @@ test('frame thumbnails show the frame at each requested source time, cover-cropp
   expect(Math.abs(r[1].frame - 75)).toBeLessThanOrEqual(1)
   expect(errors).toEqual([])
 })
+test('video frames decoded in the worker look as the preview’s <video> shows them: untagged SD colors and rotation', async ({
+  page,
+}) => {
+  const errors = collectErrors(page)
+  await openHarness(page)
+  await page.setInputFiles(
+    '#e2e-file-input',
+    ['clip.mp4', 'clip-rotated.mp4', 'clip1080.mp4'].map((f) => path.join(FIXTURE_DIR, f)),
+  )
+  const r = await page.evaluate(async () => {
+    const { vision } = window.mvStudio
+    const read = (bitmap: ImageBitmap) => {
+      const ctx = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d')!
+      ctx.drawImage(bitmap, 0, 0)
+      return ctx.getImageData(0, 0, bitmap.width, bitmap.height).data
+    }
+    const out = []
+    for (const file of window.mvStudio.files() as File[]) {
+      // The worker path opens no <video> on the page; the fallback would, and would match trivially.
+      let videos = 0
+      const create = document.createElement.bind(document)
+      document.createElement = ((tag: string, o?: ElementCreationOptions) => {
+        if (tag === 'video') videos++
+        return create(tag, o)
+      }) as typeof document.createElement
+      const worker = await vision.openVideoFrames(file, 'worker')
+      const a: ImageBitmap = await worker.frameAt(1, { maxSide: 320 })
+      document.createElement = create
+      const element = await vision.createVideoElementSource(file, 'element')
+      const b: ImageBitmap = await element.frameAt(1, { maxSide: 320 })
+      const pa = read(a)
+      const pb = read(b)
+      let sum = 0
+      for (let i = 0; i < pa.length; i++) if (i % 4 !== 3) sum += Math.abs(pa[i]! - pb[i]!)
+      out.push({
+        name: file.name,
+        videos,
+        worker: [a.width, a.height],
+        element: [b.width, b.height],
+        diff: sum / ((pa.length / 4) * 3),
+      })
+      worker.dispose()
+      element.dispose()
+    }
+    return out
+  })
+  console.log('worker frames vs <video>', JSON.stringify(r))
+  expect(r).toHaveLength(3)
+  for (const f of r) {
+    expect(f.videos, f.name).toBe(0)
+    expect(f.worker, f.name).toEqual(f.element)
+    // Untagged SD video differs by about 8.5 on average when decoded as BT.709 instead of the <video>'s BT.601.
+    expect(f.diff, f.name).toBeLessThan(1.5)
+  }
+  expect(r.find((f) => f.name === 'clip-rotated.mp4')?.worker).toEqual([180, 320])
+  expect(errors).toEqual([])
+})
 test('depth estimation and the parallax renderer produce a camera move', async ({ page }) => {
   test.setTimeout(240_000)
   const errors = collectErrors(page)

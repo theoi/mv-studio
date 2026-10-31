@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
-import { ALL_FORMATS, BlobSource, CanvasSink, Input, type InputVideoTrack } from 'mediabunny'
+import { ALL_FORMATS, BlobSource, Input, VideoSample, VideoSampleSink } from 'mediabunny'
+import { previewColorSpace, retag } from '../../engine/frames.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { exposeWorker, transfer } from '../../shared/worker.ts'
 import { fitSize } from '../runtime/frames.ts'
@@ -8,12 +9,12 @@ import { fitSize } from '../runtime/frames.ts'
 
 interface Opened {
   input: Input
-  track: InputVideoTrack
+  samples: VideoSampleSink
   width: number
   height: number
   first: number
-  /** One sink per output size. */
-  sinks: Map<string, CanvasSink>
+  /** Set when frames need another color tag to look as they do in the preview's <video>. */
+  colorSpace: VideoColorSpaceInit | null
 }
 
 const opened = new Map<string, Opened>()
@@ -25,13 +26,14 @@ const api = {
       const track = await input.getPrimaryVideoTrack()
       if (!track || !(await track.canDecode()))
         throw new JobError('decode', 'No video this browser can decode')
-      const [width, height, first, duration] = await Promise.all([
+      const [width, height, first, duration, colorSpace] = await Promise.all([
         track.getDisplayWidth(),
         track.getDisplayHeight(),
         track.getFirstTimestamp(),
         track.computeDuration(),
+        previewColorSpace(track),
       ])
-      opened.set(id, { input, track, width, height, first, sinks: new Map() })
+      opened.set(id, { input, samples: new VideoSampleSink(track), width, height, first, colorSpace })
       return { width, height, duration }
     } catch (error) {
       input.dispose()
@@ -43,18 +45,24 @@ const api = {
   async frame({ id, t, maxSide }: { id: string; t: number; maxSide?: number }) {
     const video = opened.get(id)
     if (!video) throw new JobError('decode', 'The video is not open')
-    const size = fitSize(video, maxSide ?? Infinity)
-    const key = `${size.width}x${size.height}`
-    let sink = video.sinks.get(key)
-    if (!sink) {
-      sink = new CanvasSink(video.track, { width: size.width, height: size.height, fit: 'fill' })
-      video.sinks.set(key, sink)
+    const sample = await video.samples.getSample(Math.max(t, video.first))
+    if (!sample) throw new JobError('decode', `No frame at ${t.toFixed(3)} s`)
+    let shown: VideoSample | null = null
+    try {
+      const frame = sample.toVideoFrame()
+      const tagged = video.colorSpace ? await retag(frame, video.colorSpace) : frame
+      shown = new VideoSample(tagged, { rotation: sample.rotation, flip: sample.flip })
+      const size = fitSize(video, maxSide ?? Infinity)
+      const canvas = new OffscreenCanvas(size.width, size.height)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new JobError('internal', 'No 2D canvas for a frame')
+      shown.drawWithFit(ctx, { fit: 'fill' })
+      const bitmap = canvas.transferToImageBitmap()
+      return transfer(bitmap, [bitmap])
+    } finally {
+      shown?.close()
+      sample.close()
     }
-    const wrapped = await sink.getCanvas(Math.max(t, video.first))
-    if (!wrapped) throw new JobError('decode', `No frame at ${t.toFixed(3)} s`)
-    const canvas = wrapped.canvas as OffscreenCanvas
-    const bitmap = canvas.transferToImageBitmap()
-    return transfer(bitmap, [bitmap])
   },
 
   close({ id }: { id: string }) {
