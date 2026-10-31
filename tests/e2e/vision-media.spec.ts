@@ -149,6 +149,47 @@ test('vision frames decoded through the export path match <video> frames and fee
   expect(r.track.frames).toBeGreaterThan(30)
   expect(errors).toEqual([])
 })
+test('frame thumbnails show the frame at each requested source time, cover-cropped to 160×90', async ({
+  page,
+}) => {
+  const errors = collectErrors(page)
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'frames.mp4')])
+  const r = await page.evaluate(async () => {
+    const { media, vision } = window.mvStudio
+    const asset = await media.mediaStore.importFile(window.mvStudio.files()[0])
+    const thumbs = vision.createFrameThumbnails(media.mediaStore)
+    const times = [1, 2.5]
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (times.every((t) => thumbs.get(asset, t) !== undefined)) resolve()
+      }
+      thumbs.subscribe(check)
+      for (const t of times) thumbs.want(asset, t)
+      check()
+    })
+    const read = async (url: string) => {
+      const bitmap = await createImageBitmap(await (await fetch(url)).blob())
+      const c = new OffscreenCanvas(bitmap.width, bitmap.height)
+      const ctx = c.getContext('2d')!
+      ctx.drawImage(bitmap, 0, 0)
+      const at = (x: number) => ctx.getImageData(x, 45, 1, 1).data[0]
+      // frames.mp4 encodes frame N as gray levels: left half (N mod 16)*16+8, right half floor(N/16)*16+8.
+      const frame = Math.round((at(120) - 8) / 16) * 16 + Math.round((at(40) - 8) / 16)
+      return { width: bitmap.width, height: bitmap.height, frame, url: url.slice(0, 23) }
+    }
+    const out = await Promise.all(times.map((t) => read(thumbs.get(asset, t)!)))
+    thumbs.dispose()
+    return out
+  })
+  console.log('frame thumbnails', JSON.stringify(r))
+  for (const t of r) {
+    expect(t).toMatchObject({ width: 160, height: 90, url: 'data:image/jpeg;base64,' })
+  }
+  expect(Math.abs(r[0].frame - 30)).toBeLessThanOrEqual(1)
+  expect(Math.abs(r[1].frame - 75)).toBeLessThanOrEqual(1)
+  expect(errors).toEqual([])
+})
 test('depth estimation and the parallax renderer produce a camera move', async ({ page }) => {
   test.setTimeout(240_000)
   const errors = collectErrors(page)

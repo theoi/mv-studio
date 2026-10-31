@@ -27,6 +27,8 @@ jobs.run({
 
 Frames come from a `FrameSource` (`runtime/frames.ts`). Use `createAssetFrameSource(asset, mediaStore)` for stored assets: it decodes through the engine's export decoder, so analysis sees exactly the exported pixels, and it is about 4x faster than seeking a `<video>`. `createVideoElementSource` covers blobs that are not stored yet.
 
+Clip thumbnails come from `createFrameThumbnails(media)` (`runtime/thumbnails.ts`): 160×90 JPEG frames of a video at a source time, rounded to 0.5 s. Callers `want(asset, time)` while a frame is shown and release it after; one `<video>` per video seeks for each frame, the newest request goes first and released requests are skipped. The app's `useFrameThumbnail(asset, clip.sourceStart)` (`src/app/state/thumbs.ts`) wraps it.
+
 ## Click-to-select tracking
 
 ```ts
