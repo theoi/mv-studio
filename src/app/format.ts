@@ -1,3 +1,5 @@
+import type { ParamSpec } from '../engine/types.ts'
+
 export function formatTime(t: number, withTenths = false): string {
   const m = Math.floor(t / 60)
   const s = t - m * 60
@@ -48,4 +50,17 @@ export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
   if (bytes > 0 && bytes < 1e6) return 'under 1 MB'
   return `${Math.round(bytes / 1e6)} MB`
+}
+
+/**
+ * A number setting's value as the Inspector shows it: with its unit when it has one; an amount within -1..1 as a
+ * percentage, like Opacity; a factor up to 4 (Speed, Reactivity) as a multiplier; anything else as the number.
+ */
+export function formatParam(spec: Extract<ParamSpec, { type: 'number' }>, n: number): string {
+  const step = spec.step ?? (spec.max - spec.min) / 100
+  const text = n.toFixed(step >= 1 ? 0 : step >= 0.1 ? 1 : 2)
+  if (spec.unit) return spec.unit.startsWith('°') ? `${text}${spec.unit}` : `${text} ${spec.unit}`
+  if (spec.min >= -1 && spec.max <= 1) return `${Math.round(n * 100)}%`
+  if (spec.min >= 0 && spec.max <= 4 && step < 1) return `${n.toFixed(1)}×`
+  return text
 }

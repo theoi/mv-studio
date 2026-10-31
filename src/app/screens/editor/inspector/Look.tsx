@@ -21,7 +21,7 @@ function lookSpan(project: Project, clip: VisualClip): string {
 
 /** The look's intensity is the opacity of its layer, so it can be keyframed and react to the music. */
 function LookIntensity({ clip }: { clip: VisualClip }) {
-  const intensity = useAnimatable(clip, ['opacity'])
+  const intensity = useAnimatable(clip, ['opacity'], undefined, { label: 'Look intensity' })
   const pct = Math.round(Number(intensity.value ?? 1) * 100)
   return (
     <FieldRow

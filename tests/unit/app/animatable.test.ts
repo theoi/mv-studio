@@ -62,6 +62,12 @@ describe('a row for a property the clip lacks', () => {
     expect(undone?.type === 'text' && undone.adjustments?.contrast).toBeFalsy()
   })
 
+  it('names the setting in the undo label', () => {
+    const clip = bareText()
+    animatableRow(clip, ['adjustments', 'contrast'], 0, { label: 'Contrast' }).set(0.3)
+    expect(editor.undoLabel()).toBe('Change contrast')
+  })
+
   it('creates the property with its fallback value when a keyframe is added', () => {
     const clip = bareText()
     animatableRow(clip, ['adjustments', 'contrast'], 0).key()

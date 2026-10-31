@@ -66,6 +66,12 @@ function createAt(clip: Clip, path: PropertyPath, value: ParamValue): EditComman
 /** The react button without a panel turns this reaction on and off. */
 const QUICK_REACTION = 'kick'
 
+/** Where a row reads the clip, and the setting's name for the undo label ("Change height"). */
+interface RowOptions {
+  project?: Project
+  label?: string
+}
+
 /**
  * Binds one animatable clip property to the edit API: value edits coalesce per gesture, the keyframe button, and the
  * react button, which opens the music reactions for the property. A clip that lacks the property shows `fallback`
@@ -75,7 +81,7 @@ export function animatableRow(
   clip: Clip,
   path: PropertyPath,
   fallback?: ParamValue,
-  project: Project = editor.getProject(),
+  { project = editor.getProject(), label }: RowOptions = {},
 ) {
   let node: unknown = clip
   for (const k of path) node = (node as Record<string | number, unknown> | undefined)?.[k]
@@ -123,9 +129,7 @@ export function animatableRow(
           path: [...path, 'value'],
           value,
         },
-        {
-          coalesceKey: gesture,
-        },
+        { coalesceKey: gesture, label: label && `Change ${label.charAt(0).toLowerCase()}${label.slice(1)}` },
       ),
     commit: () => editor.endGesture(),
     key,
@@ -145,6 +149,11 @@ export function animatableRow(
  * animatableRow() for an inspector row, re-rendered by project changes that affect the react button, such as stems
  * finishing separation. Spread `buttons` into AnimateButtons.
  */
-export function useAnimatable(clip: Clip, path: PropertyPath, fallback?: ParamValue) {
-  return animatableRow(clip, path, fallback, useProject())
+export function useAnimatable(
+  clip: Clip,
+  path: PropertyPath,
+  fallback?: ParamValue,
+  options: RowOptions = {},
+) {
+  return animatableRow(clip, path, fallback, { ...options, project: useProject() })
 }

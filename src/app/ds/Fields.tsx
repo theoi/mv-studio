@@ -485,7 +485,7 @@ function splitColor(value: string): { hex: string; alpha: string } | null {
 /** The color as shown: #RRGGBB, or #RRGGBBAA when it is see-through. */
 function shownColor(value: string): string {
   const c = splitColor(value)
-  return (c ? c.hex + c.alpha : value).toUpperCase()
+  return (c ? c.hex + (c.alpha === 'ff' ? '' : c.alpha) : value).toUpperCase()
 }
 
 /**

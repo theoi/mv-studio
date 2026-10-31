@@ -24,7 +24,7 @@ function AdjustmentRow({
   adjustment: ColorAdjustmentKey
   label: string
 }) {
-  const a = useAnimatable(clip, ['adjustments', adjustment], 0)
+  const a = useAnimatable(clip, ['adjustments', adjustment], 0, { label })
   return (
     <FieldRow label={label} trailing={<AnimateButtons property={label} {...a.buttons} />}>
       <Slider

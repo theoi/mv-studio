@@ -84,3 +84,43 @@ test('a visualizer follows one stem once stems are separated, and says how to ge
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
   await expect.poll(async () => (await spectrum(page))?.audio).toBeNull()
 })
+
+test('values read as percentages and multipliers, an edit names its setting, and Circle spectrum’s artwork is a project image', async ({
+  page,
+}) => {
+  await openVisualizer(page)
+  const height = page.getByRole('slider', { name: 'Height' })
+  const pct = Math.round(Number((await spectrum(page))?.height) * 100)
+  await expect(height).toHaveAttribute('aria-valuetext', `${pct}%`)
+  await height.focus()
+  await page.keyboard.press('ArrowRight')
+  expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBe('Change height')
+
+  // A circle spectrum over the chorus, selected.
+  const image = await page.evaluate(() => {
+    const { app, plugins } = window.mvStudio
+    const project: Project = app.project.editor.getProject()
+    const track = project.tracks.find((t) => t.name === 'Overlay')!
+    const clip = plugins.library.createGeneratorClip({
+      trackId: track.id,
+      generatorId: 'visualizer.circle',
+      start: 100,
+      duration: 4,
+    })
+    app.project.editor.dispatch({ type: 'clip.add', clip: { ...clip, id: 'e2e-circle' } })
+    window.location.hash = '#/editor?sel=clip:e2e-circle&t=101'
+    return Object.values(project.assets).find((a) => a.kind === 'image')!
+  })
+  await expect(page.getByRole('slider', { name: 'Radius' })).toHaveAttribute('aria-valuetext', '20%')
+  const artwork = () =>
+    page.evaluate(() => {
+      const clip = window.mvStudio.app.project.editor.getProject().clips['e2e-circle']
+      return clip?.type === 'generator' ? clip.params.artwork?.value : null
+    })
+  await page.getByRole('combobox', { name: 'Artwork' }).click()
+  await page.getByRole('option', { name: image.name, exact: true }).click()
+  expect(await artwork()).toBe(image.id)
+  await page.getByRole('combobox', { name: 'Artwork' }).click()
+  await page.getByRole('option', { name: 'None', exact: true }).click()
+  expect(await artwork()).toBe('')
+})
