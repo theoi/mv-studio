@@ -26,6 +26,15 @@ export interface SuitabilityCheckOptions extends TaskOptions {
  * would offer but the check does not from 14 to 16. Whole clips: no verdict changes.
  */
 export const CHECK_MIN_RANGE_SECONDS = 1.2
+
+/**
+ * The check's minimum range for samples `spacing` seconds apart. Past 18 s the samples are further apart than 0.2 s,
+ * so a part's length comes in whole samples: allowing half a spacing asks for the sample count nearest
+ * `CHECK_MIN_RANGE_SECONDS` (6 at 5 a second, 1 at 1 a second) instead of rounding up to the next one.
+ */
+export function checkMinRangeSeconds(spacing: number): number {
+  return Math.round((CHECK_MIN_RANGE_SECONDS - spacing / 2) * 1000) / 1000
+}
 /** The person track judges at the same rate, so both see the same moments. */
 const STABILITY_FPS = 5
 const ANALYSIS_SIDE = 256
@@ -76,7 +85,7 @@ export async function checkSuitability(
       progress(samples.length / times.length, 'analyzing')
     }
     if (signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
-    const criteria = { minRangeSeconds: CHECK_MIN_RANGE_SECONDS, ...options.criteria }
+    const criteria = { minRangeSeconds: checkMinRangeSeconds(1 / fps), ...options.criteria }
     if (!peopleAvailable) return { ...assessSuitability(samples, 1 / fps, criteria), peopleSkipped: true }
     return assessSuitability(samples, 1 / fps, criteria, people)
   } catch (err) {

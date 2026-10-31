@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkSuitability } from '../../../../src/vision/segmentation/suitability.ts'
+import { checkMinRangeSeconds, checkSuitability } from '../../../../src/vision/segmentation/suitability.ts'
 import { suitabilityInRange } from '../../../../src/vision/mask/suitability.ts'
 import { analyzeSubjects } from '../../../../src/vision/reframe/analyze.ts'
 import { discMask, fakeSegmentation, fakeSource } from './fakes.ts'
@@ -79,6 +79,20 @@ describe('checkSuitability', () => {
     })
     // 7 samples: 1.4 s.
     expect(await shot(2.39)).toMatchObject({ verdict: 'marginal', reasons: ['subject-too-small'] })
+  })
+
+  it('allows half a spacing on long shots, so a part needs the sample count nearest 1.2 s', async () => {
+    // 45 s in 90 samples: one every 0.5 s. A large person in the 2 samples at 10 and 10.5 s (1 s), small elsewhere.
+    const seg = fakeSegmentation((t, s) =>
+      discMask(s, s.width / 2, s.height / 2, t > 9.9 && t < 10.6 ? s.height / 3 : s.height / 20),
+    )
+    const report = await checkSuitability(seg, fakeSource({ duration: 45 }).source)
+    expect(report.sampledFrames).toBe(90)
+    expect(suitabilityInRange(report.evidence!, { start: 9, end: 12 })).toMatchObject({
+      verdict: 'marginal',
+      suitableRanges: [{ start: 9.75, end: 10.75 }],
+    })
+    expect(checkMinRangeSeconds(0.2)).toBe(1.1)
   })
 
   it('bridges a missed detection on a long shot, whose samples are further apart than the hold', async () => {

@@ -255,7 +255,7 @@ describe('clips showing part of their footage', () => {
     expect(whole).toMatchObject({ verdict: 'marginal', reasons: ['subject-too-small'], peopleSkipped: true })
   })
 
-  it('keep the hedge of a quick check on a clip that shows a part with a person only in parts', () => {
+  it('keep a quick check’s hedge when the part they show has a person only in parts', () => {
     const asset = threeParts()
     const project = editor.getProject()
     const checks = { [asset.id]: { ...firstHalf, quick: true } }
