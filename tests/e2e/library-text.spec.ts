@@ -225,3 +225,60 @@ test('the note under Add text says where a click goes, and a click on a video cl
   await expect(page.getByRole('status').getByText('Select a text or lyric line first')).toBeVisible()
   expect(await styles()).toEqual(before)
 })
+
+test('with several clips selected, a style goes on the texts among them as one undo step', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?lib=text&t=3'
+  })
+  await waitForPreview(page)
+  const ids = await page.evaluate(() => {
+    const project: Project = window.mvStudio.app.project.editor.getProject()
+    const line = Object.values(project.clips).find((c) => c.type === 'text' && c.lyricLineId === 'l-c1-2')
+    const ids = ['c-s-c1-1', line!.id, 'o-title']
+    window.mvStudio.app.ui.selectClips(ids)
+    return ids
+  })
+  const library = page.getByRole('tabpanel', { name: 'Text' })
+  await expect(library.getByText('Click a style to use it on 2 texts')).toBeVisible()
+  const styleOf = () =>
+    page.evaluate((ids) => {
+      const project: Project = window.mvStudio.app.project.editor.getProject()
+      return ids.map((id) => {
+        const clip = project.clips[id]
+        return clip?.type === 'text' ? JSON.stringify([clip.style.fontFamily, clip.style.color]) : clip?.type
+      })
+    }, ids)
+  const before = await styleOf()
+  await library.getByRole('button', { name: 'Neon sign' }).first().click()
+  await expect(page.getByRole('status').getByText('“Neon sign” on 2 texts')).toBeVisible()
+  const after = await styleOf()
+  expect(after[0]).toBe('video')
+  expect(after[1]).toBe(after[2])
+  expect(after).not.toEqual(before)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+  await expect.poll(styleOf).toEqual(before)
+
+  // With the title's track locked, the title is left out, and the note and the toast say so.
+  await page
+    .locator('[class*="trackHeader"]')
+    .filter({ hasText: /^Overlay/ })
+    .getByRole('button', { name: 'Lock track' })
+    .click()
+  await page.evaluate((ids) => window.mvStudio.app.ui.selectClips(ids), ids)
+  await expect(
+    library.getByText('Click a style to use it on this lyric line. 1 text is on a locked track.'),
+  ).toBeVisible()
+  await library.getByRole('button', { name: 'Neon sign' }).first().click()
+  await expect(
+    page
+      .getByRole('status')
+      .getByText('“Neon sign” on this lyric line · 1 text on a locked track was left as is'),
+  ).toBeVisible()
+  const locked = await styleOf()
+  expect(locked[2]).toBe(before[2])
+  expect(locked[1]).not.toBe(before[1])
+})
