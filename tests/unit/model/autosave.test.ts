@@ -57,4 +57,18 @@ describe('autosave', () => {
     expect(save).not.toHaveBeenCalled()
     autosave.stop()
   })
+
+  it('saves derived writes that skip the undo history', async () => {
+    const editor = new ProjectEditor(createProject())
+    const saved: Project[] = []
+    const autosave = startAutosave(editor, async (p) => void saved.push(p), { delayMs: 100 })
+    editor.dispatch(
+      { type: 'analysis.setVisual', analysis: { assetId: 'a', version: 'test', data: { v: 1 } } },
+      { history: 'skip' },
+    )
+    await vi.advanceTimersByTimeAsync(100)
+    expect(saved.map((p) => p.analysis.visual.a?.data)).toEqual([{ v: 1 }])
+    expect(editor.canUndo()).toBe(false)
+    autosave.stop()
+  })
 })
