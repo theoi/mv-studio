@@ -18,13 +18,28 @@ const lengthsIn = (spans: { start: number; end: number; sectionId: string }[], i
 ]
 
 describe('auto-cut rhythm', () => {
-  it('cuts every bar by default, twice as often in the chorus and half as often in calm parts', () => {
+  it('cuts verses every bar by default, choruses faster, intros and outros slower, and leads into faster parts', () => {
     const { spans } = cutSpans(song, options())
     expect(spans.every((s) => onGrid(s.start, BEATS))).toBe(true)
-    expect(lengthsIn(spans, 'verse')).toEqual([4])
+    const lastBar = (id: string) => SECTIONS.find((s) => s.id === id)!.end - 4 * BEAT - 1e-6
+    const before = (id: string) => spans.filter((s) => s.sectionId === id && s.start < lastBar(id))
+    expect(lengthsIn(before('verse'), 'verse')).toEqual([4])
     expect(lengthsIn(spans, 'chorus')).toEqual([2])
-    expect(lengthsIn(spans, 'intro')).toEqual([8])
+    expect(Math.round((before('intro')[0]!.end - before('intro')[0]!.start) / BEAT)).toBe(8)
     expect(lengthsIn(spans, 'outro')).toEqual([8])
+    // The last bar before a faster section cuts at that section's pace.
+    expect(
+      lengthsIn(
+        spans.filter((s) => s.start >= lastBar('verse') && s.sectionId === 'verse'),
+        'verse',
+      ),
+    ).toEqual([2])
+    expect(
+      lengthsIn(
+        spans.filter((s) => s.start >= lastBar('intro') && s.sectionId === 'intro'),
+        'intro',
+      ),
+    ).toEqual([4])
     spans.slice(1).forEach((s, i) => expect(s.start).toBeCloseTo(spans[i]!.end, 9))
     expect(spans[0]!.start).toBe(0)
     expect(spans[spans.length - 1]!.end).toBe(SONG_LENGTH)
@@ -33,8 +48,24 @@ describe('auto-cut rhythm', () => {
   it('keeps one pace when not following the energy, and never cuts faster than a beat', () => {
     const steady = cutSpans(song, options({ followEnergy: false }))
     expect(new Set(steady.spans.map((s) => Math.round((s.end - s.start) / BEAT)))).toEqual(new Set([4]))
-    expect(beatsPerShot('beat', 1, { followEnergy: true, cutOn: 'beats', beatLength: BEAT })).toBe(1)
-    expect(beatsPerShot('beat', 1, { followEnergy: true, cutOn: 'beats', beatLength: 0.2 })).toBe(2)
+    const chorus = { label: 'Chorus', energy: 1 }
+    const grid = (beatLength: number) => ({ beatLength, bpm: 60 / beatLength })
+    expect(beatsPerShot('beat', chorus, { followEnergy: true, cutOn: 'beats', grid: grid(BEAT) })).toBe(1)
+    expect(beatsPerShot('beat', chorus, { followEnergy: true, cutOn: 'beats', grid: grid(0.2) })).toBe(2)
+  })
+
+  it('paces by the section role before its energy', () => {
+    const at = (section: { label: string; energy: number }) =>
+      beatsPerShot('bar', section, {
+        followEnergy: true,
+        cutOn: 'beats',
+        grid: { beatLength: BEAT, bpm: 100 },
+      })
+    // Energy normalized within a song often puts verses and choruses alike; the role still sets them apart.
+    expect(at({ label: 'chorus', energy: 0.8 })).toBeLessThan(at({ label: 'verse', energy: 0.9 }))
+    expect(at({ label: 'verse', energy: 0.9 })).toBeLessThan(at({ label: 'bridge', energy: 0.5 }))
+    expect(at({ label: 'chorus', energy: 0.2 })).toBe(at({ label: 'verse', energy: 0.5 }))
+    expect(at({ label: 'Part 2', energy: 0.9 })).toBeLessThan(at({ label: 'Part 1', energy: 0.2 }))
   })
 
   it('cuts only on bar starts or only at section boundaries when asked', () => {

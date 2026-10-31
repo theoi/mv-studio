@@ -77,6 +77,8 @@ const RANGE_GAP = 0.1
  * shown two shots ago, so preferred clips keep coming back instead of giving way to every clip not used yet.
  */
 const PREFER_BONUS = 0.7
+/** Shots ahead whose new lyric line keeps its best clip unused (the recency penalty lasts about this long). */
+const LYRIC_LOOKAHEAD = 3
 const round3 = (t: number) => Math.round(t * 1000) / 1000
 
 function covers(item: PoolItem, length: Seconds): boolean {
@@ -232,12 +234,21 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
   }
   const hasRanking = ranked.size > 0
   const hasVideo = pool.some((p) => p.kind === 'video')
-  /** Best clip for a shot whose lyric starts there, which the shot before it should leave free. */
-  const lyricLead = (shot: number): Id | undefined => {
-    const next = queries[shot + 1]
-    if (!next?.text || next.text === queries[shot]?.text) return undefined
-    const matches = ranked.get(keyOf(next))
-    return matches ? [...matches.values()].sort((a, b) => b.score - a.score)[0]?.mediaId : undefined
+  /**
+   * Best clips for lyrics that start in the next few shots, by how many shots ahead. This shot leaves them free: a
+   * clip used right before its lyric could not play there at all, and one used a little earlier would score lower
+   * there for having been used recently.
+   */
+  const lyricLeads = (shot: number): Map<Id, number> => {
+    const saved = new Map<Id, number>()
+    for (let j = shot + 1; j <= shot + LYRIC_LOOKAHEAD && j < queries.length; j++) {
+      const text = queries[j]?.text
+      if (!text || text === queries[j - 1]?.text || text === queries[shot]?.text) continue
+      const matches = ranked.get(keyOf(queries[j] as MatchQuery))
+      const best = matches ? [...matches.values()].sort((a, b) => b.score - a.score)[0]?.mediaId : undefined
+      if (best && !saved.has(best)) saved.set(best, j - shot)
+    }
+    return saved
   }
 
   const picks = input.spans.map((span, shot): ClipPick | undefined => {
@@ -246,7 +257,7 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
     const matches = ranked.get(keyOf(query))
     const fitting = pool.filter((p) => covers(p, length))
     const candidates = fitting.length ? fitting : pool
-    const saved = candidates.length > 2 ? lyricLead(shot) : undefined
+    const saved = candidates.length > 2 ? lyricLeads(shot) : new Map<Id, number>()
     let best: PoolItem | undefined
     let bestScore = -Infinity
     for (const item of candidates) {
@@ -254,7 +265,8 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
       const match = matches?.get(item.assetId)
       let score = match ? sigmoid(match.score) : hasRanking ? 0.35 : 0.5
       if (item.kind === 'image' && hasVideo) score -= 0.15
-      if (item.assetId === saved) score -= 0.4
+      const ahead = saved.get(item.assetId)
+      if (ahead !== undefined) score -= ahead === 1 ? 10 : 0.4
       if (span.prefer?.includes(item.assetId)) score += PREFER_BONUS
       if (!u) score += 0.3
       else {
