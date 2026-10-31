@@ -185,6 +185,12 @@ export const sectionColor: Record<SectionKind, string> = {
   outro: 'var(--section-outro)',
 }
 
+/** A section's color: the one the user picked, else the color of its kind. */
+export function sectionTint(s: SongSection): string {
+  const picked = s.color && Object.hasOwn(sectionColor, s.color) ? (s.color as SectionKind) : undefined
+  return sectionColor[picked ?? sectionKind(s)]
+}
+
 export function sectionsOf(p: Project): SongSection[] {
   return songAnalysis(p)?.sections ?? []
 }

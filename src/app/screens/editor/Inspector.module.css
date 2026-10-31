@@ -152,6 +152,18 @@
   padding: 0 var(--space-3) 0 var(--space-4);
 }
 
+.swatch {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.autoSwatch {
+  padding: 0 2px;
+  font-size: var(--text-xs);
+}
+
 .hint {
   padding: var(--space-5) var(--space-4) 0;
   color: var(--text-3);

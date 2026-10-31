@@ -7,6 +7,7 @@ import {
   type Asset,
   type AudioAnalysis,
   type AudioFeatures,
+  type SongSection,
 } from '../../../src/model/index.ts'
 
 function songAsset(): Asset {
@@ -255,5 +256,53 @@ describe('narrow analysis commands', () => {
     expect(() =>
       editor.dispatch({ type: 'analysis.setGrid', assetId: 'missing', grid: { beats: [0] } }),
     ).toThrow(EditError)
+  })
+})
+
+describe('section edits', () => {
+  it('refuses a section that would end before it starts, and changes nothing', () => {
+    const { editor, song, analysis } = setup()
+    expect(() =>
+      editor.dispatch({
+        type: 'analysis.updateSection',
+        assetId: song.id,
+        sectionId: 's1',
+        patch: { start: 12 },
+      }),
+    ).toThrow(EditError)
+    expect(analysis()?.sections?.[0]).toMatchObject({ start: 0, end: 10 })
+  })
+
+  it('keeps a picked color until a patch with an empty color removes it', () => {
+    const { editor, song, analysis } = setup()
+    const color = (value: string) =>
+      editor.dispatch({
+        type: 'analysis.updateSection',
+        assetId: song.id,
+        sectionId: 's2',
+        patch: { color: value },
+      })
+    color('bridge')
+    expect(analysis()?.sections?.[1]?.color).toBe('bridge')
+    color('')
+    expect(analysis()?.sections?.[1]).not.toHaveProperty('color')
+  })
+
+  it('records which fields the user changed, so analyzing again can keep them', () => {
+    const { editor, song, analysis } = setup()
+    const edit = (patch: Partial<SongSection>) =>
+      editor.dispatch({ type: 'analysis.updateSection', assetId: song.id, sectionId: 's1', patch })
+    expect(analysis()?.sections?.[0]).not.toHaveProperty('edited')
+    edit({ end: 9 })
+    edit({ label: 'Intro', color: 'intro' })
+    expect(analysis()?.sections?.[0]?.edited).toEqual(['label', 'end', 'color'])
+    edit({ color: '' })
+    expect(analysis()?.sections?.[0]?.edited).toEqual(['label', 'end'])
+    edit({ confidence: 0.5 })
+    expect(analysis()?.sections?.[0]?.edited).toEqual(['label', 'end'])
+    editor.undo()
+    editor.undo()
+    editor.undo()
+    expect(analysis()?.sections?.[0]?.edited).toEqual(['end'])
   })
 })

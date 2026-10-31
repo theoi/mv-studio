@@ -373,7 +373,19 @@ export interface SongSection {
    * label the user typed. Absent in older projects.
    */
   confidence?: number
+  /**
+   * The color the user picked, by its name in the app's section palette ('chorus', 'bridge', ...); absent: from the
+   * label. A patch with '' removes it, since commands must survive JSON.
+   */
+  color?: string
+  /**
+   * What the user changed by hand, kept up to date by analysis.updateSection, so analyzing the song again can keep
+   * those edits. Absent: nothing.
+   */
+  edited?: SectionEdit[]
 }
+
+export type SectionEdit = 'label' | 'start' | 'end' | 'color'
 
 /** Per-frame features consumed by audio-reactive modulation. bands[i] holds one value per band at time i / rate. */
 export interface AudioFeatures {
