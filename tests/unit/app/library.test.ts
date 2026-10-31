@@ -14,9 +14,13 @@ import {
   addTransition,
   chooseLook,
   chosenLookId,
+  dropLibraryItem,
   effectItems,
   effectTarget,
+  endLibraryDrag,
+  libraryDropHint,
   matchesQuery,
+  startLibraryDrag,
   transitionTarget,
 } from '../../../src/app/state/library.ts'
 import { editor } from '../../../src/app/state/project.ts'
@@ -162,5 +166,64 @@ describe('adding from the library', () => {
     set({ playhead: 12 })
     addEffect('glow')
     expect(get().toasts.at(-1)?.message).toBe('Select a clip to add “Glow” to it')
+  })
+})
+
+describe('dropping library items on the timeline', () => {
+  beforeEach(() => set({ selection: { type: 'none' }, playhead: 1, toasts: [] }))
+
+  it('puts a dropped effect on the clip under the drop and selects it, and says when nothing is there', () => {
+    const s = scene()
+    editor.load(s.p)
+    dropLibraryItem({ kind: 'effect', id: 'glow' }, { trackId: s.b.trackId, time: 5 })
+    const clip = editor.getProject().clips[s.b.id]
+    expect(clip?.type !== 'audio' && clip?.effects.map((e) => e.effectId)).toEqual(['glow'])
+    expect(get().selection).toEqual({ type: 'clip', id: s.b.id })
+    expect(editor.undoLabel()).toBe('Add effect: Glow')
+    dropLibraryItem({ kind: 'effect', id: 'glow' }, { trackId: s.b.trackId, time: 12 })
+    expect(get().toasts.at(-1)?.message).toBe('Drop “Glow” on a clip')
+  })
+
+  it('puts a dropped transition on the nearer cut of the clip under the drop, else on that clip’s start', () => {
+    const s = scene()
+    editor.load(s.p)
+    dropLibraryItem({ kind: 'transition', id: 'flash' }, { trackId: s.b.trackId, time: 7.4 })
+    expect(editor.getProject().clips[s.c.id]).toMatchObject({ transitionIn: { kind: 'flash' } })
+    expect(get().toasts.at(-1)?.message).toBe('“Flash” added to the cut at 0:08.0')
+    // The clip after the gap has no cut of its own: it gets the transition, not the cut at 8 s.
+    dropLibraryItem({ kind: 'transition', id: 'iris' }, { trackId: s.d.trackId, time: 15 })
+    expect(editor.getProject().clips[s.d.id]).toMatchObject({ transitionIn: { kind: 'iris' } })
+    expect(editor.getProject().clips[s.c.id]).toMatchObject({ transitionIn: { kind: 'flash' } })
+    // The lyrics track has no cuts: the line under the drop gets it.
+    dropLibraryItem({ kind: 'transition', id: 'iris' }, { trackId: s.line.trackId, time: 2 })
+    expect(editor.getProject().clips[s.line.id]).toMatchObject({ transitionIn: { kind: 'iris' } })
+    dropLibraryItem({ kind: 'transition', id: 'flash' }, { trackId: s.b.trackId, time: 12 })
+    expect(get().toasts.at(-1)?.message).toBe('Drop “Flash” on a cut between two clips')
+  })
+
+  it('lands nothing on a locked track and says so', () => {
+    const s = scene()
+    editor.load(s.p)
+    startLibraryDrag({ dataTransfer: null }, { kind: 'effect', id: 'glow' })
+    expect(libraryDropHint(s.top.trackId, 1.6)).toEqual({ trackId: s.top.trackId, locked: true, at: 1 })
+    endLibraryDrag()
+    const before = editor.getProject()
+    dropLibraryItem({ kind: 'effect', id: 'glow' }, { trackId: s.top.trackId, time: 1 })
+    expect(editor.getProject()).toBe(before)
+    expect(get().toasts.at(-1)?.message).toBe('Track is locked')
+  })
+
+  it('highlights the clip or cut the dragged item would land on', () => {
+    const s = scene()
+    editor.load(s.p)
+    startLibraryDrag({ dataTransfer: null }, { kind: 'effect', id: 'glow' })
+    expect(libraryDropHint(s.b.trackId, 5)).toEqual({ trackId: s.b.trackId, start: 4, end: 8 })
+    expect(libraryDropHint(s.b.trackId, 12)).toBeNull()
+    startLibraryDrag({ dataTransfer: null }, { kind: 'transition', id: 'flash' })
+    expect(libraryDropHint(s.b.trackId, 5)).toEqual({ trackId: s.b.trackId, start: 4, end: 4 })
+    expect(libraryDropHint(s.b.trackId, 7)).toEqual({ trackId: s.b.trackId, start: 8, end: 8 })
+    expect(libraryDropHint(s.b.trackId, 12)).toBeNull()
+    endLibraryDrag()
+    expect(libraryDropHint(s.b.trackId, 5)).toBeNull()
   })
 })

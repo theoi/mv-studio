@@ -61,6 +61,12 @@ import {
   type ClipView,
 } from '../../../state/project.ts'
 import { get, openAssist, select, set, toast, useUi } from '../../../state/ui.ts'
+import {
+  droppedLibraryItem,
+  dropLibraryItem,
+  isLibraryDrag,
+  libraryDropHint,
+} from '../../../state/library.ts'
 import { useFootage, useFootageResults } from '../../../state/footage.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import styles from './Timeline.module.css'
@@ -621,6 +627,7 @@ export function Timeline() {
   const [snapLine, setSnapLine] = useState<number | null>(null)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
+  const [dropHint, setDropHint] = useState<ReturnType<typeof libraryDropHint>>(null)
 
   const empty = !hasSong(project)
   const analysis = songAnalysis(project)
@@ -924,7 +931,45 @@ export function Timeline() {
                   onPointerDown={(e) => {
                     if (e.target === e.currentTarget) set({ selection: { type: 'none' } })
                   }}
+                  onDragOver={(e) => {
+                    if (kind === 'audio' || !isLibraryDrag(e)) return
+                    const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
+                    const next = libraryDropHint(track.id, time)
+                    // A locked track takes no drop: without preventDefault the browser shows "not allowed".
+                    if (next && 'locked' in next) e.dataTransfer.dropEffect = 'none'
+                    else {
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'copy'
+                    }
+                    setDropHint((h) => (JSON.stringify(h) === JSON.stringify(next) ? h : next))
+                  }}
+                  onDragLeave={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHint(null)
+                  }}
+                  onDrop={(e) => {
+                    const item = kind === 'audio' ? null : droppedLibraryItem(e)
+                    if (!item) return
+                    e.preventDefault()
+                    setDropHint(null)
+                    const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
+                    dropLibraryItem(item, { trackId: track.id, time })
+                  }}
                 >
+                  {dropHint?.trackId === track.id &&
+                    ('locked' in dropHint ? (
+                      <div className={styles.dropLocked} style={{ left: dropHint.at * pps }}>
+                        Track is locked
+                      </div>
+                    ) : (
+                      <div
+                        className={dropHint.end > dropHint.start ? styles.dropClip : styles.dropCut}
+                        style={{
+                          left: dropHint.start * pps,
+                          width:
+                            dropHint.end > dropHint.start ? (dropHint.end - dropHint.start) * pps : undefined,
+                        }}
+                      />
+                    ))}
                   {kind === 'audio' &&
                     clips.map((c) => (
                       <div

@@ -138,6 +138,22 @@ export function effectTarget(
   )
 }
 
+const effectNamed = (def: { id: string; name: string }) => ({ id: def.id, name: def.name })
+
+/** Adds an effect with its default audio mappings to a clip as one undo step, selecting the clip if asked. */
+function putEffect(
+  project: Project,
+  clip: VisualClip,
+  def: { id: string; name: string },
+  selectClip: boolean,
+) {
+  const label = `Add effect: ${def.name}`
+  const effect = createEffectInstance(def.id)
+  if (!dispatch({ type: 'effect.add', clipId: clip.id, effect }, { label })) return
+  if (selectClip) select({ type: 'clip', id: clip.id })
+  toast(`“${def.name}” added to ${viewOf(project, clip).name}`, undoAction(label))
+}
+
 /** Adds an effect to the effect target, with the effect's default audio mappings, as one undo step. */
 export function addEffect(effectId: string): void {
   const def = pluginRegistry.get(effectId)
@@ -145,15 +161,8 @@ export function addEffect(effectId: string): void {
   const project = editor.getProject()
   const { selection, playhead } = get()
   const clip = effectTarget(project, selection, playhead)
-  if (!clip) {
-    toast(`Select a clip to add “${def.name}” to it`)
-    return
-  }
-  const label = `Add effect: ${def.name}`
-  const effect = createEffectInstance(effectId)
-  if (!dispatch({ type: 'effect.add', clipId: clip.id, effect }, { label })) return
-  if (selection.type === 'none') select({ type: 'clip', id: clip.id })
-  toast(`“${def.name}” added to ${viewOf(project, clip).name}`, undoAction(label))
+  if (!clip) toast(`Select a clip to add “${def.name}” to it`)
+  else putEffect(project, clip, effectNamed(def), selection.type === 'none')
 }
 
 /** Same tolerance as the compositor's, so a transition put on a cut blends from the clip before it. */
@@ -195,21 +204,26 @@ export function transitionTarget(
   return best && { clip: best.clip, cut: true }
 }
 
-/**
- * Puts a transition on the transition target as one undo step. A transition already there keeps its duration and
- * easing; a new one gets the transition's suggested duration, at most half the clip.
- */
+/** Puts a transition on the transition target as one undo step. */
 export function addTransition(kind: string): void {
   const def = pluginRegistry.get(kind)
   if (def?.kind !== 'transition') return
   const project = editor.getProject()
   const target = transitionTarget(project, get().selection, get().playhead)
-  if (!target) {
-    toast(`Select a clip to add “${def.name}” to it`)
-    return
-  }
-  const { clip, cut } = target
-  const fresh = createTransition(kind)
+  if (!target) toast(`Select a clip to add “${def.name}” to it`)
+  else putTransition(project, target, effectNamed(def))
+}
+
+/**
+ * Puts a transition on a clip's start as one undo step. A transition already there keeps its duration and easing; a
+ * new one gets the transition's suggested duration, at most half the clip.
+ */
+function putTransition(
+  project: Project,
+  { clip, cut }: { clip: VisualClip; cut: boolean },
+  def: { id: string; name: string },
+) {
+  const fresh = createTransition(def.id)
   const existing = clip.transitionIn
   const value = existing
     ? { ...fresh, duration: existing.duration, easing: existing.easing }
@@ -222,4 +236,111 @@ export function addTransition(kind: string): void {
       : `“${def.name}” added to the start of ${viewOf(project, clip).name}`,
     undoAction(label),
   )
+}
+
+/** What a library drag carries. */
+export interface LibraryItem {
+  kind: 'effect' | 'transition'
+  id: string
+}
+
+/**
+ * What a dragged library item would land on, for the timeline to show: a clip's span for an effect, a cut (start
+ * equals end) for a transition, or a locked track where nothing lands (`at` is where to say so).
+ */
+export type LibraryDropHint =
+  { trackId: string; start: Seconds; end: Seconds } | { trackId: string; locked: true; at: Seconds }
+
+const isLocked = (project: Project, trackId: string) => !!project.tracks.find((t) => t.id === trackId)?.locked
+
+/** Drag data type of library items; drop targets check for it while dragging, when the data itself is not readable. */
+export const LIBRARY_DRAG_TYPE = 'application/x-mv-studio-library'
+
+let dragging: LibraryItem | null = null
+
+export function startLibraryDrag(e: { dataTransfer: DataTransfer | null }, item: LibraryItem): void {
+  e.dataTransfer?.setData(LIBRARY_DRAG_TYPE, JSON.stringify(item))
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy'
+  dragging = item
+}
+
+export function endLibraryDrag(): void {
+  dragging = null
+}
+
+export function isLibraryDrag(e: { dataTransfer: DataTransfer | null }): boolean {
+  return !!e.dataTransfer?.types.includes(LIBRARY_DRAG_TYPE)
+}
+
+/** The item a drop carries, if it came from the library. */
+export function droppedLibraryItem(e: { dataTransfer: DataTransfer | null }): LibraryItem | null {
+  try {
+    const item = JSON.parse(e.dataTransfer?.getData(LIBRARY_DRAG_TYPE) || 'null') as LibraryItem | null
+    return item && typeof item.id === 'string' ? item : null
+  } catch {
+    return null
+  }
+}
+
+/** The clip on a track at `time` that an effect dropped there goes on. */
+function clipAt(project: Project, trackId: string, time: Seconds): VisualClip | undefined {
+  return Object.values(project.clips).find(
+    (c): c is VisualClip =>
+      isPicture(c) && c.trackId === trackId && time >= c.start && time < c.start + c.duration,
+  )
+}
+
+/**
+ * Where a transition dropped on a track at `time` goes: the cut at the start or the end of the clip there, whichever
+ * is nearer, else that clip's start. Nothing when no clip is there.
+ */
+function cutAt(
+  project: Project,
+  trackId: string,
+  time: Seconds,
+): { clip: VisualClip; cut: boolean } | undefined {
+  const under = clipAt(project, trackId, time)
+  if (!under || under.type === 'adjustment') return undefined
+  const next = Object.values(project.clips).find(
+    (c): c is VisualClip =>
+      isPicture(c) && c.type !== 'adjustment' && clipBefore(project, c)?.id === under.id,
+  )
+  const cuts = [clipBefore(project, under) ? under : undefined, next].filter((c) => c !== undefined)
+  const nearest = cuts.sort((a, b) => Math.abs(a.start - time) - Math.abs(b.start - time))[0]
+  return nearest ? { clip: nearest, cut: true } : { clip: under, cut: false }
+}
+
+/** What the item being dragged would land on at `time` on a track. Null when it would land nowhere there. */
+export function libraryDropHint(trackId: string, time: Seconds): LibraryDropHint | null {
+  const project = editor.getProject()
+  if (dragging && isLocked(project, trackId)) return { trackId, locked: true, at: Math.floor(time) }
+  if (dragging?.kind === 'effect') {
+    const clip = clipAt(project, trackId, time)
+    return clip ? { trackId, start: clip.start, end: clip.start + clip.duration } : null
+  }
+  if (dragging?.kind === 'transition') {
+    const target = cutAt(project, trackId, time)
+    return target ? { trackId, start: target.clip.start, end: target.clip.start } : null
+  }
+  return null
+}
+
+/** Adds a dropped library item where it was dropped on the timeline, as one undo step. */
+export function dropLibraryItem(item: LibraryItem, at: { trackId: string; time: Seconds }): void {
+  const project = editor.getProject()
+  if (isLocked(project, at.trackId)) {
+    toast('Track is locked')
+    return
+  }
+  const def = pluginRegistry.get(item.id)
+  if (item.kind === 'effect' && def?.kind === 'effect') {
+    const clip = clipAt(project, at.trackId, at.time)
+    if (clip) putEffect(project, clip, effectNamed(def), true)
+    else toast(`Drop “${def.name}” on a clip`)
+  }
+  if (item.kind === 'transition' && def?.kind === 'transition') {
+    const target = cutAt(project, at.trackId, at.time)
+    if (target) putTransition(project, target, effectNamed(def))
+    else toast(`Drop “${def.name}” on a cut between two clips`)
+  }
 }

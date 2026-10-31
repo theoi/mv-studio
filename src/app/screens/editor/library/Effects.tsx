@@ -8,8 +8,10 @@ import {
   chooseLook,
   chosenLookId,
   effectItems,
+  endLibraryDrag,
   lookItems,
   matchesQuery,
+  startLibraryDrag,
   transitionItems,
 } from '../../../state/library.ts'
 import { useProject } from '../../../state/project.ts'
@@ -17,10 +19,12 @@ import styles from '../Library.module.css'
 
 function Pills({
   label,
+  kind,
   items,
   onAdd,
 }: {
   label: string
+  kind: 'effect' | 'transition'
   items: PluginCatalogEntry[]
   onAdd: (id: string) => void
 }) {
@@ -30,7 +34,14 @@ function Pills({
       <div className={styles.groupLabel}>{label}</div>
       <div className={styles.pills}>
         {items.map((item) => (
-          <button key={item.id} className={styles.pill} onClick={() => onAdd(item.id)}>
+          <button
+            key={item.id}
+            className={styles.pill}
+            draggable
+            onDragStart={(e) => startLibraryDrag(e.nativeEvent, { kind, id: item.id })}
+            onDragEnd={endLibraryDrag}
+            onClick={() => onAdd(item.id)}
+          >
             {item.name}
           </button>
         ))}
@@ -83,9 +94,14 @@ export function EffectsTab() {
               </div>
             </>
           )}
-          <Pills label="Transitions · go on a cut" items={transitions} onAdd={addTransition} />
-          <Pills label="Effects" items={effects} onAdd={addEffect} />
-          <Pills label="Filters" items={filters} onAdd={addEffect} />
+          <Pills
+            label="Transitions · go on a cut"
+            kind="transition"
+            items={transitions}
+            onAdd={addTransition}
+          />
+          <Pills label="Effects" kind="effect" items={effects} onAdd={addEffect} />
+          <Pills label="Filters" kind="effect" items={filters} onAdd={addEffect} />
         </div>
       )}
     </>
