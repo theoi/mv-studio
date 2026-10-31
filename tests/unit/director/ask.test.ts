@@ -299,6 +299,8 @@ describe('AskSession', () => {
     if (state.status !== 'error') throw new Error(state.status)
     expect(state.needsSetup).toBe(true)
     expect(state.title).toBe('Ask needs an AI model')
+    expect(state.message).toMatch(/^Add one in Settings › AI and cloud\./)
+    expect(state.message).not.toMatch(/OpenAI/)
   })
 
   it('shows the endpoint error in place', async () => {

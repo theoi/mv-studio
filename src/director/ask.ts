@@ -390,8 +390,8 @@ export class AskSession {
         request: originalRequest,
         title: 'Ask needs an AI model',
         message:
-          'Connect an OpenAI-compatible model (cloud, or local with Ollama or LM Studio) to edit by asking.',
-        steps: ['Open Settings › AI and cloud and set up a model.'],
+          'Add one in Settings › AI and cloud. It can run in the cloud or on this computer with Ollama or LM Studio.',
+        steps: [],
         error: new JobError('invalid-input', 'No LLM configured').toJSON(),
         needsSetup: true,
       })
