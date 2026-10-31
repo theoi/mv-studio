@@ -15,5 +15,7 @@ ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=30" -f lavfi -i "sine=frequenc
 ffmpeg $q -f lavfi -i "color=c=black:s=320x180:r=30:d=4,format=gray,geq=lum='if(lt(X,W/2),mod(N,16)*16+8,floor(N/16)*16+8)'" -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -movflags +faststart frames.mp4
 # 2 s audio-only Opus WebM, like a MediaRecorder voice recording
 ffmpeg $q -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" -c:a libopus -b:a 64k voice.webm
+# 4 s 1920x1080 30 fps H.264 clip without audio (performance benchmarks)
+ffmpeg $q -f lavfi -i "testsrc2=size=1920x1080:rate=30" -t 4 -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -movflags +faststart clip1080.mp4
 ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=1" -frames:v 1 image.png
 ls -la

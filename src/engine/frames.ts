@@ -63,6 +63,13 @@ class ImageCache {
 interface VideoSlot {
   video: HTMLVideoElement
   ready: Promise<boolean>
+  assetId: Id
+  /** The clip (request key) the slot currently serves. */
+  clipKey: string
+  /** Kept loaded while idle (prefetch). */
+  pinned: boolean
+  /** Serial of the last frame the video presented (requestVideoFrameCallback), or 0 before the first. */
+  presented: number
   /** Latest requested time while paused; queued seeks skip to it. */
   target: Seconds
   seeking: Promise<void>
@@ -75,7 +82,12 @@ const PLAYBACK_DRIFT = 0.12
 const MIN_MEDIA_RATE = 0.0625
 const MAX_MEDIA_RATE = 16
 const PAUSE_AFTER_FRAMES = 2
+/** warm() starts an upcoming clip's element playing this long before the cut. */
+const PREROLL = 0.3
 const RELEASE_AFTER_FRAMES = 900
+
+/** Unique across slots, so a texture never mistakes a new slot's frame for one it already holds. */
+let presentedSerial = 0
 
 function once(target: EventTarget, events: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve) => {
@@ -93,8 +105,17 @@ function once(target: EventTarget, events: string[], timeoutMs: number): Promise
   })
 }
 
+/**
+ * One <video> element per clip on screen. When a new clip starts, it takes over the element of a clip of the same
+ * footage that left the screen, so contiguous pieces (splits, beat cuts) continue without a seek and a freeze is a
+ * pause; during playback, elements for clips starting soon are loaded and seeked ahead of time (warm()).
+ */
 export class VideoElementFrameProvider implements FrameProvider {
   private readonly slots = new Map<string, VideoSlot>()
+  /** Request keys of the frame being rendered, whose slots must not be taken over. */
+  private active = new Set<string>()
+  /** Slot ids reserved by warm() for clips about to start. */
+  private upcoming = new Set<string>()
   private readonly urls = new Map<Id, Promise<string>>()
   private readonly images: ImageCache
   private readonly media: MediaFileSource
@@ -130,9 +151,28 @@ export class VideoElementFrameProvider implements FrameProvider {
     return url
   }
 
-  private slot(asset: Asset, key: string): VideoSlot {
-    let slot = this.slots.get(key)
+  beginFrame(keys: string[]): void {
+    this.active = new Set(keys)
+  }
+
+  /** The slot for a clip: its own, a free one of the same footage (nearest to `t`), or a new element. */
+  private slot(asset: Asset, key: string, t: Seconds): VideoSlot {
+    const id = `${key}:${asset.id}`
+    let slot = this.slots.get(id)
     if (slot) return slot
+    let free: [string, VideoSlot] | null = null
+    for (const entry of this.slots) {
+      const [otherId, other] = entry
+      if (other.assetId !== asset.id || this.active.has(other.clipKey) || this.upcoming.has(otherId)) continue
+      if (!free || Math.abs(other.video.currentTime - t) < Math.abs(free[1].video.currentTime - t))
+        free = entry
+    }
+    if (free) {
+      this.slots.delete(free[0])
+      free[1].clipKey = key
+      this.slots.set(id, free[1])
+      return free[1]
+    }
     const video = document.createElement('video')
     video.muted = true
     video.playsInline = true
@@ -143,24 +183,48 @@ export class VideoElementFrameProvider implements FrameProvider {
       const result = await once(video, ['loadeddata', 'error'], 15_000)
       return result === 'loadeddata'
     })
-    slot = { video, ready, target: 0, seeking: Promise.resolve(), lastUsed: this.frame }
-    this.slots.set(key, slot)
+    slot = {
+      video,
+      ready,
+      assetId: asset.id,
+      clipKey: key,
+      pinned: false,
+      presented: 0,
+      target: 0,
+      seeking: Promise.resolve(),
+      lastUsed: this.frame,
+    }
+    this.slots.set(id, slot)
+    if ('requestVideoFrameCallback' in video) {
+      const current = slot
+      const watch = () =>
+        video.requestVideoFrameCallback(() => {
+          current.presented = ++presentedSerial
+          watch()
+        })
+      watch()
+    }
     return slot
   }
 
   async videoFrame(asset: Asset, sourceTime: Seconds, key: string, rate = 1): Promise<FrameRef | null> {
-    const slot = this.slot(asset, `${key}:${asset.id}`)
+    const t = clampSourceTime(asset, sourceTime)
+    const slot = this.slot(asset, key, t)
     slot.lastUsed = this.frame
     if (!(await slot.ready)) return null
     const { video } = slot
-    const t = clampSourceTime(asset, sourceTime)
     const mediaRate = rate * this.rate
+    let version: number | undefined
     if (this.playing && mediaRate >= MIN_MEDIA_RATE && mediaRate <= MAX_MEDIA_RATE) {
+      // Upload only frames the video presented since the last upload (a 30 fps clip in a 60 fps preview skips every
+      // other upload). Exact seeks below always upload: a seek does not reliably present a new frame callback.
+      if (slot.presented > 0) version = slot.presented
       if (video.playbackRate !== mediaRate) video.playbackRate = mediaRate
       // Drift is measured in source time, which moves at mediaRate; allow at least two source frames.
       const tolerance = Math.max(PLAYBACK_DRIFT * mediaRate, 2 / (asset.frameRate ?? 30))
       if (video.paused) {
-        video.currentTime = t
+        // A warmed or taken-over element is usually already there; seeking anyway would stall its first frames.
+        if (Math.abs(video.currentTime - t) > tolerance) video.currentTime = t
         void video.play().catch(() => undefined)
       } else if (Math.abs(video.currentTime - t) > tolerance) {
         video.currentTime = t
@@ -172,7 +236,7 @@ export class VideoElementFrameProvider implements FrameProvider {
       slot.seeking = slot.seeking.then(() => this.seek(slot))
       await slot.seeking
     }
-    return { source: video, width: video.videoWidth, height: video.videoHeight }
+    return { source: video, width: video.videoWidth, height: video.videoHeight, version }
   }
 
   private async seek(slot: VideoSlot): Promise<void> {
@@ -194,12 +258,54 @@ export class VideoElementFrameProvider implements FrameProvider {
     }
   }
 
+  /**
+   * Prepares elements for clips about to start, so their first frames need no load or seek: each is loaded and
+   * seeked to the clip's first frame, and in the last PREROLL seconds it starts playing (invisibly) at the position
+   * that reaches that frame exactly at the cut, hiding the element's playback start-up latency. Each call replaces
+   * the previous set; requests come from the playing preview.
+   */
+  warm(
+    requests: { asset: Asset; sourceTime: Seconds; key: string; startsIn: Seconds; rate: number }[],
+  ): void {
+    this.upcoming = new Set()
+    for (const { asset, sourceTime, key, startsIn, rate } of requests) {
+      const t = clampSourceTime(asset, sourceTime)
+      const slot = this.slot(asset, key, t)
+      this.upcoming.add(`${key}:${asset.id}`)
+      slot.lastUsed = this.frame
+      void slot.ready.then((ok) => {
+        const { video } = slot
+        if (!ok || video.seeking) return
+        const mediaRate = rate * this.rate
+        const from = t - startsIn * mediaRate
+        const playable = mediaRate >= MIN_MEDIA_RATE && mediaRate <= MAX_MEDIA_RATE
+        if (this.playing && playable && startsIn <= PREROLL && from >= 0) {
+          if (!video.paused) return
+          video.playbackRate = mediaRate
+          video.currentTime = from
+          void video.play().catch(() => undefined)
+        } else if (video.paused && Math.abs(video.currentTime - t) > 1e-3) {
+          video.currentTime = t
+        }
+      })
+    }
+  }
+  /** Keeps one loaded element per asset (e.g. VJ pad footage) until the next prefetch() call. */
+  prefetch(assets: Asset[]): void {
+    const ids = new Set(assets.map((a) => a.id))
+    for (const slot of this.slots.values()) slot.pinned = ids.has(slot.assetId)
+    for (const asset of assets) {
+      const has = [...this.slots.values()].some((s) => s.assetId === asset.id)
+      if (!has) this.slot(asset, `prefetch:${asset.id}`, 0).pinned = true
+    }
+  }
+
   endFrame(): void {
     this.frame++
     for (const [key, slot] of this.slots) {
       const idle = this.frame - slot.lastUsed
-      if (idle > PAUSE_AFTER_FRAMES && !slot.video.paused) slot.video.pause()
-      if (idle > RELEASE_AFTER_FRAMES) {
+      if (idle > PAUSE_AFTER_FRAMES && !slot.video.paused && !this.upcoming.has(key)) slot.video.pause()
+      if (idle > RELEASE_AFTER_FRAMES && !slot.pinned && !this.upcoming.has(key)) {
         slot.video.removeAttribute('src')
         slot.video.load()
         this.slots.delete(key)

@@ -9,6 +9,7 @@
  */
 import type {
   Animatable,
+  Asset,
   BlendMode,
   ColorAdjustmentKey,
   ImageClip,
@@ -91,6 +92,8 @@ const TEXTURE_IDLE_FRAMES = 300
 const STEM_ORDER: StemName[] = ['vocals', 'drums', 'bass', 'other']
 /** Texture units 0 and 1 hold a plugin's own inputs (u_input, or u_from and u_to); image params start here. */
 const FIRST_IMAGE_PARAM_UNIT = 2
+/** Texture creation and uploads happen on this unit, so they never disturb textures bound for the current pass. */
+const SCRATCH_UNIT = 15
 const BUNDLED_PREFIX = 'bundled:'
 
 /**
@@ -176,6 +179,110 @@ function matteSource(project: Project, clip: VisualClip, time: Seconds) {
   return { matte, maskAsset, host, sourceTime, rate }
 }
 
+/** Layer matrix of a clip whose drawn size is known without decoding it, or null (text, unknown media size). */
+function knownLayerMatrix(
+  clip: VisualClip,
+  project: Project,
+  time: Seconds,
+  canvas: { width: number; height: number },
+  audio: AudioSampler,
+): Mat2D | null {
+  const { width, height } = canvas
+  let size: [number, number] | null = null
+  if (clip.type === 'solid' || clip.type === 'generator') size = [width, height]
+  else if (clip.type === 'video' || clip.type === 'image') {
+    const asset = project.assets[clip.assetId]
+    if (asset?.width && asset.height) size = fitSize(clip.fit, asset.width, asset.height, width, height)
+  }
+  return size && layerMatrix(clip, time - clip.start, time, size[0], size[1], width, height, audio)
+}
+
+/** Whether a clip paints every canvas pixel with full opacity, hiding everything below it. */
+function coversCanvas(
+  clip: VisualClip,
+  project: Project,
+  time: Seconds,
+  canvas: { width: number; height: number },
+  audio: AudioSampler,
+): boolean {
+  if (clip.blendMode !== 'normal' || clip.effects.some((e) => e.enabled) || clip.matte) return false
+  const local = time - clip.start
+  if (evaluateNumber(clip.opacity, local, time, audio) < 1) return false
+  if (clip.type === 'solid') {
+    if (parseColor(evaluate(clip.color, local))[3] < 1) return false
+  } else if (clip.type === 'video') {
+    // WebM (VP8/VP9) can carry alpha; the other formats browsers decode cannot.
+    if (/webm/i.test(project.assets[clip.assetId]?.mimeType ?? 'webm')) return false
+  } else if (clip.type === 'image') {
+    if (project.assets[clip.assetId]?.mimeType !== 'image/jpeg') return false
+  } else return false
+  const m = knownLayerMatrix(clip, project, time, canvas, audio)
+  if (!m) return false
+  const det = m[0] * m[3] - m[2] * m[1]
+  if (Math.abs(det) < 1e-9) return false
+  const eps = 1e-6
+  for (const [x, y] of [
+    [0, 0],
+    [canvas.width, 0],
+    [0, canvas.height],
+    [canvas.width, canvas.height],
+  ] as const) {
+    const dx = x - m[4]
+    const dy = y - m[5]
+    const u = (m[3] * dx - m[2] * dy) / det
+    const v = (m[0] * dy - m[1] * dx) / det
+    if (u < -eps || u > 1 + eps || v < -eps || v > 1 + eps) return false
+  }
+  return true
+}
+
+/** Whether a clip without effects draws nothing on the canvas (fully outside it, or transparent). */
+function offCanvas(
+  clip: VisualClip,
+  project: Project,
+  time: Seconds,
+  canvas: { width: number; height: number },
+  audio: AudioSampler,
+): boolean {
+  if (clip.type === 'adjustment' || clip.effects.some((e) => e.enabled)) return false
+  if (evaluateNumber(clip.opacity, time - clip.start, time, audio) <= 0) return true
+  const m = knownLayerMatrix(clip, project, time, canvas, audio)
+  if (!m) return false
+  const xs = [m[4], m[0] + m[4], m[2] + m[4], m[0] + m[2] + m[4]]
+  const ys = [m[5], m[1] + m[5], m[3] + m[5], m[1] + m[3] + m[5]]
+  return (
+    Math.max(...xs) <= 0 ||
+    Math.min(...xs) >= canvas.width ||
+    Math.max(...ys) <= 0 ||
+    Math.min(...ys) >= canvas.height
+  )
+}
+
+/**
+ * Drops layers that cannot change the frame: everything below the topmost layer that covers the canvas with opaque
+ * pixels, and layers without effects that fall entirely outside the canvas. Their media is then not decoded either.
+ * Preview and export share this, so it never changes what is exported.
+ */
+export function visibleLayers(
+  plan: LayerPlan[],
+  project: Project,
+  time: Seconds,
+  canvas: { width: number; height: number },
+  audio: AudioSampler,
+): LayerPlan[] {
+  let start = 0
+  for (let i = plan.length - 1; i > 0; i--) {
+    const layer = plan[i] as LayerPlan
+    if (layer.kind === 'clip' && coversCanvas(layer.clip, project, time, canvas, audio)) {
+      start = i
+      break
+    }
+  }
+  return plan
+    .slice(start)
+    .filter((layer) => layer.kind !== 'clip' || !offCanvas(layer.clip, project, time, canvas, audio))
+}
+
 /** Averages analysis bands into the fixed-size u_bands uniform. */
 function bandUniform(bands: readonly number[]): Float32Array {
   const out = new Float32Array(BAND_UNIFORMS)
@@ -204,6 +311,8 @@ export class WebGLCompositor implements Compositor {
   private readonly urlImages = new Map<string, Promise<FrameRef | null>>()
   private gpu: GpuState | null
   private frameIndex = 0
+  /** Signals when the GPU has finished the last rendered frame. */
+  private fence: WebGLSync | null = null
   private queue: Promise<void> = Promise.resolve()
   private disposed = false
 
@@ -230,6 +339,7 @@ export class WebGLCompositor implements Compositor {
     this.canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault()
       this.gpu = null
+      this.fence = null
     })
     this.canvas.addEventListener('webglcontextrestored', () => {
       if (!this.disposed) this.gpu = this.createGpuState()
@@ -268,6 +378,19 @@ export class WebGLCompositor implements Compositor {
     if (this.canvas.height !== h) this.canvas.height = h
   }
 
+  /**
+   * Whether the GPU is still executing the last rendered frame. Real-time callers skip a frame instead of queueing
+   * more work: once the GPU falls behind, further WebGL calls block the main thread until it catches up.
+   */
+  gpuBusy(): boolean {
+    const fence = this.fence
+    if (!fence || !this.gpu) return false
+    if (this.gl.getSyncParameter(fence, this.gl.SYNC_STATUS) !== this.gl.SIGNALED) return true
+    this.gl.deleteSync(fence)
+    this.fence = null
+    return false
+  }
+
   /** Renders are serialized: each waits for the previous one, so overlapping calls never interleave GPU work. */
   render(project: Project, time: Seconds, options?: RenderOptions): Promise<void> {
     const run = this.queue.then(() => this.renderNow(project, time, options))
@@ -284,10 +407,10 @@ export class WebGLCompositor implements Compositor {
     return s
   }
 
-  private async renderNow(project: Project, time: Seconds, _options?: RenderOptions): Promise<void> {
+  private async renderNow(project: Project, time: Seconds, options?: RenderOptions): Promise<void> {
     if (this.disposed) return
-    const plan = planFrame(project, time)
     const audio = this.sampler(project)
+    const plan = visibleLayers(planFrame(project, time), project, time, options?.size ?? this.canvas, audio)
     const audioFrame = audio.frame(time)
     const sources = await this.prepare(project, plan, time)
     const gpu = this.gpu
@@ -295,6 +418,7 @@ export class WebGLCompositor implements Compositor {
       this.frames.endFrame?.()
       return
     }
+    if (options?.size) this.resize(options.size.width, options.size.height)
     const gl = this.gl
     const width = this.canvas.width
     const height = this.canvas.height
@@ -319,6 +443,9 @@ export class WebGLCompositor implements Compositor {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null)
       gl.disable(gl.BLEND)
       this.fullscreen(gpu.programs.copy, [['u_tex', acc.texture]])
+      if (this.fence) gl.deleteSync(this.fence)
+      this.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+      gl.flush()
     } finally {
       gpu.pool.releaseAll()
       this.frames.endFrame?.()
@@ -362,6 +489,8 @@ export class WebGLCompositor implements Compositor {
       const anim = values[key]
       return anim ? evaluate(anim, local) : undefined
     }
+    // Video requests start after beginFrame() has seen all of them, so the provider knows which clips stay on screen.
+    const videos: { key: string; asset: Asset; time: Seconds; rate: number }[] = []
     const visit = (clip: VisualClip | null) => {
       if (!clip) return
       const local = time - clip.start
@@ -376,15 +505,12 @@ export class WebGLCompositor implements Compositor {
       if (clip.type === 'video' || clip.type === 'image') {
         const asset = project.assets[clip.assetId]
         if (asset && clip.type === 'video')
-          want(
-            clip.id,
-            this.frames.videoFrame(
-              asset,
-              clip.sourceStart + local * clip.playbackRate,
-              clip.id,
-              clip.playbackRate,
-            ),
-          )
+          videos.push({
+            key: clip.id,
+            asset,
+            time: clip.sourceStart + local * clip.playbackRate,
+            rate: clip.playbackRate,
+          })
         else if (asset) want(clip.id, this.frames.image(asset))
       } else if (clip.type === 'text') {
         tasks.push(this.text.prepare(clip, project))
@@ -392,12 +518,8 @@ export class WebGLCompositor implements Compositor {
       const matte = matteSource(project, clip, time)
       if (matte) {
         const key = `matte:${clip.id}`
-        want(
-          key,
-          matte.maskAsset.kind === 'image'
-            ? this.frames.image(matte.maskAsset)
-            : this.frames.videoFrame(matte.maskAsset, matte.sourceTime, key, matte.rate),
-        )
+        if (matte.maskAsset.kind === 'image') want(key, this.frames.image(matte.maskAsset))
+        else videos.push({ key, asset: matte.maskAsset, time: matte.sourceTime, rate: matte.rate })
       }
     }
     for (const layer of plan) {
@@ -408,6 +530,8 @@ export class WebGLCompositor implements Compositor {
         if (def?.kind === 'transition') wantImages(def.params, (key) => layer.transition.params?.[key])
       } else visit(layer.clip)
     }
+    this.frames.beginFrame?.(videos.map((v) => v.key))
+    for (const v of videos) want(v.key, this.frames.videoFrame(v.asset, v.time, v.key, v.rate))
     await Promise.all(tasks)
     return sources
   }
@@ -645,7 +769,7 @@ export class WebGLCompositor implements Compositor {
       gpu,
       `matte:${clip.id}`,
       frame.source,
-      info.maskAsset.kind === 'image' ? frame.source : undefined,
+      info.maskAsset.kind === 'image' ? frame.source : frame.version,
     )
     const { host } = info
     const src = s.project.assets[host.assetId]
@@ -740,7 +864,12 @@ export class WebGLCompositor implements Compositor {
         const frame = s.sources.get(clip.id)
         if (!frame || frame.width === 0 || frame.height === 0) return null
         const key = clip.type === 'image' ? `image:${clip.assetId}` : `video:${clip.id}`
-        const texture = this.texture(gpu, key, frame.source, clip.type === 'image' ? frame.source : undefined)
+        const texture = this.texture(
+          gpu,
+          key,
+          frame.source,
+          clip.type === 'image' ? frame.source : frame.version,
+        )
         const [bw, bh] = fitSize(clip.fit, frame.width, frame.height, s.width, s.height)
         const m = matrix(bw, bh)
         this.drawQuad(gpu, target, m, { texture, flipY: false }, opacity, s)
@@ -877,12 +1006,14 @@ export class WebGLCompositor implements Compositor {
   /** A texture per key; re-uploads when `version` changes, or every call when `version` is undefined. */
   private texture(gpu: GpuState, key: string, source: TexImageSource, version: unknown): WebGLTexture {
     let entry = gpu.textures.get(key)
+    const upload = !entry || version === undefined || entry.version !== version
+    if (upload) this.gl.activeTexture(this.gl.TEXTURE0 + SCRATCH_UNIT)
     if (!entry) {
       entry = { texture: createTexture(this.gl), version: undefined, lastUsed: 0 }
       gpu.textures.set(key, entry)
     }
     entry.lastUsed = this.frameIndex
-    if (version === undefined || entry.version !== version) {
+    if (upload) {
       uploadSource(this.gl, entry.texture, source)
       entry.version = version
     }
@@ -1038,6 +1169,8 @@ export class WebGLCompositor implements Compositor {
     this.disposed = true
     const gpu = this.gpu
     this.gpu = null
+    if (this.fence) this.gl.deleteSync(this.fence)
+    this.fence = null
     if (gpu) {
       gpu.pool.dispose()
       for (const entry of gpu.textures.values()) this.gl.deleteTexture(entry.texture)
