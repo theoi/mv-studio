@@ -22,7 +22,7 @@ import { AnalysisView } from './Analysis.tsx'
 import { AskBox } from './Ask.tsx'
 import { AutocutBadge, AutocutView } from './Autocut.tsx'
 import { BehindView } from './Behind.tsx'
-import { CameraView } from './Camera.tsx'
+import { CameraBadge, CameraView } from './Camera.tsx'
 import { DirectorBadge, DirectorView } from './Director.tsx'
 import { GenerateBadge, GenerateView } from './Generate.tsx'
 import { etaText, pct } from './jobState.ts'
@@ -49,6 +49,7 @@ const viewForKind: Record<string, AssistView> = {
   [JOB_KINDS.stems]: 'stems',
   [JOB_KINDS.director]: 'director',
   [JOB_KINDS.autocut]: 'autocut',
+  [JOB_KINDS.camera]: 'camera',
 }
 
 function Running() {
@@ -163,7 +164,13 @@ const groups: { label: string; tools: ToolDef[] }[] = [
         desc: 'Put text between people and background',
         icon: <Users />,
       },
-      { id: 'camera', title: '3D camera', desc: 'Depth motion on still images', icon: <Box /> },
+      {
+        id: 'camera',
+        title: '3D camera',
+        desc: 'Depth motion on still images',
+        icon: <Box />,
+        status: <CameraBadge />,
+      },
       {
         id: 'match',
         title: 'Match footage',
