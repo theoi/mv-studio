@@ -116,6 +116,18 @@ describe('smoothSubjectTrack', () => {
     for (const s of empty.samples) expect(s.focus).toEqual({ x: 0.5, y: 0.5 })
   })
 
+  it('ignores a subject seen only for a moment, so it does not steer the framing of the whole clip', () => {
+    const at5Hz = (subject: (i: number) => boolean) =>
+      Array.from({ length: 40 }, (_, i) =>
+        subject(i) ? sample(i / 5, 0.9, 0.2) : sample(i / 5, 0, 0, 'none'),
+      )
+    const blip = smoothSubjectTrack(track(at5Hz((i) => i === 20 || i === 21)), noBlur).samples
+    expect(blip.every((s) => s.source === 'none' && s.focus.x === 0.5)).toBe(true)
+    const held = smoothSubjectTrack(track(at5Hz((i) => i >= 20 && i < 23)), noBlur).samples
+    expect(held.filter((s) => s.source === 'face')).toHaveLength(3)
+    expect(held[0]?.focus.x).toBeCloseTo(0.9)
+  })
+
   it('removes a single-frame outlier', () => {
     const samples = Array.from({ length: 20 }, (_, i) => sample(i / 30, i === 10 ? 0.95 : 0.4))
     const out = smoothSubjectTrack(track(samples), noBlur).samples

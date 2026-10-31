@@ -1,8 +1,9 @@
 /**
  * Footage matching for the app: search the library by description, suggestions for a lyric line or a song section,
- * and background analysis of every clip and still as it is imported (one cancellable job, cached per clip).
- * Results are written to the project's visual analysis without an undo step, so the director and auto-cut read
- * them too, and Ctrl+Z never undoes an analysis the user did not ask for.
+ * and background analysis of every clip and still as it is imported (one cancellable job, cached per clip): the
+ * matching index, then where the people are for auto-reframe. Results are written to the project's visual analysis
+ * without an undo step, so the director, auto-cut and export read them too, and Ctrl+Z never undoes an analysis the
+ * user did not ask for.
  */
 import { songInfoFromProject } from '../../director/inputs.ts'
 import type { MediaFileSource } from '../../engine/types.ts'
@@ -15,7 +16,12 @@ import {
   type JobHandle,
   type JobRunner,
 } from '../../shared/jobs.ts'
-import { buildVisualAnalysis, readClipIndex } from '../analysisData.ts'
+import {
+  buildVisualAnalysis,
+  readClipIndex,
+  readSubjectTrack,
+  type VisualAnalysisParts,
+} from '../analysisData.ts'
 import { visionError } from '../errors.ts'
 import { createAssetFrameSource } from '../runtime/assetSource.ts'
 import type { FrameSource } from '../runtime/frames.ts'
@@ -55,6 +61,11 @@ export interface FootageQueryOptions {
 }
 
 export type AssetIndexStatus = 'indexed' | 'queued' | 'indexing' | 'paused' | 'failed' | 'unsupported'
+/** Where a clip stands for subject-aware framing. `no-subject`: analyzed, and no face or person was found. */
+export type SubjectStatus =
+  'analyzed' | 'no-subject' | 'analyzing' | 'queued' | 'paused' | 'failed' | 'unsupported'
+/** The two analyses of a clip, in the order they run. */
+export type IndexStep = 'matching' | 'subjects'
 
 export interface IndexingState {
   /** `paused` after Cancel; `error` when the run stopped (model download failed, ...). */
@@ -62,7 +73,8 @@ export interface IndexingState {
   /** Clips in the current run (done plus still to do) and how many are done. */
   total: number
   done: number
-  current?: { assetId: Id; name: string; fraction: number }
+  /** The clip being analyzed; `fraction` covers all of its steps. */
+  current?: { assetId: Id; name: string; fraction: number; step: IndexStep }
   failed: { assetId: Id; name: string; message: string }[]
   error?: { code: JobErrorCode; message: string }
 }
@@ -72,7 +84,10 @@ export interface FootageIndexer {
   start(): () => void
   getState(): IndexingState
   subscribe(listener: (state: IndexingState) => void): () => void
+  /** Matching (search, suggestions, auto-cut). */
   statusOf(assetId: Id): AssetIndexStatus
+  /** Subject tracking (auto-reframe in multi-format export). */
+  subjectStatusOf(assetId: Id): SubjectStatus
   /** Stops the run; nothing more is analyzed until `resume()` or the next import. */
   cancel(): void
   resume(options?: { retryFailed?: boolean }): void
@@ -87,7 +102,7 @@ export interface FootageService {
 
 export interface FootageServiceDeps {
   editor: Pick<ProjectEditor, 'getProject' | 'dispatch' | 'subscribe'>
-  vision: Pick<VisionService, 'indexClip' | 'matcher'>
+  vision: Pick<VisionService, 'indexClip' | 'matcher' | 'subjects'>
   media: MediaFileSource
   jobs?: Pick<JobRunner, 'run'>
   /** Frames to analyze for an asset (default: the export decoder for clips, the image itself for stills). */
@@ -122,7 +137,8 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
   // ---------------------------------------------------------------------------------------------------------
   // Background analysis
 
-  const failed = new Map<Id, string>()
+  const failedMatching = new Map<Id, string>()
+  const failedSubjects = new Map<Id, string>()
   const listeners = new Set<(state: IndexingState) => void>()
   let watching = false
   let paused = false
@@ -134,9 +150,18 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
   let scheduled = false
   let state: IndexingState = { status: 'idle', total: 0, done: 0, failed: [] }
 
+  const stepsFor = (project: Project, asset: Asset): IndexStep[] => {
+    if (!analyzable(asset)) return []
+    const steps: IndexStep[] = []
+    if (!failedMatching.has(asset.id) && !indexOf(project, asset.id)) steps.push('matching')
+    if (!failedSubjects.has(asset.id) && !readSubjectTrack(project.analysis.visual[asset.id]))
+      steps.push('subjects')
+    return steps
+  }
+
   const pending = (project: Project) =>
     Object.values(project.assets)
-      .filter((a) => analyzable(a) && !failed.has(a.id) && !indexOf(project, a.id))
+      .filter((a) => stepsFor(project, a).length > 0)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
 
   const emit = () => {
@@ -152,8 +177,16 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       total: running ? total : 0,
       done: running ? done : 0,
       ...(running && current ? { current: { ...current } } : {}),
-      failed: [...failed].flatMap(([assetId, message]) =>
-        assets[assetId] ? [{ assetId, name: assets[assetId].name, message }] : [],
+      failed: [...new Set([...failedMatching.keys(), ...failedSubjects.keys()])].flatMap((assetId) =>
+        assets[assetId]
+          ? [
+              {
+                assetId,
+                name: assets[assetId].name,
+                message: (failedMatching.get(assetId) ?? failedSubjects.get(assetId)) as string,
+              },
+            ]
+          : [],
       ),
       ...(error ? { error } : {}),
     }
@@ -183,9 +216,52 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
           const fraction = total ? (done + (current?.fraction ?? 0)) / total : 0
           ctx.progress({
             fraction: clamp(fraction, 0, 1),
-            stage: 'indexing',
+            stage: current?.step === 'subjects' ? 'subjects' : 'indexing',
             ...(current ? { message: `Clip ${done + 1} of ${total} · ${current.name}` } : {}),
           })
+        }
+        /** Records a clip's failed steps; errors that would hit every clip stop the run instead. */
+        const fail = (asset: Asset, err: unknown, steps: readonly IndexStep[]) => {
+          const e = visionError(err)
+          if (e.code === 'cancelled' || ctx.signal.aborted || RUN_LEVEL.includes(e.code)) throw e
+          for (const step of steps)
+            (step === 'matching' ? failedMatching : failedSubjects).set(asset.id, e.message)
+        }
+        const write = (
+          asset: Asset,
+          src: FrameSource,
+          parts: Omit<VisualAnalysisParts, 'assetId' | 'sourceSize'>,
+        ) => {
+          const project = editor.getProject()
+          if (!project.assets[asset.id]) return
+          const analysis = buildVisualAnalysis(
+            { assetId: asset.id, sourceSize: { width: src.width, height: src.height }, ...parts },
+            project.analysis.visual[asset.id],
+          )
+          editor.dispatch({ type: 'analysis.setVisual', analysis }, { history: 'skip' })
+        }
+        const runStep = async (asset: Asset, src: FrameSource, step: IndexStep, k: number, of: number) => {
+          if (current) Object.assign(current, { step, fraction: k / of })
+          const task = {
+            signal: ctx.signal,
+            onProgress: (p: { fraction?: number }) => {
+              if (current) current.fraction = (k + clamp(p.fraction ?? 0, 0, 1)) / of
+              report()
+              emit()
+            },
+          }
+          try {
+            if (step === 'matching') {
+              const index = await vision.indexClip(src, task)
+              write(asset, src, { duration: index.duration, index })
+            } else {
+              // A still is the same picture at every time, so one sample is enough.
+              const subjects = await vision.subjects(src, asset.kind === 'image' ? { ...task, fps: 1 } : task)
+              write(asset, src, { duration: src.duration, subjects })
+            }
+          } catch (err) {
+            fail(asset, err, [step])
+          }
         }
         for (;;) {
           ctx.throwIfCancelled()
@@ -193,44 +269,21 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
           const asset = todo[0]
           if (!asset) break
           total = done + todo.length
-          current = { assetId: asset.id, name: asset.name, fraction: 0 }
+          const steps = stepsFor(editor.getProject(), asset)
+          current = { assetId: asset.id, name: asset.name, fraction: 0, step: steps[0] as IndexStep }
           report()
           emit()
-          let source: (FrameSource & { dispose?(): void }) | undefined
+          let src: (FrameSource & { dispose?(): void }) | undefined
           try {
-            source = await frameSource(asset)
-            const index = await vision.indexClip(source, {
-              signal: ctx.signal,
-              onProgress: (p) => {
-                if (current) current.fraction = clamp(p.fraction ?? 0, 0, 1)
-                report()
-                emit()
-              },
-            })
-            const project = editor.getProject()
-            if (project.assets[asset.id]) {
-              editor.dispatch(
-                {
-                  type: 'analysis.setVisual',
-                  analysis: buildVisualAnalysis(
-                    {
-                      assetId: asset.id,
-                      duration: index.duration,
-                      sourceSize: { width: source.width, height: source.height },
-                      index,
-                    },
-                    project.analysis.visual[asset.id],
-                  ),
-                },
-                { history: 'skip' },
-              )
-            }
+            src = await frameSource(asset)
           } catch (err) {
-            const e = visionError(err)
-            if (e.code === 'cancelled' || ctx.signal.aborted || RUN_LEVEL.includes(e.code)) throw e
-            failed.set(asset.id, e.message)
+            fail(asset, err, steps)
+          }
+          try {
+            for (const [k, step] of src ? steps.entries() : [])
+              await runStep(asset, src as FrameSource, step, k, steps.length)
           } finally {
-            source?.dispose?.()
+            src?.dispose?.()
           }
           done++
           current = undefined
@@ -270,7 +323,8 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
             current = undefined
             old.handle.cancel()
           }
-          failed.clear()
+          failedMatching.clear()
+          failedSubjects.clear()
           paused = false
           error = undefined
         } else if (change.commands.some((c) => c.type === 'asset.add')) {
@@ -296,9 +350,19 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       const project = editor.getProject()
       const asset = project.assets[assetId]
       if (!asset || !analyzable(asset)) return 'unsupported'
-      if (current?.assetId === assetId && running) return 'indexing'
       if (indexOf(project, assetId)) return 'indexed'
-      if (failed.has(assetId)) return 'failed'
+      if (current?.assetId === assetId && running) return 'indexing'
+      if (failedMatching.has(assetId)) return 'failed'
+      return paused || error ? 'paused' : 'queued'
+    },
+    subjectStatusOf(assetId) {
+      const project = editor.getProject()
+      const asset = project.assets[assetId]
+      if (!asset || !analyzable(asset)) return 'unsupported'
+      const track = readSubjectTrack(project.analysis.visual[assetId])
+      if (track) return track.samples.some((s) => s.source !== 'none') ? 'analyzed' : 'no-subject'
+      if (current?.assetId === assetId && running) return 'analyzing'
+      if (failedSubjects.has(assetId)) return 'failed'
       return paused || error ? 'paused' : 'queued'
     },
     cancel() {
@@ -307,7 +371,10 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
     resume(options = {}) {
       paused = false
       error = undefined
-      if (options.retryFailed) failed.clear()
+      if (options.retryFailed) {
+        failedMatching.clear()
+        failedSubjects.clear()
+      }
       schedule()
     },
   }

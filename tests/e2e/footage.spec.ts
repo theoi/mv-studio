@@ -12,12 +12,13 @@ function collectErrors(page: Page): string[] {
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
   page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text())
+    // MediaPipe reports its TFLite setup through console.error.
+    if (m.type() === 'error' && !m.text().startsWith('INFO:')) errors.push(m.text())
   })
   return errors
 }
 
-test('footage is analyzed on import without undo steps, and auto-cut cuts it to the beat in one', async ({
+test('footage is analyzed and subject-tracked on import without undo steps, and auto-cut cuts it to the beat in one', async ({
   page,
 }) => {
   test.setTimeout(120_000)
@@ -70,13 +71,10 @@ test('footage is analyzed on import without undo steps, and auto-cut cuts it to 
         return { dim: 4, data: new Float32Array(texts.flatMap(() => [0.5, 0.5, 0.5, 0.5])) }
       },
     }
+    // Subject tracking uses the real MediaPipe segmenter and face detector.
+    const workers = vision.createWorkerBackends()
     const service = vision.createVisionService({
-      backends: {
-        onnx: () => onnx,
-        segmentation: () => {
-          throw new Error('unused')
-        },
-      },
+      backends: { onnx: () => onnx, segmentation: (role: Untyped) => workers.segmentation(role) },
       cache: vision.createMemoryCache(),
     })
     const footage = vision.createFootageService({
@@ -84,6 +82,11 @@ test('footage is analyzed on import without undo steps, and auto-cut cuts it to 
       vision: service,
       media: media.mediaStore,
       jobs: shared.jobs,
+    })
+    const stages = new Set<string>()
+    shared.jobs.subscribe((jobs: Untyped[]) => {
+      for (const j of jobs)
+        if (j.kind === vision.FOOTAGE_INDEX_JOB && j.progress.stage) stages.add(j.progress.stage)
     })
     const states: string[] = []
     footage.indexing.subscribe((s: Untyped) => {
@@ -96,7 +99,11 @@ test('footage is analyzed on import without undo steps, and auto-cut cuts it to 
         if (s.status === 'error') reject(new Error(s.error.message))
         else if (
           s.status === 'idle' &&
-          [frames, clip, image].every((a) => footage.indexing.statusOf(a.id) === 'indexed')
+          [frames, clip, image].every(
+            (a) =>
+              footage.indexing.statusOf(a.id) === 'indexed' &&
+              ['analyzed', 'no-subject', 'failed'].includes(footage.indexing.subjectStatusOf(a.id)),
+          )
         )
           resolve()
       }
@@ -104,6 +111,12 @@ test('footage is analyzed on import without undo steps, and auto-cut cuts it to 
       check()
     })
     stop()
+    workers.dispose()
+    const subjectsOf = (a: Untyped) => {
+      const track = vision.readSubjectTrack(editor.getProject().analysis.visual[a.id])
+      return { status: footage.indexing.subjectStatusOf(a.id), samples: track?.samples.length }
+    }
+    const subjects = { frames: subjectsOf(frames), clip: subjectsOf(clip), image: subjectsOf(image) }
     const index = (id: string) => vision.readClipIndex(editor.getProject().analysis.visual[id])
     const framesIndex = index(frames.id)
     const imageIndex = index(image.id)
@@ -141,6 +154,8 @@ test('footage is analyzed on import without undo steps, and auto-cut cuts it to 
     const undone = editor.getProject()
     return {
       states,
+      stages: [...stages],
+      subjects,
       framesIndex: { times: framesIndex?.times.length, energy: framesIndex?.motion.meanEnergy },
       imageIndex: { times: imageIndex?.times.length, energy: imageIndex?.motion.meanEnergy },
       clipIndexed: !!index(clip.id),
@@ -160,6 +175,12 @@ test('footage is analyzed on import without undo steps, and auto-cut cuts it to 
   })
   console.log('auto-cut e2e', JSON.stringify({ ...r, starts: r.starts.length }))
   expect(r.states).toEqual(['indexing', 'idle'])
+  // The synthetic fixtures show no people; what matters is that every clip was tracked (5 Hz, a still once).
+  for (const s of Object.values(r.subjects)) expect(['analyzed', 'no-subject']).toContain(s.status)
+  expect(r.subjects.frames.samples).toBeGreaterThanOrEqual(19)
+  expect(r.subjects.clip.samples).toBeGreaterThanOrEqual(19)
+  expect(r.subjects.image.samples).toBe(1)
+  expect(r.stages).toEqual(expect.arrayContaining(['indexing', 'subjects']))
   expect(r.framesIndex.times).toBe(4)
   expect(r.framesIndex.energy).toBeGreaterThan(1)
   expect(r.imageIndex).toEqual({ times: 1, energy: 0 })
@@ -189,10 +210,12 @@ const CC0 = [
 ]
 
 /**
- * Real-model timing (downloads the CLIP model on first run). Not part of CI:
+ * Real-model timing (downloads the CLIP and MediaPipe models on first run). Not part of CI:
  *   node scripts/fetch-vision-fixtures.mjs && npm run build && VISION_HEAVY=1 npx playwright test tests/e2e/footage.spec.ts
  */
-test('timing: background analysis of 10 clips and an auto-cut with the real CLIP model', async ({ page }) => {
+test('timing: background analysis (matching and subjects) of 10 clips and an auto-cut with real models', async ({
+  page,
+}) => {
   test.skip(!process.env.VISION_HEAVY, 'set VISION_HEAVY=1 to run the real-model timing')
   test.setTimeout(20 * 60_000)
   for (const c of CC0) expect(existsSync(path.join(VISION_DIR, `${c}.webm`)), `${c} missing`).toBe(true)
@@ -221,17 +244,27 @@ test('timing: background analysis of 10 clips and an auto-cut with the real CLIP
       jobs: shared.jobs,
     })
     const t0 = performance.now()
-    const startedAt: Record<string, number> = {}
+    /** When each clip's matching and subject steps started, in run order. */
+    const marks: { assetId: string; step: string; at: number }[] = []
     footage.indexing.subscribe((s: Untyped) => {
-      if (s.current && startedAt[s.current.assetId] === undefined)
-        startedAt[s.current.assetId] = performance.now() - t0
+      const last = marks[marks.length - 1]
+      if (s.current && (last?.assetId !== s.current.assetId || last.step !== s.current.step))
+        marks.push({ assetId: s.current.assetId, step: s.current.step, at: performance.now() - t0 })
     })
+    const settled = ['analyzed', 'no-subject', 'failed']
     const stop = footage.indexing.start()
     await new Promise<void>((resolve, reject) => {
       const check = () => {
         const s = footage.indexing.getState()
         if (s.status === 'error') reject(new Error(s.error.message))
-        else if (s.status === 'idle' && assets.every((a) => footage.indexing.statusOf(a.id) === 'indexed'))
+        else if (
+          s.status === 'idle' &&
+          assets.every(
+            (a) =>
+              footage.indexing.statusOf(a.id) === 'indexed' &&
+              settled.includes(footage.indexing.subjectStatusOf(a.id)),
+          )
+        )
           resolve()
       }
       footage.indexing.subscribe(check)
@@ -239,9 +272,23 @@ test('timing: background analysis of 10 clips and an auto-cut with the real CLIP
     })
     const totalMs = performance.now() - t0
     stop()
-    const order = assets.map((a) => startedAt[a.id] ?? 0).sort((a, b) => a - b)
-    const perClip = order.map((t, i) => Math.round((order[i + 1] ?? totalMs) - t))
+    const stepMs = (step: string) =>
+      assets.map((a) => {
+        const i = marks.findIndex((m) => m.assetId === a.id && m.step === step)
+        return i < 0 ? 0 : Math.round((marks[i + 1]?.at ?? totalMs) - marks[i]!.at)
+      })
+    const matchingMs = stepMs('matching')
+    const subjectsMs = stepMs('subjects')
+    const perClip = matchingMs.map((m, i) => m + subjectsMs[i]!)
     const footageSeconds = assets.reduce((s, a) => s + (a.duration ?? 0), 0)
+    const steadySeconds = assets.slice(1).reduce((s, a) => s + (a.duration ?? 0), 0)
+    const steady = (ms: number[]) => Math.round(ms.slice(1).reduce((a, b) => a + b, 0) / steadySeconds)
+    const subjects = assets.map((a) => {
+      const track = vision.readSubjectTrack(editor.getProject().analysis.visual[a.id])
+      const sources: Record<string, number> = {}
+      for (const s of track?.samples ?? []) sources[s.source] = (sources[s.source] ?? 0) + 1
+      return { name: a.name, status: footage.indexing.subjectStatusOf(a.id), sources }
+    })
 
     // Auto-cut of a 3-minute, 120 BPM song (synthetic grid and lyrics) over the ten analyzed clips.
     const song = {
@@ -308,14 +355,20 @@ test('timing: background analysis of 10 clips and an auto-cut with the real CLIP
       footageSeconds: +footageSeconds.toFixed(1),
       totalMs: Math.round(totalMs),
       perClip,
-      steadyMsPerFootageSecond: Math.round(
-        perClip.slice(1).reduce((a, b) => a + b, 0) /
-          assets.slice(1).reduce((s, a) => s + (a.duration ?? 0), 0),
-      ),
+      matchingMs,
+      subjectsMs,
+      steadyMsPerFootageSecond: {
+        matching: steady(matchingMs),
+        subjects: steady(subjectsMs),
+        total: steady(perClip),
+      },
+      subjects,
       autoCut: { planMs: Math.round(planMs), shots: plan.shots.length, cuts: applied.stats.cuts, lyricHits },
     }
   })
   console.log('footage timing', JSON.stringify(r, null, 1))
   expect(r.clips).toBe(10)
   expect(r.autoCut.cuts).toBeGreaterThan(100)
+  // The teacher and interview clips show a person talking to the camera.
+  for (const s of r.subjects.slice(0, 2)) expect(s, JSON.stringify(s)).toMatchObject({ status: 'analyzed' })
 })
