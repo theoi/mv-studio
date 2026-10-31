@@ -123,6 +123,8 @@ test('the keyboard aims and picks, and a spot where the object was lost is fixed
   await expect(layer).toBeFocused()
   // Started from the keyboard: the crosshair shows where Enter picks, and the pill says how to aim.
   await expect(page.getByText('Arrows to aim')).toBeVisible()
+  // Screen readers hear which clip Enter would pick in.
+  await expect(page.getByRole('status').filter({ hasText: /^Over / })).toHaveText('Over people-interview')
 
   // Editor shortcuts wait while picking: S does not split and T does not add text.
   const clipCount = () =>

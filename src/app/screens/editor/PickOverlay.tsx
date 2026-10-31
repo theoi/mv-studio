@@ -55,8 +55,11 @@ export function PickOverlay({ width, height }: { width: number; height: number }
   }, [])
 
   if (!request || !width) return null
-  const outline = point ? request.hover?.(point) : null
+  const target = point && request.hover ? request.hover(point) : null
+  const outline = target?.outline
   const cross = point ?? CENTER
+  const announced =
+    point && request.hover ? (target ? `Over ${target.name}` : (request.miss ?? 'Nothing to pick here')) : ''
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const arrow = ARROWS[e.key]
@@ -83,61 +86,67 @@ export function PickOverlay({ width, height }: { width: number; height: number }
   }
 
   return (
-    <div
-      ref={ref}
-      className={styles.pickLayer}
-      tabIndex={0}
-      role="button"
-      aria-label={request.prompt}
-      aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter Escape"
-      onKeyDown={onKeyDown}
-      onFocus={(e) => {
-        // Started from the keyboard: show where Enter will pick right away.
-        if (!e.currentTarget.matches(':focus-visible')) return
-        setAiming(true)
-        setPoint((p) => p ?? CENTER)
-      }}
-      onPointerMove={(e) => {
-        setAiming(false)
-        setPoint(pointIn(e))
-      }}
-      onPointerLeave={() => {
-        if (!aiming) setPoint(null)
-      }}
-      onClick={(e) => {
-        const at = pointIn(e)
-        pickAt(at.x, at.y)
-      }}
-    >
-      <svg className={styles.overlay} width={width} height={height} aria-hidden>
-        {outline && (
-          <polygon
-            className={styles.selBox}
-            points={outline.map(([x, y]) => `${x * width},${y * height}`).join(' ')}
-          />
-        )}
-        {aiming && (
-          <g className={styles.pickCross}>
-            <circle cx={cross.x * width} cy={cross.y * height} r={9} />
-            <path
-              d={`M${cross.x * width - 15} ${cross.y * height}h9M${cross.x * width + 6} ${cross.y * height}h9M${
-                cross.x * width
-              } ${cross.y * height - 15}v9M${cross.x * width} ${cross.y * height + 6}v9`}
+    <>
+      <div
+        ref={ref}
+        className={styles.pickLayer}
+        tabIndex={0}
+        role="button"
+        aria-label={request.prompt}
+        aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter Escape"
+        onKeyDown={onKeyDown}
+        onFocus={(e) => {
+          // Started from the keyboard: show where Enter will pick right away.
+          if (!e.currentTarget.matches(':focus-visible')) return
+          setAiming(true)
+          setPoint((p) => p ?? CENTER)
+        }}
+        onPointerMove={(e) => {
+          setAiming(false)
+          setPoint(pointIn(e))
+        }}
+        onPointerLeave={() => {
+          if (!aiming) setPoint(null)
+        }}
+        onClick={(e) => {
+          const at = pointIn(e)
+          pickAt(at.x, at.y)
+        }}
+      >
+        <svg className={styles.overlay} width={width} height={height} aria-hidden>
+          {outline && (
+            <polygon
+              className={styles.selBox}
+              points={outline.map(([x, y]) => `${x * width},${y * height}`).join(' ')}
             />
-          </g>
-        )}
-      </svg>
-      <div className={styles.pickNote}>
-        <span className={styles.pickPrompt}>{request.prompt}</span>
-        <span className={styles.pickHint}>
-          {aiming && (
-            <>
-              Arrows to aim · <Kbd keys="Enter" /> to pick ·
-            </>
           )}
-          <Kbd keys="Esc" /> to cancel
-        </span>
+          {aiming && (
+            <g className={styles.pickCross}>
+              <circle cx={cross.x * width} cy={cross.y * height} r={9} />
+              <path
+                d={`M${cross.x * width - 15} ${cross.y * height}h9M${cross.x * width + 6} ${cross.y * height}h9M${
+                  cross.x * width
+                } ${cross.y * height - 15}v9M${cross.x * width} ${cross.y * height + 6}v9`}
+              />
+            </g>
+          )}
+        </svg>
+        <div className={styles.pickNote}>
+          <span className={styles.pickPrompt}>{request.prompt}</span>
+          <span className={styles.pickHint}>
+            {aiming && (
+              <>
+                Arrows to aim · <Kbd keys="Enter" /> to pick ·
+              </>
+            )}
+            <Kbd keys="Esc" /> to cancel
+          </span>
+        </div>
       </div>
-    </div>
+      {/* Outside the layer: a role="button" hides its children from screen readers. */}
+      <div className="sr-only" role="status" aria-live="polite">
+        {announced}
+      </div>
+    </>
   )
 }

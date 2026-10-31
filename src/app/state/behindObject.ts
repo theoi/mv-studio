@@ -256,14 +256,16 @@ export function pickObject(hostId?: string, fixing?: ObjectPick): void {
   const t = ui().playhead
   if (host && (t < host.start || t >= host.start + host.duration))
     setUi({ playhead: host.start + Math.min(0.1, host.duration / 2) })
+  const hostName = host && (host.name ?? footageOf(editor.getProject(), host)?.asset.name)
   startPick({
     prompt: fixing ? FIX_PROMPT : PICK_PROMPT,
     hover: (p) => {
       const project = editor.getProject()
       const time = ui().playhead
       const hit = footageAt(project, p, time, hostId)
-      return hit ? outlineOf(project, hit, time) : null
+      return hit ? { outline: outlineOf(project, hit, time), name: hit.clip.name ?? hit.asset.name } : null
     },
+    miss: hostName ? `Outside ${hostName}` : 'Not over a video clip',
     onPick: (p) => {
       const hit = footageAt(editor.getProject(), p, p.time, hostId)
       if (!hit) {
