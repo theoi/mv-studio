@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Info,
   KeyRound,
+  LocateFixed,
   RotateCcw,
   Settings,
   Sparkles,
@@ -40,6 +41,7 @@ import {
 } from '../../../state/generate.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { useProject } from '../../../state/project.ts'
+import { showClips } from '../../../state/reveal.ts'
 import { set, toast } from '../../../state/ui.ts'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, Field, RunCard, Steps, ToolView } from './ToolView.tsx'
@@ -330,6 +332,15 @@ function Done({ job }: { job?: JobSnapshot }) {
             {assets.length === 1 ? 'a normal clip' : 'normal clips'}.{' '}
             {capitalize(formatEstimate({ usd: outcome?.usd ?? 0 }))}, charged by fal.ai.
           </div>
+          <Button
+            size="sm"
+            icon={<LocateFixed />}
+            className={styles.successAction}
+            disabled={!outcome}
+            onClick={() => outcome && showClips(outcome.clipIds, { openInspector: false })}
+          >
+            Show
+          </Button>
         </div>
       </div>
     </ToolView>

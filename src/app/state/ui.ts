@@ -36,6 +36,8 @@ export interface Toast {
   id: number
   message: string
   action?: { label: string; run: () => void }
+  /** Selects what an automatic or AI tool just made. The toast stays, so Undo is still at hand. */
+  show?: () => void
 }
 
 export interface UiState {
@@ -118,11 +120,37 @@ useUi.subscribe((s, prev) => {
   }
 })
 
+const TOAST_MS = 5200
 let toastId = 1
-export function toast(message: string, action?: Toast['action']) {
+const toastTimers = new Map<number, number>()
+
+export function toast(message: string, action?: Toast['action'], options: { show?: () => void } = {}) {
   const id = toastId++
-  set((s) => ({ toasts: [...s.toasts.slice(-2), { id, message, action }] }))
-  window.setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 5200)
+  set((s) => ({ toasts: [...s.toasts.slice(-2), { id, message, action, show: options.show }] }))
+  releaseToast(id)
+}
+
+export function dismissToast(id: number) {
+  holdToast(id)
+  set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
+}
+
+/** Keeps a toast open, while the pointer is on it or focus is in it. */
+export function holdToast(id: number) {
+  const timer = toastTimers.get(id)
+  if (timer === undefined) return
+  window.clearTimeout(timer)
+  toastTimers.delete(id)
+}
+
+/** Gives a toast its full time again, counted from now. */
+export function releaseToast(id: number) {
+  holdToast(id)
+  if (get().toasts.some((t) => t.id === id))
+    toastTimers.set(
+      id,
+      window.setTimeout(() => dismissToast(id), TOAST_MS),
+    )
 }
 
 export function select(selection: Selection) {

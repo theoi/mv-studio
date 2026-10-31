@@ -123,12 +123,12 @@ async function mockFal(
 }
 
 /** Opens Assist › Generate on the sample project with the playhead at 12 s, with or without a saved fal.ai key. */
-async function openGenerate(page: Page, settings: Record<string, unknown> | null) {
+async function openGenerate(page: Page, settings: Record<string, unknown> | null, { harness = false } = {}) {
   await page.addInitScript((saved) => {
     localStorage.setItem('mv-studio.guide-seen', '1')
     if (saved) localStorage.setItem('mv-studio.cloud.v1', JSON.stringify(saved))
   }, settings)
-  await openApp(page)
+  await (harness ? openHarness(page) : openApp(page))
   await page.evaluate(() => {
     window.location.hash = '#/editor?tab=assist&assist=generate&t=12'
   })
@@ -191,9 +191,11 @@ test('an image goes through fal.ai’s queue and lands in Media and at the playh
     page.getByText('Cancelling stops the request if it is still waiting in line.', { exact: false }),
   ).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('generate-running-1440x900.png') })
-  await expect(page.getByText('Added AI image: Neon city skyline at night', { exact: true })).toBeVisible({
-    timeout: 20_000,
-  })
+  const added = page.locator('[data-toast]').filter({ hasText: 'Added AI image: Neon city skyline at night' })
+  await expect(added).toBeVisible({ timeout: 20_000 })
+  // The pointer on the toast keeps it open past the 5.2 s it otherwise lasts.
+  await added.hover()
+  const hoveredAt = Date.now()
   await expect.poll(() => previewShowsRed(page), { timeout: 10_000 }).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('generate-done-1440x900.png') })
 
@@ -210,11 +212,100 @@ test('an image goes through fal.ai’s queue and lands in Media and at the playh
   const name = 'AI image: Neon city skyline at night'
   await expect(timelineClip(page, name, '0:12.0 to 0:16.0')).toHaveCount(1)
   await expect(libraryCard(page, name)).toHaveCount(1)
-  await page.getByRole('button', { name: 'Undo', exact: true }).first().click()
+  await page.waitForTimeout(Math.max(0, 6000 - (Date.now() - hoveredAt)))
+  await expect(added).toBeVisible()
+
+  // Show in the toast selects the new clip. Focus stays on Show, which keeps the toast open with the pointer away.
+  await added.getByRole('button', { name: 'Show', exact: true }).click()
+  await expect(timelineClip(page, name, '0:12.0 to 0:16.0')).toHaveAttribute('aria-pressed', 'true')
+  await expect(
+    page.getByRole('tabpanel', { name: 'Inspector' }).getByText(name, { exact: true }),
+  ).toBeVisible()
+  await page.mouse.move(0, 0)
+  await page.waitForTimeout(6000)
+  await expect(added).toBeVisible()
+
+  // The result card in Assist has Show too, and it leaves the panel and its focus where they are.
+  const assistTab = page.getByRole('tab', { name: 'Assist' })
+  await assistTab.click()
+  const cardShow = page
+    .getByRole('tabpanel', { name: 'Assist' })
+    .getByRole('button', { name: 'Show', exact: true })
+  await cardShow.click()
+  await expect(cardShow).toBeFocused()
+  await expect(assistTab).toHaveAttribute('aria-selected', 'true')
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.screenshot({ path: testInfo.outputPath('generate-done-card-1280x720.png') })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(timelineClip(page, name, '0:12.0 to 0:16.0')).toHaveAttribute('aria-pressed', 'true')
+
+  // Undo in the toast puts focus back where it was before it came into the toast.
+  await added.getByRole('button', { name: 'Undo', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect(added).toHaveCount(0)
+  await expect(cardShow).toBeFocused()
   await expect(timelineClip(page, name, '0:12')).toHaveCount(0)
   await expect(libraryCard(page, name)).toHaveCount(0)
   await expect.poll(() => previewShowsRed(page)).toBe(false)
+  await cardShow.click()
+  await expect(page.getByText('That clip is no longer in the project', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Generate another' }).click()
   await expect(page.getByRole('button', { name: /^Generate · / })).toBeVisible()
+})
+
+test('Show says when the new clip is on a hidden track, and Show track brings the track back', async ({
+  page,
+}) => {
+  await mockFal(page)
+  await openGenerate(page, { falKey: KEY }, { harness: true })
+  await page.getByRole('radio', { name: 'Image' }).click()
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Rain on a window')
+  await page.getByRole('button', { name: /^Generate · / }).click()
+  const added = page.locator('[data-toast]').filter({ hasText: 'Added AI image: Rain on a window' })
+  await expect(added).toBeVisible({ timeout: 20_000 })
+  const shownAt = Date.now()
+  await added.hover()
+
+  // Hide the track the result landed on (the result card's Show selects it).
+  await page
+    .getByRole('tabpanel', { name: 'Assist' })
+    .getByRole('button', { name: 'Show', exact: true })
+    .click()
+  await added.hover()
+  const trackName = await page.evaluate(() => {
+    const { project, ui } = window.mvStudio.app
+    const selection = ui.get().selection
+    const p = project.editor.getProject()
+    const clip = selection.type === 'clip' ? p.clips[selection.id] : undefined
+    const track = (p.tracks as { id: string; name: string }[]).find((t) => t.id === clip?.trackId)
+    if (!track) throw new Error('The result is not selected')
+    project.dispatch({ type: 'track.update', trackId: track.id, patch: { hidden: true } })
+    return track.name
+  })
+  const hidden = () =>
+    page.evaluate(
+      (n) =>
+        window.mvStudio.app.project.editor
+          .getProject()
+          .tracks.find((t: { name: string; hidden: boolean }) => t.name === n)?.hidden,
+      trackName,
+    )
+
+  await added.getByRole('button', { name: 'Show', exact: true }).click()
+  const note = page.locator('[data-toast]').filter({ hasText: 'It’s on a hidden track' })
+  await expect(note).toBeVisible()
+  await note.getByRole('button', { name: 'Show track', exact: true }).click()
+  expect(await hidden()).toBe(false)
+  expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBe(`Show ${trackName}`)
+
+  // Focus came back to Show, which holds the toast. With the pointer and focus away, it gets its full time again,
+  // counted from then, and closes.
+  await page.waitForTimeout(Math.max(0, 6000 - (Date.now() - shownAt)))
+  await page.mouse.move(0, 0)
+  await page.getByRole('tab', { name: 'Assist' }).focus()
+  await page.waitForTimeout(3000)
+  await expect(added).toBeVisible()
+  await expect(added).toBeHidden({ timeout: 4000 })
 })
 
 test('asks before spending when Settings says so, and Cancel stops the request at fal.ai', async ({

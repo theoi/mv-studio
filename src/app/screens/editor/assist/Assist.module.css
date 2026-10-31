@@ -553,6 +553,10 @@
   font-weight: var(--weight-semibold);
 }
 
+.successAction {
+  margin-top: var(--space-2);
+}
+
 .failure {
   display: flex;
   gap: var(--space-3);
