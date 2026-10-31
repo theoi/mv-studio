@@ -593,11 +593,33 @@
   background: color-mix(in srgb, var(--clip-lyric-text) 45%, transparent);
 }
 
+.untimedLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
 .untimedSuggest {
   position: absolute;
   top: 50%;
-  z-index: 8;
   transform: translateY(-50%);
+  pointer-events: auto;
+}
+
+/* No free spot in view: the hint stays at the right edge of the visible lane, over its lyric chips, instead of after
+   the last line where nobody sees it. Sticky, so it holds still while the timeline scrolls. */
+.untimedPinned {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.untimedPinned .untimedSuggest {
+  position: sticky;
+  top: auto;
+  right: 8px;
+  transform: none;
 }
 
 .lyricSuggest {

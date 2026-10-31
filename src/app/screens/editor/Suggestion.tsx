@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { Sparkles, X } from 'lucide-react'
 import { Button } from '../../ds/Button.tsx'
 import { usePrefs } from '../../state/prefs.ts'
@@ -24,6 +24,21 @@ function useTurn(wants: boolean, ambient: boolean): boolean {
   return useSuggestionQueue((s) => hasSuggestionTurn(key, s.waiting))
 }
 
+const TABBABLE =
+  'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+
+/** Focuses the control Tab would reach after `el` in its panel, else the one before it. */
+function focusPast(el: HTMLElement) {
+  const scope = el.closest('[role="tabpanel"]') ?? document.body
+  const controls = [...scope.querySelectorAll<HTMLElement>(TABBABLE)].filter(
+    (c) => !el.contains(c) && c.checkVisibility(),
+  )
+  const after = controls.find((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING)
+  const before = controls.findLast((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_PRECEDING)
+  const target = after ?? before
+  target?.focus()
+}
+
 /** The single inline-suggestion pattern: quiet, in context, one click to apply, dismissible, one at a time. */
 export function InlineSuggestion({
   id,
@@ -36,11 +51,16 @@ export function InlineSuggestion({
   const dismissed = useUi((s) => s.dismissed.includes(id))
   const on = usePrefs((p) => p.suggestions)
   const turn = useTurn(on && !dismissed, ambient)
+  const root = useRef<HTMLDivElement>(null)
   if (dismissed || !on || !turn) return null
-  const dismiss = () => set((s) => ({ dismissed: [...s.dismissed, id] }))
+  const dismiss = () => {
+    // Dismissing unmounts the suggestion under the focused button, which would drop focus to the page.
+    if (root.current?.contains(document.activeElement)) focusPast(root.current)
+    set((s) => ({ dismissed: [...s.dismissed, id] }))
+  }
   if (variant === 'chip') {
     return (
-      <div className={styles.chip} role="note">
+      <div ref={root} className={styles.chip} role="note">
         <Sparkles className={styles.icon} />
         <span className={styles.chipText}>{children}</span>
         <button className={styles.chipAction} onClick={onAction}>
@@ -53,7 +73,7 @@ export function InlineSuggestion({
     )
   }
   return (
-    <div className={styles.card} role="note">
+    <div ref={root} className={styles.card} role="note">
       <Sparkles className={styles.icon} />
       <div className={styles.body}>
         <div className={styles.text}>{children}</div>

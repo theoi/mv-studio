@@ -393,7 +393,10 @@ test('one inline suggestion at a time: a selected still’s suggestion takes the
   await expect(camera).toBeVisible()
   await expect(hint).toHaveCount(0)
 
-  await camera.getByRole('button', { name: 'Not now' }).click()
+  // From the keyboard, focus stays in the Inspector instead of dropping to the page as the card goes.
+  await camera.getByRole('button', { name: 'Not now' }).focus()
+  await page.keyboard.press('Enter')
   await expect(camera).toHaveCount(0)
+  await expect(inspector.locator(':focus')).toHaveCount(1)
   await expect(hint).toBeVisible()
 })
