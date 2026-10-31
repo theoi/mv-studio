@@ -30,7 +30,7 @@ function Pills({
       <div className={styles.groupLabel}>{label}</div>
       <div className={styles.pills}>
         {items.map((item) => (
-          <button key={item.id} className={styles.pill} draggable onClick={() => onAdd(item.id)}>
+          <button key={item.id} className={styles.pill} onClick={() => onAdd(item.id)}>
             {item.name}
           </button>
         ))}
@@ -83,7 +83,7 @@ export function EffectsTab() {
               </div>
             </>
           )}
-          <Pills label="Transitions · drop on a cut" items={transitions} onAdd={addTransition} />
+          <Pills label="Transitions · go on a cut" items={transitions} onAdd={addTransition} />
           <Pills label="Effects" items={effects} onAdd={addEffect} />
           <Pills label="Filters" items={filters} onAdd={addEffect} />
         </div>
