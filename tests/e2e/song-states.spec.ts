@@ -40,9 +40,12 @@ async function importSong(page: Page, file: string | { name: string; mimeType: s
 test('a silent song says no beat was found, and the toolbar shows no tempo', async ({ page }) => {
   await openBlank(page)
   await importSong(page, { name: 'silence.wav', mimeType: 'audio/wav', buffer: silentWav(10) })
-  await expect(page.getByText(/^No beat found/).first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText(/^No beat found\. The song has \d+ sections?\.$/)).toBeVisible({
+    timeout: 30_000,
+  })
+  // Counted once while the toast shows, so a toast naming a tempo cannot pass by fading out first.
+  expect(await page.getByText(/\d+ BPM/).count()).toBe(0)
   await expect(page.getByTestId('song-facts')).toHaveText('No beat found')
-  await expect(page.getByText(/\d+ BPM/)).toHaveCount(0)
   await page.getByRole('tab', { name: 'Assist' }).click()
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await expect(assist.getByText('Song analyzed')).toBeVisible()

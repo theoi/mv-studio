@@ -39,8 +39,20 @@ describe('what an analysis found, for its toast', () => {
       'Found 120 BPM and 7 sections',
     )
     expect(foundText({ tempo: { bpm: 0, confidence: 0 }, sections: sections(1) })).toBe(
-      'No beat found. The song has 1 section',
+      'No beat found. The song has 1 section.',
     )
     expect(foundText({})).toBe('No beat found')
+  })
+
+  it('ends every sentence with a period once there are several, and only once', () => {
+    const kept = 'Kept 2 sections you named'
+    const one = [{ id: 's0', start: 0, end: 1, label: 'verse' }]
+    expect(foundText({ tempo: { bpm: 120, confidence: 0.9 }, sections: one }, kept)).toBe(
+      'Found 120 BPM and 1 section. Kept 2 sections you named.',
+    )
+    expect(foundText({ sections: one }, kept)).toBe(
+      'No beat found. The song has 1 section. Kept 2 sections you named.',
+    )
+    expect(foundText({}, kept)).toBe('No beat found. Kept 2 sections you named.')
   })
 })

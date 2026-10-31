@@ -341,14 +341,29 @@ test('a file that is not audio is refused as the song, and Skip for now opens th
   await expect(page).toHaveURL(/project=empty/)
 })
 
-test('a song without a beat says so instead of showing results', async ({ page }) => {
+test('a song without a beat says no beat was found, as the editor does, and shows no tempo', async ({
+  page,
+}) => {
   await startKind(page, /Lyric video/)
   await page
     .getByLabel('Song file')
     .setInputFiles({ name: 'quiet.wav', mimeType: 'audio/wav', buffer: silentWav(20) })
-  await expect(
-    page.getByText('Couldn’t find the beat. You can analyze it again in Assist › Song analysis.'),
-  ).toBeVisible({ timeout: 60_000 })
+  const status = page.getByRole('status').filter({ hasText: 'No beat found' })
+  await expect(status).toBeVisible({ timeout: 60_000 })
+  // The badge stays once the analysis job has finished, not only between storing the analysis and the job ending.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.mvStudio.shared.jobs
+          .list()
+          .some(
+            (j: { kind: string; status: string }) => j.kind === 'analysis.song' && j.status === 'succeeded',
+          ),
+      ),
+    )
+    .toBe(true)
+  await expect(status).toBeVisible()
+  await expect(page.getByText(/Couldn’t find the beat/)).toHaveCount(0)
   await expect(page.getByText(/BPM$/)).toHaveCount(0)
 })
 

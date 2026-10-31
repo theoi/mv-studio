@@ -80,12 +80,19 @@ export function songState(
   return songAnalysis(project) ? 'no-beat' : 'not-analyzed'
 }
 
-/** What an analysis found, for its toast: "Found 120 BPM and 7 sections", or that it found no beat. */
-export function foundText(analysis: Pick<AudioAnalysis, 'tempo' | 'sections'>): string {
+/**
+ * What an analysis found, for its toast: "Found 120 BPM and 7 sections", or that it found no beat, then `more`
+ * sentences. Like other toasts, a single sentence has no period and several each end with one.
+ */
+export function foundText(analysis: Pick<AudioAnalysis, 'tempo' | 'sections'>, ...more: string[]): string {
   const sections = analysis.sections?.length ?? 0
   const bpm = analysis.tempo?.bpm ?? 0
-  if (bpm > 0) return `Found ${formatBpm(bpm)} and ${plural(sections, 'section')}`
-  return sections ? `No beat found. The song has ${plural(sections, 'section')}` : 'No beat found'
+  const found =
+    bpm > 0
+      ? [`Found ${formatBpm(bpm)} and ${plural(sections, 'section')}`]
+      : ['No beat found', ...(sections ? [`The song has ${plural(sections, 'section')}`] : [])]
+  const all = [...found, ...more]
+  return all.length === 1 ? all.join('') : all.map((s) => `${s}.`).join(' ')
 }
 
 /** For end-to-end tests: a stand-in for song analysis. */
@@ -222,11 +229,8 @@ export async function analyzeAgain(): Promise<void> {
       ? { ...analysis, sections: keepUserSections(analysis.sections ?? [], previous) }
       : analysis
     const chorus = project.lyrics ? lyricChorusCommand(merged, project.lyrics) : null
-    const found = foundText(merged)
-    undoable('Analyze again', kept ? `${found}. Kept ${plural(kept, 'section')} you named.` : found, [
-      setAnalysisCommand(merged),
-      ...(chorus ? [chorus] : []),
-    ])
+    const found = foundText(merged, ...(kept ? [`Kept ${plural(kept, 'section')} you named`] : []))
+    undoable('Analyze again', found, [setAnalysisCommand(merged), ...(chorus ? [chorus] : [])])
   } catch (error) {
     // Failures and their messages show in Assist › Song analysis, from the job.
     if (!(error instanceof JobError)) throw error
