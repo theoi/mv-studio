@@ -61,7 +61,9 @@ test('selecting the look layer shows the look: its intensity, color adjustments 
   // The header names the look; the look's Color grade shows its own grade among its settings.
   await expect(inspector.getByText('Golden hour', { exact: true }).first()).toBeVisible()
   await expect(inspector.getByText('Look · On every clip')).toBeVisible()
-  await expect(inspector.getByRole('combobox', { name: 'Grade' })).toHaveText('Golden hour')
+  await expect(inspector.getByRole('combobox', { name: 'Color grade', exact: true })).toHaveText(
+    'Golden hour',
+  )
   expect((await lookLayer(page))?.effects).toEqual(['color-grade', 'light-leak', 'glow'])
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
   await expect(inspector.getByText('Neon night', { exact: true }).first()).toBeVisible()

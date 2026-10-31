@@ -120,11 +120,25 @@ export function valueAtCommands(
 /** The react button without a panel turns this reaction on and off. */
 const QUICK_REACTION = 'kick'
 
+/** A setting's name for the middle of a sentence ("Amount" to "amount"), keeping acronyms ("LUT strength"). */
+const lowerFirst = (name: string) =>
+  /^[A-Z][a-z]/.test(name) ? name.charAt(0).toLowerCase() + name.slice(1) : name
+
+/**
+ * A setting's full name with what it belongs to: "RGB split amount", or just "Color grade" for its Grade, rather
+ * than repeating the word.
+ */
+export function settingName(label: string, owner: string): string {
+  return owner.toLowerCase().endsWith(label.toLowerCase()) ? owner : `${owner} ${lowerFirst(label)}`
+}
+
 interface RowOptions {
   /** Where the row reads the clip. */
   project?: Project
   /** The setting's name for the undo label ("Change height"). */
   label?: string
+  /** What the setting belongs to, such as an effect, named first in the undo label ("Change RGB split amount"). */
+  owner?: string
   /** Where a keyframed property is read and keyed, in timeline seconds. */
   playhead?: Seconds
   /** Properties that take the same edits and keyframes, such as Scale's scaleY with scaleX. */
@@ -141,8 +155,9 @@ export function animatableRow(
   clip: Clip,
   path: PropertyPath,
   fallback?: ParamValue,
-  { project = editor.getProject(), label, playhead = get().playhead, linked = [] }: RowOptions = {},
+  { project = editor.getProject(), label, owner, playhead = get().playhead, linked = [] }: RowOptions = {},
 ) {
+  const named = label && (owner ? settingName(label, owner) : lowerFirst(label))
   const anim = animatableAt(clip, path)
   const paths = [path, ...linked]
   const gesture = `inspector:${clip.id}:${path.join('.')}`
@@ -176,7 +191,7 @@ export function animatableRow(
           },
         ]
       }),
-      { label: 'Add keyframe' },
+      { label: owner && named ? `Add keyframe: ${named}` : 'Add keyframe' },
     )
     toast(`Keyframe added at ${formatTime(get().playhead, true)}`)
   }
@@ -186,7 +201,7 @@ export function animatableRow(
     const own = animatableAt(now, path)
     dispatch(
       paths.flatMap((p) => valueAtCommands(now, p, value, time)),
-      { coalesceKey: gesture, label: label && `Change ${label.charAt(0).toLowerCase()}${label.slice(1)}` },
+      { coalesceKey: gesture, label: named && `Change ${named}` },
     )
     if (own?.keyframes?.length && !keyframeAt(own, time))
       toast(`Keyframe added at ${formatTime(clip.start + time, true)}`)
@@ -212,7 +227,7 @@ export function animatableRow(
       reactive,
       reaction,
       onKey: key,
-      onReact: react,
+      onReact: target ? react : undefined,
       reactPanel: target ? createElement(ReactPanel, { target }) : undefined,
     },
   }

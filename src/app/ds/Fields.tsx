@@ -116,6 +116,7 @@ export function AnimateButtons({
   keyAtPlayhead?: boolean
   reactive?: boolean
   onKey?: () => void
+  /** Without it, a panel, or a reaction already on, the value can't react and shows no react button. */
   onReact?: () => void
   property: string
   /** What the value reacts to, for the tooltip, e.g. "Kick · 40% · Drums stem". */
@@ -155,8 +156,11 @@ export function AnimateButtons({
             {reactPanel}
           </PopoverContent>
         </Popover>
-      ) : (
+      ) : onReact || reactive ? (
         tooltip(reactButton)
+      ) : (
+        // A value that can't react to the music keeps the space, so its diamond lines up with the others.
+        <span className={styles.reactSpacer} />
       )}
       <Tooltip
         label={keyAtPlayhead ? 'Keyframe at playhead' : keyed ? 'Add keyframe at playhead' : 'Animate this'}
