@@ -371,7 +371,11 @@ function Failed({ job }: { job?: JobSnapshot }) {
   const keyProblem = kind === 'missing-key' || kind === 'bad-key'
   const canRetry = keyProblem ? false : (job?.error?.retryable ?? false) || kind === 'insufficient-credit'
   const title = info?.title ?? job?.error?.message ?? 'Generation failed'
-  const message = job?.error?.message && job.error.message !== title ? job.error.message : ''
+  // Ended as a sentence, so the next one doesn't run into it ("Internal server error. The timeline is…").
+  const message =
+    job?.error?.message && job.error.message !== title
+      ? job.error.message.trim().replace(/[^.!?…]$/, (last) => `${last}.`)
+      : ''
   // What fal.ai made before the failure went to Media, as the toast said.
   const kept = generateOutcome(job?.id)?.kept
   const back = (

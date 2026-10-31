@@ -461,7 +461,9 @@ test('a run that fails part-way keeps the images fal.ai already made in Media an
   ).toBeVisible({ timeout: 20_000 })
   const alert = page.getByRole('alert')
   await expect(alert).toContainText('fal.ai had a problem')
-  await expect(alert).toContainText('The timeline is unchanged. 2 images made so far are kept in Media.')
+  await expect(alert).toContainText(
+    'Internal server error. The timeline is unchanged. 2 images made so far are kept in Media.',
+  )
   await page.screenshot({ path: testInfo.outputPath('generate-failed-kept-1440x900.png') })
   await expect(libraryCard(page, 'AI image: Rain on a window')).toHaveCount(2)
   await expect(timelineClip(page, 'AI image: Rain on a window', '0:')).toHaveCount(0)
