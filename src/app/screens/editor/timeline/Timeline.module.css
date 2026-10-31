@@ -765,3 +765,48 @@
   background: var(--accent-soft);
   pointer-events: none;
 }
+
+/* Track reordering: the header grip (shown on hover) and the drop line */
+.grip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 100%;
+  margin-left: calc(-1 * var(--space-2));
+  color: var(--text-3);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+}
+
+.grip svg {
+  width: 12px;
+  height: 12px;
+}
+
+.trackHeader:hover .grip,
+.grip:focus-visible {
+  opacity: 1;
+}
+
+.grip ~ .trackName {
+  flex: 1;
+  min-width: 0;
+}
+
+.grip:active {
+  cursor: grabbing;
+}
+
+.trackDrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 7;
+  height: 2px;
+  background: var(--accent-line);
+  pointer-events: none;
+}
