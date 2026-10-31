@@ -314,14 +314,19 @@ describe('export settings and outputs', () => {
     expect(framingOverrides(editor.getProject(), '9:16')).toEqual({ [shot.id]: { offsetX: 0.3 } })
   })
 
-  it('suggests the full video and the other orientation, with square and portrait to add', () => {
+  it('suggests the full video and the other orientation, with square, portrait, teaser and loop to add', () => {
     const { project } = footageProject()
     const { selected, more } = suggestedOutputs(project)
     expect(selected.map((o) => [o.kind, o.aspect, o.name])).toEqual([
       ['video', '16:9', 'Song'],
       ['video', '9:16', 'Song - Vertical'],
     ])
-    expect(more.map((o) => o.aspect)).toEqual(['1:1', '4:5'])
+    expect(more.map((o) => [o.kind, o.aspect])).toEqual([
+      ['video', '1:1'],
+      ['video', '4:5'],
+      ['teaser', '9:16'],
+      ['loop', '9:16'],
+    ])
   })
 
   it('plans frame size, duration and file size for an output', () => {
