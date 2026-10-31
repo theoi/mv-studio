@@ -1,7 +1,7 @@
 import type { EditCommand } from '../model/commands.ts'
 import type { ProjectEditor } from '../model/editor.ts'
 import { newId } from '../model/factory.ts'
-import type { Asset, EffectInstance, Id, ImageClip, Project } from '../model/types.ts'
+import type { Asset, AssetOrigin, EffectInstance, Id, ImageClip, Project } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
 import { prepareDepthForParallax, suggestFocus } from './depth/prepare.ts'
 import type { DepthService } from './depth/service.ts'
@@ -16,6 +16,13 @@ import { createProgress, type TaskOptions } from './runtime/tasks.ts'
 import type { CameraPreset, DepthMap, GrayImage } from './types.ts'
 
 const DEPTH_MODEL = VISION_MODELS.depthAnythingSmall.id
+/**
+ * Bumped whenever `prepareDepthForParallax` makes something different of the same estimate. A depth image records
+ * its preparation in its provider (`depthOrigin`), so one stored by an older preparation is prepared again the next
+ * time a camera move is added to its still.
+ */
+export const DEPTH_PREPARATION_VERSION = 2
+const PREPARED_PROVIDER = `${DEPTH_MODEL}/parallax-`
 const DEFAULT_INTENSITY = 0.5
 /** An automatic move goes no lower than this: below it the depth motion is hard to see. */
 const MIN_AUTO_INTENSITY = 0.25
@@ -60,9 +67,10 @@ export interface CameraMovesResult {
 /**
  * "Add 3D camera move" on an image clip: estimates the still's depth (cached), stores it as a derived image asset
  * and adds the camera effect with its progress keyframed from the start to the end of the clip. When the project
- * already has a depth image for this still it is reused as it is, and the focus and the smear prediction come from
- * it, since that is what the move renders. The project changes in a single dispatch, so it is one undo step. A camera
- * move already on the clip is replaced.
+ * already has a depth image for this still from the current preparation it is reused, and the focus and the smear
+ * prediction come from it, since that is what the move renders. One from an older preparation is prepared again from
+ * the cached estimate (or a new one), and older depth images of the still are removed once no effect uses them. The
+ * project changes in a single dispatch, so it is one undo step. A camera move already on the clip is replaced.
  */
 export async function addCameraMove(
   deps: CameraMoveDeps,
@@ -97,11 +105,13 @@ export async function addCameraMoves(
       if (stills.has(still.id)) continue
       const step = (f: number, stage?: string) => progress((i + f) / ids.length, stage)
       step(0, 'loading')
-      let depthAsset = findDepthAsset(deps.editor.getProject(), still.id)
+      const stored = findDepthAsset(deps.editor.getProject(), still.id)
+      let depthAsset: Asset
       let newAsset: Asset | null = null
       let scene: SmearScene
-      if (depthAsset) {
-        // The move renders the stored image, which may come from an older preparation, so predict from it.
+      if (stored && (depthPreparation(stored) ?? 0) >= DEPTH_PREPARATION_VERSION) {
+        // The move renders the stored image, so predict from it.
+        depthAsset = stored
         scene = await storedScene(deps.media, still, depthAsset)
       } else {
         const { depth, gray } = await estimateDepth(deps, still, signal, step)
@@ -141,6 +151,16 @@ export async function addCameraMoves(
         smearRisk: intensity > still.safeIntensity,
       })
     }
+    // Depth images of these stills from older preparations go once no effect uses them.
+    for (const [stillId, { depthAsset }] of stills)
+      for (const a of Object.values(project.assets))
+        if (
+          a.id !== depthAsset.id &&
+          a.origin.parentAssetId === stillId &&
+          depthPreparation(a) !== null &&
+          !usedElsewhere(project, a.id, ids)
+        )
+          commands.push({ type: 'asset.remove', assetId: a.id })
     const label = moves.length === 1 ? 'Add 3D camera move' : `Add 3D camera moves to ${moves.length} images`
     deps.editor.dispatch(commands, { label })
     progress(1)
@@ -191,7 +211,27 @@ async function storeDepth(
   return deps.media.storeBlob(await encodeDepthImage(depth), {
     kind: 'image',
     name: `${still.name.replace(/\.[^.]+$/, '')} (depth).png`,
-    origin: { type: 'derived', parentAssetId: still.id, provider: DEPTH_MODEL },
+    origin: depthOrigin(still.id),
+  })
+}
+
+/**
+ * Whether anything in the project refers to `assetId` (a clip's media, an effect or generator param such as a
+ * visualizer's artwork, another asset's parent), apart from the camera moves being replaced on `replacing` clips.
+ */
+function usedElsewhere(project: Project, assetId: Id, replacing: readonly Id[]): boolean {
+  const refers = (value: unknown): boolean =>
+    value === assetId || (typeof value === 'object' && value !== null && Object.values(value).some(refers))
+  return Object.entries(project).some(([key, value]) => {
+    if (key === 'assets') return Object.values(project.assets).some((a) => a.id !== assetId && refers(a))
+    if (key !== 'clips') return refers(value)
+    return Object.values(project.clips).some((clip) =>
+      refers(
+        replacing.includes(clip.id) && 'effects' in clip
+          ? { ...clip, effects: clip.effects.filter((e) => e.effectId !== CAMERA_EFFECT_ID) }
+          : clip,
+      ),
+    )
   })
 }
 
@@ -271,15 +311,40 @@ async function loadScene(
   }
 }
 
-/** Depth image stored earlier for `stillId`, if the project still has it. */
+/** Origin of a depth image of `stillId` made by the current preparation. */
+export function depthOrigin(stillId: Id): AssetOrigin {
+  return {
+    type: 'derived',
+    parentAssetId: stillId,
+    provider: `${PREPARED_PROVIDER}${DEPTH_PREPARATION_VERSION}`,
+  }
+}
+
+/**
+ * The preparation a stored depth image was made with: 1 for one stored before preparations were recorded (its
+ * provider is the bare model id), null for an asset that is not a depth image.
+ */
+export function depthPreparation(asset: Asset): number | null {
+  if (asset.kind !== 'image' || asset.origin.type !== 'derived') return null
+  const { provider } = asset.origin
+  if (provider === DEPTH_MODEL) return 1
+  if (!provider?.startsWith(PREPARED_PROVIDER)) return null
+  const version = Number(provider.slice(PREPARED_PROVIDER.length))
+  return Number.isInteger(version) && version > 0 ? version : null
+}
+
+/** Depth image stored earlier for `stillId`, if the project still has one: the one from the latest preparation. */
 export function findDepthAsset(project: Pick<Project, 'assets'>, stillId: Id): Asset | undefined {
-  return Object.values(project.assets).find(
-    (a) =>
-      a.kind === 'image' &&
-      a.origin.type === 'derived' &&
-      a.origin.parentAssetId === stillId &&
-      a.origin.provider === DEPTH_MODEL,
-  )
+  let found: Asset | undefined
+  let latest = 0
+  for (const a of Object.values(project.assets)) {
+    const version = a.origin.parentAssetId === stillId ? depthPreparation(a) : null
+    if (version !== null && version > latest) {
+      found = a
+      latest = version
+    }
+  }
+  return found
 }
 
 /** Effect instance for a camera move across the whole clip (progress keyframed 0 -> 1; the move eases itself). */

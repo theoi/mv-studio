@@ -108,8 +108,9 @@ function ramp(base: Uint8Array, width: number, height: number, dilate: number, b
 
 /**
  * 255 on near pixels that belong to a structure thinner than 2·`radius`, else 0; null when there are none. Near
- * means at least `step` nearer than the farthest point around. A near pixel is thin when no near pixel within
- * `radius` lies deeper than `radius` inside its region, so the edge of a large region never counts as thin.
+ * means at least `step` nearer than the farthest point around. A near pixel is thin when no pixel of its own region
+ * within `radius` steps lies deeper than `radius` inside it, so the edge of a large region never counts as thin, and
+ * a thin structure beside a large region still does.
  */
 function thinWeight(
   base: Uint8Array,
@@ -125,18 +126,54 @@ function thinWeight(
   )
   const near = new Uint8Array(base.length)
   for (let i = 0; i < near.length; i++) near[i] = base[i]! - far[i]! >= step ? 1 : 0
-  const inside = distanceInside(near, width, height)
-  separable(inside, width, height, (src, dst, start, stride, len) =>
-    slidingExtreme(src, dst, start, stride, len, radius, 1),
-  )
+  const steps = stepsToDeep(near, distanceInside(near, width, height), width, height, radius)
   const weight = new Uint8Array(base.length)
   let any = false
   for (let i = 0; i < weight.length; i++)
-    if (near[i] && inside[i]! < radius) {
+    if (near[i] && steps[i] === 255) {
       weight[i] = 255
       any = true
     }
   return any ? weight : null
+}
+
+/**
+ * Steps (8-connected, never leaving `mask`) from each pixel of `mask` to the nearest pixel at least `radius` inside
+ * it, up to `radius` (at most 254); 255 farther. A plain max filter of `inside` over a square window would also reach a deep pixel
+ * of another region close by: across the corners of the window, beside a round or diagonal edge.
+ */
+function stepsToDeep(
+  mask: Uint8Array,
+  inside: Uint8Array,
+  width: number,
+  height: number,
+  radius: number,
+): Uint8Array {
+  const limit = Math.min(radius, 254)
+  const steps = new Uint8Array(mask.length).fill(255)
+  const queue = new Int32Array(mask.length)
+  let tail = 0
+  for (let i = 0; i < mask.length; i++)
+    if (mask[i] && inside[i]! >= radius) {
+      steps[i] = 0
+      queue[tail++] = i
+    }
+  for (let head = 0; head < tail; head++) {
+    const i = queue[head]!
+    const next = steps[i]! + 1
+    if (next > limit) continue
+    const x = i % width
+    const y = (i - x) / width
+    for (let yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy++)
+      for (let xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx++) {
+        const j = yy * width + xx
+        if (mask[j] && steps[j]! > next) {
+          steps[j] = next
+          queue[tail++] = j
+        }
+      }
+  }
+  return steps
 }
 
 /** Distance in pixels (3-4 chamfer, capped at 255) from each pixel of `mask` to the nearest pixel outside it. */

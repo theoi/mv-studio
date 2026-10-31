@@ -141,7 +141,8 @@ const fromReport = (r: SuitabilityReport): Extract<Suitability, { status: 'check
   ...(r.evidence ? { evidence: r.evidence } : {}),
 })
 
-const PEOPLE_SKIPPED = 'People check skipped: the person detector could not download.'
+const PEOPLE_SKIPPED =
+  "Couldn't check for people, so the cutout may include animals or objects. It checks again when you're back online."
 
 const REASONS: Record<SuitabilityReason, string> = {
   // The person segmenter finds nobody both in empty shots and in wide shots of small people, so this must not claim
@@ -158,14 +159,26 @@ const MARGINAL_REASONS: Partial<Record<SuitabilityReason, string>> = {
   'no-subject': 'In the other parts, no one is large enough to cut out',
 }
 
-/** What the inspector and Assist say about a shot: a short status and, when it matters, why. */
-export function suitabilityText(s: Suitability): { status: string; why?: string; ok: boolean } {
+/**
+ * What the inspector and Assist say about a shot: a short status and, when it matters, why (`brief`: a shorter why
+ * for a row in a list).
+ */
+export function suitabilityText(s: Suitability): {
+  status: string
+  why?: string
+  brief?: string
+  ok: boolean
+} {
   switch (s.status) {
     case 'checked': {
       const text = checkedText(s)
       // Without the detector an animal can pass for the person, so an offered shot says the check was partial.
       if (!s.peopleSkipped || !text.ok) return text
-      return { ...text, why: text.why ? `${text.why} ${PEOPLE_SKIPPED}` : PEOPLE_SKIPPED }
+      return {
+        ...text,
+        why: text.why ? `${text.why} ${PEOPLE_SKIPPED}` : PEOPLE_SKIPPED,
+        brief: 'Not checked for people',
+      }
     }
     case 'checking':
       return { status: 'Looking for people…', ok: false }

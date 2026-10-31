@@ -106,9 +106,10 @@ describe('suitability', () => {
   })
 
   it('says when no one was looked for because the person detector could not download', () => {
-    const note = 'People check skipped: the person detector could not download.'
+    const note =
+      "Couldn't check for people, so the cutout may include animals or objects. It checks again when you're back online."
     expect(suitabilityText({ status: 'checked', verdict: 'good', reasons: [], peopleSkipped: true })).toEqual(
-      { status: 'Person found', why: note, ok: true },
+      { status: 'Person found', why: note, brief: 'Not checked for people', ok: true },
     )
     expect(
       suitabilityText({

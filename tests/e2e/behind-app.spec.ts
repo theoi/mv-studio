@@ -138,8 +138,11 @@ test('a clip is cut out when the person and face detectors cannot download, and 
   await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   const row = assist.getByText('people-interview', { exact: true }).locator('..').locator('..')
-  const note = 'People check skipped: the person detector could not download.'
-  await expect(row.getByText(`${note.replace(/\.$/, '')} · 1 clip`)).toBeVisible({ timeout: 90_000 })
+  const note =
+    "Couldn't check for people, so the cutout may include animals or objects. It checks again when you're back online."
+  await expect(row.getByText('Not checked for people · 1 clip', { exact: true })).toBeVisible({
+    timeout: 90_000,
+  })
   // The sample clips of the demo project are suitable too.
   await assist.getByRole('button', { name: /^Apply to \d+ suitable clips$/ }).click()
   await expect(assist.getByText(`people-interview: ${note}`)).toBeVisible({ timeout: 90_000 })
