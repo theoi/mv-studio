@@ -313,6 +313,64 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
   expect(placed).toEqual({ offVideo: 0, autoCutTrack: false })
 })
 
+for (const { failure, error, note } of [
+  {
+    failure: 'stops with an error',
+    error: 'Array buffer allocation failed',
+    note: 'Footage analysis ran out of memory, so your clip was picked for variety.',
+  },
+  {
+    failure: 'can’t read the clip',
+    error: 'Corrupt frame',
+    note: '“clip.mp4” couldn’t be analyzed, so it was picked for variety.',
+  },
+])
+  test(`when footage analysis ${failure}, Cut my clips still cuts and says why the clips were picked for variety`, async ({
+    page,
+  }) => {
+    await startKind(page, /Beat-cut footage/)
+    await page.evaluate((message) => {
+      const onnx = {
+        async embedImages({
+          bitmaps,
+        }: {
+          bitmaps: ImageBitmap[]
+        }): Promise<{ dim: number; data: Float32Array }> {
+          for (const b of bitmaps) b.close()
+          throw new Error(message)
+        },
+        async embedTexts({ texts }: { texts: string[] }) {
+          return { dim: 2, data: new Float32Array(texts.flatMap(() => [0.6, 0.8])) }
+        },
+      }
+      window.mvStudio.app.footage.setVisionBackendsForTests({
+        onnx: () => onnx,
+        segmentation: () => {
+          throw new Error('unused')
+        },
+      })
+    }, error)
+    await page.getByLabel('Clip files').setInputFiles([fixture('clip.mp4')])
+    await expect(page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')).toHaveCount(1, {
+      timeout: 30_000,
+    })
+    await page.getByRole('button', { name: 'Use a sample song' }).click()
+    await page.getByRole('button', { name: 'Cut my clips' }).click()
+
+    await waitForPreview(page)
+    const assist = page.getByRole('tabpanel', { name: 'Assist' })
+    await expect(assist.getByText(/^On the Video track\./)).toBeVisible({ timeout: 60_000 })
+    await expect(assist.getByText(note, { exact: true })).toBeVisible()
+    await expect(assist.getByText(/analyzed yet/)).toHaveCount(0)
+    const cut = await page.evaluate(
+      () =>
+        Object.values(
+          window.mvStudio.app.project.editor.getProject().clips as Record<string, { type: string }>,
+        ).filter((c) => c.type === 'video').length,
+    )
+    expect(cut).toBeGreaterThan(1)
+  })
+
 test('a file that is not audio is refused as the song, and Skip for now opens the template without one', async ({
   page,
 }) => {

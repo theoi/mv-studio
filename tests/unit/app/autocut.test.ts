@@ -7,13 +7,15 @@ import {
   matchesMood,
   startAutoCut,
   unanalyzedClipCount,
+  unanalyzedWarning,
   undoAutoCut,
   type AutoCutChoices,
 } from '../../../src/app/state/autocut.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import { barsState, setSongAnalysisServiceForTests } from '../../../src/app/state/songAnalysis.ts'
 import type * as Footage from '../../../src/app/state/footage.ts'
-import { JobError, jobs } from '../../../src/shared/jobs.ts'
+import { JobError, jobs, type JobErrorCode } from '../../../src/shared/jobs.ts'
+import type { IndexingState } from '../../../src/vision/index.ts'
 
 vi.mock('../../../src/app/state/footage.ts', async (original) => ({
   ...(await original<typeof Footage>()),
@@ -80,6 +82,43 @@ it('counts clips footage analysis has not indexed for matching', () => {
     { history: 'skip' },
   )
   expect(unanalyzedClipCount(editor.getProject())).toBe(total - 1)
+})
+
+it('says why clips were cut without matching when footage analysis stopped, was cancelled or couldn’t read them', () => {
+  const state = (patch: Partial<IndexingState>): IndexingState => ({
+    status: 'idle',
+    total: 0,
+    done: 0,
+    failed: [],
+    ...patch,
+  })
+  const stopped = (code: JobErrorCode) => state({ status: 'error', error: { code, message: 'technical' } })
+  expect(unanalyzedWarning(['a', 'b'], true, stopped('out-of-memory'))).toBe(
+    'Footage analysis ran out of memory, so your clips were picked for variety.',
+  )
+  expect(unanalyzedWarning(['a'], true, stopped('network'))).toBe(
+    'Footage analysis couldn’t download its model, so your clip was picked for variety.',
+  )
+  expect(unanalyzedWarning(['a', 'b'], false, stopped('internal'))).toBe(
+    'Footage analysis stopped, so 2 clips were picked for variety.',
+  )
+  expect(unanalyzedWarning(['a'], false, state({ status: 'paused' }))).toBe(
+    'Footage analysis was cancelled, so 1 clip was picked for variety.',
+  )
+  const failed = [
+    { assetId: 'a', name: 'beach.mp4', message: 'Could not read this media file.' },
+    { assetId: 'b', name: 'night.mov', message: 'Could not read this media file.' },
+  ]
+  expect(unanalyzedWarning(['a'], false, state({ failed }))).toBe(
+    '“beach.mp4” couldn’t be analyzed, so it was picked for variety.',
+  )
+  expect(unanalyzedWarning(['a', 'b'], true, state({ failed }))).toBe(
+    'Your clips couldn’t be analyzed, so they were picked for variety.',
+  )
+  // Clips still waiting for a running analysis keep the default note.
+  expect(unanalyzedWarning(['a', 'c'], false, state({ status: 'indexing', failed }))).toBeUndefined()
+  expect(unanalyzedWarning(['c'], true, state({}))).toBeUndefined()
+  expect(unanalyzedWarning(['a'], true, null)).toBeUndefined()
 })
 
 it('passes the More options through: where cuts land, and story order over the mood switch', () => {
