@@ -202,6 +202,8 @@ export function applyLookCommands(
   const start = existingClip?.start ?? 0
   const duration = existingClip?.duration ?? Math.max(projectDuration(project), 10)
   const clip = createLookClip(look, { trackId, start, duration }, registry)
+  // The new layer takes the old one's place and id, so a selection of the look layer stays on it.
+  if (existingClip && commands.some((c) => c.type === 'clip.remove')) clip.id = existingClip.id
   // The layer's opacity is the look's intensity, which stays with the video when the look changes.
   if (existingClip && existingClip.type !== 'audio') clip.opacity = existingClip.opacity
   commands.push({ type: 'clip.add', clip })

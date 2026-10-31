@@ -54,4 +54,14 @@ test('selecting the look layer shows the look: its intensity, color adjustments 
 
   await inspector.getByRole('button', { name: 'Change look' }).click()
   await expect(page.getByRole('tab', { name: 'Effects', selected: true })).toBeVisible()
+  // Focus goes to the current look, and the look picked there stays selected, so the inspector shows it.
+  const library = page.getByRole('tabpanel', { name: 'Effects' })
+  await expect(library.getByRole('button', { name: 'Neon night', pressed: true })).toBeFocused()
+  await library.getByRole('button', { name: 'Golden hour' }).click()
+  await expect(inspector.getByText('Golden hour', { exact: true })).toBeVisible()
+  await expect(inspector.getByText('Look · On every clip')).toBeVisible()
+  expect((await lookLayer(page))?.effects).toEqual(['color-grade', 'light-leak', 'glow'])
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+  await expect(inspector.getByText('Neon night', { exact: true })).toBeVisible()
+  expect((await lookLayer(page))?.effects).toEqual(['color-grade', 'glow'])
 })

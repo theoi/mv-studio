@@ -4,14 +4,12 @@ import { currentLook, lookIdOf, lookRegistry, ORIGINAL_LOOK } from '../../../../
 import { Button } from '../../../ds/Button.tsx'
 import { AnimateButtons, FieldRow, Section, Slider } from '../../../ds/Fields.tsx'
 import { formatTime } from '../../../format.ts'
+import { revealLooks } from '../../../state/library.ts'
 import { isLookClip, useProject } from '../../../state/project.ts'
-import { set } from '../../../state/ui.ts'
 import { useAnimatable } from './animatable.ts'
 import { ColorSection, EffectsSection } from './Effects.tsx'
 import { Header } from './parts.tsx'
 import styles from '../Inspector.module.css'
-
-const openLooks = () => set({ libraryTab: 'effects', libraryOpen: true })
 
 /** Where the look layer applies: everywhere, or the part of the video it was trimmed to. */
 function lookSpan(project: Project, clip: VisualClip): string {
@@ -62,7 +60,7 @@ export function LookSection() {
           </div>
           <div className={styles.meta}>{layer ? lookSpan(project, layer) : 'No look'}</div>
         </div>
-        <Button size="sm" variant="secondary" onClick={openLooks}>
+        <Button size="sm" variant="secondary" onClick={revealLooks}>
           Change
         </Button>
       </div>
@@ -93,7 +91,7 @@ export function LookInspector({ clip }: { clip: AdjustmentClip }) {
         <LookIntensity clip={clip} name={isLook ? 'Look intensity' : 'Intensity'} />
         {isLook && (
           <div className={styles.stackActions}>
-            <Button size="sm" variant="secondary" block onClick={openLooks}>
+            <Button size="sm" variant="secondary" block onClick={revealLooks}>
               Change look
             </Button>
           </div>

@@ -80,6 +80,7 @@ export function EffectsTab() {
                 key={l.id}
                 className={[styles.tile, chosen === l.id && styles.tileOn].filter(Boolean).join(' ')}
                 aria-pressed={chosen === l.id}
+                data-look-tile
                 onClick={() => chooseLook(l.id)}
                 {...previewHandlers({ kind: 'look', id: l.id })}
               >

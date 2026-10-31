@@ -1,4 +1,16 @@
-import { AudioWaveform, Plus } from 'lucide-react'
+import {
+  Brush,
+  Droplet,
+  Film,
+  Palette,
+  Plus,
+  SlidersHorizontal,
+  Sparkles,
+  Sun,
+  Waves,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { ColorAdjustmentKey, VisualClip } from '../../../../model/index.ts'
 import { IconButton } from '../../../ds/Button.tsx'
@@ -7,6 +19,18 @@ import { AnimateButtons, FieldRow, Section, Slider } from '../../../ds/Fields.ts
 import { set } from '../../../state/ui.ts'
 import { useAnimatable } from './animatable.ts'
 import styles from '../Inspector.module.css'
+
+/** An effect row's icon, by the effect's library category. */
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  Basic: SlidersHorizontal,
+  Blur: Droplet,
+  Color: Palette,
+  Distort: Waves,
+  Glitch: Zap,
+  Light: Sun,
+  Stylize: Brush,
+  Texture: Film,
+}
 
 const ADJUSTMENTS: readonly { key: ColorAdjustmentKey; label: string }[] = [
   { key: 'exposure', label: 'Exposure' },
@@ -75,12 +99,16 @@ export function EffectsSection({ clip, defaultOpen = false }: { clip: VisualClip
       {clip.effects.length === 0 ? (
         <p className={styles.note}>No effects yet. Add one from Library › Effects.</p>
       ) : (
-        clip.effects.map((fx) => (
-          <div key={fx.id} className={styles.effectRow}>
-            <AudioWaveform className={styles.effectIcon} />
-            <span className={styles.effectName}>{pluginRegistry.get(fx.effectId)?.name ?? fx.effectId}</span>
-          </div>
-        ))
+        clip.effects.map((fx) => {
+          const def = pluginRegistry.get(fx.effectId)
+          const Icon = CATEGORY_ICONS[def?.category ?? ''] ?? Sparkles
+          return (
+            <div key={fx.id} className={styles.effectRow}>
+              <Icon className={styles.effectIcon} />
+              <span className={styles.effectName}>{def?.name ?? fx.effectId}</span>
+            </div>
+          )
+        })
       )}
     </Section>
   )
