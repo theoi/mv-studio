@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import {
+  AlertTriangle,
   BookOpen,
   Check,
   ChevronDown,
@@ -19,49 +21,108 @@ import {
 } from 'lucide-react'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { Kbd } from '../../ds/Kbd.tsx'
-import { ProgressRing } from '../../ds/Feedback.tsx'
+import { ProgressRing, Spinner } from '../../ds/Feedback.tsx'
+import { Input } from '../../ds/Fields.tsx'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
-import { JOB_KINDS, runningJobs, useJobs } from '../../state/jobs.ts'
+import { openJob, runningJobs, useJobs } from '../../state/jobs.ts'
+import {
+  downloadProjectFile,
+  duplicateCurrent,
+  openProjectFile,
+  renameProject,
+  saveNow,
+  usePersistence,
+} from '../../state/persistence.ts'
 import { editor, redo, undo, useProject } from '../../state/project.ts'
-import { openAssist, set, toast, type AssistView } from '../../state/ui.ts'
+import { set, toast } from '../../state/ui.ts'
 import { LogoMark } from '../common/Logo.tsx'
 import styles from './TopBar.module.css'
-
-const viewForKind: Record<string, AssistView> = {
-  [JOB_KINDS.stems]: 'stems',
-  [JOB_KINDS.director]: 'director',
-  [JOB_KINDS.directorShots]: 'director',
-  [JOB_KINDS.ask]: 'home',
-  [JOB_KINDS.autocut]: 'autocut',
-  [JOB_KINDS.camera]: 'camera',
-  [JOB_KINDS.lyrics]: 'lyrics',
-  [JOB_KINDS.realign]: 'lyrics',
-  [JOB_KINDS.cutout]: 'behind',
-  [JOB_KINDS.suitability]: 'behind',
-}
 
 function Activity() {
   const running = runningJobs(useJobs())
   const first = running[0]
   if (!first) return null
-  const fraction = first.progress.fraction ?? 0
+  // Jobs that can't measure their progress (a language model thinking) show a spinner instead of a stuck 0%.
+  const fraction = first.progress.fraction
   return (
     <Tooltip label="Background tasks" description="You can keep editing. Click for details.">
-      <button
-        className={styles.activity}
-        onClick={() => {
-          const view = viewForKind[first.kind]
-          if (view) openAssist(view)
-          else set({ dialog: 'export', exportPhase: 'exporting' })
-        }}
-      >
-        <ProgressRing value={fraction} size={16} label={first.title} />
+      <button className={styles.activity} onClick={() => openJob(first.kind)}>
+        {fraction === undefined ? (
+          <Spinner size={14} />
+        ) : (
+          <ProgressRing value={fraction} size={16} label={first.title} />
+        )}
         <span>{first.title}</span>
-        <span className={`${styles.activityPct} tnum`}>{Math.round(fraction * 100)}%</span>
+        {fraction !== undefined && (
+          <span className={`${styles.activityPct} tnum`}>{Math.round(fraction * 100)}%</span>
+        )}
         {running.length > 1 && <span className={styles.activityMore}>+{running.length - 1}</span>}
       </button>
     </Tooltip>
+  )
+}
+
+const SAVE_HINT = 'Autosaves as you work. Mod S saves now.'
+
+/** Whether the open project's latest changes are in browser storage. */
+function SaveStatus() {
+  const status = usePersistence((s) => s.status)
+  const tracked = usePersistence((s) => s.tracked)
+  const error = usePersistence((s) => s.error)
+  if (tracked && status === 'error')
+    return (
+      <Tooltip
+        label="Not saved"
+        description={`${error ?? 'Couldn’t save in this browser.'} Click to try again.`}
+      >
+        <button className={styles.saved} data-state="error" onClick={() => void saveNow()}>
+          <AlertTriangle />
+          Not saved
+        </button>
+      </Tooltip>
+    )
+  if (tracked && (status === 'pending' || status === 'saving'))
+    return (
+      <Tooltip label="Saving in this browser" description={SAVE_HINT}>
+        <span className={styles.saved}>
+          <Spinner size={11} />
+          Saving…
+        </span>
+      </Tooltip>
+    )
+  return (
+    <Tooltip label="All changes saved in this browser" description={SAVE_HINT}>
+      <span className={styles.saved}>
+        <Check />
+        Saved
+      </span>
+    </Tooltip>
+  )
+}
+
+/** The project name, edited in place: Enter or leaving the field renames, Escape keeps the name. */
+function RenameField({ project, onDone }: { project: { id: string; name: string }; onDone: () => void }) {
+  return (
+    <Input
+      className={styles.rename}
+      aria-label="Project name"
+      defaultValue={project.name}
+      maxLength={120}
+      autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') {
+          e.currentTarget.value = project.name
+          e.currentTarget.blur()
+        }
+      }}
+      onBlur={(e) => {
+        void renameProject(project.id, e.currentTarget.value)
+        onDone()
+      }}
+    />
   )
 }
 
@@ -69,6 +130,7 @@ export function TopBar() {
   const project = useProject()
   const undoLabel = editor.undoLabel()
   const redoLabel = editor.redoLabel()
+  const [renaming, setRenaming] = useState(false)
 
   return (
     <header className={styles.bar}>
@@ -82,39 +144,45 @@ export function TopBar() {
             <LogoMark size={22} />
           </button>
         </Tooltip>
-        <Menu>
-          <MenuTrigger asChild>
-            <button className={styles.project} aria-label={`Project: ${project.name}`}>
-              <span className={styles.projectName}>{project.name}</span>
-              <ChevronDown />
-            </button>
-          </MenuTrigger>
-          <MenuContent width={260}>
-            <MenuItem icon={<Pencil />}>Rename</MenuItem>
-            <MenuItem icon={<Copy />}>Duplicate</MenuItem>
-            <MenuSeparator />
-            <MenuItem icon={<FilePlus2 />} onSelect={() => set({ screen: 'start' })}>
-              New project
-            </MenuItem>
-            <MenuItem icon={<FolderOpen />} onSelect={() => set({ screen: 'start' })}>
-              Open recent…
-            </MenuItem>
-            <MenuSeparator />
-            <MenuItem icon={<Download />} description="One file with the project and all its media">
-              Download project file
-            </MenuItem>
-            <MenuItem icon={<Upload />}>Open project file…</MenuItem>
-          </MenuContent>
-        </Menu>
-        <Tooltip
-          label="All changes saved in this browser"
-          description="Autosaves as you work. Mod S saves now."
-        >
-          <span className={styles.saved}>
-            <Check />
-            Saved
-          </span>
-        </Tooltip>
+        {renaming ? (
+          <RenameField project={project} onDone={() => setRenaming(false)} />
+        ) : (
+          <Menu>
+            <MenuTrigger asChild>
+              <button className={styles.project} aria-label={`Project: ${project.name}`}>
+                <span className={styles.projectName}>{project.name}</span>
+                <ChevronDown />
+              </button>
+            </MenuTrigger>
+            <MenuContent width={260}>
+              <MenuItem icon={<Pencil />} onSelect={() => setRenaming(true)}>
+                Rename
+              </MenuItem>
+              <MenuItem icon={<Copy />} onSelect={() => void duplicateCurrent()}>
+                Duplicate
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem icon={<FilePlus2 />} onSelect={() => set({ screen: 'start' })}>
+                New project
+              </MenuItem>
+              <MenuItem icon={<FolderOpen />} onSelect={() => set({ screen: 'start' })}>
+                Open recent…
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                icon={<Download />}
+                description="One file with the project and all its media"
+                onSelect={() => downloadProjectFile()}
+              >
+                Download project file
+              </MenuItem>
+              <MenuItem icon={<Upload />} onSelect={openProjectFile}>
+                Open project file…
+              </MenuItem>
+            </MenuContent>
+          </Menu>
+        )}
+        <SaveStatus />
         <span className={styles.divider} />
         <IconButton
           label={undoLabel ? `Undo ${undoLabel.toLowerCase()}` : 'Undo'}

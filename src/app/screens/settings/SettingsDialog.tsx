@@ -466,12 +466,13 @@ function GeneralPage() {
   const suggest = usePrefs((p) => p.suggestions)
   const motion = usePrefs((p) => p.reduceMotion)
   const fps = usePrefs((p) => p.defaultFps)
+  const autosave = usePrefs((p) => p.autosaveSeconds)
   return (
     <>
       <Row title="Autosave" desc="Projects save to this browser automatically.">
         <Select
-          value="5"
-          onChange={() => undefined}
+          value={String(autosave)}
+          onChange={(v) => setPref('autosaveSeconds', Number(v))}
           ariaLabel="Autosave interval"
           size="sm"
           options={[
@@ -524,6 +525,7 @@ const shortcutGroups: { label: string; items: [string, string][] }[] = [
     label: 'General',
     items: [
       ['Command palette', 'Mod K'],
+      ['Save now', 'Mod S'],
       ['Ask Assist', 'Mod J'],
       ['Export', 'Mod E'],
       ['Settings', 'Mod ,'],

@@ -25,10 +25,13 @@ import {
   GraduationCap,
   Wand2,
   Film,
+  FolderOpen,
+  Save,
 } from 'lucide-react'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { settingsForAspect } from '../../../model/index.ts'
 import { openImport } from '../../state/importer.ts'
+import { downloadProjectFile, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { addTextAtPlayhead, dispatch, editor, splitAtPlayhead, undo } from '../../state/project.ts'
 import { openAssist, set, toast, useUi } from '../../state/ui.ts'
 import styles from './CommandPalette.module.css'
@@ -161,7 +164,22 @@ const actions: Action[] = [
     label: 'Download project file',
     icon: <Download />,
     keywords: 'save backup portable',
-    run: () => toast('Preparing project file…'),
+    run: () => downloadProjectFile(),
+  },
+  {
+    group: 'Project',
+    label: 'Open project file…',
+    icon: <FolderOpen />,
+    keywords: 'mvstudio restore import backup',
+    run: openProjectFile,
+  },
+  {
+    group: 'Project',
+    label: 'Save now',
+    icon: <Save />,
+    shortcut: 'Mod S',
+    keywords: 'save store browser',
+    run: () => void saveNow(),
   },
   {
     group: 'Settings',

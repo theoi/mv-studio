@@ -1,11 +1,14 @@
 import { create } from 'zustand'
 
 /*
- * Preferences from Settings › General and Editing, saved per browser. Each is read where it applies: suggestions by
- * the inline suggestion, motion by the root element, the defaults when a project, image or text is added.
+ * Preferences from Settings › General and Editing, saved per browser. Each is read where it applies: autosave by
+ * persistence, suggestions by the inline suggestion, motion by the root element, the defaults when a project, image
+ * or text is added.
  */
 
 export interface Prefs {
+  /** Longest wait before a change is saved, in seconds. */
+  autosaveSeconds: number
   suggestions: boolean
   reduceMotion: boolean
   defaultFps: number
@@ -19,6 +22,7 @@ export interface Prefs {
 const KEY = 'mv-studio.prefs'
 
 const DEFAULTS: Prefs = {
+  autosaveSeconds: 5,
   suggestions: true,
   reduceMotion: false,
   defaultFps: 30,

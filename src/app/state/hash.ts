@@ -3,6 +3,7 @@ import { directorRequest, draftVideo, useDirector } from './director.ts'
 import type { Project } from '../../model/index.ts'
 import { startAutoCut } from './autocut.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
+import { isStored, openFromLink, untracked, usePersistence } from './persistence.ts'
 import { editor, loadDemoProject, loadEmptyProject } from './project.ts'
 import {
   get,
@@ -22,7 +23,8 @@ import {
 
 /*
  * Every reviewable state has a deep link (used by the design-preview navigator and screenshots). The hash mirrors
- * UI state; `t`, `project` and job parameters are read on load but only `project` is written back.
+ * UI state; `t`, `project` and job parameters are read on load but only `project` is written back: the id of a project
+ * kept in this browser, or "empty".
  */
 
 const selToStr = (s: Selection) => (s.type === 'none' ? '' : `${s.type}:${s.id}`)
@@ -47,7 +49,8 @@ export function stateToHash(s: UiState, project: Project): string {
     if (s.setupSong) q.set('song', '1')
   }
   if (s.screen === 'editor') {
-    if (emptyProject) q.set('project', 'empty')
+    if (isStored(project.id)) q.set('project', project.id)
+    else if (emptyProject) q.set('project', 'empty')
     if (s.kind !== 'lyric') q.set('kind', s.kind)
     const sel = selToStr(s.selection)
     if (sel) q.set('sel', sel)
@@ -93,7 +96,22 @@ export function hashToState(hash: string): Partial<UiState> {
 
 function applyHash(hash: string) {
   const q = new URLSearchParams(hash.split('?')[1] ?? '')
-  const wantEmpty = q.get('project') === 'empty'
+  const project = q.get('project')
+  const wantEmpty = project === 'empty'
+  // A kept project opens as it was saved; the preview's project and job parameters apply to the sample only.
+  if (project && !wantEmpty) openFromLink(project)
+  else untracked(() => applyPreviewProject(q, wantEmpty))
+  set({
+    ...initialUi,
+    ...(wantEmpty ? { playhead: 0 } : {}),
+    ...hashToState(hash),
+    toasts: get().toasts,
+    libraryOpen: get().libraryOpen,
+    playing: false,
+  })
+}
+
+function applyPreviewProject(q: URLSearchParams, wantEmpty: boolean) {
   const isEmpty = !editor.getProject().songAssetId
   if (wantEmpty !== isEmpty) {
     if (wantEmpty) loadEmptyProject()
@@ -114,14 +132,6 @@ function applyHash(hash: string) {
     else bringToFront(Object.keys(project.clips))
   }
   if (q.get('export') === 'exporting') startMockExport(0.31)
-  set({
-    ...initialUi,
-    ...(wantEmpty ? { playhead: 0 } : {}),
-    ...hashToState(hash),
-    toasts: get().toasts,
-    libraryOpen: get().libraryOpen,
-    playing: false,
-  })
 }
 
 let started = false
@@ -133,6 +143,7 @@ export function initHashSync() {
   window.addEventListener('hashchange', () => applyHash(window.location.hash))
   let last = stateToHash(get(), editor.getProject())
   const write = () => {
+    if (usePersistence.getState().restoring) return
     const next = stateToHash(get(), editor.getProject())
     if (next === last) return
     const screenChanged = next.split('?')[0] !== last.split('?')[0]
@@ -142,4 +153,5 @@ export function initHashSync() {
   }
   useUi.subscribe(write)
   editor.subscribe(write)
+  usePersistence.subscribe(write)
 }

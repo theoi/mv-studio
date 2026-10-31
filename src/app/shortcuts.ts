@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { jumpSection, stepPlayhead } from './state/playback.ts'
 import { openImport } from './state/importer.ts'
+import { saveNow } from './state/persistence.ts'
 import {
   addTextAtPlayhead,
   editor,
@@ -66,7 +67,7 @@ export function useGlobalShortcuts() {
         redo()
       } else if (mod && key === 's') {
         e.preventDefault()
-        toast('All changes are saved in this browser')
+        void saveNow()
       } else if (mod && key === 'b') {
         e.preventDefault()
         set({ libraryOpen: !s.libraryOpen })

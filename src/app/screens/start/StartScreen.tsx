@@ -1,8 +1,38 @@
-import { FileUp, Lock, Plus, Settings, ArrowRight, Sparkles, Clock } from 'lucide-react'
+import { useRef, useState } from 'react'
+import {
+  ArrowRight,
+  Clock,
+  Copy,
+  Download,
+  FileUp,
+  Lock,
+  MoreHorizontal,
+  Music,
+  Pencil,
+  Plus,
+  Settings,
+  Sparkles,
+  Trash2,
+} from 'lucide-react'
 import { Button, IconButton } from '../../ds/Button.tsx'
+import { Dialog } from '../../ds/Dialog.tsx'
+import { Input } from '../../ds/Fields.tsx'
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
+import { editedAgo } from '../../format.ts'
 import { sceneThumb } from '../../mock/art.ts'
+import {
+  deleteProject,
+  downloadProjectFile,
+  duplicateProject,
+  openProject,
+  openProjectFile,
+  renameProject,
+  saveErrorMessage,
+  usePersistence,
+  type RecentProject,
+} from '../../state/persistence.ts'
 import { openEditor } from '../../state/project.ts'
-import { set, type Kind } from '../../state/ui.ts'
+import { set, toast, type Kind } from '../../state/ui.ts'
 import { Logo } from '../common/Logo.tsx'
 import styles from './Start.module.css'
 
@@ -25,11 +55,7 @@ const kinds: { id: Exclude<Kind, 'blank'>; title: string; description: string }[
   },
 ]
 
-const recent = [
-  { name: 'Neon Skyline', edited: 'Edited 2 hours ago', scene: 'city' as const, kind: 'Lyric video' },
-  { name: 'Low Tide (visualizer)', edited: 'Edited yesterday', scene: 'ocean' as const, kind: 'Visualizer' },
-  { name: 'Tour recap', edited: 'Edited Oct 24', scene: 'crowd' as const, kind: 'Beat-cut footage' },
-]
+const RECENT_LIMIT = 6
 
 export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   if (kind === 'lyric') {
@@ -90,13 +116,171 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   )
 }
 
+function RecentCard({ project }: { project: RecentProject }) {
+  const [renaming, setRenaming] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  // The menu traps focus while open and gives it back to its button as it closes, so the rename field takes focus
+  // only once the menu has closed.
+  const keepFocus = useRef(false)
+  const field = useRef<HTMLInputElement>(null)
+  const thumb = (
+    <span
+      className={styles.recentThumb}
+      style={project.thumbnail ? { backgroundImage: `url(${project.thumbnail})` } : undefined}
+    >
+      {!project.thumbnail && <Music />}
+    </span>
+  )
+  const meta = (
+    <span className={styles.recentMeta}>
+      <Clock />
+      {editedAgo(project.updatedAt)}
+    </span>
+  )
+  return (
+    <div className={styles.recentItem}>
+      {renaming ? (
+        <div className={styles.recentOpen}>
+          {thumb}
+          <span className={styles.recentText}>
+            <Input
+              ref={field}
+              aria-label="Project name"
+              defaultValue={project.name}
+              maxLength={120}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+                if (e.key === 'Escape') {
+                  e.currentTarget.value = project.name
+                  e.currentTarget.blur()
+                }
+              }}
+              onBlur={(e) => {
+                const name = e.currentTarget.value.trim()
+                setRenaming(false)
+                if (name && name !== project.name) void renameProject(project.id, name)
+              }}
+            />
+            {meta}
+          </span>
+        </div>
+      ) : (
+        <button className={styles.recentOpen} onClick={() => void openProject(project.id)}>
+          {thumb}
+          <span className={styles.recentText}>
+            <span className={styles.recentName}>{project.name}</span>
+            {meta}
+          </span>
+        </button>
+      )}
+      <Menu>
+        <MenuTrigger asChild>
+          <button className={styles.recentMore} aria-label={`More actions for ${project.name}`}>
+            <MoreHorizontal />
+          </button>
+        </MenuTrigger>
+        <MenuContent
+          align="end"
+          width={220}
+          onCloseAutoFocus={(e) => {
+            if (!keepFocus.current) return
+            keepFocus.current = false
+            e.preventDefault()
+            field.current?.focus()
+          }}
+        >
+          <MenuItem
+            icon={<Pencil />}
+            onSelect={() => {
+              keepFocus.current = true
+              setRenaming(true)
+            }}
+          >
+            Rename
+          </MenuItem>
+          <MenuItem
+            icon={<Copy />}
+            onSelect={() =>
+              void duplicateProject(project.id).catch((error: unknown) => toast(saveErrorMessage(error)))
+            }
+          >
+            Duplicate
+          </MenuItem>
+          <MenuItem icon={<Download />} onSelect={() => downloadProjectFile(project.id)}>
+            Download project file
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem icon={<Trash2 />} danger onSelect={() => setConfirming(true)}>
+            Delete…
+          </MenuItem>
+        </MenuContent>
+      </Menu>
+      <Dialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Delete “${project.name}”?`}
+        width={440}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              icon={<Trash2 />}
+              onClick={() => {
+                setConfirming(false)
+                void deleteProject(project.id)
+              }}
+            >
+              Delete project
+            </Button>
+          </>
+        }
+      >
+        <p className={styles.confirmText}>
+          The project and its media files are removed from this browser. Media another project uses is kept.
+          You can’t undo this, so download the project file first if you might want it back.
+        </p>
+      </Dialog>
+    </div>
+  )
+}
+
+/** Projects kept in this browser, most recently edited first. Hidden until there is one. */
+function RecentProjects() {
+  const recents = usePersistence((s) => s.recents)
+  const [all, setAll] = useState(false)
+  if (!recents?.length) return null
+  const shown = all ? recents : recents.slice(0, RECENT_LIMIT)
+  return (
+    <section className={styles.recent} aria-labelledby="recent-title">
+      <div className={styles.recentHeader}>
+        <h2 id="recent-title" className={styles.sectionTitle}>
+          Recent projects
+        </h2>
+        {recents.length > RECENT_LIMIT && (
+          <Button size="sm" variant="ghost" onClick={() => setAll(!all)}>
+            {all ? 'Show fewer' : `Show all ${recents.length}`}
+          </Button>
+        )}
+      </div>
+      <div className={styles.recentList}>
+        {shown.map((p) => (
+          <RecentCard key={p.id} project={p} />
+        ))}
+      </div>
+    </section>
+  )
+}
 export function StartScreen() {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
         <Logo />
         <div className={styles.headerActions}>
-          <Button variant="ghost" icon={<FileUp />}>
+          <Button variant="ghost" icon={<FileUp />} onClick={openProjectFile}>
             Open project file
           </Button>
           <IconButton
@@ -142,28 +326,7 @@ export function StartScreen() {
           <ArrowRight className={styles.blankArrow} />
         </button>
 
-        <section className={styles.recent} aria-labelledby="recent-title">
-          <h2 id="recent-title" className={styles.sectionTitle}>
-            Recent projects
-          </h2>
-          <div className={styles.recentList}>
-            {recent.map((r) => (
-              <button key={r.name} className={styles.recentItem} onClick={() => openEditor('lyric')}>
-                <span
-                  className={styles.recentThumb}
-                  style={{ backgroundImage: `url(${sceneThumb(r.scene)})` }}
-                />
-                <span className={styles.recentText}>
-                  <span className={styles.recentName}>{r.name}</span>
-                  <span className={styles.recentMeta}>
-                    <Clock />
-                    {r.edited}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
+        <RecentProjects />
       </main>
 
       <footer className={styles.footer}>

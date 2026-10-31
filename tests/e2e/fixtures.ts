@@ -4,21 +4,26 @@ import { test as base, chromium, type BrowserContext, type Page } from '@playwri
  * Tests run in a persistent (on-disk) profile. Playwright's default contexts keep OPFS/IndexedDB in memory with a
  * much lower real quota, which the runtime pilot found makes 200 MB media writes fail.
  */
+export async function launchProfile(dir: string, baseURL: string | undefined): Promise<BrowserContext> {
+  const context = await chromium.launchPersistentContext(dir, {
+    headless: true,
+    baseURL,
+    acceptDownloads: true,
+    viewport: { width: 1440, height: 900 },
+    // page.evaluate is not a user gesture, so playback tests could not start an AudioContext otherwise.
+    args: ['--autoplay-policy=no-user-gesture-required'],
+  })
+  // Desktop Chrome and Edge define window.chrome; headless Chromium does not. Code that sniffs it (upstream
+  // coi-serviceworker picks require-corp when it exists) must see what real users' browsers expose.
+  await context.addInitScript(() => {
+    if (!('chrome' in window)) Object.defineProperty(window, 'chrome', { value: {}, configurable: true })
+  })
+  return context
+}
+
 export const test = base.extend<{ context: BrowserContext; page: Page }>({
   context: async ({ baseURL }, use, testInfo) => {
-    const context = await chromium.launchPersistentContext(testInfo.outputPath('profile'), {
-      headless: true,
-      baseURL,
-      acceptDownloads: true,
-      viewport: { width: 1440, height: 900 },
-      // page.evaluate is not a user gesture, so playback tests could not start an AudioContext otherwise.
-      args: ['--autoplay-policy=no-user-gesture-required'],
-    })
-    // Desktop Chrome and Edge define window.chrome; headless Chromium does not. Code that sniffs it (upstream
-    // coi-serviceworker picks require-corp when it exists) must see what real users' browsers expose.
-    await context.addInitScript(() => {
-      if (!('chrome' in window)) Object.defineProperty(window, 'chrome', { value: {}, configurable: true })
-    })
+    const context = await launchProfile(testInfo.outputPath('profile'), baseURL)
     await use(context)
     await context.close()
   },
