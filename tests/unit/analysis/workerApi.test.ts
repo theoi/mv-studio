@@ -82,6 +82,28 @@ describe('analysis worker API', () => {
     expect(refined.beats?.length).toBeGreaterThan(30)
   })
 
+  it('runs Beat This! once per song and fits its bars to a tempo the user taps', async () => {
+    const client = connect()
+    const { audio, beats } = song(4)
+    await client.call('analyzeFast', { assetId: 'a', audio })
+    expect((await client.call('trackAtTempo', { assetId: 'a', bpm: 120 })).downbeats).toBeUndefined()
+
+    const refined = await client.call('refineBeats', { assetId: 'a' })
+    expect(refined.downbeats?.length).toBeGreaterThan(3)
+    await client.call('refineBeats', { assetId: 'a' })
+    expect(modelLoads).toBe(1)
+
+    const tracked = await client.call('trackAtTempo', { assetId: 'a', bpm: 121 })
+    expect(fmeasure(tracked.beats ?? [], beats)).toBeGreaterThan(0.95)
+    expect(fmeasure(tracked.downbeats ?? [], refined.downbeats ?? [])).toBeGreaterThan(0.9)
+    expect(tracked.downbeats?.every((d) => tracked.beats?.includes(d))).toBe(true)
+
+    // A released song is read again, but its Beat This! output is kept.
+    await client.call('release', { assetId: 'a' })
+    await client.call('refineBeats', { assetId: 'a', audio: song(4).audio })
+    expect(modelLoads).toBe(1)
+  })
+
   it('forgets released songs and keeps at most two', async () => {
     const client = connect()
     for (const id of ['a', 'b', 'c']) await client.call('analyzeFast', { assetId: id, audio: song(3).audio })

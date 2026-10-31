@@ -50,7 +50,8 @@ describe('analyzeSongFast', () => {
     expect(analysis.version).toBe(ANALYZER_VERSION)
     expect(Math.abs((analysis.tempo?.bpm ?? 0) - BPM)).toBeLessThan(1)
     expect(fmeasure(analysis.beats ?? [], beats)).toBeGreaterThan(0.97)
-    expect(analysis.downbeats?.every((d) => analysis.beats?.includes(d))).toBe(true)
+    // The fast path's bar guesses are not stored: only bars the refinement step (or the user) finds are.
+    expect(analysis).not.toHaveProperty('downbeats')
     const fractions = progress.map((p) => p.fraction ?? 0)
     expect(fractions.length).toBeGreaterThan(3)
     expect(fractions).toEqual([...fractions].sort((a, b) => a - b))
@@ -99,11 +100,12 @@ describe('trackSongAtTempo', () => {
   const { mono, beats } = song()
   const { state } = analyzeSongFast('song-1', { sampleRate: SR, channels: [mono] })
 
-  it('corrects a slightly-off tapped tempo from the audio', () => {
+  it('corrects a slightly-off tapped tempo from the audio, removing bars it has not found', () => {
     const grid = trackSongAtTempo(state, 124)
     expect(grid.tempo?.bpm).toBeCloseTo(BPM, 0)
     expect(grid.tempo?.confidence).toBe(1)
     expect(fmeasure(grid.beats ?? [], beats)).toBeGreaterThan(0.97)
+    expect('downbeats' in grid && grid.downbeats === undefined).toBe(true)
   })
 
   it('follows a tapped half tempo on every other beat', () => {

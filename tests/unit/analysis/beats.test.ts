@@ -4,6 +4,7 @@ import { dpBeatTrack } from '../../../src/analysis/beats/dp.ts'
 import { analyzeMono } from '../../../src/analysis/beats/fast.ts'
 import {
   bpmFromBeats,
+  fitDownbeats,
   gridPoints,
   inferBarPositions,
   makeGrid,
@@ -90,6 +91,19 @@ describe('grid helpers', () => {
     const s = setDownbeat(grid, 1)
     expect(s.downbeats[0]).toBe(1.5)
     expect(s.downbeatsReliable).toBe(true)
+  })
+
+  it('puts bars found on another grid on these beats, when they fall on them', () => {
+    // Refined bars a few ms off these beats, and one before the first beat.
+    expect(fitDownbeats(beats, [0.2, 1.02, 2.97, 5.01, 7.04, 9])).toEqual([1, 3, 5, 7, 9])
+    // At twice the tempo (beats every 0.25 s) a bar 66 ms off is more than a quarter beat away.
+    expect(fitDownbeats(rescaleGrid(grid, 2).beats, [1.066, 3.066, 5.066])).toBeNull()
+    expect(fitDownbeats(rescaleGrid(grid, 2).beats, [1.05, 3.05, 5.05])).toEqual([1, 3, 5])
+    // Bars on the off-beats (another phase) do not fit.
+    expect(fitDownbeats(beats, [1.25, 3.25, 5.25, 7.25])).toBeNull()
+    expect(fitDownbeats(beats, [1, 3.25, 5.25, 7.25, 9.25])).toBeNull()
+    expect(fitDownbeats(beats, [3])).toBeNull()
+    expect(fitDownbeats([1], [1])).toBeNull()
   })
 })
 

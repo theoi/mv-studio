@@ -7,7 +7,7 @@ import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm } from '../../../format.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
-import { analyzeAgain, applyTappedTempo, setFirstBeat } from '../../../state/songAnalysis.ts'
+import { analyzeAgain, applyTappedTempo, setFirstBeat, useBars } from '../../../state/songAnalysis.ts'
 import { get } from '../../../state/ui.ts'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, ToolView } from './ToolView.tsx'
@@ -61,6 +61,7 @@ export function AnalysisView() {
   const { job, phase } = useJob(JOB_KINDS.analysis)
   const tempo = useJob(JOB_KINDS.tempo)
   const { taps, tap } = useTaps()
+  const bars = useBars()
   const tapped = tapTempo(taps)
   const busy = phase === 'running' || tempo.phase === 'running'
 
@@ -125,7 +126,11 @@ export function AnalysisView() {
         <div>
           <span>Bar starts</span>
           <span>
-            <FoundBadge count={analysis?.downbeats?.length ?? 0} />
+            {bars.status === 'finding' ? (
+              <Badge>Finding bars…</Badge>
+            ) : (
+              <FoundBadge count={analysis?.downbeats?.length ?? 0} />
+            )}
           </span>
         </div>
         <div>

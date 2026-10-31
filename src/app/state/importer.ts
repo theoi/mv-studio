@@ -9,15 +9,13 @@ import {
   type Project,
   type Track,
 } from '../../model/index.ts'
-import type { AudioAnalysis } from '../../model/index.ts'
-import type * as AnalysisClient from '../../analysis/client.ts'
-import type { SongAnalysisService } from '../../analysis/client.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
 import { TRACK_IDS } from '../mock/demoProject.ts'
 import { backgroundAnalysisOn } from './footage.ts'
 import { JOB_KINDS } from './jobs.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
+import { analysisService, findBars } from './songAnalysis.ts'
 import { get, select, set, toast } from './ui.ts'
 
 /*
@@ -64,47 +62,22 @@ function songCommands(project: Project, song: Asset): EditCommand[] {
   return commands
 }
 
-let analysisService: SongAnalysisService | null = null
-
 async function analyzeSong(song: Asset, file: Blob): Promise<void> {
   try {
     const client = await import('../../analysis/client.ts')
-    analysisService ??= new client.SongAnalysisService()
     const audio = await client.decodeAudioFile(file)
-    const analysis = await analysisService.analyze(song.id, audio).promise
+    const analysis = await (await analysisService()).analyze(song.id, audio).promise
     if (!editor.getProject().assets[song.id]) return
     dispatch(client.setAnalysisCommand(analysis), { history: 'skip' })
     const bpm = analysis.tempo ? `${Math.round(analysis.tempo.bpm)} BPM` : 'the beat'
     const sections = analysis.sections?.length ?? 0
     toast(`Found ${bpm} and ${sections} ${sections === 1 ? 'section' : 'sections'}`)
-    void refineSong(client, analysisService, analysis)
+    // Bars and steadier beats from Beat This! (a model downloaded on first use), shown in the activity list while
+    // it runs. Beats or sections the user corrected meanwhile are kept. If it fails, the fast analysis stays.
+    if (backgroundAnalysisOn()) void findBars(song.id, { baseline: analysis, sections: true })
   } catch (error) {
     if (error instanceof JobError && error.code === 'cancelled') return
     toast(`Could not analyze the song: ${error instanceof Error ? error.message : String(error)}`)
-  }
-}
-
-/**
- * Bars and steadier beats from Beat This! (a model downloaded on first use), shown in the activity list while it
- * runs. Beats or sections the user corrected meanwhile are kept. If it fails, the fast analysis stays.
- */
-async function refineSong(
-  client: typeof AnalysisClient,
-  service: SongAnalysisService,
-  fast: AudioAnalysis,
-): Promise<void> {
-  try {
-    if (!backgroundAnalysisOn()) return
-    const refined = await service.refine(fast.assetId).promise
-    if (editor.getProject().assets[fast.assetId])
-      dispatch(client.refinedAnalysisCommand(fast, refined), { history: 'skip' })
-  } catch (error) {
-    if (error instanceof JobError && error.code === 'cancelled') return
-    toast(
-      `Could not refine the beats, so the first analysis is kept. ${error instanceof Error ? error.message : ''}`,
-    )
-  } finally {
-    void service.release(fast.assetId).catch(() => undefined)
   }
 }
 

@@ -298,4 +298,31 @@ describe('parseProject', () => {
     expect(() => parseProject({ schemaVersion: 1 })).toThrow(/missing/)
     expect(() => parseProject('nope')).toThrow(/Not a project/)
   })
+
+  it('drops the downbeats a version 1 project stored from the fast analysis, keeping refined and user bars', () => {
+    const analysis = (confidence: number) => ({
+      assetId: `a${confidence}`,
+      version: 'mvs-audio-2',
+      tempo: { bpm: 120, confidence },
+      beats: [0, 0.5, 1, 1.5, 2],
+      downbeats: [0, 2],
+    })
+    const v1 = {
+      ...JSON.parse(JSON.stringify(createProject())),
+      schemaVersion: 1,
+      analysis: {
+        audio: { a0: analysis(0.6), a1: analysis(0.8), a2: analysis(0.95), a3: analysis(1) },
+        visual: {},
+      },
+    }
+    const project = parseProject(v1)
+    expect(project.schemaVersion).toBe(2)
+    const audio = project.analysis.audio
+    expect(audio.a0).toEqual({ ...analysis(0.6), downbeats: undefined })
+    expect('downbeats' in (audio.a0 ?? {})).toBe(false)
+    expect(audio.a1?.downbeats).toBeUndefined()
+    expect(audio.a1?.beats).toEqual([0, 0.5, 1, 1.5, 2])
+    expect(audio.a2?.downbeats).toEqual([0, 2])
+    expect(audio.a3?.downbeats).toEqual([0, 2])
+  })
 })

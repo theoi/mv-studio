@@ -6,8 +6,14 @@ import { resample } from './dsp/resample.ts'
 import { throwIfAborted } from './dsp/stats.ts'
 import { toAnalysisMono, trackBeatsFast, type DecodedAudio } from './beats/fast.ts'
 import type { BeatGrid } from './beats/grid.ts'
+import { fitDownbeats } from './beats/grid.ts'
 import { refineWithBeatThis } from './beats/refine.ts'
-import { BEAT_THIS_SAMPLE_RATE, runBeatThis, type BeatThisModel } from './beats/beatThis.ts'
+import {
+  BEAT_THIS_SAMPLE_RATE,
+  runBeatThis,
+  type BeatThisLogits,
+  type BeatThisModel,
+} from './beats/beatThis.ts'
 import {
   analyzeStructure,
   computeEnergyCurve,
@@ -18,7 +24,7 @@ import { computeAudioFeatures } from './features/features.ts'
 import { AUDIO_CHORUS_CONFIDENCE, withChorus } from './structure/chorus.ts'
 
 /** Stored with results; bump when algorithms change so older analyses can be recomputed. */
-export const ANALYZER_VERSION = 'mvs-audio-2'
+export const ANALYZER_VERSION = 'mvs-audio-3'
 
 export interface AnalysisCallbacks {
   signal?: AbortSignal
@@ -32,8 +38,14 @@ export interface SongState {
   onset: Float32Array
   energy: EnergyCurve
   grid: BeatGrid
+  /** Beat This! output once it ran, so bars can be fitted to a grid the user changes without running it again. */
+  logits?: BeatThisLogits
 }
 
+/**
+ * Tempo and beats of a grid, and its downbeats only when they were found (by Beat This!). The fast path's bar guesses
+ * are mostly a beat or two off, so they stay internal (sections use them) and are never stored.
+ */
 export function gridFields(grid: BeatGrid): Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'> {
   const top = grid.tempoCandidates[0]?.score ?? 1
   const second = grid.tempoCandidates[1]?.score ?? 0
@@ -46,7 +58,7 @@ export function gridFields(grid: BeatGrid): Pick<AudioAnalysis, 'tempo' | 'beats
   return {
     tempo: { bpm: grid.bpm, confidence: Math.round(confidence * 100) / 100 },
     beats: grid.beats,
-    downbeats: grid.downbeats,
+    ...(grid.downbeatsReliable ? { downbeats: grid.downbeats } : {}),
   }
 }
 
@@ -100,8 +112,9 @@ export function analyzeSongFast(
 const TAPPED_TEMPO_RANGE = 1.06
 
 /**
- * The beat grid tracked again around a tempo the user tapped: the period is refined from the audio within 6% of it,
- * downbeats are provisional. The tempo counts as confirmed (confidence 1).
+ * The beat grid tracked again around a tempo the user tapped: the period is refined from the audio within 6% of it.
+ * The tempo counts as confirmed (confidence 1). Downbeats are the Beat This! bars that fall on the new beats when it
+ * already ran for the song, else none (`downbeats` is then explicitly undefined, so the edit removes old bars).
  */
 export function trackSongAtTempo(
   state: SongState,
@@ -111,27 +124,35 @@ export function trackSongAtTempo(
   const tempo = { minBpm: bpm / TAPPED_TEMPO_RANGE, maxBpm: bpm * TAPPED_TEMPO_RANGE, priorBpm: bpm }
   const { grid } = trackBeatsFast(state.spec, tempo, signal)
   state.grid = grid
-  return { ...gridFields(grid), tempo: { bpm: grid.bpm, confidence: 1 } }
+  const bars = state.logits
+    ? fitDownbeats(grid.beats, refineWithBeatThis(state.logits, { dspBpm: grid.bpm }).downbeats)
+    : null
+  return { tempo: { bpm: grid.bpm, confidence: 1 }, beats: grid.beats, downbeats: bars ?? undefined }
 }
 
 export type RefinedFields = Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats' | 'sections'>
 
-/** Background step: Beat This! beats and downbeats on the fast grid's tempo level, then sections on real bars. */
+/**
+ * Background step: Beat This! beats and downbeats on the fast grid's tempo level, then sections on real bars. The
+ * network runs once per song state; later calls reuse its output.
+ */
 export async function refineSongBeats(
   state: SongState,
-  model: BeatThisModel,
+  model: () => Promise<BeatThisModel>,
   cb: AnalysisCallbacks = {},
 ): Promise<{ fields: RefinedFields; grid: BeatGrid }> {
-  const pcm =
-    BEAT_THIS_SAMPLE_RATE === ANALYSIS_SAMPLE_RATE
-      ? state.mono
-      : resample(state.mono, ANALYSIS_SAMPLE_RATE, BEAT_THIS_SAMPLE_RATE)
-  const logits = await runBeatThis(model, pcm, {
-    signal: cb.signal,
-    onProgress: (f) =>
-      cb.onProgress?.({ stage: 'downbeats', fraction: f, message: 'Finding bars and refining beats' }),
-  })
-  const grid = refineWithBeatThis(logits, {
+  if (!state.logits) {
+    const pcm =
+      BEAT_THIS_SAMPLE_RATE === ANALYSIS_SAMPLE_RATE
+        ? state.mono
+        : resample(state.mono, ANALYSIS_SAMPLE_RATE, BEAT_THIS_SAMPLE_RATE)
+    state.logits = await runBeatThis(await model(), pcm, {
+      signal: cb.signal,
+      onProgress: (f) =>
+        cb.onProgress?.({ stage: 'downbeats', fraction: f, message: 'Finding bars and refining beats' }),
+    })
+  }
+  const grid = refineWithBeatThis(state.logits, {
     dspBpm: state.grid.bpm,
     tempoCandidates: state.grid.tempoCandidates,
   })
