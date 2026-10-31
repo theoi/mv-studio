@@ -45,6 +45,7 @@ import {
   MenuTrigger,
 } from '../../../ds/Menu.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
+import { keyName } from '../../../ds/keys.ts'
 import { TransitionMark } from './Transitions.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
@@ -135,12 +136,13 @@ import {
   BUTT_PX,
   blockedAt,
   dropShift,
+  insertPlan,
   isLyricsTrack,
   refusalLabel,
   refusalToast,
   refuseTrack,
   type DropRefusal,
-  type Span,
+  type StayingSpan,
 } from '../../../state/clipDrag.ts'
 import { registerReveal } from '../../../state/reveal.ts'
 import {
@@ -1467,8 +1469,12 @@ export function Timeline() {
     label: string
     /** The box of the clip that can't drop, which carries the label. */
     labelAt: number
+    /** A second line under the label. */
+    hint?: string
     boxes: { top: number; height: number; start: number; duration: number }[]
   } | null>(null)
+  // Where the pointer is during an insert drag, for the "Insert" pill beside it.
+  const [insertPill, setInsertPill] = useState<{ x: number; y: number } | null>(null)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
@@ -1738,14 +1744,14 @@ export function Timeline() {
         return
       }
       const movingIds = new Set(moving.map((c) => c.id))
-      const spansOn = new Map<string, Span[]>()
+      const spansOn = new Map<string, StayingSpan[]>()
       /** The clips that stay on a track. */
       const othersOn = (trackId: string) => {
         let spans = spansOn.get(trackId)
         if (!spans) {
           spans = clipsOnTrack(p, trackId)
             .filter((o) => !movingIds.has(o.id))
-            .map((o) => ({ start: o.start, end: o.start + o.duration }))
+            .map((o) => ({ id: o.id, start: o.start, end: o.start + o.duration }))
           spansOn.set(trackId, spans)
         }
         return spans
@@ -1772,6 +1778,17 @@ export function Timeline() {
       let moved = false
       let rows: TrackRow[] = []
       let refused: DropRefusal | null = null
+      // Mod held during the drag inserts: the clips go in at the drop point and push the later clips right.
+      let modHeld = false
+      let inserting = false
+      let pill = false
+      /** Clips an insert pushed during this drag, which go back when a later pointer position no longer pushes them. */
+      const pushed = new Set<string>()
+      const hidePill = () => {
+        if (!pill) return
+        pill = false
+        setInsertPill(null)
+      }
       const target = e.currentTarget as HTMLElement
       target.setPointerCapture(e.pointerId)
       const scroller = scrollRef.current
@@ -1818,16 +1835,27 @@ export function Timeline() {
             end: c.start + c.duration,
             others: othersOn(trackFor(c).id),
           }))
-          const place = refusal ? null : dropShift(spans, r.t - clip.start, dt, BUTT_PX / scale, lo, hi)
-          if (!place) {
+          if (modHeld !== inserting) {
+            // Moving and inserting are different undo steps: start over, so the step's label says which it is.
+            if (!refused) editor.cancelGesture(key)
+            pushed.clear()
+            inserting = modHeld
+          }
+          const plan = refusal || !inserting ? null : insertPlan(spans, r.t - clip.start, lo)
+          const place =
+            refusal || inserting ? null : dropShift(spans, r.t - clip.start, dt, BUTT_PX / scale, lo, hi)
+          if (!place && !plan) {
             // The clips go back to where they started until the pointer finds a place they can drop.
             if (!refused) editor.cancelGesture(key)
+            pushed.clear()
+            hidePill()
             refused = refusal ?? { reason: 'room' }
             setSnapLine(null)
             const shift = Math.min(hi, Math.max(lo, dt))
             if (!refusal) refusedAt = blockedAt(spans, shift)
             setRefusedDrop({
               label: refusalLabel(refused),
+              hint: !refusal && !inserting ? `Hold ${keyName('Mod')} while dragging to insert` : undefined,
               labelAt: Math.max(0, refusedAt),
               boxes: grabbedFirst.map((c) => {
                 const row = rows[rowOf(c) + offset] as TrackRow
@@ -1840,6 +1868,27 @@ export function Timeline() {
             refused = null
             setRefusedDrop(null)
           }
+          if (plan) {
+            setSnapLine(plan.at)
+            pill = true
+            setInsertPill({ x: ev.clientX - (contentRef.current?.getBoundingClientRect().left ?? 0), y })
+            const moves: { clipId: string; start: number; trackId?: string }[] = moving.map((c) => ({
+              clipId: c.id,
+              start: c.start + plan.shift,
+              trackId: trackFor(c).id,
+            }))
+            const next = new Map(plan.pushes.map((m) => [m.id, m.start]))
+            for (const id of pushed)
+              if (!next.has(id)) moves.push({ clipId: id, start: p.clips[id]?.start ?? 0 })
+            for (const [id, start] of next) {
+              moves.push({ clipId: id, start })
+              pushed.add(id)
+            }
+            dispatch({ type: 'clip.move', moves }, { coalesceKey: key, label: 'Insert clip' })
+            return
+          }
+          hidePill()
+          if (!place) return
           setSnapLine(
             place.edge ??
               (r.snapped !== null && Math.abs(r.snapped - (clip.start + place.shift)) < 0.001
@@ -1878,12 +1927,14 @@ export function Timeline() {
       const finish = () => {
         edge?.stop()
         if (refused) setRefusedDrop(null)
+        hidePill()
         if (rows.length) setFrozenKinds(null)
         setSnapLine(null)
         if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId)
-        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointermove', onPointerMove)
         window.removeEventListener('pointerup', up)
         window.removeEventListener('keydown', onKey, true)
+        window.removeEventListener('keyup', onKey, true)
       }
       const up = () => {
         if (refused) toast(refusalToast(p, refused))
@@ -1894,18 +1945,29 @@ export function Timeline() {
         if (moved && staying && !refused)
           toast(`Moved ${plural(moving.length, 'clip')}. Lyric lines stay with the vocals.`)
       }
-      // Esc puts the clips back and ends the drag; captured before the global Esc deselects.
+      const onPointerMove = (ev: PointerEvent) => {
+        modHeld = ev.ctrlKey || ev.metaKey
+        move(ev)
+      }
+      // Esc puts the clips back and ends the drag; captured before the global Esc deselects. Pressing or releasing Mod
+      // switches between moving and inserting without waiting for the pointer to move.
       const onKey = (ev: KeyboardEvent) => {
-        if (ev.key !== 'Escape') return
+        if (ev.key === 'Control' || ev.key === 'Meta') {
+          modHeld = ev.ctrlKey || ev.metaKey
+          if (mode === 'move' && moved && last) move(last)
+          return
+        }
+        if (ev.type !== 'keydown' || ev.key !== 'Escape') return
         ev.preventDefault()
         ev.stopPropagation()
         if (!refused) editor.cancelGesture(key)
         finish()
       }
       // On the window: a clip that changes tracks is drawn by a new element, and the old one loses the pointer.
-      window.addEventListener('pointermove', move)
+      window.addEventListener('pointermove', onPointerMove)
       window.addEventListener('pointerup', up)
       window.addEventListener('keydown', onKey, true)
+      window.addEventListener('keyup', onKey, true)
     },
     [grid, duration],
   )
@@ -2601,11 +2663,22 @@ export function Timeline() {
             >
               {i === refusedDrop.labelAt && (
                 <span className={styles.refusedLabel} style={{ left: HEADER_W + 3 }}>
-                  <span className={styles.refusedText}>{refusedDrop.label}</span>
+                  <span className={styles.refusedText}>
+                    <span>{refusedDrop.label}</span>
+                    {refusedDrop.hint && <span className={styles.refusedHint}>{refusedDrop.hint}</span>}
+                  </span>
                 </span>
               )}
             </div>
           ))}
+          {insertPill && (
+            <div
+              className={styles.insertPill}
+              style={{ transform: `translate(${insertPill.x + 14}px, ${insertPill.y - 30}px)` }}
+            >
+              Insert
+            </div>
+          )}
           <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />
           <div ref={dropRef} className={styles.trackDrop} hidden aria-hidden />
           <div ref={announceRef} className="sr-only" aria-live="polite" />

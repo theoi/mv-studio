@@ -48,7 +48,7 @@ import {
   useCloud,
   type LlmChoice,
 } from '../../state/cloud.ts'
-import { SHORTCUTS, SHORTCUT_GROUPS } from '../../state/keymap.ts'
+import { GESTURES, SHORTCUTS, SHORTCUT_GROUPS } from '../../state/keymap.ts'
 import {
   LOCAL_MODELS,
   clearModels,
@@ -555,7 +555,7 @@ function ShortcutsPage() {
     <>
       <SearchInput value={q} onChange={setQ} placeholder="Search shortcuts" />
       {SHORTCUT_GROUPS.map((group) => {
-        const items = SHORTCUTS.filter(
+        const items = [...SHORTCUTS, ...GESTURES].filter(
           (s) => s.group === group && [s.label, ...s.keys].join(' ').toLowerCase().includes(query),
         )
         if (!items.length) return null

@@ -1102,8 +1102,9 @@
   container-type: scroll-state;
 }
 
-/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Across
-   the lane's top edge, between the clip rows, so it covers no clip names. */
+/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Its first
+   line across the lane's top edge, between the clip rows, so it covers no clip names; a hint line hangs below it, into
+   the target lane. */
 .refusedText {
   position: relative;
   display: block;
@@ -1114,11 +1115,16 @@
   color: var(--danger-text);
   font-size: var(--text-xs);
   white-space: nowrap;
-  transform: translateY(calc(-50% - 3px));
+  transform: translateY(calc(-0.5lh - 1px - 3px));
 }
 
-/* Stuck at the left edge, where the lane above may have a name stuck too: inside the outline instead, short enough for
-   the outline of a look lane. */
+.refusedHint {
+  display: block;
+  color: var(--text-2);
+}
+
+/* Stuck at the left edge, where the lane above may have a name stuck too: inside the outline instead, on one line short
+   enough for the outline of a look lane. */
 @container scroll-state(stuck: left) {
   .refusedText {
     top: 50%;
@@ -1126,6 +1132,30 @@
     line-height: 14px;
     transform: translateY(-50%);
   }
+
+  .refusedHint {
+    display: inline;
+  }
+
+  .refusedHint::before {
+    content: ' · ';
+  }
+}
+
+/* Beside the pointer while Mod turns a clip drag into an insert. */
+.insertPill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-on-accent);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .content[data-refused],
