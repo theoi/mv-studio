@@ -154,3 +154,52 @@ test('effects and transitions from the library go on the clip at the playhead, a
   await search.fill('qwerty')
   await expect(library.getByText('No matches')).toBeVisible()
 })
+
+/** The timeline's name for a clip at start..end ("Night city, 1:06.0 to 1:08.0"). */
+function clipLabel(name: string, start: number, end: number): string {
+  const time = (t: number) => {
+    const m = Math.floor(t / 60)
+    const s = t - m * 60
+    return `${m}:${String(Math.floor(s)).padStart(2, '0')}.${Math.floor((s - Math.floor(s)) * 10)}`
+  }
+  return `${name}, ${time(start)} to ${time(end)}`
+}
+
+test('effects and transitions dragged onto the timeline land on the clip or cut they are dropped on', async ({
+  page,
+}) => {
+  const { library } = await openEffectsTab(page)
+  const clip = await page.evaluate(() => {
+    const project: Project = window.mvStudio.app.project.editor.getProject()
+    const c = Object.values(project.clips).find(
+      (c) => c.trackId === 't-video' && c.start <= 66.9 && c.start + c.duration > 66.9,
+    )!
+    return {
+      id: c.id,
+      name: c.name ?? project.assets[(c as { assetId: string }).assetId]!.name,
+      start: c.start,
+      end: c.start + c.duration,
+    }
+  })
+  const block = page.getByRole('button', { name: clipLabel(clip.name, clip.start, clip.end), exact: true })
+  const effects = (id: string) =>
+    page.evaluate((id) => {
+      const c = window.mvStudio.app.project.editor.getProject().clips[id]
+      return {
+        effects: c.effects.map((e: { effectId: string }) => e.effectId),
+        transition: c.transitionIn?.kind,
+      }
+    }, id)
+
+  await library.getByRole('button', { name: 'RGB split', exact: true }).dragTo(block)
+  await expect(page.getByText(`“RGB split” added to ${clip.name}`)).toBeVisible()
+  expect(await effects(clip.id)).toEqual({ effects: ['rgb-split'], transition: undefined })
+  await expect(block).toHaveAttribute('aria-pressed', 'true')
+
+  // Near the clip's left edge is the cut where it starts.
+  await library
+    .getByRole('button', { name: 'Whip pan', exact: true })
+    .dragTo(block, { targetPosition: { x: 3, y: 10 } })
+  await expect(page.getByText(/^“Whip pan” added to the cut at \d+:\d\d\.\d$/)).toBeVisible()
+  expect(await effects(clip.id)).toEqual({ effects: ['rgb-split'], transition: 'whip-pan' })
+})

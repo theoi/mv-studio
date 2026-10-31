@@ -612,6 +612,31 @@
   pointer-events: none;
 }
 
+/* Where a library item dragged over a lane lands: a cut for a transition, a clip for an effect */
+.dropCut,
+.dropClip {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  left: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.dropCut {
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.dropClip {
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 2px var(--accent-line);
+  background: var(--accent-softer);
+}
+
 .dropHint {
   position: absolute;
   right: 12px;
