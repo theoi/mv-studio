@@ -121,6 +121,8 @@ export interface JobSnapshot {
   error?: SerializedJobError
   startedAt?: number
   finishedAt?: number
+  /** Cancel was requested and the job has not ended yet: it may still be finishing work it must not drop. */
+  stopping?: boolean
 }
 
 export interface JobHandle<T> {
@@ -189,6 +191,7 @@ class Job<T> implements JobHandle<T> {
         status: err.code === 'cancelled' ? 'cancelled' : 'failed',
         error: err.toJSON(),
         finishedAt: this.now(),
+        stopping: undefined,
       })
       throw err
     }
@@ -204,7 +207,9 @@ class Job<T> implements JobHandle<T> {
   }
 
   cancel(): void {
-    if (this.state.status === 'queued' || this.state.status === 'running') this.controller.abort()
+    if (this.state.status !== 'queued' && this.state.status !== 'running') return
+    if (!this.state.stopping) this.update({ stopping: true })
+    this.controller.abort()
   }
 
   subscribe(listener: Listener<JobSnapshot>): () => void {

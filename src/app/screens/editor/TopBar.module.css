@@ -20,6 +20,11 @@
   gap: var(--space-1);
 }
 
+/* Buttons keep their size; only the activity indicator gives way, by cutting off its title. */
+.right > * {
+  flex: none;
+}
+
 .home {
   display: flex;
   align-items: center;
@@ -158,6 +163,20 @@
   white-space: nowrap;
   transition: background-color var(--dur-fast);
   animation: fadeSlide var(--dur-slow) var(--ease-out);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 320px;
+}
+
+.activity > * {
+  flex: none;
+}
+
+.activityTitle {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .activity:hover {

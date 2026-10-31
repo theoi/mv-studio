@@ -527,20 +527,22 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
 
   // The whole panel agrees it is stopping: the subtitle, the card's line, and a disabled Cancel.
   await expect(page.getByText('Keeping 1 clip that is downloading')).toBeVisible()
-  await expect(page.getByText('Stopping…', { exact: true })).toHaveCount(2)
+  await expect(
+    page.getByRole('tabpanel', { name: 'Assist' }).getByText('Stopping…', { exact: true }),
+  ).toHaveCount(2)
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled()
-  // At 1280 the card's top line stays on one line, clear of the percent.
+  // At 1280 the card's top line stays on one line, clear of the spinner that took the percent's place.
   const top = page
     .getByRole('progressbar', { name: 'Generating clips' })
     .locator('xpath=preceding-sibling::div[1]')
   const message = top.locator('span').first()
-  const percent = top.locator('span').last()
-  await expect(message).toHaveText('Stopping…')
-  await expect(percent).toHaveText(/^\d+%$/)
+  const spinner = top.locator('span').last()
+  await expect(top).toHaveText('Stopping…')
   const m = (await message.boundingBox())!
-  const p = (await percent.boundingBox())!
-  expect(m.x + m.width + 4).toBeLessThanOrEqual(p.x)
-  expect(m.height).toBeLessThanOrEqual(p.height + 1)
+  const s = (await spinner.boundingBox())!
+  expect(m.x + m.width + 4).toBeLessThanOrEqual(s.x)
+  const fontSize = await message.evaluate((el) => parseFloat(getComputedStyle(el).fontSize))
+  expect(m.height).toBeLessThan(2 * fontSize)
   await page.screenshot({ path: testInfo.outputPath('director-video-stopping.png') })
   fal.release()
   await expect(page.getByText('Generation stopped. 3 clips made so far are kept.')).toBeVisible()

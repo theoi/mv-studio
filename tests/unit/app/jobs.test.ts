@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { JOB_KINDS, openJob } from '../../../src/app/state/jobs.ts'
+import { JOB_KINDS, jobFraction, jobLabel, openJob } from '../../../src/app/state/jobs.ts'
+import { JobRunner } from '../../../src/shared/jobs.ts'
 import { get, set } from '../../../src/app/state/ui.ts'
 
 const SRC = path.resolve('src')
@@ -78,5 +79,28 @@ describe('opening a running job', () => {
     openJob(JOB_KINDS.projectExport)
     openJob(JOB_KINDS.projectImport)
     expect(get()).toMatchObject({ dialog: null, libraryOpen: false, rightTab: 'inspector' })
+  })
+})
+
+describe('a running job where jobs are listed', () => {
+  it('says Stopping… without a percentage from a Cancel until the job ends', async () => {
+    const runner = new JobRunner()
+    let finish!: () => void
+    const job = runner.run({
+      kind: 'test',
+      title: 'Timing lyrics',
+      run: (ctx) =>
+        new Promise<void>((resolve) => {
+          ctx.progress({ fraction: 0.4 })
+          finish = resolve
+        }),
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect([jobLabel(job.snapshot()), jobFraction(job.snapshot())]).toEqual(['Timing lyrics', 0.4])
+    job.cancel()
+    expect([jobLabel(job.snapshot()), jobFraction(job.snapshot())]).toEqual(['Stopping…', undefined])
+    finish()
+    await job.promise.catch(() => undefined)
   })
 })

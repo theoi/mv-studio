@@ -40,6 +40,37 @@ describe('JobRunner', () => {
     expect(job.snapshot().status).toBe('cancelled')
   })
 
+  it('says a job that took a Cancel is stopping until it ends', async () => {
+    const runner = new JobRunner()
+    let finish!: () => void
+    const job = runner.run({
+      kind: 'test',
+      title: 'Downloading the clip',
+      // Like a job keeping a result it already paid for: it doesn't stop the moment Cancel is pressed.
+      run: () => new Promise<void>((resolve) => (finish = resolve)),
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(job.snapshot().stopping).toBeFalsy()
+    job.cancel()
+    expect(job.snapshot()).toMatchObject({ status: 'running', stopping: true })
+    expect(runner.list()).toMatchObject([{ status: 'running', stopping: true }])
+    finish()
+    expect(((await job.promise.catch((e: unknown) => e)) as JobError).code).toBe('cancelled')
+    expect(job.snapshot().status).toBe('cancelled')
+    expect(job.snapshot().stopping).toBeFalsy()
+    expect(runner.list()[0]?.stopping).toBeFalsy()
+  })
+
+  it('does not say a job that already ended is stopping when Cancel comes too late', async () => {
+    const runner = new JobRunner()
+    const job = runner.run({ kind: 'test', title: 'Quick', run: async () => 1 })
+    await job.promise
+    job.cancel()
+    expect(job.snapshot().status).toBe('succeeded')
+    expect(job.snapshot().stopping).toBeFalsy()
+  })
+
   it('maps storage quota failures to a typed error', async () => {
     const runner = new JobRunner()
     const job = runner.run({

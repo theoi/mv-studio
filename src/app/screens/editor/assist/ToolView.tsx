@@ -4,6 +4,7 @@ import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { jobs } from '../../../../shared/jobs.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { ProgressBar, Spinner } from '../../../ds/Feedback.tsx'
+import { jobFraction } from '../../../state/jobs.ts'
 import { openAssist } from '../../../state/ui.ts'
 import { etaText, pct } from './jobState.ts'
 import styles from './Assist.module.css'
@@ -87,7 +88,8 @@ export function Steps({ steps, active }: { steps: string[]; active: number }) {
 
 /**
  * A job's step and progress. `placeholder` names the first step until the job reports one (`label` names the bar).
- * `note` goes on the line under the bar while there is no time left to show there.
+ * `note` goes on the line under the bar while there is no time left to show there. After a Cancel, until the job
+ * ends, the step says "Stopping…" and a spinner takes the percentage's place, as in the top bar.
  */
 export function RunCard({
   job,
@@ -104,8 +106,12 @@ export function RunCard({
   return (
     <div className={styles.runCard}>
       <div className={styles.jobTop}>
-        <span>{job?.progress.message ?? placeholder ?? label}</span>
-        <span className={`${styles.jobPct} tnum`}>{pct(job)}%</span>
+        <span>{job?.stopping ? 'Stopping…' : (job?.progress.message ?? placeholder ?? label)}</span>
+        {job && jobFraction(job) === undefined ? (
+          <Spinner size={12} />
+        ) : (
+          <span className={`${styles.jobPct} tnum`}>{pct(job)}%</span>
+        )}
       </div>
       <ProgressBar value={job?.progress.fraction ?? 0} label={label} />
       {below && <div className={styles.jobEta}>{below}</div>}
