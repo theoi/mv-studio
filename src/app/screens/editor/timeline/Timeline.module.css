@@ -1094,8 +1094,9 @@
   container-type: scroll-state;
 }
 
-/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Across
-   the lane's top edge, between the clip rows, so it covers no clip names. */
+/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Its first
+   line across the lane's top edge, between the clip rows, so it covers no clip names; a hint line hangs below it, into
+   the target lane. */
 .refusedText {
   position: relative;
   display: block;
@@ -1106,7 +1107,7 @@
   color: var(--danger-text);
   font-size: var(--text-xs);
   white-space: nowrap;
-  transform: translateY(calc(-50% - 3px));
+  transform: translateY(calc(-0.5lh - 1px - 3px));
 }
 
 .refusedHint {

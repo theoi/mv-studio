@@ -317,6 +317,16 @@ test('Mod pressed during a clip drag inserts the clip, pushing the later clips o
   await page.mouse.move(from.x + 2.5 * pps, from.y, { steps: 10 })
   await expect(page.getByText('No room', { exact: true })).toBeVisible()
   await expect(page.getByText(/^Hold (Ctrl|⌘) while dragging to insert$/)).toBeVisible()
+  // The reason crosses the lane's top edge and the hint hangs below it, clear of the clip names in the lane above.
+  const reason = (await page.getByText('No room', { exact: true }).boundingBox())!
+  const hint = (await page.getByText(/^Hold (Ctrl|⌘) while dragging to insert$/).boundingBox())!
+  const outline = (await page
+    .getByText('No room', { exact: true })
+    .locator('xpath=ancestor::div[1]')
+    .boundingBox())!
+  expect(reason.y).toBeLessThan(outline.y)
+  expect(reason.y + reason.height).toBeGreaterThan(outline.y)
+  expect(hint.y).toBeGreaterThanOrEqual(outline.y)
 
   // Mod during the drag: the clip goes in before Neon grid (the nearer edge), and every later Video clip moves right
   // by its 2 s.

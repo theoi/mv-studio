@@ -2654,7 +2654,7 @@ export function Timeline() {
                   <span className={styles.refusedText}>
                     <span>{refusedDrop.label}</span>
                     {refusedDrop.hint && <span className={styles.refusedHint}>{refusedDrop.hint}</span>}
-                  </span>{' '}
+                  </span>
                 </span>
               )}
             </div>
