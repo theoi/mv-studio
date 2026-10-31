@@ -1,7 +1,8 @@
 /**
  * Lyric typography: the text style (src/plugins/typography TEXT_STYLES) a look pairs with, sized to read at a glance,
  * broken into balanced rows, and the stressed word of a line picked for emphasis. The director has no font metrics,
- * so widths are estimated from average letter widths per bundled font; estimates err wide so rows fit.
+ * so widths are estimated from average letter widths per bundled font and weight. Rows are laid out to 90% of the
+ * clip's wrap width, so an estimate a little narrow never makes the renderer wrap a word onto a row of its own.
  */
 import type { AspectPreset } from '../model/types.ts'
 import { bundledFont } from '../plugins/typography/fonts.ts'
@@ -52,29 +53,36 @@ const EMPHASIS_ANIMATION: Record<string, string> = {
  * narrow, so their lines are smaller relative to the height and wrap to more rows.
  */
 const LINE_SIZE: Record<AspectPreset, number> = { '16:9': 100, '1:1': 88, '4:5': 84, '9:16': 70 }
-const MAX_WIDTH: Record<AspectPreset, number> = { '16:9': 0.8, '1:1': 0.84, '4:5': 0.86, '9:16': 0.86 }
+/** The text clip's wrap width (`maxWidth`); rows are laid out to LAYOUT_FILL of it. */
+const MAX_WIDTH: Record<AspectPreset, number> = { '16:9': 0.88, '1:1': 0.92, '4:5': 0.94, '9:16': 0.94 }
+const LAYOUT_FILL = 0.9
 const MAX_ROWS: Record<AspectPreset, number> = { '16:9': 2, '1:1': 2, '4:5': 3, '9:16': 3 }
 const ASPECT_RATIO: Record<AspectPreset, number> = { '16:9': 16 / 9, '1:1': 1, '4:5': 4 / 5, '9:16': 9 / 16 }
-export const EMPHASIS_SCALE = 1.6
+const EMPHASIS_SCALE = 1.6
 
-/** Average advance of a lowercase and an uppercase letter, in em. */
-const FONT_WIDTH: Record<string, [number, number]> = {
-  Inter: [0.55, 0.7],
-  Montserrat: [0.62, 0.78],
-  Anton: [0.44, 0.5],
-  'Bebas Neue': [0.42, 0.42],
-  Oswald: [0.46, 0.54],
-  'Archivo Black': [0.64, 0.8],
-  Syne: [0.62, 0.82],
-  'Playfair Display': [0.5, 0.68],
-  'DM Serif Display': [0.52, 0.68],
-  'Space Grotesk': [0.56, 0.68],
-  Caveat: [0.42, 0.52],
-  Pacifico: [0.58, 0.74],
-  'Permanent Marker': [0.62, 0.74],
-  'Press Start 2P': [1, 1],
+type Advances = [lower: number, upper: number, space: number]
+/**
+ * Average advance of a lowercase letter, an uppercase letter and a space, in em, by weight: measured in Chrome on the
+ * bundled fonts over English lyric lines, plus 3%. Syne widens sharply at 800.
+ */
+const FONT_WIDTH: Record<string, Record<number, Advances>> = {
+  Inter: { 400: [0.53, 0.68, 0.29], 700: [0.55, 0.69, 0.25], 900: [0.58, 0.71, 0.21] },
+  Montserrat: { 400: [0.57, 0.71, 0.27], 700: [0.6, 0.73, 0.29], 900: [0.62, 0.75, 0.31] },
+  'Space Grotesk': { 400: [0.55, 0.62, 0.27], 700: [0.56, 0.62, 0.26] },
+  Syne: { 400: [0.5, 0.64, 0.22], 700: [0.62, 0.81, 0.25], 800: [0.9, 1.18, 0.32] },
+  Oswald: { 400: [0.4, 0.49, 0.24], 700: [0.46, 0.53, 0.27] },
+  'Bebas Neue': { 400: [0.39, 0.39, 0.16] },
+  Anton: { 400: [0.46, 0.47, 0.24] },
+  'Archivo Black': { 400: [0.61, 0.77, 0.34] },
+  'Playfair Display': { 400: [0.51, 0.65, 0.26], 700: [0.52, 0.69, 0.24], 900: [0.53, 0.71, 0.23] },
+  'DM Serif Display': { 400: [0.51, 0.61, 0.23] },
+  'Permanent Marker': { 400: [0.55, 0.68, 0.38] },
+  Caveat: { 400: [0.37, 0.52, 0.25] },
+  Pacifico: { 400: [0.46, 0.81, 0.28] },
+  'Press Start 2P': { 400: [1.03, 1.03, 1.03] },
 }
-const DEFAULT_WIDTH: [number, number] = [0.6, 0.74]
+/** Unknown fonts: as wide as the widest common sans faces. */
+const DEFAULT_WIDTH: Advances = [0.62, 0.77, 0.3]
 /** Faces whose letters look small (or large) for their size, so lines of every style read alike. */
 const FONT_SCALE: Record<string, number> = {
   Anton: 1.1,
@@ -263,13 +271,27 @@ export function frameWidth(aspect: AspectPreset): number {
   return 1080 * ASPECT_RATIO[aspect]
 }
 
+/** Advances of the measured weight nearest the style's (the heavier on a tie). */
+function advances(style: TextStyleSpec): Advances {
+  const byWeight = FONT_WIDTH[familyOf(style.fontFamily)]
+  if (!byWeight) return DEFAULT_WIDTH
+  const weight = style.fontWeight ?? 700
+  const nearest = Object.keys(byWeight)
+    .map(Number)
+    .reduce((best, w) => {
+      const d = Math.abs(w - weight) - Math.abs(best - weight)
+      return d < 0 || (d === 0 && w > best) ? w : best
+    })
+  return byWeight[nearest] as Advances
+}
+
 /** Estimated width of a text in px at a 1080-px-tall canvas. */
 export function textWidth(text: string, style: TextStyleSpec, fontSize = style.fontSize ?? 80): number {
-  const [lower, upper] = FONT_WIDTH[familyOf(style.fontFamily)] ?? DEFAULT_WIDTH
+  const [lower, upper, space] = advances(style)
   const spacing = style.letterSpacing ?? 0
   let em = 0
   for (const ch of text) {
-    if (ch === ' ') em += 0.28
+    if (ch === ' ') em += space
     else if (/[\p{Lu}]/u.test(ch) || (style.uppercase && /\p{L}/u.test(ch))) em += upper
     else if (/[\p{L}\p{N}]/u.test(ch)) em += lower
     else em += 0.3
@@ -278,9 +300,9 @@ export function textWidth(text: string, style: TextStyleSpec, fontSize = style.f
   return em * fontSize
 }
 
-/** Usable row width in px at a 1080-px-tall canvas. */
+/** Width rows are laid out to, in px at a 1080-px-tall canvas. */
 export function rowWidth(style: TextStyleSpec, aspect: AspectPreset): number {
-  return (style.maxWidth ?? MAX_WIDTH[aspect]) * frameWidth(aspect)
+  return (style.maxWidth ?? MAX_WIDTH[aspect]) * LAYOUT_FILL * frameWidth(aspect)
 }
 
 /** The split of `words` into `rows` rows with the narrowest widest row. */
@@ -335,7 +357,7 @@ const STOPWORDS = new Set(
   ).split(' '),
 )
 
-export const normalizeWord = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '')
+const normalizeWord = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '')
 
 /**
  * Where the emphasized tail of a sung line starts: its last content word (the stressed rhyme), counting trailing

@@ -28,8 +28,11 @@ const main = (p: EditPlan): PlanShot[] => p.shots.filter((s) => s.layer === 'mai
 const halfHeight = (t: PlanText) =>
   (t.text.split('\n').length * (t.style.lineHeight ?? 1.15) * (t.style.fontSize ?? 0)) / 1080 / 2
 
-/** Every clip has a person facing the camera in the middle of the frame. */
-function withFaces(project: Project): Project {
+/**
+ * Every clip has a person facing the camera in the middle of the frame, the face centered at `faceY`, the person
+ * `height` tall (from the top of the head).
+ */
+function withFaces(project: Project, faceY = 0.42, height = 0.85): Project {
   const sourceSize = { width: 1920, height: 1080 }
   for (const id of VIDEOS) {
     project.analysis.visual[id] = buildVisualAnalysis({
@@ -42,8 +45,8 @@ function withFaces(project: Project): Project {
         sourceSize,
         samples: Array.from({ length: 151 }, (_, i) => ({
           t: i * 0.2,
-          focus: { x: 0.5, y: 0.42 },
-          box: { x: 0.3, y: 0.15, width: 0.4, height: 0.85 },
+          focus: { x: 0.5, y: faceY },
+          box: { x: 0.3, y: faceY - 0.27 * height, width: 0.4, height },
           confidence: 0.9,
           source: 'face' as const,
         })),
@@ -107,6 +110,12 @@ describe('lyric typography', () => {
     expect(rows.join(' ')).toBe(text)
     const widths = rows.map((r) => textWidth(r, wide))
     for (const w of widths) expect(w).toBeLessThanOrEqual(rowWidth(wide, '16:9'))
+    // Room to spare within the clip's wrap width, even for a line that needs smaller type, so a slightly narrow
+    // estimate never makes the renderer wrap a word onto a row of its own.
+    const long = layoutLine("maybe you're just playing games a game i don't wanna play", wide, '16:9')
+    expect(long.fontSize).toBeLessThan(wide.fontSize as number)
+    for (const row of long.text.split('\n'))
+      expect(textWidth(row, wide, long.fontSize)).toBeLessThanOrEqual(0.92 * (wide.maxWidth as number) * 1920)
     expect(Math.min(...widths) / Math.max(...widths)).toBeGreaterThan(0.75)
     const tall = lyricTypography({ aspect: '9:16', busy: false, catalog: DEFAULT_CATALOG }).style
     expect(layoutLine(text, tall, '9:16').text.split('\n').length).toBeGreaterThan(2)
@@ -124,19 +133,28 @@ describe('lyric typography', () => {
     }
   })
 
-  it('moves lines off faces', async () => {
+  it('moves lines off faces, keeping a chorus line whole when its emphasized word would not fit clear', async () => {
     const plain = await lyricDraft()
-    const faced = await lyricDraft(withFaces(makeProject()))
-    const verse = (p: EditPlan) => p.texts.filter((t) => t.lyricLineId === 'l1' || t.lyricLineId === 'l2')
-    expect(verse(plain).map((t) => t.position.y)).toEqual([0.5, 0.5])
-    for (const t of verse(faced)) {
-      // The face spans about y 0.3 to 0.54 of the frame.
-      const top = t.position.y - halfHeight(t)
-      const bottom = t.position.y + halfHeight(t)
-      expect(top > 0.54 || bottom < 0.3).toBe(true)
-      expect(top).toBeGreaterThanOrEqual(0.08)
-      expect(bottom).toBeLessThanOrEqual(0.92)
+    const lines = (p: EditPlan) => p.texts.filter((t) => ['l1', 'l2', 'l3'].includes(t.lyricLineId ?? ''))
+    expect(lines(plain).map((t) => t.position.y)).toEqual([0.5, 0.5, expect.any(Number), expect.any(Number)])
+    // Face boxes span the face center plus or minus 0.12 of the frame height.
+    for (const [faceY, chorusRoles] of [
+      [0.42, ['lyric', 'emphasis']],
+      [0.5, ['lyric']],
+    ] as const) {
+      const faced = lines(await lyricDraft(withFaces(makeProject(), faceY)))
+      expect(faced.filter((t) => t.lyricLineId === 'l3').map((t) => t.role)).toEqual(chorusRoles)
+      for (const t of faced) {
+        const top = t.position.y - halfHeight(t)
+        const bottom = t.position.y + halfHeight(t)
+        expect(top > faceY + 0.12 || bottom < faceY - 0.12).toBe(true)
+        expect(top).toBeGreaterThanOrEqual(0.08)
+        expect(bottom).toBeLessThanOrEqual(0.92)
+      }
     }
+    // People far from the camera may stand behind the words.
+    const far = lines(await lyricDraft(withFaces(makeProject(), 0.42, 0.25)))
+    expect(far.map((t) => t.position.y)).toEqual(lines(plain).map((t) => t.position.y))
   })
 
   it('puts a soft scrim behind text over bright footage, and a dark outline over all footage, whatever the look', async () => {

@@ -49,13 +49,15 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
 - **Lyric typography** (`typography.ts`): lines use the text style (`src/plugins/typography` TEXT_STYLES) the look
   pairs with (`LOOK_TEXT_STYLE`: Clean → Karaoke, Neon night → Neon sign, Cinematic → Poster, ...; other looks match
   by tags), with its kinetic preset and karaoke, and the look's colors. Lines are about 9% of the frame height in
-  landscape (capitals 6–7%), broken into balanced rows. Chorus lines are a little bigger and heavier. The stressed
+  landscape (capitals 6–7%), broken into balanced rows from per-font width estimates (measured advances by weight),
+  laid out to 90% of the clip's wrap width so the renderer never pushes a word onto a row of its own. Chorus lines are a little bigger and heavier. The stressed
   last word of chorus lines (and of other lines when it is long or a hook from the title or chorus) is shown 1.6×
   bigger in the accent color below the rest of the line, entering as it is sung (`role: 'emphasis'`).
 - **Contrast and placement**: over footage every line has a dark outline, plus a dark halo unless the style has its
   own glow. With `media` the director measures the frames under each text box and gives text over bright footage
   (mean luma ≥ 0.5) a soft dark scrim. Lines move to the lower or upper third when a tracked face would be under
-  them (src/vision subject tracks), inside the title-safe area. When the clips of a chorus have a subject mask video
+  them (src/vision subject tracks), inside the title-safe area; a chorus line whose emphasized word makes it too
+  tall to clear the face stays whole. When the clips of a chorus have a subject mask video
   from src/vision, up to four of its lines go behind the subject (`behind` → a matte outside the mask).
 - **Title card** over the intro (not for beat cuts): the song's title and artist from its file name
   (`songTitleFromName`), never the prompt or the kind of video.

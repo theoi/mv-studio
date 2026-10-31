@@ -398,6 +398,26 @@ function generatorSource(
 
 const isScene = (g: CatalogItem | undefined) => !!g && g.id.startsWith('generator.')
 
+/** Phrase length, in bars, of the overlay's rests in long sections. */
+const PHRASE_BARS = 16
+
+/**
+ * When a section's overlay shows: all of it, or, in sections of 24 bars or more, every other 16-bar phrase from the
+ * section's start (on downbeats), so a long verse does not hold one picture and the scene alone gets room. A last
+ * phrase under 4 bars is left out.
+ */
+function overlaySpans(section: SectionInfo, ctx: Ctx): { start: Seconds; end: Seconds }[] {
+  const bars = ctx.grid.downbeats.filter((d) => d >= section.start - 0.05 && d < section.end - 0.05)
+  if (bars.length < 24) return [{ start: section.start, end: section.end }]
+  const out: { start: Seconds; end: Seconds }[] = []
+  for (let i = 0; i < bars.length; i += PHRASE_BARS * 2) {
+    const start = i === 0 ? section.start : (bars[i] as Seconds)
+    const end = bars[i + PHRASE_BARS] ?? section.end
+    if (end - start >= ctx.grid.beatLength * 16) out.push({ start: round3(start), end: round3(end) })
+  }
+  return out
+}
+
 /**
  * A visualizer section in layers: a scene colored by the look that slowly pushes in or pulls out, a visualizer over
  * it that pulses with the kick (visualizer videos only), and particles on peaks. Over the user's images, the images
@@ -445,15 +465,19 @@ function visualizerLayers(
   if (overlay) {
     const kick: ReactionSpec[] =
       KICK[tier] > 0 ? [{ reaction: 'kick', target: { property: 'scale' }, amount: KICK[tier] }] : []
-    shots.push({
-      ...span,
-      id: newId(),
-      layer: 'overlay',
-      source: generatorSource(overlay, tier, sb, ctx),
-      blendMode: 'screen',
-      ...(o.effects.length ? { effects: o.effects } : {}),
-      ...(kick.length ? { reactions: kick } : o.reactive ? { reactive: o.reactive } : {}),
-    })
+    for (const part of background ? overlaySpans(section, ctx) : [span]) {
+      shots.push({
+        ...span,
+        ...part,
+        id: newId(),
+        layer: 'overlay',
+        // Spectrum bars at full height cover the scene; these masters keep their bands high.
+        source: generatorSource(overlay, tier, sb, ctx, { height: 0.4 }),
+        blendMode: 'screen',
+        ...(o.effects.length ? { effects: o.effects } : {}),
+        ...(kick.length ? { reactions: kick } : o.reactive ? { reactive: o.reactive } : {}),
+      })
+    }
   }
   const particles = findItem(gens, PARTICLES_ID)
   if (tier === 'peak' && particles && particles !== overlay && particles !== background) {
@@ -810,7 +834,6 @@ function subjectsDuring(at: NonNullable<ReturnType<typeof mediaShotAt>>, start: 
   )
 }
 
-/** Faces (or upper bodies) on screen while a line shows, as frame boxes (top-left origin, cropped to fill). */
 /** The part of a source (normalized, top-left origin) a frame shows when the source is cropped to fill it. */
 function visiblePart(source: { width: number; height: number }, ctx: Ctx): Box {
   const frame = ctx.input.settings.width / Math.max(1, ctx.input.settings.height)
@@ -819,25 +842,38 @@ function visiblePart(source: { width: number; height: number }, ctx: Ctx): Box {
   return { x: 0, y: (1 - aspect / frame) / 2, width: 1, height: aspect / frame }
 }
 
+/** People shorter than this (fraction of the frame height) are far from the camera; text may cover them. */
+const NEAR_SUBJECT = 0.3
+
+/**
+ * Faces (or upper bodies) of people near the camera on screen while a line shows, as frame boxes (top-left origin,
+ * cropped to fill).
+ */
 function facesDuring(start: Seconds, end: Seconds, shots: PlanShot[], ctx: Ctx): Box[] {
   const at = mediaShotAt((start + end) / 2, shots, ctx)
   const track = at?.media.subjects
   if (!at || !track) return []
   const v = visiblePart(track.sourceSize, ctx)
   const toFrame = (x: number, y: number) => ({ x: (x - v.x) / v.width, y: (y - v.y) / v.height })
-  return subjectsDuring(at, start, end).map((s) => {
+  return subjectsDuring(at, start, end).flatMap((s) => {
+    if (s.box && s.box.height / v.height < NEAR_SUBJECT) return []
     const c = toFrame(s.focus.x, s.focus.y)
     const r = s.source === 'face' ? { w: 0.08, h: 0.12 } : { w: 0.1, h: 0.16 }
-    return { x: c.x - r.w, y: c.y - r.h, width: r.w * 2, height: r.h * 2 }
+    return [{ x: c.x - r.w, y: c.y - r.h, width: r.w * 2, height: r.h * 2 }]
   })
 }
 
 /**
  * Where to center a block of text `height` tall and `width` wide (fractions of the frame): `preferred` unless a face
- * would be under it, then the lower or upper third, whichever covers the fewest faces. Always inside the title-safe
- * area.
+ * would be under it, then the lower or upper third, whichever covers the fewest faces (`hits`). Always inside the
+ * title-safe area.
  */
-function clearOfFaces(preferred: number, height: number, width: number, faces: Box[]): number {
+function clearOfFaces(
+  preferred: number,
+  height: number,
+  width: number,
+  faces: Box[],
+): { y: number; hits: number } {
   const safe = (y: number) => Math.min(0.92 - height / 2, Math.max(0.08 + height / 2, y))
   const options = [...new Set([preferred, 0.76, 0.26].map((y) => round3(safe(y))))]
   const hits = (y: number) =>
@@ -857,7 +893,7 @@ function clearOfFaces(preferred: number, height: number, width: number, faces: B
       fewest = n
     }
   }
-  return best
+  return { y: best, hits: fewest }
 }
 
 /**
@@ -956,6 +992,15 @@ function lineTexts(
     return [{ ...line(laid.text, { ...big, fontSize: laid.fontSize }, 0.5), behind: o.behind, ...pulse }]
   }
 
+  const laid = layoutLine(item.line.text, lineStyle, aspect)
+  const style = { ...lineStyle, fontSize: laid.fontSize }
+  const whole = clearOfFaces(
+    o.anchor,
+    blockHeight(laid.rows, style),
+    blockWidth(laid.text, style, aspect),
+    faces,
+  )
+
   const split = emphasisStart(words, { peak, hooks: o.hooks })
   const tailAt =
     split === undefined
@@ -970,34 +1015,34 @@ function lineTexts(
     const tailH = blockHeight(1, tailStyle)
     const total = headH + 0.012 + tailH
     const width = Math.max(blockWidth(head.text, headStyle, aspect), blockWidth(tailText, tailStyle, aspect))
-    const top = clearOfFaces(o.anchor, total, width, faces) - total / 2
+    const placed = clearOfFaces(o.anchor, total, width, faces)
+    const top = placed.y - total / 2
     const emphasis = type.emphasisAnimation
-    return [
-      line(head.text, headStyle, top + headH / 2),
-      {
-        id: newId(),
-        sectionId: section?.id,
-        start: tailAt,
-        end: item.shownEnd,
-        text: tailText,
-        lyricLineId: item.line.id,
-        style: tailStyle,
-        position: { x: 0.5, y: round3(top + total - tailH / 2) },
-        ...(emphasis
-          ? { animationPresetId: emphasis }
-          : o.fade
-            ? { transitionIn: o.fade, transitionOut: o.fade }
-            : {}),
-        ...pulse,
-        role: 'emphasis',
-      },
-    ]
+    // The split block is taller: when no place for it clears the faces, the whole line may.
+    if (placed.hits <= whole.hits)
+      return [
+        line(head.text, headStyle, top + headH / 2),
+        {
+          id: newId(),
+          sectionId: section?.id,
+          start: tailAt,
+          end: item.shownEnd,
+          text: tailText,
+          lyricLineId: item.line.id,
+          style: tailStyle,
+          position: { x: 0.5, y: round3(top + total - tailH / 2) },
+          ...(emphasis
+            ? { animationPresetId: emphasis }
+            : o.fade
+              ? { transitionIn: o.fade, transitionOut: o.fade }
+              : {}),
+          ...pulse,
+          role: 'emphasis',
+        },
+      ]
   }
 
-  const laid = layoutLine(item.line.text, lineStyle, aspect)
-  const style = { ...lineStyle, fontSize: laid.fontSize }
-  const y = clearOfFaces(o.anchor, blockHeight(laid.rows, style), blockWidth(laid.text, style, aspect), faces)
-  return [{ ...line(laid.text, style, y), ...pulse }]
+  return [{ ...line(laid.text, style, whole.y), ...pulse }]
 }
 
 /** Mean luma under a text box from which the text gets a scrim. */
@@ -1149,7 +1194,7 @@ function buildTexts(
         end: round3(titleEnd),
         text: artist,
         style: smallStyle,
-        position: { x: 0.5, y: round3(top + titleH + artistH - (artistH - 0.02) / 2) },
+        position: { x: 0.5, y: round3(top + titleH + 0.02 + blockHeight(1, smallStyle) / 2) },
         ...fades,
         role: 'title',
       })

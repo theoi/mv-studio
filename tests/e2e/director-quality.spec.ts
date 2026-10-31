@@ -13,11 +13,12 @@ import { expect, openHarness, test } from './fixtures.ts'
  *   # plus the dataset's lyrics/<song>.txt (same revision as the script) in tests/fixtures/.cache/jamendolyrics/lyrics/
  *   npm run build
  *   DIRECTOR_QUALITY="Rxbyn_-_Bad_Side,Cortez_-_Feel__Stripped_" [DIRECTOR_QUALITY_KINDS=beat-cut,autocut] \
- *     [DIRECTOR_QUALITY_PROMPT="neon city at night"] \
+ *     [DIRECTOR_QUALITY_PROMPT="neon city at night"] [DIRECTOR_QUALITY_INDEX=1] \
  *     npx playwright test tests/e2e/director-quality.spec.ts
  *
  * Output: test-results/director-quality/<song>/<kind>-{sheet,opening,timeline}.jpg and metrics.json. Lyric text
- * comes from lyrics/<song>.txt, one word per timed word in words/<song>.csv.
+ * comes from lyrics/<song>.txt, one word per timed word in words/<song>.csv. DIRECTOR_QUALITY_INDEX=1 first runs
+ * src/vision's background analysis with the real models (clip matching and subject tracks), as the app does on import.
  */
 // The harness exposes untyped modules to page.evaluate callbacks.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -27,20 +28,22 @@ const SONGS = (process.env.DIRECTOR_QUALITY ?? '').split(',').filter(Boolean)
 const KINDS = (process.env.DIRECTOR_QUALITY_KINDS ?? 'lyric,beat-cut,visualizer,ai').split(',')
 /** A prompt for every draft (it picks the look); outputs go to <song>__<prompt>. */
 const PROMPT = process.env.DIRECTOR_QUALITY_PROMPT ?? ''
+const INDEX = !!process.env.DIRECTOR_QUALITY_INDEX
 const JAMENDO = path.join(FIXTURE_DIR, 'jamendolyrics')
 const VISION = path.join(FIXTURE_DIR, 'vision')
 const FOOTAGE = path.join(FIXTURE_DIR, 'director-footage')
 const OUT = path.resolve('test-results/director-quality')
 
-/** CC0 / public-domain segments cut from the vision fixtures' sources: [source, start, duration]. */
-const CUTS: [string, number, number][] = [
+/** CC0 / public-domain segments cut from the vision fixtures' sources: [source, start, duration, crop]. */
+const CUTS: [string, number, number, string?][] = [
   ['city_street', 4, 10],
   ['city_street', 40, 9],
   ['city_street', 85, 12],
   ['nature_creek', 2, 10],
   ['nature_creek', 24, 12],
-  ['people_dance', 0, 12],
-  ['people_dance', 16, 12],
+  // people_dance has pillarbox bars baked in.
+  ['people_dance', 0, 12, 'crop=540:480:90:0'],
+  ['people_dance', 16, 12, 'crop=540:480:90:0'],
   ['people_interview', 100, 8],
   ['people_teacher', 200, 8],
   ['rain_street', 0, 5.5],
@@ -48,13 +51,24 @@ const CUTS: [string, number, number][] = [
 
 function footage(): string[] {
   mkdirSync(FOOTAGE, { recursive: true })
-  return CUTS.map(([name, start, duration], i) => {
+  return CUTS.map(([name, start, duration, crop], i) => {
     const out = path.join(FOOTAGE, `${String(i + 1).padStart(2, '0')}_${name}.webm`)
     if (!existsSync(out)) {
       execFileSync('ffmpeg', [
         ...['-y', '-hide_banner', '-loglevel', 'error', '-ss', String(start)],
         ...['-i', path.join(VISION, `${name}.source.webm`), '-t', String(duration), '-an'],
-        ...['-vf', 'scale=-2:360', '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '34', '-deadline', 'realtime'],
+        ...[
+          '-vf',
+          [crop, 'scale=-2:360'].filter(Boolean).join(','),
+          '-c:v',
+          'libvpx-vp9',
+          '-b:v',
+          '0',
+          '-crf',
+          '34',
+          '-deadline',
+          'realtime',
+        ],
         out,
       ])
     }
@@ -100,11 +114,11 @@ test('director drafts on real songs', async ({ page }) => {
     mkdirSync(dir, { recursive: true })
     await page.setInputFiles('#e2e-file-input', [path.join(JAMENDO, 'mp3', `${song}.mp3`), ...clips])
     const result = await page.evaluate(
-      async ({ lines, kinds, prompt }) => {
-        const { model, media, analysis, director, testing, vision } = window.mvStudio
+      async ({ lines, kinds, prompt, index }) => {
+        const { model, media, analysis, director, testing, vision, shared } = window.mvStudio
         const [songFile, ...videoFiles] = window.mvStudio.files() as File[]
         const songAsset = await media.mediaStore.importFile(songFile)
-        const videos = []
+        const videos: Untyped[] = []
         for (const f of videoFiles) videos.push(await media.mediaStore.importFile(f))
         const service = new analysis.SongAnalysisService()
         const audio = await analysis.decodeAudioFile(songFile)
@@ -120,7 +134,7 @@ test('director drafts on real songs', async ({ page }) => {
           sections: refined.sections,
         }
 
-        const base = model.createProject({ name: songFile.name, aspect: '16:9' })
+        let base = model.createProject({ name: songFile.name, aspect: '16:9' })
         base.assets[songAsset.id] = songAsset
         for (const v of videos) base.assets[v.id] = v
         base.songAssetId = songAsset.id
@@ -135,6 +149,40 @@ test('director drafts on real songs', async ({ page }) => {
             end: l.words[l.words.length - 1]!.end,
             words: l.words,
           })),
+        }
+        // The app's lyrics flow labels the chorus from repeated lines.
+        const chorus = analysis.lyricChorusCommand(songAnalysis, base.lyrics)
+        if (chorus) songAnalysis.sections = chorus.refined.sections
+        if (index) {
+          const editor = new model.ProjectEditor(base)
+          const workers = vision.createWorkerBackends()
+          const footage = vision.createFootageService({
+            editor,
+            vision: vision.createVisionService({ backends: workers, cache: vision.createMemoryCache() }),
+            media: media.mediaStore,
+            jobs: shared.jobs,
+          })
+          const stop = footage.indexing.start()
+          await new Promise<void>((resolve, reject) => {
+            const check = () => {
+              const s = footage.indexing.getState()
+              if (s.status === 'error') reject(new Error(s.error.message))
+              else if (
+                s.status === 'idle' &&
+                videos.every(
+                  (v: { id: string }) =>
+                    footage.indexing.statusOf(v.id) === 'indexed' &&
+                    ['analyzed', 'no-subject', 'failed'].includes(footage.indexing.subjectStatusOf(v.id)),
+                )
+              )
+                resolve()
+            }
+            footage.indexing.subscribe(check)
+            check()
+          })
+          stop()
+          workers.dispose()
+          base = editor.getProject()
         }
         const duration = songAsset.duration as number
 
@@ -220,6 +268,13 @@ test('director drafts on real songs', async ({ page }) => {
         }
 
         const out: Record<string, unknown> = {}
+        if (index)
+          out.footageIndex = {
+            indexed: videos.filter((v) => vision.readClipIndex(base.analysis.visual[v.id])).length,
+            subjectTracks: videos.filter(
+              (v) => vision.readSubjectTrack(base.analysis.visual[v.id])?.samples.length,
+            ).length,
+          }
         for (const kind of kinds) {
           // `autocut` is src/vision's auto-cut on the same song and clips, for comparison.
           let plan: Untyped
@@ -466,6 +521,11 @@ test('director drafts on real songs', async ({ page }) => {
             bySection,
             lyricLines: base.lyrics.lines.length,
             lyricTexts: lyricTexts.length,
+            // Lines moved to the lower or upper third, off the centered default: kept clear of tracked faces.
+            textsOffCenter: plan.texts.filter(
+              (t: { role: string; position: { y: number } }) =>
+                t.role !== 'title' && Math.abs(t.position.y - 0.5) > 0.15,
+            ).length,
             maxCps: lyricStats.length ? Math.max(...lyricStats.map((s: { cps: number }) => s.cps)) : null,
             minShown: lyricStats.length
               ? Math.min(...lyricStats.map((s: { shown: number }) => s.shown))
@@ -552,7 +612,7 @@ test('director drafts on real songs', async ({ page }) => {
         big.dispose()
         return out
       },
-      { lines: lyrics(song), kinds: KINDS, prompt: PROMPT },
+      { lines: lyrics(song), kinds: KINDS, prompt: PROMPT, index: INDEX },
     )
     const metrics: Record<string, unknown> = {}
     for (const [kind, value] of Object.entries(result) as [string, Record<string, unknown>][]) {

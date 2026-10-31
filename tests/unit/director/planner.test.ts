@@ -194,6 +194,20 @@ describe('local planner', () => {
     expect(p.texts.find((t) => t.role === 'title')?.text).toBeTruthy()
   })
 
+  it('rests the visualizer every other 16-bar phrase of a long section, over one unbroken scene', async () => {
+    const project = makeProject({ videos: 0 })
+    // A 30-bar verse (2 s bars).
+    project.analysis.audio.song!.sections = [
+      { id: 's-intro', label: 'intro', start: 0, end: 4, energy: 0.2 },
+      { id: 's-verse', label: 'verse', start: 4, end: 64, energy: 0.6 },
+    ]
+    const p = await planLocally(await buildPlannerInput(project, { kind: 'visualizer', seed: 7 }))
+    const inVerse = (layer: string) => p.shots.filter((s) => s.layer === layer && s.sectionId === 's-verse')
+    expect(inVerse('main').map((s) => [s.start, s.end])).toEqual([[4, 64]])
+    expect(inVerse('overlay').map((s) => [s.start, s.end])).toEqual([[4, 36]])
+    expect(p.shots.filter((s) => s.layer === 'overlay' && s.sectionId === 's-intro')).toHaveLength(1)
+  })
+
   it('layers the visualizer over the user images when there are some', async () => {
     const p = await plan('visualizer', { videos: 0, images: 2 })
     expect(main(p).every((s) => s.source.type === 'media' && s.motion)).toBe(true)
