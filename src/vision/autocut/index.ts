@@ -19,7 +19,13 @@ import {
   type AutoCutCompiled,
   type AutoCutShot,
 } from './apply.ts'
-import { chooseClips, MIN_PLAYBACK_RATE, type AutoCutOrder, type PoolItem } from './choose.ts'
+import {
+  chooseClips,
+  MIN_PLAYBACK_RATE,
+  type AutoCutOrder,
+  type ChooseInput,
+  type PoolItem,
+} from './choose.ts'
 import { cutSpans, type AutoCutOn, type AutoCutPace } from './rhythm.ts'
 
 export type { AutoCutOn, AutoCutOrder, AutoCutPace, AutoCutShot, AutoCutCompiled }
@@ -60,6 +66,8 @@ export interface AutoCutPlan {
 export interface AutoCutDeps {
   /** Footage matcher (`vision.matcher`); without it "matched" picks for variety. */
   matcher?: Pick<FootageMatcher, 'model' | 'rankAll'>
+  /** Words the warning about clips used without analysis, when the caller knows why (see `ChooseInput`). */
+  unanalyzedWarning?: ChooseInput['unanalyzedWarning']
 }
 
 /** Job kind for `jobs.run`, so the Assist panel can follow a running auto-cut. */
@@ -141,6 +149,7 @@ export async function planAutoCut(
     ...(project.lyrics ? { lyrics: project.lyrics } : {}),
     ...(energyAt ? { energyAt } : {}),
     ...(deps.matcher ? { matcher: deps.matcher } : {}),
+    ...(deps.unanalyzedWarning ? { unanalyzedWarning: deps.unanalyzedWarning } : {}),
     seed: resolved.seed,
     ...(task.signal ? { signal: task.signal } : {}),
   })

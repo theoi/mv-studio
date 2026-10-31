@@ -1,5 +1,12 @@
 import { expect, it } from 'vitest'
-import { aboutMinutes, editedAgo, formatParam, formatTime, formatTimecode } from '../../../src/app/format.ts'
+import {
+  aboutMinutes,
+  editedAgo,
+  formatParam,
+  formatTime,
+  formatTimecode,
+  shortFileName,
+} from '../../../src/app/format.ts'
 
 const now = new Date(2026, 9, 31, 15, 0).getTime()
 const at = (...parts: [number, number, number, number, number]) => new Date(...parts).toISOString()
@@ -36,6 +43,15 @@ it('rounds a wait up to the next minute, so "About 5 min" never stands for 5 min
   expect(aboutMinutes(45)).toBe('Under a minute')
   expect(aboutMinutes(300)).toBe('About 5 min')
   expect(aboutMinutes(326)).toBe('About 6 min')
+})
+
+it('shortens a long file name in the middle, keeping its start and extension', () => {
+  expect(shortFileName('my_holiday_footage_from_the_beach_2024_final_version_v2.mp4')).toBe(
+    'my_holiday_foot…_v2.mp4',
+  )
+  expect(shortFileName('a_very_long_name_without_any_extension_at_all')).toBe('a_very_long_nam…_at_all')
+  expect(shortFileName('street.mp4')).toBe('street.mp4')
+  expect(shortFileName('exactly_twenty_three.mp')).toBe('exactly_twenty_three.mp')
 })
 
 it('shows the tenth a time was set at, though sums land a hair under it', () => {

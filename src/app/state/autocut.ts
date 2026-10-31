@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { BARS_NOTES, type Id, type Project } from '../../model/index.ts'
-import { jobs, type JobHandle } from '../../shared/jobs.ts'
+import { jobs, type JobErrorCode, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
 import type {
   AutoCutOn,
@@ -10,8 +10,8 @@ import type {
   IndexingState,
 } from '../../vision/index.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
-import { plural } from '../format.ts'
-import { analyzeFootageAndWait, visionService } from './footage.ts'
+import { plural, shortFileName } from '../format.ts'
+import { analyzeFootageAndWait, useFootage, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { editor, sectionAt, sectionsOf } from './project.ts'
 import { barsState, ensureBars } from './songAnalysis.ts'
@@ -98,6 +98,59 @@ export function analysisBacklog(
   return { waiting: left.length - unreadable.length, unreadable }
 }
 
+const TRY_AGAIN = 'Try again in Match footage, then cut again to match the mood.'
+
+/**
+ * What stopped footage analysis, by its error's code, for the cut's note, with what the user can do about it (none
+ * when `next` is empty, Try again in Match footage when it is left out).
+ */
+const ANALYSIS_STOPPED: Partial<Record<JobErrorCode, { why: string; next?: string }>> = {
+  network: {
+    why: 'couldn’t finish its download',
+    next: 'Check your connection and try again in Match footage, then cut again to match the mood.',
+  },
+  'model-load': { why: 'couldn’t start' },
+  'out-of-memory': { why: 'ran out of memory' },
+  'storage-quota': {
+    why: 'ran out of browser storage',
+    next: 'Free space in Settings › Storage and try again in Match footage, then cut again to match the mood.',
+  },
+  unsupported: { why: 'can’t run in this browser', next: '' },
+}
+
+/**
+ * The cut's note for clips it used without matching, when footage analysis says why they have no index: it stopped
+ * with an error, was cancelled, or couldn’t read them. Undefined while they are only waiting for analysis.
+ */
+export function unanalyzedWarning(
+  assetIds: readonly Id[],
+  all: boolean,
+  indexing: IndexingState | null,
+): string | undefined {
+  const n = assetIds.length
+  if (!indexing || !n) return undefined
+  const clips = all
+    ? n === 1
+      ? 'your clip was'
+      : 'your clips were'
+    : `${plural(n, 'clip')} ${n === 1 ? 'was' : 'were'}`
+  if (indexing.status === 'error') {
+    const { why, next = TRY_AGAIN } = (indexing.error && ANALYSIS_STOPPED[indexing.error.code]) ?? {
+      why: 'stopped',
+    }
+    return `Footage analysis ${why}, so ${clips} picked for variety.${next ? ` ${next}` : ''}`
+  }
+  if (indexing.status === 'paused')
+    return `Footage analysis was cancelled, so ${clips} picked for variety. Analyze your footage in Match footage, then cut again to match the mood.`
+  const ids = new Set(assetIds)
+  const failed = indexing.failed.filter((f) => ids.has(f.assetId))
+  if (failed.length < n) return undefined
+  const [first] = failed
+  if (n === 1 && first)
+    return `“${shortFileName(first.name)}” couldn’t be analyzed, so it was picked for variety.`
+  return `${all ? 'Your clips' : plural(n, 'clip')} couldn’t be analyzed, so they were picked for variety.`
+}
+
 /** Bytes footage analysis still has to download to match clips (the matching model, once), 0 when cached. */
 export async function matchingDownloadBytes(): Promise<number> {
   const files = Object.values(VISION_MODELS.clipB32.files)
@@ -159,7 +212,8 @@ let runs = 0
  *
  * With `analyzeFirst`, a cut that matches clips first analyzes the ones not analyzed yet (also where background
  * analysis is off) and waits for them, as the job's `analyzing` stage, so every clip analysis can read is matched.
- * Cancelling the job in that stage also stops the analysis if the job started it.
+ * Cancelling the job in that stage also stops the analysis if the job started it. When the analysis stops with an
+ * error, is cancelled elsewhere or can’t read a clip, the cut picks those clips for variety and its note says why.
  */
 export function startAutoCut(
   options: Omit<AutoCutOptions, 'seed'>,
@@ -206,7 +260,11 @@ export function startAutoCut(
       ctx.progress({ fraction: scale(0), stage: 'planning', message: STAGE_MESSAGES.planning })
       const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
       const cut = await v.autoCut(
-        { editor, matcher: vision.matcher },
+        {
+          editor,
+          matcher: vision.matcher,
+          unanalyzedWarning: (ids, all) => unanalyzedWarning(ids, all, useFootage.getState().indexing),
+        },
         { ...options, seed },
         {
           signal: ctx.signal,

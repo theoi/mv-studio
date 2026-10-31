@@ -86,6 +86,25 @@ describe('auto-cut plan', () => {
     expect(result.shots.every((s) => s.reason === 'variety')).toBe(true)
   })
 
+  it('words the warning about clips without analysis as the caller says, naming the clips it means', async () => {
+    const calls: [readonly string[], boolean][] = []
+    const unanalyzedWarning = (ids: readonly string[], all: boolean) => {
+      calls.push([ids, all])
+      return all ? 'Footage analysis ran out of memory.' : undefined
+    }
+    const none = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) })
+    const all = await planAutoCut(none, {}, { matcher, unanalyzedWarning })
+    expect(all.warnings).toContain('Footage analysis ran out of memory.')
+    expect(all.warnings.join(' ')).not.toMatch(/analyzed yet/)
+    const some = makeProject({ clips: [...CLIPS.slice(0, 2), { ...CLIPS[2]!, indexed: false }] })
+    const partial = await planAutoCut(some, {}, { matcher, unanalyzedWarning })
+    expect(partial.warnings.join(' ')).toMatch(/1 clip isn't analyzed yet/)
+    expect(calls).toEqual([
+      [CLIPS.map((c) => c.id), true],
+      [[CLIPS[2]!.id], false],
+    ])
+  })
+
   it('uses only the chosen clips, and refuses without a song or clips', async () => {
     const { shots } = await plan(makeProject(), { assetIds: ['ocean', 'misc'] })
     expect(new Set(shots.map((s) => s.assetId))).toEqual(new Set(['ocean', 'misc']))
