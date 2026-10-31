@@ -165,7 +165,7 @@ describe('weight, values, outline, shadow and background', () => {
       'Regular',
       'Medium',
       'Semibold',
-      '650',
+      '650 · Custom',
       'Bold',
     ])
     // A font that isn't bundled gets every weight.

@@ -101,10 +101,10 @@ export function LyricStyleSections({ clip }: { clip?: TextClip }) {
           />
         </FieldRow>
       </Section>
+      <DecorationSections clip={clip} />
       <Section title="Animation" defaultOpen={false}>
         <PresetSettings clip={clip} />
       </Section>
-      <DecorationSections clip={clip} />
       <div className={styles.footerAction}>
         <Button variant="secondary" size="sm" block onClick={() => applyStyleToAllLines(clip)}>
           Apply style to all lines

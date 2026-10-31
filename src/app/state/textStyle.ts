@@ -195,7 +195,7 @@ const WEIGHTS: [number, string][] = [
   [900, 'Black'],
 ]
 
-const weightName = (weight: number) => WEIGHTS.find(([w]) => w === weight)?.[1] ?? String(weight)
+const weightName = (weight: number) => WEIGHTS.find(([w]) => w === weight)?.[1] ?? `${weight} · Custom`
 
 /** The weights the style's font has (all of them for a font that isn't bundled), and the style's own. */
 export function weightChoice(style: TextStyle): {

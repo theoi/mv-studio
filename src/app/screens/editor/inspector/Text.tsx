@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import { AlignCenter, AlignLeft, AlignRight, Type } from 'lucide-react'
 import type { ParamSpec } from '../../../../engine/types.ts'
 import type { Clip, ParamValue, TextClip, TextStyle } from '../../../../model/index.ts'
-import { Badge } from '../../../ds/Feedback.tsx'
 import {
   ColorField,
   FieldRow,
@@ -216,18 +215,25 @@ function DecorationSection({ clip, part }: { clip: TextClip; part: TextDecoratio
   )
   const { stroke, shadow, background } = clip.style
   return (
-    <Section title={name} defaultOpen={false} badge={on ? <Badge>On</Badge> : undefined}>
-      <FieldRow label={name} trailing={spacer}>
+    <Section
+      title={name}
+      defaultOpen={false}
+      actions={
         <Switch checked={on} onCheckedChange={(v) => setDecoration(clip, part, v)} ariaLabel={`${name} on`} />
-        {on && (
+      }
+    >
+      {on ? (
+        <FieldRow label="Color" trailing={spacer}>
           <TextColor
             clip={clip}
             path={['style', part, 'color']}
             value={clip.style[part]?.color ?? '#000000'}
             ariaLabel={`${name} color`}
           />
-        )}
-      </FieldRow>
+        </FieldRow>
+      ) : (
+        <p className={styles.note}>Off. Use the switch to turn it on.</p>
+      )}
       {part === 'stroke' && stroke && slider('width', 'Width', stroke.width, 0, 20)}
       {part === 'shadow' && shadow && (
         <>

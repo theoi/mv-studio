@@ -45,10 +45,9 @@ test('a text clip’s weight, alignment, spacing, outline, shadow and animation 
   await page.keyboard.press('ArrowRight')
   expect((await textClip(page, 'o-title')).style.stroke).toEqual({ color: '#000000', width: 5 })
 
-  // The sample title has a shadow, so its section says it is on.
-  const shadow = page.getByRole('button', { name: /^Shadow/ })
-  await expect(shadow).toContainText('On')
-  await shadow.click()
+  // The sample title has a shadow, so its header switch is on.
+  await expect(page.getByRole('switch', { name: 'Shadow on' })).toBeChecked()
+  await page.getByRole('button', { name: 'Shadow', exact: true }).click()
   await page.screenshot({ path: testInfo.outputPath('text-styling.png'), fullPage: true })
   await page.getByRole('switch', { name: 'Shadow on' }).click()
   expect((await textClip(page, 'o-title')).style.shadow).toBeUndefined()
