@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import type { Id, Project } from '../../model/index.ts'
+import { JobError } from '../../shared/jobs.ts'
 import type {
+  AssetIndexStatus,
   DirectorFootageMatcher,
+  FootageIndexer,
   FootageMatcher,
   FootageResult,
   FootageService,
@@ -218,6 +221,61 @@ export function retryFootageAnalysis(): void {
   })
 }
 
+/**
+ * Analyzes clips now (as `analyzeFootageNow`) and resolves once each of `assetIds` is matched or failed, or analysis
+ * stops (a Cancel elsewhere, an error). Aborting `signal` rejects with a cancelled JobError and also cancels the
+ * analysis when this call started it.
+ */
+export async function analyzeFootageAndWait(
+  assetIds: readonly Id[],
+  options: { signal?: AbortSignal; onProgress?: (state: IndexingState) => void } = {},
+): Promise<void> {
+  const service = await footageService()
+  if (options.signal?.aborted) throw new JobError('cancelled', 'Cancelled')
+  const startedHere = service.indexing.getState().status !== 'indexing'
+  started = true
+  service.indexing.start()
+  service.indexing.resume()
+  return waitForMatching(service.indexing, assetIds, { ...options, cancelOnAbort: startedHere })
+}
+
+const SETTLED: readonly AssetIndexStatus[] = ['indexed', 'failed', 'unsupported']
+
+/**
+ * Resolves on the indexer's next update that finds every one of `assetIds` matched or failed, or nothing running. Call
+ * it right after asking the indexer to run (`start`, `resume`): it ignores the state from before that request.
+ */
+export function waitForMatching(
+  indexing: Pick<FootageIndexer, 'subscribe' | 'statusOf' | 'cancel'>,
+  assetIds: readonly Id[],
+  options: {
+    signal?: AbortSignal
+    onProgress?: (state: IndexingState) => void
+    cancelOnAbort?: boolean
+  } = {},
+): Promise<void> {
+  const { signal, onProgress, cancelOnAbort = false } = options
+  return new Promise<void>((resolve, reject) => {
+    const stop = () => {
+      unsubscribe()
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const onAbort = () => {
+      stop()
+      if (cancelOnAbort) indexing.cancel()
+      reject(new JobError('cancelled', 'Cancelled'))
+    }
+    const unsubscribe = indexing.subscribe((state) => {
+      onProgress?.(state)
+      if (state.status !== 'indexing' || assetIds.every((id) => SETTLED.includes(indexing.statusOf(id)))) {
+        stop()
+        resolve()
+      }
+    })
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) onAbort()
+  })
+}
 /**
  * Asks Library › Media to bring its "Suggested for …" row into view the next time it shows (from the "N clips
  * match" chips, whose matches load again in the library).

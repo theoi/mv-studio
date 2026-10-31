@@ -1,12 +1,14 @@
 /**
- * Puts an auto-cut on the timeline: its own "Auto-cut" track, clips tagged with `meta.autocut`, one undo step.
- * Running it again replaces only auto-cut clips nobody has touched; clips the user made or edited on that track
- * stay and the new cut goes around them. A locked Auto-cut track is kept as is and the new cut goes on a new track.
+ * Puts an auto-cut on the timeline: its own "Auto-cut" track (or, in a project made from a starter template, the
+ * template's Video track while it is empty), clips tagged with `meta.autocut`, one undo step. Running it again
+ * replaces only auto-cut clips nobody has touched; clips the user made or edited on that track stay and the new cut
+ * goes around them. A locked Auto-cut track is kept as is and the new cut goes on a new track.
  */
 import type { EditCommand } from '../../model/commands.ts'
 import { anim, createImageClip, createTrack, createVideoClip } from '../../model/factory.ts'
 import { clipsOnTrack } from '../../model/queries.ts'
 import type { Clip, Id, JsonObject, Project, Seconds, Track, VisualClip } from '../../model/types.ts'
+import { templateState } from '../../plugins/templates.ts'
 import type { TimeRange } from '../types.ts'
 import type { PickReason } from './choose.ts'
 
@@ -73,7 +75,7 @@ export function isUntouchedAutoCut(clip: Clip): boolean {
 }
 
 export interface TrackState {
-  /** Existing Auto-cut track to use, or undefined to add one at `newIndex`. */
+  /** Existing track to cut on (the Auto-cut track or a template's empty Video track), or undefined to add one. */
   track?: Track
   newIndex: number
   /** A locked Auto-cut track that is kept as is. */
@@ -90,7 +92,18 @@ const isAutoCutTrack = (project: Project, track: Track) => {
   return clips.some((c) => autoCutMeta(c)) || (clips.length === 0 && track.name === AUTOCUT_TRACK_NAME)
 }
 
-/** The Auto-cut track auto-cut writes to, and which of its clips it may replace. */
+/** A starter template's Video track while it is empty, unlocked and shown. */
+function templateVideoTrack(project: Project): Track | undefined {
+  const id = templateState(project)?.tracks.video
+  const track = id ? project.tracks.find((t) => t.id === id) : undefined
+  if (!track || track.kind !== 'visual' || track.locked || track.hidden) return undefined
+  return clipsOnTrack(project, track.id).length ? undefined : track
+}
+
+/**
+ * The track auto-cut writes to, and which of its clips it may replace: the Auto-cut track (a track holding earlier
+ * auto-cut clips, a template's Video track included), else a template's empty Video track, else a new one.
+ */
 export function autoCutTrackState(project: Project): TrackState {
   const candidates = project.tracks.filter((t) => isAutoCutTrack(project, t))
   const track = candidates.find((t) => !t.locked)
@@ -104,6 +117,9 @@ export function autoCutTrackState(project: Project): TrackState {
     }
   }
   const lockedTrack = candidates[0]
+  const template = lockedTrack ? undefined : templateVideoTrack(project)
+  if (template)
+    return { track: template, newIndex: project.tracks.indexOf(template), replaceable: [], kept: [] }
   let newIndex: number
   if (lockedTrack) newIndex = project.tracks.indexOf(lockedTrack)
   else {
@@ -143,11 +159,13 @@ export interface AutoCutCompiled {
   commands: EditCommand[]
   /** Undo menu label. */
   label: string
+  /** The track the cut is on. */
+  track: { id: Id; name: string }
   stats: {
     cuts: number
     /** Earlier auto-cut clips replaced. */
     replaced: number
-    /** Clips on the Auto-cut track that were kept because the user made or edited them. */
+    /** Clips on the cut's track that were kept because the user made or edited them. */
     kept: number
     newTrack: boolean
   }
@@ -162,14 +180,16 @@ export function compileAutoCut(
   const state = autoCutTrackState(project)
   const warnings: string[] = []
   const commands: EditCommand[] = []
-  let trackId = state.track?.id
-  if (!trackId) {
-    const track = createTrack('visual', AUTOCUT_TRACK_NAME)
+  let track = state.track
+  if (!track) {
+    track = createTrack('visual', AUTOCUT_TRACK_NAME)
     commands.push({ type: 'track.add', track, index: state.newIndex })
-    trackId = track.id
     if (state.lockedTrack)
-      warnings.push('The Auto-cut track is locked, so the new cut is on a new track above it.')
+      warnings.push(
+        `The ${state.lockedTrack.name} track is locked, so the new cut is on a new track above it.`,
+      )
   }
+  const trackId = track.id
   const range = expandRange(plan.range, state.replaceable)
   const inRange = (c: { start: number; duration: number }) =>
     c.start < range.end - EPS && c.start + c.duration > range.start + EPS
@@ -178,7 +198,7 @@ export function compileAutoCut(
   const keptInRange = state.kept.filter(inRange)
   if (keptInRange.length) {
     const n = keptInRange.length
-    warnings.push(`Kept ${n} ${n === 1 ? 'clip' : 'clips'} you made or edited on the Auto-cut track.`)
+    warnings.push(`Kept ${n} ${n === 1 ? 'clip' : 'clips'} you made or edited on the ${track.name} track.`)
   }
 
   let cuts = 0
@@ -213,6 +233,7 @@ export function compileAutoCut(
   return {
     commands,
     label: `Auto-cut: ${cuts} ${cuts === 1 ? 'cut' : 'cuts'}`,
+    track: { id: track.id, name: track.name },
     stats: { cuts, replaced: replaced.length, kept: keptInRange.length, newTrack: !state.track },
     warnings,
   }

@@ -187,7 +187,7 @@ export function AutocutView() {
                 : `Cut ${formatTime(start)}–${formatTime(end)} into ${plural(cuts, 'shot')}`}
             </div>
             <div className={styles.muted}>
-              On the Auto-cut track. Cutting again replaces only the clips you haven’t changed.
+              On the {result.track.name} track. Cutting again replaces only the clips you haven’t changed.
             </div>
           </div>
         </div>

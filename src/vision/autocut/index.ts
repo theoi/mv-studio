@@ -1,6 +1,6 @@
 /**
  * Auto-cut: cuts the user's footage to the song's beats and sections. `planAutoCut` decides the shots (where to
- * cut, which clip, which part of it); `applyAutoCut` puts them on the Auto-cut track as one undo step.
+ * cut, which clip, which part of it); `applyAutoCut` puts them on the timeline as one undo step (see apply.ts).
  */
 import { mediaFromProject, songInfoFromProject } from '../../director/inputs.ts'
 import type { ProjectEditor } from '../../model/editor.ts'
@@ -153,8 +153,6 @@ export async function planAutoCut(
     warnings.unshift(
       `The song's beats aren't analyzed yet, so cuts follow an even ${Math.round(rhythm.grid.bpm)} BPM grid.`,
     )
-  if (state.lockedTrack && !state.track)
-    warnings.push('The Auto-cut track is locked, so the new cut goes on a new track above it.')
   progress(1, 'done')
   return {
     version: 1,
