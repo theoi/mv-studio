@@ -41,6 +41,9 @@ export function sceneOf(asset: Asset | undefined): SceneId | undefined {
 
 export const MASK_PREFIX = 'mock-mask:'
 
+/** Frame rate of the videos made for the sample's scenes, which are still: a low one is enough and encodes fast. */
+export const SAMPLE_VIDEO_FPS = 2
+
 /** Storage key of the subject mask generated for a sample scene. */
 export function maskStorageKey(scene: SceneId): string {
   return `${MASK_PREFIX}${scene}`
@@ -62,6 +65,7 @@ function asset(
     byteSize: Math.round((duration ?? 1) * 1_200_000),
     storageKey: `mock:${scene}`,
     duration,
+    frameRate: kind === 'video' ? SAMPLE_VIDEO_FPS : undefined,
     width: kind === 'audio' ? undefined : 1920,
     height: kind === 'audio' ? undefined : 1080,
     hasAudio: kind === 'video' ? false : undefined,

@@ -133,6 +133,27 @@ describe('seeking a paused preview video', () => {
     expect(ms).toBeLessThan(60)
   })
 
+  it.each([
+    { name: 'a new element seeking within its first frame', times: [0.2] },
+    { name: 'a step within the frame the seek before showed', times: [4, 4.3] },
+  ])('returns at once going forward within one frame of 2 fps footage: $name', async ({ times }) => {
+    const video = new FakeVideo()
+    video.shows = (t) => Math.floor(t * 2) / 2
+    const lowRate = { ...asset, frameRate: 2 }
+    const provider = pausedProvider(video)
+    for (const t of times.slice(0, -1)) {
+      void provider.videoFrame(lowRate, t, 'clip')
+      await vi.advanceTimersByTimeAsync(300)
+    }
+    const start = performance.now()
+    let ms = -1
+    void provider.videoFrame(lowRate, times.at(-1)!, 'clip').then(() => (ms = performance.now() - start))
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    expect(ms).toBeGreaterThan(0)
+    expect(ms).toBeLessThan(60)
+  })
+
   it('does not take another frame presented during the seek for the new one', async () => {
     const video = new FakeVideo()
     // A frame from where the video was before (e.g. its playback, just paused), and none after the seek.
