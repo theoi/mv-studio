@@ -26,15 +26,7 @@ function LookIntensity({ clip }: { clip: VisualClip }) {
   return (
     <FieldRow
       label="Intensity"
-      trailing={
-        <AnimateButtons
-          property="Look intensity"
-          keyed={intensity.keyed}
-          reactive={intensity.reactive}
-          onKey={intensity.key}
-          onReact={intensity.react}
-        />
-      }
+      trailing={<AnimateButtons property="Look intensity" {...intensity.buttons} />}
     >
       <Slider
         value={pct}

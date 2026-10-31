@@ -44,6 +44,8 @@ export interface Reaction {
   defaultAmount: number
   /** The stem that makes this reaction precise, so pickers can suggest separating stems. */
   bestWithStem?: StemName
+  /** Where the instrument is in the full mix, for "Listens to: the low end (sub bass), where the kick sits." */
+  inMix?: string
 }
 
 export const REACTIONS: Reaction[] = [
@@ -59,6 +61,7 @@ export const REACTIONS: Reaction[] = [
     smoothing: 0.05,
     defaultAmount: 0.4,
     bestWithStem: 'drums',
+    inMix: 'where the kick sits',
   },
   {
     id: 'snare',
@@ -69,6 +72,7 @@ export const REACTIONS: Reaction[] = [
     smoothing: 0.1,
     defaultAmount: 0.4,
     bestWithStem: 'drums',
+    inMix: 'snares and claps included',
   },
   {
     id: 'hats',
@@ -82,6 +86,7 @@ export const REACTIONS: Reaction[] = [
     smoothing: 0,
     defaultAmount: 0.3,
     bestWithStem: 'drums',
+    inMix: 'where the hi-hats sit',
   },
   {
     id: 'bass',
@@ -95,6 +100,7 @@ export const REACTIONS: Reaction[] = [
     smoothing: 0.35,
     defaultAmount: 0.35,
     bestWithStem: 'bass',
+    inMix: 'where the bassline sits',
   },
   {
     id: 'vocals',
@@ -108,6 +114,7 @@ export const REACTIONS: Reaction[] = [
     smoothing: 0.6,
     defaultAmount: 0.3,
     bestWithStem: 'vocals',
+    inMix: 'where most of the voice sits',
   },
   {
     id: 'loudness',
@@ -245,11 +252,42 @@ export function listenLabel(listen: Listen): string {
   }
 }
 
+const BAND_PHRASES: [maxHz: number, phrase: string][] = [
+  [80, 'the low end (sub bass)'],
+  [300, 'the bass frequencies'],
+  [2000, 'the mids'],
+  [5000, 'the upper mids'],
+  [Infinity, 'the highs'],
+]
+
+/**
+ * What a reaction listens to as the end of a sentence, saying where its instrument is found until stems are
+ * separated: 'the drums stem', or 'the low end (sub bass), where the kick sits'.
+ */
+export function listenPhrase(r: Reaction, listen: Listen): string {
+  if ('stem' in listen && listen.stem) return `the ${STEM_LABELS[listen.stem].toLowerCase()}`
+  const where = r.inMix ? `, ${r.inMix}` : ''
+  switch (listen.feature) {
+    case 'beat':
+      return 'the song’s beat grid'
+    case 'downbeat':
+      return 'the song’s bar grid'
+    case 'band':
+      return (BAND_PHRASES.find(([max]) => listen.hz < max)?.[1] ?? 'the highs') + where
+    case 'loudness':
+      return 'the loudness of the whole mix' + where
+    case 'onset':
+      return 'every hit in the mix' + where
+  }
+}
+
 export interface ReactionAvailability {
   reaction: Reaction
   listen: Listen
   /** e.g. 'Drums stem', or 'Sub bass' when stems are not separated. */
   listensTo: string
+  /** listenPhrase(): 'the drums stem', or 'the low end (sub bass), where the kick sits'. */
+  listening: string
   /** Separating stems would make this reaction follow its instrument precisely. */
   betterWithStems: boolean
   /** The song has the data this reaction uses (false until the song is analyzed). */
@@ -265,6 +303,7 @@ export function availableReactions(project: Project): ReactionAvailability[] {
       reaction: r,
       listen,
       listensTo: listenLabel(listen),
+      listening: listenPhrase(r, listen),
       betterWithStems: !!r.bestWithStem && !('stem' in listen && listen.stem),
       ready: hasData(listen, analysis),
     }
@@ -547,6 +586,8 @@ export type ActiveReaction =
       amount: number
       /** What it listens to now, e.g. 'Drums stem' or 'Sub bass'. */
       listensTo: string
+      /** listenPhrase() of what it listens to now. */
+      listening: string
       /** A better source is available now (stems were separated after the reaction was chosen). */
       canUpgrade: boolean
       /**
@@ -610,6 +651,7 @@ export function describeReaction(
     reaction: match.reaction,
     amount,
     listensTo: listenLabel(match.listen),
+    listening: listenPhrase(match.reaction, match.listen),
     canUpgrade: match.exact && best !== match.listen && hasData(best, songAnalysis(project)),
     exact: match.exact,
     summary: `${match.reaction.label} · ${Math.round(amount * 100)}%`,

@@ -1,37 +1,49 @@
 import { AudioWaveform, Plus } from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
-import type { VisualClip } from '../../../../model/index.ts'
+import type { ColorAdjustmentKey, VisualClip } from '../../../../model/index.ts'
 import { IconButton } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { AnimateButtons, FieldRow, Section, Slider } from '../../../ds/Fields.tsx'
-import { dispatch, editor } from '../../../state/project.ts'
 import { set } from '../../../state/ui.ts'
+import { useAnimatable } from './animatable.ts'
 import styles from '../Inspector.module.css'
+
+const ADJUSTMENTS = [
+  { key: 'exposure', label: 'Exposure' },
+  { key: 'contrast', label: 'Contrast' },
+  { key: 'saturation', label: 'Saturation' },
+] as const
+
+/** One color adjustment (-1..1, neutral 0) on a 0..100 slider. */
+function AdjustmentRow({
+  clip,
+  adjustment,
+  label,
+}: {
+  clip: VisualClip
+  adjustment: ColorAdjustmentKey
+  label: string
+}) {
+  const a = useAnimatable(clip, ['adjustments', adjustment], 0)
+  return (
+    <FieldRow label={label} trailing={<AnimateButtons property={label} {...a.buttons} />}>
+      <Slider
+        value={Math.round((Number(a.value) + 1) * 50)}
+        min={0}
+        max={100}
+        onChange={(v) => a.set(v / 50 - 1)}
+        onCommit={a.commit}
+        ariaLabel={label}
+      />
+    </FieldRow>
+  )
+}
 
 export function ColorSection({ clip }: { clip: VisualClip }) {
   return (
     <Section title="Color" defaultOpen={false}>
-      {(['exposure', 'contrast', 'saturation'] as const).map((k) => (
-        <FieldRow key={k} label={k[0]?.toUpperCase() + k.slice(1)} trailing={<AnimateButtons property={k} />}>
-          <Slider
-            value={Math.round(((clip.adjustments?.[k]?.value ?? 0) + 1) * 50)}
-            min={0}
-            max={100}
-            onChange={(v) =>
-              dispatch(
-                {
-                  type: 'clip.set',
-                  clipId: clip.id,
-                  path: ['adjustments'],
-                  value: { ...clip.adjustments, [k]: { value: v / 50 - 1 } },
-                },
-                { coalesceKey: `inspector:${clip.id}:${k}` },
-              )
-            }
-            onCommit={() => editor.endGesture()}
-            ariaLabel={k}
-          />
-        </FieldRow>
+      {ADJUSTMENTS.map((x) => (
+        <AdjustmentRow key={x.key} clip={clip} adjustment={x.key} label={x.label} />
       ))}
     </Section>
   )

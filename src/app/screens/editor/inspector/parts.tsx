@@ -103,18 +103,7 @@ export function TransformSection({ clip }: { clip: VisualClip }) {
         </IconButton>
       }
     >
-      <FieldRow
-        label="Position"
-        trailing={
-          <AnimateButtons
-            property="Position"
-            keyed={x.keyed}
-            reactive={x.reactive}
-            onKey={x.key}
-            onReact={x.react}
-          />
-        }
-      >
+      <FieldRow label="Position" trailing={<AnimateButtons property="Position" {...x.buttons} />}>
         <NumberProp
           clip={clip}
           path={['transform', 'x']}
@@ -132,18 +121,7 @@ export function TransformSection({ clip }: { clip: VisualClip }) {
           fromView={(v) => v / height + 0.5}
         />
       </FieldRow>
-      <FieldRow
-        label="Scale"
-        trailing={
-          <AnimateButtons
-            property="Scale"
-            keyed={scale.keyed}
-            reactive={scale.reactive}
-            onKey={scale.key}
-            onReact={scale.react}
-          />
-        }
-      >
+      <FieldRow label="Scale" trailing={<AnimateButtons property="Scale" {...scale.buttons} />}>
         <NumberField
           value={Math.round(Number(scale.value ?? 1) * 100)}
           onChange={(v) =>
@@ -161,18 +139,7 @@ export function TransformSection({ clip }: { clip: VisualClip }) {
           ariaLabel="Scale"
         />
       </FieldRow>
-      <FieldRow
-        label="Rotation"
-        trailing={
-          <AnimateButtons
-            property="Rotation"
-            keyed={rot.keyed}
-            reactive={rot.reactive}
-            onKey={rot.key}
-            onReact={rot.react}
-          />
-        }
-      >
+      <FieldRow label="Rotation" trailing={<AnimateButtons property="Rotation" {...rot.buttons} />}>
         <NumberProp
           clip={clip}
           path={['transform', 'rotation']}
@@ -191,18 +158,7 @@ export function CompositingSection({ clip }: { clip: VisualClip }) {
   const pct = Math.round(Number(opacity.value ?? 1) * 100)
   return (
     <Section title="Compositing">
-      <FieldRow
-        label="Opacity"
-        trailing={
-          <AnimateButtons
-            property="Opacity"
-            keyed={opacity.keyed}
-            reactive={opacity.reactive}
-            onKey={opacity.key}
-            onReact={opacity.react}
-          />
-        }
-      >
+      <FieldRow label="Opacity" trailing={<AnimateButtons property="Opacity" {...opacity.buttons} />}>
         <Slider
           value={pct}
           onChange={(v) => opacity.set(v / 100)}
