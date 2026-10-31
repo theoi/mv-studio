@@ -45,6 +45,11 @@ export function Dialog({
             e.preventDefault()
             ;(e.currentTarget as HTMLElement | null)?.focus()
           }}
+          // Toasts sit outside the dialog: pressing a toast's Undo must not close the dialog it undoes in. The check
+          // can run after the click removed the toast, so it looks for the toast itself, not the toaster.
+          onInteractOutside={(e) => {
+            if ((e.target as Element | null)?.closest?.('[data-toast]')) e.preventDefault()
+          }}
         >
           {bare ? (
             <RDialog.Title className="sr-only">{title}</RDialog.Title>

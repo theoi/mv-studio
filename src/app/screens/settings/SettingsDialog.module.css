@@ -295,3 +295,18 @@
   color: var(--text-3);
   font-size: var(--text-xs);
 }
+
+/* Room for the row's description: long controller names end in an ellipsis (every name is in the title). */
+.midiBadge {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.midiBadge > span {
+  max-width: 240px;
+}
+
+.midiName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

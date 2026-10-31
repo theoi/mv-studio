@@ -7,7 +7,7 @@ export function Toaster() {
   return (
     <div className={styles.toaster} role="status" aria-live="polite">
       {toasts.map((t) => (
-        <div key={t.id} className={styles.toast}>
+        <div key={t.id} className={styles.toast} data-toast>
           <span>{t.message}</span>
           {t.action && (
             <button

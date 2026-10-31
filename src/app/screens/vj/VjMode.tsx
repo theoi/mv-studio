@@ -54,7 +54,13 @@ import {
   useProject,
 } from '../../state/project.ts'
 import { useThumbnail } from '../../state/thumbs.ts'
-import { setActiveVjSession, vjMidi } from '../../state/vj.ts'
+import {
+  midiControllers,
+  midiDevicesLabel,
+  midiErrorText,
+  setActiveVjSession,
+  vjMidi,
+} from '../../state/vj.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
 import styles from './VjMode.module.css'
 
@@ -80,10 +86,7 @@ function usePlaying(preview: PreviewController | undefined): boolean {
 
 function midiChip(midi: VjSnapshot['midi'] | undefined): string {
   const status: MidiStatus = midi?.status ?? 'off'
-  if (status === 'ready' && midi?.devices.length)
-    return midi.devices.length > 1
-      ? `${midi.devices[0]!.name} +${midi.devices.length - 1}`
-      : midi.devices[0]!.name
+  if (status === 'ready' && midi?.devices.length) return midiDevicesLabel(midi.devices)
   if (status === 'requesting') return 'Connecting…'
   if (status === 'denied') return 'MIDI blocked'
   if (status === 'unsupported') return 'No Web MIDI'
@@ -554,9 +557,9 @@ export function VjMode() {
               <MenuLabel>MIDI controller</MenuLabel>
               {snapshot?.midi.status === 'ready' ? (
                 snapshot.midi.devices.length ? (
-                  snapshot.midi.devices.map((d) => (
-                    <MenuItem key={d.id} disabled description={d.manufacturer}>
-                      {d.name}
+                  midiControllers(snapshot.midi.devices).map((c) => (
+                    <MenuItem key={c.ports[0]?.id ?? c.name} disabled description={c.manufacturer}>
+                      {c.name}
                     </MenuItem>
                   ))
                 ) : (
@@ -568,14 +571,23 @@ export function VjMode() {
                 <MenuItem disabled description="Use desktop Chrome or Edge for MIDI controllers">
                   This browser has no Web MIDI
                 </MenuItem>
-              ) : snapshot?.midi.status === 'denied' ? (
-                <MenuItem disabled description="Allow MIDI devices in the site settings, then try again">
-                  MIDI access was blocked
-                </MenuItem>
+              ) : snapshot?.midi.status === 'denied' || snapshot?.midi.status === 'error' ? (
+                <>
+                  {snapshot.midi.status === 'denied' ? (
+                    <MenuItem disabled description="Allow MIDI devices in the site settings, then try again">
+                      MIDI access was blocked
+                    </MenuItem>
+                  ) : (
+                    <MenuItem disabled description={midiErrorText(snapshot.midi.error)}>
+                      MIDI error
+                    </MenuItem>
+                  )}
+                  <MenuItem onSelect={() => void session?.connectMidi()}>Try again</MenuItem>
+                </>
               ) : (
                 <MenuItem
                   disabled={snapshot?.midi.status === 'requesting'}
-                  description={snapshot?.midi.error ?? 'The browser asks for permission once'}
+                  description="The browser asks for permission once"
                   onSelect={() => void session?.connectMidi()}
                 >
                   Connect a MIDI controller

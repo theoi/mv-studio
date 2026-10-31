@@ -72,3 +72,37 @@ function currentMidiState(): VjMidiState {
 export function useVjMidi(): VjMidiState {
   return useSyncExternalStore((listener) => vjMidi().subscribe(listener), currentMidiState)
 }
+
+/** One controller: its input ports, which a browser can list as several devices ("… MIDI Port", "… DAW Port"). */
+export interface MidiController {
+  name: string
+  manufacturer?: string
+  ports: MidiDevice[]
+}
+
+const PORT_SUFFIX = /\s+(?:\S+\s+)?Port(?:\s*\d+)?$/i
+
+export function midiControllers(devices: MidiDevice[]): MidiController[] {
+  const out: MidiController[] = []
+  for (const d of devices) {
+    const name = d.name.replace(PORT_SUFFIX, '') || d.name
+    const known = out.find((c) => c.name === name && c.manufacturer === d.manufacturer)
+    if (known) known.ports.push(d)
+    else out.push({ name, ...(d.manufacturer ? { manufacturer: d.manufacturer } : {}), ports: [d] })
+  }
+  return out
+}
+
+/** The connected controllers in a few words: the first one's name, then "+N" for the others. */
+export function midiDevicesLabel(devices: MidiDevice[]): string {
+  const [first, ...others] = midiControllers(devices)
+  if (!first) return 'None connected'
+  return others.length ? `${first.name} +${others.length}` : first.name
+}
+
+const RECONNECT = 'Reconnect the controller, then try again.'
+
+export function midiErrorText(error: string | undefined): string {
+  const reason = error?.trim().replace(/\.$/, '')
+  return reason ? `MIDI couldn’t start: ${reason}. ${RECONNECT}` : `MIDI couldn’t start. ${RECONNECT}`
+}

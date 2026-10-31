@@ -92,6 +92,17 @@ export function withMidiPreset(bindings: VjBindings, preset: MidiPreset): VjBind
   return { ...bindings, midi: presetMidi(preset) }
 }
 
+/** MIDI bindings that are not in the closest default mapping: the ones learned by hand. */
+export function midiMappedByHand(bindings: VjBindings): number {
+  const key = (b: VjBindings['midi'][number]) => JSON.stringify([b.match, b.target])
+  return Math.min(
+    ...(Object.keys(MIDI_PRESETS) as MidiPreset[]).map((p) => {
+      const preset = new Set(presetMidi(p).map(key))
+      return bindings.midi.filter((b) => !preset.has(key(b))).length
+    }),
+  )
+}
+
 export function sameTarget(a: BindingTarget, b: BindingTarget): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === 'pad' && b.kind === 'pad') return a.row === b.row && a.index === b.index

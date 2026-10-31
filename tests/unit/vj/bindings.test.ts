@@ -7,6 +7,7 @@ import {
   keyForTarget,
   keyLabel,
   midiLabel,
+  midiMappedByHand,
   midiPresetOf,
   targetForKey,
   targetsForMidi,
@@ -103,5 +104,20 @@ describe('default MIDI mappings', () => {
       { kind: 'pad', row: 'looks', index: 0 },
     )
     expect(midiPresetOf(b)).toBeNull()
+  })
+})
+
+describe('MIDI controls mapped by hand', () => {
+  it('counts only the bindings the closest default mapping lacks', () => {
+    expect(midiMappedByHand(defaultBindings())).toBe(0)
+    expect(midiMappedByHand(withMidiPreset(defaultBindings(), 'keys'))).toBe(0)
+    const one = bindMidi(
+      defaultBindings(),
+      { type: 'note', number: 99 },
+      { kind: 'pad', row: 'looks', index: 0 },
+    )
+    expect(midiMappedByHand(one)).toBe(1)
+    const two = bindMidi(one, { type: 'cc', number: 90 }, { kind: 'knob', index: 2 })
+    expect(midiMappedByHand(two)).toBe(2)
   })
 })
