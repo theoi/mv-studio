@@ -278,17 +278,26 @@ describe('Animate with AI', () => {
 describe('the lane menu', () => {
   const spot = (trackId: string, time: number) => laneItemsAt(buildDemoProject(), { trackId, time })
 
-  it('offers Generate a shot here on an empty stretch of a video or overlay track only', () => {
-    expect(spot(TRACK_IDS.overlay, 30).map((i) => i.label)).toEqual(['Generate a shot here'])
-    expect(spot(TRACK_IDS.overlay, 70)).toEqual([])
-    expect(spot(TRACK_IDS.lyrics, 2)).toEqual([])
-    expect(spot(TRACK_IDS.song, 30)).toEqual([])
+  it('offers Generate a shot here on an empty stretch of a video or overlay track only, after Paste here', () => {
+    const labels = (trackId: string, time: number) => spot(trackId, time).map((i) => i.label)
+    expect(labels(TRACK_IDS.overlay, 30)).toEqual(['Paste here', 'Generate a shot here'])
+    expect(labels(TRACK_IDS.overlay, 70)).toEqual(['Paste here'])
+    expect(labels(TRACK_IDS.lyrics, 2)).toEqual(['Paste here'])
+    expect(labels(TRACK_IDS.song, 30)).toEqual(['Paste here'])
+  })
+
+  it('shows Paste here disabled until clips are copied', () => {
+    const project = buildDemoProject()
+    const at = { trackId: TRACK_IDS.overlay, time: 30 }
+    const paste = laneItemsAt(project, at).find((i) => i.label === 'Paste here')
+    expect(paste?.disabled?.(project, at)).toBe(true)
+    expect(paste?.description?.(project, at)).toBe('Copy clips first')
   })
 
   it('says when fal.ai is missing, and why a locked track can’t take a shot', () => {
     const project = buildDemoProject()
     const at = { trackId: TRACK_IDS.overlay, time: 30.2 }
-    const [item] = laneItemsAt(project, at)
+    const item = laneItemsAt(project, at).find((i) => i.label === 'Generate a shot here')
     expect(item?.description?.(project, at)).toBe('AI image or clip at 0:30')
     cloudSettings.update({ falKey: '' })
     expect(item?.description?.(project, at)).toBe('AI image or clip at 0:30 · needs fal.ai')

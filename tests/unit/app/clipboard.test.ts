@@ -14,6 +14,8 @@ import {
   deleteSelection,
   duplicateSelection,
   paste,
+  pasteAt,
+  pasteHereOutcome,
   selectAll,
 } from '../../../src/app/state/clipboard.ts'
 import { editor, splitAtPlayhead } from '../../../src/app/state/project.ts'
@@ -131,6 +133,52 @@ describe('copy and paste', () => {
     expect(copySelection()).toBe(false)
     set({ selection: { type: 'lyric', id: 'l1' } })
     expect(copySelection()).toBe(false)
+  })
+})
+
+describe('Paste here (the lane menu)', () => {
+  it('pastes at the right-clicked time on the right-clicked track when it can take the clips, and selects them', () => {
+    selectClips([s.a.id, s.c.id])
+    copySelection()
+    const overlay = createTrack('visual', 'Overlay')
+    editor.dispatch({ type: 'track.add', track: overlay, index: 0 })
+    expect(pasteHereOutcome(project(), overlay.id, 2)).toBe('here')
+    pasteAt(overlay.id, 2)
+    expect(onTrack(overlay.id)).toEqual([
+      [2, 4],
+      [10, 3],
+    ])
+    expect(selected().map((c) => c?.trackId)).toEqual([overlay.id, overlay.id])
+    expect(editor.undoLabel()).toBe('Paste 2 clips')
+    editor.undo()
+    expect(onTrack(overlay.id)).toEqual([])
+  })
+
+  it('keeps the usual paste rules where the track is taken or locked, is the lyrics lane, or the clips come from several tracks, and says where they land', () => {
+    selectClips([s.a.id])
+    copySelection()
+    const lyrics = project().tracks.find((t) => t.name === 'Lyrics')!
+    expect(pasteHereOutcome(project(), s.footage.id, 20)).toBe('here')
+    // Footage, the clip's own track, is taken at 2 s, so the copy goes on a new track.
+    expect(pasteHereOutcome(project(), s.footage.id, 2)).toBe('new')
+    expect(pasteHereOutcome(project(), s.locked.id, 2)).toBe('new')
+    expect(pasteHereOutcome(project(), lyrics.id, 2)).toBe('new')
+    expect(pasteHereOutcome(project(), s.locked.id, 20)).toBe('own')
+    expect(pasteHereOutcome(project(), lyrics.id, 20)).toBe('own')
+    pasteAt(s.locked.id, 2)
+    const added = project().tracks.find((t) => t.name === 'Footage 2')!
+    expect(onTrack(added.id)).toEqual([[2, 4]])
+    pasteAt(lyrics.id, 20)
+    expect(onTrack(s.footage.id)).toContainEqual([20, 4])
+
+    // From two tracks: the footage goes back on Footage, and the locked track's image needs a new track.
+    selectClips([s.a.id, s.top.id])
+    copySelection()
+    expect(pasteHereOutcome(project(), s.footage.id, 30)).toBe('mixed')
+    expect(pasteHereOutcome(project(), s.footage.id, 2)).toBe('new-tracks')
+    const before = project().tracks.length
+    pasteAt(s.footage.id, 2)
+    expect(project().tracks.length).toBe(before + 2)
   })
 })
 

@@ -12,7 +12,7 @@ import {
   type Project,
   type Track,
 } from '../../model/index.ts'
-import { dispatch, editor } from './project.ts'
+import { dispatch, editor, isLookClip } from './project.ts'
 import { revealClips } from './reveal.ts'
 import { get, selectClips, selectedClipIds, toast } from './ui.ts'
 
@@ -102,7 +102,50 @@ export function paste(): void {
     return
   }
   const first = Math.min(...clipboard.clips.map((c) => c.start))
-  place(clipboard, Math.max(get().playhead, 0) - first, 'Paste')
+  place(clipboard, 'Paste', Math.max(get().playhead, 0) - first)
+}
+
+/**
+ * Where "Paste here" at `time` on a track puts the copied clips, from the placement the paste makes: 'here' on that
+ * track; otherwise by the usual paste rules, all back on their own tracks ('own'), all on one new track ('new') or on
+ * several ('new-tracks'), or a mix ('mixed'). Null when nothing is copied.
+ */
+export type PasteHereOutcome = 'here' | 'own' | 'new' | 'new-tracks' | 'mixed'
+
+export function pasteHereOutcome(p: Project, trackId: string, time: number): PasteHereOutcome | null {
+  if (!clipboard?.clips.length) return null
+  const { landings } = plan(p, clipboard, ...pasteHereArgs(p, clipboard, trackId, time))
+  const [only] = landings
+  if (!only || landings.some((l) => l !== only)) return 'mixed'
+  return only === 'new' && landings.length > 1 ? 'new-tracks' : only
+}
+
+/** Pastes the clipboard with its first clip at `time`, on `trackId` when it can take them (see pasteHereOutcome). */
+export function pasteAt(trackId: string, time: number): void {
+  if (!clipboard?.clips.length) return
+  place(clipboard, 'Paste', ...pasteHereArgs(editor.getProject(), clipboard, trackId, time))
+}
+
+function pasteHereArgs(p: Project, source: ClipboardContent, trackId: string, time: number) {
+  const first = Math.min(...source.clips.map((c) => c.start))
+  const at = Math.max(0, time)
+  return [at - first, hereTrack(p, source.clips, trackId, at)] as const
+}
+
+/** The track at `trackId` when all `clips` come from one track, it holds clips like them and is free for them at `time`. */
+function hereTrack(p: Project, clips: Clip[], trackId: string, time: number): Track | undefined {
+  const track = p.tracks.find((t) => t.id === trackId)
+  if (!track || track.locked || new Set(clips.map((c) => c.trackId)).size !== 1) return undefined
+  if (track.kind !== (clips[0]?.type === 'audio' ? 'audio' : 'visual')) return undefined
+  const there = clipsOnTrack(p, track.id)
+  // Not the lyrics lane, and a look lane only for looks.
+  if (track.name === 'Lyrics' || there.some((c) => c.type === 'text' && c.lyricLineId)) return undefined
+  const looks = clips.every(isLookClip)
+  if (there.length ? there.every(isLookClip) !== looks : looks) return undefined
+  const first = Math.min(...clips.map((c) => c.start))
+  const end = time + Math.max(...clips.map((c) => c.start + c.duration)) - first
+  const free = !there.some((c) => c.start < end - EPS && c.start + c.duration > time + EPS)
+  return free ? track : undefined
 }
 
 /** Copies the selected clips to right after the last of them; false when no clip is selected. */
@@ -112,17 +155,29 @@ export function duplicateSelection(): boolean {
   if (!clips.length) return false
   const start = Math.min(...clips.map((c) => c.start))
   const end = Math.max(...clips.map((c) => c.start + c.duration))
-  place({ clips, assets: [], tracks: p.tracks }, end - start, 'Duplicate')
+  place({ clips, assets: [], tracks: p.tracks }, 'Duplicate', end - start)
   return true
 }
 
+/** Adds copies of the clips moved by `offset` seconds (see plan), as one undo step, and selects them. */
+function place(source: ClipboardContent, verb: 'Paste' | 'Duplicate', offset: number, onto?: Track): void {
+  const { commands, ids } = plan(editor.getProject(), source, offset, onto)
+  if (!dispatch(commands, { label: `${verb} ${clipCount(ids.length)}` })) return
+  selectClips(ids)
+  revealClips(ids)
+}
+
 /**
- * Adds copies of the clips moved by `offset` seconds, as one undo step, and selects them. The clips of each source
- * track go back on that track when it is unlocked and free over their span, else on a new track of the same kind and
- * name added above it.
+ * The edits that add copies of the clips moved by `offset` seconds, and where each source track's clips land. They go
+ * back on that track when it is unlocked and free over their span ('own'), else on a new track of the same kind and
+ * name added above it ('new'). `onto`, already checked by hereTrack, takes the clips of a single source track ('here').
  */
-function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplicate'): void {
-  const p = editor.getProject()
+function plan(
+  p: Project,
+  source: ClipboardContent,
+  offset: number,
+  onto?: Track,
+): { commands: EditCommand[]; ids: string[]; landings: ('here' | 'own' | 'new')[] } {
   const commands: EditCommand[] = source.assets
     .filter((a) => !p.assets[a.id])
     .map((asset) => ({ type: 'asset.add', asset }))
@@ -130,6 +185,7 @@ function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplic
   for (const c of source.clips) groups.set(c.trackId, [...(groups.get(c.trackId) ?? []), c])
   const tracks = [...p.tracks]
   const ids: string[] = []
+  const landings: ('here' | 'own' | 'new')[] = []
   for (const [trackId, group] of groups) {
     const start = Math.min(...group.map((c) => c.start)) + offset
     const end = Math.max(...group.map((c) => c.start + c.duration)) + offset
@@ -138,7 +194,8 @@ function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplic
       own &&
       !own.locked &&
       !clipsOnTrack(p, own.id).some((c) => c.start < end - EPS && c.start + c.duration > start + EPS)
-    let target = free ? own : undefined
+    let target = onto ?? (free ? own : undefined)
+    landings.push(onto ? 'here' : target ? 'own' : 'new')
     if (!target) {
       const like = own ?? source.tracks.find((t) => t.id === trackId)
       const kind = like?.kind ?? (group[0]?.type === 'audio' ? 'audio' : 'visual')
@@ -159,9 +216,7 @@ function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplic
       commands.push({ type: 'clip.add', clip: copy })
     }
   }
-  if (!dispatch(commands, { label: `${verb} ${clipCount(ids.length)}` })) return
-  selectClips(ids)
-  revealClips(ids)
+  return { commands, ids, landings }
 }
 
 /** "Video 2", "Video 3": a name the other tracks don't have, so a new track can be told apart in the headers. */
