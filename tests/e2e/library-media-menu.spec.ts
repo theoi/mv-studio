@@ -42,11 +42,16 @@ test('a Library card’s menu adds the file at the playhead, or removes it with 
     page.getByRole('tabpanel', { name: 'Inspector' }).getByText(name, { exact: true }),
   ).toBeVisible()
 
+  const next = await card.evaluate((el) => el.nextElementSibling?.getAttribute('aria-label') ?? null)
   await card.click({ button: 'right' })
   await menuItem('Remove from project').click()
   const toast = page.getByRole('status').filter({ hasText: `Removed “${name}” and its ${used + 1} clips` })
   await expect(toast).toBeVisible()
   await expect(card).toHaveCount(0)
+  // The card is gone, so focus moves to the next one; the Undo button names the file as it is spelled.
+  expect(next).toBeTruthy()
+  await expect(page.getByLabel(next as string, { exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: `Undo remove ${name}`, exact: true })).toBeVisible()
   expect(await clipsOf(page, name)).toBeNull()
   // The removed clip was selected, so the inspector shows the project again.
   await expect(
@@ -56,6 +61,15 @@ test('a Library card’s menu adds the file at the playhead, or removes it with 
   await toast.getByRole('button', { name: 'Undo' }).click()
   await expect(card).toBeVisible()
   expect(await clipsOf(page, name)).toHaveLength(used + 1)
+
+  // Removing the last card moves focus to the one before it.
+  const last = card.locator('xpath=../*[last()]')
+  const before = await last.evaluate((el) => el.previousElementSibling?.getAttribute('aria-label') ?? null)
+  expect(before).toBeTruthy()
+  await last.click({ button: 'right' })
+  await menuItem('Remove from project').click()
+  await expect(page.getByLabel(before as string, { exact: true })).toBeFocused()
+  await page.getByRole('button', { name: /^Undo remove / }).click()
 
   // With one of its clips on a locked track, the file can't be removed and the menu says why.
   await page.evaluate(

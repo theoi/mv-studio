@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { AudioWaveform, Image as ImageIcon, Music2, Plus, Sparkles, Trash2, Upload } from 'lucide-react'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../../ds/Feedback.tsx'
@@ -86,7 +86,7 @@ function libraryItems(project: Project): LibraryItem[] {
 const ANALYZING_NAMES = { analyzing: ', analyzing', waiting: ', waiting to be analyzed' } as const
 
 /** The card's right-click menu, made when it opens so the counts are current. */
-function MediaMenu({ asset }: { asset: Asset }) {
+function MediaMenu({ asset, onRemove }: { asset: Asset; onRemove: () => void }) {
   const project = useProject()
   const playhead = useUi((s) => s.playhead)
   const removal = mediaRemoval(project, asset.id)
@@ -111,7 +111,7 @@ function MediaMenu({ asset }: { asset: Asset }) {
               ? `Also removes ${plural(removal.clips, 'clip')} from the timeline`
               : undefined
         }
-        onSelect={() => removeMedia(asset.id)}
+        onSelect={onRemove}
       >
         Remove from project
       </ContextMenuItem>
@@ -123,11 +123,20 @@ function MediaCard({ item }: { item: LibraryItem }) {
   const thumb = useThumbnail(item.asset)
   const duration = item.type === 'image' ? undefined : item.asset.duration
   const analyzing = useClipAnalyzing(item.asset.id)
+  const card = useRef<HTMLDivElement>(null)
+  // The card is gone once its file is removed, so focus goes to the next card, else the previous one, else the panel.
+  const focusAfterRemove = useRef<HTMLElement | null>(null)
+  const remove = () => {
+    const el = card.current
+    const next = el?.nextElementSibling ?? el?.previousElementSibling ?? el?.closest('[role="tabpanel"]')
+    if (removeMedia(item.asset.id) && next instanceof HTMLElement) focusAfterRemove.current = next
+  }
   return (
     <ContextMenu>
       <Tooltip label={item.name} description={item.tags.length ? item.tags.join(' · ') : undefined}>
         <ContextMenuTrigger asChild>
           <div
+            ref={card}
             className={styles.card}
             draggable
             tabIndex={0}
@@ -176,8 +185,16 @@ function MediaCard({ item }: { item: LibraryItem }) {
           </div>
         </ContextMenuTrigger>
       </Tooltip>
-      <ContextMenuContent>
-        <MediaMenu asset={item.asset} />
+      <ContextMenuContent
+        onCloseAutoFocus={(e) => {
+          const target = focusAfterRemove.current
+          if (!target) return
+          focusAfterRemove.current = null
+          e.preventDefault()
+          target.focus()
+        }}
+      >
+        <MediaMenu asset={item.asset} onRemove={remove} />
       </ContextMenuContent>
     </ContextMenu>
   )

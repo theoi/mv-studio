@@ -510,20 +510,20 @@ export function mediaRemoval(project: Project, assetId: Id): { clips: number } |
 
 /**
  * Removes a file from the project with every clip that uses it, as one undo step. The song is not removed this way.
- * The stored file stays in the browser, so Undo can bring it back.
+ * The stored file stays in the browser, so Undo can bring it back. False when nothing was removed.
  */
-export function removeMedia(assetId: Id): void {
+export function removeMedia(assetId: Id): boolean {
   const project = editor.getProject()
   const asset = project.assets[assetId]
-  if (!asset || assetId === project.songAssetId) return
+  if (!asset || assetId === project.songAssetId) return false
   const removal = mediaRemoval(project, assetId)
   if ('why' in removal) {
     toast(`${removal.why}. Unlock it to remove this file.`)
-    return
+    return false
   }
   const name = asset.name.replace(/\.[^.]+$/, '')
   const label = `Remove ${name}`
-  if (!dispatch({ type: 'asset.remove', assetId }, { label })) return
+  if (!dispatch({ type: 'asset.remove', assetId }, { label })) return false
   const selection = get().selection
   if (selection.type === 'clip' && !editor.getProject().clips[selection.id])
     set({ selection: { type: 'none' } })
@@ -531,4 +531,5 @@ export function removeMedia(assetId: Id): void {
     `Removed “${name}”${removal.clips ? ` and its ${plural(removal.clips, 'clip')}` : ''}`,
     undoAction(label),
   )
+  return true
 }
