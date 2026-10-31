@@ -79,10 +79,11 @@ test('a short clip shows its name once a zoom makes it wide enough, and hides it
       document.querySelector('[data-timeline-scroller]')!.scrollLeft = 66 * v - 200
     }, pps)
   // 1.5 s is 45 px at 30 px/s, too narrow for a name, and 60 px at 40 px/s.
+  // Inner text: the name stays in the DOM and hides by the clip's width.
   await zoom(30)
-  await expect(label).toHaveText('')
+  await expect(label).toHaveText('', { useInnerText: true })
   await zoom(40)
-  await expect(label).toHaveText('Circle spectrum')
+  await expect(label).toHaveText('Circle spectrum', { useInnerText: true })
   await zoom(30)
-  await expect(label).toHaveText('')
+  await expect(label).toHaveText('', { useInnerText: true })
 })
