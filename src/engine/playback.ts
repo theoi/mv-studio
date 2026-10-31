@@ -100,15 +100,15 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     this.plain = plain
     this.plainSignature = plainSignature
     this.wantedSignature = signature
+    this.holdBuffers()
     // The cache is shared by every clock and export on this media source, so it is never cleared, only trimmed to
-    // what this project can play. That assumes every preview on the source shows the current project or a copy of it:
-    // a clock holding an unrelated project would evict the audio the others play. A stem that could not be decoded is
-    // forgotten once no stem is heard, so it is decoded again the next time (the app's stem failures follow this);
-    // decoded stems go STEM_RELEASE_MS after they were last heard.
+    // what this project can play, keeping what another clock plays. A stem that could not be decoded is forgotten
+    // once no stem is heard, so it is decoded again the next time (the app's stem failures follow this); decoded
+    // stems go STEM_RELEASE_MS after they were last heard.
     const used = new Set(wanted.map((c) => c.assetId))
     this.buffers.evict(
       (asset) =>
-        !project.assets[asset.id] ||
+        (!project.assets[asset.id] && !this.buffers.heldElsewhere(asset.id, this)) ||
         (!stems && asset.origin.type === 'stem' && !used.has(asset.id) && !!this.buffers.error(asset.id)),
     )
     this.timeReleases(project, used)
@@ -143,15 +143,13 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   }
 
   /**
-   * Drops a stem's decoded audio, unless it still plays (the mix that plays while newly heard stems decode). This clock
-   * decides alone although the cache is shared: that relies on every clock on the media source showing the current
-   * project's stem flags (the stills and VJ previews do). A clock that heard other stems would evict one another
-   * clock plays.
+   * Drops a stem's decoded audio, unless it still plays here (the mix that plays while newly heard stems decode) or in
+   * another clock on the same cache, whose stem flags may differ (a preview holding an older copy of the project).
    */
   private release(id: Id): void {
     this.releases.delete(id)
     if (this.wanted.some((c) => c.assetId === id)) return
-    if (this.clips.some((c) => c.assetId === id)) {
+    if (this.clips.some((c) => c.assetId === id) || this.buffers.heldElsewhere(id, this)) {
       this.timeRelease(id)
       return
     }
@@ -166,6 +164,11 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   onAudioError(listener: (error: JobError) => void): () => void {
     this.errorListeners.add(listener)
     return () => this.errorListeners.delete(listener)
+  }
+
+  /** Tells the shared cache what this clock plays or is about to: the wanted mix, its fallback and what is scheduled. */
+  private holdBuffers(): void {
+    this.buffers.hold(this, new Set([...this.wanted, ...this.plain, ...this.clips].map((c) => c.assetId)))
   }
 
   /** Chooses what to schedule from the decoded buffers, and reschedules while playing when that changed. */
@@ -191,6 +194,7 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     const key = `${audioSignature(clips)}|${clips.map((c) => loaded.has(c.assetId)).join()}`
     if (key === this.scheduledKey) return
     this.clips = clips
+    this.holdBuffers()
     this.clipsPlain = this.plainSignature
     this.scheduledKey = key
     this.switchMix()
@@ -406,6 +410,7 @@ export class WebAudioPlaybackClock implements PlaybackClock {
   dispose(): void {
     for (const timer of this.releases.values()) clearTimeout(timer)
     this.releases.clear()
+    this.buffers.hold(this, null)
     this.stopAudio()
     this.playState = 'stopped'
     void this.ctx?.close()

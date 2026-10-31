@@ -192,4 +192,40 @@ describe('WebAudioPlaybackClock', () => {
     clock.dispose()
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('never evicts what another clock on the same cache plays, even when its own project or stem flags differ', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        decodeAudioData() {
+          return Promise.resolve({ duration: 10 })
+        }
+      },
+    )
+    const media = { getFile: async (asset: Asset) => new Blob([asset.id]) }
+    // The editor's preview, and a preview still holding a copy of the project from before the vocals were soloed.
+    const editorClock = new WebAudioPlaybackClock(media)
+    const otherClock = new WebAudioPlaybackClock(media)
+    const cache = audioBufferCache(media)
+    const song = songProject('song')
+    otherClock.setProject(withStems(song))
+    editorClock.setProject(withStems(song, { vocals: { solo: true } }))
+    await vi.waitFor(() => expect(cache.loaded.has('stem-vocals')).toBe(true))
+    vi.advanceTimersByTime(STEM_RELEASE_MS)
+    expect(cache.loaded.has('stem-vocals')).toBe(true)
+    // Once no clock hears them, the vocals go a minute later.
+    editorClock.setProject(withStems(song))
+    vi.advanceTimersByTime(STEM_RELEASE_MS)
+    expect(cache.loaded.has('stem-vocals')).toBe(false)
+
+    // A clock switching to another project keeps the song another clock plays.
+    otherClock.setProject(songProject('other'))
+    expect(cache.loaded.has('song')).toBe(true)
+    // Once that clock is gone, the next change trims it.
+    editorClock.dispose()
+    otherClock.setProject(songProject('third'))
+    expect(cache.loaded.has('song')).toBe(false)
+    otherClock.dispose()
+  })
 })

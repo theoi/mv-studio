@@ -236,6 +236,8 @@ export class AudioBufferCache {
   private readonly entries = new Map<Id, CacheEntry>()
   private readonly ready = new Map<Id, AudioBuffer>()
   private readonly failures = new Map<Id, JobError>()
+  /** The assets each playback clock on this cache plays or is about to, so another clock never evicts them. */
+  private readonly holds = new Map<object, ReadonlySet<Id>>()
   private readonly media: MediaFileSource
   private readonly decode: AudioDecodeFunction
 
@@ -302,6 +304,18 @@ export class AudioBufferCache {
   /** Why the asset's audio could not be decoded, if its last decode failed. */
   error(assetId: Id): JobError | undefined {
     return this.failures.get(assetId)
+  }
+
+  /** Records the assets `holder` plays or is about to play; null when it plays nothing anymore. */
+  hold(holder: object, ids: ReadonlySet<Id> | null): void {
+    if (ids) this.holds.set(holder, ids)
+    else this.holds.delete(holder)
+  }
+
+  /** Whether a holder other than `except` plays the asset or is about to. */
+  heldElsewhere(id: Id, except: object): boolean {
+    for (const [holder, ids] of this.holds) if (holder !== except && ids.has(id)) return true
+    return false
   }
 
   /** Forgets the assets that match, decoded, decoding or failed. */
