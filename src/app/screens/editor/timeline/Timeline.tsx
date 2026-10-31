@@ -866,6 +866,58 @@ function KeyframeMarks({
   )
 }
 
+/** How close to the timeline's left or right edge a drag scrolls it, and how fast at the edge (px per second). */
+const EDGE_ZONE = 40
+const EDGE_SPEED = 1000
+
+/**
+ * Scrolls the timeline while a drag holds the pointer near its left or right edge, and calls `onScroll` after each
+ * step so the drag follows the content that moved under the pointer. A drag that starts in the zone scrolls only once
+ * the pointer has left it, so pressing near an edge doesn't scroll by itself.
+ */
+function edgeScroll(el: HTMLElement, onScroll: () => void) {
+  let x = 0
+  let armed = false
+  let frame = 0
+  let then = 0
+  const speed = () => {
+    const r = el.getBoundingClientRect()
+    const left = r.left + HEADER_W + EDGE_ZONE
+    const right = r.left + el.clientWidth - EDGE_ZONE
+    if (x < left) return -EDGE_SPEED * Math.min(1, (left - x) / EDGE_ZONE)
+    if (x > right) return EDGE_SPEED * Math.min(1, (x - right) / EDGE_ZONE)
+    return 0
+  }
+  const step = (now: number) => {
+    frame = 0
+    const v = speed()
+    if (!armed || !v) return
+    // By the time since the last step, not per frame: frame rates differ between displays.
+    const dt = then ? Math.min(0.05, (now - then) / 1000) : 1 / 60
+    then = now
+    const before = el.scrollLeft
+    el.scrollLeft = before + v * dt
+    if (el.scrollLeft === before) return
+    // Before onScroll, which may call follow() again and must not start a second loop.
+    frame = requestAnimationFrame(step)
+    onScroll()
+  }
+  return {
+    follow(clientX: number) {
+      x = clientX
+      armed ||= speed() === 0
+      if (!frame) {
+        then = 0
+        frame = requestAnimationFrame(step)
+      }
+    },
+    stop() {
+      cancelAnimationFrame(frame)
+      frame = 0
+    },
+  }
+}
+
 interface ClipBlockProps {
   clip: ClipView
   pps: number
@@ -1714,10 +1766,17 @@ export function Timeline() {
       let refused: DropRefusal | null = null
       const target = e.currentTarget as HTMLElement
       target.setPointerCapture(e.pointerId)
+      const scroller = scrollRef.current
+      const scroll0 = scroller?.scrollLeft ?? 0
+      let last: PointerEvent | null = null
+      const edge = scroller && mode === 'move' ? edgeScroll(scroller, () => last && move(last)) : null
       const move = (ev: PointerEvent) => {
-        const dx = ev.clientX - x0
-        if (!moved && Math.hypot(dx, ev.clientY - y0) < 3) return
+        last = ev
+        // The timeline may have scrolled under the pointer since the drag started.
+        const dx = ev.clientX - x0 + (scroller ? scroller.scrollLeft - scroll0 : 0)
+        if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return
         moved = true
+        edge?.follow(ev.clientX)
         const scale = get().pxPerSec
         const dt = dx / scale
         if (mode === 'move') {
@@ -1809,6 +1868,7 @@ export function Timeline() {
         }
       }
       const finish = () => {
+        edge?.stop()
         if (refused) setRefusedDrop(null)
         if (rows.length) setFrozenKinds(null)
         setSnapLine(null)
@@ -1955,13 +2015,16 @@ export function Timeline() {
       shown = key
       selectTimelineClips(p, ids)
     }
+    const edge = scrollRef.current ? edgeScroll(scrollRef.current, update) : null
     const move = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return
       moved = true
       pointer = { x: ev.clientX, y: ev.clientY }
       frame ||= requestAnimationFrame(update)
+      edge?.follow(ev.clientX)
     }
     const end = () => {
+      edge?.stop()
       cancelAnimationFrame(frame)
       box.hidden = true
       lane.removeEventListener('pointermove', move)
@@ -2518,12 +2581,17 @@ export function Timeline() {
               key={i}
               className={styles.refusedDrop}
               style={{
-                transform: `translate(${HEADER_W + b.start * pps}px, ${b.top + 3}px)`,
+                left: HEADER_W + b.start * pps,
+                top: b.top + 3,
                 width: b.duration * pps,
                 height: b.height - 6,
               }}
             >
-              {i === refusedDrop.labelAt && <span className={styles.refusedLabel}>{refusedDrop.label}</span>}
+              {i === refusedDrop.labelAt && (
+                <span className={styles.refusedLabel} style={{ left: HEADER_W + 3 }}>
+                  <span className={styles.refusedText}>{refusedDrop.label}</span>
+                </span>
+              )}
             </div>
           ))}
           <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />

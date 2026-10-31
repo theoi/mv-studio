@@ -1071,11 +1071,10 @@
   text-overflow: ellipsis;
 }
 
-/* A clip drag that can't drop where the pointer is: an outline where it would go, with the reason. */
+/* A clip drag that can't drop where the pointer is: an outline where it would go, with the reason. Placed with left and
+   top, not a transform, so its label can stick (sticky offsets ignore transforms). */
 .refusedDrop {
   position: absolute;
-  top: 0;
-  left: 0;
   z-index: 4;
   border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
@@ -1083,13 +1082,23 @@
   pointer-events: none;
 }
 
+/* Sticks to the left edge of the lanes (its left is set inline) within the outline, so an outline that starts off
+   screen (a look over the whole song) keeps its reason in view, as clip names do. */
+.refusedLabel {
+  position: sticky;
+  z-index: 1;
+  display: block;
+  width: max-content;
+  height: 100%;
+  margin: 0 3px;
+  container-type: scroll-state;
+}
+
 /* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Across
    the lane's top edge, between the clip rows, so it covers no clip names. */
-.refusedLabel {
-  position: absolute;
-  top: -3px;
-  left: 3px;
-  z-index: 1;
+.refusedText {
+  position: relative;
+  display: block;
   padding: 1px var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--bg-overlay);
@@ -1097,7 +1106,18 @@
   color: var(--danger-text);
   font-size: var(--text-xs);
   white-space: nowrap;
-  transform: translateY(-50%);
+  transform: translateY(calc(-50% - 3px));
+}
+
+/* Stuck at the left edge, where the lane above may have a name stuck too: inside the outline instead, short enough for
+   the outline of a look lane. */
+@container scroll-state(stuck: left) {
+  .refusedText {
+    top: 50%;
+    padding-block: 0;
+    line-height: 14px;
+    transform: translateY(-50%);
+  }
 }
 
 .content[data-refused],

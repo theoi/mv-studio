@@ -152,8 +152,12 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
 }) => {
   await openEditor(page)
   await page.keyboard.press('n')
+  // An empty track below Video, where a look would no longer grade the picture.
   await page.evaluate(() =>
-    window.mvStudio.app.project.dispatch({ type: 'clip.move', moves: [{ clipId: 'o-spec1', start: 69 }] }),
+    window.mvStudio.app.project.dispatch([
+      { type: 'clip.move', moves: [{ clipId: 'o-spec1', start: 69 }] },
+      { type: 'track.add', track: window.mvStudio.model.createTrack('visual', 'Empty'), index: 4 },
+    ]),
   )
   const id: string = await page.evaluate(
     () =>
@@ -172,6 +176,7 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   const from = await center(singer)
   const lookY = (await center(look)).y
   const overlayY = (await center(spectrum)).y
+  const emptyY = (await center(page.getByRole('button', { name: 'Move the Empty track' }))).y
   const before = await placed(page, id)
   const lookBefore = await placed(page, 'c-look')
   const startLabel = await undoLabel(page)
@@ -185,13 +190,19 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   await expect(page.getByText("Video clips can't go on the Look track.")).toHaveCount(1)
   expect(await placed(page, id)).toEqual(before)
 
-  // The look onto the Overlay track, which holds other clips.
+  // The look onto the Overlay track, which holds other clips, and onto the empty track.
   await page.mouse.move(from.x, lookY)
   await page.mouse.down()
   await page.mouse.move(from.x, overlayY, { steps: 8 })
-  await expect(page.getByText('Visual clips only', { exact: true })).toBeVisible()
+  await expect(page.getByText('No looks here', { exact: true })).toBeVisible()
   await page.mouse.up()
   await expect(page.getByText("Look clips can't go on the Overlay track.")).toHaveCount(1)
+  await page.mouse.move(from.x, lookY)
+  await page.mouse.down()
+  await page.mouse.move(from.x, emptyY, { steps: 12 })
+  await expect(page.getByText('No looks here', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await expect(page.getByText("Look clips can't go on the Empty track.")).toHaveCount(1)
   expect(await placed(page, 'c-look')).toEqual(lookBefore)
   expect(await undoLabel(page)).toBe(startLabel)
 
@@ -204,9 +215,13 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   await page.mouse.move(from.x, overlayY, { steps: 8 })
   const label = page.getByText('Looks only', { exact: true })
   await expect(label).toBeVisible()
-  const outline = (await label.locator('..').boundingBox())!
+  const outline = (await label.locator('../..').boundingBox())!
   const bars = (await spectrum.boundingBox())!
   expect(Math.abs(outline.x - bars.x)).toBeLessThan(2)
+  // Its outline starts in view, so the label crosses the lane's top edge.
+  const across = (await label.boundingBox())!
+  expect(across.y).toBeLessThan(outline.y)
+  expect(across.y + across.height).toBeGreaterThan(outline.y)
   await page.keyboard.press('Escape')
   await expect(label).toBeHidden()
   await expect(content).not.toHaveAttribute('data-refused')
@@ -229,4 +244,37 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   expect(await placed(page, id)).toEqual(before)
   expect(await undoLabel(page)).toBe(startLabel)
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().selection)).toEqual({ type: 'clip', id })
+})
+
+test('a refusal label stays in view at the left of the lanes, inside its outline, when the outline starts off screen', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openEditor(page)
+  const look = page.getByRole('button', { name: /^Neon night\b.*, 0:00\.0 to / })
+  const spectrum = page.getByRole('button', { name: /^Spectrum bars, 1:04\.0 to / })
+  const scroller = (await page.locator('[data-timeline-scroller]').boundingBox())!
+  // Where the lanes start, right of the track headers (HEADER_W).
+  const lanesLeft = scroller.x + 148
+  // The look spans the whole song: in this view it starts well left of the lanes, under the track headers.
+  const lookBox = (await look.boundingBox())!
+  expect(lookBox.x).toBeLessThan(lanesLeft - 100)
+  const from = { x: lanesLeft + 300, y: lookBox.y + lookBox.height / 2 }
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x, (await center(spectrum)).y, { steps: 8 })
+  const label = page.getByText('No looks here', { exact: true })
+  await expect(label).toBeVisible()
+  const pill = (await label.boundingBox())!
+  const outline = (await label.locator('../..').boundingBox())!
+  expect(outline.x).toBeLessThan(lanesLeft)
+  expect(pill.x).toBeGreaterThanOrEqual(lanesLeft)
+  expect(pill.x + pill.width).toBeLessThanOrEqual(
+    Math.min(scroller.x + scroller.width, outline.x + outline.width),
+  )
+  // Inside the outline, off the Look lane above, where the look's own name sticks to the same edge.
+  expect(pill.y).toBeGreaterThanOrEqual(outline.y)
+  expect(pill.y + pill.height).toBeLessThanOrEqual(outline.y + outline.height)
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
 })

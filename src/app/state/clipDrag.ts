@@ -20,8 +20,8 @@ export function isLyricsTrack(p: Project, t: Track): boolean {
 
 const isLyricClip = (c: Clip) => c.type === 'text' && !!c.lyricLineId
 
-/** What a track takes, when it refuses a clip for its kind. */
-export type TrackTakes = 'audio' | 'visual' | 'lyrics' | 'looks'
+/** What a track takes, when it refuses a clip for its kind; `non-looks` is any track but a look lane, refusing a look. */
+export type TrackTakes = 'audio' | 'visual' | 'lyrics' | 'looks' | 'non-looks'
 
 export type DropRefusal =
   | { reason: 'room' }
@@ -29,10 +29,10 @@ export type DropRefusal =
   | { reason: 'kind'; clip: Clip; track: Track; takes: TrackTakes }
 
 /**
- * Why a clip can't move to a track, or null when it can. As paste does: a locked track takes nothing, audio and visual
- * tracks take only their own kind, the Lyrics track takes only lyric lines, and a look lane takes only looks while
- * looks go only on look lanes (or an empty track). `moving` are the clips dragged with it, which don't count as
- * staying on the track.
+ * Why a clip can't move to a track, or null when it can. As paste does: a locked track takes nothing, a look goes only
+ * on a look lane (a track holding only looks; not an empty track, where it would stop grading the picture below it),
+ * audio and visual tracks take only their own kind, the Lyrics track takes only lyric lines, and a look lane takes only
+ * looks. `moving` are the clips dragged with it, which don't count as staying on the track.
  */
 export function refuseTrack(
   p: Project,
@@ -43,15 +43,14 @@ export function refuseTrack(
   if (track.locked) return { reason: 'locked', track }
   if (clip.trackId === track.id) return null
   const refuse = (takes: TrackTakes): DropRefusal => ({ reason: 'kind', clip, track, takes })
+  const staying = clipsOnTrack(p, track.id).filter((c) => !moving.has(c.id))
+  const lookLane = track.kind === 'visual' && staying.length > 0 && staying.every(isLookClip)
+  if (isLookClip(clip)) return lookLane ? null : refuse('non-looks')
   if (track.kind === 'audio') return clip.type === 'audio' ? null : refuse('audio')
   if (clip.type === 'audio') return refuse('visual')
-  const staying = clipsOnTrack(p, track.id).filter((c) => !moving.has(c.id))
   if (isLyricsTrack(p, track) || (staying.length > 0 && staying.every(isLyricClip)))
     return isLyricClip(clip) ? null : refuse('lyrics')
-  if (!staying.length) return null
-  const lookLane = staying.every(isLookClip)
-  if (lookLane !== isLookClip(clip)) return refuse(lookLane ? 'looks' : 'visual')
-  return null
+  return lookLane ? refuse('looks') : null
 }
 
 const kindNames: Record<ClipKindView, string> = {
@@ -74,6 +73,7 @@ const takesLabels: Record<TrackTakes, string> = {
   visual: 'Visual clips only',
   lyrics: 'Lyric lines only',
   looks: 'Looks only',
+  'non-looks': 'No looks here',
 }
 
 /** The label in the drop preview: for a kind, what the track takes. */
