@@ -202,6 +202,10 @@ test('a visualizer with the sample song uses the chosen style and opens on its v
   expect(project.generators).toContain('visualizer.particles')
   expect(project.generators).not.toContain('visualizer.spectrum')
   expect(project.selected).toBe('visualizer.particles')
+  // Template clips are named after their plugin, never by its id.
+  await expect(page.getByRole('button', { name: /^Particles, \d/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Nebula, \d/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^(visualizer|generator)\./ })).toHaveCount(0)
 })
 
 test('a lyric video with the sample song gets its timed lyrics', async ({ page }) => {
@@ -295,6 +299,9 @@ test('a file that is not audio is refused as the song, and Skip for now opens th
   const guide = page.getByRole('dialog', { name: 'Getting started guide' })
   await expect(guide.getByText('Add anything')).toBeVisible()
   await expect(guide.getByText('1 of 3')).toBeVisible()
+  // Enter presses the focused Next once: one step, not two.
+  await page.keyboard.press('Enter')
+  await expect(guide.getByText('2 of 3')).toBeVisible()
   await guide.getByRole('button', { name: 'Skip' }).click()
   await expect(page.getByText('Start with a song')).toBeVisible()
   const project = await opened(page)

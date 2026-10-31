@@ -16,6 +16,7 @@ import {
   type SongSection,
 } from '../../model/index.ts'
 import { directorMeta } from '../../director/meta.ts'
+import { pluginRegistry } from '../../engine/registry.ts'
 import { TRACK_IDS, buildDemoProject, sceneOf } from '../mock/demoProject.ts'
 import type { SceneId } from '../mock/art.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
@@ -219,7 +220,11 @@ export function viewOf(p: Project, c: Clip): ClipView {
         ? { ...base, kind: 'lyric', name: c.text, lyricLineId: c.lyricLineId }
         : { ...base, kind: 'text', name: c.name ?? c.text }
     case 'generator':
-      return { ...base, kind: 'visualizer', name: c.name ?? c.generatorId }
+      return {
+        ...base,
+        kind: 'visualizer',
+        name: c.name ?? pluginRegistry.get(c.generatorId)?.name ?? 'Visual',
+      }
     case 'audio':
       return { ...base, kind: 'audio', name: c.name ?? p.assets[c.assetId]?.name ?? 'Audio' }
     case 'adjustment':

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { AudioWaveform } from 'lucide-react'
 import type { Clip } from '../../../../model/index.ts'
+import { pluginRegistry } from '../../../../engine/registry.ts'
 import {
   AnimateButtons,
   ColorField,
@@ -26,7 +27,7 @@ export function GeneratorInspector({ clip }: { clip: Extract<Clip, { type: 'gene
     <>
       <Header
         icon={<AudioWaveform />}
-        title={clip.name ?? clip.generatorId}
+        title={clip.name ?? pluginRegistry.get(clip.generatorId)?.name ?? 'Visual'}
         meta={`Visualizer · ${formatTime(clip.start)} – ${formatTime(clip.start + clip.duration)}`}
       />
       <Section title="Reacts to">

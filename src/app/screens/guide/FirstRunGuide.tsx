@@ -55,7 +55,10 @@ export function FirstRunGuide() {
     if (step === null) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') set({ guideStep: null })
-      if (e.key === 'Enter' || e.key === 'ArrowRight') set({ guideStep: step + 1 < count ? step + 1 : null })
+      // Enter on the focused Next or Skip presses it; advancing here as well would skip a step.
+      const pressesButton = e.key === 'Enter' && e.target instanceof HTMLButtonElement
+      if ((e.key === 'Enter' && !pressesButton) || e.key === 'ArrowRight')
+        set({ guideStep: step + 1 < count ? step + 1 : null })
       if (e.key === 'ArrowLeft' && step > 0) set({ guideStep: step - 1 })
     }
     window.addEventListener('keydown', onKey)
