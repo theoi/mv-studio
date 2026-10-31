@@ -103,9 +103,10 @@ describe('vision service', () => {
     }
     /**
      * A cache holding one person track whose report is replaced by `stale`, without a version or with `version`, and
-     * without detected people when `withPeople` is false (a file written before people detection).
+     * without detected people when `withPeople` is false (a file written before people detection), and without pop
+     * shares when `withPops` is false (written before they were measured).
      */
-    const storedWithReport = async (version?: number, withPeople = true) => {
+    const storedWithReport = async (version?: number, withPeople = true, withPops = true) => {
       const cache = createMemoryCache()
       const { source } = fakeSource({ duration: 2, frameRate: 10 })
       let key = ''
@@ -120,11 +121,13 @@ describe('vision service', () => {
       await setup(spy).service.personTrack(source)
       const { meta, chunks } = await decodeContainer<Record<string, unknown>>((await cache.get(key))!)
       const { suitabilityVersion: _, people, ...rest } = meta
+      const { pops: __, ...track } = rest.track as Record<string, unknown>
       await cache.put(
         key,
         await encodeContainer(
           {
             ...rest,
+            ...(withPops ? {} : { track }),
             suitability: stale,
             ...(version ? { suitabilityVersion: version } : {}),
             ...(withPeople ? { people } : {}),
@@ -163,6 +166,22 @@ describe('vision service', () => {
       expect(meta.people).toEqual(judged.people)
       const later = setup(cache)
       expect((await later.service.personTrack(source)).suitability).toEqual(judged.suitability)
+      expect(later.seg.calls).toEqual([])
+    })
+
+    it('measures the pops of a track stored before they were kept, from every frame, and writes them back', async () => {
+      const { cache, source, storedMeta } = await storedWithReport(undefined, true, false)
+      const old = setup(cache)
+      const judged = await old.service.personTrack(source)
+      expect(count(old.seg.calls, 'beginTrack')).toBe(0)
+      expect(old.seg.analyzed).toHaveLength(20)
+      expect(old.seg.analyzed.every((a) => a.gray && !a.people && !a.mask)).toBe(true)
+      expect(judged.suitability).toMatchObject({ verdict: 'good', stability: 1 })
+      const meta = await storedMeta()
+      expect(meta.suitabilityVersion).toBe(SUITABILITY_VERSION)
+      expect((meta.track as { pops: number[] }).pops).toHaveLength(20)
+      const later = setup(cache)
+      await later.service.personTrack(source)
       expect(later.seg.calls).toEqual([])
     })
 

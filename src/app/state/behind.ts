@@ -76,6 +76,11 @@ export interface CutoutResult {
    * offer is not followed by a silent skip.
    */
   refused?: Array<{ assetId: Id; name: string; why: string }>
+  /**
+   * Clips cut out although the person track found that their cutout flickers, with why. Only the track can measure
+   * flicker, so the check could not warn before the cutout.
+   */
+  flickers?: Array<{ assetId: Id; name: string; why: string }>
   label: string
   /** Set when the cutout follows a picked object. */
   object?: ObjectPick
@@ -126,6 +131,13 @@ export function suitabilityText(s: Suitability): { status: string; why?: string;
       const reason = first ? REASONS[first] : undefined
       if (s.verdict === 'good') return { status: 'Person found', ok: true }
       if (s.verdict === 'marginal') {
+        // Flicker alone makes a shot marginal with a person in all of it, so "works in parts" would be wrong.
+        if (first === 'unstable-mask')
+          return {
+            status: 'Person found',
+            why: 'The cutout flickers in places, so the lyrics can blink around the person for a moment.',
+            ok: true,
+          }
         const partly = first ? (MARGINAL_REASONS[first] ?? reason) : undefined
         return {
           status: 'Person found',
@@ -449,6 +461,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
       }
       const newMasks = new Map<Id, Asset>()
       const refused: NonNullable<CutoutResult['refused']> = []
+      const flickers: NonNullable<CutoutResult['flickers']> = []
       if (needMask.size) {
         const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
         const assets = [...needMask.values()]
@@ -464,15 +477,14 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
             })
             const check = fromReport(person.suitability)
             setCheck(asset.id, check)
+            const { status, why } = suitabilityText(check)
+            const name = asset.name.replace(/\.[^.]+$/, '')
             if (person.suitability.verdict === 'unsuitable') {
-              const { status, why } = suitabilityText(check)
-              refused.push({
-                assetId: asset.id,
-                name: asset.name.replace(/\.[^.]+$/, ''),
-                why: why ?? status,
-              })
+              refused.push({ assetId: asset.id, name, why: why ?? status })
               continue
             }
+            if (person.suitability.reasons[0] === 'unstable-mask' && why)
+              flickers.push({ assetId: asset.id, name, why })
             const blob = await v.encodeMaskVideo(person.track, {
               duration: asset.duration ?? source.duration,
               signal: ctx.signal,
@@ -495,6 +507,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
         count,
         skipped: clipIds.length - count,
         ...(refused.length ? { refused } : {}),
+        ...(flickers.length ? { flickers } : {}),
         label: CUTOUT_LABEL,
       }
       if (count && !dispatch(commands, { label: CUTOUT_LABEL }))

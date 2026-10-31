@@ -26,7 +26,7 @@ import type { TaskOptions } from './runtime/tasks.ts'
 import { SUITABILITY_VERSION, type PeopleAt } from './mask/suitability.ts'
 import {
   buildPersonTrack,
-  findTrackPeople,
+  findTrackEvidence,
   personTrackParams,
   PERSON_TRACK_VERSION,
   trackSuitability,
@@ -185,7 +185,10 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
     const people = meta.people ?? null
     return {
       track: { meta: meta.track, packed: chunks.map((c) => c.slice()) },
-      suitability: meta.suitabilityVersion === SUITABILITY_VERSION && people ? meta.suitability : null,
+      suitability:
+        meta.suitabilityVersion === SUITABILITY_VERSION && people && meta.track.pops
+          ? meta.suitability
+          : null,
       observations: meta.observations,
       hqFrames: meta.hqFrames,
       people,
@@ -205,9 +208,9 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
     )
   /**
    * The stored track with a current report. A report from older criteria is judged again from the stored masks, after
-   * a detection-only pass when the track predates people detection, and written back, so this runs once per entry
-   * (judging a long track takes about a second on the main thread). It runs outside the cache read, so a failed model
-   * download does not discard the stored masks.
+   * a pass over the frames for what the track predates (people detection, pop shares), and written back, so this
+   * runs once per entry (judging a long track takes about a second on the main thread). It runs outside the cache
+   * read, so a failed model download does not discard the stored masks.
    */
   const currentPerson = (
     key: string,
@@ -216,21 +219,31 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
     o: PersonTrackOptions,
   ): Promise<PersonTrackResult> => {
     const { suitability, people } = stored
-    if (suitability && people) return Promise.resolve({ ...stored, suitability, people })
+    const stalePops = !stored.track.meta.pops
+    if (suitability && people && !stalePops) return Promise.resolve({ ...stored, suitability, people })
     const { signal, onProgress } = o
     return shared(
       `${key}:judge`,
       async (task) => {
         const found =
-          people ??
-          (await findTrackPeople(backends.segmentation('background'), source, stored.track.meta, {
-            ...task,
-            ...(o.peopleFps ? { peopleFps: o.peopleFps } : {}),
-          }))
+          people && !stalePops
+            ? {}
+            : await findTrackEvidence(
+                backends.segmentation('background'),
+                source,
+                stored.track,
+                { people: !people, pops: stalePops },
+                { ...task, ...(o.peopleFps ? { peopleFps: o.peopleFps } : {}) },
+              )
+        const track = found.pops
+          ? { ...stored.track, meta: { ...stored.track.meta, pops: found.pops } }
+          : stored.track
+        const withPeople = people ?? found.people ?? []
         const result = {
           ...stored,
-          people: found,
-          suitability: trackSuitability(stored.track, found, o.suitability),
+          track,
+          people: withPeople,
+          suitability: trackSuitability(track, withPeople, o.suitability),
         }
         await store(key, await encodePerson(result))
         return result

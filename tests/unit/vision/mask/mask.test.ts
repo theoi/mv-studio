@@ -19,6 +19,7 @@ import {
   assessSuitability,
   keepPeople,
   peopleNear,
+  POP_MIN_SHARE,
 } from '../../../../src/vision/mask/suitability.ts'
 import {
   appendFrame,
@@ -206,35 +207,41 @@ describe('suitability', () => {
     expect(assessSuitability([], 1).verdict).toBe('unsuitable')
   })
 
-  it('flags a mask that jumps back and forth for single frames as unstable', () => {
-    const narrow = rectMask(W, H, 25, 6, 35, 36)
-    const samples = Array.from({ length: 8 }, (_, i) => ({
-      t: i * 0.2,
-      prev: narrow,
-      mask: big,
-      next: narrow,
-    }))
-    const r = assessSuitability(samples, 0.2)
-    expect(r.stability!).toBeCloseTo(0.5, 2)
-    expect(r.reasons).toContain('unstable-mask')
-    expect(r.verdict).not.toBe('good')
+  it('measures stability as the share of frames without a visible pop, and flags a cutout that pops often', () => {
+    const samples = Array.from({ length: 8 }, (_, i) => ({ t: i * 0.2, mask: big }))
+    // 40 frames; every 5th pops by 8 % of the subject, the rest by a little.
+    const often = Array.from({ length: 40 }, (_, i) => (i % 5 ? 0.01 : 0.08))
+    const r = assessSuitability(samples, 0.2, {}, undefined, often)
+    expect(r.stability).toBeCloseTo(0.8, 6)
+    expect(r).toMatchObject({ verdict: 'marginal', reasons: ['unstable-mask'] })
+    const calm = assessSuitability(
+      samples,
+      0.2,
+      {},
+      undefined,
+      often.map(() => POP_MIN_SHARE - 0.001),
+    )
+    expect(calm).toMatchObject({ verdict: 'good', stability: 1 })
   })
 
-  it('does not count movement or a changing pose as flicker', () => {
-    // Frame k: the subject has moved 2 px and grown 1 px; samples are 5 frames apart, each with its neighbours.
-    const pose = (k: number) => rectMask(160, H, 4 + 2 * k, 6, 4 + 2 * k + 10 + k, H)
-    const samples = Array.from({ length: 8 }, (_, i) => ({
-      t: i * 0.2,
-      prev: pose(5 * i - 1),
-      mask: pose(5 * i),
-      next: pose(5 * i + 1),
-    }))
-    const r = assessSuitability(samples, 0.2)
-    expect(r.stability).toBe(1)
-    expect(r.verdict).toBe('good')
+  it('names flicker first when it alone keeps a shot from good, after the frame reasons otherwise', () => {
+    const popping = Array.from({ length: 50 }, (_, i) => (i % 4 ? 0 : 0.2))
+    const at = (masks: Mask[]) => masks.map((mask, i) => ({ t: i * 0.2, mask }))
+    // 9 of 10 frames usable: good without the flicker.
+    const mostly = assessSuitability(at([...Array(9).fill(big), tiny]), 0.2, {}, undefined, popping)
+    expect(mostly).toMatchObject({ verdict: 'marginal', reasons: ['unstable-mask', 'subject-too-small'] })
+    // About half the frames usable: marginal anyway, because of the small subject.
+    const half = assessSuitability(
+      at([...Array(8).fill(big), ...Array(7).fill(tiny)]),
+      0.2,
+      {},
+      undefined,
+      popping,
+    )
+    expect(half).toMatchObject({ verdict: 'marginal', reasons: ['subject-too-small', 'unstable-mask'] })
   })
 
-  it('does not judge stability from samples without their neighbouring frames', () => {
+  it('leaves stability to the person track, which measures pops on every frame', () => {
     const narrow = rectMask(W, H, 25, 6, 35, 36)
     const r = assessSuitability(
       Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask: i % 2 ? big : narrow })),
