@@ -8,7 +8,7 @@ import {
   type Project,
   type TextClip,
 } from '../../../src/model/index.ts'
-import { lyricsCommands } from '../../../src/app/state/lyrics.ts'
+import { lyricsCommands, lyricsCost } from '../../../src/app/state/lyrics.ts'
 
 const doc: LyricsDoc = {
   source: 'pasted',
@@ -85,4 +85,9 @@ it('a locked lyric track is left alone and the new clips go on a new track', () 
   const clips = lyricClips(editor.getProject())
   expect(clips.filter((c) => c.trackId === trackId).map((c) => c.lyricLineId)).toEqual(['old-1'])
   expect(clips.filter((c) => c.trackId !== trackId)).toHaveLength(2)
+})
+
+it('rounds the time of timing that separates the vocals up, like the stems estimate it includes', () => {
+  const cost = lyricsCost({ separatesStems: true, downloads: [], downloadBytes: 0, seconds: 389 })
+  expect(cost.text).toBe('Separates the vocals first · about 7 min on this device')
 })
