@@ -26,6 +26,10 @@ it.each([
 it.each([
   ['chorus', 0.4, 'Chorus', 'Probably the chorus'],
   ['verse', 0.4, 'Verse', 'Probably a verse'],
+  ['verse 2', 0.4, 'Verse 2', 'Probably a verse'],
+  ['bridge', 0.4, 'Bridge', 'Probably the bridge'],
+  ['pre-chorus', 0.3, 'Pre-chorus', 'Probably the pre-chorus'],
+  ['outro', 0.4, 'Outro', 'Probably the outro'],
   ['chorus', 0.8, 'Chorus', undefined],
   ['Chorus', undefined, 'Chorus', undefined],
   ['drop', 1, 'drop', undefined],
