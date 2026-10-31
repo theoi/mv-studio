@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { prefs } from './prefs.ts'
 
 /*
  * UI-only state: which screen, panel, dialog and selection is showing, plus view settings such as zoom. Project
@@ -91,7 +92,7 @@ export const initialUi: UiState = {
   starting: false,
   pxPerSec: 12,
   snap: true,
-  beatSnap: true,
+  beatSnap: prefs().beatSnap,
   showEnergy: true,
   review: true,
   dismissed: [],

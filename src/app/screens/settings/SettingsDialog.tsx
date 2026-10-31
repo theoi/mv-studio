@@ -12,9 +12,14 @@ import {
   Pencil,
   Settings2,
   Disc3,
-  Trash2,
 } from 'lucide-react'
-import { detectCapabilities, type RuntimeCapabilities } from '../../../shared/capabilities.ts'
+import {
+  detectCapabilities,
+  loadThreadLimit,
+  saveThreadLimit,
+  wasmThreadCount,
+  type RuntimeCapabilities,
+} from '../../../shared/capabilities.ts'
 import { Dialog } from '../../ds/Dialog.tsx'
 import { Button } from '../../ds/Button.tsx'
 import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
@@ -44,9 +49,12 @@ import {
   type LlmChoice,
 } from '../../state/cloud.ts'
 import { LOCAL_MODELS, clearModels, refreshModels, useModels } from '../../state/models.ts'
+import { setPref, usePrefs } from '../../state/prefs.ts'
 import { set, toast, useUi, type SettingsPage } from '../../state/ui.ts'
 import { setVjQuantize, vjMidiDevices, vjSettings } from '../../state/vj.ts'
 import styles from './SettingsDialog.module.css'
+
+const NOTICES_URL = 'https://github.com/theoi/mv-studio/blob/main/THIRD_PARTY_NOTICES.md'
 
 const pages: { id: SettingsPage; label: string; icon: ReactNode }[] = [
   { id: 'general', label: 'General', icon: <Settings2 /> },
@@ -455,8 +463,9 @@ function AiPage() {
   )
 }
 function GeneralPage() {
-  const [suggest, setSuggest] = useState(true)
-  const [motion, setMotion] = useState(false)
+  const suggest = usePrefs((p) => p.suggestions)
+  const motion = usePrefs((p) => p.reduceMotion)
+  const fps = usePrefs((p) => p.defaultFps)
   return (
     <>
       <Row title="Autosave" desc="Projects save to this browser automatically.">
@@ -475,15 +484,23 @@ function GeneralPage() {
         title="Inline suggestions"
         desc="Quiet hints next to sections, lyric lines and clips. At most one at a time."
       >
-        <Switch checked={suggest} onCheckedChange={setSuggest} ariaLabel="Inline suggestions" />
+        <Switch
+          checked={suggest}
+          onCheckedChange={(v) => setPref('suggestions', v)}
+          ariaLabel="Inline suggestions"
+        />
       </Row>
       <Row title="Reduce motion" desc="Turns off interface animations. Your video is not affected.">
-        <Switch checked={motion} onCheckedChange={setMotion} ariaLabel="Reduce motion" />
+        <Switch
+          checked={motion}
+          onCheckedChange={(v) => setPref('reduceMotion', v)}
+          ariaLabel="Reduce motion"
+        />
       </Row>
-      <Row title="Default frame rate">
+      <Row title="Default frame rate" desc="For new projects. Change a project's own rate in the inspector.">
         <Select
-          value="30"
-          onChange={() => undefined}
+          value={String(fps)}
+          onChange={(v) => setPref('defaultFps', Number(v))}
           ariaLabel="Default frame rate"
           size="sm"
           options={['24', '25', '30', '60'].map((v) => ({ value: v, label: `${v} fps` }))}
@@ -604,12 +621,41 @@ function Capability({
   )
 }
 
+/** "auto" or a thread count, as saved for AI in this browser. */
+function useThreadLimit(): [string | null, (value: string) => void] {
+  const [limit, setLimit] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void loadThreadLimit().then((n) => {
+      if (!cancelled) setLimit((current) => current ?? (n ? String(n) : 'auto'))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const choose = (value: string) => {
+    setLimit(value)
+    saveThreadLimit(value === 'auto' ? null : Number(value)).catch(() =>
+      toast('The thread setting could not be saved in this browser.'),
+    )
+  }
+  return [limit, choose]
+}
+
 function LocalPage() {
   const caps = useCapabilities()
   const cached = useModels((s) => s.cached)
+  const [threads, setThreads] = useThreadLimit()
   useEffect(() => {
     void refreshModels()
   }, [])
+  const used =
+    caps &&
+    wasmThreadCount(
+      caps.crossOriginIsolated,
+      caps.hardwareConcurrency,
+      threads === null || threads === 'auto' ? null : Number(threads),
+    )
   return (
     <>
       <div className={styles.scLabel}>This browser</div>
@@ -619,7 +665,7 @@ function LocalPage() {
         title="Multi-threaded processing"
         desc={
           caps
-            ? `AI and analysis use ${caps.wasmThreads} of ${caps.hardwareConcurrency} CPU threads.`
+            ? `AI and analysis use ${used} of ${caps.hardwareConcurrency} CPU threads.`
             : 'Lets AI and analysis use several CPU threads.'
         }
       />
@@ -641,15 +687,18 @@ function LocalPage() {
         title="Private file storage"
         desc="Keeps imported media on this device between visits."
       />
-      <Row title="CPU threads for AI" desc="Use fewer if the computer gets slow or runs out of memory.">
+      <Row
+        title="CPU threads for AI"
+        desc="Fewer threads keep the computer responsive and use less memory while AI runs, but AI takes longer. Applies to AI that loads after the change; reload the page to apply it everywhere."
+      >
         <span data-testid="cap-threads" data-value={caps?.wasmThreads ?? ''}>
           <Select
-            value="auto"
-            onChange={() => undefined}
+            value={threads ?? 'auto'}
+            onChange={setThreads}
             ariaLabel="CPU threads for AI"
             size="sm"
             options={[
-              { value: 'auto', label: caps ? `Automatic (${caps.wasmThreads})` : 'Automatic' },
+              { value: 'auto', label: caps ? `Automatic (${caps.autoWasmThreads})` : 'Automatic' },
               { value: '2', label: '2' },
               { value: '1', label: '1' },
             ]}
@@ -726,11 +775,6 @@ function StoragePage() {
           </div>
         )}
       </div>
-      <Row title="Unused media" desc="Files no project uses anymore.">
-        <Button size="sm" variant="danger" icon={<Trash2 />}>
-          Delete 640 MB
-        </Button>
-      </Row>
       <Row
         title="Model cache"
         desc={
@@ -783,36 +827,51 @@ function VjPage() {
   )
 }
 
+const barOptions = [
+  { value: '1', label: '1 bar' },
+  { value: '2', label: '2 bars' },
+]
+
+function EditingPage() {
+  const beatSnap = usePrefs((p) => p.beatSnap)
+  const imageBars = usePrefs((p) => p.imageBars)
+  const textBars = usePrefs((p) => p.textBars)
+  return (
+    <>
+      <Row title="Snap to beats by default">
+        <Switch
+          checked={beatSnap}
+          onCheckedChange={(v) => {
+            setPref('beatSnap', v)
+            set({ beatSnap: v })
+          }}
+          ariaLabel="Snap to beats by default"
+        />
+      </Row>
+      <Row title="Default image duration">
+        <Select
+          value={String(imageBars)}
+          onChange={(v) => setPref('imageBars', Number(v))}
+          ariaLabel="Default image duration"
+          size="sm"
+          options={barOptions}
+        />
+      </Row>
+      <Row title="Default text duration">
+        <Select
+          value={String(textBars)}
+          onChange={(v) => setPref('textBars', Number(v))}
+          ariaLabel="Default text duration"
+          size="sm"
+          options={barOptions}
+        />
+      </Row>
+    </>
+  )
+}
+
 function SimplePage({ page }: { page: SettingsPage }) {
-  if (page === 'editing')
-    return (
-      <>
-        <Row title="Snap to beats by default">
-          <Switch checked onCheckedChange={() => undefined} ariaLabel="Snap to beats by default" />
-        </Row>
-        <Row title="Default image duration">
-          <Select
-            value="4"
-            onChange={() => undefined}
-            ariaLabel="Default image duration"
-            size="sm"
-            options={[
-              { value: '2', label: '1 bar' },
-              { value: '4', label: '2 bars' },
-            ]}
-          />
-        </Row>
-        <Row title="Default text duration">
-          <Select
-            value="4"
-            onChange={() => undefined}
-            ariaLabel="Default text duration"
-            size="sm"
-            options={[{ value: '4', label: '2 bars' }]}
-          />
-        </Row>
-      </>
-    )
+  if (page === 'editing') return <EditingPage />
   if (page === 'vj') return <VjPage />
   return (
     <>
@@ -823,7 +882,11 @@ function SimplePage({ page }: { page: SettingsPage }) {
         <span />
       </Row>
       <Row title="Third-party notices" desc="Fonts, libraries and AI models with their licenses.">
-        <Button size="sm" variant="ghost">
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => window.open(NOTICES_URL, '_blank', 'noopener,noreferrer')}
+        >
           View
         </Button>
       </Row>

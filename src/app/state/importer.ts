@@ -14,7 +14,8 @@ import type * as AnalysisClient from '../../analysis/client.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
 import { backgroundAnalysisOn } from './footage.ts'
-import { dispatch, editor } from './project.ts'
+import { barsToSeconds, prefs } from './prefs.ts'
+import { bpmOf, dispatch, editor } from './project.ts'
 import { get, select, set, toast } from './ui.ts'
 
 /*
@@ -176,7 +177,7 @@ function isFootageTrack(project: Project, track: Track): boolean {
 export interface Placement {
   /** Timeline start (default: the playhead). */
   start?: number
-  /** Default: the whole clip, or 4 s for an image. */
+  /** Default: the whole clip, or Settings › Editing › Default image duration for an image. */
   duration?: number
   /** Where in a video or audio file to start, in source seconds. */
   sourceStart?: number
@@ -191,7 +192,8 @@ export function addAsset(assetId: string, at: Placement = {}): void {
   const kind = asset.kind === 'audio' ? 'audio' : 'visual'
   const sourceStart = asset.kind === 'image' ? 0 : Math.max(0, at.sourceStart ?? 0)
   const available = asset.kind === 'image' ? Infinity : Math.max(0.5, (asset.duration ?? 4) - sourceStart)
-  const duration = Math.min(available, at.duration ?? (asset.kind === 'image' ? 4 : available))
+  const imageDuration = barsToSeconds(prefs().imageBars, bpmOf(project))
+  const duration = Math.min(available, at.duration ?? (asset.kind === 'image' ? imageDuration : available))
   const candidates = project.tracks
     .filter((t) => t.kind === kind && !t.locked)
     .sort((a, b) => Number(isFootageTrack(project, b)) - Number(isFootageTrack(project, a)))

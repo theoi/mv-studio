@@ -72,6 +72,13 @@ describe('thread policy', () => {
     expect(wasmThreadCount(true, 32)).toBe(8)
   })
 
+  it("lowers the count to the user's limit, never above the automatic count", () => {
+    expect(wasmThreadCount(true, 8, 2)).toBe(2)
+    expect(wasmThreadCount(true, 4, 6)).toBe(3)
+    expect(wasmThreadCount(false, 8, 4)).toBe(1)
+    expect(wasmThreadCount(true, 8, null)).toBe(7)
+  })
+
   it('configures an onnxruntime env with an explicit thread count and no proxy', async () => {
     const env = { wasm: {} as { numThreads?: number; proxy?: boolean } }
     await expect(configureOnnxEnv(env, { numThreads: 3 })).resolves.toBe(3)
