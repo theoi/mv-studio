@@ -17,6 +17,7 @@ import {
 } from '../../plugins/preview.ts'
 import { THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH } from '../../plugins/thumbnails.ts'
 import { appMedia } from './media.ts'
+import { prefs } from './prefs.ts'
 
 export interface PreviewItem {
   kind: 'plugin' | 'look' | 'text-style'
@@ -73,7 +74,9 @@ export function useTilePreviewActive(item: PreviewItem): boolean {
   return useSyncExternalStore(subscribe, () => activeKey === key)
 }
 
-const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+/** Settings › Reduce motion, or the system setting. */
+const reducedMotion = () =>
+  prefs().reduceMotion || window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
 /** Plays `item` after a short hover, in place of any other preview. Nothing plays when motion is reduced. */
 export function showTilePreview(item: PreviewItem): void {
@@ -139,20 +142,30 @@ export function playTilePreview(item: PreviewItem, host: HTMLElement): () => voi
   let frame = 0
   let stopped = false
   // Seeking on every animation frame never lets the preview settle, so wait for the first frame before looping.
-  void preview.rendered().then(() => {
-    if (stopped) return
-    canvas.dataset.ready = 'true'
-    const started = performance.now()
-    let last = -Infinity
-    const tick = (now: number) => {
+  preview.rendered().then(
+    () => {
       if (stopped) return
+      canvas.dataset.ready = 'true'
+      const started = performance.now()
+      let last = -Infinity
+      const tick = (now: number) => {
+        if (stopped) return
+        frame = requestAnimationFrame(tick)
+        if (now - last < 1000 / FPS) return
+        last = now
+        preview.seek(from + (((now - started) / 1000) % (to - from)))
+      }
       frame = requestAnimationFrame(tick)
-      if (now - last < 1000 / FPS) return
-      last = now
-      preview.seek(from + (((now - started) / 1000) % (to - from)))
-    }
-    frame = requestAnimationFrame(tick)
-  })
+    },
+    () => {
+      // The render worker died: the tile keeps its still thumbnail, and the next hover starts a fresh preview.
+      if (canvas.parentElement === host) canvas.remove()
+      if (shared?.preview === preview) {
+        preview.dispose()
+        shared = null
+      }
+    },
+  )
   return () => {
     stopped = true
     cancelAnimationFrame(frame)

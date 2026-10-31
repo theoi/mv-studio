@@ -66,3 +66,13 @@ test('with reduced motion, tiles keep their still thumbnails on hover', async ({
   await page.waitForTimeout(800)
   expect(await motion(page, tile)).toBeLessThan(0.5)
 })
+
+test('with Settings › Reduce motion on, tiles keep their still thumbnails on hover', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.prefs', JSON.stringify({ reduceMotion: true })))
+  const library = await openEffectsTab(page)
+  const tile = library.getByRole('button', { name: 'Golden hour', exact: true })
+  await tile.hover()
+  await page.waitForTimeout(800)
+  expect(await motion(page, tile)).toBeLessThan(0.5)
+})
