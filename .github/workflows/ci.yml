@@ -5,12 +5,13 @@ on:
   push:
     branches: [main]
 
-# A new push to a pull request cancels its older run, waiting or running. On main, a new commit cancels the run of the
-# one before it the same way: the newest commit's tree contains every earlier merge, and each pull request was green on
-# its own head, so only the newest main commit's result matters.
+# A new push to a pull request cancels its older run, waiting or running. On main, a running run is never cancelled:
+# merges land faster than a run takes, so cancelling it meant no main commit was ever tested to the end. A new main
+# commit only replaces the one waiting behind the running run, so the next run tests the newest tree, which contains
+# every earlier merge.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
