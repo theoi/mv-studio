@@ -151,7 +151,7 @@ describe('applying looks', () => {
       align: 'left',
     })
     expect(lyric.karaoke?.highlightColor).toBe(look.accentColor)
-    expect(lyric.animation?.presetId).toBe('pop')
+    expect(lyric.animation?.presetId).toBe(look.text?.animation?.presetId)
     const viz = p.clips[s.viz.id] as GeneratorClip
     expect([viz.params.color, viz.params.color2]).toEqual([{ value: '#22d3ee' }, { value: '#f472b6' }])
     expect(p.clips[s.b.id]).toMatchObject({
@@ -177,6 +177,27 @@ describe('applying looks', () => {
     expect(looks).toHaveLength(1)
     expect(looks[0]).toMatchObject({ start: 2, duration: 5, meta: { lookId: 'ember' } })
     expect(p.tracks.filter((t) => t.name === 'Look')).toHaveLength(1)
+  })
+
+  it("switching looks replaces the previous look's typography instead of layering on it", () => {
+    const s = scene()
+    const editor = new ProjectEditor(s.p)
+    applyLook(editor, 'vivid')
+    applyLook(editor, 'dreamy')
+    const dreamy = editor.getProject().clips[s.lyric.id] as TextClip
+    expect(dreamy.style).toMatchObject({
+      italic: true,
+      fontFamily: expect.stringContaining('Playfair Display'),
+    })
+    expect(dreamy.style.stroke).toBeUndefined()
+    applyLook(editor, 'neon')
+    const neon = editor.getProject().clips[s.lyric.id] as TextClip
+    expect(neon.style).toMatchObject({ italic: false, fontFamily: expect.stringContaining('Montserrat') })
+    expect(neon.style.shadow).toBeDefined()
+    applyLook(editor, 'clean')
+    const clean = editor.getProject().clips[s.lyric.id] as TextClip
+    expect(clean.style.shadow).toBeUndefined()
+    expect(clean.style.fontSize).toBe(120)
   })
 
   it('replaces the look layer of a director draft instead of stacking a second grade', () => {

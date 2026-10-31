@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "thumbnails": "playwright test -c playwright.tools.config.ts thumbnails && prettier --write src/plugins/thumbnails.manifest.ts",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run test"
   },
   "dependencies": {

@@ -25,6 +25,8 @@ import type {
   Track,
 } from '../model/types.ts'
 import { createEffectInstance, createTransition } from './library.ts'
+import { thumbnailUrl } from './thumbnails.ts'
+import { fontStack } from './typography/fonts.ts'
 
 export interface LookEffect {
   effectId: string
@@ -55,6 +57,7 @@ export interface LookDefinition {
   text?: { style?: Partial<TextStyle>; animation?: { presetId: string; params?: Record<string, ParamValue> } }
   /** Transition style for existing transitions; their durations and easing are kept. */
   transition?: { kind: string; params?: Record<string, ParamValue> }
+  /** Library thumbnail URL (16:9 image). */
   thumbnail?: string
 }
 
@@ -191,7 +194,13 @@ export function applyLookCommands(
         type: 'clip.set',
         clipId: clip.id,
         path: ['style'],
-        value: { ...clip.style, ...look.text?.style, color: look.textColor },
+        value: {
+          ...clip.style,
+          // A look owns the typography: switching looks must not keep the previous look's italic, outline or glow.
+          ...(look.text?.style ? { italic: false, stroke: undefined, shadow: undefined } : {}),
+          ...look.text?.style,
+          color: look.textColor,
+        },
       })
       if (clip.karaoke)
         commands.push({
@@ -275,8 +284,8 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     promptStyle: 'natural light, clean composition, high detail',
     palette: { primary: '#ffffff', secondary: '#facc15' },
     text: {
-      style: { fontWeight: 700, textTransform: 'none', letterSpacing: 0 },
-      animation: { presetId: 'fade-up' },
+      style: { fontFamily: fontStack('Inter'), fontWeight: 700, textTransform: 'none', letterSpacing: 0 },
+      animation: { presetId: 'rise' },
     },
     transition: { kind: 'fade' },
   },
@@ -296,12 +305,13 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     palette: { primary: '#22d3ee', secondary: '#f472b6' },
     text: {
       style: {
+        fontFamily: fontStack('Montserrat'),
         fontWeight: 800,
         textTransform: 'uppercase',
         letterSpacing: 0.06,
         shadow: { color: '#22d3eecc', blur: 24, offsetX: 0, offsetY: 0 },
       },
-      animation: { presetId: 'pop' },
+      animation: { presetId: 'flicker' },
     },
     transition: { kind: 'flash', params: { color: '#a5f3fc' } },
   },
@@ -321,10 +331,15 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     promptStyle: 'golden hour sunlight, warm tones, soft lens flare, cinematic',
     palette: { primary: '#fde68a', secondary: '#fb923c' },
     text: {
-      style: { fontWeight: 700, textTransform: 'none', letterSpacing: 0.02 },
-      animation: { presetId: 'fade-up' },
+      style: {
+        fontFamily: fontStack('DM Serif Display'),
+        fontWeight: 400,
+        textTransform: 'none',
+        letterSpacing: 0.01,
+      },
+      animation: { presetId: 'rise' },
     },
-    transition: { kind: 'fade' },
+    transition: { kind: 'light-burn' },
   },
   {
     id: 'vintage',
@@ -342,10 +357,15 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     promptStyle: 'shot on 35mm film, faded colors, grain, nostalgic',
     palette: { primary: '#fef3c7', secondary: '#f87171' },
     text: {
-      style: { fontWeight: 600, textTransform: 'none', letterSpacing: 0.04 },
-      animation: { presetId: 'typewriter' },
+      style: {
+        fontFamily: fontStack('Playfair Display'),
+        fontWeight: 600,
+        textTransform: 'none',
+        letterSpacing: 0.04,
+      },
+      animation: { presetId: 'typewriter', params: { cursor: false } },
     },
-    transition: { kind: 'fade' },
+    transition: { kind: 'dip' },
   },
   {
     id: 'moody',
@@ -362,10 +382,15 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     promptStyle: 'low-key lighting, deep shadows, muted colors, atmospheric',
     palette: { primary: '#e5e7eb', secondary: '#93c5fd' },
     text: {
-      style: { fontWeight: 500, textTransform: 'lowercase', letterSpacing: 0.08 },
-      animation: { presetId: 'fade-up' },
+      style: {
+        fontFamily: fontStack('Space Grotesk'),
+        fontWeight: 400,
+        textTransform: 'lowercase',
+        letterSpacing: 0.08,
+      },
+      animation: { presetId: 'blur-in' },
     },
-    transition: { kind: 'fade' },
+    transition: { kind: 'dip' },
   },
   {
     id: 'dreamy',
@@ -383,8 +408,14 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     promptStyle: 'soft focus, pastel colors, hazy light, dreamlike',
     palette: { primary: '#fdf4ff', secondary: '#f0abfc' },
     text: {
-      style: { fontWeight: 600, textTransform: 'none', letterSpacing: 0.03 },
-      animation: { presetId: 'fade-up' },
+      style: {
+        fontFamily: fontStack('Playfair Display'),
+        fontWeight: 500,
+        italic: true,
+        textTransform: 'none',
+        letterSpacing: 0.02,
+      },
+      animation: { presetId: 'wave', params: { amplitude: 0.1, speed: 0.5 } },
     },
     transition: { kind: 'fade' },
   },
@@ -403,10 +434,15 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     promptStyle: 'black and white photography, high contrast, dramatic',
     palette: { primary: '#ffffff', secondary: '#a3a3a3' },
     text: {
-      style: { fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.1 },
-      animation: { presetId: 'fade-up' },
+      style: {
+        fontFamily: fontStack('Oswald'),
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: 0.1,
+      },
+      animation: { presetId: 'slide-in' },
     },
-    transition: { kind: 'fade' },
+    transition: { kind: 'iris' },
   },
   {
     id: 'vivid',
@@ -421,14 +457,15 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     palette: { primary: '#f472b6', secondary: '#facc15' },
     text: {
       style: {
-        fontWeight: 900,
+        fontFamily: fontStack('Anton'),
+        fontWeight: 400,
         textTransform: 'uppercase',
         letterSpacing: 0.02,
         stroke: { color: '#000000', width: 6 },
       },
-      animation: { presetId: 'pop' },
+      animation: { presetId: 'bounce' },
     },
-    transition: { kind: 'zoom' },
+    transition: { kind: 'zoom-blur' },
   },
   {
     id: 'cinematic',
@@ -445,10 +482,15 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     promptStyle: 'cinematic lighting, anamorphic lens, shallow depth of field, film still',
     palette: { primary: '#ffffff', secondary: '#fbbf24' },
     text: {
-      style: { fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.18 },
-      animation: { presetId: 'fade-up' },
+      style: {
+        fontFamily: fontStack('Montserrat'),
+        fontWeight: 500,
+        textTransform: 'uppercase',
+        letterSpacing: 0.18,
+      },
+      animation: { presetId: 'blur-in' },
     },
-    transition: { kind: 'fade' },
+    transition: { kind: 'dip' },
   },
   {
     id: 'vhs',
@@ -466,6 +508,7 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     palette: { primary: '#ffffff', secondary: '#facc15' },
     text: {
       style: {
+        fontFamily: fontStack('Space Grotesk'),
         fontWeight: 700,
         textTransform: 'uppercase',
         letterSpacing: 0.05,
@@ -473,7 +516,7 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
       },
       animation: { presetId: 'typewriter' },
     },
-    transition: { kind: 'flash' },
+    transition: { kind: 'glitch-cut' },
   },
   {
     id: 'ice',
@@ -490,10 +533,15 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     promptStyle: 'icy blue color palette, cold light, frost, crisp winter air',
     palette: { primary: '#e0f2fe', secondary: '#7dd3fc' },
     text: {
-      style: { fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.12 },
-      animation: { presetId: 'fade-up' },
+      style: {
+        fontFamily: fontStack('Montserrat'),
+        fontWeight: 400,
+        textTransform: 'uppercase',
+        letterSpacing: 0.14,
+      },
+      animation: { presetId: 'rise' },
     },
-    transition: { kind: 'fade' },
+    transition: { kind: 'luma-wipe' },
   },
   {
     id: 'ember',
@@ -512,16 +560,19 @@ export const BUILTIN_LOOKS: LookDefinition[] = [
     palette: { primary: '#fdba74', secondary: '#ef4444' },
     text: {
       style: {
-        fontWeight: 900,
+        fontFamily: fontStack('Anton'),
+        fontWeight: 400,
         textTransform: 'uppercase',
         letterSpacing: 0.03,
         shadow: { color: '#f97316aa', blur: 20, offsetX: 0, offsetY: 0 },
       },
-      animation: { presetId: 'pop' },
+      animation: { presetId: 'stamp' },
     },
-    transition: { kind: 'flash', params: { color: '#ffcc88' } },
+    transition: { kind: 'noise-dissolve', params: { edgeColor: '#ff7a1a' } },
   },
 ]
+
+for (const look of BUILTIN_LOOKS) look.thumbnail ??= thumbnailUrl('look', look.id)
 
 /** The app-wide look registry with the built-in looks. */
 export const lookRegistry: LookRegistry = createLookRegistry()

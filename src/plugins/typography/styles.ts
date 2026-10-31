@@ -6,6 +6,7 @@
 import type { EditCommand } from '../../model/commands.ts'
 import type { ProjectEditor } from '../../model/editor.ts'
 import type { Id, ParamValue, Project, TextClip, TextStyle } from '../../model/types.ts'
+import { thumbnailUrl } from '../thumbnails.ts'
 import { fontStack } from './fonts.ts'
 
 export interface TextStylePreset {
@@ -19,6 +20,8 @@ export interface TextStylePreset {
   style: Partial<Omit<TextStyle, 'align' | 'maxWidth' | 'fontAssetId'>>
   animation?: { presetId: string; params?: Record<string, ParamValue> }
   karaoke?: NonNullable<TextClip['karaoke']>
+  /** Library thumbnail URL (16:9 image). */
+  thumbnail?: string
 }
 
 const base = {
@@ -322,6 +325,8 @@ export const TEXT_STYLES: TextStylePreset[] = [
     animation: { presetId: 'glitch-text', params: { intensity: 0.35 } },
   },
 ]
+
+for (const style of TEXT_STYLES) style.thumbnail ??= thumbnailUrl('text-style', style.id)
 
 export function textStyle(id: string): TextStylePreset | undefined {
   return TEXT_STYLES.find((s) => s.id === id)
