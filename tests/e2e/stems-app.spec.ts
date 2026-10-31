@@ -196,9 +196,9 @@ test('Assist › Stems shows progress, cancels, and explains an out-of-memory fa
 
   await panel.getByRole('button', { name: 'Separate stems' }).click()
   await expect(panel.getByRole('progressbar', { name: 'Stem separation progress' })).toBeVisible()
-  await expect(
-    panel.getByText('Separating vocals, drums, bass and other', { exact: true }).first(),
-  ).toBeVisible()
+  // Said once, in the progress card; the subtitle names the song instead.
+  await expect(panel.getByText('Separating vocals, drums, bass and other', { exact: true })).toHaveCount(1)
+  await shot(page, 'stems-running')
   await panel.getByRole('button', { name: 'Cancel' }).click()
   await expect(panel.getByRole('button', { name: 'Separate stems' })).toBeVisible()
 

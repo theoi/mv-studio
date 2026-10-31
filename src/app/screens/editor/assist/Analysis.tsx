@@ -22,6 +22,8 @@ import { dismiss, pct, useJob, useSongState } from './jobState.ts'
 import { CancelButton, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
+const FINDING = 'Finding…'
+
 function FoundBadge({ count }: { count: number }) {
   if (!count) return <Badge>None found</Badge>
   return (
@@ -109,6 +111,9 @@ export function AnalysisView() {
   const tapped = tapTempo(taps)
   const busy = phase === 'running' || tempo.phase === 'running'
   const state = useSongState()
+  // Also while the song file loads before the first analysis starts (no job yet).
+  const analyzing = phase === 'running' || state === 'analyzing'
+  const finding = state === 'analyzing'
 
   if (phase === 'failed') {
     return (
@@ -166,7 +171,7 @@ export function AnalysisView() {
     )
 
   const bpm = bpmOf(project)
-  let tempoText = bpm ? `${formatBpm(bpm)} · 4/4` : state === 'analyzing' ? 'Finding…' : 'No beat found'
+  let tempoText = bpm ? `${formatBpm(bpm)} · 4/4` : finding ? FINDING : 'No beat found'
   if (taps.length)
     tempoText = tapped ? `Tapping · ${formatBpm(tapped)}` : `Tapping… ${taps.length} of ${MIN_TAPS}`
   else if (tempo.phase === 'running') tempoText = `Following your tempo… ${pct(tempo.job)}%`
@@ -184,7 +189,7 @@ export function AnalysisView() {
           <span>Tempo</span>
           <span className={styles.tempoValue}>
             <span className="tnum">{tempoText}</span>
-            {bpm && analysis?.beats?.length && !taps.length && tempo.phase !== 'running' ? (
+            {bpm && analysis?.beats?.length && !taps.length && tempo.phase !== 'running' && !analyzing ? (
               <span className={styles.tempoLevel}>
                 <TempoLevelButton factor={0.5} bpm={bpm} disabled={busy} />
                 <TempoLevelButton factor={2} bpm={bpm} disabled={busy} />
@@ -194,14 +199,14 @@ export function AnalysisView() {
         </div>
         <div>
           <span>Beats</span>
-          <span>
-            <FoundBadge count={analysis?.beats?.length ?? 0} />
-          </span>
+          <span>{finding ? FINDING : <FoundBadge count={analysis?.beats?.length ?? 0} />}</span>
         </div>
         <div>
           <span>Bar starts</span>
           <span>
-            {bars.status === 'finding' ? (
+            {finding ? (
+              FINDING
+            ) : bars.status === 'finding' ? (
               <Badge>{BARS_NOTES.finding}</Badge>
             ) : bars.status === 'unavailable' ? (
               <Badge>Not found yet</Badge>
@@ -213,16 +218,16 @@ export function AnalysisView() {
         <div>
           <span>Sections</span>
           <span>
-            {list.length}
-            {choruses > 1 ? `, chorus repeats ${choruses}×` : ''}
+            {finding ? FINDING : list.length}
+            {!finding && choruses > 1 ? `, chorus repeats ${choruses}×` : ''}
           </span>
         </div>
         <div>
           <span>Energy curve</span>
-          <span>Shown in the song lane</span>
+          <span>{finding ? FINDING : 'Shown in the song lane'}</span>
         </div>
       </div>
-      {bars.status === 'unavailable' && (
+      {bars.status === 'unavailable' && !analyzing && (
         <div className={styles.muted}>
           {analysis?.tempo?.confidence === 1
             ? // Analyze again would replace the tempo the user set.
@@ -230,54 +235,59 @@ export function AnalysisView() {
             : `${BARS_NOTES.notFound}. Analyze again to look for them.`}
         </div>
       )}
-      <div className={styles.linkRow}>
-        <Tooltip
-          label="Tap tempo"
-          description={`Play the song and tap along with the beat, at least ${MIN_TAPS} times, or press Space or T while the button is focused. Stop for ${TAP_RESET_SECONDS} seconds to use the tempo.`}
-        >
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<Activity />}
-            disabled={!analysis || busy}
-            onPointerDown={(e) => {
-              if (e.button === 0) tap(e.timeStamp)
-            }}
-            onKeyDown={(e) => {
-              if (!TAP_KEYS.has(e.key)) return
-              // Space and T are also editor shortcuts (play, add text); here they only tap.
-              e.preventDefault()
-              e.stopPropagation()
-              if (!e.repeat) tap(e.timeStamp)
-            }}
+      {!analyzing && (
+        <div className={styles.linkRow}>
+          <Tooltip
+            label="Tap tempo"
+            description={`Play the song and tap along with the beat, at least ${MIN_TAPS} times, or press Space or T while the button is focused. Stop for ${TAP_RESET_SECONDS} seconds to use the tempo.`}
           >
-            Tap tempo
-          </Button>
-        </Tooltip>
-        <Tooltip label="Set first beat" description="Makes the beat nearest the playhead the start of a bar">
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={!analysis?.beats?.length || busy}
-            onClick={() => setFirstBeat(get().playhead)}
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Activity />}
+              disabled={!analysis || busy}
+              onPointerDown={(e) => {
+                if (e.button === 0) tap(e.timeStamp)
+              }}
+              onKeyDown={(e) => {
+                if (!TAP_KEYS.has(e.key)) return
+                // Space and T are also editor shortcuts (play, add text); here they only tap.
+                e.preventDefault()
+                e.stopPropagation()
+                if (!e.repeat) tap(e.timeStamp)
+              }}
+            >
+              Tap tempo
+            </Button>
+          </Tooltip>
+          <Tooltip
+            label="Set first beat"
+            description="Makes the beat nearest the playhead the start of a bar"
           >
-            Set first beat
-          </Button>
-        </Tooltip>
-        <Tooltip
-          label="Analyze again"
-          description="Finds the beats, bars and sections again. Undo brings back your corrections."
-        >
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={!hasSong(project) || busy}
-            onClick={() => void analyzeAgain()}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!analysis?.beats?.length || busy}
+              onClick={() => setFirstBeat(get().playhead)}
+            >
+              Set first beat
+            </Button>
+          </Tooltip>
+          <Tooltip
+            label="Analyze again"
+            description="Finds the beats, bars and sections again. Undo brings back your corrections."
           >
-            Analyze again
-          </Button>
-        </Tooltip>
-      </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!hasSong(project) || busy}
+              onClick={() => void analyzeAgain()}
+            >
+              Analyze again
+            </Button>
+          </Tooltip>
+        </div>
+      )}
       <p className={styles.muted}>
         Section names are best guesses. Rename them by double-clicking on the timeline.
       </p>
