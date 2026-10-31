@@ -58,7 +58,8 @@ function songCommands(project: Project, song: Asset): EditCommand[] {
   })
   commands.push({ type: 'clip.add', clip: { ...clip, name: baseName(song.name) } })
   commands.push({ type: 'project.setSong', assetId: song.id })
-  if (project.name === 'Untitled video') commands.push({ type: 'project.rename', name: baseName(song.name) })
+  if (project.name === 'Untitled video')
+    commands.push({ type: 'project.rename', name: song.tags?.title ?? baseName(song.name) })
   return commands
 }
 

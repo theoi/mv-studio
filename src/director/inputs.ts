@@ -3,7 +3,7 @@
  * project.analysis.audio (src/analysis); footage tags (createDirectorFootageMatcher), clip indexes and the matcher
  * that ranks clips per shot come from src/vision, whose types are used as is.
  */
-import type { AspectPreset, FeatureSeries, Id, LyricsDoc, Project, Seconds } from '../model/types.ts'
+import type { AspectPreset, Asset, FeatureSeries, Id, LyricsDoc, Project, Seconds } from '../model/types.ts'
 import { projectDuration } from '../model/queries.ts'
 import type { CostEstimate } from '../cloud/pricing.ts'
 import type { GenerationRequest, GenerationTier } from '../cloud/types.ts'
@@ -39,7 +39,7 @@ export interface SectionInfo {
 
 export interface SongInfo {
   assetId?: Id
-  /** From the song's file name ("Artist - Title.mp3"), for title cards. */
+  /** From the song's title and artist tags, else its file name ("Artist - Title.mp3"), for title cards. */
   title?: string
   artist?: string
   duration: Seconds
@@ -179,6 +179,18 @@ export function songTitleFromName(name: string): { title?: string; artist?: stri
     : { title: unshout(base) }
 }
 
+/**
+ * The song's title and artist: its own tags first, then its file name. A tagged title brings only the tagged artist,
+ * since the file name may name a different song or none.
+ */
+export function songTitle(asset: Pick<Asset, 'name' | 'tags'>): { title?: string; artist?: string } {
+  const tags = asset.tags
+  if (tags?.title) return { title: tags.title, ...(tags.artist ? { artist: tags.artist } : {}) }
+  const named = songTitleFromName(asset.name)
+  const artist = tags?.artist ?? named.artist
+  return { ...(named.title ? { title: named.title } : {}), ...(artist ? { artist } : {}) }
+}
+
 /** Rank-normalizes raw section energies to 0..1 so "the loudest part" is high even in a quiet song. */
 function normalizeEnergy(raw: number[]): number[] {
   if (raw.length <= 1) return raw.map(() => 0.6)
@@ -212,7 +224,7 @@ export function songInfoFromProject(project: Project): SongInfo {
   }))
   return {
     assetId,
-    ...(asset ? songTitleFromName(asset.name) : {}),
+    ...(asset ? songTitle(asset) : {}),
     duration,
     bpm: analysis?.tempo?.bpm,
     beats,

@@ -6,6 +6,8 @@ export const FIXTURE_DIR = path.resolve(import.meta.dirname, '../fixtures/.cache
 const REQUIRED = [
   'song.mp3',
   'song.wav',
+  'tagged.mp3',
+  'tagged.m4a',
   'clip.mp4',
   'clip1080.mp4',
   'clip-rotated.mp4',

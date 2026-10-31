@@ -123,6 +123,26 @@ test('rejects unsupported files with a typed error', async ({ page }) => {
   expect(error).toEqual({ name: 'JobError', code: 'unsupported' })
 })
 
+test('reads a song’s title and artist tags from MP3 and M4A files, trimmed', async ({ page }) => {
+  await openHarness(page)
+  await page.setInputFiles(
+    '#e2e-file-input',
+    ['tagged.mp3', 'tagged.m4a', 'song.mp3'].map((f) => path.join(FIXTURE_DIR, f)),
+  )
+  const tags = await page.evaluate(async () => {
+    const assets = []
+    for (const file of window.mvStudio.files())
+      assets.push(await window.mvStudio.media.mediaStore.importFile(file))
+    return assets.map((a) => ({ name: a.name, tags: a.tags }))
+  })
+  expect(tags).toEqual([
+    { name: 'tagged.mp3', tags: { title: 'Neon Skyline', artist: 'The Night Shift' } },
+    { name: 'tagged.m4a', tags: { title: 'Neon Skyline', artist: 'The Night Shift' } },
+    // No tags: no field at all, as in projects saved before tags were read.
+    { name: 'song.mp3', tags: undefined },
+  ])
+})
+
 test('imports an audio-only WebM recording as audio even when typed video/webm', async ({ page }) => {
   await openHarness(page)
   await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'voice.webm')])

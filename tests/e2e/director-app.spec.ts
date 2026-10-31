@@ -1,5 +1,7 @@
+import path from 'node:path'
 import type { Page, Route } from '@playwright/test'
 import { expect, openHarness, test } from './fixtures.ts'
+import { FIXTURE_DIR } from './global-setup.ts'
 
 /*
  * Assist › Director with the real director on the sample project. Language models and fal.ai are answered at the
@@ -315,4 +317,33 @@ test('a retry after failed AI shots shows its price and asks again; Back returns
   await expect(generate).toBeVisible()
   await expect(page.getByRole('button', { name: 'Apply without AI shots' })).toBeVisible()
   expect(fal).toHaveLength(sent)
+})
+
+test('a tagged song names the project, and the title card shows its title and artist', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?project=empty&kind=blank'
+  })
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Import a song' }).click()
+  // The file's tags say "Neon Skyline" by "The Night Shift"; its name says neither.
+  await (await chooser).setFiles(path.join(FIXTURE_DIR, 'tagged.mp3'))
+  await expect(page.getByRole('button', { name: 'Project: Neon Skyline' })).toBeVisible()
+  await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
+
+  await page.evaluate(() => {
+    window.location.hash = '#/editor?tab=assist&assist=director'
+  })
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await expect(page.getByRole('button', { name: 'Undo draft' })).toBeVisible({ timeout: 30_000 })
+  const titles = await page.evaluate(() => {
+    const clips = Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+      type: string
+      text?: string
+      meta?: { director?: { role?: string } }
+    }[]
+    return clips.filter((c) => c.type === 'text' && c.meta?.director?.role === 'title').map((c) => c.text)
+  })
+  expect(titles).toEqual(['Neon Skyline', 'The Night Shift'])
 })

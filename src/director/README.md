@@ -69,8 +69,8 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   them (src/vision subject tracks), inside the title-safe area; a chorus line whose emphasized word makes it too
   tall to clear the face stays whole. When the clips of a chorus have a subject mask video
   from src/vision, up to four of its lines go behind the subject (`behind` → a matte outside the mask).
-- **Title card** over the intro (not for beat cuts): the song's title and artist from its file name
-  (`songTitleFromName`), never the prompt or the kind of video.
+- **Title card** over the intro (not for beat cuts): the song's title and artist from its tags, else from its file
+  name (`songTitle`, `songTitleFromName`), never the prompt or the kind of video.
 - **Opening and ending**: the first shot fades in from black and the last fades out, ending when the music does
   when the song has a silent tail (`musicEnd`).
 - **Clip choice** (`chooseFootage`): footage and stills come from src/vision's `chooseClips`, the chooser auto-cut
