@@ -160,15 +160,68 @@ describe('local planner', () => {
     expect(p.warnings.some((w) => w.includes('Add lyrics'))).toBe(true)
   })
 
-  it('makes one music-reactive visual per section for a visualizer', async () => {
+  it('layers a scene, a visualizer and chorus particles per section, reacting harder in loud parts', async () => {
     const p = await plan('visualizer', { videos: 0 })
     const shots = main(p)
     expectContiguous(shots, SONG_LENGTH)
     expect(shots).toHaveLength(SECTIONS.length)
-    expect(shots.every((s) => s.source.type === 'generator')).toBe(true)
-    const chorus = shots.find((s) => s.sectionId === 's-chorus1')!
-    expect(chorus.reactive?.some((r) => r.source === 'beat')).toBe(true)
+    const generator = (s: PlanShot) => (s.source.type === 'generator' ? s.source : undefined)
+    // Scenes underneath, drifting in and out.
+    expect(shots.every((s) => generator(s)?.generatorId.startsWith('generator.'))).toBe(true)
+    expect(shots.every((s) => s.motion === 'push-in' || s.motion === 'pull-out')).toBe(true)
+    const reactivity = (id: string) => generator(shots.find((s) => s.sectionId === id)!)?.params?.reactivity
+    expect(reactivity('s-chorus1')).toBeGreaterThan(reactivity('s-verse') as number)
+    expect(reactivity('s-verse')).toBeGreaterThan(reactivity('s-intro') as number)
+    // A visualizer over every scene, pulsing with the kick in the chorus.
+    const overlays = p.shots.filter((s) => s.layer === 'overlay')
+    expect(overlays).toHaveLength(SECTIONS.length)
+    expect(overlays.every((s) => generator(s)?.generatorId.startsWith('visualizer.'))).toBe(true)
+    const chorus = overlays.find((s) => s.sectionId === 's-chorus1')!
+    expect(chorus.reactions).toEqual([{ reaction: 'kick', target: { property: 'scale' }, amount: 0.3 }])
+    expect(overlays.find((s) => s.sectionId === 's-intro')!.reactions).toBeUndefined()
+    // Sections of different kinds look different.
+    const ids = (sectionId: string) =>
+      p.shots
+        .filter((s) => s.sectionId === sectionId)
+        .map(generator)
+        .map((g) => g?.generatorId)
+    expect(ids('s-chorus1')).not.toEqual(ids('s-verse'))
+    expect(ids('s-chorus2')).toEqual(ids('s-chorus1'))
+    // Particles only on the choruses.
+    const accents = p.shots.filter((s) => s.layer === 'accent')
+    expect(accents.map((s) => s.sectionId)).toEqual(['s-chorus1', 's-chorus2'])
+    expect(accents.every((s) => generator(s)?.generatorId === 'visualizer.particles')).toBe(true)
     expect(p.texts.find((t) => t.role === 'title')?.text).toBeTruthy()
+  })
+
+  it('treats a chorus label guessed from the audio as a verse unless the energy agrees', async () => {
+    const particlesOn = async (confidence: number) => {
+      const project = makeProject({ videos: 0 })
+      // The first chorus is no louder than the verse; the second is the loudest part of the song.
+      project.analysis.audio.song!.sections = SECTIONS.map((s) => ({
+        ...s,
+        confidence,
+        ...(s.id === 's-chorus1' ? { energy: 0.45 } : {}),
+      }))
+      const p = await planLocally(await buildPlannerInput(project, { kind: 'visualizer', seed: 7 }))
+      return p.shots.filter((s) => s.layer === 'accent').map((s) => s.sectionId)
+    }
+    expect(await particlesOn(0.4)).toEqual(['s-chorus2'])
+    expect(await particlesOn(0.8)).toEqual(['s-chorus1', 's-chorus2'])
+  })
+
+  it('rests the visualizer every other 16-bar phrase of a long section, over one unbroken scene', async () => {
+    const project = makeProject({ videos: 0 })
+    // A 30-bar verse (2 s bars).
+    project.analysis.audio.song!.sections = [
+      { id: 's-intro', label: 'intro', start: 0, end: 4, energy: 0.2 },
+      { id: 's-verse', label: 'verse', start: 4, end: 64, energy: 0.6 },
+    ]
+    const p = await planLocally(await buildPlannerInput(project, { kind: 'visualizer', seed: 7 }))
+    const inVerse = (layer: string) => p.shots.filter((s) => s.layer === layer && s.sectionId === 's-verse')
+    expect(inVerse('main').map((s) => [s.start, s.end])).toEqual([[4, 64]])
+    expect(inVerse('overlay').map((s) => [s.start, s.end])).toEqual([[4, 36]])
+    expect(p.shots.filter((s) => s.layer === 'overlay' && s.sectionId === 's-intro')).toHaveLength(1)
   })
 
   it('layers the visualizer over the user images when there are some', async () => {

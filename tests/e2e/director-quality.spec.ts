@@ -13,10 +13,12 @@ import { expect, openHarness, test } from './fixtures.ts'
  *   # plus the dataset's lyrics/<song>.txt (same revision as the script) in tests/fixtures/.cache/jamendolyrics/lyrics/
  *   npm run build
  *   DIRECTOR_QUALITY="Rxbyn_-_Bad_Side,Cortez_-_Feel__Stripped_" [DIRECTOR_QUALITY_KINDS=beat-cut,autocut] \
+ *     [DIRECTOR_QUALITY_PROMPT="neon city at night"] [DIRECTOR_QUALITY_INDEX=1] \
  *     npx playwright test tests/e2e/director-quality.spec.ts
  *
  * Output: test-results/director-quality/<song>/<kind>-{sheet,opening,timeline}.jpg and metrics.json. Lyric text
- * comes from lyrics/<song>.txt, one word per timed word in words/<song>.csv.
+ * comes from lyrics/<song>.txt, one word per timed word in words/<song>.csv. DIRECTOR_QUALITY_INDEX=1 first runs
+ * src/vision's background analysis with the real models (clip matching and subject tracks), as the app does on import.
  */
 // The harness exposes untyped modules to page.evaluate callbacks.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -24,20 +26,24 @@ type Untyped = any
 
 const SONGS = (process.env.DIRECTOR_QUALITY ?? '').split(',').filter(Boolean)
 const KINDS = (process.env.DIRECTOR_QUALITY_KINDS ?? 'lyric,beat-cut,visualizer,ai').split(',')
+/** A prompt for every draft (it picks the look); outputs go to <song>__<prompt>. */
+const PROMPT = process.env.DIRECTOR_QUALITY_PROMPT ?? ''
+const INDEX = !!process.env.DIRECTOR_QUALITY_INDEX
 const JAMENDO = path.join(FIXTURE_DIR, 'jamendolyrics')
 const VISION = path.join(FIXTURE_DIR, 'vision')
 const FOOTAGE = path.join(FIXTURE_DIR, 'director-footage')
 const OUT = path.resolve('test-results/director-quality')
 
-/** CC0 / public-domain segments cut from the vision fixtures' sources: [source, start, duration]. */
-const CUTS: [string, number, number][] = [
+/** CC0 / public-domain segments cut from the vision fixtures' sources: [source, start, duration, crop]. */
+const CUTS: [string, number, number, string?][] = [
   ['city_street', 4, 10],
   ['city_street', 40, 9],
   ['city_street', 85, 12],
   ['nature_creek', 2, 10],
   ['nature_creek', 24, 12],
-  ['people_dance', 0, 12],
-  ['people_dance', 16, 12],
+  // people_dance has pillarbox bars baked in.
+  ['people_dance', 0, 12, 'crop=540:480:90:0'],
+  ['people_dance', 16, 12, 'crop=540:480:90:0'],
   ['people_interview', 100, 8],
   ['people_teacher', 200, 8],
   ['rain_street', 0, 5.5],
@@ -45,13 +51,24 @@ const CUTS: [string, number, number][] = [
 
 function footage(): string[] {
   mkdirSync(FOOTAGE, { recursive: true })
-  return CUTS.map(([name, start, duration], i) => {
+  return CUTS.map(([name, start, duration, crop], i) => {
     const out = path.join(FOOTAGE, `${String(i + 1).padStart(2, '0')}_${name}.webm`)
     if (!existsSync(out)) {
       execFileSync('ffmpeg', [
         ...['-y', '-hide_banner', '-loglevel', 'error', '-ss', String(start)],
         ...['-i', path.join(VISION, `${name}.source.webm`), '-t', String(duration), '-an'],
-        ...['-vf', 'scale=-2:360', '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '34', '-deadline', 'realtime'],
+        ...[
+          '-vf',
+          [crop, 'scale=-2:360'].filter(Boolean).join(','),
+          '-c:v',
+          'libvpx-vp9',
+          '-b:v',
+          '0',
+          '-crf',
+          '34',
+          '-deadline',
+          'realtime',
+        ],
         out,
       ])
     }
@@ -93,24 +110,31 @@ test('director drafts on real songs', async ({ page }) => {
   const clips = footage()
   await openHarness(page)
   for (const song of SONGS) {
-    const dir = path.join(OUT, song)
+    const dir = path.join(OUT, PROMPT ? `${song}__${PROMPT.replace(/[^a-z0-9]+/gi, '-')}` : song)
     mkdirSync(dir, { recursive: true })
     await page.setInputFiles('#e2e-file-input', [path.join(JAMENDO, 'mp3', `${song}.mp3`), ...clips])
     const result = await page.evaluate(
-      async ({ lines, kinds }) => {
-        const { model, media, analysis, director, testing, vision } = window.mvStudio
+      async ({ lines, kinds, prompt, index }) => {
+        const { model, media, analysis, director, testing, vision, shared } = window.mvStudio
         const [songFile, ...videoFiles] = window.mvStudio.files() as File[]
         const songAsset = await media.mediaStore.importFile(songFile)
-        const videos = []
+        const videos: Untyped[] = []
         for (const f of videoFiles) videos.push(await media.mediaStore.importFile(f))
         const service = new analysis.SongAnalysisService()
         const audio = await analysis.decodeAudioFile(songFile)
         const fast = await service.analyze(songAsset.id, audio).promise
         const refined = await service.refine(songAsset.id).promise
         service.dispose()
-        const songAnalysis = analysis.mergeRefinedAnalysis(fast, fast, refined)
+        // Nothing is corrected by hand here, so the refinement replaces the fast grid and sections.
+        const songAnalysis = {
+          ...fast,
+          tempo: refined.tempo,
+          beats: refined.beats,
+          downbeats: refined.downbeats,
+          sections: refined.sections,
+        }
 
-        const base = model.createProject({ name: songFile.name, aspect: '16:9' })
+        let base = model.createProject({ name: songFile.name, aspect: '16:9' })
         base.assets[songAsset.id] = songAsset
         for (const v of videos) base.assets[v.id] = v
         base.songAssetId = songAsset.id
@@ -125,6 +149,40 @@ test('director drafts on real songs', async ({ page }) => {
             end: l.words[l.words.length - 1]!.end,
             words: l.words,
           })),
+        }
+        // The app's lyrics flow labels the chorus from repeated lines.
+        const chorus = analysis.lyricChorusCommand(songAnalysis, base.lyrics)
+        if (chorus) songAnalysis.sections = chorus.refined.sections
+        if (index) {
+          const editor = new model.ProjectEditor(base)
+          const workers = vision.createWorkerBackends()
+          const footage = vision.createFootageService({
+            editor,
+            vision: vision.createVisionService({ backends: workers, cache: vision.createMemoryCache() }),
+            media: media.mediaStore,
+            jobs: shared.jobs,
+          })
+          const stop = footage.indexing.start()
+          await new Promise<void>((resolve, reject) => {
+            const check = () => {
+              const s = footage.indexing.getState()
+              if (s.status === 'error') reject(new Error(s.error.message))
+              else if (
+                s.status === 'idle' &&
+                videos.every(
+                  (v: { id: string }) =>
+                    footage.indexing.statusOf(v.id) === 'indexed' &&
+                    ['analyzed', 'no-subject', 'failed'].includes(footage.indexing.subjectStatusOf(v.id)),
+                )
+              )
+                resolve()
+            }
+            footage.indexing.subscribe(check)
+            check()
+          })
+          stop()
+          workers.dispose()
+          base = editor.getProject()
         }
         const duration = songAsset.duration as number
 
@@ -162,7 +220,76 @@ test('director drafts on real songs', async ({ page }) => {
           return toDataUrl(canvas)
         }
 
+        // Larger frames for judging lyric typography.
+        const LW = 768
+        const LH = 432
+        const big = testing.createCompositor('export', LW, LH).compositor
+        const probe = new OffscreenCanvas(W, H)
+        const probeCtx = probe.getContext('2d', { willReadFrequently: true })!
+        const pixels = async (project: unknown, t: number) => {
+          await compositor.render(project, t)
+          probeCtx.drawImage(compositor.canvas, 0, 0, W, H)
+          return probeCtx.getImageData(0, 0, W, H).data
+        }
+        const lumaAt = (d: Uint8ClampedArray, i: number) =>
+          (0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!) / 255
+        /**
+         * Legibility of a text at time t: renders with and without the text track, finds the pixels the text changes,
+         * and measures the background's brightness there and the luma spread (95th minus 5th percentile) of the
+         * frame with text: high when letters stand out from their outline or halo, low when white text sits on white.
+         */
+        const legibility = async (project: Untyped, t: number) => {
+          const hidden = {
+            ...project,
+            tracks: project.tracks.map((tr: { name: string }) =>
+              tr.name === 'Director · Text' ? { ...tr, hidden: true } : tr,
+            ),
+          }
+          const fg = await pixels(project, t)
+          const bg = await pixels(hidden, t)
+          const changed: number[] = []
+          for (let i = 0; i < fg.length; i += 4)
+            if (Math.abs(lumaAt(fg, i) - lumaAt(bg, i)) > 0.06) changed.push(i)
+          if (changed.length < 20) return null
+          const xs = changed.map((i) => (i / 4) % W)
+          const ys = changed.map((i) => Math.floor(i / 4 / W))
+          const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+          const inBox: number[] = []
+          let bgSum = 0
+          for (let y = y0; y <= y1; y++)
+            for (let x = x0; x <= x1; x++) {
+              const i = (y * W + x) * 4
+              inBox.push(lumaAt(fg, i))
+              bgSum += lumaAt(bg, i)
+            }
+          inBox.sort((a, b) => a - b)
+          const q = (p: number) => inBox[Math.floor(p * (inBox.length - 1))]!
+          return { bg: bgSum / inBox.length, spread: q(0.95) - q(0.05), height: (y1 - y0 + 1) / H }
+        }
+
         const out: Record<string, unknown> = {}
+        if (index)
+          out.footageIndex = {
+            indexed: videos.filter((v) => vision.readClipIndex(base.analysis.visual[v.id])).length,
+            subjectTracks: videos.filter(
+              (v) => vision.readSubjectTrack(base.analysis.visual[v.id])?.samples.length,
+            ).length,
+            // Per clip: samples by source, and the median subject height and focus.
+            clips: videos.map((v) => {
+              const samples: Untyped[] = vision.readSubjectTrack(base.analysis.visual[v.id])?.samples ?? []
+              const sources: Record<string, number> = {}
+              for (const s of samples) sources[s.source] = (sources[s.source] ?? 0) + 1
+              const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
+              const seen = samples.filter((s) => s.source !== 'none')
+              return {
+                name: v.name,
+                sources,
+                height: median(seen.map((s) => s.box?.height ?? 0)),
+                focusY: median(seen.map((s) => s.focus.y)),
+                confidence: median(seen.map((s) => s.confidence)),
+              }
+            }),
+          }
         for (const kind of kinds) {
           // `autocut` is src/vision's auto-cut on the same song and clips, for comparison.
           let plan: Untyped
@@ -200,7 +327,10 @@ test('director drafts on real songs', async ({ page }) => {
                 ),
               }
             } else {
-              plan = await director.planLocally(await director.buildPlannerInput(base, { kind, seed: 1 }))
+              // `media` lets the director measure footage brightness under lyrics, as the app's media store does.
+              plan = await director.planLocally(
+                await director.buildPlannerInput(base, { kind, seed: 1, prompt, media: media.mediaStore }),
+              )
               const editor = new model.ProjectEditor(base)
               editor.dispatch(director.compilePlan(plan, base).commands)
               project = editor.getProject()
@@ -330,6 +460,15 @@ test('director drafts on real songs', async ({ page }) => {
             base.lyrics.lines.some(
               (l: { start: number; end: number }) => t > l.start + 0.2 && t < l.end - 0.1,
             )
+          const duringText = (t: number) =>
+            lyricTexts.some((l: { start: number; end: number }) => t > l.start + 0.12 && t < l.end - 0.12)
+          const legible = []
+          for (const l of lyricTexts as { start: number; end: number }[]) {
+            const r = await legibility(project, Math.max(l.start + 0.6, (l.start + l.end) / 2))
+            if (r) legible.push(r)
+          }
+          const mean = (v: number[]) => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : null)
+          const spreads = legible.map((r) => r.spread).sort((a, b) => a - b)
           const bands: number[][] = songAnalysis.features?.bands ?? []
           const bandValues = bands.flat()
           // Clip choice: source seconds shown more than once, how evenly clips are used, slowed shots, closest reuse.
@@ -397,6 +536,10 @@ test('director drafts on real songs', async ({ page }) => {
             bySection,
             lyricLines: base.lyrics.lines.length,
             lyricTexts: lyricTexts.length,
+            // Lines moved to the lower or upper third, off the centered default: kept clear of tracked faces.
+            linesOffCenter: lyricTexts.filter(
+              (t: { position: { y: number } }) => Math.abs(t.position.y - 0.5) > 0.15,
+            ).length,
             maxCps: lyricStats.length ? Math.max(...lyricStats.map((s: { cps: number }) => s.cps)) : null,
             minShown: lyricStats.length
               ? Math.min(...lyricStats.map((s: { shown: number }) => s.shown))
@@ -411,6 +554,18 @@ test('director drafts on real songs', async ({ page }) => {
               .filter((t: { role: string }) => t.role === 'title')
               .map((t: { text: string }) => t.text),
             cutsMidLine: cuts.length ? cuts.filter(midLine).length / cuts.length : null,
+            cutsDuringText: cuts.length ? cuts.filter(duringText).length / cuts.length : null,
+            legibility: legible.length
+              ? {
+                  measured: legible.length,
+                  brightBackgrounds: legible.filter((r) => r.bg > 0.55).length / legible.length,
+                  backgroundLuma: mean(legible.map((r) => r.bg)),
+                  spreadMean: mean(spreads),
+                  spreadP10: spreads[Math.floor(spreads.length * 0.1)],
+                  spreadMin: spreads[0],
+                  textHeight: mean(legible.map((r) => r.height)),
+                }
+              : null,
             generators: [
               ...new Set(
                 main.map((m: { source: { generatorId?: string } }) => m.source.generatorId).filter(Boolean),
@@ -438,22 +593,45 @@ test('director drafts on real songs', async ({ page }) => {
                 ]
               : null,
           }
+          const lyricMoments = lyricTexts
+            .filter((_: unknown, i: number) => i % Math.max(1, Math.floor(lyricTexts.length / 8)) === 0)
+            .slice(0, 8)
+            .map((l: { start: number; end: number }) => Math.max(l.start + 0.6, (l.start + l.end) / 2))
+          let lyricSheet: string | undefined
+          if (lyricMoments.length) {
+            const canvas = new OffscreenCanvas(4 * LW, Math.ceil(lyricMoments.length / 4) * (LH + 18))
+            const lc = canvas.getContext('2d')!
+            lc.fillStyle = '#111'
+            lc.fillRect(0, 0, canvas.width, canvas.height)
+            for (const [i, t] of lyricMoments.entries()) {
+              await big.render(project, t)
+              const x = (i % 4) * LW
+              const y = Math.floor(i / 4) * (LH + 18)
+              lc.drawImage(big.canvas, x, y, LW, LH)
+              lc.fillStyle = '#ddd'
+              lc.font = '13px sans-serif'
+              lc.fillText(label(t), x + 4, y + LH + 14)
+            }
+            lyricSheet = await toDataUrl(canvas)
+          }
           out[kind] = {
             metrics,
+            ...(lyricSheet ? { lyrics: lyricSheet } : {}),
             sheet: await sheet(project, grid, 6, label),
             opening: await sheet(project, [...opening, ...ending], 6, label),
             timeline: await toDataUrl(tl),
           }
         }
         compositor.dispose()
+        big.dispose()
         return out
       },
-      { lines: lyrics(song), kinds: KINDS },
+      { lines: lyrics(song), kinds: KINDS, prompt: PROMPT, index: INDEX },
     )
     const metrics: Record<string, unknown> = {}
     for (const [kind, value] of Object.entries(result) as [string, Record<string, unknown>][]) {
       metrics[kind] = value.metrics ?? value
-      for (const name of ['sheet', 'opening', 'timeline']) {
+      for (const name of ['sheet', 'opening', 'timeline', 'lyrics']) {
         const url = value[name] as string | undefined
         if (url)
           writeFileSync(path.join(dir, `${kind}-${name}.jpg`), Buffer.from(url.split(',')[1]!, 'base64'))

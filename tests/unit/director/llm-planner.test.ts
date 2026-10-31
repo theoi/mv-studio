@@ -102,6 +102,17 @@ describe('LLM planner', () => {
     expect(prompts.every((p) => p === 'a runner under neon signs, teal and orange')).toBe(true)
   })
 
+  it('tells the model which section labels were guessed from the audio alone', async () => {
+    const project = makeProject()
+    project.analysis.audio.song!.sections = SECTIONS.map((s) => ({
+      ...s,
+      confidence: s.id === 's-chorus2' ? 0.8 : 0.4,
+    }))
+    const { payload } = briefRequest(await buildPlannerInput(project, { kind: 'beat-cut', seed: 1 }))
+    const sections = (payload.song as { sections: { label: string; labelGuessed?: boolean }[] }).sections
+    expect(sections.map((s) => !!s.labelGuessed)).toEqual(SECTIONS.map((s) => s.id !== 's-chorus2'))
+  })
+
   it('applies section moods for an unanalyzed song too', async () => {
     const inp = await input('beat-cut', { analyzed: false })
     const { payload } = briefRequest(inp)

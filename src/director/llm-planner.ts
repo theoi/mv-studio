@@ -13,7 +13,7 @@ import { expandBrief } from './expand.ts'
 import type { PlannerInput } from './inputs.ts'
 import { ruleBrief } from './local-planner.ts'
 import { COLOR_KEYS, MOTIONS, PACES, type EditPlan, type Pace } from './plan.ts'
-import { linesIn } from './rules.ts'
+import { linesIn, SURE_LABEL } from './rules.ts'
 import { beatGrid, sectionsFor } from './timing.ts'
 
 /** The part of OpenAICompatibleClient the director uses. */
@@ -81,6 +81,7 @@ export function briefRequest(input: PlannerInput): { payload: Record<string, unk
         return {
           id,
           label: s.label,
+          ...((s.confidence ?? 1) < SURE_LABEL ? { labelGuessed: true } : {}),
           start: r2(s.start),
           end: r2(s.end),
           energy: r2(s.energy),
@@ -127,6 +128,7 @@ export function briefMessages(input: PlannerInput, payload: Record<string, unkno
     '- visual: "footage" or "stills" only when media is listed, "generated" only when generation is not null, otherwise "visualizer".',
     '- Follow the energy: quiet sections get a slower pace, lower intensity and soft transitions; choruses and drops get faster cuts, higher intensity and stronger reactivity.',
     '- Repeated sections (same label) should feel related.',
+    '- A label with labelGuessed was guessed from the audio alone: when its energy disagrees, follow the energy.',
     '- Generation prompts describe one concrete image each: subject, setting, action, camera and light. Keep the same main subject and style throughout. No text, logos or real people.',
     '- Follow the user prompt as the creative direction when there is one.',
   ].join('\n')

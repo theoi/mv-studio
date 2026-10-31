@@ -4,6 +4,7 @@
  * everything the director makes stays normal, editable project content.
  */
 import { z } from 'zod'
+import type { ReactionId } from '../plugins/reactions.ts'
 
 export const COLOR_KEYS = [
   'exposure',
@@ -26,6 +27,19 @@ export const MOTIONS = [
 ] as const
 export const AUDIO_SOURCES = ['loudness', 'bass', 'mid', 'treble', 'onset', 'beat', 'downbeat'] as const
 export const BINDING_TARGETS = ['scale', 'opacity', 'rotation', 'x', 'y', ...COLOR_KEYS] as const
+/** Music reactions from src/plugins/reactions.ts ("Pulse with kick"), so the inspector shows them by name. */
+export const REACTION_IDS = [
+  'kick',
+  'snare',
+  'hats',
+  'bass',
+  'vocals',
+  'loudness',
+  'beat',
+  'downbeat',
+] as const satisfies readonly ReactionId[]
+/** Bottom to top: shots, overlays (visualizers over footage or scenes), accents (particles on choruses). */
+export const SHOT_LAYERS = ['main', 'overlay', 'accent'] as const
 
 const seconds = z.number().finite().min(0)
 const paramValue = z.union([z.number(), z.string(), z.boolean()])
@@ -55,6 +69,16 @@ export const effectSpecSchema = z.object({
       }),
     )
     .optional(),
+})
+
+/** A music reaction on a clip property or on a param of the shot's generator, at 0..1 of its full amount. */
+export const reactionSpecSchema = z.object({
+  reaction: z.enum(REACTION_IDS),
+  target: z.union([
+    z.object({ property: z.enum(['scale', 'opacity', 'rotation', 'x', 'y']) }),
+    z.object({ param: z.string().min(1) }),
+  ]),
+  amount: z.number().min(0).max(1),
 })
 
 export const transitionSpecSchema = z.object({
@@ -94,7 +118,7 @@ export const shotSchema = z
     sectionId: z.string().optional(),
     start: seconds,
     end: seconds,
-    layer: z.enum(['main', 'overlay']),
+    layer: z.enum(SHOT_LAYERS),
     source: shotSourceSchema,
     fit: z.enum(['cover', 'contain']).optional(),
     motion: z.enum(MOTIONS).optional(),
@@ -103,6 +127,7 @@ export const shotSchema = z
     transitionOut: transitionSpecSchema.optional(),
     effects: z.array(effectSpecSchema).optional(),
     reactive: z.array(audioBindingSchema).optional(),
+    reactions: z.array(reactionSpecSchema).optional(),
     adjustments: adjustmentsSchema.optional(),
     opacity: z.number().min(0).max(1).optional(),
     blendMode: z.enum(['normal', 'screen', 'add', 'overlay', 'multiply', 'soft-light']).optional(),
@@ -118,7 +143,10 @@ export const textStyleSpecSchema = z.object({
   color: z.string().optional(),
   align: z.enum(['left', 'center', 'right']).optional(),
   uppercase: z.boolean().optional(),
+  /** Wins over `uppercase`, for styles set in lowercase. */
+  textTransform: z.enum(['none', 'uppercase', 'lowercase']).optional(),
   letterSpacing: z.number().optional(),
+  lineHeight: z.number().min(0.5).max(3).optional(),
   maxWidth: z.number().min(0.1).max(1).optional(),
   stroke: z.object({ color: z.string(), width: z.number().min(0) }).optional(),
   shadow: z
@@ -142,7 +170,10 @@ export const textItemSchema = z
     reactive: z.array(audioBindingSchema).optional(),
     transitionIn: transitionSpecSchema.optional(),
     transitionOut: transitionSpecSchema.optional(),
-    role: z.enum(['lyric', 'title']).optional(),
+    /** 'emphasis': the stressed word of a lyric line, shown bigger below the rest of the line as it is sung. */
+    role: z.enum(['lyric', 'title', 'emphasis']).optional(),
+    /** Lyrics behind the subject: the text shows only outside this subject mask of the footage under it. */
+    behind: z.object({ maskAssetId: z.string().min(1), sourceAssetId: z.string().min(1) }).optional(),
   })
   .refine((t) => t.end > t.start, { message: 'Text must end after it starts' })
 
@@ -191,6 +222,8 @@ export type Motion = (typeof MOTIONS)[number]
 export type AudioBinding = z.infer<typeof audioBindingSchema>
 export type EffectSpec = z.infer<typeof effectSpecSchema>
 export type TransitionSpec = z.infer<typeof transitionSpecSchema>
+export type ReactionSpec = z.infer<typeof reactionSpecSchema>
+export type ShotLayer = (typeof SHOT_LAYERS)[number]
 export type ShotSource = z.infer<typeof shotSourceSchema>
 export type GenerateSource = Extract<ShotSource, { type: 'generate' }>
 export type PlanShot = z.infer<typeof shotSchema>

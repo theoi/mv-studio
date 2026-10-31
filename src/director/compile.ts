@@ -4,7 +4,7 @@
  * step. Every clip carries meta.director so a later run can replace the previous draft without touching the user's
  * own clips. Ids the catalog does not know are left out with a warning instead of failing.
  */
-import type { EditCommand } from '../model/commands.ts'
+import type { EditCommand, PropertyPath } from '../model/commands.ts'
 import { createTrack, DEFAULT_TEXT_STYLE, defaultTransform, newId } from '../model/factory.ts'
 import { clipsOnTrack } from '../model/queries.ts'
 import type {
@@ -28,6 +28,8 @@ import type {
   Transition,
   VisualClip,
 } from '../model/types.ts'
+import { reactionCommands, type ReactionTarget } from '../plugins/reactions.ts'
+import { behindSubjectMatte } from '../vision/index.ts'
 import { DEFAULT_CATALOG, findItem, type DirectorCatalog } from './catalog.ts'
 import { DIRECTOR_META_KEY, directorMeta, type DirectorClipMeta, type DirectorTrackRole } from './meta.ts'
 import type {
@@ -39,17 +41,26 @@ import type {
   PlanLook,
   PlanShot,
   PlanText,
+  ReactionSpec,
+  ShotLayer,
   TransitionSpec,
 } from './plan.ts'
 
 /** Top to bottom. Text stays above the look layer so lyrics are not color graded. */
-const TRACK_ORDER: DirectorTrackRole[] = ['text', 'look', 'overlay', 'shots']
+const TRACK_ORDER: DirectorTrackRole[] = ['text', 'look', 'accent', 'overlay', 'shots']
 
 const TRACK_NAMES: Record<DirectorTrackRole, string> = {
   text: 'Director · Text',
   look: 'Director · Look',
+  accent: 'Director · Accents',
   overlay: 'Director · Overlay',
   shots: 'Director · Shots',
+}
+
+const LAYER_ROLE: Record<ShotLayer, DirectorTrackRole> = {
+  main: 'shots',
+  overlay: 'overlay',
+  accent: 'accent',
 }
 
 const PLACEHOLDER_COLOR = '#1c1c28'
@@ -342,7 +353,7 @@ function shotClip(
   if (duration <= 0.01) return undefined
   const meta: DirectorClipMeta = {
     planId: ctx.plan.id,
-    role: shot.layer === 'overlay' ? 'overlay' : 'shots',
+    role: LAYER_ROLE[shot.layer],
     shotId: shot.id,
     ...(shot.sectionId ? { sectionId: shot.sectionId } : {}),
   }
@@ -442,7 +453,34 @@ function shotClip(
   if (tOut) clip.transitionOut = tOut
   applyMotion(clip, shot.motion)
   applyBindings(clip, shot.reactive, ctx)
+  applyReactions(clip, shot.reactions, ctx)
   return clip
+}
+
+function setPath(target: object, path: PropertyPath, value: unknown) {
+  let node = target as Record<string | number, unknown>
+  for (const key of path.slice(0, -1)) {
+    const next = node[key]
+    if (typeof next !== 'object' || next === null) return
+    node = next as Record<string | number, unknown>
+  }
+  const last = path[path.length - 1]
+  if (last !== undefined) node[last] = value
+}
+
+/** Music reactions, written exactly as the inspector's reaction picker writes them so it shows them by name. */
+function applyReactions(clip: VisualClip, reactions: ReactionSpec[] | undefined, ctx: Ctx) {
+  if (!reactions?.length) return
+  const project: Project = { ...ctx.project, clips: { ...ctx.project.clips, [clip.id]: clip } }
+  for (const r of reactions) {
+    const target: ReactionTarget =
+      'property' in r.target
+        ? { clipId: clip.id, property: r.target.property }
+        : { clipId: clip.id, param: r.target.param }
+    for (const command of reactionCommands(project, [target], r.reaction, r.amount)) {
+      if (command.type === 'clip.set') setPath(clip, command.path, command.value)
+    }
+  }
 }
 
 function textStyle(t: PlanText): TextStyle {
@@ -457,7 +495,8 @@ function textStyle(t: PlanText): TextStyle {
     ...(s.align ? { align: s.align } : {}),
     ...(s.letterSpacing !== undefined ? { letterSpacing: s.letterSpacing } : {}),
     ...(s.maxWidth ? { maxWidth: s.maxWidth } : {}),
-    textTransform: s.uppercase ? 'uppercase' : 'none',
+    ...(s.lineHeight ? { lineHeight: s.lineHeight } : {}),
+    textTransform: s.textTransform ?? (s.uppercase ? 'uppercase' : 'none'),
     ...(s.stroke
       ? { stroke: { color: normalizeColor(s.stroke.color, '#000000'), width: s.stroke.width } }
       : {}),
@@ -485,8 +524,12 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx): TextClip | undefined {
   }
   clip.transform.x = { value: t.position.x }
   clip.transform.y = { value: t.position.y }
-  if (t.lyricLineId && ctx.project.lyrics?.lines.some((l) => l.id === t.lyricLineId))
+  // An emphasized word is timed by its own start; linked to the whole line, the renderer would look for its timing
+  // among the line's first words only.
+  if (t.role !== 'emphasis' && t.lyricLineId && ctx.project.lyrics?.lines.some((l) => l.id === t.lyricLineId))
     clip.lyricLineId = t.lyricLineId
+  if (t.behind && ctx.project.assets[t.behind.maskAssetId])
+    clip.matte = behindSubjectMatte(t.behind.maskAssetId, t.behind.sourceAssetId)
   if (t.animationPresetId) {
     if (findItem(ctx.catalog.textPresets, t.animationPresetId))
       clip.animation = { presetId: t.animationPresetId, params: {} }
@@ -639,8 +682,7 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
   stats.removedClips = cleanup.removedClips
 
   const needed = new Set<DirectorTrackRole>()
-  if (plan.shots.some((s) => s.layer === 'main')) needed.add('shots')
-  if (plan.shots.some((s) => s.layer === 'overlay')) needed.add('overlay')
+  for (const s of plan.shots) needed.add(LAYER_ROLE[s.layer])
   if (plan.texts.length) needed.add('text')
   if (
     plan.look &&
@@ -668,7 +710,7 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
 
   const clips: Clip[] = []
   for (const shot of [...plan.shots].sort((a, b) => a.start - b.start)) {
-    const trackId = placed.trackFor.get(shot.layer === 'overlay' ? 'overlay' : 'shots')
+    const trackId = placed.trackFor.get(LAYER_ROLE[shot.layer])
     if (!trackId) continue
     const clip = shotClip(shot, trackId, ctx, generated, stats)
     if (!clip) continue

@@ -10,6 +10,7 @@ import {
 } from '../../../src/director/index.ts'
 import { BAND_EDGES_HZ } from '../../../src/analysis/features/features.ts'
 import { planFrame } from '../../../src/engine/layout.ts'
+import { describeReaction } from '../../../src/plugins/reactions.ts'
 import { createTextClip } from '../../../src/model/factory.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import type { Asset, Clip, ImageClip, Project, TextClip, VideoClip } from '../../../src/model/types.ts'
@@ -82,12 +83,30 @@ describe('compilePlan', () => {
     })
   })
 
+  it('writes music reactions the way the reaction picker does, with chorus particles on their own track', async () => {
+    const { project, editor, plan } = await setup('visualizer', { videos: 0 })
+    editor.dispatch(compilePlan(plan, project).commands)
+    const after = editor.getProject()
+    const shot = plan.shots.find((s) => s.reactions?.length)!
+    const clip = directorClips(after).find((c) => directorMeta(c)!.shotId === shot.id)!
+    const active = describeReaction(after, { clipId: clip.id, property: 'scale' })
+    expect(active).toMatchObject({ kind: 'reaction', reaction: { id: 'kick' }, exact: true })
+    expect(active?.kind === 'reaction' && active.amount).toBeCloseTo(shot.reactions![0]!.amount, 5)
+    const names = after.tracks.map((t) => t.name)
+    expect(names.indexOf('Director · Accents')).toBeGreaterThan(names.indexOf('Director · Look'))
+    expect(names.indexOf('Director · Accents')).toBeLessThan(names.indexOf('Director · Overlay'))
+  })
+
   it('links lyric text to lyric lines and keeps it above the look layer', async () => {
     const { project, editor, plan } = await setup('lyric')
     editor.dispatch(compilePlan(plan, project).commands)
     const after = editor.getProject()
     const texts = clips(after).filter((c): c is TextClip => c.type === 'text')
-    expect(texts.map((t) => t.lyricLineId)).toEqual(plan.texts.map((t) => t.lyricLineId))
+    // Emphasized words keep their line in the plan but are timed by their own start, unlinked.
+    expect(plan.texts.some((t) => t.role === 'emphasis' && t.lyricLineId)).toBe(true)
+    expect(texts.map((t) => t.lyricLineId)).toEqual(
+      plan.texts.map((t) => (t.role === 'emphasis' ? undefined : t.lyricLineId)),
+    )
     const lyrics = texts.filter((t) => t.lyricLineId)
     expect(lyrics.length).toBeGreaterThan(0)
     expect(lyrics.every((t) => t.karaoke?.mode === 'word')).toBe(true)
