@@ -1,4 +1,5 @@
 /** Built-in GLSL ES 3.00 shaders and the plugin shader templates. */
+import type { ColorAdjustmentKey } from '../model/types.ts'
 import type { ParamSpec } from './types.ts'
 
 /** Full-screen pass. v_uv has a bottom-left origin, matching render-target textures. */
@@ -58,8 +59,8 @@ void main() {
 
 /**
  * Tone helpers shared by the finish pass and grading effects, so grades roll off instead of clipping:
- * `contrastCurve` is an S-curve that keeps black and white fixed, and `fitGamut` brings a color into 0..1 by pulling
- * its chroma toward its luma (hue and luma kept) instead of clamping channel by channel.
+ * `contrastCurve` is an S-curve that keeps black, white and fully saturated colors fixed, and `fitGamut` brings a
+ * color into 0..1 by pulling its chroma toward its luma (hue and luma kept) instead of clamping channel by channel.
  */
 export const TONE_GLSL = `
 const vec3 LUMA_709 = vec3(0.2126, 0.7152, 0.0722);
@@ -91,27 +92,49 @@ vec3 fitGamut(vec3 c, float knee) {
 }
 
 /**
- * Contrast k around pivot p. Above 1 it is an S-curve on luma with slope k at the pivot that flattens into black and
- * white, so shadows and highlights compress instead of clipping; chroma scales with the curve's slope, as it would
- * under a per-channel curve, but the hue is kept. Below 1 it fades linearly toward the pivot.
+ * Pulls the chroma of c, which has no channel below 0, toward its luma just enough to bring every channel to 1 or
+ * below, keeping hue and luma; colors inside are unchanged.
+ */
+vec3 clipWhite(vec3 c) {
+  float l = dot(c, LUMA_709);
+  float hi = max(c.r, max(c.g, c.b));
+  return l >= 1.0 ? vec3(1.0) : l + (c - l) * min((1.0 - l) / max(hi - l, 1e-5), 1.0);
+}
+
+/** S-curve with slope k > 1 at pivot p that flattens into 0 and 1, for two values at once. */
+vec2 sCurve(vec2 x, float k, float p) {
+  x = clamp(x, 0.0, 1.0);
+  vec2 below = vec2(lessThan(x, vec2(p)));
+  vec2 y = pow(mix((1.0 - x) / (1.0 - p), x / p, below), vec2(k));
+  return mix(1.0 - (1.0 - p) * y, p * y, below);
+}
+
+/**
+ * Contrast k around pivot p. Above 1 the brightest and darkest channels follow an S-curve that flattens into black
+ * and white, so shadows and highlights compress instead of clipping and midtone colors gain saturation as under a
+ * per-channel curve. The middle channel keeps its place between them, so the hue is kept, and a color with a channel
+ * at 1 and one at 0 (primaries, secondaries) is unchanged. A color outside 0..1 first moves toward its luma until it
+ * fits. Below 1 it fades linearly toward the pivot.
  */
 vec3 contrastCurve(vec3 c, float k, float p) {
   if (k <= 1.0) return (c - p) * k + p;
   float l0 = dot(c, LUMA_709);
   float l = clamp(l0, 0.0, 1.0);
-  float t = l < p ? l / p : (1.0 - l) / (1.0 - p);
-  float slope = pow(t, k - 1.0);
-  float curved = l < p ? p * t * slope : 1.0 - (1.0 - p) * t * slope;
-  return curved + (c - l0) * k * slope;
+  // Brightest and darkest channel relative to luma, and how far past the edge of 0..1 they reach.
+  vec2 range = vec2(max(c.r, max(c.g, c.b)), min(c.r, min(c.g, c.b))) - l0;
+  float reach = max(range.x / max(1.0 - l, 1e-5), -range.y / max(l, 1e-5));
+  vec2 m = sCurve(l + range / max(reach, 1.0), k, p);
+  return m.y + (m.x - m.y) * (c - l0 - range.y) / max(range.x - range.y, 1e-5);
 }
 `
-
 /**
  * Color adjustments, matte and opacity in one pass over a premultiplied layer. Contrast above 0 is an S-curve and
  * below 0 a fade (to 40% at -1, so the extreme stays usable); out-of-range colors roll off toward their luma, so no
- * setting clips channels or shifts hue, and neutral settings leave the layer unchanged.
+ * setting clips channels or shifts hue, and neutral settings leave the layer unchanged. CURVE (contrast above 0), COLOR
+ * (brightness, temperature, tint, hue, saturation) and HUE compile in only the adjustments a layer uses, see
+ * `finishShader`.
  */
-export const FINISH_FS = `#version 300 es
+const FINISH_FS = `#version 300 es
 precision highp float;
 in vec2 v_uv;
 uniform sampler2D u_tex;
@@ -139,16 +162,31 @@ void main() {
   vec4 c = texture(u_tex, v_uv);
   if (u_adjust == 1 && c.a > 0.0) {
     vec3 rgb = c.rgb / c.a;
+#ifdef COLOR
     float knee = gamutKnee(rgb);
+#endif
     rgb *= exp2(u_exposure * 2.0);
+#ifdef COLOR
     rgb += u_brightness * 0.5;
-    if (u_contrast != 0.0)
-      rgb = contrastCurve(rgb, u_contrast > 0.0 ? 1.0 + u_contrast : 1.0 + 0.6 * u_contrast, 0.5);
+#endif
+#ifdef CURVE
+    rgb = contrastCurve(rgb, 1.0 + u_contrast, 0.5);
+#else
+    rgb = (rgb - 0.5) * (1.0 + 0.6 * min(u_contrast, 0.0)) + 0.5;
+#endif
+#ifdef COLOR
     rgb += vec3(u_temperature, 0.0, -u_temperature) * 0.15 + vec3(0.0, u_tint, 0.0) * 0.15;
-    if (u_hue != 0.0) rgb = hueRotate(rgb, u_hue * 3.14159265);
+#ifdef HUE
+    rgb = hueRotate(rgb, u_hue * 3.14159265);
+#endif
     float l = dot(rgb, LUMA_709);
-    rgb = mix(vec3(l), rgb, 1.0 + u_saturation);
-    c = vec4(clamp(fitGamut(rgb, knee), 0.0, 1.0) * c.a, c.a);
+    rgb = fitGamut(mix(vec3(l), rgb, 1.0 + u_saturation), knee);
+#else
+    // Exposure, contrast and fade keep in-range colors in range and never go below 0, so only colors pushed past
+    // white need fitting, without the soft knee.
+    rgb = clipWhite(rgb);
+#endif
+    c = vec4(clamp(rgb, 0.0, 1.0) * c.a, c.a);
   }
   if (u_matteMode != 0) {
     float m = texture(u_matte, v_uv).r;
@@ -161,6 +199,31 @@ void main() {
   outColor = c * u_opacity;
 }`
 
+const FINISH_CURVE = 1
+const FINISH_COLOR = 2
+const FINISH_HUE = 4
+
+/** The finish-pass variant for a layer's adjustments (null when it has none), a key for `finishShader`. */
+export function finishVariant(adjust: Readonly<Record<ColorAdjustmentKey, number>> | null): number {
+  if (!adjust) return 0
+  const color = adjust.brightness || adjust.saturation || adjust.temperature || adjust.tint || adjust.hue
+  return (adjust.contrast > 0 ? FINISH_CURVE : 0) | (color ? FINISH_COLOR : 0) | (adjust.hue ? FINISH_HUE : 0)
+}
+
+/**
+ * The finish pass with only the adjustment code a variant needs. Uniform branches would leave one program, but
+ * SwiftShader (software WebGL) still pays for the code it skips: on exposure alone, about as much as the soft gamut
+ * knee and the contrast curve cost.
+ */
+export function finishShader(variant: number): string {
+  const names: [number, string][] = [
+    [FINISH_CURVE, 'CURVE'],
+    [FINISH_COLOR, 'COLOR'],
+    [FINISH_HUE, 'HUE'],
+  ]
+  const defines = names.map(([bit, name]) => (variant & bit ? `#define ${name}\n` : '')).join('')
+  return FINISH_FS.replace('#version 300 es\n', `#version 300 es\n${defines}`)
+}
 /** Blend a premultiplied source layer over a premultiplied destination (W3C compositing and blending). */
 export const BLEND_FS = `#version 300 es
 precision highp float;

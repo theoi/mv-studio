@@ -2,8 +2,9 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { openHarness, test } from '../e2e/fixtures.ts'
 
-// Frame cost of every plugin over a baseline without it, at 1280x720 (PERF_KIND=effect|transition|generator|
-// text-animation|all, PERF_FRAMES, PERF_OUT). Results are relative: agents and CI render with SwiftShader on the CPU.
+// Frame cost of every plugin, and of clip adjustments, over a baseline without it, at 1280x720 (PERF_KIND=effect|
+// transition|generator|text-animation|adjustment|all, PERF_FRAMES, PERF_OUT). Results are relative: agents and CI
+// render with SwiftShader on the CPU.
 const OUT = process.env.PERF_OUT ?? '/tmp/mv-perf'
 
 interface Row {
@@ -21,7 +22,7 @@ test('plugin frame cost', async ({ page }) => {
   await openHarness(page)
   const rows: Row[] = await page.evaluate(
     async ({ kind, frames }) => {
-      const { engine, media, plugins, testing } = window.mvStudio
+      const { engine, media, model, plugins, testing } = window.mvStudio
       const image = await media.mediaStore.storeBlob(await plugins.preview.sampleSceneBlob(1280, 720), {
         kind: 'image',
         name: 'scene.png',
@@ -45,7 +46,12 @@ test('plugin frame cost', async ({ page }) => {
         return median(samples)
       }
       const baselines = new Map<string, number>()
-      const kinds = kind === 'all' ? ['effect', 'transition', 'generator', 'text-animation'] : [kind]
+      const kinds =
+        kind === 'all'
+          ? ['effect', 'transition', 'generator', 'text-animation']
+          : kind === 'adjustment'
+            ? []
+            : [kind]
       const out: Row[] = []
       for (const k of kinds) {
         for (const def of engine.pluginRegistry.list(k as 'effect')) {
@@ -65,6 +71,43 @@ test('plugin frame cost', async ({ page }) => {
             id: def.id,
             kind: k,
             cost: def.cost ?? '',
+            baselineMs,
+            ms,
+            extraMs: Math.max(0, ms - baselineMs),
+          })
+        }
+      }
+      if (kind === 'adjustment' || kind === 'all') {
+        const base = plugins.preview.previewBase('Adjustments')
+        base.assets[image.id] = image
+        const clip = model.createImageClip({
+          trackId: base.tracks[0]!.id,
+          assetId: image.id,
+          start: 0,
+          duration: base.duration,
+        })
+        base.clips[clip.id] = clip
+        const baselineMs = await time(base, 1)
+        // Opacity alone runs the same pass without color math, so it shows what the math adds.
+        const sets: Record<string, Record<string, number>> = {
+          'opacity 0.99': {},
+          'exposure +0.3': { exposure: 0.3 },
+          'exposure -0.3': { exposure: -0.3 },
+          'contrast +0.3': { contrast: 0.3 },
+          'saturation +0.3': { saturation: 0.3 },
+          'all adjustments': { exposure: 0.2, contrast: 0.3, saturation: 0.2, temperature: 0.1 },
+        }
+        for (const [id, values] of Object.entries(sets)) {
+          const p = structuredClone(base)
+          const c = p.clips[clip.id]!
+          if (c.type !== 'image') throw new Error('expected the image clip')
+          c.adjustments = Object.fromEntries(Object.entries(values).map(([k, value]) => [k, { value }]))
+          if (!Object.keys(values).length) c.opacity = { value: 0.99 }
+          const ms = await time(p, 1)
+          out.push({
+            id,
+            kind: 'adjustment',
+            cost: '',
             baselineMs,
             ms,
             extraMs: Math.max(0, ms - baselineMs),
