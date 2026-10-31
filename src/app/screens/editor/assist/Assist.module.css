@@ -649,14 +649,35 @@
   text-align: right;
 }
 
+/* In a narrow panel Half and Double move under the value rather than the value wrapping. */
 .tempoValue {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-1) 0;
 }
 
 .tempoValue > span:first-child {
-  margin-right: var(--space-1);
+  white-space: nowrap;
+}
+
+.tempoLevel {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.tempoLevel > button[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tempoLevel > button[aria-disabled='true']:hover,
+.tempoLevel > button[aria-disabled='true']:active {
+  background: transparent;
+  color: var(--text-2);
+  transform: none;
 }
 
 .stemRow {

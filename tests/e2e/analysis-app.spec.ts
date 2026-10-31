@@ -138,11 +138,12 @@ test('Assist › Song analysis halves and doubles the tempo, keeping bars of fou
   const double = panel.getByRole('button', { name: 'Double tempo, 240 BPM' })
   await double.hover()
   await expect(page.getByRole('tooltip')).toContainText(
-    'For a beat felt twice as fast: adds a beat between each two (240 BPM)',
+    'For a beat felt twice as fast: adds a beat between every two beats (240 BPM)',
   )
   await shot(page, 'analysis-tempo-level')
 
-  await double.click()
+  await double.focus()
+  await page.keyboard.press('Enter')
   await expect(page.getByText('Tempo set to 240 BPM')).toBeVisible()
   await expect(panel.getByText('240 BPM · 4/4')).toBeVisible()
   const doubled = await grid(page)
@@ -155,8 +156,16 @@ test('Assist › Song analysis halves and doubles the tempo, keeping bars of fou
   const gaps = doubled.downbeats.slice(1).map((d, i) => index.get(d)! - index.get(doubled.downbeats[i]!)!)
   expect(new Set(gaps)).toEqual(new Set([4]))
   await expect(barsRow).toContainText(`${doubled.downbeats.length} found`)
-  // 480 BPM is no beat a listener could tap.
-  await expect(panel.getByRole('button', { name: 'Double tempo, 480 BPM' })).toBeDisabled()
+  // 480 BPM is no beat a listener could tap. The pressed button keeps keyboard focus, and its tooltip says why it is off.
+  const tooFast = panel.getByRole('button', { name: 'Double tempo, 480 BPM' })
+  await expect(tooFast).toBeDisabled()
+  await expect(tooFast).toBeFocused()
+  await page.mouse.move(0, 0)
+  await tooFast.hover()
+  await expect(
+    page.getByRole('tooltip').filter({ hasText: '480 BPM is faster than any beat you could tap' }),
+  ).toBeVisible()
+  await shot(page, 'analysis-double-off-tooltip')
   await page.getByRole('button', { name: 'Undo' }).last().click()
   await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
   expect((await grid(page)).downbeats).toEqual(found.downbeats)
@@ -194,6 +203,16 @@ test('Assist › Song analysis halves and doubles the tempo, keeping bars of fou
   await page.getByRole('button', { name: 'Undo' }).last().click()
   await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
   expect((await grid(page)).downbeats).toEqual(found.downbeats)
+
+  // In the narrowest panel (1280×720) the value stays on one line, and Half and Double move under it if need be.
+  await page.setViewportSize({ width: 1280, height: 720 })
+  const value = await panel.getByText('120 BPM · 4/4', { exact: true }).boundingBox()
+  const label = await panel.getByText('Tempo', { exact: true }).boundingBox()
+  expect(value!.height).toBeLessThan(label!.height * 1.5)
+  const edge = await panel.boundingBox()
+  const right = await double.boundingBox()
+  expect(right!.x + right!.width).toBeLessThanOrEqual(edge!.x + edge!.width)
+  await shot(page, 'analysis-tempo-level-1280')
 })
 
 /**

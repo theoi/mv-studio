@@ -40,33 +40,39 @@ export function AnalysisBadge() {
   return null
 }
 
-/** Half or Double next to the tempo: the beat level at half or twice the speed, with what it becomes. */
+/**
+ * Half or Double next to the tempo: the beat level at half or twice the speed, with what it becomes. Past the tempo
+ * range it stays focusable (`aria-disabled`), so focus stays on it when a press reaches the limit and its tooltip can
+ * say why.
+ */
 function TempoLevelButton({ factor, bpm, disabled }: { factor: 2 | 0.5; bpm: number; disabled: boolean }) {
   const next = bpm * factor
-  const allowed = next >= TEMPO_LEVEL_RANGE.min && next <= TEMPO_LEVEL_RANGE.max
+  const tooFast = next > TEMPO_LEVEL_RANGE.max
+  const allowed = next >= TEMPO_LEVEL_RANGE.min && !tooFast
   const name = factor === 2 ? 'Double tempo' : 'Half tempo'
+  let description = `${formatBpm(next)} is ${tooFast ? 'faster' : 'slower'} than any beat you could tap`
+  if (allowed)
+    description =
+      factor === 2
+        ? `For a beat felt twice as fast: adds a beat between every two beats (${formatBpm(next)})`
+        : `For a beat felt half as fast: keeps every other beat (${formatBpm(next)})`
   return (
-    <Tooltip
-      label={name}
-      description={
-        factor === 2
-          ? `For a beat felt twice as fast: adds a beat between each two (${formatBpm(next)})`
-          : `For a beat felt half as fast: keeps every other beat (${formatBpm(next)})`
-      }
-    >
+    <Tooltip label={name} description={description}>
       <Button
         size="sm"
         variant="ghost"
         aria-label={`${factor === 2 ? 'Double' : 'Half'} tempo, ${formatBpm(next)}`}
-        disabled={disabled || !allowed}
-        onClick={() => setTempoLevel(factor)}
+        disabled={disabled}
+        aria-disabled={allowed ? undefined : true}
+        onClick={() => {
+          if (allowed) setTempoLevel(factor)
+        }}
       >
         {factor === 2 ? 'Double' : 'Half'}
       </Button>
     </Tooltip>
   )
 }
-
 const TAP_KEYS = new Set([' ', 'Enter', 't', 'T'])
 
 /**
@@ -153,10 +159,10 @@ export function AnalysisView() {
           <span className={styles.tempoValue}>
             <span className="tnum">{tempoText}</span>
             {analysis?.tempo && analysis.beats?.length && !taps.length && tempo.phase !== 'running' ? (
-              <>
+              <span className={styles.tempoLevel}>
                 <TempoLevelButton factor={0.5} bpm={analysis.tempo.bpm} disabled={busy} />
                 <TempoLevelButton factor={2} bpm={analysis.tempo.bpm} disabled={busy} />
-              </>
+              </span>
             ) : null}
           </span>
         </div>
