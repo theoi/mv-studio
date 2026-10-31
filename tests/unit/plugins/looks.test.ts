@@ -124,8 +124,8 @@ describe('applying looks', () => {
     expect(clip.type).toBe('adjustment')
     expect(clip.adjustments).toEqual({
       contrast: { value: 0.15 },
-      saturation: { value: 0.25 },
-      temperature: { value: -0.15 },
+      saturation: { value: 0.2 },
+      temperature: { value: -0.08 },
     })
     expect(
       clip.effects.map((e) => [
@@ -136,7 +136,7 @@ describe('applying looks', () => {
       ]),
     ).toEqual([
       ['color-grade', 'neon', 0.55, undefined],
-      ['glow', undefined, undefined, 0.8],
+      ['glow', undefined, undefined, 0.95],
     ])
     expect([clip.start, clip.duration]).toEqual([0, 12])
     // The new Look track sits right under the lyrics track, above the footage.

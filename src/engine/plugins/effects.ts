@@ -94,11 +94,16 @@ vec4 mainImage(vec2 uv) {
 }`,
 }
 
-/** The highlights glow spreads from: pixels brighter than u_threshold, with a soft knee. */
+/**
+ * The highlights glow spreads from: pixels brighter than u_threshold, weighted by how far above it they are (full
+ * weight only at white, with a soft knee), so bright footage glows from its light sources rather than everywhere.
+ */
 const GLOW_BRIGHT = `
 vec4 bright(vec4 s) {
   float l = max(s.r, max(s.g, s.b));
-  return s * smoothstep(u_threshold, min(u_threshold + 0.25, 1.0001), l);
+  float x = l - u_threshold;
+  float soft = clamp(x + 0.1, 0.0, 0.2);
+  return s * clamp(max(soft * soft * 2.5, x) / max(1.0 - u_threshold, 0.05), 0.0, 1.0);
 }`
 
 export const glow: EffectDefinition = {
@@ -115,17 +120,42 @@ export const glow: EffectDefinition = {
     { key: 'threshold', label: 'Threshold', type: 'number', default: 0.6, min: 0, max: 1, step: 0.01 },
     { key: 'tint', label: 'Tint', type: 'color', default: '#ffffff', advanced: true },
   ],
-  passes: blurPyramid(`${GLOW_BRIGHT}
+  passes: [
+    ...blurPyramid(`${GLOW_BRIGHT}
 vec4 tap(vec2 uv) { return bright(texture(u_input, uv)); }`),
+    {
+      // Share of the frame above the threshold, averaged once from the coarsest pyramid level into a 1x1 target.
+      id: 'share',
+      scale: 1 / 4096,
+      inputs: [`d${PYRAMID_LEVELS}`],
+      fragmentShader: `
+vec4 mainImage(vec2 uv) {
+  float s = 0.0;
+  for (int y = 0; y < 4; y++)
+    for (int x = 0; x < 4; x++) {
+      vec3 b = texture(u_d${PYRAMID_LEVELS}, (vec2(x, y) + 0.5) / 4.0).rgb;
+      s += max(b.r, max(b.g, b.b));
+    }
+  return vec4(s / 16.0);
+}`,
+    },
+  ],
+  passInputs: ['u1', 'share'],
   fragmentShader: `${PYRAMID_LEVEL}
 ${GLOW_BRIGHT}
+
 vec4 mainImage(vec2 uv) {
   vec4 base = texture(u_input, uv);
   float level = pyramidLevel();
   vec3 g = texture(u_u1, uv).rgb;
   if (level < 1.0) g = mix(bright(base).rgb, g, level);
-  g *= u_intensity * u_tint.rgb;
-  vec3 rgb = min(base.rgb + g, vec3(1.0));
+  // Like the eye adapting to a bright scene, glow eases off when much of the frame is bright, so it stays a glow
+  // around light sources instead of a haze over bright footage.
+  float adapt = 1.0 / (1.0 + 4.0 * max(texture(u_share, vec2(0.5)).r - 0.06, 0.0));
+  // Screen blend of light that saturates smoothly: glow brightens dark surroundings fully but cannot blow out what
+  // is already bright.
+  g = 1.0 - exp(-g * u_intensity * adapt * u_tint.rgb);
+  vec3 rgb = base.rgb + g * (1.0 - base.rgb);
   return vec4(rgb, max(base.a, max(rgb.r, max(rgb.g, rgb.b))));
 }`,
 }
