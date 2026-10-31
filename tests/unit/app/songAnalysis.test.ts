@@ -114,7 +114,9 @@ describe('bars state', () => {
     await vi.waitFor(() => expect(runs).toHaveLength(1))
     runs[0]?.reject(new JobError('network', 'The model could not be downloaded.'))
     await vi.waitFor(() => expect(barsState()).toEqual({ status: 'unavailable' }))
-    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not find the bars/))
+    expect(toast).toHaveBeenCalledWith(
+      expect.stringMatching(/^Bars not found yet\. The model could not be downloaded\. Analyze again/),
+    )
     editor.load(editor.getProject())
     await Promise.resolve()
     expect(runs).toHaveLength(1)

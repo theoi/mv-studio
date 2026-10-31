@@ -128,6 +128,8 @@ export function AnalysisView() {
           <span>
             {bars.status === 'finding' ? (
               <Badge>Finding bars…</Badge>
+            ) : bars.status === 'unavailable' ? (
+              <Badge>Not found yet</Badge>
             ) : (
               <FoundBadge count={analysis?.downbeats?.length ?? 0} />
             )}
@@ -145,6 +147,9 @@ export function AnalysisView() {
           <span>Shown in the song lane</span>
         </div>
       </div>
+      {bars.status === 'unavailable' && (
+        <div className={styles.muted}>Bars not found yet. Analyze again to look for them.</div>
+      )}
       <div className={styles.linkRow}>
         <Tooltip
           label="Tap tempo"

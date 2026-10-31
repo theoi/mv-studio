@@ -246,7 +246,9 @@ function startRun(
       setAttempt(songId, cancelled ? 'cancelled' : 'failed')
       if (!(error instanceof JobError)) throw error
       if (!cancelled && !options.quiet)
-        toast(`Could not find the bars, so the first analysis is kept. ${error.message}`)
+        toast(
+          `Bars not found yet. ${error.message} Analyze again in Assist › Song analysis to look for them.`,
+        )
       return false
     },
   )

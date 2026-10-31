@@ -221,3 +221,40 @@ test('Assist › Song analysis says “Finding bars…” until the bars are fou
   await page.evaluate(() => (window as unknown as { finishBars: () => void }).finishBars())
   await expect(barsRow).toContainText(`${Math.ceil(beats / 4)} found`)
 })
+
+/** When the refinement step fails, the Bar starts row says the bars are not found yet and how to look again. */
+test('Assist › Song analysis says the bars are not found yet after the refinement step fails', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem('mv-studio.background-analysis', 'on')
+    const { app, shared } = window.mvStudio
+    app.songAnalysis.setSongAnalysisServiceForTests({
+      refine: () =>
+        shared.jobs.run({
+          kind: 'analysis.downbeats',
+          title: 'Finding bars and refining beats',
+          run: () => Promise.reject(new shared.JobError('network', 'The model could not be downloaded.')),
+        }),
+      release: async () => true,
+    })
+    window.location.hash = '#/editor?tab=assist&assist=analysis'
+  })
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  const barsRow = panel.getByText('Bar starts', { exact: true }).locator('..')
+  await expect(barsRow).toContainText(/\d+ found/)
+  await page.evaluate(() => {
+    const editor = window.mvStudio.app.project.editor
+    const project = editor.getProject()
+    editor.dispatch(
+      { type: 'analysis.setGrid', assetId: project.songAssetId, grid: { downbeats: undefined } },
+      { history: 'skip' },
+    )
+  })
+  await expect(barsRow).toContainText('Not found yet')
+  await expect(panel.getByText('Bars not found yet. Analyze again to look for them.')).toBeVisible()
+  await expect(page.getByText(/^Bars not found yet\. The model could not be downloaded\./)).toBeVisible()
+  await shot(page, 'analysis-bars-not-found')
+})
