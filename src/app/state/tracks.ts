@@ -23,21 +23,21 @@ export function moveTrack(trackId: string, toIndex: number): boolean {
   const { min, max } = trackMoveRange(p, trackId)
   const to = Math.min(max, Math.max(min, toIndex))
   if (from < 0 || to === from) return false
-  if (!dispatch({ type: 'track.move', trackId, toIndex: to }, { label: MOVE_LABEL })) return false
+  const label = `Move ${p.tracks[from]!.name} ${to < from ? 'up' : 'down'}`
+  if (!dispatch({ type: 'track.move', trackId, toIndex: to }, { label })) return false
   const after = editor.getProject()
   const note = coveringNote(p, after, trackId)
   if (note)
     toast(note, {
       label: 'Undo',
       run: () => {
-        // Every move has this label, so the track order tells whether the last one is still this move.
-        if (editor.undoLabel() === MOVE_LABEL && sameOrder(editor.getProject().tracks, after.tracks)) undo()
+        // Every move of this track this way has this label, so the track order tells whether the last one is still
+        // this move.
+        if (editor.undoLabel() === label && sameOrder(editor.getProject().tracks, after.tracks)) undo()
       },
     })
   return true
 }
-
-const MOVE_LABEL = 'Move track'
 
 const sameOrder = (a: Track[], b: Track[]) => a.length === b.length && a.every((t, i) => t.id === b[i]?.id)
 

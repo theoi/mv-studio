@@ -108,7 +108,7 @@ test('tracks reorder by dragging the header grip, from the header menu and with 
   // The look is below tracks it colored before, and a toast says so.
   await expect(page.getByText('The look no longer colors the tracks above it.')).toBeVisible()
   await page.keyboard.press(`${mod}+z`)
-  await expect(page.getByText('Undid: Move track')).toBeVisible()
+  await expect(page.getByText('Undid: Move Look down')).toBeVisible()
 
   // The header menu: Overlay back up; Video is then the lowest visual track and can't move down.
   await header(page, 'Overlay').click({ button: 'right' })
@@ -144,4 +144,42 @@ test('tracks reorder by dragging the header grip, from the header menu and with 
     .locator('div', { hasText: 'The lyrics are behind the Overlay track now, which covers them.' })
   await note.getByRole('button', { name: 'Undo' }).click()
   expect(await trackNames(page)).toEqual(['Look', 'Lyrics', 'Overlay', 'Video', 'Song'])
+})
+
+test('the track header menu hides, mutes, solos and locks like the header icons, on locked tracks too', async ({
+  page,
+}, testInfo) => {
+  await openEditor(page, '#/editor?t=67')
+  const item = (name: string) => page.getByRole('menuitem', { name, exact: true })
+  const video = header(page, 'Video')
+  await video.click({ button: 'right' })
+  await item('Hide track').click()
+  expect((await trackState(page, 'Video'))?.hidden).toBe(true)
+  await expect(video.getByRole('button', { name: 'Show track' })).toHaveAttribute('aria-pressed', 'true')
+
+  // A locked track keeps every item, as its header keeps every icon.
+  await video.click({ button: 'right' })
+  await item('Lock track').click()
+  await video.click({ button: 'right' })
+  await expect(item('Show track')).toBeEnabled()
+  await expect(item('Unlock track')).toBeEnabled()
+  await item('Show track').click()
+  expect(await trackState(page, 'Video')).toMatchObject({ hidden: false, locked: true })
+  // One undo step each, as from the header, named by the action and the track.
+  await page.keyboard.press(`${mod}+z`)
+  await expect(page.getByText('Undid: Show Video')).toBeVisible()
+  expect(await trackState(page, 'Video')).toMatchObject({ hidden: true, locked: true })
+
+  const song = header(page, 'Song')
+  await song.click({ button: 'right' })
+  await expect(item('Hide track')).toHaveCount(0)
+  await item('Mute').click()
+  await song.click({ button: 'right' })
+  await item('Solo').click()
+  expect(await trackState(page, 'Song')).toMatchObject({ muted: true, solo: true })
+  await song.click({ button: 'right' })
+  await expect(item('Unmute')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('track-menu.png') })
+  await item('Unsolo').click()
+  expect(await trackState(page, 'Song')).toMatchObject({ muted: true, solo: false })
 })
