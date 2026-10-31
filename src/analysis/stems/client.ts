@@ -1,5 +1,5 @@
 import type { Asset, EditCommand, Id, StemName } from '../../model/index.ts'
-import { jobs, type JobHandle, type JobRunner } from '../../shared/jobs.ts'
+import { jobs, type JobContext, type JobHandle, type JobRunner } from '../../shared/jobs.ts'
 import { createWorkerClient, runWorkerCall } from '../../shared/worker.ts'
 import type { MediaStore } from '../../media/types.ts'
 import type { DecodedAudio } from '../beats/fast.ts'
@@ -40,21 +40,24 @@ export class StemSeparationService {
     return this.runner.run({
       kind: 'analysis.stems',
       title: 'Separating stems',
-      run: async (ctx) => {
-        const client = createWorkerClient<StemsWorkerApi>(this.createWorker())
-        try {
-          return await runWorkerCall(
-            client,
-            'separate',
-            { audio },
-            ctx,
-            audio.channels.map((c) => c.buffer),
-          )
-        } finally {
-          client.terminate()
-        }
-      },
+      run: (ctx) => this.separateIn(audio, ctx),
     })
+  }
+
+  /** Like `separate`, as a step of an existing job. */
+  async separateIn(audio: DecodedAudio, ctx: JobContext): Promise<StemSeparationResult> {
+    const client = createWorkerClient<StemsWorkerApi>(this.createWorker())
+    try {
+      return await runWorkerCall(
+        client,
+        'separate',
+        { audio },
+        ctx,
+        audio.channels.map((c) => c.buffer),
+      )
+    } finally {
+      client.terminate()
+    }
   }
 }
 

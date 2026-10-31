@@ -18,4 +18,9 @@ ffmpeg $q -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" -c:a lib
 # 4 s 1920x1080 30 fps H.264 clip without audio (performance benchmarks)
 ffmpeg $q -f lavfi -i "testsrc2=size=1920x1080:rate=30" -t 4 -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -movflags +faststart clip1080.mp4
 ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=1" -frames:v 1 image.png
+# 10 s of synthesized speech (flite): one phrase at about 1.2 s and one at about 6.2 s, 16 kHz mono
+ffmpeg $q -f lavfi -i "flite=text='we were young and the night was long':voice=slt" \
+  -f lavfi -i "flite=text='hold on tight we are almost there':voice=slt" \
+  -filter_complex "[0]aresample=16000,adelay=1000[a];[1]aresample=16000,adelay=6000[b];[a][b]amix=inputs=2:duration=longest:normalize=0,apad=whole_dur=10[out]" \
+  -map "[out]" -ar 16000 -ac 1 speech.wav
 ls -la
