@@ -205,6 +205,27 @@ export interface EffectFrameContext {
  */
 export interface EffectDefinition extends PluginBase {
   kind: 'effect'
+  /** The final pass, at canvas size. */
+  fragmentShader: string
+  /** Intermediate passes that run first, in order, for example a downsampled blur pyramid. */
+  passes?: EffectPass[]
+  /** Passes the final shader samples (default: the last pass). */
+  passInputs?: string[]
+}
+
+/**
+ * An intermediate pass of an effect: same uniforms as the effect (u_input is still the layer), plus the outputs of the
+ * earlier passes listed in `inputs`, each as `sampler2D u_<id>` and `vec2 u_<id>Size` (pixels). u_resolution stays
+ * the canvas size, so pixel math is the same in every pass.
+ */
+export interface EffectPass {
+  /** Names the output; matches `[A-Za-z_][A-Za-z0-9_]*` and must not clash with a param key. */
+  id: string
+  /** Output size as a fraction of the canvas, in (0, 1] (default 1). */
+  scale?: number
+  /** Earlier passes this pass samples. */
+  inputs?: string[]
+  /** Defines `vec4 mainImage(vec2 uv)`. */
   fragmentShader: string
 }
 

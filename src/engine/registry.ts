@@ -9,6 +9,7 @@ import { isHexColor } from './color.ts'
 import { PLUGINS } from '../plugins/index.ts'
 import { BUILTIN_PLUGINS } from './plugins/index.ts'
 import type {
+  EffectDefinition,
   ParamSpec,
   PluginCatalogEntry,
   PluginDefinition,
@@ -38,6 +39,28 @@ export function catalogEntry(plugin: PluginDefinition): PluginCatalogEntry {
   return entry
 }
 
+const KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function validatePasses(effect: EffectDefinition, paramKeys: Set<string>): void {
+  const ids = new Set<string>()
+  const fail = (message: string) => {
+    throw new Error(`${effect.id}: ${message}`)
+  }
+  for (const pass of effect.passes ?? []) {
+    if (!KEY.test(pass.id)) fail(`invalid pass id "${pass.id}"`)
+    if (ids.has(pass.id)) fail(`duplicate pass id "${pass.id}"`)
+    if (pass.id === 'input' || paramKeys.has(pass.id) || paramKeys.has(`${pass.id}Size`))
+      fail(`pass id "${pass.id}" clashes with a uniform`)
+    if (pass.scale !== undefined && !(pass.scale > 0 && pass.scale <= 1))
+      fail(`pass "${pass.id}" scale must be in (0, 1]`)
+    for (const input of pass.inputs ?? [])
+      if (!ids.has(input)) fail(`pass "${pass.id}" reads "${input}", which is not an earlier pass`)
+    ids.add(pass.id)
+  }
+  for (const input of effect.passInputs ?? [])
+    if (!ids.has(input)) fail(`final shader reads unknown pass "${input}"`)
+}
+
 class Registry implements PluginRegistry {
   private readonly plugins = new Map<string, PluginDefinition>()
   private readonly listeners = new Set<() => void>()
@@ -47,11 +70,11 @@ class Registry implements PluginRegistry {
     if (!plugin.id) throw new Error('Plugin id is required')
     const keys = new Set<string>()
     for (const p of plugin.params) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(p.key))
-        throw new Error(`${plugin.id}: invalid param key "${p.key}"`)
+      if (!KEY.test(p.key)) throw new Error(`${plugin.id}: invalid param key "${p.key}"`)
       if (keys.has(p.key)) throw new Error(`${plugin.id}: duplicate param key "${p.key}"`)
       keys.add(p.key)
     }
+    if (plugin.kind === 'effect') validatePasses(plugin, keys)
     this.plugins.set(plugin.id, plugin)
     this.catalogCache = null
     for (const listener of this.listeners) listener()

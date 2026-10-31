@@ -1,4 +1,5 @@
-import { createPluginRegistry } from '../../../src/engine/registry.ts'
+import { BUILTIN_PLUGINS } from '../../../src/engine/plugins/index.ts'
+import { catalogEntry } from '../../../src/engine/registry.ts'
 import {
   createAudioClip,
   createProject,
@@ -10,7 +11,8 @@ import {
 import type { PadSnapshot, Take, VjEvent, VjLayout } from '../../../src/vj/index.ts'
 import { layoutPads } from '../../../src/vj/index.ts'
 
-export const catalog = createPluginRegistry().catalog()
+/** The engine's built-in plugins only, so layouts in these tests do not change as the plugin library grows. */
+export const catalog = BUILTIN_PLUGINS.map(catalogEntry)
 
 export function asset(id: string, kind: AssetKind, name: string, duration?: number, minute = 1): Asset {
   return {

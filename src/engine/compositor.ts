@@ -52,7 +52,9 @@ import { TextRenderer } from './text.ts'
 import type {
   AudioFrame,
   Compositor,
+  EffectDefinition,
   EffectFrameContext,
+  EffectPass,
   FrameProvider,
   FrameRef,
   MediaFileSource,
@@ -104,6 +106,10 @@ const imageParamKey = (ref: string) => `param:${ref}`
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
+/** Passes an effect's final shader samples. */
+const finalInputs = (def: EffectDefinition): readonly string[] =>
+  def.passInputs ?? (def.passes?.length ? [def.passes[def.passes.length - 1]!.id] : [])
+
 interface FrameState {
   project: Project
   time: Seconds
@@ -130,7 +136,8 @@ interface GpuState {
   pool: TargetPool
   quad: WebGLVertexArrayObject
   transparent: WebGLTexture
-  plugins: WeakMap<PluginDefinition, Program | null>
+  /** Compiled programs by plugin definition or effect pass; null when compilation failed. */
+  plugins: WeakMap<PluginDefinition | EffectPass, Program | null>
   textures: Map<string, { texture: WebGLTexture; version: unknown; lastUsed: number }>
 }
 
@@ -479,17 +486,35 @@ export class WebGLCompositor implements Compositor {
       const def = this.registry.get(instance.effectId)
       if (def?.kind !== 'effect') continue
       const program = this.pluginProgram(gpu, def)
-      if (!program) continue
-      const out = gpu.pool.acquire()
-      gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo)
-      gl.disable(gl.BLEND)
-      gl.useProgram(program.program)
-      this.setCommonUniforms(program, local, s)
+      const passes = (def.passes ?? []).map((pass) => this.passProgram(gpu, def, pass))
+      if (!program || passes.some((p) => !p)) continue
       const params = resolveParams(def.params, instance.params, local, s.time, s.audio)
-      this.setParamUniforms(program, def.params, params)
-      this.bindImageParams(gpu, program, def.params, params, s)
-      this.bindTexture(program, 'u_input', 0, current.texture)
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+      const outputs = new Map<string, RenderTarget>()
+      ;(def.passes ?? []).forEach((pass, i) => {
+        const scale = pass.scale ?? 1
+        const out = gpu.pool.acquire(
+          Math.max(1, Math.round(s.width * scale)),
+          Math.max(1, Math.round(s.height * scale)),
+        )
+        gl.viewport(0, 0, out.width, out.height)
+        this.effectPass(
+          gpu,
+          passes[i] as Program,
+          def,
+          params,
+          current,
+          pass.inputs ?? [],
+          outputs,
+          out,
+          local,
+          s,
+        )
+        outputs.set(pass.id, out)
+      })
+      gl.viewport(0, 0, s.width, s.height)
+      const out = gpu.pool.acquire()
+      this.effectPass(gpu, program, def, params, current, finalInputs(def), outputs, out, local, s)
+      for (const target of outputs.values()) gpu.pool.release(target)
       if (owned) gpu.pool.release(current)
       current = out
       owned = true
@@ -516,6 +541,37 @@ export class WebGLCompositor implements Compositor {
     if (owned) gpu.pool.release(current)
     if (matte) gpu.pool.release(matte.target)
     return out
+  }
+
+  /** Draws one pass of an effect into `out` (the viewport must match it). */
+  private effectPass(
+    gpu: GpuState,
+    program: Program,
+    def: EffectDefinition,
+    params: ResolvedParams,
+    input: RenderTarget,
+    inputs: readonly string[],
+    outputs: ReadonlyMap<string, RenderTarget>,
+    out: RenderTarget,
+    local: Seconds,
+    s: FrameState,
+  ): void {
+    const gl = this.gl
+    gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo)
+    gl.disable(gl.BLEND)
+    gl.useProgram(program.program)
+    this.setCommonUniforms(program, local, s)
+    this.setParamUniforms(program, def.params, params)
+    this.bindImageParams(gpu, program, def.params, params, s)
+    this.bindTexture(program, 'u_input', 0, input.texture)
+    let unit = FIRST_IMAGE_PARAM_UNIT + def.params.filter((p) => p.type === 'image').length
+    for (const id of inputs) {
+      const target = outputs.get(id)
+      if (!target) continue
+      this.bindTexture(program, `u_${id}`, unit++, target.texture)
+      gl.uniform2f(program.uniform(`u_${id}Size`), target.width, target.height)
+    }
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
   }
 
   private adjustments(clip: VisualClip, s: FrameState): Record<ColorAdjustmentKey, number> | null {
@@ -796,7 +852,11 @@ export class WebGLCompositor implements Compositor {
     let program: Program | null = null
     try {
       if (def.kind === 'effect')
-        program = createProgram(this.gl, FULLSCREEN_VS, effectShader(def.params, def.fragmentShader))
+        program = createProgram(
+          this.gl,
+          FULLSCREEN_VS,
+          effectShader(def.params, def.fragmentShader, finalInputs(def)),
+        )
       else if (def.kind === 'transition')
         program = createProgram(this.gl, FULLSCREEN_VS, transitionShader(def.params, def.fragmentShader))
       else if (def.kind === 'generator' && def.fragmentShader)
@@ -805,6 +865,22 @@ export class WebGLCompositor implements Compositor {
       console.error(`Plugin "${def.id}" failed to compile and is skipped`, error)
     }
     gpu.plugins.set(def, program)
+    return program
+  }
+
+  private passProgram(gpu: GpuState, def: EffectDefinition, pass: EffectPass): Program | null {
+    if (gpu.plugins.has(pass)) return gpu.plugins.get(pass) ?? null
+    let program: Program | null = null
+    try {
+      program = createProgram(
+        this.gl,
+        FULLSCREEN_VS,
+        effectShader(def.params, pass.fragmentShader, pass.inputs ?? []),
+      )
+    } catch (error) {
+      console.error(`Plugin "${def.id}" pass "${pass.id}" failed to compile and is skipped`, error)
+    }
+    gpu.plugins.set(pass, program)
     return program
   }
 

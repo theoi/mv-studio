@@ -4,6 +4,8 @@
  * tests) has them. See "Plugins" in AGENTS.md.
  */
 import type { PluginDefinition } from '../engine/types.ts'
+import { EFFECTS } from './effects/index.ts'
 import { cameraMove3d } from './parallax.ts'
+import { TRANSITIONS } from './transitions.ts'
 
-export const PLUGINS: PluginDefinition[] = [cameraMove3d]
+export const PLUGINS: PluginDefinition[] = [...EFFECTS, cameraMove3d, ...TRANSITIONS]

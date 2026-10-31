@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createPluginRegistry, resolveParams, resolveStaticParams } from '../../../src/engine/registry.ts'
-import type { EffectDefinition, ParamSpec } from '../../../src/engine/types.ts'
+import type { EffectDefinition, EffectPass, ParamSpec } from '../../../src/engine/types.ts'
 
 describe('plugin registry', () => {
   it('ships the built-in plugins the director and the UI rely on', () => {
@@ -53,6 +53,32 @@ describe('plugin registry', () => {
     expect(() => registry.register(bad('has space'))).toThrow(/invalid param key/)
     const dup: ParamSpec = { key: 'a', label: 'a', type: 'boolean', default: false }
     expect(() => registry.register({ ...effect, params: [dup, dup] })).toThrow(/duplicate/)
+  })
+
+  it('accepts multi-pass effects whose passes read only earlier passes', () => {
+    const registry = createPluginRegistry({ builtins: false })
+    const body = 'vec4 mainImage(vec2 uv) { return texture(u_input, uv); }'
+    const radius: ParamSpec = { key: 'radius', label: 'Radius', type: 'number', default: 1, min: 0, max: 2 }
+    const effect = (passes: EffectPass[], passInputs?: string[]): EffectDefinition => ({
+      kind: 'effect',
+      id: 'multi',
+      name: 'Multi',
+      category: 'Test',
+      params: [radius],
+      fragmentShader: body,
+      passes,
+      ...(passInputs ? { passInputs } : {}),
+    })
+    const down = { id: 'down', scale: 0.5, fragmentShader: body }
+    registry.register(effect([down, { id: 'up', inputs: ['down'], fragmentShader: body }], ['down', 'up']))
+    expect(registry.get('multi')).toBeDefined()
+    expect(() => registry.register(effect([{ ...down, inputs: ['up'] }]))).toThrow(/not an earlier pass/)
+    expect(() => registry.register(effect([down, down]))).toThrow(/duplicate pass/)
+    expect(() => registry.register(effect([{ ...down, id: 'radius' }]))).toThrow(/clashes/)
+    expect(() => registry.register(effect([{ ...down, id: 'input' }]))).toThrow(/clashes/)
+    expect(() => registry.register(effect([{ ...down, scale: 0 }]))).toThrow(/scale/)
+    expect(() => registry.register(effect([{ ...down, scale: 2 }]))).toThrow(/scale/)
+    expect(() => registry.register(effect([down], ['missing']))).toThrow(/unknown pass/)
   })
 })
 

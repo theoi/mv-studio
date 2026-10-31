@@ -169,7 +169,7 @@ describe('compilePlan', () => {
           ? {
               ...s,
               effects: [{ effectId: 'warp-drive' }, { effectId: 'glow' }],
-              transitionIn: { kind: 'spin', duration: 0.3 },
+              transitionIn: { kind: 'teleport', duration: 0.3 },
             }
           : s,
       ),
@@ -183,7 +183,7 @@ describe('compilePlan', () => {
     expect(clip.effects.map((e) => e.effectId)).toEqual(['glow'])
     expect(clip.transitionIn).toBeUndefined()
     expect(compiled.warnings).toEqual(
-      expect.arrayContaining([expect.stringContaining('warp-drive'), expect.stringContaining('spin')]),
+      expect.arrayContaining([expect.stringContaining('warp-drive'), expect.stringContaining('teleport')]),
     )
   })
 
