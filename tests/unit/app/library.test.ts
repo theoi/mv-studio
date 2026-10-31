@@ -21,6 +21,8 @@ import {
   endLibraryDrag,
   libraryDropHint,
   matchesQuery,
+  mediaRemoval,
+  removeMedia,
   startLibraryDrag,
   transitionTarget,
   visualPlacement,
@@ -290,5 +292,36 @@ describe('adding visuals', () => {
     dropLibraryItem({ kind: 'visual', id: 'visualizer.spectrum' }, { trackId: footage, time: 5 })
     expect(Object.values(editor.getProject().clips).filter((c) => c.type === 'generator')).toHaveLength(1)
     expect(get().toasts.at(-1)?.message).toBe('Drop “Spectrum bars” on an empty part of a track')
+  })
+})
+
+describe('removing a file from the library', () => {
+  it('counts the clips that go with it, and refuses while one of them is on a locked track', () => {
+    const s = scene()
+    expect(mediaRemoval(s.p, 'v')).toEqual({ clips: 3 })
+    expect(mediaRemoval(s.p, 'i')).toEqual({ why: 'Some of its clips are on a locked track' })
+  })
+
+  it('removes the file and its clips as one undo step, and drops a selection of one of them', () => {
+    const s = scene()
+    editor.load(s.p)
+    set({ selection: { type: 'clip', id: s.a.id } })
+    removeMedia('v')
+    const after = editor.getProject()
+    expect(after.assets.v).toBeUndefined()
+    expect([s.a.id, s.c.id, s.d.id].filter((id) => after.clips[id])).toEqual([])
+    expect(after.clips[s.b.id]).toBeDefined()
+    expect(get().selection).toEqual({ type: 'none' })
+    editor.undo()
+    expect(editor.getProject().assets.v).toBeDefined()
+    expect([s.a.id, s.c.id, s.d.id].every((id) => editor.getProject().clips[id])).toBe(true)
+  })
+
+  it('leaves a file with a clip on a locked track, and the song, in the project', () => {
+    const s = scene()
+    editor.load({ ...s.p, songAssetId: 'v' })
+    removeMedia('v')
+    removeMedia('i')
+    expect(Object.keys(editor.getProject().assets).sort()).toEqual(['i', 'v'])
   })
 })

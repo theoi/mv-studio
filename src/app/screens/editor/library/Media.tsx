@@ -1,8 +1,15 @@
 import { useMemo, useState } from 'react'
-import { AudioWaveform, Image as ImageIcon, Music2, Plus, Sparkles, Upload } from 'lucide-react'
+import { AudioWaveform, Image as ImageIcon, Music2, Plus, Sparkles, Trash2, Upload } from 'lucide-react'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../../ds/Feedback.tsx'
 import { SearchInput } from '../../../ds/Fields.tsx'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '../../../ds/Menu.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import type { Asset, Project } from '../../../../model/index.ts'
@@ -15,6 +22,7 @@ import {
   useFootageResults,
 } from '../../../state/footage.ts'
 import { addAsset, openImport } from '../../../state/importer.ts'
+import { mediaRemoval, removeMedia } from '../../../state/library.ts'
 import {
   bpmOf,
   hasSong,
@@ -77,60 +85,101 @@ function libraryItems(project: Project): LibraryItem[] {
 
 const ANALYZING_NAMES = { analyzing: ', analyzing', waiting: ', waiting to be analyzed' } as const
 
+/** The card's right-click menu, made when it opens so the counts are current. */
+function MediaMenu({ asset }: { asset: Asset }) {
+  const project = useProject()
+  const playhead = useUi((s) => s.playhead)
+  const removal = mediaRemoval(project, asset.id)
+  return (
+    <>
+      <ContextMenuItem
+        icon={<Plus />}
+        description={`At ${formatTime(playhead, true)}`}
+        onSelect={() => addAsset(asset.id)}
+      >
+        Add at playhead
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        icon={<Trash2 />}
+        danger
+        disabled={'why' in removal}
+        description={
+          'why' in removal
+            ? removal.why
+            : removal.clips
+              ? `Also removes ${plural(removal.clips, 'clip')} from the timeline`
+              : undefined
+        }
+        onSelect={() => removeMedia(asset.id)}
+      >
+        Remove from project
+      </ContextMenuItem>
+    </>
+  )
+}
+
 function MediaCard({ item }: { item: LibraryItem }) {
   const thumb = useThumbnail(item.asset)
   const duration = item.type === 'image' ? undefined : item.asset.duration
   const analyzing = useClipAnalyzing(item.asset.id)
   return (
-    <Tooltip label={item.name} description={item.tags.length ? item.tags.join(' · ') : undefined}>
-      <div
-        className={styles.card}
-        draggable
-        tabIndex={0}
-        aria-label={`${item.name}, ${item.type}${analyzing ? ANALYZING_NAMES[analyzing] : ''}`}
-      >
-        <div className={styles.thumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}>
-          {item.type === 'audio' && (
-            <span className={styles.thumbIcon}>
-              <AudioWaveform />
-            </span>
-          )}
-          {item.type === 'generated' && (
-            <span className={styles.genBadge}>
-              <Sparkles /> AI
-            </span>
-          )}
-          {item.type === 'image' && (
-            <span className={styles.duration}>
-              <ImageIcon />
-            </span>
-          )}
-          {duration !== undefined && (
-            <span className={`${styles.duration} tnum`}>{formatTime(duration)}</span>
-          )}
-          {analyzing && (
-            <span className={styles.analyzingMark} data-state={analyzing} aria-hidden>
-              {analyzing === 'analyzing' && <Spinner size={8} />}
-              <span className={styles.analyzingLabel}>
-                {analyzing === 'analyzing' ? 'Analyzing…' : 'Waiting'}
+    <ContextMenu>
+      <Tooltip label={item.name} description={item.tags.length ? item.tags.join(' · ') : undefined}>
+        <ContextMenuTrigger asChild>
+          <div
+            className={styles.card}
+            draggable
+            tabIndex={0}
+            aria-label={`${item.name}, ${item.type}${analyzing ? ANALYZING_NAMES[analyzing] : ''}`}
+          >
+            <div className={styles.thumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}>
+              {item.type === 'audio' && (
+                <span className={styles.thumbIcon}>
+                  <AudioWaveform />
+                </span>
+              )}
+              {item.type === 'generated' && (
+                <span className={styles.genBadge}>
+                  <Sparkles /> AI
+                </span>
+              )}
+              {item.type === 'image' && (
+                <span className={styles.duration}>
+                  <ImageIcon />
+                </span>
+              )}
+              {duration !== undefined && (
+                <span className={`${styles.duration} tnum`}>{formatTime(duration)}</span>
+              )}
+              {analyzing && (
+                <span className={styles.analyzingMark} data-state={analyzing} aria-hidden>
+                  {analyzing === 'analyzing' && <Spinner size={8} />}
+                  <span className={styles.analyzingLabel}>
+                    {analyzing === 'analyzing' ? 'Analyzing…' : 'Waiting'}
+                  </span>
+                </span>
+              )}
+              <span className={styles.addBtn}>
+                <IconButton
+                  label="Add at playhead"
+                  size="xs"
+                  variant="secondary"
+                  tooltipSide="top"
+                  onClick={() => addAsset(item.asset.id)}
+                >
+                  <Plus />
+                </IconButton>
               </span>
-            </span>
-          )}
-          <span className={styles.addBtn}>
-            <IconButton
-              label="Add at playhead"
-              size="xs"
-              variant="secondary"
-              tooltipSide="top"
-              onClick={() => addAsset(item.asset.id)}
-            >
-              <Plus />
-            </IconButton>
-          </span>
-        </div>
-        <div className={styles.cardName}>{item.name}</div>
-      </div>
-    </Tooltip>
+            </div>
+            <div className={styles.cardName}>{item.name}</div>
+          </div>
+        </ContextMenuTrigger>
+      </Tooltip>
+      <ContextMenuContent>
+        <MediaMenu asset={item.asset} />
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
