@@ -176,3 +176,82 @@ test('a card dragged where its track has no room shows “New track” on the gh
   await expect(laneOf(page, 'Video 2').getByRole('button', { name: /^clip, / })).toHaveCount(1)
   await expect(lane.getByRole('button', { name: /^clip, / })).toHaveCount(1)
 })
+
+test('a dropped media card snaps like a moved clip: to beats and section ends with snapping on, to the cursor with snapping off or without a beat grid', async ({
+  page,
+}) => {
+  await openEmptyEditor(page)
+  // A known song map in place of the analysis: beats every 0.5 s from 0.25 s, and a verse that ends at 5.5 s, between
+  // two beats. No background refinement replaces it.
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.background-analysis', 'off')
+    window.mvStudio.app.songAnalysis.setSongAnalysisServiceForTests({
+      analyze: (assetId: string) => ({
+        promise: Promise.resolve({
+          assetId,
+          version: 'e2e',
+          tempo: { bpm: 120, confidence: 1 },
+          beats: Array.from({ length: 16 }, (_, i) => 0.25 + i * 0.5),
+          sections: [{ id: 's-verse', label: 'verse', start: 0, end: 5.5 }],
+        }),
+      }),
+    } as never)
+  })
+  await importFiles(page, ['song.mp3', 'clip.mp4'])
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const p = window.mvStudio.app.project.editor.getProject()
+        return p.analysis.audio[p.songAssetId]?.beats?.length ?? 0
+      }),
+    )
+    .toBe(16)
+  const card = page.getByLabel('clip, video')
+  await expect(card).toBeVisible()
+  // Wide enough that the snap distance (8 px) reaches the section end but not the beat 0.25 s past it.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ pxPerSec: 40 }))
+  const lane = laneOf(page, 'Video 1')
+  const box = (await lane.boundingBox())!
+  const dropAt = async (t: number) => {
+    await card.dragTo(lane, { targetPosition: { x: t * 40, y: box.height / 2 } })
+    await expect(lane.getByRole('button', { name: /^clip, / })).toHaveCount(1)
+    const start: number = await page.evaluate(
+      () =>
+        (
+          Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+            type: string
+            start: number
+          }[]
+        ).find((c) => c.type === 'video')!.start,
+    )
+    await page.locator('body').click({ position: { x: 1, y: 1 } })
+    await page.keyboard.press(`${mod}+z`)
+    await expect(lane.getByRole('button', { name: /^clip, / })).toHaveCount(0)
+    return start
+  }
+
+  // 6 px past the beat at 3.25 s.
+  expect(await dropAt(3.4)).toBeCloseTo(3.25, 3)
+  // 4 px past the verse's end, which is nearer than the next beat (5.75 s).
+  expect(await dropAt(5.6)).toBeCloseTo(5.5, 3)
+
+  await page.keyboard.press('n')
+  await expect(page.getByText('Snapping off')).toBeVisible()
+  expect(await dropAt(3.4)).toBeCloseTo(3.4, 1)
+  await page.keyboard.press('n')
+  await expect(page.getByText('Snapping on')).toBeVisible()
+
+  // Without a tempo or beats there is no grid to snap to.
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    editor.dispatch(
+      {
+        type: 'analysis.setGrid',
+        assetId: editor.getProject().songAssetId,
+        grid: { tempo: undefined, beats: undefined, downbeats: undefined },
+      },
+      { history: 'skip' },
+    )
+  })
+  expect(await dropAt(3.4)).toBeCloseTo(3.4, 1)
+})
