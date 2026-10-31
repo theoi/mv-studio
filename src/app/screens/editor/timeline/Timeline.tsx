@@ -5,6 +5,7 @@ import {
   Eye,
   EyeOff,
   Flag,
+  GripVertical,
   Lock,
   LockOpen,
   Magnet,
@@ -118,6 +119,7 @@ import {
   toggleStem,
   type StemMix,
 } from '../../../state/stems.ts'
+import { moveAnnouncement, moveTrack, moveTrackBy, trackMoveRange } from '../../../state/tracks.ts'
 import { MAX_PPS, MIN_PPS, registerFit, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { LaneMenu } from './LaneMenu.tsx'
@@ -653,82 +655,137 @@ const TrackHeader = memo(function TrackHeader({
   track,
   height,
   stems,
+  canMoveUp,
+  canMoveDown,
+  onGripPointerDown,
+  onAnnounce,
 }: {
   track: Track
   height: number
   stems?: StemMix | null
+  canMoveUp: boolean
+  canMoveDown: boolean
+  onGripPointerDown: (e: React.PointerEvent<HTMLElement>, track: Track) => void
+  onAnnounce: (message: string) => void
 }) {
   const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
     dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
   const isAudio = track.kind === 'audio'
   const badge = stems && stemBadgeText(stems)
+  const grip = useRef<HTMLButtonElement>(null)
+  // Set by Move up and Move down, so the closing menu hands focus to this track's grip instead of the page.
+  const movedFromMenu = useRef(false)
+  const moveBy = (step: -1 | 1) => {
+    const moved = moveTrackBy(track.id, step)
+    onAnnounce(moveAnnouncement(editor.getProject(), track.id, step, moved))
+  }
+  const moveFromMenu = (step: -1 | 1) => {
+    movedFromMenu.current = true
+    moveBy(step)
+  }
   return (
-    <div className={styles.trackHeader} style={{ height }}>
-      <span
-        className={styles.trackName}
-        onPointerEnter={(e) => {
-          // Names cut off by the narrow header get their full text as a tooltip.
-          const el = e.currentTarget
-          el.title = el.scrollWidth > el.clientWidth ? track.name : ''
-        }}
-      >
-        {track.name}
-      </span>
-      <span className={styles.trackIcons}>
-        {isAudio ? (
-          <>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className={styles.trackHeader} style={{ height }}>
+          <Tooltip label="Drag to reorder" description="↑ ↓ when focused" side="right">
+            <button
+              ref={grip}
+              className={styles.grip}
+              aria-label={`Move the ${track.name} track`}
+              onPointerDown={(e) => onGripPointerDown(e, track)}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+                // The arrows otherwise move the playhead between sections.
+                e.preventDefault()
+                e.stopPropagation()
+                moveBy(e.key === 'ArrowUp' ? -1 : 1)
+              }}
+            >
+              <GripVertical />
+            </button>
+          </Tooltip>
+          <span
+            className={styles.trackName}
+            onPointerEnter={(e) => {
+              // Names cut off by the narrow header get their full text as a tooltip.
+              const el = e.currentTarget
+              el.title = el.scrollWidth > el.clientWidth ? track.name : ''
+            }}
+          >
+            {track.name}
+          </span>
+          <span className={styles.trackIcons}>
+            {isAudio ? (
+              <>
+                <IconButton
+                  label={track.muted ? 'Unmute' : 'Mute'}
+                  size="xs"
+                  active={track.muted}
+                  onClick={() => toggle('muted')}
+                  tooltipSide="top"
+                >
+                  {track.muted ? <VolumeX /> : <Volume2 />}
+                </IconButton>
+                <Tooltip label="Solo" side="top">
+                  <button
+                    className={[styles.solo, track.solo && styles.soloOn].filter(Boolean).join(' ')}
+                    aria-label="Solo"
+                    aria-pressed={track.solo}
+                    onClick={() => toggle('solo')}
+                  >
+                    S
+                  </button>
+                </Tooltip>
+              </>
+            ) : (
+              <IconButton
+                label={track.hidden ? 'Show track' : 'Hide track'}
+                size="xs"
+                active={track.hidden}
+                onClick={() => toggle('hidden')}
+                tooltipSide="top"
+              >
+                {track.hidden ? <EyeOff /> : <Eye />}
+              </IconButton>
+            )}
             <IconButton
-              label={track.muted ? 'Unmute' : 'Mute'}
+              label={track.locked ? 'Unlock track' : 'Lock track'}
               size="xs"
-              active={track.muted}
-              onClick={() => toggle('muted')}
+              active={track.locked}
+              onClick={() => toggle('locked')}
               tooltipSide="top"
             >
-              {track.muted ? <VolumeX /> : <Volume2 />}
+              {track.locked ? <Lock /> : <LockOpen />}
             </IconButton>
-            <Tooltip label="Solo" side="top">
-              <button
-                className={[styles.solo, track.solo && styles.soloOn].filter(Boolean).join(' ')}
-                aria-label="Solo"
-                aria-pressed={track.solo}
-                onClick={() => toggle('solo')}
-              >
-                S
-              </button>
-            </Tooltip>
-          </>
-        ) : (
-          <IconButton
-            label={track.hidden ? 'Show track' : 'Hide track'}
-            size="xs"
-            active={track.hidden}
-            onClick={() => toggle('hidden')}
-            tooltipSide="top"
-          >
-            {track.hidden ? <EyeOff /> : <Eye />}
-          </IconButton>
-        )}
-        <IconButton
-          label={track.locked ? 'Unlock track' : 'Lock track'}
-          size="xs"
-          active={track.locked}
-          onClick={() => toggle('locked')}
-          tooltipSide="top"
-        >
-          {track.locked ? <Lock /> : <LockOpen />}
-        </IconButton>
-      </span>
-      {stems && badge && (
-        <span
-          className={[styles.stemBadge, stems.solo.length > 0 && styles.stemBadgeSolo]
-            .filter(Boolean)
-            .join(' ')}
-          title={badge}
-        >
-          {badge}
-        </span>
-      )}
-    </div>
+          </span>
+          {stems && badge && (
+            <span
+              className={[styles.stemBadge, stems.solo.length > 0 && styles.stemBadgeSolo]
+                .filter(Boolean)
+                .join(' ')}
+              title={badge}
+            >
+              {badge}
+            </span>
+          )}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent
+        onCloseAutoFocus={(e) => {
+          if (!movedFromMenu.current) return
+          movedFromMenu.current = false
+          e.preventDefault()
+          grip.current?.focus()
+        }}
+      >
+        <ContextMenuItem disabled={!canMoveUp} onSelect={() => moveFromMenu(-1)}>
+          Move up
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!canMoveDown} onSelect={() => moveFromMenu(1)}>
+          Move down
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 })
 
@@ -911,6 +968,8 @@ export function Timeline() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const marqueeRef = useRef<HTMLDivElement>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
+  const announceRef = useRef<HTMLDivElement>(null)
   const project = useProject()
   const pps = useUi((s) => s.pxPerSec)
   const selection = useUi((s) => s.selection)
@@ -1351,6 +1410,55 @@ export function Timeline() {
     window.addEventListener('pointercancel', up)
   }
 
+  /** Dragging a track header's grip: a line shows where the track will go among the tracks of its kind. */
+  const startTrackDrag = useCallback(
+    (e: React.PointerEvent<HTMLElement>, track: Track) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      const content = contentRef.current
+      const line = dropRef.current
+      if (!content || !line) return
+      const grip = e.currentTarget
+      const p = editor.getProject()
+      const rows = trackRows(p, empty)
+      const from = rows.findIndex((r) => r.trackId === track.id)
+      const others = rows.filter((_, i) => i !== from)
+      const { min, max } = trackMoveRange(p, track.id)
+      let target = from
+      grip.setPointerCapture(e.pointerId)
+      const move = (ev: PointerEvent) => {
+        const y = ev.clientY - content.getBoundingClientRect().top
+        target = Math.min(max, Math.max(min, others.filter((r) => r.top + r.height / 2 < y).length))
+        const below = others[target]
+        const last = others[others.length - 1]
+        const at = below ? below.top : last ? last.top + last.height : 0
+        line.style.transform = `translateY(${at - 1}px)`
+        line.hidden = target === from
+      }
+      const up = () => {
+        line.hidden = true
+        grip.removeEventListener('pointermove', move)
+        grip.removeEventListener('pointerup', up)
+        grip.removeEventListener('pointercancel', up)
+        if (target !== from) moveTrack(track.id, target)
+      }
+      grip.addEventListener('pointermove', move)
+      grip.addEventListener('pointerup', up)
+      grip.addEventListener('pointercancel', up)
+    },
+    [empty],
+  )
+
+  const announce = useCallback((message: string) => {
+    const region = announceRef.current
+    if (!region) return
+    // Emptied first, so the same message twice in a row is read again.
+    region.textContent = ''
+    requestAnimationFrame(() => {
+      region.textContent = message
+    })
+  }, [])
+
   const selId = selection.type === 'none' ? null : selection.id
   const gridStyle = beatSnap && beat ? { backgroundSize: `${beat * 4 * pps}px 100%` } : undefined
   const inView = (start: number, end: number) => end >= view.t0 - 4 && start <= view.t1 + 4
@@ -1448,7 +1556,7 @@ export function Timeline() {
             </div>
           )}
 
-          {lanes.map(({ track, kind, height }) => {
+          {lanes.map(({ track, kind, height }, index) => {
             const clips = clipsOnTrack(project, track.id)
               .map((c) => viewOf(project, c))
               .filter((c) => inView(c.start, c.end))
@@ -1463,6 +1571,10 @@ export function Timeline() {
                       track={track}
                       height={height}
                       stems={track.id === stemTrack?.id ? mix : null}
+                      canMoveUp={index > trackMoveRange(project, track.id).min}
+                      canMoveDown={index < trackMoveRange(project, track.id).max}
+                      onGripPointerDown={startTrackDrag}
+                      onAnnounce={announce}
                     />
                   </div>
                   <div
@@ -1645,6 +1757,8 @@ export function Timeline() {
             />
           )}
           <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />
+          <div ref={dropRef} className={styles.trackDrop} hidden aria-hidden />
+          <div ref={announceRef} className="sr-only" aria-live="polite" />
           <Playhead height={totalH} />
         </div>
       </div>
