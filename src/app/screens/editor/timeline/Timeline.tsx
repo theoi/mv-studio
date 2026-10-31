@@ -50,7 +50,6 @@ import {
 } from '../../../ds/Menu.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
-import { sceneThumb } from '../../../mock/art.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import {
   lineDeltaRange,
@@ -92,6 +91,7 @@ import {
   viewOf,
   type ClipView,
 } from '../../../state/project.ts'
+import { useFrameThumbnail } from '../../../state/thumbs.ts'
 import {
   get,
   openAssist,
@@ -557,7 +557,8 @@ function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
   const [canPaste, setCanPaste] = useState(false)
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
-  const showLabel = width > 54
+  const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
+  const showLabel = width > (isMedia ? 36 : 54)
   const label =
     clip.kind === 'look' && clip.amount !== undefined
       ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
@@ -579,7 +580,7 @@ function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
           style={{
             left: clip.start * pps,
             width,
-            backgroundImage: isMedia && clip.scene ? `url(${sceneThumb(clip.scene, 160, 90)})` : undefined,
+            backgroundImage: thumb ? `url(${thumb})` : undefined,
           }}
           role="button"
           tabIndex={0}
