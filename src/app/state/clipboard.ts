@@ -14,6 +14,7 @@ import {
 } from '../../model/index.ts'
 import { dispatch, editor, isLookClip } from './project.ts'
 import { revealClips } from './reveal.ts'
+import { removeTransition } from './transitions.ts'
 import { get, selectClips, selectedClipIds, toast } from './ui.ts'
 
 interface ClipboardContent {
@@ -88,8 +89,13 @@ export function cutSelection(): boolean {
   return true
 }
 
-/** Removes the selected clips; false when no clip is selected. */
+/** Removes the selected clips, or the selected transition; false when neither is selected. */
 export function deleteSelection(): boolean {
+  const selection = get().selection
+  if (selection.type === 'transition') {
+    removeTransition(selection.id, selection.edge)
+    return true
+  }
   const clips = selectedClips(editor.getProject())
   if (!clips.length) return false
   remove(clips, 'Delete')

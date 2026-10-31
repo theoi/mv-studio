@@ -29,13 +29,16 @@ import {
  * kept in this browser, or "empty".
  */
 
-const selToStr = (s: Selection) => (s.type === 'none' ? '' : `${s.type}:${s.id}`)
+const selToStr = (s: Selection) =>
+  s.type === 'none' ? '' : s.type === 'transition' ? `transition:${s.edge}:${s.id}` : `${s.type}:${s.id}`
 
 function strToSel(v: string | null): Selection {
   if (!v) return { type: 'none' }
   const [type, ...rest] = v.split(':')
   const id = rest.join(':')
   if (type === 'clip' || type === 'lyric' || type === 'section') return { type, id }
+  const [edge, ...clip] = rest
+  if (type === 'transition' && (edge === 'in' || edge === 'out')) return { type, id: clip.join(':'), edge }
   return { type: 'none' }
 }
 

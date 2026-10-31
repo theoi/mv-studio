@@ -77,7 +77,9 @@ function DropImport() {
           <div className={styles.dropCard}>
             <Upload />
             <span className={styles.dropTitle}>Drop to import</span>
-            <span className={styles.dropHint}>Songs, video clips and images. Files stay on this device.</span>
+            <span className={styles.dropHint}>
+              Songs, video clips and images. Files are kept in this browser.
+            </span>
           </div>
         </div>
       )}

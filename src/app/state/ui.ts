@@ -14,6 +14,8 @@ export type Selection =
   | { type: 'clip'; id: string; ids?: string[] }
   | { type: 'lyric'; id: string }
   | { type: 'section'; id: string }
+  /** A clip's transition in (at its start) or out (at its end); `id` is the clip. */
+  | { type: 'transition'; id: string; edge: 'in' | 'out' }
 export type RightTab = 'inspector' | 'assist'
 export type AssistView =
   | 'home'
