@@ -265,15 +265,18 @@ export class VideoElementFrameProvider implements FrameProvider {
     const t = slot.target
     if (Math.abs(video.currentTime - t) < 1e-6 && !video.seeking) return
     const before = slot.presented
+    const from = video.currentTime
     video.currentTime = t
     await once(video, ['seeked', 'error'], 5_000)
     // Chrome often presents the new frame before 'seeked' fires. A paused video then presents nothing more, so waiting
     // for a frame would only run into the timeout below. The frame shown for `t` starts at or just before it: up to a
-    // second before in low frame rate footage, whatever frame rate the asset reports.
+    // second before in low frame rate footage, whatever frame rate the asset reports. Going forward it must also be
+    // past where the video was, or it may be the previous seek's frame, presented late.
     const presented =
       slot.presented !== before &&
       slot.presentedTime <= t + 0.01 &&
-      slot.presentedTime > t - MAX_FRAME_SPACING
+      slot.presentedTime > t - MAX_FRAME_SPACING &&
+      (t < from || slot.presentedTime > from)
     if ('requestVideoFrameCallback' in video && !presented) {
       // 'seeked' can fire before the new frame is presented to WebGL; wait for it (bounded, paused videos may not
       // present again when the frame did not change).
