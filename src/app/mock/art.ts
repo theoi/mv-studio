@@ -534,7 +534,8 @@ interface SceneLayers {
 
 const layerCache = new Map<string, SceneLayers>()
 
-export function sceneLayers(scene: SceneId, w = 1280, h = 720): SceneLayers {
+/** The scene's layers, kept for later calls unless `keep` is false (a drawing made once, such as a sample video's). */
+export function sceneLayers(scene: SceneId, w = 1280, h = 720, keep = true): SceneLayers {
   const key = `${scene}:${w}x${h}`
   const hit = layerCache.get(key)
   if (hit) return hit
@@ -547,7 +548,7 @@ export function sceneLayers(scene: SceneId, w = 1280, h = 720): SceneLayers {
   fgc.height = h
   const hasFg = drawForeground(fgc.getContext('2d')!, scene, w, h)
   const layers = { bg, fg: hasFg ? fgc : null }
-  layerCache.set(key, layers)
+  if (keep) layerCache.set(key, layers)
   return layers
 }
 

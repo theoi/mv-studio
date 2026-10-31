@@ -28,8 +28,9 @@ export function isSampleAsset(asset: Asset): boolean {
   return asset.storageKey.startsWith(SCENE_PREFIX) || asset.storageKey.startsWith(MASK_PREFIX)
 }
 
-function sceneCanvas(scene: SceneId): HTMLCanvasElement {
-  const { bg, fg } = sceneLayers(scene, WIDTH, HEIGHT)
+/** The scene as one canvas. `keep: false` leaves its layers out of the art cache unless they are there already. */
+function sceneCanvas(scene: SceneId, keep = true): HTMLCanvasElement {
+  const { bg, fg } = sceneLayers(scene, WIDTH, HEIGHT, keep)
   const canvas = document.createElement('canvas')
   canvas.width = WIDTH
   canvas.height = HEIGHT
@@ -113,49 +114,62 @@ function fileKey(asset: Asset): string {
   return `${asset.kind}:${asset.storageKey}:${asset.duration ?? ''}`
 }
 
-/** The generated file for a sample asset, made once per storage key and kind. */
-export function sampleFile(asset: Asset): Promise<Blob> {
+/** The file for `asset`, made by `make` unless it was made (or is being made) already. */
+function fileFor(asset: Asset, make: () => Promise<Blob>): Promise<Blob> {
   const key = fileKey(asset)
   let file = cache.get(key)
   if (!file) {
-    file = generate(asset)
+    file = make()
     file.catch(() => cache.delete(key))
     cache.set(key, file)
   }
   return file
 }
 
-const queued = new Set<string>()
-const toPrepare: Asset[] = []
+/** The generated file for a sample asset, made once per storage key and kind. */
+export function sampleFile(asset: Asset): Promise<Blob> {
+  return fileFor(asset, () => generate(asset))
+}
+
+/** The assets prepareSampleVideos() was last given, the videos among them still to make, and whether one is underway. */
+let shown: Readonly<Record<string, Asset>> | null = null
+let waiting: Asset[] = []
+let preparing = false
 
 /**
- * Makes the sample videos among `assets` ahead of their first use, one at a time while the page is idle. Encoding one
- * takes a few hundred milliseconds, which the first jump to one of its clips would otherwise wait for.
+ * Makes the sample videos among a project's assets ahead of their first use, one at a time while the page is idle.
+ * Encoding one takes a few hundred milliseconds, which the first jump to one of its clips would otherwise wait for.
+ * Each call replaces the videos still waiting (the one underway finishes), so another project, or null when the
+ * editor closes, stops it.
  */
-export function prepareSampleVideos(assets: Iterable<Asset>): void {
-  const idle = toPrepare.length === 0
-  for (const asset of assets) {
-    if (asset.kind !== 'video' || !isSampleAsset(asset)) continue
-    const key = fileKey(asset)
-    if (queued.has(key) || cache.has(key)) continue
-    queued.add(key)
-    toPrepare.push(asset)
+export function prepareSampleVideos(assets: Readonly<Record<string, Asset>> | null): void {
+  if (assets === shown) return
+  shown = assets
+  waiting = Object.values(assets ?? {}).filter(
+    (a) => a.kind === 'video' && isSampleAsset(a) && !cache.has(fileKey(a)),
+  )
+  if (!preparing && waiting.length > 0) {
+    preparing = true
+    whenIdle(prepareNext)
   }
-  if (idle && toPrepare.length > 0) whenIdle(prepareNext)
 }
 
 function prepareNext(): void {
-  const asset = toPrepare[0]
-  if (!asset) return
-  // Drawing the scene and starting its encoder each take tens of milliseconds: separate tasks, each at idle.
-  sceneLayers(asset.storageKey.slice(SCENE_PREFIX.length) as SceneId, WIDTH, HEIGHT)
+  let asset = waiting.shift()
+  // Made on demand meanwhile.
+  while (asset && cache.has(fileKey(asset))) asset = waiting.shift()
+  if (!asset) {
+    preparing = false
+    return
+  }
+  const video = asset
+  // Drawing the scene and starting its encoder each take tens of milliseconds: separate tasks, each at idle. The
+  // drawing is not kept: once the file is made, nothing needs it.
+  const canvas = sceneCanvas(video.storageKey.slice(SCENE_PREFIX.length) as SceneId, false)
   whenIdle(() => {
-    void sampleFile(asset)
+    void fileFor(video, () => encodeStillVideo(canvas, video.duration ?? 10))
       .catch(() => undefined)
-      .finally(() => {
-        toPrepare.shift()
-        if (toPrepare.length > 0) whenIdle(prepareNext)
-      })
+      .finally(() => whenIdle(prepareNext))
   })
 }
 

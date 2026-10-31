@@ -68,7 +68,7 @@ export function connectPreview(
     shown = project
     preview.setProject(project)
     forgetStemPlaybackErrors(project, preview.clock.scheduledClips)
-    prepareSampleVideos(Object.values(project.assets))
+    prepareSampleVideos(project.assets)
   }
   showProject(editor.getProject())
   preview.setVolume(prefs().previewVolume)
@@ -120,6 +120,7 @@ export function connectPreview(
     preview,
     dispose() {
       for (const u of unsubscribe) u()
+      prepareSampleVideos(null)
       if (current === preview) {
         current = null
         shown = null
