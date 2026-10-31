@@ -281,6 +281,63 @@ test('a marquee and Mod A select clips, and dragging and trimming move them, smo
   }
 })
 
+test('a marquee or a dragged clip held at the timeline’s edge scrolls it, and keeps up with the scroll', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  // Snapping off: a drag moves the clip by exactly the pointer's distance plus the scroll.
+  await page.keyboard.press('n')
+  const scroller = page.locator('[data-timeline-scroller]')
+  const scrollLeft = (): Promise<number> => scroller.evaluate((el) => el.scrollLeft)
+  // 40 px a second, showing 1:00 to about 1:32: the clips after that are off screen.
+  const pps = 40
+  await page.evaluate((v) => window.mvStudio.app.ui.set({ pxPerSec: v }), pps)
+  const showFrom = async (t: number) => {
+    await scroller.evaluate((el, x) => (el.scrollLeft = x), t * pps)
+    await expect.poll(scrollLeft).toBe(t * pps)
+  }
+  await expect.poll(() => scroller.evaluate((el) => el.scrollWidth)).toBeGreaterThan(200 * pps)
+  await showFrom(60)
+  await expect(page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' })).toBeVisible()
+  const box = (await scroller.boundingBox())!
+  const laneLeft = box.x + 148
+  const xAt = (t: number) => laneLeft + (t - 60) * pps
+  const right = box.x + box.width - 4
+  const visibleEnd = 60 + (right - laneLeft) / pps
+  const spectrum = page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' })
+  const spec = (await spectrum.boundingBox())!
+  const singer = page.getByRole('button', { name: /, 1:06\.0 to 1:08\.0$/ }).last()
+  const video = (await singer.boundingBox())!
+
+  // A marquee from empty Overlay space at 1:02.5, held at the right edge down on the Video track.
+  await page.mouse.move(xAt(62.5), spec.y + spec.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(right, video.y + video.height / 2, { steps: 10 })
+  await expect.poll(scrollLeft).toBeGreaterThan(60 * pps + 400)
+  await page.mouse.up()
+  const scrolled = (await scrollLeft()) / pps - 60
+  const reach = visibleEnd + scrolled
+  const picked = (await clipsOn(page, ['t-overlay', 't-video'])).filter(
+    (c) => c.start < reach - 0.5 && c.end > 62.5,
+  )
+  // It reaches clips that were off screen when it started.
+  expect(picked.some((c) => c.start > visibleEnd + 2)).toBe(true)
+  expect(new Set(await selectedIds(page))).toEqual(new Set(picked.map((c) => c.id)))
+
+  // A clip dragged to the right edge and held there moves on with the scroll.
+  await page.keyboard.press('Escape')
+  await showFrom(60)
+  const grab = xAt(81)
+  await page.mouse.move(grab, spec.y + spec.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(right, spec.y + spec.height / 2, { steps: 10 })
+  await expect.poll(scrollLeft).toBeGreaterThan(60 * pps + 200)
+  await page.mouse.up()
+  const extra = (await scrollLeft()) - 60 * pps
+  const [moved] = (await clipsOn(page, ['t-overlay'])).filter((c) => c.end - c.start === 32 && c.start < 120)
+  expect(moved.start).toBeCloseTo(64 + (right - grab + extra) / pps, 1)
+  expect(moved.start - 64).toBeGreaterThan((right - grab) / pps + 4)
+})
 test('pasted and duplicated clips are scrolled into view, on a numbered track when theirs is taken; the palette runs them', async ({
   page,
 }) => {
