@@ -31,6 +31,18 @@ async function plan(project: Project, kind: EditPlan['kind'], prompt = '') {
 
 const rank = (pace: (typeof PACES)[number]) => PACES.indexOf(pace)
 
+describe('beat grid', () => {
+  it('guesses no bars from analysed beats while the bars are not found, so cuts follow the beats', () => {
+    const song = { duration: SONG_LENGTH, bpm: 120, beats: BEATS, sections: [], analyzed: true }
+    const noBars = beatGrid({ ...song, downbeats: [] })
+    expect(noBars.downbeats).toEqual([])
+    // Four-beat shots then count from the section start, even off the bar lines a guess would have put there.
+    expect(cutTimes(BEATS[1]!, BEATS[13]!, 4, noBars)).toEqual([BEATS[1], BEATS[5], BEATS[9]])
+    // Without any beat analysis, the beats and bars are both synthesized from the tempo.
+    expect(beatGrid({ ...song, beats: [], downbeats: [] }).downbeats.slice(0, 2)).toEqual([0, 2])
+  })
+})
+
 describe('phrased cuts', () => {
   it('cuts louder bars twice as often and quieter bars half as often', () => {
     // 120 BPM, bars every 2 s: bars at 4-8 s are loud, bars at 12-16 s quiet.

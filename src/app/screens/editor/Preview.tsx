@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   AudioLines,
   ChevronDown,
@@ -16,7 +16,7 @@ import {
   Volume2,
 } from 'lucide-react'
 import type { PreviewController } from '../../../engine/preview.ts'
-import type { AspectPreset } from '../../../model/index.ts'
+import { BARS_NOTES, type AspectPreset } from '../../../model/index.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
 import {
@@ -36,7 +36,6 @@ import { formatTimecode } from '../../format.ts'
 import { jumpSection } from '../../state/playback.ts'
 import { saveFrame } from '../../state/stills.ts'
 import {
-  bpmOf,
   editor,
   hasSong,
   loadSample,
@@ -45,6 +44,7 @@ import {
   timelineDuration,
   useProject,
 } from '../../state/project.ts'
+import { barPosition, songBeatsOnTimeline, useBars, type BarsState } from '../../state/songAnalysis.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
@@ -199,18 +199,30 @@ function Timecode() {
   )
 }
 
+/** What the position readout says about bars when it cannot count them. */
+const BARS_NOTE: Record<BarsState['status'], string | undefined> = {
+  ready: BARS_NOTES.beforeFirstBar,
+  finding: BARS_NOTES.finding,
+  unavailable: BARS_NOTES.notFound,
+  none: undefined,
+}
+
+/** The section at the playhead, and the bar once the song's bars are found (never a bar guessed from the tempo). */
 function Position() {
   const t = useUi((s) => s.playhead)
   const project = useProject()
+  const bars = useBars()
+  const beats = useMemo(() => songBeatsOnTimeline(project), [project])
   const sec = sectionAt(project, t)
-  const beat = 60 / (bpmOf(project) ?? 120)
-  const bar = Math.floor(t / (beat * 4)) + 1
-  const beatInBar = Math.floor((t % (beat * 4)) / beat) + 1
+  const place = bars.status === 'ready' ? barPosition(bars.downbeats, beats, t) : null
   return (
-    <Tooltip label="Where you are in the song" description={`Bar ${bar}, beat ${beatInBar}`}>
+    <Tooltip
+      label="Where you are in the song"
+      description={place ? `Bar ${place.bar}, beat ${place.beat}` : BARS_NOTE[bars.status]}
+    >
       <span className={`${styles.position} tnum`}>
         <span className={styles.posSection}>{sec && sectionName(sec)}</span>
-        <span>Bar {bar}</span>
+        {place && <span>Bar {place.bar}</span>}
       </span>
     </Tooltip>
   )

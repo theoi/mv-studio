@@ -76,6 +76,16 @@ describe('auto-cut rhythm', () => {
     expect(sections.spans.map((s) => s.start)).toEqual(SECTIONS.map((s) => s.start))
   })
 
+  it('cuts on beats, not once per section, when asked for bar starts and the bars are not found', () => {
+    const project = makeProject()
+    delete project.analysis.audio.song!.downbeats
+    const noBars = songInfoFromProject(project)
+    const spans = cutSpans(noBars, options({ cutOn: 'downbeats', pace: 'beat' })).spans
+    expect(spans.length).toBeGreaterThan(SECTIONS.length)
+    expect(spans.every((s) => onGrid(s.start, BEATS))).toBe(true)
+    expect(lengthsIn(spans, 'chorus')).toEqual([4])
+  })
+
   it('splits shots longer than the footage on bar lines', () => {
     const { spans } = cutSpans(song, options({ cutOn: 'sections', maxShot: 6 }))
     expect(spans.every((s) => s.end - s.start <= 6 + 1e-6)).toBe(true)

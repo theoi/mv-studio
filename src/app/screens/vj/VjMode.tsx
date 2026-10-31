@@ -22,7 +22,6 @@ import {
   type Pad,
   type PadRow,
   type PadView,
-  type QuantizeGrid,
   type VjSnapshot,
 } from '../../../vj/index.ts'
 import { Button } from '../../ds/Button.tsx'
@@ -53,6 +52,7 @@ import {
   timelineDuration,
   useProject,
 } from '../../state/project.ts'
+import { barsState } from '../../state/songAnalysis.ts'
 import { useThumbnail } from '../../state/thumbs.ts'
 import { midiControllers, midiDevicesLabel, setActiveVjSession, vjMidi } from '../../state/vj.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
@@ -89,7 +89,7 @@ function midiChip(midi: VjSnapshot['midi'] | undefined): string {
 }
 
 /** What a kept take added, or null when it changed nothing. */
-function takeSummary(take: VjSnapshot['takes'][number], grid: QuantizeGrid): string | null {
+function takeSummary(take: VjSnapshot['takes'][number], lined: 'bars' | 'beats'): string | null {
   const s = take.summary
   const parts = s
     ? [
@@ -100,7 +100,7 @@ function takeSummary(take: VjSnapshot['takes'][number], grid: QuantizeGrid): str
     : [plural(take.presses, 'press', 'presses')]
   if (parts.length === 0) return null
   const what = parts.join(', ')
-  return take.quantized ? `${what}, lined up with the ${grid === 'bar' ? 'bars' : 'beats'}` : what
+  return take.quantized ? `${what}, lined up with the ${lined}` : what
 }
 
 /**
@@ -484,7 +484,8 @@ export function VjMode() {
         continue
       }
       if (take.status !== 'kept') continue
-      const added = takeSummary(take, grid)
+      // Nearest bar lines up with beats until the song's bars are found (see vj/quantize.ts).
+      const added = takeSummary(take, grid === 'bar' && barsState().status === 'ready' ? 'bars' : 'beats')
       if (!added) {
         toast(`Take ${take.number} changed nothing`)
         continue

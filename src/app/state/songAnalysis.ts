@@ -2,7 +2,15 @@ import { useMemo, useSyncExternalStore } from 'react'
 import { nearestBeatIndex } from '../../analysis/beats/grid.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
 import { fitTappedTempo, moveDownbeat } from '../../analysis/edits.ts'
-import type { AudioAnalysis, EditCommand, Id, Project, Seconds } from '../../model/index.ts'
+import {
+  BARS_NOTES,
+  hasFoundBars,
+  type AudioAnalysis,
+  type EditCommand,
+  type Id,
+  type Project,
+  type Seconds,
+} from '../../model/index.ts'
 import { JobError, type JobHandle } from '../../shared/jobs.ts'
 import { formatBpm, formatTime, plural } from '../format.ts'
 import { backgroundAnalysisOn } from './footage.ts'
@@ -161,7 +169,7 @@ function subscribeBars(listener: () => void): () => void {
 }
 
 /** Song (asset) times on the timeline, through the first enabled clip that plays the song; outside it they drop. */
-function toTimeline(project: Project, songId: Id, times: readonly Seconds[]): Seconds[] {
+function songTimesOnTimeline(project: Project, songId: Id, times: readonly Seconds[]): Seconds[] {
   const clip = Object.values(project.clips)
     .filter((c) => c.type === 'audio' && c.enabled && c.assetId === songId)
     .sort((a, b) => a.start - b.start)[0]
@@ -172,12 +180,48 @@ function toTimeline(project: Project, songId: Id, times: readonly Seconds[]): Se
     .filter((t) => t >= clip.start - 1e-6 && t <= end)
 }
 
+/** The song's beats in timeline time (see `songTimesOnTimeline`); empty without analyzed beats. */
+export function songBeatsOnTimeline(project: Project): Seconds[] {
+  const songId = project.songAssetId
+  const beats = songId ? project.analysis.audio[songId]?.beats : undefined
+  return songId && beats ? songTimesOnTimeline(project, songId, beats) : []
+}
+
+/** How many of the sorted `times` are at or before `t`. */
+function countUpTo(times: readonly Seconds[], t: Seconds): number {
+  let lo = 0
+  let hi = times.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if ((times[mid] as number) <= t) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/**
+ * Where `t` falls in the song's bars, all in timeline time: the bar (1 = the first bar found) and the beat in it
+ * (1 = its downbeat). Null before the first bar.
+ */
+export function barPosition(
+  downbeats: readonly Seconds[],
+  beats: readonly Seconds[],
+  t: Seconds,
+): { bar: number; beat: number } | null {
+  const bar = countUpTo(downbeats, t + 1e-3)
+  if (bar === 0) return null
+  const start = downbeats[bar - 1] as number
+  return { bar, beat: countUpTo(beats, t + 1e-3) - countUpTo(beats, start + 1e-3) + 1 }
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+
 function barsOf(project: Project, current: ReadonlyMap<Id, Attempt>): BarsState {
   const songId = project.songAssetId
   const analysis = songId ? project.analysis.audio[songId] : undefined
   if (!songId || !analysis?.beats?.length) return { status: 'none' }
-  if (analysis.downbeats?.length)
-    return { status: 'ready', downbeats: toTimeline(project, songId, analysis.downbeats) }
+  if (analysis.downbeats && hasFoundBars(analysis))
+    return { status: 'ready', downbeats: songTimesOnTimeline(project, songId, analysis.downbeats) }
   return current.get(songId) === 'running' ? { status: 'finding' } : { status: 'unavailable' }
 }
 
@@ -226,13 +270,29 @@ function startRun(
         const refined = await handle.promise
         const now = editor.getProject().analysis.audio[songId]
         if (!now) return false
-        const { refinedBarsCommand } = await import('../../analysis/client.ts')
-        const command = refinedBarsCommand(now, baseline, refined, { sections: options.sections })
+        const { chorusEdgesCommand, lyricChorusCommand, refinedBarsCommand } =
+          await import('../../analysis/client.ts')
+        const lyrics = editor.getProject().lyrics
+        const chorus = (a: AudioAnalysis) => (lyrics ? lyricChorusCommand(a, lyrics) : null)
+        const relabeled = chorus(baseline)
+        // Sections the lyrics' chorus relabeled are still the detected ones: the refined sections replace them and the
+        // chorus is found again on those.
+        const detected =
+          sameJson(now.sections, baseline.sections) ||
+          (relabeled?.type === 'analysis.setRefined' && sameJson(now.sections, relabeled.refined.sections))
+        const from = detected ? { ...baseline, sections: now.sections } : baseline
+        const command = refinedBarsCommand(now, from, refined, { sections: options.sections })
         if (command) dispatch(command, { history: 'skip' })
+        const after = editor.getProject().analysis.audio[songId]
+        if (command && hasFoundBars(after)) {
+          const fresh = !sameJson(after.sections, now.sections)
+          const next = fresh ? chorus(after) : chorusEdgesCommand(after)
+          if (next) dispatch(next, { history: 'skip' })
+        }
       } finally {
         void backend.release(songId).catch(() => undefined)
       }
-      return Boolean(editor.getProject().analysis.audio[songId]?.downbeats?.length)
+      return hasFoundBars(editor.getProject().analysis.audio[songId])
     } finally {
       started(null)
     }
@@ -246,9 +306,7 @@ function startRun(
       setAttempt(songId, cancelled ? 'cancelled' : 'failed')
       if (!(error instanceof JobError)) throw error
       if (!cancelled && !options.quiet)
-        toast(
-          `Bars not found yet. ${error.message} Analyze again in Assist › Song analysis to look for them.`,
-        )
+        toast(`${BARS_NOTES.notFound}. ${error.message} ${BARS_NOTES.analyzeAgain}`)
       return false
     },
   )
@@ -275,7 +333,7 @@ export async function ensureBars(
   const songId = project.songAssetId
   const analysis = songId ? project.analysis.audio[songId] : undefined
   if (!songId || !analysis?.beats?.length) return false
-  if (analysis.downbeats?.length) return true
+  if (hasFoundBars(analysis)) return true
   const { signal, progress } = options
   const ours = !runs.has(songId)
   const run = startRun(songId, { quiet: true })
@@ -318,7 +376,7 @@ export function findBarsInBackground(): () => void {
     const project = editor.getProject()
     const songId = project.songAssetId
     const analysis = songId ? project.analysis.audio[songId] : undefined
-    if (!songId || !analysis?.beats?.length || analysis.downbeats?.length) return
+    if (!songId || !analysis?.beats?.length || hasFoundBars(analysis)) return
     if (attempts.has(songId) || !backgroundAnalysisOn()) return
     void findBars(songId)
   }

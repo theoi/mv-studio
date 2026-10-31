@@ -1,6 +1,31 @@
 /** Read-only helpers over a project. */
 import type { Clip, Id, Project, Seconds, Track } from './types.ts'
 
+/**
+ * Whether the song's bars were found: at least two bar starts, since one alone gives no bar length. Until then,
+ * anything that cuts, snaps, counts or pulses on bars falls back to beats.
+ */
+export function hasFoundBars(grid: { readonly downbeats?: readonly Seconds[] } | undefined): boolean {
+  return (grid?.downbeats?.length ?? 0) >= 2
+}
+
+/** What the app says about a song's bars while it cannot count them, worded the same wherever it is shown. */
+export const BARS_NOTES = {
+  /** While the bars are being looked for: a job stage, a badge or the position readout. */
+  finding: 'Finding bars…',
+  /** After a search that did not find them. */
+  notFound: 'Bars not found yet',
+  /** The playhead is before the song's first bar. */
+  beforeFirstBar: 'Before the first bar',
+  /** How to look for them again, outside the Song analysis panel. */
+  analyzeAgain: 'Analyze again in Assist › Song analysis to look for them.',
+  /** A cut plan made without them. */
+  beatsOnly:
+    'Bars not found yet, so the cuts follow the beats. Analyze again in Assist › Song analysis to look for them.',
+  /** What an effect pulsing on bars follows instead. */
+  everyFourthBeat: 'every fourth beat (bars not found yet)',
+} as const
+
 /** Project length: explicit duration, else the end of the last clip, else 0. */
 export function projectDuration(project: Project): Seconds {
   if (project.duration !== undefined) return project.duration

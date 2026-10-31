@@ -9,6 +9,7 @@ import { pluginRegistry } from '../engine/registry.ts'
 import type { ParamSpec, PluginRegistry } from '../engine/types.ts'
 import type { EditCommand, PropertyPath } from '../model/commands.ts'
 import type { ProjectEditor } from '../model/editor.ts'
+import { BARS_NOTES, hasFoundBars } from '../model/queries.ts'
 import type {
   Animatable,
   AudioAnalysis,
@@ -180,12 +181,20 @@ function featuresOf(analysis: AudioAnalysis | undefined, stem?: StemName): Audio
   return stem ? analysis?.stemFeatures?.[stem] : analysis?.features
 }
 
+/**
+ * Until the song's bars are found, the "downbeat" pulse lands on every fourth beat (the engine's barStarts) and follows
+ * the found bars once they arrive, so a downbeat reaction works from the first beats without being redone.
+ */
+function barsGuessed(analysis: AudioAnalysis | undefined): boolean {
+  return (analysis?.beats?.length ?? 0) > 0 && !hasFoundBars(analysis)
+}
+
 function hasData(listen: Listen, analysis: AudioAnalysis | undefined): boolean {
   switch (listen.feature) {
     case 'beat':
       return (analysis?.beats?.length ?? 0) > 0
     case 'downbeat':
-      return (analysis?.downbeats?.length ?? 0) > 0
+      return hasFoundBars(analysis) || barsGuessed(analysis)
     case 'band':
       return (featuresOf(analysis, listen.stem)?.bands.length ?? 0) > 0
     default:
@@ -236,13 +245,15 @@ function bandLabel(hz: number): string {
 }
 
 /** Plain-language name of what a reaction listens to, e.g. 'Drums stem' or 'Sub bass'. */
-export function listenLabel(listen: Listen): string {
+export function listenLabel(listen: Listen, analysis?: AudioAnalysis): string {
   if ('stem' in listen && listen.stem) return STEM_LABELS[listen.stem]
   switch (listen.feature) {
     case 'beat':
       return 'Beat grid'
     case 'downbeat':
-      return 'Bar grid'
+      return barsGuessed(analysis)
+        ? BARS_NOTES.everyFourthBeat.replace(/^./, (c) => c.toUpperCase())
+        : 'Bar grid'
     case 'band':
       return bandLabel(listen.hz)
     case 'loudness':
@@ -264,14 +275,14 @@ const BAND_PHRASES: [maxHz: number, phrase: string][] = [
  * What a reaction listens to as the end of a sentence, saying where its instrument is found until stems are
  * separated: 'the drums stem', or 'the low end (sub bass), where the kick sits'.
  */
-export function listenPhrase(r: Reaction, listen: Listen): string {
+export function listenPhrase(r: Reaction, listen: Listen, analysis?: AudioAnalysis): string {
   if ('stem' in listen && listen.stem) return `the ${STEM_LABELS[listen.stem].toLowerCase()}`
   const where = r.inMix ? `, ${r.inMix}` : ''
   switch (listen.feature) {
     case 'beat':
       return 'the song’s beat grid'
     case 'downbeat':
-      return 'the song’s bar grid'
+      return barsGuessed(analysis) ? BARS_NOTES.everyFourthBeat : 'the song’s bar grid'
     case 'band':
       return (BAND_PHRASES.find(([max]) => listen.hz < max)?.[1] ?? 'the highs') + where
     case 'loudness':
@@ -302,8 +313,8 @@ export function availableReactions(project: Project): ReactionAvailability[] {
     return {
       reaction: r,
       listen,
-      listensTo: listenLabel(listen),
-      listening: listenPhrase(r, listen),
+      listensTo: listenLabel(listen, analysis),
+      listening: listenPhrase(r, listen, analysis),
       betterWithStems: !!r.bestWithStem && !('stem' in listen && listen.stem),
       ready: hasData(listen, analysis),
     }
@@ -646,13 +657,14 @@ export function describeReaction(
   if (!match) return custom
   const amount = clamp01(mod.amount / resolved.span)
   const best = chooseListen(project, match.reaction)
+  const analysis = songAnalysis(project)
   return {
     kind: 'reaction',
     reaction: match.reaction,
     amount,
-    listensTo: listenLabel(match.listen),
-    listening: listenPhrase(match.reaction, match.listen),
-    canUpgrade: match.exact && best !== match.listen && hasData(best, songAnalysis(project)),
+    listensTo: listenLabel(match.listen, analysis),
+    listening: listenPhrase(match.reaction, match.listen, analysis),
+    canUpgrade: match.exact && best !== match.listen && hasData(best, analysis),
     exact: match.exact,
     summary: `${match.reaction.label} · ${Math.round(amount * 100)}%`,
     modulation: first,

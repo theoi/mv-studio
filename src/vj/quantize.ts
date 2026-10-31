@@ -3,6 +3,7 @@
  * Grid points subdivide each analysed beat interval, so they follow tempo changes; outside the analysed beats the
  * nearest interval is extended.
  */
+import { hasFoundBars } from '../model/queries.ts'
 import type { Project, Seconds } from '../model/types.ts'
 import type { QuantizeGrid, QuantizeSettings, VjEvent } from './types.ts'
 
@@ -35,7 +36,7 @@ export function beatGridOf(project: Project): BeatGrid | null {
   const beats = map(analysis.beats)
   if (beats.length >= 2) {
     const downbeats = map(analysis.downbeats)
-    return downbeats.length >= 2 ? { beats, downbeats } : { beats }
+    return hasFoundBars({ downbeats }) ? { beats, downbeats } : { beats }
   }
   const bpm = analysis.tempo?.bpm
   const duration = clip ? clip.duration : (analysis.beats?.at(-1) ?? 0)
@@ -49,8 +50,9 @@ export function beatGridOf(project: Project): BeatGrid | null {
 
 function points(grid: BeatGrid, q: QuantizeGrid): { times: Seconds[]; division: number } {
   if (q !== 'bar') return { times: grid.beats, division: DIVISIONS[q] }
-  if (grid.downbeats && grid.downbeats.length >= 2) return { times: grid.downbeats, division: 1 }
-  return { times: grid.beats.filter((_, i) => i % 4 === 0), division: 1 }
+  if (grid.downbeats && hasFoundBars(grid)) return { times: grid.downbeats, division: 1 }
+  // Bars not found: the nearest beat, rather than a guessed bar.
+  return { times: grid.beats, division: 1 }
 }
 
 /** The grid point nearest to `t`. */

@@ -1,4 +1,5 @@
 import type { AudioAnalysis, EditCommand, Id } from '../model/index.ts'
+import { hasFoundBars } from '../model/queries.ts'
 import { JobError, jobs, type JobHandle, type JobRunner } from '../shared/jobs.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../shared/worker.ts'
 import type { DecodedAudio } from './beats/fast.ts'
@@ -213,7 +214,7 @@ export function refinedBarsCommand(
   refined: RefinedFields,
   options: { sections?: boolean } = {},
 ): EditCommand | null {
-  if (current.downbeats?.length || !refined.downbeats?.length) return null
+  if (hasFoundBars(current) || !refined.downbeats || !hasFoundBars(refined)) return null
   const grid = (a: RefinedFields) => ({ tempo: a.tempo, beats: a.beats, downbeats: a.downbeats })
   const untouched = JSON.stringify(grid(current)) === JSON.stringify(grid(baseline))
   if (untouched && current.tempo?.confidence !== 1) {
@@ -244,7 +245,7 @@ export {
   type LyricsResult,
   type WhisperSize,
 } from './lyrics/client.ts'
-export { lyricChorusCommand } from './structure/chorus.ts'
+export { chorusEdgesCommand, lyricChorusCommand } from './structure/chorus.ts'
 export {
   STEM_MODEL_BYTES,
   StemSeparationService,

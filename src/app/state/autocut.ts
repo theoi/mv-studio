@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Id, Project } from '../../model/index.ts'
+import { BARS_NOTES, type Id, type Project } from '../../model/index.ts'
 import { jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
 import type {
@@ -14,6 +14,7 @@ import { plural } from '../format.ts'
 import { analyzeFootageAndWait, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { editor, sectionAt, sectionsOf } from './project.ts'
+import { barsState, ensureBars } from './songAnalysis.ts'
 import type { Selection } from './ui.ts'
 
 /*
@@ -139,12 +140,16 @@ export function autoCutOptions(
 }
 
 const STAGE_MESSAGES: Record<string, string> = {
+  bars: BARS_NOTES.finding,
   planning: 'Finding the cuts in the song',
   matching: 'Choosing a clip for each shot',
 }
 
 const analyzingMessage = (done: number, total: number) =>
   `Analyzing your footage… ${done} of ${plural(total, 'clip')}`
+
+/** Share of the job's progress spent finding bars, when they are not found yet. */
+const BARS_SHARE = 0.4
 
 let runs = 0
 
@@ -173,8 +178,11 @@ export function startAutoCut(
         .filter((a) => !wanted || wanted.has(a.id))
         .map((a) => a.id)
       const analyze = analyzeFirst && matched && waiting.length > 0
-      // The analyzing stage takes the first half of the bar, the cut the rest.
-      const scale = (f: number) => (analyze ? 0.5 + f / 2 : f)
+      // The analyzing stage takes the first half of the bar. Cuts phrase on bars, so a song whose bars are still being
+      // found waits for them next; the cut takes the rest.
+      const analyzed = analyze ? 0.5 : 0
+      const share = barsState().status === 'ready' ? 0 : BARS_SHARE * (1 - analyzed)
+      const scale = (f: number) => analyzed + share + f * (1 - analyzed - share)
       if (analyze) {
         ctx.progress({ fraction: 0, stage: 'analyzing', message: analyzingMessage(0, waiting.length) })
         await analyzeFootageAndWait(waiting, {
@@ -183,16 +191,21 @@ export function startAutoCut(
             if (s.status !== 'indexing' || !s.total) return
             const fraction = Math.min(1, (s.done + (s.current?.fraction ?? 0)) / s.total)
             ctx.progress({
-              fraction: fraction / 2,
+              fraction: fraction * analyzed,
               stage: 'analyzing',
               message: analyzingMessage(s.done, s.total),
             })
           },
         })
       }
+      const bars = await ensureBars({
+        signal: ctx.signal,
+        progress: (f) =>
+          ctx.progress({ fraction: analyzed + f * share, stage: 'bars', message: STAGE_MESSAGES.bars }),
+      })
       ctx.progress({ fraction: scale(0), stage: 'planning', message: STAGE_MESSAGES.planning })
       const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
-      const result = await v.autoCut(
+      const cut = await v.autoCut(
         { editor, matcher: vision.matcher },
         { ...options, seed },
         {
@@ -205,6 +218,8 @@ export function startAutoCut(
             }),
         },
       )
+      const beatsOnly = !bars && barsState().status === 'unavailable'
+      const result = beatsOnly ? { ...cut, warnings: [...cut.warnings, BARS_NOTES.beatsOnly] } : cut
       useAutoCut.setState((s) => ({ results: { ...s.results, [id]: result } }))
       return result
     },

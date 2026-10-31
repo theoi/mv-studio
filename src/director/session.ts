@@ -9,6 +9,7 @@ import { formatEstimate } from '../cloud/pricing.ts'
 import type { MediaGenerationProvider } from '../cloud/types.ts'
 import type { MediaFileSource } from '../engine/types.ts'
 import type { ProjectEditor } from '../model/editor.ts'
+import { BARS_NOTES } from '../model/queries.ts'
 import type { Asset, Id } from '../model/types.ts'
 import {
   JobError,
@@ -71,7 +72,15 @@ export interface DirectorDeps {
   readAsset?: (assetId: Id) => Promise<Blob>
   /** Reads stored media (`appMedia`), so the director can measure footage brightness under lyrics. */
   media?: MediaFileSource
+  /**
+   * Waits for the song's bars before planning (the app's `ensureBars`): resolves whether the song has them. Without
+   * them the plan cuts on beats and says so.
+   */
+  ensureBars?: (options: { signal: AbortSignal; progress: (fraction: number) => void }) => Promise<boolean>
 }
+
+/** Share of the plan's progress spent finding the song's bars when they are not found yet (often the longest step). */
+const BARS_SHARE = 0.5
 
 export interface PlanPreview {
   /** What the plan makes, e.g. "Beat-cut video with 6 sections, 48 shots, 5 of your clips, Vivid look." */
@@ -198,7 +207,6 @@ export class DirectorSession {
   /** Makes a plan. Costs nothing: generation only happens in apply(). */
   async plan(request: DirectorRequest, options: { local?: boolean } = {}): Promise<DirectorState> {
     this.job?.cancel()
-    const project = this.deps.editor.getProject()
     const provider = request.generate ? this.deps.provider?.() : undefined
     const local = (input: PlannerInput) => planLocally(input)
     const planner = options.local ? local : (this.deps.planner ?? local)
@@ -206,7 +214,30 @@ export class DirectorSession {
       kind: 'director.plan',
       title: 'Planning your video',
       run: async (ctx) => {
-        ctx.progress({ stage: 'gather', fraction: 0.05, message: 'Reading the song and your media' })
+        // ensureBars reports progress only while it finds the bars; the rest of the plan then gets the rest of the bar.
+        let share = 0
+        const bars = this.deps.ensureBars
+          ? await this.deps.ensureBars({
+              signal: ctx.signal,
+              progress: (f) => {
+                share = BARS_SHARE
+                ctx.progress({ stage: 'bars', fraction: BARS_SHARE * f, message: BARS_NOTES.finding })
+              },
+            })
+          : true
+        const planCtx: JobContext =
+          share === 0
+            ? ctx
+            : {
+                signal: ctx.signal,
+                throwIfCancelled: () => ctx.throwIfCancelled(),
+                progress: (p) =>
+                  ctx.progress(
+                    p.fraction === undefined ? p : { ...p, fraction: share + p.fraction * (1 - share) },
+                  ),
+              }
+        planCtx.progress({ stage: 'gather', fraction: 0.05, message: 'Reading the song and your media' })
+        const project = this.deps.editor.getProject()
         const input = await buildPlannerInput(project, {
           kind: request.kind,
           prompt: request.prompt,
@@ -221,8 +252,11 @@ export class DirectorSession {
             provider && request.generate ? generationOptionsFor(provider, request.generate) : undefined,
         })
         ctx.throwIfCancelled()
-        ctx.progress({ stage: 'plan', fraction: 0.3, message: 'Planning shots, text and effects' })
-        return planner(input, ctx)
+        planCtx.progress({ stage: 'plan', fraction: 0.3, message: 'Planning shots, text and effects' })
+        const plan = await planner(input, planCtx)
+        return bars || !input.song.beats.length
+          ? plan
+          : { ...plan, warnings: [...plan.warnings, BARS_NOTES.beatsOnly] }
       },
     })
     this.job = handle

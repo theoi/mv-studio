@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Activity, AlertTriangle, Check, RotateCcw } from 'lucide-react'
 import { MIN_TAPS, TAP_RESET_SECONDS, tapTempo } from '../../../../analysis/beats/tap.ts'
+import { BARS_NOTES } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
@@ -127,7 +128,7 @@ export function AnalysisView() {
           <span>Bar starts</span>
           <span>
             {bars.status === 'finding' ? (
-              <Badge>Finding bars…</Badge>
+              <Badge>{BARS_NOTES.finding}</Badge>
             ) : bars.status === 'unavailable' ? (
               <Badge>Not found yet</Badge>
             ) : (
@@ -148,7 +149,7 @@ export function AnalysisView() {
         </div>
       </div>
       {bars.status === 'unavailable' && (
-        <div className={styles.muted}>Bars not found yet. Analyze again to look for them.</div>
+        <div className={styles.muted}>{BARS_NOTES.notFound}. Analyze again to look for them.</div>
       )}
       <div className={styles.linkRow}>
         <Tooltip
