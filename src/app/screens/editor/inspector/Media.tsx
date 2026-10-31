@@ -1,10 +1,9 @@
 import type { VisualClip } from '../../../../model/index.ts'
 import { FieldRow, NumberField, Section, Select } from '../../../ds/Fields.tsx'
 import { formatTime } from '../../../format.ts'
-import { sceneThumb } from '../../../mock/art.ts'
-import { sceneOf } from '../../../mock/demoProject.ts'
 import { dispatch, editor, useProject } from '../../../state/project.ts'
 import { clipReframeMode, framingHint, setClipReframe } from '../../../state/reframe.ts'
+import { useFrameThumbnail } from '../../../state/thumbs.ts'
 import { AnimateAction } from './Animate.tsx'
 import { CameraSection, CameraSuggestion } from './Camera.tsx'
 import { ColorSection, EffectsSection } from './Effects.tsx'
@@ -15,17 +14,13 @@ import styles from '../Inspector.module.css'
 export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string } }) {
   const project = useProject()
   const asset = project.assets[clip.assetId]
-  const scene = sceneOf(asset)
+  const thumb = useFrameThumbnail(asset, clip.type === 'video' ? clip.sourceStart : 0)
   const isImage = clip.type === 'image'
   const end = clip.start + clip.duration
   const meta = `${isImage ? 'Image' : 'Video'} · ${formatTime(clip.start, true)} – ${formatTime(end, true)} · ${clip.duration.toFixed(1)} s`
   return (
     <>
-      <Header
-        thumb={scene ? sceneThumb(scene) : undefined}
-        title={clip.name ?? asset?.name ?? 'Clip'}
-        meta={meta}
-      />
+      <Header thumb={thumb} title={clip.name ?? asset?.name ?? 'Clip'} meta={meta} />
       <BehindSuggestion clip={clip} />
       {clip.type === 'image' && <AnimateAction clip={clip} />}
       {isImage && <CameraSuggestion clip={clip} />}

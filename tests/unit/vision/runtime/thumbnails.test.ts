@@ -57,7 +57,7 @@ function fakeVideos(config: { manual?: boolean; unsupported?: string[] } & Frame
           dispose: () => disposed.push(a.id),
         }
       },
-      draw: (frame, w, h) => `${(frame as unknown as { label: string }).label} ${w}x${h}`,
+      draw: config.draw ?? ((frame, w, h) => `${(frame as unknown as { label: string }).label} ${w}x${h}`),
     },
   )
   const finishNext = async () => {
@@ -176,6 +176,26 @@ describe('frame thumbnails', () => {
     release2()
     release1()
     expect([1, 2, 3].map((t) => thumbs.get(a, t) !== undefined)).toEqual([true, false, true])
+  })
+
+  it('revokes the object URL of each frame it drops, and of every frame when disposed', async () => {
+    const revoked = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const { thumbs } = fakeVideos({
+      maxEntries: 1,
+      draw: async (frame) => `blob:${(frame as unknown as { label: string }).label}`,
+    })
+    const a = asset('a')
+    const release1 = thumbs.want(a, 1)
+    thumbs.want(a, 2)
+    await flush()
+    expect(thumbs.get(a, 1)).toBe('blob:a@1')
+    expect(revoked).not.toHaveBeenCalled()
+    release1()
+    expect(thumbs.get(a, 1)).toBeUndefined()
+    expect(revoked.mock.calls).toEqual([['blob:a@1']])
+    thumbs.dispose()
+    expect(revoked.mock.calls).toEqual([['blob:a@1'], ['blob:a@2']])
+    revoked.mockRestore()
   })
 
   it('leaves images and audio to the asset thumbnail', async () => {
