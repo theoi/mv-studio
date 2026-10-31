@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import type { SongSection } from '../../../src/model/index.ts'
-import { sectionKind, sectionName } from '../../../src/app/state/project.ts'
+import { sectionGuess, sectionKind, sectionName } from '../../../src/app/state/project.ts'
 
 const section = (label: string, repeatGroup?: number): SongSection => ({
   id: label,
@@ -24,12 +24,16 @@ it.each([
 })
 
 it.each([
-  [0.4, 'Chorus?'],
-  [0.8, 'Chorus'],
-  [1, 'Chorus'],
-  [undefined, 'Chorus'],
-] as const)('a chorus label with confidence %s is shown as %s', (confidence, shown) => {
-  expect(sectionName({ ...section('Chorus'), ...(confidence !== undefined ? { confidence } : {}) })).toBe(
-    shown,
-  )
-})
+  ['chorus', 0.4, 'Chorus', 'Probably the chorus'],
+  ['verse', 0.4, 'Verse', 'Probably a verse'],
+  ['chorus', 0.8, 'Chorus', undefined],
+  ['Chorus', undefined, 'Chorus', undefined],
+  ['drop', 1, 'drop', undefined],
+] as const)(
+  'a section labeled %s with confidence %s is shown as %s, guessed: %s',
+  (label, confidence, shown, guess) => {
+    const s = { ...section(label), ...(confidence !== undefined ? { confidence } : {}) }
+    expect(sectionName(s)).toBe(shown)
+    expect(sectionGuess(s)).toBe(guess)
+  },
+)

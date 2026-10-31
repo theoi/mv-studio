@@ -101,7 +101,7 @@ export function createLyricsApi(deps: LyricsWorkerDeps) {
         ctx.progress({ stage: 'transcribe', fraction: 0.15, message: 'Detecting the language' })
         ;({ language, probability: languageProbability } = await detectLanguage(transcriber, pcm, chunks))
       }
-      const message = `Writing down the lyrics (${device === 'webgpu' ? 'GPU' : 'CPU'})`
+      const message = 'Writing down the lyrics'
       ctx.progress({ stage: 'transcribe', fraction: 0.18, message })
       const segments = await transcribeChunks(transcriber, pcm, chunks, {
         language,

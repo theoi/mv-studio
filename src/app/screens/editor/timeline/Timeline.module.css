@@ -229,6 +229,12 @@
   text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
 }
 
+/* A label guessed from the audio: muted, with "Probably the chorus" in its tooltip. */
+.sectionLabelGuess {
+  color: var(--text-2);
+  font-weight: var(--weight-medium);
+}
+
 .renameInput {
   position: relative;
   z-index: 4;

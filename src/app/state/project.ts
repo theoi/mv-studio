@@ -147,9 +147,16 @@ export function sectionUnsure(s: SongSection): boolean {
   return s.confidence !== undefined && s.confidence < SURE_LABEL
 }
 
-/** A section's label as shown, with a question mark when it is a guess ("Chorus?"). */
+/** A section's label as shown: a name the user typed as typed, a label from the analysis capitalized ("Chorus"). */
 export function sectionName(s: SongSection): string {
-  return sectionUnsure(s) ? `${s.label}?` : s.label
+  return s.confidence === 1 ? s.label : s.label.charAt(0).toUpperCase() + s.label.slice(1)
+}
+
+/** What the song map says about a guessed label ("Probably the chorus"); undefined when it is not a guess. */
+export function sectionGuess(s: SongSection): string | undefined {
+  if (!sectionUnsure(s)) return undefined
+  const label = s.label.toLowerCase()
+  return `Probably ${/^(intro|outro|chorus)$/.test(label) ? 'the' : 'a'} ${label}`
 }
 
 export const sectionColor: Record<SectionKind, string> = {
