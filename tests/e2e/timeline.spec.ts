@@ -29,8 +29,7 @@ test('a look shows as a compact labeled bar that keeps its label in view, and cu
 
   // The look starts at 0:00, which is scrolled out of view; its label stays at the left edge of the lanes.
   const scrolled = await bar.evaluate((el) => {
-    let node: HTMLElement | null = el.parentElement
-    while (node && node.scrollWidth <= node.clientWidth) node = node.parentElement
+    const node = el.closest<HTMLElement>('[data-timeline-scroller]')
     if (!node) return 0
     node.scrollLeft = 600
     return node.scrollLeft
