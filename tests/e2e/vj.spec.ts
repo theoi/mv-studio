@@ -10,6 +10,7 @@ interface PadKeys {
   mono: string
   strobe: string
   neon: string
+  freeze: string
 }
 
 /**
@@ -127,6 +128,7 @@ async function setUp(page: Page, o: { beats?: boolean } = {}): Promise<PadKeys> 
       mono: rowKey('effects', 'Mono'),
       strobe: rowKey('effects', 'Strobe'),
       neon: rowKey('looks', 'Neon night'),
+      freeze: rowKey('effects', 'Freeze'),
     }
   }, o.beats ?? false)
 }
@@ -427,4 +429,98 @@ test('quantized takes land on the beat, rehearsals add nothing, and Esc asks to 
   expect(r.label).toBe('VJ take 1')
   expect(r.afterUndo).toEqual([])
   expect(r.exits).toBe(1)
+})
+
+test('holding Freeze stills the playing footage in the live preview and records a rate-0 hold', async ({
+  page,
+}) => {
+  const keys = await setUp(page)
+  // Mean per-channel change between consecutive preview frames, sampled at 32x18.
+  await page.evaluate(() => {
+    const { preview, frames } = window.mvStudio.vjTest
+    const { testing } = window.mvStudio
+    let previous: Uint8ClampedArray | null = null
+    const motion: { at: number; diff: number }[] = []
+    preview.onFrame(() => {
+      const px: Uint8ClampedArray = testing.readPixels(preview.canvas, 32, 18)
+      if (previous) {
+        let sum = 0
+        for (let i = 0; i < px.length; i += 4)
+          sum +=
+            Math.abs(px[i]! - previous[i]!) +
+            Math.abs(px[i + 1]! - previous[i + 1]!) +
+            Math.abs(px[i + 2]! - previous[i + 2]!)
+        motion.push({ at: performance.now(), diff: sum / (px.length / 4) / 3 })
+      }
+      previous = px
+    })
+    window.mvStudio.vjTest.motion = motion
+    return frames.length
+  })
+
+  await page.keyboard.press('Space')
+  await waitForClock(page, 0.3)
+  await page.keyboard.press(keys.video)
+  await page.waitForTimeout(700)
+  await page.keyboard.down(keys.freeze)
+  await page.waitForTimeout(700)
+  await page.keyboard.up(keys.freeze)
+  await page.waitForTimeout(700)
+  await page.keyboard.press('Space')
+
+  const r = await page.evaluate((freezeCode) => {
+    const { editor, keys: log, motion, ids } = window.mvStudio.vjTest
+    const vj = window.mvStudio.vj
+    const at = (type: string) =>
+      log.find((k: { code: string; type: string }) => k.code === freezeCode && k.type === type)
+    const down = at('keydown')
+    const up = at('keyup')
+    type M = { at: number; diff: number }
+    const window_ = (from: number, to: number) =>
+      motion.filter((m: M) => m.at > from && m.at < to).map((m: M) => m.diff)
+    // When the still frame was on screen: the last moving frame after the key went down.
+    const moving = motion.filter((m: M) => m.at > down.timeStamp && m.at < up.timeStamp && m.diff > 0.2)
+    const longestGap = (from: number, to: number) => {
+      const ats = motion.filter((m: M) => m.at > from && m.at < to).map((m: M) => m.at)
+      return Math.max(...ats.slice(1).map((a: number, i: number) => a - ats[i]))
+    }
+    const clips = Object.values(
+      editor.getProject().clips as Record<
+        string,
+        { type: string; assetId?: string; start: number; duration: number; playbackRate?: number }
+      >,
+    )
+      .filter((c) => vj.laneOfClip(c) === 'clips' && c.assetId === ids.video.id)
+      .sort((a, b) => a.start - b.start)
+      .map((c) => ({ start: c.start, end: c.start + c.duration, rate: c.playbackRate }))
+    return {
+      before: window_(down.timeStamp - 500, down.timeStamp),
+      stillAfterMs: moving.length > 0 ? moving.at(-1).at - down.timeStamp : 0,
+      longestFrameGapMs: {
+        freeze: longestGap(down.timeStamp - 50, down.timeStamp + 400),
+        release: longestGap(up.timeStamp - 50, up.timeStamp + 400),
+      },
+      during: window_(down.timeStamp + 250, up.timeStamp),
+      after: window_(up.timeStamp + 150, up.timeStamp + 650),
+      clips,
+      downClock: down.clock,
+      upClock: up.clock,
+    }
+  }, keys.freeze)
+  const max = (a: number[]) => Math.max(...a)
+  console.log(
+    'vj freeze',
+    JSON.stringify({ stillAfterMs: r.stillAfterMs, longestFrameGapMs: r.longestFrameGapMs, clips: r.clips }),
+  )
+  // The frozen clip is new footage for the preview to seek, so the still frame lags the key by a few frames.
+  expect(r.stillAfterMs).toBeLessThan(250)
+  expect(r.during.length).toBeGreaterThan(15)
+  expect(max(r.before)).toBeGreaterThan(1)
+  expect(max(r.during)).toBeLessThan(0.2)
+  expect(max(r.after)).toBeGreaterThan(1)
+  const frozen = r.clips.filter((c) => c.rate === 0)
+  expect(frozen).toHaveLength(1)
+  expect(Math.abs(frozen[0]!.start - r.downClock)).toBeLessThan(0.05)
+  expect(Math.abs(frozen[0]!.end - r.upClock)).toBeLessThan(0.05)
+  expect(r.clips.filter((c) => c.rate === 1).length).toBeGreaterThanOrEqual(2)
 })
