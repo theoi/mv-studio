@@ -13,7 +13,8 @@ import type {
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
 import { floatToMask, resizeMask } from '../mask/ops.ts'
-import { createMediaPipeTask, mediapipeModel, withModelProgress } from '../runtime/loaders.ts'
+import { createMediaPipeTask, mediapipeModel } from '../runtime/loaders.ts'
+import { withModelProgress } from '../../shared/transformers.ts'
 import { VISION_MODELS } from '../runtime/models.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../../shared/worker.ts'
 import {

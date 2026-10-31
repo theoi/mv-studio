@@ -1,37 +1,13 @@
 /**
- * Model runtime loading for the vision workers (MediaPipe tasks, Transformers.js). Kept apart from the model
- * registry so main-thread code that only needs descriptors does not bundle the runtimes.
+ * MediaPipe runtime loading for the vision workers. Transformers.js loading is shared (src/shared/transformers.ts).
+ * Kept apart from the model registry so main-thread code that only needs descriptors does not bundle the runtimes.
  */
-import type * as Transformers from '@huggingface/transformers'
 import { FilesetResolver } from '@mediapipe/tasks-vision'
-import { configureOnnxEnv, fetchModelFile, type ModelDescriptor } from '../../shared/models.ts'
-import { JobError, type JobProgress } from '../../shared/jobs.ts'
+import { fetchModelFile, type ModelDescriptor } from '../../shared/models.ts'
+import { JobError } from '../../shared/jobs.ts'
+import { downloadProgress } from '../../shared/transformers.ts'
 import { visionError } from '../errors.ts'
 import { MEDIAPIPE_WASM_BASE } from './models.ts'
-
-/**
- * Progress of model downloads started by the current worker call. Workers handle one heavy call at a time,
- * so a single sink is enough; calls set it while they may trigger downloads.
- */
-let progressSink: ((p: JobProgress) => void) | null = null
-
-export async function withModelProgress<T>(
-  onProgress: ((p: JobProgress) => void) | undefined,
-  run: () => Promise<T>,
-): Promise<T> {
-  const previous = progressSink
-  progressSink = onProgress ?? null
-  try {
-    return await run()
-  } finally {
-    progressSink = previous
-  }
-}
-
-function reportDownload(name: string) {
-  return (p: JobProgress) => progressSink?.({ ...p, stage: 'download', message: `Downloading ${name}` })
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // MediaPipe
 
@@ -54,7 +30,7 @@ function loadMediaPipeRuntime(): Promise<{ fileset: WasmFileset; factory: unknow
 export async function mediapipeModel(model: ModelDescriptor): Promise<Uint8Array> {
   const file = model.files.model
   if (!file) throw new JobError('internal', `${model.name} has no model file`)
-  return new Uint8Array(await fetchModelFile(file, { onProgress: reportDownload(model.name) }))
+  return new Uint8Array(await fetchModelFile(file, { onProgress: downloadProgress(model.name) }))
 }
 
 /**
@@ -71,38 +47,4 @@ export async function createMediaPipeTask<T>(create: (fileset: WasmFileset) => P
   } catch (err) {
     throw visionError(err, 'model-load')
   }
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// Transformers.js
-
-let transformersPromise: Promise<typeof Transformers> | null = null
-
-/**
- * Transformers.js fetches models itself; routing its fetch through the shared loader gives one cache, one progress
- * surface and integrity handling for every model. Its optional-file probing relies on real HTTP statuses.
- */
-async function sharedFetch(input: string | URL): Promise<Response> {
-  const url = String(input)
-  try {
-    const buf = await fetchModelFile({ url }, { onProgress: reportDownload(url.split('/').pop() ?? url) })
-    return new Response(buf, { status: 200, headers: { 'content-length': String(buf.byteLength) } })
-  } catch (err) {
-    const status = err instanceof JobError ? /\((\d{3})\)/.exec(err.message)?.[1] : undefined
-    if (status) return new Response(null, { status: Number(status) })
-    throw err
-  }
-}
-
-/** Imports Transformers.js once and applies the shared runtime settings (threads, fetch, no second cache). */
-export function loadTransformers(): Promise<typeof Transformers> {
-  transformersPromise ??= import('@huggingface/transformers').then(async (T) => {
-    const onnx = T.env.backends.onnx
-    if (onnx.wasm) await configureOnnxEnv({ wasm: onnx.wasm })
-    T.env.allowLocalModels = false
-    T.env.useBrowserCache = false
-    T.env.fetch = sharedFetch
-    return T
-  })
-  return transformersPromise
 }

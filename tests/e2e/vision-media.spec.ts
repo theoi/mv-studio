@@ -152,6 +152,10 @@ test('vision frames decoded through the export path match <video> frames and fee
 test('depth estimation and the parallax renderer produce a camera move', async ({ page }) => {
   test.setTimeout(240_000)
   const errors = collectErrors(page)
+  const ortRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('ort-wasm')) ortRequests.push(request.url())
+  })
   await openHarness(page)
   await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'image.png')])
   const r = await page.evaluate(async () => {
@@ -215,6 +219,9 @@ test('depth estimation and the parallax renderer produce a camera move', async (
   expect(r.std).toBeGreaterThan(5)
   expect(r.cachedMs).toBeLessThan(r.firstMs / 10)
   expect(r.moveDiff).toBeGreaterThan(2)
+  // Transformers.js runs on the ONNX Runtime binaries bundled with the app, not a CDN copy.
+  expect(ortRequests.length).toBeGreaterThan(0)
+  for (const url of ortRequests) expect(new URL(url).origin).toBe(new URL(page.url()).origin)
   expect(errors).toEqual([])
 })
 
