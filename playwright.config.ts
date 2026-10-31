@@ -6,30 +6,43 @@ const external = process.env.E2E_BASE_URL
 const baseURL = external ?? 'http://127.0.0.1:4173/mv-studio/'
 
 /**
- * CI runs the suite as two halves on separate machines: E2E_HALF=1 runs the spec files this matches, E2E_HALF=2
- * everything else, so every spec runs in one of them. Specs are dealt out longest first, each to the half with less
- * time so far, by the seconds tests/e2e/timings.json records for them (`node scripts/e2e-timings.mjs <CI run id>`
- * refreshes it). A spec missing from it counts as a typical one, so new specs spread over both halves.
+ * CI runs the suite as two halves on separate machines: E2E_HALF=1 runs the spec files firstHalfSpecs() picks,
+ * E2E_HALF=2 everything else, so every spec runs in one of them. Specs are dealt out longest first, each to the half
+ * with less time so far, by the seconds tests/e2e/timings.json records for them (`node scripts/e2e-timings.mjs <CI run
+ * id>` refreshes it). A spec missing from it counts as a typical one, so new specs spread over both halves.
  */
-function firstHalf(): RegExp {
-  const dir = new URL('tests/e2e/', import.meta.url)
-  const timings = JSON.parse(readFileSync(new URL('timings.json', dir), 'utf8')) as Record<string, number>
+export function firstHalfSpecs(timings: Record<string, unknown>, specs: string[]): string[] {
+  const valid = (s: unknown): s is number => typeof s === 'number' && Number.isFinite(s) && s >= 0
   const known = Object.values(timings)
+    .filter(valid)
     .filter((s) => s > 0)
     .sort((a, b) => a - b)
   const typical = known[Math.floor(known.length / 2)] ?? 1
-  const seconds = (spec: string) => timings[spec] ?? typical
-  const specs = readdirSync(dir)
-    .filter((f) => f.endsWith('.spec.ts'))
-    .sort((a, b) => seconds(b) - seconds(a) || a.localeCompare(b))
+  const seconds = (spec: string) => {
+    const s = timings[spec]
+    return valid(s) ? s : typical
+  }
+  // Ties go by code point: localeCompare follows the machine's locale, so two machines could deal them differently.
+  const order = [...specs].sort((a, b) => seconds(b) - seconds(a) || (a < b ? -1 : 1))
   const load = [0, 0]
   const first: string[] = []
-  for (const spec of specs) {
+  for (const spec of order) {
     const i = load[0] <= load[1] ? 0 : 1
     load[i] += seconds(spec)
     if (i === 0) first.push(spec)
   }
-  return new RegExp(`/(${first.map((f) => f.replaceAll('.', '\\.')).join('|')})$`)
+  return first
+}
+
+function firstHalf(): RegExp {
+  const dir = new URL('tests/e2e/', import.meta.url)
+  const timings = JSON.parse(readFileSync(new URL('timings.json', dir), 'utf8')) as Record<string, unknown>
+  const specs = readdirSync(dir).filter((f) => f.endsWith('.spec.ts'))
+  return new RegExp(
+    `/(${firstHalfSpecs(timings, specs)
+      .map((f) => f.replaceAll('.', '\\.'))
+      .join('|')})$`,
+  )
 }
 const half = process.env.E2E_HALF
 
