@@ -5,6 +5,7 @@ import { sceneThumb } from '../../../mock/art.ts'
 import { sceneOf } from '../../../mock/demoProject.ts'
 import { dispatch, editor, useProject } from '../../../state/project.ts'
 import { clipReframeMode, framingHint, setClipReframe } from '../../../state/reframe.ts'
+import { AnimateAction } from './Animate.tsx'
 import { CameraSection, CameraSuggestion } from './Camera.tsx'
 import { ColorSection, EffectsSection } from './Effects.tsx'
 import { BehindSuggestion, LayeringSection } from './Layering.tsx'
@@ -26,6 +27,7 @@ export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string 
         meta={meta}
       />
       <BehindSuggestion clip={clip} />
+      {clip.type === 'image' && <AnimateAction clip={clip} />}
       {isImage && <CameraSuggestion clip={clip} />}
       <TransformSection clip={clip} />
       <CompositingSection clip={clip} />

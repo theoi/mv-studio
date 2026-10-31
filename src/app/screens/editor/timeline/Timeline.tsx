@@ -83,6 +83,8 @@ import {
 import { useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
+import { LaneMenu } from './LaneMenu.tsx'
+import { openLaneMenu } from './laneMenu.ts'
 import styles from './Timeline.module.css'
 
 const HEADER_W = 148
@@ -1077,6 +1079,13 @@ export function Timeline() {
                   onPointerDown={(e) => {
                     if (e.target === e.currentTarget) set({ selection: { type: 'none' } })
                   }}
+                  onContextMenu={(e) =>
+                    openLaneMenu(
+                      e,
+                      track.id,
+                      (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps,
+                    )
+                  }
                   onDragOver={(e) => {
                     if (kind === 'audio' || !isLibraryDrag(e)) return
                     const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
@@ -1243,6 +1252,7 @@ export function Timeline() {
           <Playhead height={totalH} />
         </div>
       </div>
+      <LaneMenu />
     </div>
   )
 }
