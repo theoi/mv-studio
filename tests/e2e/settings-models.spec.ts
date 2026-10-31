@@ -67,3 +67,28 @@ test('Settings › This device removes one downloaded model and keeps the others
   expect(await page.evaluate((url) => caches.match(url).then(Boolean), urls.beats)).toBe(false)
   expect(await page.evaluate((url) => caches.match(url).then(Boolean), urls.stems)).toBe(true)
 })
+
+test('a partly downloaded model says so and can be removed on its own', async ({ page }) => {
+  await openHarness(page)
+  const model: { title: string; urls: string[] } = await page.evaluate(() => {
+    const models: { title: string; urls: string[] }[] = window.mvStudio.app.models.LOCAL_MODELS
+    return models.find((m) => m.urls.length > 1)!
+  })
+  // An interrupted download: the first file is in the cache, the rest are not.
+  await page.evaluate(async (url) => {
+    const cache = await caches.open('mv-studio-models-v1')
+    await cache.put(url, new Response(new Uint8Array(1000)))
+  }, model.urls[0]!)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?dialog=settings&page=local'
+  })
+  const row = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: model.title })
+  await expect(row.getByText('Partly downloaded')).toBeVisible()
+  await row.getByRole('button', { name: `Remove ${model.title}` }).click()
+  await expect(
+    page.getByText(`The partial download of ${model.title} was removed. It downloads again when needed.`),
+  ).toBeVisible()
+  await expect(row.getByText('Downloads when used')).toBeVisible()
+  expect(await page.evaluate((url) => caches.match(url).then(Boolean), model.urls[0]!)).toBe(false)
+})

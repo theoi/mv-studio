@@ -75,6 +75,8 @@ function libraryItems(project: Project): LibraryItem[] {
     }))
 }
 
+const ANALYZING_NAMES = { analyzing: ', analyzing', waiting: ', waiting to be analyzed' } as const
+
 function MediaCard({ item }: { item: LibraryItem }) {
   const thumb = useThumbnail(item.asset)
   const duration = item.type === 'image' ? undefined : item.asset.duration
@@ -85,7 +87,7 @@ function MediaCard({ item }: { item: LibraryItem }) {
         className={styles.card}
         draggable
         tabIndex={0}
-        aria-label={`${item.name}, ${item.type}${analyzing ? ', analyzing' : ''}`}
+        aria-label={`${item.name}, ${item.type}${analyzing ? ANALYZING_NAMES[analyzing] : ''}`}
       >
         <div className={styles.thumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}>
           {item.type === 'audio' && (
@@ -107,9 +109,11 @@ function MediaCard({ item }: { item: LibraryItem }) {
             <span className={`${styles.duration} tnum`}>{formatTime(duration)}</span>
           )}
           {analyzing && (
-            <span className={styles.analyzingMark} aria-hidden>
-              <Spinner size={8} />
-              Analyzing…
+            <span className={styles.analyzingMark} data-state={analyzing} aria-hidden>
+              {analyzing === 'analyzing' && <Spinner size={8} />}
+              <span className={styles.analyzingLabel}>
+                {analyzing === 'analyzing' ? 'Analyzing…' : 'Waiting'}
+              </span>
             </span>
           )}
           <span className={styles.addBtn}>

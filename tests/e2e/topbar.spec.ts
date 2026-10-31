@@ -47,6 +47,16 @@ test('the search field opens the command palette, which runs the action picked a
   await expect(palette).toBeHidden()
   await expect(search).toBeFocused()
 
+  // A dialog opened from the palette gives focus back to what opened the palette.
+  await search.click()
+  await input.fill('keyboard shortcuts')
+  await page.keyboard.press('Enter')
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await expect(settings.getByRole('heading', { name: 'Shortcuts' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(settings).toBeHidden()
+  await expect(search).toBeFocused()
+
   await search.click()
   await input.fill('add text')
   await page.keyboard.press('Enter')

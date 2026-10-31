@@ -164,6 +164,14 @@
   font-weight: var(--weight-medium);
 }
 
+/* On a narrow card the label would touch the + that hover shows; the spinner stays, a waiting mark goes. */
+.card:hover .analyzingLabel,
+.card:focus-within .analyzingLabel,
+.card:hover .analyzingMark[data-state='waiting'],
+.card:focus-within .analyzingMark[data-state='waiting'] {
+  display: none;
+}
+
 .genBadge ~ .analyzingMark {
   top: 24px;
 }

@@ -44,7 +44,7 @@ export function Dialog({
           aria-describedby={description ? undefined : undefined}
           tabIndex={-1}
           onOpenAutoFocus={(e) => {
-            returnFocus.onOpenAutoFocus()
+            returnFocus.onOpenAutoFocus(e)
             e.preventDefault()
             ;(e.currentTarget as HTMLElement | null)?.focus()
           }}
