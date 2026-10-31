@@ -16,7 +16,7 @@ function lookSpan(project: Project, clip: VisualClip): string {
   const clipEnd = clip.start + clip.duration
   return clip.start <= 0.05 && clipEnd >= end - 0.05
     ? 'On every clip'
-    : `From ${formatTime(clip.start)} to ${formatTime(clipEnd)}`
+    : `${formatTime(clip.start)} to ${formatTime(clipEnd)}`
 }
 
 /** The look's intensity is the opacity of its layer, so it can be keyframed and react to the music. */
@@ -66,7 +66,7 @@ export function LookSection() {
           <div className={styles.lookName}>
             {layer ? (look?.name ?? layer.name ?? 'Custom look') : ORIGINAL_LOOK.name}
           </div>
-          <div className={styles.meta}>{layer ? lookSpan(project, layer) : 'No look on the video'}</div>
+          <div className={styles.meta}>{layer ? lookSpan(project, layer) : 'No look'}</div>
         </div>
         <Button
           size="sm"

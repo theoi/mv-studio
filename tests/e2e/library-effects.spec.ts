@@ -89,7 +89,7 @@ test('a look from the library restyles the whole video as one undo step; the ins
   const none = await settled(page, preview)
   await original.click()
   await expect(original).toHaveAttribute('aria-pressed', 'true')
-  await expect(inspector.getByText('No look on the video')).toBeVisible()
+  await expect(inspector.getByText('No look', { exact: true })).toBeVisible()
   await expect(inspector.getByRole('slider', { name: 'Look intensity' })).toHaveCount(0)
   expect(await imageDiff(page, none, await settled(page, preview))).toBeLessThan(0.5)
   await page.screenshot({ path: testInfo.outputPath('effects-original.png') })
