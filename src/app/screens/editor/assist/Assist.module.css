@@ -655,6 +655,20 @@
   cursor: pointer;
 }
 
+/* "More options" disclosure: a ghost button aligned with the field labels. */
+.moreToggle {
+  flex: none;
+  align-self: flex-start;
+  margin-left: calc(-1 * var(--space-2));
+  color: var(--text-2);
+}
+
+.moreFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
 .switchTitle {
   display: block;
   font-size: var(--text-sm);

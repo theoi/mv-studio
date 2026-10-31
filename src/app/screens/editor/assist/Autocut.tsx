@@ -1,5 +1,16 @@
-import { useEffect, useState } from 'react'
-import { AlertTriangle, Check, Info, Lock, RotateCcw, Scissors, Undo2, Upload } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Info,
+  Lock,
+  RotateCcw,
+  Scissors,
+  Undo2,
+  Upload,
+} from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
@@ -8,6 +19,8 @@ import { formatBytes, formatTime, plural } from '../../../format.ts'
 import {
   autoCutClipCount,
   autoCutOptions,
+  DEFAULT_AUTOCUT_CHOICES,
+  matchesMood,
   matchingDownloadBytes,
   selectedAsset,
   setAutoCutChoices,
@@ -65,7 +78,17 @@ export function AutocutView() {
   const range = choices.range === 'section' && section ? 'section' : 'all'
   const clips = choices.clips === 'selected' && asset ? 'selected' : 'all'
   const analyzing = indexing?.status === 'indexing'
-  const willAnalyze = choices.matchMood && unanalyzed > 0 && !analyzing
+  const willAnalyze = matchesMood(choices) && unanalyzed > 0 && !analyzing
+  const story = choices.clipOrder === 'story'
+  const sectionsOnly = choices.cutOn === 'sections'
+  // Open when a choice inside differs from the default, so a changed option never hides.
+  const [more, setMore] = useState(
+    () =>
+      choices.cutOn !== DEFAULT_AUTOCUT_CHOICES.cutOn ||
+      choices.clipOrder !== DEFAULT_AUTOCUT_CHOICES.clipOrder,
+  )
+  const moreId = useId()
+  const revealMore = useRef(false)
   const download = useMatchingDownload(willAnalyze)
   const cut = () => {
     if (willAnalyze) analyzeFootageNow()
@@ -182,7 +205,7 @@ export function AutocutView() {
 
   const note = !clipCount
     ? 'Import video clips or images first. Auto-cut cuts them to the song.'
-    : choices.matchMood && analyzing
+    : matchesMood(choices) && analyzing
       ? `Analyzing your footage… ${indexing?.done ?? 0} of ${indexing?.total ?? clipCount} clips. Cut again when it’s done to match the mood.`
       : willAnalyze
         ? `${unanalyzed === clipCount ? 'Your clips aren’t' : `${plural(unanalyzed, 'clip')} aren’t`} analyzed yet, so this cut picks them for variety and starts the analysis. Cut again when it’s done to match the mood.`
@@ -208,7 +231,7 @@ export function AutocutView() {
           <div>{note}</div>
         </div>
       )}
-      <Field label="Cut every">
+      <Field label="Cut every" {...(sectionsOnly ? { hint: 'Not used while each section is one shot' } : {})}>
         <Segmented
           block
           value={choices.pace}
@@ -225,22 +248,32 @@ export function AutocutView() {
       <label className={styles.switchRow}>
         <span>
           <span className={styles.switchTitle}>Follow the song’s energy</span>
-          <span className={styles.fieldHint}>Faster cuts in choruses, slower in verses</span>
+          <span className={styles.fieldHint}>
+            {sectionsOnly
+              ? `Off while each section is one shot${more ? '' : ' (More options)'}`
+              : 'Faster cuts in choruses, slower in verses'}
+          </span>
         </span>
         <Switch
-          checked={choices.followEnergy}
+          checked={choices.followEnergy && !sectionsOnly}
           onCheckedChange={(followEnergy) => setAutoCutChoices({ followEnergy })}
+          disabled={sectionsOnly}
           ariaLabel="Follow the song’s energy"
         />
       </label>
       <label className={styles.switchRow}>
         <span>
           <span className={styles.switchTitle}>Match clips to the mood</span>
-          <span className={styles.fieldHint}>Uses footage tags, like “crowd” for choruses</span>
+          <span className={styles.fieldHint}>
+            {story
+              ? `Off while clips play in story order${more ? '' : ' (More options)'}`
+              : 'Uses footage tags, like “crowd” for choruses'}
+          </span>
         </span>
         <Switch
-          checked={choices.matchMood}
+          checked={choices.matchMood && !story}
           onCheckedChange={(matchMood) => setAutoCutChoices({ matchMood })}
+          disabled={story}
           ariaLabel="Match clips to the mood"
         />
       </label>
@@ -276,6 +309,67 @@ export function AutocutView() {
           ]}
         />
       </Field>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={styles.moreToggle}
+        icon={more ? <ChevronDown /> : <ChevronRight />}
+        aria-expanded={more}
+        aria-controls={moreId}
+        onClick={() => {
+          revealMore.current = !more
+          setMore(!more)
+        }}
+      >
+        More options
+      </Button>
+      {more && (
+        <div
+          id={moreId}
+          className={styles.moreFields}
+          ref={(el) => {
+            // The options open below the fold of the panel, so bring them into view when the user opens them.
+            if (el && revealMore.current) el.scrollIntoView({ block: 'nearest' })
+            revealMore.current = false
+          }}
+        >
+          <Field label="Cut on">
+            <Select
+              value={choices.cutOn}
+              onChange={(cutOn) => setAutoCutChoices({ cutOn })}
+              ariaLabel="Cut on"
+              options={[
+                { value: 'beats', label: 'Pace', description: 'Cuts land on the beats of the pace above' },
+                {
+                  value: 'downbeats',
+                  label: 'Bar lines only',
+                  description: 'Every cut lands on the first beat of a bar, a bar or more apart',
+                },
+                {
+                  value: 'sections',
+                  label: 'Section changes only',
+                  description: 'One shot per section, for slow songs',
+                },
+              ]}
+            />
+          </Field>
+          <Field label="Clip order">
+            <Select
+              value={choices.clipOrder}
+              onChange={(clipOrder) => setAutoCutChoices({ clipOrder })}
+              ariaLabel="Clip order"
+              options={[
+                {
+                  value: 'mood',
+                  label: choices.matchMood ? 'Match the mood' : 'Shuffle',
+                  description: 'Follows “Match clips to the mood” above',
+                },
+                { value: 'story', label: 'Story order', description: 'Clips in the order you imported them' },
+              ]}
+            />
+          </Field>
+        </div>
+      )}
     </ToolView>
   )
 }

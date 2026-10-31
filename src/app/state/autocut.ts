@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { Id, Project } from '../../model/index.ts'
 import { jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
-import type { AutoCutOptions, AutoCutPace, AutoCutResult } from '../../vision/index.ts'
+import type { AutoCutOn, AutoCutOptions, AutoCutPace, AutoCutResult } from '../../vision/index.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
@@ -16,6 +16,8 @@ import type { Selection } from './ui.ts'
 
 export type AutoCutRange = 'all' | 'section'
 export type AutoCutClips = 'all' | 'selected'
+/** "mood" follows the Match clips to the mood switch (matched or shuffled); "story" keeps import order. */
+export type AutoCutClipOrder = 'mood' | 'story'
 
 export interface AutoCutChoices {
   pace: AutoCutPace
@@ -23,10 +25,26 @@ export interface AutoCutChoices {
   matchMood: boolean
   range: AutoCutRange
   clips: AutoCutClips
+  /** More options: the grid lines cuts land on ('beats' follows the pace). */
+  cutOn: AutoCutOn
+  clipOrder: AutoCutClipOrder
 }
 
+export const DEFAULT_AUTOCUT_CHOICES: AutoCutChoices = {
+  pace: 'bar',
+  followEnergy: true,
+  matchMood: true,
+  range: 'all',
+  clips: 'all',
+  cutOn: 'beats',
+  clipOrder: 'mood',
+}
+
+/** Whether the cut matches clips to the song with footage analysis (not shuffled, not story order). */
+export const matchesMood = (choices: AutoCutChoices) => choices.matchMood && choices.clipOrder === 'mood'
+
 export const useAutoCut = create<{ choices: AutoCutChoices; results: Record<string, AutoCutResult> }>(() => ({
-  choices: { pace: 'bar', followEnergy: true, matchMood: true, range: 'all', clips: 'all' },
+  choices: DEFAULT_AUTOCUT_CHOICES,
   results: {},
 }))
 
@@ -89,7 +107,8 @@ export function autoCutOptions(
   return {
     pace: choices.pace,
     followEnergy: choices.followEnergy,
-    order: choices.matchMood ? 'matched' : 'shuffled',
+    cutOn: choices.cutOn,
+    order: choices.clipOrder === 'story' ? 'chronological' : choices.matchMood ? 'matched' : 'shuffled',
     ...(section ? { range: { start: section.start, end: section.end } } : {}),
     ...(asset ? { assetIds: [asset.id] } : {}),
   }
