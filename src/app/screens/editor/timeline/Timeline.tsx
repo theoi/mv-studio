@@ -1374,8 +1374,8 @@ export function Timeline() {
       snapTime(
         t,
         pps,
+        grid,
         edges,
-        beat,
         sections.map((x) => x.start),
       ).t,
     )
