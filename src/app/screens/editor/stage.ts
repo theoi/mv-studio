@@ -2,6 +2,7 @@ import { applyMat, fitSize, layerMatrix } from '../../../engine/layout.ts'
 import { PreviewController } from '../../../engine/preview.ts'
 import { cssFont, fontPxFor, layoutText } from '../../../engine/text.ts'
 import type { Clip, Project, VisualClip } from '../../../model/index.ts'
+import { prepareSampleVideos } from '../../mock/sampleMedia.ts'
 import { appMedia } from '../../state/media.ts'
 import { prefs, usePrefs } from '../../state/prefs.ts'
 import { loopRange } from '../../state/previewControls.ts'
@@ -67,6 +68,7 @@ export function connectPreview(
     shown = project
     preview.setProject(project)
     forgetStemPlaybackErrors(project, preview.clock.scheduledClips)
+    prepareSampleVideos(project.assets)
   }
   showProject(editor.getProject())
   preview.setVolume(prefs().previewVolume)
@@ -118,6 +120,7 @@ export function connectPreview(
     preview,
     dispose() {
       for (const u of unsubscribe) u()
+      prepareSampleVideos(null)
       if (current === preview) {
         current = null
         shown = null
