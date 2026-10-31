@@ -58,6 +58,7 @@ beforeAll(() => {
     class extends FakeWorker {
       constructor() {
         super({
+          ready: () => true,
           predict: (request: PredictionRequest) => {
             requests.push(request)
             const { source } = request

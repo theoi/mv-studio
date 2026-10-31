@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ImageClip } from '../../../src/model/index.ts'
+import type * as Vision from '../../../src/vision/index.ts'
 import {
   addedRiskNote,
   cameraMoveOf,
@@ -10,11 +11,18 @@ import {
   riskFacts,
   riskNote,
   riskyMoves,
+  safeAmountsOf,
   setCameraMove,
   stillClips,
   undoCameraMoves,
 } from '../../../src/app/state/camera.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
+
+const safeCameraAmounts = vi.hoisted(() => vi.fn())
+vi.mock('../../../src/vision/index.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof Vision>()),
+  safeCameraAmounts,
+}))
 
 beforeEach(() => loadDemoProject())
 
@@ -164,6 +172,18 @@ it('tells what moves may do at the strength they were added with', () => {
   expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.1 }, true)] })).toBe(
     'Straight lines in this image may bend with any Motion. A lower Strength bends them less.',
   )
+})
+
+it('computes a still’s safe amounts again after a failure, instead of keeping the failure for the session', async () => {
+  const safe = { smear: 0.4, bend: 0.2 }
+  safeCameraAmounts
+    .mockRejectedValueOnce(new Error('The task stopped unexpectedly. Try again.'))
+    .mockResolvedValueOnce(safe)
+  const clipId = stillClips(editor.getProject())[0]!.id
+  await expect(safeAmountsOf('depth:orbit-left', clipId, 'orbit-left')).rejects.toThrow('stopped')
+  await expect(safeAmountsOf('depth:orbit-left', clipId, 'orbit-left')).resolves.toEqual(safe)
+  await expect(safeAmountsOf('depth:orbit-left', clipId, 'orbit-left')).resolves.toEqual(safe)
+  expect(safeCameraAmounts).toHaveBeenCalledTimes(2)
 })
 
 describe('editing a move in Inspector › Motion', () => {

@@ -263,6 +263,24 @@ export function cameraMoveOf(
 const safeAmounts = new Map<string, Promise<SafeAmounts | null>>()
 
 /**
+ * vision's safeCameraAmounts for a clip's still with `preset`, kept for the session per depth image and preset
+ * (`key`). A failure (the camera worker crashed, say) is not kept, so the next time they are needed they are computed
+ * again.
+ */
+export function safeAmountsOf(key: string, clipId: Id, preset: CameraPreset): Promise<SafeAmounts | null> {
+  const known = safeAmounts.get(key)
+  if (known) return known
+  const amount = import('../../vision/index.ts').then((v) =>
+    v.safeCameraAmounts(appMedia, editor.getProject(), clipId, preset),
+  )
+  safeAmounts.set(key, amount)
+  amount.catch(() => {
+    if (safeAmounts.get(key) === amount) safeAmounts.delete(key)
+  })
+  return amount
+}
+
+/**
  * The largest strengths (0..1) predicted not to smear and not to bend the clip's still with its current move, from
  * its stored depth image (vision's safeCameraAmounts); null without a move and until they are known.
  */
@@ -275,16 +293,10 @@ export function useSafeAmounts(clip: Clip): SafeAmounts | null {
   useEffect(() => {
     if (!key || !preset) return
     let live = true
-    let amount = safeAmounts.get(key)
-    if (!amount) {
-      amount = import('../../vision/index.ts')
-        .then((v) => v.safeCameraAmounts(appMedia, editor.getProject(), clip.id, preset))
-        .catch(() => null)
-      safeAmounts.set(key, amount)
-    }
-    void amount.then((value) => {
+    const show = (value: SafeAmounts | null) => {
       if (live) setKnown({ key, value })
-    })
+    }
+    safeAmountsOf(key, clip.id, preset).then(show, () => show(null))
     return () => {
       live = false
     }

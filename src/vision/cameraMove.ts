@@ -3,7 +3,6 @@ import type { ProjectEditor } from '../model/editor.ts'
 import { newId } from '../model/factory.ts'
 import type { Asset, AssetOrigin, EffectInstance, Id, ImageClip, Project } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
-import { createWorkerClient, type WorkerClient } from '../shared/worker.ts'
 import {
   predictCameraMove,
   type CameraPrediction,
@@ -20,7 +19,7 @@ import { fitSize } from './runtime/frames.ts'
 import { VISION_MODELS } from './runtime/models.ts'
 import { createProgress, type TaskOptions } from './runtime/tasks.ts'
 import type { CameraPreset, DepthMap, GrayImage } from './types.ts'
-import type { CameraWorkerApi } from './workers/camera.worker.ts'
+import { predictInWorker } from './workers/cameraClient.ts'
 
 const DEPTH_MODEL = VISION_MODELS.depthAnythingSmall.id
 /**
@@ -262,19 +261,12 @@ function stillOf(project: Project, clipId: Id): { clip: ImageClip; asset: Asset 
   return { clip, asset }
 }
 
-let predictor: WorkerClient<CameraWorkerApi> | null = null
-
-/** `predictCameraMove` in the camera worker, or here where there are no workers (unit tests). */
-function predict(request: PredictionRequest, signal?: AbortSignal): Promise<CameraPrediction> {
-  if (typeof Worker === 'undefined') return predictCameraMove(request)
-  predictor ??= createWorkerClient<CameraWorkerApi>(
-    () =>
-      new Worker(new URL('./workers/camera.worker.ts', import.meta.url), {
-        type: 'module',
-        name: 'vision-camera',
-      }),
-  )
-  return predictor.call('predict', request, signal ? { signal } : {})
+/**
+ * `predictCameraMove` in the camera worker, or here where there are no workers (unit tests) or the worker's script did
+ * not load (offline before the worker ever started).
+ */
+async function predict(request: PredictionRequest, signal?: AbortSignal): Promise<CameraPrediction> {
+  return (await predictInWorker(request, signal)) ?? predictCameraMove(request)
 }
 
 /** A stored depth image and its still, to predict from. */

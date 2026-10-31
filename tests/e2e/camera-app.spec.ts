@@ -500,6 +500,63 @@ test('a move added at a strength that may smear says so where it lands: in Assis
   await expect(page.getByRole('status').getByText(`3D camera move added. ${advice}`)).toBeVisible()
 })
 
+/**
+ * Adds a move at full strength to the selected detailed still over the fence depth, then checks its advice in Assist
+ * and in Inspector › Motion: both come from the camera-move prediction.
+ */
+async function addSmearingMove(page: Page) {
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await assist.getByRole('slider', { name: 'Strength' }).focus()
+  await page.keyboard.press('End')
+  await assist.getByRole('button', { name: 'Apply to 1 image' }).click()
+  await expect(assist.getByText('Added a 3D camera move to 1 image')).toBeVisible()
+  await expect(
+    assist.getByText(
+      'This image may smear behind foreground objects at this strength. Try a lower Strength.',
+    ),
+  ).toBeVisible()
+  await assist.getByRole('button', { name: /^Show checker at \d+:\d\d$/ }).click()
+  await expect(
+    page
+      .getByRole('tabpanel', { name: 'Inspector' })
+      .getByText(/^May smear behind foreground objects above \d+%\.$/),
+  ).toBeVisible()
+}
+
+const cameraWorkerRunning = (page: Page) => page.workers().some((w) => w.url().includes('camera.worker'))
+
+test('offline before the first 3D camera move, the move is still added with its advice: the camera worker started early', async ({
+  page,
+}) => {
+  await openWithFakeDepth(page, '#/editor?t=28', false, 'fence')
+  const clipId = await addStill(page)
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?tab=assist&assist=camera&sel=clip:${id}&t=28`
+  }, clipId)
+  // The app starts the camera worker when the browser is first idle, before any move needs it.
+  await expect.poll(() => cameraWorkerRunning(page)).toBe(true)
+  await page.context().setOffline(true)
+  await addSmearingMove(page)
+  await page.context().setOffline(false)
+})
+
+test('where the camera worker’s script cannot load, a 3D camera move is still added with its advice', async ({
+  page,
+}) => {
+  let blocked = 0
+  await page.context().route(/\/camera\.worker-[^/]+\.js$/, (route) => {
+    blocked++
+    return route.abort('internetdisconnected')
+  })
+  await openWithFakeDepth(page, '#/editor?t=28', false, 'fence')
+  const clipId = await addStill(page)
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?tab=assist&assist=camera&sel=clip:${id}&t=28`
+  }, clipId)
+  await addSmearingMove(page)
+  expect(blocked).toBeGreaterThan(0)
+})
+
 test('a still whose straight lines a move may bend gets a lower automatic amount, and a stronger move says it may bend them', async ({
   page,
 }) => {

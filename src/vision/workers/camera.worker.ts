@@ -5,6 +5,7 @@ import { predictCameraMove, type PredictionRequest } from '../cameraPrediction.t
 /** The camera-move prediction (`cameraPrediction.ts`), off the page's thread. */
 
 const api = {
+  ready: () => true,
   async predict(request: PredictionRequest) {
     const result = await predictCameraMove(request)
     return transfer(result, result.prepared ? [result.prepared.data.buffer] : [])

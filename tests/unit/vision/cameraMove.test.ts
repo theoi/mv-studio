@@ -430,3 +430,37 @@ describe('the amount of an automatic move', () => {
     expect(move.safeIntensity).toBeLessThan(0.8)
   })
 })
+
+describe('without the camera worker', () => {
+  it('predicts on the page when the camera worker’s script does not load, as offline before it ever started', async () => {
+    stubCanvas()
+    const add = async () => {
+      const { project, clipId } = setup()
+      const { moves } = await addCameraMoves(
+        { editor: new ProjectEditor(project), ...storingMedia(), ...rampDepth() },
+        [clipId],
+        { preset: 'orbit-left' },
+      )
+      const { intensity, safe, alwaysBends } = moves[0]!
+      return { intensity, safe, alwaysBends }
+    }
+    const onPage = await add()
+    let made = 0
+    vi.stubGlobal(
+      'Worker',
+      class extends EventTarget {
+        constructor() {
+          super()
+          made++
+          // What the browser fires when it cannot fetch a worker's script: an error event without a message.
+          setTimeout(() => this.dispatchEvent(new Event('error', { cancelable: true })))
+        }
+        postMessage() {}
+        terminate() {}
+      },
+    )
+    expect(await add()).toEqual(onPage)
+    expect(made).toBeGreaterThan(0)
+    vi.unstubAllGlobals()
+  })
+})
