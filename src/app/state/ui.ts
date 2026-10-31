@@ -50,6 +50,8 @@ export interface UiState {
   guideStep: number | null
   libraryTab: LibraryTab
   libraryOpen: boolean
+  /** Library groups showing all their items instead of the first rows, for this session. */
+  libraryExpanded: string[]
   playhead: number
   playing: boolean
   /** Play was pressed and the preview is still loading audio. */
@@ -87,6 +89,7 @@ export const initialUi: UiState = {
   guideStep: null,
   libraryTab: 'media',
   libraryOpen: storedLibraryOpen(),
+  libraryExpanded: [],
   playhead: 73.6,
   playing: false,
   starting: false,
