@@ -5,6 +5,7 @@ import { IconButton } from '../../../ds/Button.tsx'
 import { AnimateButtons, FieldRow, NumberField, Section, Select, Slider } from '../../../ds/Fields.tsx'
 import { dispatch, useProject } from '../../../state/project.ts'
 import { useAnimatable } from './animatable.ts'
+import { blendModes } from './blendModes.ts'
 import styles from '../Inspector.module.css'
 
 /** Top of every inspector: a thumbnail or icon, the selection's name and a one-line summary. */
@@ -33,16 +34,6 @@ export function Header({
     </div>
   )
 }
-
-const blendModes: { value: BlendMode; label: string }[] = [
-  { value: 'normal', label: 'Normal' },
-  { value: 'screen', label: 'Screen' },
-  { value: 'multiply', label: 'Multiply' },
-  { value: 'overlay', label: 'Overlay' },
-  { value: 'add', label: 'Add' },
-  { value: 'soft-light', label: 'Soft light' },
-  { value: 'difference', label: 'Difference' },
-]
 
 function NumberProp({
   clip,

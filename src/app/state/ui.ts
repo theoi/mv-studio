@@ -10,7 +10,8 @@ export type Screen = 'start' | 'setup' | 'editor' | 'vj'
 export type Kind = 'lyric' | 'visualizer' | 'footage' | 'ai' | 'blank'
 export type Selection =
   | { type: 'none' }
-  | { type: 'clip'; id: string }
+  /** `ids` lists every selected clip when there are several; `id` is the one picked last. */
+  | { type: 'clip'; id: string; ids?: string[] }
   | { type: 'lyric'; id: string }
   | { type: 'section'; id: string }
 export type RightTab = 'inspector' | 'assist'
@@ -123,6 +124,19 @@ export function toast(message: string, action?: Toast['action']) {
 
 export function select(selection: Selection) {
   set({ selection, rightTab: 'inspector' })
+}
+
+/** Every selected clip, in the order they were picked. */
+export function selectedClipIds(selection: Selection): string[] {
+  if (selection.type !== 'clip') return []
+  return selection.ids && selection.ids.length > 1 ? selection.ids : [selection.id]
+}
+
+/** Selects these clips (the last is the one picked last); an empty list clears the selection. */
+export function selectClips(ids: readonly string[]) {
+  const last = ids[ids.length - 1]
+  if (last === undefined) set({ selection: { type: 'none' } })
+  else select(ids.length > 1 ? { type: 'clip', id: last, ids: [...ids] } : { type: 'clip', id: last })
 }
 
 export function openAssist(view: AssistView = 'home') {
