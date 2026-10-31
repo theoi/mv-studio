@@ -386,7 +386,8 @@ export function summarizeChanges(items: ChangeItem[]): {
 export function previewCommands(project: Project, commands: EditCommand[]): ChangePreview {
   const scratch = new ProjectEditor(project)
   try {
-    scratch.dispatch(commands)
+    // The editor freezes objects it stores; clone so the caller's commands stay usable.
+    scratch.dispatch(structuredClone(commands))
   } catch (error) {
     const err =
       error instanceof EditError

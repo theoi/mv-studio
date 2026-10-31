@@ -26,6 +26,7 @@ import {
 import {
   DEFAULT_CONCEPT,
   defaultSectionBrief,
+  footageMood,
   linesIn,
   moodFor,
   normalizedLabel,
@@ -245,8 +246,9 @@ async function sectionMatches(section: SectionInfo, sb: BriefSection, ctx: Ctx, 
     .join(' ')
   const text = [sb.mediaQuery, lyric].filter(Boolean).join('. ')
   try {
+    const mood = footageMood(sb.mood, sb.intensity)
     const results = await matcher.rank(
-      { text: text || undefined, mood: sb.mood, energy: sb.intensity, duration: shotLength },
+      { text: text || undefined, ...(mood ? { mood } : {}), energy: sb.intensity, duration: shotLength },
       { limit: 12 },
     )
     for (const r of results) matches.set(r.assetId, r)

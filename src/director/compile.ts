@@ -120,15 +120,23 @@ export function normalizeColor(value: string | undefined, fallback: string): str
   return v.toLowerCase()
 }
 
-interface Ctx {
-  project: Project
-  plan: EditPlan
+/** What building effects, transitions and modulation needs; shared with plain-language edits. */
+export interface ParamContext {
   catalog: DirectorCatalog
   warnings: string[]
   source: (name: AudioBinding['source'], stem?: AudioBinding['stem']) => AudioFeatureSource
 }
 
-function warn(ctx: Ctx, message: string) {
+interface Ctx extends ParamContext {
+  project: Project
+  plan: EditPlan
+}
+
+export function paramContext(project: Project, catalog: DirectorCatalog = DEFAULT_CATALOG): ParamContext {
+  return { catalog, warnings: [], source: audioSourceMapper(project, project.songAssetId) }
+}
+
+function warn(ctx: Pick<ParamContext, 'warnings'>, message: string) {
   if (!ctx.warnings.includes(message)) ctx.warnings.push(message)
 }
 
@@ -151,7 +159,8 @@ function bandNear(hz: number, edges: number[], count: number): number {
   return best
 }
 
-function audioSourceMapper(project: Project, songAssetId: Id | undefined) {
+/** Maps plan audio sources (loudness, bass, beat...) to analysis features of the song. */
+export function audioSourceMapper(project: Project, songAssetId: Id | undefined) {
   const analysis = songAssetId ? project.analysis.audio[songAssetId] : undefined
   const features = analysis?.features
   const count = features?.bands[0]?.length ?? 0
@@ -183,8 +192,8 @@ function audioSourceMapper(project: Project, songAssetId: Id | undefined) {
   }
 }
 
-function modulation(
-  ctx: Ctx,
+export function modulation(
+  ctx: ParamContext,
   b: { source: AudioBinding['source']; stem?: AudioBinding['stem'] },
   amount: number,
   mode: 'add' | 'multiply',
@@ -197,7 +206,7 @@ function withModulation<T>(anim: Animatable<T>, mod: AudioModulation): Animatabl
   return { ...anim, modulation: [...(anim.modulation ?? []), mod] }
 }
 
-function applyBindings(clip: VisualClip, bindings: AudioBinding[] | undefined, ctx: Ctx) {
+export function applyBindings(clip: VisualClip, bindings: AudioBinding[] | undefined, ctx: ParamContext) {
   for (const b of bindings ?? []) {
     switch (b.target) {
       case 'scale': {
@@ -269,10 +278,10 @@ function applyMotion(clip: VisualClip, motion: Motion | undefined) {
   if (m.y) clip.transform.y = ramp(m.y[0], m.y[1], clip.duration)
 }
 
-function transition(
+export function transition(
   spec: TransitionSpec | undefined,
   clipDuration: Seconds,
-  ctx: Ctx,
+  ctx: ParamContext,
 ): Transition | undefined {
   if (!spec) return undefined
   if (!findItem(ctx.catalog.transitions, spec.kind)) {
@@ -292,7 +301,7 @@ function clampParam(value: ParamValue, min?: number, max?: number): ParamValue {
   return v
 }
 
-function effectInstance(spec: EffectSpec, ctx: Ctx): EffectInstance | undefined {
+export function effectInstance(spec: EffectSpec, ctx: ParamContext): EffectInstance | undefined {
   const item = findItem(ctx.catalog.effects, spec.effectId)
   if (!item) {
     warn(ctx, `Effect "${spec.effectId}" isn't available and was left out.`)

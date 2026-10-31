@@ -7,8 +7,11 @@ import {
   planLocally,
   shotsToGenerate,
   type EditPlan,
+  type FootageMatcher,
+  type MatchQuery,
   type PlanShot,
 } from '../../../src/director/index.ts'
+import { MOOD_PROMPTS } from '../../../src/vision/matching/prompts.ts'
 import {
   BEATS,
   fakeProvider,
@@ -87,6 +90,29 @@ describe('local planner', () => {
     expect(strip(a)).toEqual(strip(b))
     const others = await Promise.all([2, 3, 4].map((seed) => plan('beat-cut', { images: 2 }, { seed })))
     expect(others.some((o) => JSON.stringify(strip(o)) !== JSON.stringify(strip(a)))).toBe(true)
+  })
+
+  it('asks the footage matcher with moods it knows and uses its best clips and ranges', async () => {
+    const project = makeProject()
+    const queries: MatchQuery[] = []
+    const matcher: FootageMatcher = {
+      async rank(query) {
+        if (typeof query !== 'string') queries.push(query)
+        return [
+          { assetId: 'video4', score: 0.95, time: 7.5 },
+          { assetId: 'video2', score: 0.4 },
+        ]
+      },
+      info: async () => [],
+    }
+    const p = await planLocally(await buildPlannerInput(project, { kind: 'beat-cut', seed: 7, matcher }))
+    expect(queries).toHaveLength(SECTIONS.length)
+    for (const q of queries) if (q.mood) expect(Object.keys(MOOD_PROMPTS)).toContain(q.mood)
+    const loudest = queries.reduce((a, b) => ((b.energy ?? 0) > (a.energy ?? 0) ? b : a))
+    expect(loudest.mood).toBe('energetic')
+    const firstUse = main(p).find((s) => s.source.type === 'media' && s.source.assetId === 'video4')!
+    expect(firstUse.source.type === 'media' && firstUse.source.sourceStart).toBe(7.5)
+    expect(p.warnings).toEqual([])
   })
 
   it('places every timed lyric line with karaoke highlighting', async () => {
