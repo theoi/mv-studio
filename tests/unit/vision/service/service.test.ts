@@ -28,6 +28,37 @@ describe('vision service', () => {
     expect(b.observations).toEqual(a.observations)
   })
 
+  it('serves a selection track with its states from the cache, even from a new service', async () => {
+    const selectDisc = (s: ReturnType<typeof setup>) => {
+      s.seg.select = async (req) => {
+        s.seg.calls.push('select')
+        req.bitmap.close()
+        const size = req.maskSize!
+        return discMask(size, size.width / 2, size.height / 2, size.height / 4)
+      }
+      return s
+    }
+    const first = selectDisc(setup())
+    const { source } = fakeSource({ duration: 1, frameRate: 10 })
+    const click = { t: 0.5, points: [{ x: 0.5, y: 0.5 }] }
+    const a = await first.service.selectionTrack(source, click, { fps: 10, maxSide: 64 })
+    const second = selectDisc(setup(first.cache))
+    const b = await second.service.selectionTrack(source, click, { fps: 10, maxSide: 64 })
+    expect(count(second.seg.calls, 'select')).toBe(0)
+    expect(a.states).toHaveLength(10)
+    expect(b.states).toEqual(a.states)
+    expect(b.confidence).toEqual(a.confidence)
+    expect(b.spans).toEqual(a.spans)
+    expect(b.track.packed).toEqual(a.track.packed)
+    // A correction is a different request.
+    const c = await second.service.selectionTrack(source, click, {
+      fps: 10,
+      maxSide: 64,
+      corrections: [{ t: 0.9, points: [{ x: 0.5, y: 0.5 }] }],
+    })
+    expect(count(second.seg.calls, 'select')).toBeGreaterThan(0)
+    expect(c.states).toHaveLength(10)
+  })
   it('computes concurrent identical requests once', async () => {
     const { service, seg } = setup()
     const { source } = fakeSource({ duration: 1, frameRate: 10 })

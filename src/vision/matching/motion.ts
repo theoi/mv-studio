@@ -149,6 +149,50 @@ export function estimateGlobalShift(
   return searchShift(prev, cur, 0, 0, limit, limit)
 }
 
+/**
+ * `estimateGlobalShift` refined to a fraction of a pixel with one Lucas-Kanade step around the best whole-pixel
+ * shift, so slow pans still add up when shifts are summed over many frames.
+ */
+export function estimateSubpixelShift(
+  prev: GrayImage,
+  cur: GrayImage,
+  maxShift: number = DEFAULT_MAX_SHIFT,
+): { dx: number; dy: number; residual: number } {
+  const best = estimateGlobalShift(prev, cur, maxShift)
+  const { dx, dy } = best
+  const w = cur.width
+  const h = cur.height
+  const p = prev.data
+  const c = cur.data
+  let xx = 0
+  let xy = 0
+  let yy = 0
+  let xt = 0
+  let yt = 0
+  for (let y = Math.max(1, dy + 1); y < Math.min(h - 1, h + dy - 1); y++) {
+    for (let x = Math.max(1, dx + 1); x < Math.min(w - 1, w + dx - 1); x++) {
+      const i = y * w + x
+      const j = (y - dy) * w + (x - dx)
+      // Gradients averaged over both frames keep the step symmetric.
+      const gx = (p[j + 1]! - p[j - 1]! + c[i + 1]! - c[i - 1]!) / 4
+      const gy = (p[j + w]! - p[j - w]! + c[i + w]! - c[i - w]!) / 4
+      const gt = c[i]! - p[j]!
+      xx += gx * gx
+      xy += gx * gy
+      yy += gy * gy
+      xt += gx * gt
+      yt += gy * gt
+    }
+  }
+  const det = xx * yy - xy * xy
+  if (det <= 1e-6 * Math.max(1, xx * yy)) return best
+  const clamp = (v: number) => Math.min(0.75, Math.max(-0.75, v))
+  return {
+    dx: dx + clamp(-(yy * xt - xy * yt) / det),
+    dy: dy + clamp(-(xx * yt - xy * xt) / det),
+    residual: best.residual,
+  }
+}
 /** Mean absolute luma difference (0..255). */
 export function frameDifference(prev: GrayImage, cur: GrayImage): number {
   assertSameSize(prev, cur)

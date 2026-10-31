@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createMotionAnalyzer,
   estimateGlobalShift,
+  estimateSubpixelShift,
   frameDifference,
   histogramDistance,
   rgbaToGray,
@@ -77,6 +78,35 @@ describe('estimateGlobalShift', () => {
   })
 })
 
+describe('estimateSubpixelShift', () => {
+  const smooth = (dx: number, dy: number): GrayImage => {
+    const data = new Uint8Array(W * H)
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const u = x - dx
+        const v = y - dy
+        data[y * W + x] = Math.round(
+          128 + 60 * Math.sin(u * 0.21 + v * 0.13) + 40 * Math.sin(u * 0.07 - v * 0.17),
+        )
+      }
+    return { width: W, height: H, data }
+  }
+
+  it('measures shifts of a fraction of a pixel that whole-pixel search reports as none', () => {
+    const prev = smooth(0, 0)
+    const cur = smooth(0.4, -0.3)
+    expect(estimateGlobalShift(prev, cur)).toMatchObject({ dx: 0, dy: 0 })
+    const shift = estimateSubpixelShift(prev, cur)
+    expect(shift.dx).toBeCloseTo(0.4, 1)
+    expect(shift.dy).toBeCloseTo(-0.3, 1)
+  })
+
+  it('keeps whole-pixel shifts', () => {
+    const shift = estimateSubpixelShift(smooth(0, 0), smooth(3, -2))
+    expect(shift.dx).toBeCloseTo(3, 1)
+    expect(shift.dy).toBeCloseTo(-2, 1)
+  })
+})
 describe('histogramDistance', () => {
   it('is 0 for identical and 1 for disjoint histograms', () => {
     const img = makeTexture(W, H, createRng(5))

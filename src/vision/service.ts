@@ -37,7 +37,10 @@ import {
 } from './segmentation/preview.ts'
 import {
   buildSelectionTrack,
+  selectionResult,
   SELECTION_TRACK_VERSION,
+  type SelectionClick,
+  type SelectionState,
   type SelectionTrackOptions,
   type SelectionTrackResult,
 } from './segmentation/selectionTrack.ts'
@@ -46,7 +49,6 @@ import type {
   ClipVisionIndex,
   GrayImage,
   MaskTrackMeta,
-  Point,
   ReframeAspect,
   ReframePlan,
   Size,
@@ -72,10 +74,13 @@ export interface VisionService {
   personTrack(source: FrameSource, options?: PersonTrackOptions): Promise<PersonTrackResult>
   /** The cached person track for these options, without computing. */
   cachedPersonTrack(source: FrameSource, options?: PersonTrackOptions): Promise<PersonTrackResult | null>
-  /** Mask track of an object the user clicked, followed through the clip (cached). */
+  /**
+   * Mask track of an object the user clicked, followed through the clip (cached), with per-frame states for the
+   * UI. Pass later clicks on the same object as `options.corrections` to re-anchor it where it was lost.
+   */
   selectionTrack(
     source: FrameSource,
-    click: { t: number; points: Point[] },
+    click: SelectionClick,
     options?: SelectionTrackOptions,
   ): Promise<SelectionTrackResult>
   /** Subject positions over a clip (cached); reuses a cached person track's observations when present. */
@@ -91,6 +96,12 @@ export interface VisionService {
   readonly matcher: FootageMatcher
   /** Depth maps for 2.5D camera moves (cached; preview and full quality). */
   readonly depth: DepthService
+}
+
+interface SelectionFileMeta {
+  track: MaskTrackMeta
+  states: SelectionState[]
+  confidence: number[]
 }
 
 interface PersonTrackFileMeta {
@@ -209,20 +220,28 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
       return memo<SelectionTrackResult>(
         key,
         async (bytes) => {
-          const { meta, chunks } = await decodeContainer<{ track: MaskTrackMeta; trackedFraction: number }>(
-            bytes,
-          )
-          return {
-            track: { meta: meta.track, packed: chunks.map((c) => c.slice()) },
-            trackedFraction: meta.trackedFraction,
-          }
+          const { meta, chunks } = await decodeContainer<SelectionFileMeta>(bytes)
+          if (meta.track.frameCount !== chunks.length || meta.states.length !== chunks.length)
+            throw new Error('inconsistent selection track')
+          const track = { meta: meta.track, packed: chunks.map((c) => c.slice()) }
+          return selectionResult(track, meta.states, meta.confidence)
         },
-        (r) => encodeContainer({ track: r.track.meta, trackedFraction: r.trackedFraction }, r.track.packed),
+        (r) =>
+          encodeContainer<SelectionFileMeta>(
+            { track: r.track.meta, states: r.states, confidence: r.confidence },
+            r.track.packed,
+          ),
         (task) =>
-          buildSelectionTrack({ segmentation: backends.segmentation('interactive'), toGray }, source, click, {
-            ...rest,
-            ...task,
-          }),
+          buildSelectionTrack(
+            {
+              segmentation: backends.segmentation('interactive'),
+              toGray,
+              ...(options.toGray ? {} : { toRgba }),
+            },
+            source,
+            click,
+            { ...rest, ...task },
+          ),
         { ...(signal ? { signal } : {}), ...(onProgress ? { onProgress } : {}) },
       )
     },
