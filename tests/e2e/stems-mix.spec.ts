@@ -128,6 +128,20 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   )
   await expectBadge(badge, 'Vocals solo', 'Stems: vocals solo')
   await expect(note).toHaveText('Only the vocals play, in the preview and the export.')
+  // The badge fits in the song header, under the track's name, and the Vocals header below does not cover it.
+  const header = badge.locator('xpath=..')
+  const [b, h, name] = await Promise.all(
+    [badge, header, header.getByText('Song', { exact: true })].map((l) => l.boundingBox()),
+  )
+  expect(b!.y).toBeGreaterThanOrEqual(h!.y)
+  expect(b!.y + b!.height).toBeLessThanOrEqual(h!.y + h!.height)
+  expect(Math.abs(b!.x - name!.x)).toBeLessThan(1)
+  expect(
+    await page.evaluate(
+      ([x, y]) => !!document.elementFromPoint(x, y)?.closest('[class*="stemBadge"]'),
+      [b!.x + 4, b!.y + b!.height - 2],
+    ),
+  ).toBe(true)
   expect(await undoLabel(page)).toBe('Solo vocals')
   expect(await songStems(page)).toEqual({ vocals: { solo: true } })
   // The other stems are not heard, so their lanes are dimmed.

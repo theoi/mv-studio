@@ -289,14 +289,16 @@
   z-index: 8;
 }
 
+/* The left padding makes room for the grip, which is out of the flow. */
 .trackHeader {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-content: center;
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  padding: 0 6px 0 var(--space-3);
+  padding: 0 6px 0 32px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -913,15 +915,17 @@
   pointer-events: none;
 }
 
-/* Track reordering: the header grip (shown on hover) and the drop line */
+/* Track reordering: the header grip (shown on hover) and the drop line. The grip spans the header's height out of the
+   flow: in it, it made the first line as tall as the header and pushed the stem badge's line below the header. */
 .grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
   display: inline-flex;
-  flex: none;
   align-items: center;
   justify-content: center;
   width: 24px;
-  height: 100%;
-  margin-left: calc(-1 * var(--space-2));
   color: var(--text-3);
   cursor: grab;
   opacity: 0;
