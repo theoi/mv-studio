@@ -13,8 +13,8 @@ function isTyping(el: EventTarget | null, mod: boolean) {
     node.tagName === 'INPUT' ||
     node.tagName === 'TEXTAREA' ||
     node.getAttribute('role') === 'combobox' ||
-    // Sliders take the arrow keys, Home and End for their value.
-    node.getAttribute('role') === 'slider'
+    // Sliders take the arrow keys, Home and End for their value; shortcuts with Ctrl or Cmd, such as undo, pass.
+    (node.getAttribute('role') === 'slider' && !mod)
   )
 }
 

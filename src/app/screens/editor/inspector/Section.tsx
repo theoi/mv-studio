@@ -100,14 +100,21 @@ export function SectionInspector({ id }: { id: string }) {
             aria-label="Section color"
             className={styles.swatches}
           >
-            <Tooltip label={`Auto: ${colorNames[sectionKind(sec)]}`} description="From the section's name">
+            <Tooltip
+              label={`Auto: ${colorNames[sectionKind(sec)]} color`}
+              description="From the section's name"
+            >
               <ToggleGroup.Item value="auto" className={styles.swatchAuto} aria-label="Auto">
                 Auto
               </ToggleGroup.Item>
             </Tooltip>
             {kinds.map((k) => (
-              <Tooltip key={k} label={colorNames[k]}>
-                <ToggleGroup.Item value={k} className={styles.swatchItem} aria-label={colorNames[k]}>
+              <Tooltip key={k} label={`${colorNames[k]} color`}>
+                <ToggleGroup.Item
+                  value={k}
+                  className={styles.swatchItem}
+                  aria-label={`${colorNames[k]} color`}
+                >
                   <span className={styles.swatch} style={{ background: sectionColor[k] }} />
                 </ToggleGroup.Item>
               </Tooltip>
@@ -130,10 +137,10 @@ export function SectionInspector({ id }: { id: string }) {
       <Section title="Do more with this section">
         <div className={styles.stackActions}>
           <Button size="sm" variant="secondary" block onClick={() => cutClipsToSection(sec.id)}>
-            Cut clips to this section
+            Cut clips to this section…
           </Button>
           <Button size="sm" variant="ghost" block onClick={() => exportSectionTeaser(sec.id)}>
-            Export as a teaser
+            Export as a teaser…
           </Button>
         </div>
       </Section>

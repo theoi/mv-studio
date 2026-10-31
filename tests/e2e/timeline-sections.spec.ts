@@ -206,8 +206,12 @@ test('a section edge drags with its neighbor, snaps to the beat, nudges with the
   expect(await span(page, 's-c1')).toMatchObject({ start: 66 })
   expect(await span(page, 's-pre')).toMatchObject({ end: 66 })
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().playhead)).toBe(67)
-  // The two nudges are one undo step (the edge, a slider, keeps its keys while focused).
-  await edge.blur()
+  // The two nudges are one undo step, and undo and redo work with the edge still focused.
+  await page.keyboard.press(`${mod}+z`)
+  expect(await span(page, 's-c1')).toMatchObject({ start: 64 })
+  await page.keyboard.press(`${mod}+Shift+z`)
+  expect(await span(page, 's-c1')).toMatchObject({ start: 66 })
+  await expect(edge).toBeFocused()
   await page.keyboard.press(`${mod}+z`)
   expect(await span(page, 's-c1')).toMatchObject({ start: 64 })
 
@@ -226,7 +230,7 @@ test('the section inspector sets color, start and end; the section menu selects 
   await expect(page.getByText(/^Section: Chorus/)).toBeVisible()
   await expect(page.getByText('1:04 – 1:36 · 16 bars')).toBeVisible()
 
-  await page.getByRole('radio', { name: 'Bridge' }).click()
+  await page.getByRole('radio', { name: 'Bridge color' }).click()
   expect(await span(page, 's-c1')).toMatchObject({ color: 'bridge' })
   await expect(chorus).toHaveAttribute('style', /--sec: var\(--section-bridge\)/)
   await page.getByRole('radio', { name: /^Auto/ }).click()
@@ -283,10 +287,10 @@ test('the section inspector sets color, start and end; the section menu selects 
   await page.getByRole('menuitem', { name: 'Go to its start' }).click()
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().playhead)).toBe(62)
 
-  // Cut clips to it opens Auto-cut set to this section.
+  // Cut clips to this section opens Auto-cut set to it.
   await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 10 }))
   await moved.click({ button: 'right' })
-  await page.getByRole('menuitem', { name: 'Cut clips to it…' }).click()
+  await page.getByRole('menuitem', { name: 'Cut clips to this section…' }).click()
   expect(
     await page.evaluate(() => {
       const { autocut, ui } = window.mvStudio.app
