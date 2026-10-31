@@ -27,6 +27,7 @@ import { detectCapabilities } from '../shared/capabilities.ts'
 import { jobs } from '../shared/jobs.ts'
 import * as vision from '../vision/index.ts'
 import * as vj from '../vj/index.ts'
+import * as bench from './bench.ts'
 
 /** A compositor whose canvas stays readable after render, fed by the preview or the export frame provider. */
 function createCompositor(mode: 'preview' | 'export', width: number, height: number) {
@@ -73,7 +74,7 @@ export function installHarness(): void {
     analysis,
     shared: { jobs, detectCapabilities },
     plugins: { library, looks, lut, preview, thumbnails, typography },
-    testing: { createCompositor, readPixels },
+    testing: { createCompositor, readPixels, bench },
     vision,
     vj,
     exporting,

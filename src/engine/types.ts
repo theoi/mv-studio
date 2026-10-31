@@ -19,8 +19,11 @@ import type {
 } from '../model/types.ts'
 
 export interface RenderOptions {
-  /** Preview may render at reduced resolution while scrubbing; export always uses full quality. */
-  quality: 'draft' | 'full'
+  /**
+   * Canvas size for this frame, applied in the same task as the drawing, so a resize never shows a cleared canvas
+   * while media is still being prepared (preview quality changes use this).
+   */
+  size?: { width: number; height: number }
 }
 
 export interface Compositor {
@@ -41,6 +44,8 @@ export interface FrameRef {
   source: TexImageSource
   width: number
   height: number
+  /** Changes whenever the pixels of `source` change, so unchanged frames are not uploaded again. Undefined: always upload. */
+  version?: number
 }
 
 /** Supplies media frames to the compositor: <video> elements for preview, WebCodecs decoding for export. */
@@ -52,6 +57,8 @@ export interface FrameProvider {
    */
   videoFrame(asset: Asset, sourceTime: Seconds, key: string, rate?: number): Promise<FrameRef | null>
   image(asset: Asset): Promise<FrameRef | null>
+  /** Called before each frame's requests with the keys of every video it requests (clips that stay on screen). */
+  beginFrame?(keys: string[]): void
   /** Called after each rendered frame so per-frame resources can be released. */
   endFrame?(): void
   dispose(): void
