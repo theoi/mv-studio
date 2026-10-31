@@ -6,7 +6,8 @@ on:
     branches: [main]
 
 # A new push to a pull request cancels its older run. Each push to main gets its own group, so it is neither
-# cancelled nor replaced while waiting, and every main commit gets a result.
+# cancelled nor replaced while waiting, and every main commit gets a result. A main commit whose E2E jobs start after
+# a newer commit has landed skips them: the newer commit's run tests a tree that contains it.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -27,32 +28,72 @@ jobs:
       - run: npm test
 
   e2e:
-    # Previews draw in the render worker by default; the second leg runs the preview specs with the main-thread
-    # fallback, which browsers without OffscreenCanvas workers (or pages opened with ?preview-worker=0) use.
-    name: E2E (Chromium${{ matrix.preview == 'main' && ', main-thread preview' || '' }})
+    # Previews draw in the render worker by default. The worker suite runs as two halves on separate machines
+    # (E2E_HALF in playwright.config.ts). The main-thread leg runs the preview specs with the fallback that browsers
+    # without OffscreenCanvas workers (or pages opened with ?preview-worker=0) use.
+    name: E2E (Chromium${{ matrix.preview == 'main' && ', main-thread preview' || format(', {0} of 2', matrix.half) }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        preview: [worker, main]
+        include:
+          - { preview: worker, half: 1 }
+          - { preview: worker, half: 2 }
+          - { preview: main }
+    env:
+      MAIN_THREAD_SPECS: playback vj editor-engine export-dialog design-preview preview-worker
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/node-deps
+        with:
+          # HEAD^1 of a pull request's merge commit is its base, for the changed-files check below.
+          fetch-depth: 2
+      - name: Decide whether this leg runs
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          LEG: ${{ matrix.preview }}
+        run: |
+          run=true
+          if [ "$EVENT" = push ]; then
+            tip=$(git ls-remote origin refs/heads/main | cut -f1) || tip=
+            if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+              echo "::notice::main has moved on to $tip, whose run tests this commit's changes too; skipping E2E here."
+              run=false
+            fi
+          elif [ "$LEG" = main ]; then
+            # Pull requests run the main-thread leg only when they change code that can draw or behave differently
+            # there, or the test setup. Every push to main runs it.
+            specs=$(printf '%s' "$MAIN_THREAD_SPECS" | tr ' ' '|')
+            paths="^(src/(engine|shared|media|testing|export|vj)/|src/app/screens/vj/|src/app/screens/editor/([Pp]review|stage)|src/app/state/(stills|tilePreview)\.ts|tests/e2e/([^/]*($specs)[^/]*|fixtures\.ts|global-setup\.ts)$|public/[^/]+$|scripts/|\.github/|package(-lock)?\.json$|playwright\.config\.ts$|vite\.config\.ts$|tsconfig|index\.html$|\.nvmrc$)"
+            changed=$(git diff --name-only HEAD^1 HEAD)
+            if ! printf '%s\n' "$changed" | grep -qE "$paths"; then
+              echo "::notice::No changes to the preview host, engine, media, shared code or test setup; skipping the main-thread leg."
+              run=false
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      - if: steps.scope.outputs.run == 'true'
+        uses: ./.github/actions/node-deps
       - name: Install Chromium for Playwright
+        if: steps.scope.outputs.run == 'true'
         run: for attempt in 1 2 3; do npx playwright install --with-deps chromium && exit 0; sleep $((attempt * 20)); done; exit 1
       - name: Install ffmpeg (test fixtures and export verification)
+        if: steps.scope.outputs.run == 'true'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      - run: npm run build
-      - if: matrix.preview == 'worker'
+      - if: steps.scope.outputs.run == 'true'
+        run: npm run build
+      - if: steps.scope.outputs.run == 'true' && matrix.preview == 'worker'
         run: npx playwright test
-      - if: matrix.preview == 'main'
-        run: npx playwright test playback vj editor-engine export-dialog design-preview preview-worker
+        env:
+          E2E_HALF: ${{ matrix.half }}
+      - if: steps.scope.outputs.run == 'true' && matrix.preview == 'main'
+        run: npx playwright test $MAIN_THREAD_SPECS
         env:
           E2E_PREVIEW_WORKER: '0'
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: playwright-report-${{ matrix.preview }}
+          name: playwright-report-${{ matrix.preview }}${{ matrix.half }}
           path: |
             playwright-report
             test-results
