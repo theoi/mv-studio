@@ -8,6 +8,7 @@ import { formatBytes, formatTime, plural } from '../../../format.ts'
 import {
   MOTION_PRESETS,
   cameraTargets,
+  chosenIntensity,
   hasCameraMove,
   startCameraMoves,
   stillClips,
@@ -61,7 +62,7 @@ export function CameraView() {
     startCameraMoves(
       targets.map((c) => c.id),
       MOTION_PRESETS[motion],
-      strength / 100,
+      chosenIntensity(),
     )
 
   if (phase === 'running')
@@ -195,7 +196,11 @@ export function CameraView() {
         />
       </Field>
       <Field label="Strength">
-        <Slider value={strength} onChange={(v) => useCamera.setState({ strength: v })} ariaLabel="Strength" />
+        <Slider
+          value={strength}
+          onChange={(v) => useCamera.setState({ strength: v, strengthSet: true })}
+          ariaLabel="Strength"
+        />
       </Field>
       {targets.length ? (
         targets.map((clip) => {

@@ -304,6 +304,7 @@ export function Slider({
   max = 100,
   step = 1,
   ariaLabel,
+  ariaDescribedBy,
 }: {
   value: number
   onChange: (v: number) => void
@@ -312,6 +313,8 @@ export function Slider({
   max?: number
   step?: number
   ariaLabel: string
+  /** Id of a note about the value, read after the slider's name. */
+  ariaDescribedBy?: string
 }) {
   return (
     <RSlider.Root
@@ -326,7 +329,11 @@ export function Slider({
       <RSlider.Track className={styles.sliderTrack}>
         <RSlider.Range className={styles.sliderRange} />
       </RSlider.Track>
-      <RSlider.Thumb className={styles.sliderThumb} aria-label={ariaLabel} />
+      <RSlider.Thumb
+        className={styles.sliderThumb}
+        aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
+      />
     </RSlider.Root>
   )
 }

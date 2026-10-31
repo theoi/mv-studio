@@ -34,6 +34,8 @@ export const useCamera = create<{
   motion: CameraMotion
   /** 0..100, the move's intensity in percent. */
   strength: number
+  /** The user moved Strength. Until then each still gets vision's automatic amount: 0.5, or less where it smears. */
+  strengthSet: boolean
   results: Record<string, CameraMovesResult>
   /** The clips each job was asked for, so the inspector shows progress and failures next to them. */
   requests: Record<string, readonly Id[]>
@@ -42,6 +44,7 @@ export const useCamera = create<{
 }>(() => ({
   motion: 'push',
   strength: DEFAULT_CAMERA_INTENSITY * 100,
+  strengthSet: false,
   results: {},
   requests: {},
   presets: {},
@@ -90,11 +93,17 @@ export function useDepthDownload(needed: boolean): number {
 
 const depthMedia = { getFile: appMedia.getFile, storeBlob: mediaStore.storeBlob.bind(mediaStore) }
 
-/** Adds the camera move to the stills as one job and one undo step. */
+/** The intensity new moves get: the Strength the user set, else undefined for vision's automatic amount. */
+export function chosenIntensity(): number | undefined {
+  const { strength, strengthSet } = useCamera.getState()
+  return strengthSet ? strength / 100 : undefined
+}
+
+/** Adds the camera move to the stills as one job and one undo step. Without `intensity`, each still gets a safe amount. */
 export function startCameraMoves(
   clipIds: readonly Id[],
   preset: CameraPreset,
-  intensity: number,
+  intensity: number | undefined,
 ): JobHandle<CameraMovesResult> | undefined {
   if (isRunning(JOB_KINDS.camera) || !clipIds.length) return undefined
   const project = editor.getProject()
@@ -119,7 +128,7 @@ export function startCameraMoves(
       const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
       const result = await v.addCameraMoves({ editor, media: depthMedia, depth: vision.depth }, clipIds, {
         preset,
-        intensity,
+        ...(intensity === undefined ? {} : { intensity }),
         signal: ctx.signal,
         onProgress: (p) => ctx.progress({ ...p, message: message(p.fraction ?? 0) }),
       })
@@ -156,6 +165,38 @@ export function cameraMoveOf(
     preset: typeof preset === 'string' ? (preset as CameraPreset) : DEFAULT_CAMERA_PRESET,
     intensity: typeof intensity === 'number' ? intensity : DEFAULT_CAMERA_INTENSITY,
   }
+}
+
+const safeAmounts = new Map<string, Promise<number | null>>()
+
+/**
+ * The largest strength (0..1) predicted not to smear the background of the clip's still with its current move, from
+ * its stored depth image (vision's safeCameraIntensity); null without a move and until it is known.
+ */
+export function useSafeIntensity(clip: Clip): number | null {
+  const move = cameraMoveOf(clip)
+  const depth = move && 'effects' in clip ? clip.effects[move.index]?.params.depth?.value : undefined
+  const key = move && typeof depth === 'string' ? `${depth}:${move.preset}` : null
+  const preset = move?.preset
+  const [known, setKnown] = useState<{ key: string; value: number | null } | null>(null)
+  useEffect(() => {
+    if (!key || !preset) return
+    let live = true
+    let amount = safeAmounts.get(key)
+    if (!amount) {
+      amount = import('../../vision/index.ts')
+        .then((v) => v.safeCameraIntensity(appMedia, editor.getProject(), clip.id, preset))
+        .catch(() => null)
+      safeAmounts.set(key, amount)
+    }
+    void amount.then((value) => {
+      if (live) setKnown({ key, value })
+    })
+    return () => {
+      live = false
+    }
+  }, [key, preset, clip.id])
+  return known && known.key === key ? known.value : null
 }
 
 /** The panel's motion for a preset, when it is one of the three it offers. */
