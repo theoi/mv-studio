@@ -309,6 +309,9 @@ function labelWidth(text: string): number {
 /** Narrowest word that still shows as a word with edge handles on the selected line. */
 const MIN_WORD_PX = 12
 
+/** Added to a lyric chip's name while its line is to check. */
+const CHECK_NAMES = { words: ', draft, check the words', timing: ', check the timing' } as const
+
 /**
  * A lyric line shows its words only where they fit whole. Zoomed in, each word sits at its sung time and its edges
  * are handles; the selected line keeps its words as handles while every word is at least MIN_WORD_PX wide, even
@@ -1676,10 +1679,11 @@ export function Timeline() {
                               style={{ transform: `translateX(${c.start * pps}px)`, width: w }}
                               role="button"
                               tabIndex={0}
-                              aria-label={`Lyric: ${c.name}`}
+                              aria-label={`Lyric: ${c.name}${line?.check ? CHECK_NAMES[line.check] : ''}`}
                               aria-pressed={sel}
                               aria-keyshortcuts="Enter"
                               data-space-plays
+                              data-lyric-line={lineId}
                               onPointerDown={(e) => drag(e, { type: 'line', edge: 'move' })}
                               onKeyDown={(e) => {
                                 if (e.key !== 'Enter' || !lineId) return
@@ -1687,6 +1691,7 @@ export function Timeline() {
                                 select({ type: 'lyric', id: lineId })
                               }}
                             >
+                              {line?.check && <span className={styles.draftDot} aria-hidden />}
                               <LyricChipContent
                                 text={line?.text ?? c.name}
                                 words={line?.words ?? []}
