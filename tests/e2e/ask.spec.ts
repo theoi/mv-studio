@@ -211,9 +211,9 @@ test('without a model, says so and opens Settings', async ({ page }) => {
   await expect(page.getByText('Ask needs an AI model', { exact: true })).toBeVisible()
   await expect(page.getByText(/^Add one in Settings › AI and cloud\./)).toBeVisible()
   // Screen readers hear what is missing and where to add it, not a failure.
-  await expect(page.locator('.sr-only[aria-live="polite"]')).toHaveText(
-    /^Ask needs an AI model\. Add one in Settings › AI and cloud\./,
-  )
+  // The Ask box's own live region: the timeline has another.
+  const status = page.getByRole('tabpanel', { name: 'Assist' }).locator('.sr-only[aria-live="polite"]')
+  await expect(status).toHaveText(/^Ask needs an AI model\. Add one in Settings › AI and cloud\./)
   await page.getByRole('button', { name: 'Open Settings' }).click()
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
 })
