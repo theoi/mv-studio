@@ -122,3 +122,19 @@ test('rejects unsupported files with a typed error', async ({ page }) => {
   })
   expect(error).toEqual({ name: 'JobError', code: 'unsupported' })
 })
+
+test('imports an audio-only WebM recording as audio even when typed video/webm', async ({ page }) => {
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'voice.webm')])
+  const asset = await page.evaluate(async () => {
+    const file = window.mvStudio.files()[0] as File
+    // Browsers type .webm files video/webm whatever they contain.
+    const typed = new File([file], 'voice.webm', { type: 'video/webm' })
+    const a = await window.mvStudio.media.mediaStore.importFile(typed)
+    return { kind: a.kind, mimeType: a.mimeType, duration: a.duration, hasAudio: a.hasAudio, width: a.width }
+  })
+  expect(asset).toMatchObject({ kind: 'audio', hasAudio: true })
+  expect(asset.mimeType).toMatch(/^audio\/webm/)
+  expect(asset.width).toBeUndefined()
+  expect(asset.duration).toBeCloseTo(2, 1)
+})

@@ -13,5 +13,7 @@ ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=30" -f lavfi -i "sine=frequenc
 # 4 s 320x180 30 fps gray clip whose pixels encode the frame number N: left half (N mod 16)*16+8, right half
 # floor(N/16)*16+8. Gray survives any YUV matrix, so tests can read which source frame was shown.
 ffmpeg $q -f lavfi -i "color=c=black:s=320x180:r=30:d=4,format=gray,geq=lum='if(lt(X,W/2),mod(N,16)*16+8,floor(N/16)*16+8)'" -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -movflags +faststart frames.mp4
+# 2 s audio-only Opus WebM, like a MediaRecorder voice recording
+ffmpeg $q -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" -c:a libopus -b:a 64k voice.webm
 ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=1" -frames:v 1 image.png
 ls -la
