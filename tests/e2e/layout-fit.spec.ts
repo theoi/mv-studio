@@ -325,3 +325,108 @@ test('Assist home shows a running song analysis once, in the song card', async (
   await expect(panel.getByText('Running', { exact: true })).toHaveCount(0)
   await expect(panel.getByText('Analyzing the song', { exact: true })).toHaveCount(0)
 })
+
+test('Ask’s Apply keeps its primary colors and Discard stays grey, though text actions in Assist take the accent', async ({
+  page,
+}) => {
+  // The language model answered at the network level, as Ollama answers, with an edit large enough to wait for review.
+  const dim = {
+    id: 'chatcmpl-1',
+    object: 'chat.completion',
+    model: 'qwen2.5:7b',
+    choices: [
+      {
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'edit_project',
+                arguments: JSON.stringify({
+                  summary: 'Dimmed the footage',
+                  operations: [{ op: 'set', clips: { type: 'video' }, property: 'opacity', value: 0.5 }],
+                }),
+              },
+            },
+          ],
+        },
+      },
+    ],
+  }
+  await page.context().route('http://localhost:11434/v1/chat/completions', (route) =>
+    route.request().method() === 'OPTIONS'
+      ? route.fulfill({ status: 204, headers: CORS })
+      : route.fulfill({
+          status: 200,
+          headers: CORS,
+          contentType: 'application/json',
+          body: JSON.stringify(dim),
+        }),
+  )
+  await small(page)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem(
+      'mv-studio.cloud.v1',
+      JSON.stringify({
+        llm: { preset: 'ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'qwen2.5:7b' },
+      }),
+    )
+  })
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate(() => (window.location.hash = '#/editor?kind=ai&tab=assist'))
+  const box = page.getByRole('textbox', { name: 'Ask Assist for a change' })
+  await box.fill('dim all the footage')
+  await box.press('Enter')
+  const apply = page.getByRole('button', { name: 'Apply', exact: true })
+  const discard = page.getByRole('button', { name: 'Discard', exact: true })
+  await expect(apply).toBeVisible()
+
+  /** WCAG contrast of a button's label against its own (opaque) background. */
+  const contrast = (button: Locator) =>
+    button.evaluate((el) => {
+      const rgb = (css: string) =>
+        css
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+      const lum = (c: number[]) => {
+        const [r, g, b] = c.map((v) => {
+          const s = v / 255
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+        })
+        return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+      }
+      const style = getComputedStyle(el)
+      const [a, b] = [lum(rgb(style.color)), lum(rgb(style.backgroundColor))].sort((x, y) => y - x)
+      return (a! + 0.05) / (b! + 0.05)
+    })
+  expect(await contrast(apply)).toBeGreaterThanOrEqual(4.5)
+  await apply.hover()
+  await expect.poll(() => contrast(apply)).toBeGreaterThanOrEqual(4.5)
+
+  // Discard dismisses the edit: grey, like the panel's other ghost buttons, not the accent of a forward action.
+  const accent = await page.evaluate(() => {
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--accent-text)'
+    document.body.append(probe)
+    const color = getComputedStyle(probe).color
+    probe.remove()
+    return color
+  })
+  await expect(discard).not.toHaveCSS('color', accent)
+
+  // At 1280 the three buttons don't fit one line: Discard wraps instead of running into the panel's padding.
+  const row = (await apply.locator('xpath=..').boundingBox())!
+  for (const button of [apply, page.getByRole('button', { name: 'Show where' }), discard]) {
+    const box = (await button.boundingBox())!
+    expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width + 0.5)
+  }
+})

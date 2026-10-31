@@ -21,6 +21,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     <button
       ref={ref}
       type={type}
+      data-variant={variant}
       className={[styles.button, styles[variant], styles[size], block && styles.block, className]
         .filter(Boolean)
         .join(' ')}

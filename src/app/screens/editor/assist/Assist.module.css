@@ -120,6 +120,7 @@
 
 .rowActions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: var(--space-2);
 }
@@ -803,6 +804,10 @@
   color: var(--text-1);
 }
 
+.stemRow > button[aria-pressed='false']:hover:not(:disabled) {
+  background: var(--bg-active);
+}
+
 .stemRow > button[aria-pressed='true'],
 .stemRow > button[aria-pressed='true']:hover:not(:disabled) {
   background: var(--warning-soft);
@@ -870,18 +875,20 @@
   gap: 4px;
 }
 
-/* Text actions in a panel's content take the accent, like a toast's action, so they don't read as captions. */
-.linkRow > button,
-.rowActions > button,
-button.calloutBtn,
-button.footerAlt {
+/*
+ * Text (ghost) actions that move forward take the accent, like a toast's action, so they don't read as captions.
+ * Filled and outlined buttons keep their variant's colors. Actions in .rowActions cancel, discard, undo or start over
+ * (Ask's Never mind among them, in a .linkRow there), and stay grey.
+ */
+.linkRow:not(.rowActions *) > button[data-variant='ghost'],
+button.calloutBtn[data-variant='ghost'],
+button.footerAlt[data-variant='ghost'] {
   color: var(--accent-text);
 }
 
-.linkRow > button:hover:not(:disabled),
-.rowActions > button:hover:not(:disabled),
-button.calloutBtn:hover:not(:disabled),
-button.footerAlt:hover:not(:disabled) {
+.linkRow:not(.rowActions *) > button[data-variant='ghost']:hover:not(:disabled),
+button.calloutBtn[data-variant='ghost']:hover:not(:disabled),
+button.footerAlt[data-variant='ghost']:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent-text);
 }
