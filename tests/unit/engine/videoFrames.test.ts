@@ -5,7 +5,7 @@ import type { Asset } from '../../../src/model/types.ts'
 type FrameCallback = (now: number, metadata: { mediaTime: number; presentationTime: number }) => void
 
 /**
- * A paused <video> that seeks in 10 ms. As in Chrome, each seek's frame goes to the compositor as the seek ends, before
+ * A paused <video> that seeks in `seekMs` (10 ms). As in Chrome, each seek's frame goes to the compositor as the seek ends, before
  * 'seeked' (the frame's presentationTime), and its frame callback runs then or some time after.
  */
 class FakeVideo extends EventTarget {
@@ -18,6 +18,8 @@ class FakeVideo extends EventTarget {
   videoWidth = 1920
   videoHeight = 1080
   playbackRate = 1
+  /** How long a seek takes, in ms. */
+  seekMs = 10
   /** How long after 'seeked' the frame callback for a seek to `t` runs, or null for just before it. */
   presentAfter = (_t: number): number | null => null
   /** The media time of the frame presented for a seek to `t`. */
@@ -66,7 +68,7 @@ class FakeVideo extends EventTarget {
       if (seek !== this.seeks) return
       this.seeking = false
       this.dispatchEvent(new Event('seeked'))
-    }, 10)
+    }, this.seekMs)
   }
 
   /** Playback reaching `t`, presenting its frame. */
@@ -119,6 +121,10 @@ function pausedProvider(video: FakeVideo): VideoElementFrameProvider {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
   vi.stubGlobal('document', { createElement: () => video })
   vi.stubGlobal('HTMLMediaElement', { HAVE_CURRENT_DATA: 2 })
+  // Animation frames every 16 ms.
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+    setTimeout(() => callback(performance.now()), 16),
+  )
   const provider = new VideoElementFrameProvider({ getFile: async () => new Blob() })
   provider.setPlaying(false)
   return provider
@@ -321,7 +327,7 @@ describe('seeking a paused preview video', () => {
     provider.setPlaying(false)
     let resolvedAt = -1
     void provider.videoFrame(asset, 5.2, 'clip').then(() => (resolvedAt = performance.now()))
-    setTimeout(() => video.runCallbacks(4.4 + 1 / 30, inFlight), 12)
+    setTimeout(() => video.runCallbacks(4.4 + 1 / 30, inFlight), 30)
     await vi.advanceTimersByTimeAsync(300)
     provider.dispose()
     const own = video.presented.find((p) => p.t > 5)
@@ -332,16 +338,14 @@ describe('seeking a paused preview video', () => {
   it('does not take the frame of a seek still under way when it started, going forward', async () => {
     const video = new FakeVideo()
     video.shows = (t) => Math.floor(t * 30 + 1e-9) / 30
-    // Playback starts with a seek to 6 s and pauses before that seek ends. Its frame goes to the compositor as it ends,
-    // after the next seek started, with a callback 20 ms later; the next seek's frame callback runs 40 ms after it ends.
+    // warm() seeks the element to 6 s for a clip about to start, and the next seek starts before that one ends. Its frame
+    // goes to the compositor as it ends, after the next seek started, with a callback 20 ms later; the next seek's frame
+    // callback runs 40 ms after it ends.
     video.presentAfter = (t) => (t < 6.25 ? 20 : 40)
     const provider = pausedProvider(video)
     void provider.videoFrame(asset, 4, 'clip')
     await vi.advanceTimersByTimeAsync(100)
-    provider.setPlaying(true)
-    void provider.videoFrame(asset, 6, 'clip')
-    await vi.advanceTimersByTimeAsync(0)
-    provider.setPlaying(false)
+    provider.warm([{ asset, sourceTime: 6, key: 'clip', startsIn: 2, rate: 1 }])
     let resolvedAt = -1
     void provider.videoFrame(asset, 6.5, 'clip').then(() => (resolvedAt = performance.now()))
     await vi.advanceTimersByTimeAsync(300)
@@ -352,6 +356,75 @@ describe('seeking a paused preview video', () => {
     expect(own).toBeDefined()
     expect(own!.at).toBeGreaterThan(earlier!.at)
     expect(resolvedAt).toBeGreaterThanOrEqual(own!.at)
+  })
+
+  it('takes its own frame after the playback frames that still come once playback pauses, under load', async () => {
+    const video = new FakeVideo()
+    video.shows = (t) => Math.floor(t * 30 + 1e-9) / 30
+    // Busy with other videos, the pipeline takes 30 ms for the seek, and the seek's frame callback runs 4 ms after it.
+    video.seekMs = 30
+    video.presentAfter = () => 4
+    const provider = pausedProvider(video)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(100)
+    provider.setPlaying(true)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(5)
+    video.playTo(4.4)
+    await vi.advanceTimersByTimeAsync(10)
+    // Two more playback frames go to the compositor 1 and 20 ms after the pause, after the seek started.
+    for (const [after, frame] of [
+      [1, 1],
+      [20, 2],
+    ])
+      setTimeout(() => video.runCallbacks(4.4 + frame / 30, performance.now()), after)
+    provider.setPlaying(false)
+    let resolvedAt = -1
+    void provider.videoFrame(asset, 5.2, 'clip').then(() => (resolvedAt = performance.now()))
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    const own = video.presented.find((p) => p.t > 5)
+    expect(own).toBeDefined()
+    expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
+  })
+
+  it('does not wait for an animation frame when playback paused well before the seek', async () => {
+    const video = new FakeVideo()
+    const provider = pausedProvider(video)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(100)
+    provider.setPlaying(true)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(5)
+    video.playTo(4.4)
+    provider.setPlaying(false)
+    await vi.advanceTimersByTimeAsync(300)
+    const start = performance.now()
+    let ms = -1
+    void provider.videoFrame(asset, 5.2, 'clip').then(() => (ms = performance.now() - start))
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    expect(ms).toBeGreaterThan(0)
+    expect(ms).toBeLessThan(16)
+  })
+
+  it('still seeks right after a pause where animation frames do not run (a hidden page)', async () => {
+    const video = new FakeVideo()
+    const provider = pausedProvider(video)
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(100)
+    provider.setPlaying(true)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(5)
+    provider.setPlaying(false)
+    const start = performance.now()
+    let ms = -1
+    void provider.videoFrame(asset, 5.2, 'clip').then(() => (ms = performance.now() - start))
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    expect(ms).toBeGreaterThanOrEqual(50)
+    expect(ms).toBeLessThan(100)
   })
 
   it('does not take a new element’s first frame for its first seek when that frame’s callback runs late', async () => {
@@ -383,6 +456,10 @@ function providerMakingElements(): { provider: VideoElementFrameProvider; create
     },
   })
   vi.stubGlobal('HTMLMediaElement', { HAVE_CURRENT_DATA: 2 })
+  // Animation frames every 16 ms.
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+    setTimeout(() => callback(performance.now()), 16),
+  )
   const provider = new VideoElementFrameProvider({ getFile: async () => new Blob() })
   provider.setPlaying(false)
   return { provider, created }

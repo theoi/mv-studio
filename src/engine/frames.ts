@@ -74,6 +74,8 @@ interface VideoSlot {
   presentedTime: Seconds
   /** When that frame went to the compositor (its presentationTime, on the performance.now() clock). */
   presentedAt: number
+  /** When the element was last paused while playing, or -Infinity. */
+  pausedAt: number
   /** Latest requested time while paused; queued seeks skip to it. */
   target: Seconds
   seeking: Promise<void>
@@ -95,6 +97,10 @@ const PREROLL = 0.3
 const RELEASE_AFTER_FRAMES = 900
 /** Longest time between two frames of a video that a seek's frame check allows for, in seconds. */
 const MAX_FRAME_SPACING = 1
+/** A seek starting this soon (ms) after its element was paused while playing looks at its frame one animation frame late. */
+const JUST_PAUSED_MS = 200
+/** How long that wait lasts where animation frames don't run (a hidden page), in ms. */
+const FRAME_TIMEOUT_MS = 50
 
 /** Unique across slots, so a texture never mistakes a new slot's frame for one it already holds. */
 let presentedSerial = 0
@@ -112,6 +118,17 @@ function once(target: EventTarget, events: string[], timeoutMs: number): Promise
       target.addEventListener(e, handlers[e] as EventListener)
     }
     const timer = setTimeout(() => done('timeout'), timeoutMs)
+  })
+}
+
+/** Resolves on the next animation frame, or after `timeoutMs` where frames don't run (a hidden page). */
+function nextFrame(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs)
+    requestAnimationFrame(() => {
+      clearTimeout(timer)
+      resolve()
+    })
   })
 }
 
@@ -149,7 +166,7 @@ export class VideoElementFrameProvider implements FrameProvider {
   setPlaying(playing: boolean, rate = 1): void {
     this.playing = playing
     this.rate = rate
-    if (!playing) for (const slot of this.slots.values()) slot.video.pause()
+    if (!playing) for (const slot of this.slots.values()) this.pause(slot)
   }
 
   image(asset: Asset): Promise<FrameRef | null> {
@@ -213,6 +230,7 @@ export class VideoElementFrameProvider implements FrameProvider {
       presented: 0,
       presentedTime: -1,
       presentedAt: -1,
+      pausedAt: -Infinity,
       target: 0,
       seeking: Promise.resolve(),
       lastUsed: this.frame,
@@ -255,7 +273,7 @@ export class VideoElementFrameProvider implements FrameProvider {
   private async exactFrame(slot: VideoSlot, t: Seconds): Promise<FrameRef | null> {
     if (!(await slot.ready)) return null
     const { video } = slot
-    if (!video.paused) video.pause()
+    this.pause(slot)
     slot.target = t
     slot.seeking = slot.seeking.then(() => this.seek(slot))
     await slot.seeking
@@ -297,17 +315,29 @@ export class VideoElementFrameProvider implements FrameProvider {
     return { source: video, width: video.videoWidth, height: video.videoHeight, version }
   }
 
+  /** Pauses the element if it is playing, noting when for seek(). */
+  private pause(slot: VideoSlot): void {
+    if (slot.video.paused) return
+    slot.video.pause()
+    slot.pausedAt = performance.now()
+  }
+
   private async seek(slot: VideoSlot): Promise<void> {
     const { video } = slot
     const t = slot.target
     if (Math.abs(video.currentTime - t) < 1e-6 && !video.seeking) return
     const from = video.currentTime
+    // Just after a playing element is paused, the media pipeline can go on presenting playback frames after this seek
+    // starts: past where the video paused, for tens of ms while it is busy with other videos. They all come before the
+    // seek's own frame, which comes before 'seeked', so one animation frame after 'seeked' the latest frame is its own.
+    const justPaused = performance.now() - slot.pausedAt < JUST_PAUSED_MS
     // A seek still under way (playback's, warm()'s, or one on an element taken over from another clip) can hand its
     // frame to the compositor after this one starts.
     const inFlight = video.seeking
     const start = performance.now()
     video.currentTime = t
     await once(video, ['seeked', 'error'], 5_000)
+    if (justPaused) await nextFrame(FRAME_TIMEOUT_MS)
     // Chrome hands each seek's frame to the compositor before 'seeked' fires, even a seek within the frame already
     // shown, and the frame's presentationTime says when, however late its callback runs. So the seek's own frame went
     // there after the seek started; an earlier one (the previous seek's, or one from playing, in flight at the pause)
@@ -411,7 +441,7 @@ export class VideoElementFrameProvider implements FrameProvider {
     this.frame++
     for (const [key, slot] of this.slots) {
       const idle = this.frame - slot.lastUsed
-      if (idle > PAUSE_AFTER_FRAMES && !slot.video.paused && !this.upcoming.has(key)) slot.video.pause()
+      if (idle > PAUSE_AFTER_FRAMES && !this.upcoming.has(key)) this.pause(slot)
       if (idle > RELEASE_AFTER_FRAMES && !slot.pinned && !this.upcoming.has(key) && !this.prewarmed.has(key))
         this.release(key, slot)
     }
