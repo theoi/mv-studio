@@ -7,6 +7,7 @@ import { createProject } from '../../../src/model/factory.ts'
 const compositor = vi.hoisted(() => ({
   render: vi.fn<() => Promise<void>>(),
   gpuBusy: () => false,
+  gpuIdle: () => Promise.resolve(),
   dispose: vi.fn(),
   canvas: {},
 }))
