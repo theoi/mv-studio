@@ -524,3 +524,146 @@ test('holding Freeze stills the playing footage in the live preview and records 
   expect(Math.abs(frozen[0]!.end - r.upClock)).toBeLessThan(0.05)
   expect(r.clips.filter((c) => c.rate === 1).length).toBeGreaterThanOrEqual(2)
 })
+
+/**
+ * Key-to-footage latency of video pads. Over a red base, the blue image pad alternates with two video pads (a 360p
+ * and a 1080p clip), each pressed for the first time and then again. A frame counts as footage once its pixels
+ * vary, which the solid images never do. `warm` gives the session the preview's prefetch, as VJ mode does.
+ */
+async function videoPadLatency(page: Page, warm: boolean) {
+  await openHarness(page)
+  await page.setInputFiles(
+    '#e2e-file-input',
+    ['song.mp3', 'clip.mp4', 'clip1080.mp4'].map((f) => path.join(FIXTURE_DIR, f)),
+  )
+  const keys = await page.evaluate(async (warm) => {
+    const { model, media, engine, vj, testing } = window.mvStudio
+    const [songFile, smallFile, largeFile] = window.mvStudio.files()
+    const solid = async (name: string, color: string) => {
+      const c = new OffscreenCanvas(64, 36)
+      const ctx = c.getContext('2d')!
+      ctx.fillStyle = color
+      ctx.fillRect(0, 0, 64, 36)
+      const blob = await c.convertToBlob({ type: 'image/png' })
+      return media.mediaStore.storeBlob(blob, { kind: 'image', name, origin: { type: 'generated' } })
+    }
+    const song = await media.mediaStore.importFile(songFile)
+    const red = await solid('red.png', '#e02020')
+    const blue = await solid('blue.png', '#2040e0')
+    const small = await media.mediaStore.importFile(smallFile)
+    const large = await media.mediaStore.importFile(largeFile)
+    const p = model.createProject({ name: 'vj latency' })
+    for (const a of [song, red, blue, small, large]) p.assets[a.id] = a
+    p.songAssetId = song.id
+    const audioTrack = p.tracks.find((t: { kind: string }) => t.kind === 'audio')
+    const visualTrack = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    const songClip = model.createAudioClip({
+      trackId: audioTrack.id,
+      assetId: song.id,
+      start: 0,
+      duration: 8,
+    })
+    const base = model.createImageClip({ trackId: visualTrack.id, assetId: red.id, start: 0, duration: 8 })
+    base.fit = 'stretch'
+    p.clips[songClip.id] = songClip
+    p.clips[base.id] = base
+
+    const editor = new model.ProjectEditor(p)
+    const canvas = document.createElement('canvas')
+    document.body.appendChild(canvas)
+    const preview = new engine.PreviewController({
+      canvas,
+      media: media.mediaStore,
+      preserveDrawingBuffer: true,
+    })
+    preview.setProject(p)
+    preview.setViewport(320, 180, 1)
+    await preview.rendered()
+    const target = warm
+      ? preview
+      : {
+          clock: preview.clock,
+          setProject: (project: unknown) => preview.setProject(project),
+          play: () => preview.play(),
+          pause: () => preview.pause(),
+        }
+    const session = new vj.VjSession({ editor, preview: target, store: null })
+    session.attachKeyboard(window)
+    const keys: { code: string; timeStamp: number }[] = []
+    window.addEventListener('keydown', (e) => keys.push({ code: e.code, timeStamp: e.timeStamp }), {
+      capture: true,
+    })
+    const frames: { at: number; spread: number }[] = []
+    preview.onFrame(() => {
+      const px = testing.readPixels(canvas, 8, 8)
+      const luma: number[] = []
+      for (let i = 0; i < px.length; i += 4) luma.push(px[i] * 0.3 + px[i + 1] * 0.59 + px[i + 2] * 0.11)
+      frames.push({ at: performance.now(), spread: Math.max(...luma) - Math.min(...luma) })
+    })
+    window.mvStudio.vjTest = { preview, session, keys, frames }
+    const bindings = session.getBindings()
+    const bank = session.getLayout().clipBanks[0]
+    const keyOf = (assetId: string) =>
+      vj.keyForTarget(bindings, {
+        kind: 'pad',
+        row: 'clips',
+        index: bank.findIndex(
+          (pad: { action: { source?: { assetId?: string } } } | null) =>
+            pad?.action.source?.assetId === assetId,
+        ),
+      })
+    return { blue: keyOf(blue.id), small: keyOf(small.id), large: keyOf(large.id) }
+  }, warm)
+  expect(Object.values(keys).every(Boolean), JSON.stringify(keys)).toBe(true)
+
+  // Opening VJ mode and starting to play takes the user a moment; pre-warming happens in it.
+  await page.waitForTimeout(1500)
+  await page.keyboard.press('Space')
+  await waitForClock(page, 0.2)
+  const presses: string[] = []
+  for (const key of [keys.small, keys.large, keys.small]) {
+    await page.keyboard.press(keys.blue)
+    await page.waitForTimeout(300)
+    await page.keyboard.press(key)
+    presses.push(key)
+    await page.waitForTimeout(500)
+  }
+  await page.keyboard.press('Space')
+
+  return page.evaluate((presses) => {
+    const { keys, frames } = window.mvStudio.vjTest
+    let from = 0
+    return presses.map((code) => {
+      const index = keys.findIndex((k: { code: string }, i: number) => i >= from && k.code === code)
+      from = index + 1
+      const at = keys[index].timeStamp
+      const before = frames.filter((f: { at: number }) => f.at < at).at(-1)
+      const first = frames.find((f: { at: number; spread: number }) => f.at >= at && f.spread > 20)
+      return { latency: first ? first.at - at : null, solidBefore: before ? before.spread < 5 : null }
+    })
+  }, presses)
+}
+
+test('video pads show their footage at once, even on the first press, when VJ mode pre-warms the bank', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  const [small, large, again] = await videoPadLatency(page, true)
+  console.log('vj video pad key-to-footage (ms), pre-warmed', JSON.stringify({ small, large, again }))
+  for (const press of [small, large, again]) {
+    expect(press!.solidBefore).toBe(true)
+    expect(press!.latency).not.toBeNull()
+    expect(press!.latency!).toBeLessThan(100)
+  }
+  expect(errors).toEqual([])
+})
+
+test('without pre-warming, a video pad still shows its footage on the first press', async ({ page }) => {
+  const [small, large, again] = await videoPadLatency(page, false)
+  console.log('vj video pad key-to-footage (ms), cold', JSON.stringify({ small, large, again }))
+  for (const press of [small, large, again]) {
+    expect(press!.solidBefore).toBe(true)
+    expect(press!.latency).not.toBeNull()
+  }
+})

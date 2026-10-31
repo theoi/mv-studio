@@ -17,7 +17,7 @@ import type { PlaybackState, PluginCatalogEntry } from '../engine/types.ts'
 import type { ProjectEditor } from '../model/editor.ts'
 import { newId } from '../model/factory.ts'
 import { projectDuration } from '../model/queries.ts'
-import type { JsonValue, Project, Seconds } from '../model/types.ts'
+import type { Asset, JsonValue, Project, Seconds } from '../model/types.ts'
 import {
   bindKey,
   bindMidi,
@@ -72,6 +72,8 @@ export interface VjPreview {
   setProject(project: Project): void
   play(): Promise<void>
   pause(): void
+  /** Keeps these video assets loaded, so clips that use them start without a load (PreviewController.prefetch). */
+  prefetch?(assets: Asset[]): void
 }
 
 export interface VjSessionOptions {
@@ -214,6 +216,8 @@ export class VjSession {
   private dirtySnapshot = false
   private readonly cleanups: (() => void)[] = []
   private disposed = false
+  /** Asset ids last passed to preview.prefetch. */
+  private prefetched = ''
 
   constructor(options: VjSessionOptions) {
     this.editor = options.editor
@@ -248,6 +252,7 @@ export class VjSession {
       this.editor.subscribe((p, change) => {
         if (change.source === 'load') this.resetForNewProject()
         this.syncLayout(p)
+        this.prefetchBank()
         this.refreshOverlay()
         this.emit()
       }),
@@ -257,6 +262,7 @@ export class VjSession {
       this.midi.subscribe(() => this.emit()),
     )
     this.snapshot = this.buildSnapshot()
+    this.prefetchBank()
     if (this.preview.clock.state === 'playing') this.begin(this.preview.clock.currentTime())
     this.refreshOverlay()
   }
@@ -418,7 +424,24 @@ export class VjSession {
     const next = Math.max(0, Math.min(this.layout.clipBanks.length - 1, index))
     if (next === this.bank) return
     this.bank = next
+    this.prefetchBank()
     this.emit()
+  }
+
+  /** Keeps the footage of the current bank's video pads loaded, so even the first press of each cuts in at once. */
+  private prefetchBank(): void {
+    if (!this.preview.prefetch) return
+    const project = this.editor.getProject()
+    const assets: Asset[] = []
+    for (const pad of this.layout.clipBanks[this.bank] ?? []) {
+      const source = pad?.action.kind === 'clip' ? pad.action.source : null
+      const asset = source?.type === 'asset' ? project.assets[source.assetId] : undefined
+      if (asset?.kind === 'video' && !assets.includes(asset)) assets.push(asset)
+    }
+    const ids = assets.map((a) => a.id).join(' ')
+    if (ids === this.prefetched) return
+    this.prefetched = ids
+    this.preview.prefetch(assets)
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -1025,6 +1048,7 @@ export class VjSession {
     this.flashes.clear()
     for (const cleanup of this.cleanups.splice(0)) cleanup()
     this.listeners.clear()
+    if (this.prefetched) this.preview.prefetch?.([])
     this.preview.setProject(this.editor.getProject())
   }
 }
