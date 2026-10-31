@@ -3,10 +3,15 @@ import { evaluate } from '../../../src/engine/animation.ts'
 import {
   fitLoopRange,
   fitTeaserRange,
+  loopLengthRange,
+  loopLengths,
   loopRange,
+  loopSeam,
+  movedRange,
   newOutput,
   planOutput,
   sectionTeaserRange,
+  teaserLengthPatch,
   teaserRange,
   TEASER_FADES,
 } from '../../../src/export/index.ts'
@@ -238,5 +243,96 @@ describe('planOutput: teaser and loop', () => {
       measure,
     })
     expect(planned.loop).toMatchObject({ barAligned: false, crossfade: 0.5 })
+  })
+})
+
+describe('teaser length and moving a range on the song lane', () => {
+  it('runs a 15 or 30 s teaser as close to its length as the bars allow, from the strongest chorus', () => {
+    const { project } = song({ sections, duration: 90 })
+    const plan = (maxLength?: number) =>
+      planOutput(project, newOutput(project, 'teaser', { maxLength }), { measure })
+    expect(plan(15).range).toEqual({ start: 40, end: 54 })
+    expect(plan(30).range).toEqual({ start: 40, end: 70 })
+    expect(plan().range).toEqual({ start: 40, end: 56 })
+  })
+
+  it('moves a teaser to a dragged start on a bar, keeping its length', () => {
+    const { project } = song({ sections, duration: 90 })
+    const planned = planOutput(project, newOutput(project, 'teaser', { maxLength: 15 }), { measure })
+    expect(movedRange(project, planned, 21.3)).toEqual({ start: 22, end: 36 })
+    expect(
+      movedRange(project, planOutput(project, newOutput(project, 'video'), { measure }), 21.3),
+    ).toBeNull()
+  })
+
+  it('keeps a placed teaser start when its length changes, and picks an automatic one again', () => {
+    const { project } = song({ sections, duration: 90 })
+    const placed = planOutput(project, newOutput(project, 'teaser', { range: { start: 22, end: 38 } }), {
+      measure,
+    })
+    expect(teaserLengthPatch(project, placed, 30)).toEqual({ maxLength: 30, range: { start: 22, end: 52 } })
+    const auto = planOutput(project, newOutput(project, 'teaser'), { measure })
+    expect(teaserLengthPatch(project, auto, 30)).toEqual({ maxLength: 30 })
+  })
+
+  it('makes a placed teaser as long as the section it starts on again for "Whole section"', () => {
+    const { project } = song({
+      duration: 90,
+      sections: [
+        { start: 0, end: 28, label: 'verse', repeatGroup: 1, energy: 0.3 },
+        { start: 28, end: 44, label: 'chorus', repeatGroup: 2, energy: 0.8 },
+        { start: 44, end: 90, label: 'outro', repeatGroup: 3, energy: 0.2 },
+      ],
+    })
+    const short = planOutput(
+      project,
+      newOutput(project, 'teaser', { maxLength: 15, range: { start: 0, end: 14 } }),
+      { measure },
+    )
+    expect(teaserLengthPatch(project, short, null)).toEqual({
+      maxLength: undefined,
+      range: { start: 0, end: 28 },
+    })
+  })
+})
+
+describe('loop length and seam', () => {
+  it('offers the bar counts that last 3 to 8 s at the loop start, or seconds without a beat grid', () => {
+    expect(loopLengths(song({ sections }).project, 40)).toEqual([
+      { bars: 2, seconds: 4 },
+      { bars: 4, seconds: 8 },
+    ])
+    // At 90 BPM a bar is 2.67 s: one bar is too short and four are too long.
+    expect(loopLengths(song({ sections, bpm: 90 }).project, 40).map((l) => l.bars)).toEqual([2])
+    const { project } = song()
+    delete project.analysis.audio.song
+    expect(loopLengths(project, 40)).toEqual([
+      { bars: 0, seconds: 4 },
+      { bars: 0, seconds: 6 },
+      { bars: 0, seconds: 8 },
+    ])
+  })
+
+  it('changes a loop length from its start and moves it bar by bar', () => {
+    const { project } = song({ sections })
+    const planned = planOutput(project, newOutput(project, 'loop'), { measure })
+    expect(planned.range).toEqual({ start: 40, end: 48 })
+    expect(loopLengthRange(project, planned, { bars: 2, seconds: 4 })).toEqual({ start: 40, end: 44 })
+    expect(movedRange(project, planned, 23.1)).toEqual({ start: 24, end: 32 })
+  })
+
+  it('moves a loop without a beat grid by seconds, keeping its length', () => {
+    const { project } = song()
+    delete project.analysis.audio.song
+    const planned = planOutput(project, newOutput(project, 'loop'), { measure })
+    expect(planned.duration).toBeCloseTo(6)
+    expect(movedRange(project, planned, 30.25)).toEqual({ start: 30.25, end: 36.25 })
+  })
+
+  it('shows the frame before the loop start as its last frame when it crossfades', () => {
+    const { project } = song({ sections })
+    const planned = planOutput(project, newOutput(project, 'loop'), { measure })
+    expect(loopSeam(planned)).toEqual({ last: 39.967, first: 40 })
+    expect(loopSeam(planOutput(project, newOutput(project, 'teaser'), { measure }))).toBeNull()
   })
 })

@@ -21,6 +21,13 @@ export interface OutputSpec {
   reframe: ReframeMode
   /** Teaser and loop: the timeline range. Picked automatically when absent. */
   range?: { start: Seconds; end: Seconds }
+  /**
+   * Teaser: the longest it may run (15 or 30 s), ending on the last bar before that. Absent: as long as the section
+   * it starts on, 15 to 30 s.
+   */
+  maxLength?: Seconds
+  /** Teaser: the song section its range starts on, when it was made from one (Section › Export as a teaser). */
+  section?: string
   /** Include the song. Loops default to silent, like Spotify Canvas. */
   audio?: boolean
 }

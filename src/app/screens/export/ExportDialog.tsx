@@ -16,9 +16,17 @@ import {
   Square,
 } from 'lucide-react'
 import {
+  barTimes,
   estimateRenderSeconds,
   framingOverrides,
+  loopLengthOf,
+  loopLengthRange,
+  loopLengths,
+  loopSeam,
+  movedRange,
   planOutput,
+  teaserLengthPatch,
+  TEASER_CHOICES,
   type ExportQuality,
   type OutputSpec,
   type PlannedOutput,
@@ -35,7 +43,14 @@ import { formatTime, plural } from '../../format.ts'
 import { downloadAgain, useExports, type ExportRow } from '../../state/exports.ts'
 import { startFootageAnalysis } from '../../state/footage.ts'
 import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
-import { sectionColor, sectionKind, sectionsOf, timelineDuration, useProject } from '../../state/project.ts'
+import {
+  sectionColor,
+  sectionKind,
+  sectionName,
+  sectionsOf,
+  timelineDuration,
+  useProject,
+} from '../../state/project.ts'
 import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
 import {
@@ -66,12 +81,11 @@ const aspectIcon = (a: AspectPreset) =>
 
 const image = (url: string | undefined) => (url ? `url(${url})` : undefined)
 
-/** Stills depend on the project, the output's layout and the moment, not on its name, size or quality. */
+/** Stills depend on the project, the output's layout and range and the moment, not on its name, size or quality. */
 function stillKey(project: Project, planned: PlannedOutput, time: number): string {
-  const { kind, aspect, reframe, range } = planned.spec
-  return [versionOf(project), kind, aspect, reframe, range ? `${range.start}-${range.end}` : '', time].join(
-    '|',
-  )
+  const { kind, aspect, reframe } = planned.spec
+  const { start, end } = planned.range
+  return [versionOf(project), kind, aspect, reframe, `${start}-${end}`, time].join('|')
 }
 
 function framingNote(
@@ -303,11 +317,13 @@ function Frame({
     </div>
   )
 }
-function rangeReason(planned: PlannedOutput): string {
+function rangeReason(project: Project, planned: PlannedOutput): string {
   if (planned.loop) {
     const { bars, barAligned } = planned.loop
     return `${plural(bars, 'bar')}, ${barAligned ? 'loops seamlessly on the beat' : 'not on the beat, so the loop point may jump'}`
   }
+  const section = planned.spec.section && sectionsOf(project).find((s) => s.id === planned.spec.section)
+  if (section) return `starts on ${sectionName(section)}`
   if (planned.spec.range) return 'the range you picked'
   const pick = planned.teaser
   if (pick?.source === 'chorus') return 'starts on the strongest chorus'
@@ -316,10 +332,38 @@ function rangeReason(planned: PlannedOutput): string {
   return 'the start of the song, as no chorus was found'
 }
 
-/** The song's sections with the output's range on top: where a teaser or loop comes from. */
-function RangeLane({ project, planned }: { project: Project; planned: PlannedOutput }) {
+/**
+ * The song's sections with the output's range on top: where a teaser or loop comes from. The range is dragged, moved
+ * a bar at a time with the arrow keys, or placed by clicking the lane; it lands on bars.
+ */
+function RangeLane({
+  project,
+  planned,
+  title,
+  onMove,
+}: {
+  project: Project
+  planned: PlannedOutput
+  title: string
+  onMove: (start: number) => void
+}) {
+  const [drag, setDrag] = useState<{ pointerId: number; x: number; width: number; at: number } | null>(null)
   const duration = Math.max(timelineDuration(project), 1e-3)
-  const { start, end } = planned.range
+  const length = planned.range.end - planned.range.start
+  const start = drag ? drag.at : planned.range.start
+  const end = start + length
+  const latest = Math.max(0, duration - length)
+  const step = (direction: 1 | -1) => {
+    const from = planned.range.start
+    const bars = barTimes(project)
+    const next =
+      bars.length >= 2
+        ? direction > 0
+          ? bars.find((b) => b > from + 1e-3)
+          : bars.findLast((b) => b < from - 1e-3)
+        : from + direction
+    if (next !== undefined) onMove(clamp(next, 0, latest))
+  }
   const lane: { key: string; flex: number; background?: string }[] = []
   let cursor = 0
   for (const s of sectionsOf(project)) {
@@ -339,18 +383,87 @@ function RangeLane({ project, planned }: { project: Project; planned: PlannedOut
     })
   return (
     <div className={styles.range}>
-      <div className={styles.rangeLane}>
+      <div
+        className={styles.rangeLane}
+        onPointerDown={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect()
+          const at = ((e.clientX - rect.left) / Math.max(rect.width, 1)) * duration
+          onMove(clamp(at - length / 2, 0, latest))
+        }}
+      >
         {lane.map((s) => (
           <span key={s.key} style={{ flex: s.flex, background: s.background }} />
         ))}
         <span
           className={styles.rangeSel}
-          style={{ left: `${(start / duration) * 100}%`, width: `${((end - start) / duration) * 100}%` }}
+          style={{ left: `${(start / duration) * 100}%`, width: `${(length / duration) * 100}%` }}
+          role="slider"
+          tabIndex={0}
+          aria-label={`${title} range`}
+          aria-valuemin={0}
+          aria-valuemax={Math.round(duration)}
+          aria-valuenow={Math.round(start * 10) / 10}
+          aria-valuetext={`${formatTime(start)} to ${formatTime(end)}`}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            const lane = e.currentTarget.parentElement
+            e.currentTarget.setPointerCapture(e.pointerId)
+            setDrag({ pointerId: e.pointerId, x: e.clientX, width: lane?.clientWidth ?? 1, at: start })
+          }}
+          onPointerMove={(e) => {
+            if (drag?.pointerId !== e.pointerId) return
+            const at = planned.range.start + ((e.clientX - drag.x) / drag.width) * duration
+            setDrag({ ...drag, at: clamp(at, 0, latest) })
+          }}
+          onPointerUp={(e) => {
+            if (drag?.pointerId !== e.pointerId) return
+            if (Math.abs(drag.at - planned.range.start) > 1e-3) onMove(drag.at)
+            setDrag(null)
+          }}
+          onPointerCancel={() => setDrag(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Home' || e.key === 'End') onMove(e.key === 'Home' ? 0 : latest)
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') step(e.key === 'ArrowLeft' ? -1 : 1)
+            else return
+            e.preventDefault()
+          }}
         />
       </div>
       <div className={`${styles.rangeText} tnum`}>
-        {formatTime(start)} – {formatTime(end)} · {rangeReason(planned)}
+        {formatTime(start)} – {formatTime(end)} · {rangeReason(project, planned)}
       </div>
+      {planned.loop && <LoopSeam project={project} planned={planned} />}
+    </div>
+  )
+}
+
+/** A loop's last frame next to its first: when they look alike, the loop plays round without a jump. */
+function LoopSeam({ project, planned }: { project: Project; planned: PlannedOutput }) {
+  const seam = loopSeam(planned)
+  const ratio = RATIO[planned.spec.aspect]
+  const key = (t: number | undefined) => (t === undefined ? null : stillKey(project, planned, t))
+  const last = useStill(key(seam?.last), planned.project, seam?.last ?? 0, ratio, 160)
+  const first = useStill(key(seam?.first), planned.project, seam?.first ?? 0, ratio, 160)
+  if (!seam) return null
+  return (
+    <div className={styles.seam}>
+      <span className={styles.seamFrame}>
+        <span
+          role="img"
+          aria-label="Last frame of the loop"
+          style={{ aspectRatio: `${ratio}`, backgroundImage: image(last) }}
+        />
+        Ends on
+      </span>
+      <Repeat className={styles.seamIcon} />
+      <span className={styles.seamFrame}>
+        <span
+          role="img"
+          aria-label="First frame of the loop"
+          style={{ aspectRatio: `${ratio}`, backgroundImage: image(first) }}
+        />
+        Starts again on
+      </span>
     </div>
   )
 }
@@ -576,17 +689,16 @@ interface OutputsDraft {
  */
 const useDraft = create<{ draft: OutputsDraft | null }>(() => ({ draft: null }))
 useUi.subscribe((s, prev) => {
-  if (prev.dialog === 'export' && s.dialog !== 'export') useDraft.setState({ draft: null })
+  if (prev.dialog !== 'export' || s.dialog === 'export') return
+  useDraft.setState({ draft: null })
+  useExports.setState({ teaserSection: null })
 })
 
 function ExportDialogBody() {
   const phase = useUi((s) => s.exportPhase)
   const playhead = useUi((s) => s.playhead)
   const project = useProject()
-  const [initial] = useState<OutputsDraft>(() => {
-    const items = initialItems(project)
-    return { items, selectedId: items[0]?.spec.id }
-  })
+  const [initial] = useState<OutputsDraft>(() => initialItems(project, useExports.getState().teaserSection))
   const { items, selectedId } = useDraft((s) => s.draft) ?? initial
   const edit = (change: (draft: OutputsDraft) => Partial<OutputsDraft>) => {
     const draft = useDraft.getState().draft ?? initial
@@ -623,6 +735,9 @@ function ExportDialogBody() {
   const remaining = remainingCandidates(candidates, items)
   const audio = sel.spec.audio ?? sel.spec.kind !== 'loop'
   const frameRates = [...new Set([24, 25, 30, 60, sel.spec.fps])].sort((a, b) => a - b)
+  const loopChoices = sel.spec.kind === 'loop' ? loopLengths(project, selPlan.range.start) : []
+  const loopNow = loopLengthOf(selPlan)
+  const loopValue = (l: { bars: number; seconds: number }) => (l.bars > 0 ? `b${l.bars}` : `s${l.seconds}`)
 
   return (
     <Dialog
@@ -722,12 +837,59 @@ function ExportDialogBody() {
               }
               onTime={setViewTime}
             />
-            {sel.spec.kind !== 'video' && <RangeLane project={project} planned={selPlan} />}
+            {sel.spec.kind !== 'video' && (
+              <RangeLane
+                project={project}
+                planned={selPlan}
+                title={outputTitle(project, sel.spec)}
+                onMove={(start) => {
+                  const range = movedRange(project, selPlan, start)
+                  if (range) update({ range, section: undefined })
+                }}
+              />
+            )}
             <div className={styles.form}>
               <label className={styles.formRow}>
                 <span>Name</span>
                 <Input value={sel.spec.name} onChange={(e) => update({ name: e.target.value })} />
               </label>
+              {sel.spec.kind === 'teaser' && (
+                <div className={styles.formRow}>
+                  <span>Length</span>
+                  <Segmented
+                    value={sel.spec.maxLength ? String(sel.spec.maxLength) : 'section'}
+                    onChange={(v) =>
+                      update(teaserLengthPatch(project, selPlan, v === 'section' ? null : Number(v)))
+                    }
+                    ariaLabel="Teaser length"
+                    options={[
+                      { value: 'section', label: sectionsOf(project).length > 0 ? 'Whole section' : 'Auto' },
+                      ...TEASER_CHOICES.map((s) => ({ value: String(s), label: `Up to ${s} s` })),
+                    ]}
+                  />
+                </div>
+              )}
+              {sel.spec.kind === 'loop' && loopChoices.length > 0 && (
+                <div className={styles.formRow}>
+                  <span>Length</span>
+                  <Segmented
+                    value={loopValue(loopNow)}
+                    onChange={(v) => {
+                      const choice = loopChoices.find((l) => loopValue(l) === v)
+                      const range = choice && loopLengthRange(project, selPlan, choice)
+                      if (range) update({ range })
+                    }}
+                    ariaLabel="Loop length"
+                    options={loopChoices.map((l) => ({
+                      value: loopValue(l),
+                      label:
+                        l.bars > 0
+                          ? `${plural(l.bars, 'bar')} · ${Math.round(l.seconds * 10) / 10} s`
+                          : `${l.seconds} s`,
+                    }))}
+                  />
+                </div>
+              )}
               <div className={styles.formRow}>
                 <span>Aspect</span>
                 <Segmented

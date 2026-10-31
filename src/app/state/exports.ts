@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { AspectPreset } from '../../model/index.ts'
-import { toast } from './ui.ts'
+import { set, toast } from './ui.ts'
 
 /*
  * The latest export as the exporting view shows it: one job that renders several files in order. Kept outside the
@@ -21,9 +21,22 @@ interface ExportsState {
   rows: ExportRow[]
   /** Finished files by row id. */
   files: Record<string, File>
+  /** The song section the export dialog opens with a teaser of (Section › Export as a teaser). */
+  teaserSection: string | null
 }
 
-export const useExports = create<ExportsState>(() => ({ jobId: null, rows: [], files: {} }))
+export const useExports = create<ExportsState>(() => ({
+  jobId: null,
+  rows: [],
+  files: {},
+  teaserSection: null,
+}))
+
+/** Opens the export dialog with a chorus teaser that starts on a song section, selected. */
+export function exportSectionTeaser(sectionId: string): void {
+  useExports.setState({ teaserSection: sectionId })
+  set({ dialog: 'export', exportPhase: 'setup' })
+}
 
 /** Shows a job in the exporting view. */
 export function showExport(jobId: string, rows: ExportRow[]): void {

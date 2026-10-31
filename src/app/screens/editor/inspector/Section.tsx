@@ -12,7 +12,8 @@ import {
   songAnalysis,
   useProject,
 } from '../../../state/project.ts'
-import { openAssist, set } from '../../../state/ui.ts'
+import { exportSectionTeaser } from '../../../state/exports.ts'
+import { openAssist } from '../../../state/ui.ts'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
 import styles from '../Inspector.module.css'
@@ -69,7 +70,7 @@ export function SectionInspector({ id }: { id: string }) {
           <Button size="sm" variant="secondary" block onClick={() => openAssist('autocut')}>
             Cut clips to this section
           </Button>
-          <Button size="sm" variant="ghost" block onClick={() => set({ dialog: 'export' })}>
+          <Button size="sm" variant="ghost" block onClick={() => exportSectionTeaser(sec.id)}>
             Export as a teaser
           </Button>
         </div>

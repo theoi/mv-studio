@@ -257,9 +257,10 @@
   position: relative;
   display: flex;
   gap: 1px;
-  height: 18px;
+  height: 24px;
   border-radius: var(--radius-sm);
   overflow: hidden;
+  cursor: pointer;
 }
 
 .rangeSel {
@@ -269,7 +270,50 @@
   border-radius: 3px;
   box-shadow:
     0 0 0 2px var(--accent-line) inset,
-    0 0 0 999px rgb(0 0 0 / 0.45);
+    0 0 0 999px var(--bg-scrim);
+  cursor: grab;
+  touch-action: none;
+}
+
+.rangeSel:active {
+  cursor: grabbing;
+}
+
+.rangeSel:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--accent-line) inset,
+    0 0 0 4px var(--text-1) inset,
+    0 0 0 999px var(--bg-scrim);
+}
+
+/* Loop seam: the loop's last frame next to its first */
+.seam {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.seamFrame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.seamFrame > span {
+  height: 96px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-active) center / cover no-repeat;
+}
+
+.seamIcon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
 }
 
 .rangeText {

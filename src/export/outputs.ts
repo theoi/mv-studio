@@ -30,7 +30,11 @@ import {
   fitTeaserRange,
   loopCrossfade,
   loopRange,
+  placeLoop,
+  sectionEndAt,
   teaserRange,
+  teaserWindow,
+  type LoopLength,
   type LoopPick,
   type TeaserPick,
   type TimeRange,
@@ -225,8 +229,14 @@ export function planOutput(project: Project, spec: OutputSpec, options: PlanOpti
   const exportOptions: PlannedOutput['exportOptions'] = {}
   const audio = spec.audio ?? spec.kind !== 'loop'
   if (spec.kind === 'teaser') {
-    teaser = teaserRange(project) ?? undefined
-    const r = spec.range ? fitTeaserRange(project, spec.range) : (teaser ?? range)
+    const window = teaserWindow(spec.maxLength)
+    const auto = teaserRange(project, window)
+    // A chosen length is a promise: run as close to it as the bars allow, not just past its minimum.
+    teaser =
+      auto && spec.maxLength
+        ? { ...auto, ...fitTeaserRange(project, { start: auto.start, end: auto.start + window.max }, window) }
+        : (auto ?? undefined)
+    const r = spec.range ? fitTeaserRange(project, spec.range, window) : (teaser ?? range)
     range = { start: r.start, end: r.end }
     rendered = withTeaserFades(rendered, range)
   } else if (spec.kind === 'loop') {
@@ -274,6 +284,73 @@ export function planOutput(project: Project, spec: OutputSpec, options: PlanOpti
     ...(teaser ? { teaser } : {}),
     ...(loop ? { loop } : {}),
   }
+}
+
+/** A planned loop's length: its bars when it starts and ends on them, else its seconds. */
+export function loopLengthOf(planned: PlannedOutput): LoopLength {
+  const loop = planned.loop
+  return loop?.barAligned && loop.bars > 0
+    ? { bars: loop.bars, seconds: planned.duration }
+    : { bars: 0, seconds: planned.duration }
+}
+
+/**
+ * The range a teaser or loop gets when its start is moved to `start` (dragged on the dialog's song lane): the same
+ * length, on bars, inside the timeline. Null for full videos, or when the loop's bars no longer fit.
+ */
+export function movedRange(project: Project, planned: PlannedOutput, start: Seconds): TimeRange | null {
+  const { spec, range } = planned
+  if (spec.kind === 'teaser')
+    return fitTeaserRange(
+      project,
+      { start, end: start + (range.end - range.start) },
+      teaserWindow(spec.maxLength),
+    )
+  if (spec.kind !== 'loop') return null
+  const pick = placeLoop(project, start, loopLengthOf(planned))
+  return pick && { start: pick.start, end: pick.end }
+}
+
+/**
+ * The spec changes for a new teaser length (null: as long as the section it starts on): a range the user placed
+ * keeps its start; an automatic one is picked again for the new length.
+ */
+export function teaserLengthPatch(
+  project: Project,
+  planned: PlannedOutput,
+  maxLength: Seconds | null,
+): Pick<OutputSpec, 'maxLength' | 'range'> {
+  const { spec, range } = planned
+  if (!spec.range) return { maxLength: maxLength ?? undefined }
+  const window = teaserWindow(maxLength ?? undefined)
+  const sectionEnd = sectionEndAt(project, range.start)
+  const wanted = maxLength ?? (sectionEnd !== null ? sectionEnd - range.start : range.end - range.start)
+  return {
+    maxLength: maxLength ?? undefined,
+    range: fitTeaserRange(project, { start: range.start, end: range.start + wanted }, window),
+  }
+}
+
+/** The range of a loop of `length` starting where the planned loop starts. Null when those bars don't fit. */
+export function loopLengthRange(
+  project: Project,
+  planned: PlannedOutput,
+  length: LoopLength,
+): TimeRange | null {
+  const pick = placeLoop(project, planned.range.start, length)
+  return pick && { start: pick.start, end: pick.end }
+}
+
+/**
+ * The two frames either side of a loop's seam: what its last frame shows (the moment just before its start when it
+ * crossfades, else its own end) and its first frame. When they look alike, the loop plays without a jump.
+ */
+export function loopSeam(planned: PlannedOutput): { last: Seconds; first: Seconds } | null {
+  const loop = planned.loop
+  if (!loop) return null
+  const frame = 1 / planned.spec.fps
+  const round = (t: Seconds) => Math.round(Math.max(0, t) * 1000) / 1000
+  return { last: round(loop.crossfade > 0 ? loop.start - frame : loop.end - frame), first: round(loop.start) }
 }
 
 /** Rough render time: frames divided by a frame rate that scales with frame size from a measured 1080p rate. */

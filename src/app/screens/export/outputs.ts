@@ -4,6 +4,7 @@ import {
   exportPreferences,
   framingOverrides,
   newOutput,
+  sectionTeaserRange,
   setFramingCommand,
   setOutputsCommand,
   startExport,
@@ -38,8 +39,8 @@ const RESOLUTION_LABELS: Record<OutputSpec['resolution'], string> = {
 }
 
 /** The row title: what the output is, independent of its file name. */
-export function outputTitle(project: Project, spec: Pick<OutputSpec, 'kind' | 'aspect'>): string {
-  if (spec.kind === 'teaser') return 'Chorus teaser'
+export function outputTitle(project: Project, spec: Pick<OutputSpec, 'kind' | 'aspect' | 'range'>): string {
+  if (spec.kind === 'teaser') return spec.range ? 'Teaser' : 'Chorus teaser'
   if (spec.kind === 'loop') return 'Loop for Canvas'
   return spec.aspect === project.settings.aspect ? 'Full video' : FORMAT_LABELS[spec.aspect]
 }
@@ -68,11 +69,26 @@ function sameSlot(a: OutputSpec, b: OutputSpec): boolean {
   return a.kind === b.kind && (a.kind !== 'video' || a.aspect === b.aspect)
 }
 
-/** The dialog's starting list: the outputs saved with the project, else the suggested ones. */
-export function initialItems(project: Project): OutputItem[] {
+/**
+ * The dialog's starting list: the outputs saved with the project, else the suggested ones. With `teaserSection`,
+ * the list's teaser (added when there is none) starts on that song section and comes first in `selected`.
+ */
+export function initialItems(
+  project: Project,
+  teaserSection: string | null = null,
+): { items: OutputItem[]; selectedId: string | undefined } {
   const saved = exportPreferences(project).outputs
   const specs = saved?.length ? saved : suggestedOutputs(project).selected
-  return specs.map((spec) => ({ spec, on: true }))
+  const items = specs.map((spec) => ({ spec, on: true }))
+  const range = teaserSection ? sectionTeaserRange(project, teaserSection) : null
+  if (!range) return { items, selectedId: items[0]?.spec.id }
+  const existing = items.find((i) => i.spec.kind === 'teaser')
+  const { maxLength: _auto, ...base } = existing?.spec ?? newOutput(project, 'teaser')
+  const teaser = { spec: { ...base, range, section: teaserSection ?? undefined }, on: true }
+  return {
+    items: existing ? items.map((i) => (i === existing ? teaser : i)) : [...items, teaser],
+    selectedId: teaser.spec.id,
+  }
 }
 
 /** Every suggested output, for "Add another" (those already in the list are hidden). */
