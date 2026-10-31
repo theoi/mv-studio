@@ -37,7 +37,16 @@ function visualTile(v: PluginCatalogEntry) {
           </span>
         )}
       </span>
-      <span className={styles.tileName}>{v.name}</span>
+      <span
+        className={styles.tileName}
+        onPointerEnter={(e) => {
+          // Names cut off by narrow tiles get their full text as a tooltip.
+          const el = e.currentTarget
+          el.title = el.scrollWidth > el.clientWidth ? v.name : ''
+        }}
+      >
+        {v.name}
+      </span>
     </button>
   )
 }

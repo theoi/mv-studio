@@ -164,12 +164,51 @@ test('pads are changed from their menu and the layout is saved with the project'
   await expect(page.getByRole('button', { name: 'Empty pad' })).toHaveCount(1)
 
   await page.getByRole('button', { name: 'Empty pad' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Media' }).click()
   await page.getByRole('menuitem', { name: 'Tunnel lights' }).click()
   await expect(page.getByRole('button', { name: 'Tunnel lights', exact: true })).toHaveCount(2)
   await page.getByRole('button', { name: 'Tunnel lights', exact: true }).first().click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Reset all pads' }).click()
   await expect(pad(page, 'Rain on glass')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Tunnel lights', exact: true })).toHaveCount(1)
+})
+
+test('a pad’s menu fits a 1280×720 window: media and visuals are submenus', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openVj(page)
+  const fits = (menu: ReturnType<Page['getByRole']>) =>
+    menu.evaluate((m) => m.scrollHeight <= m.clientHeight && m.getBoundingClientRect().bottom <= innerHeight)
+  await pad(page, 'Night city').click({ button: 'right' })
+  const menu = page.getByRole('menu')
+  await expect(menu.getByRole('menuitem')).toHaveText([
+    'Media',
+    'Visuals',
+    'Show only while held',
+    'Clear pad',
+  ])
+  expect(await fits(menu)).toBe(true)
+
+  // From the keyboard, with the pointer out of the way: Right opens a submenu, Left goes back out.
+  await page.mouse.move(5, 5)
+  await page.keyboard.press('ArrowDown')
+  await expect(menu.getByRole('menuitem', { name: 'Media' })).toBeFocused()
+  await page.keyboard.press('ArrowRight')
+  const media = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'Tunnel lights' }) })
+  await expect(media.getByRole('menuitem').first()).toBeFocused()
+  expect(await fits(media)).toBe(true)
+  await page.keyboard.press('ArrowLeft')
+  await expect(page.getByRole('menu')).toHaveCount(1)
+  await expect(menu.getByRole('menuitem', { name: 'Media' })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(menu.getByRole('menuitem', { name: 'Visuals' })).toBeFocused()
+  await page.keyboard.press('ArrowRight')
+  const visuals = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'Orb' }) })
+  await expect(visuals.getByRole('menuitem')).toHaveCount(12)
+  expect(await fits(visuals)).toBe(true)
+  await visuals.getByRole('menuitem', { name: 'Orb' }).click()
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(pad(page, 'Orb')).toBeVisible()
+  await expect(pad(page, 'Night city')).toHaveCount(0)
 })
 
 /**

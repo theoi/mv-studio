@@ -1,6 +1,6 @@
 import { ContextMenu as RContext, DropdownMenu as RMenu } from 'radix-ui'
 import type { ReactNode } from 'react'
-import { Check } from 'lucide-react'
+import { Check, ChevronRight } from 'lucide-react'
 import { Kbd } from './Kbd.tsx'
 import styles from './Menu.module.css'
 
@@ -154,4 +154,25 @@ export function ContextMenuItem({ onSelect, disabled, danger, ...body }: ItemPro
 
 export function ContextMenuSeparator() {
   return <RContext.Separator className={styles.separator} />
+}
+
+export const ContextMenuSub = RContext.Sub
+
+export function ContextMenuSubTrigger({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
+  return (
+    <RContext.SubTrigger className={styles.item}>
+      <ItemBody icon={icon}>{children}</ItemBody>
+      <ChevronRight className={styles.subArrow} />
+    </RContext.SubTrigger>
+  )
+}
+
+export function ContextMenuSubContent({ children }: { children: ReactNode }) {
+  return (
+    <RContext.Portal>
+      <RContext.SubContent className={styles.content} sideOffset={4} alignOffset={-4} collisionPadding={8}>
+        {children}
+      </RContext.SubContent>
+    </RContext.Portal>
+  )
 }
