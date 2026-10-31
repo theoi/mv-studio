@@ -131,6 +131,8 @@ export class VideoElementFrameProvider implements FrameProvider {
   private active = new Set<string>()
   /** Slot ids reserved by warm() for clips about to start. */
   private upcoming = new Set<string>()
+  /** Slot ids kept loaded by prewarm() for clips of a transition near the paused playhead. */
+  private prewarmed = new Set<string>()
   private readonly urls = new Map<Id, Promise<string>>()
   private readonly images: ImageCache
   private readonly media: MediaFileSource
@@ -178,7 +180,13 @@ export class VideoElementFrameProvider implements FrameProvider {
     let free: [string, VideoSlot] | null = null
     for (const entry of this.slots) {
       const [otherId, other] = entry
-      if (other.assetId !== asset.id || this.active.has(other.clipKey) || this.upcoming.has(otherId)) continue
+      if (
+        other.assetId !== asset.id ||
+        this.active.has(other.clipKey) ||
+        this.upcoming.has(otherId) ||
+        this.prewarmed.has(otherId)
+      )
+        continue
       if (!free || Math.abs(other.video.currentTime - t) < Math.abs(free[1].video.currentTime - t))
         free = entry
     }
@@ -340,6 +348,31 @@ export class VideoElementFrameProvider implements FrameProvider {
       })
     }
   }
+  /**
+   * While paused, keeps an element loaded and seeked for each clip that a transition near the playhead shows besides
+   * the clips on screen. Without it, a seek into the transition has to load a new element for the clip it brings back,
+   * which costs more than the seek itself. Each call replaces the previous set. Elements no longer wanted are released
+   * at once, unless the frame on screen uses them.
+   */
+  prewarm(requests: { asset: Asset; sourceTime: Seconds; key: string }[]): void {
+    const wanted = new Set(requests.map(({ asset, key }) => `${key}:${asset.id}`))
+    for (const id of this.prewarmed) {
+      const slot = this.slots.get(id)
+      if (!wanted.has(id) && slot && !this.active.has(slot.clipKey) && !this.upcoming.has(id))
+        this.release(id, slot)
+    }
+    this.prewarmed = wanted
+    for (const { asset, sourceTime, key } of requests) {
+      const t = clampSourceTime(asset, sourceTime)
+      const slot = this.slot(asset, key, t)
+      slot.lastUsed = this.frame
+      slot.target = t
+      slot.seeking = slot.seeking.then(async () => {
+        if ((await slot.ready) && slot.video.paused) await this.seek(slot)
+      })
+    }
+  }
+
   /** Keeps one loaded element per asset (e.g. VJ pad footage) until the next prefetch() call. */
   prefetch(assets: Asset[]): void {
     const ids = new Set(assets.map((a) => a.id))
@@ -355,12 +388,16 @@ export class VideoElementFrameProvider implements FrameProvider {
     for (const [key, slot] of this.slots) {
       const idle = this.frame - slot.lastUsed
       if (idle > PAUSE_AFTER_FRAMES && !slot.video.paused && !this.upcoming.has(key)) slot.video.pause()
-      if (idle > RELEASE_AFTER_FRAMES && !slot.pinned && !this.upcoming.has(key)) {
-        slot.video.removeAttribute('src')
-        slot.video.load()
-        this.slots.delete(key)
-      }
+      if (idle > RELEASE_AFTER_FRAMES && !slot.pinned && !this.upcoming.has(key) && !this.prewarmed.has(key))
+        this.release(key, slot)
     }
+  }
+
+  private release(id: string, slot: VideoSlot): void {
+    slot.video.pause()
+    slot.video.removeAttribute('src')
+    slot.video.load()
+    this.slots.delete(id)
   }
 
   dispose(): void {
@@ -370,6 +407,7 @@ export class VideoElementFrameProvider implements FrameProvider {
       slot.video.load()
     }
     this.slots.clear()
+    this.prewarmed.clear()
     for (const url of this.urls.values()) void url.then((u) => URL.revokeObjectURL(u))
     this.urls.clear()
     this.images.dispose()

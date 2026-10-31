@@ -24,6 +24,9 @@ class FakeVideo extends EventTarget {
   private time = 0
   private callbacks: FrameCallback[] = []
 
+  /** Set once the element let go of its media. */
+  released = false
+
   set src(_url: string) {
     setTimeout(() => {
       this.readyState = 2
@@ -68,7 +71,9 @@ class FakeVideo extends EventTarget {
     return Promise.resolve()
   }
 
-  removeAttribute(): void {}
+  removeAttribute(name: string): void {
+    if (name === 'src') this.released = true
+  }
   load(): void {}
 }
 
@@ -225,5 +230,87 @@ describe('seeking a paused preview video', () => {
     expect(video.presented.some((p) => p.t > 4.49 && p.t < 4.51)).toBe(true)
     expect(own).toBeDefined()
     expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
+  })
+})
+
+/** A paused preview's frame provider that makes a new element each time; `created` lists them in order. */
+function providerMakingElements(): { provider: VideoElementFrameProvider; created: FakeVideo[] } {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+  const created: FakeVideo[] = []
+  vi.stubGlobal('document', {
+    createElement: () => {
+      const video = new FakeVideo()
+      created.push(video)
+      return video
+    },
+  })
+  vi.stubGlobal('HTMLMediaElement', { HAVE_CURRENT_DATA: 2 })
+  const provider = new VideoElementFrameProvider({ getFile: async () => new Blob() })
+  provider.setPlaying(false)
+  return { provider, created }
+}
+
+/** Draws one paused frame of `requests` (key and source time) and returns its sources by key. */
+async function frame(provider: VideoElementFrameProvider, requests: [key: string, t: number][]) {
+  provider.beginFrame(requests.map(([key]) => key))
+  const refs = requests.map(([key, t]) => provider.videoFrame(asset, t, key))
+  await vi.advanceTimersByTimeAsync(200)
+  provider.endFrame()
+  return new Map((await Promise.all(refs)).map((ref, i) => [requests[i]![0], ref?.source]))
+}
+
+describe('keeping an element ready for a transition near the paused playhead', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('loads and seeks one ahead, which a seek into the transition then uses instead of loading another', async () => {
+    const { provider, created } = providerMakingElements()
+    await frame(provider, [['a', 1]])
+    expect(created).toHaveLength(1)
+    provider.prewarm([{ asset, sourceTime: 3.9, key: 'b' }])
+    await vi.advanceTimersByTimeAsync(200)
+    expect(created).toHaveLength(2)
+    expect(created[1]!.currentTime).toBeCloseTo(3.9, 3)
+    const shown = await frame(provider, [
+      ['a', 1.1],
+      ['b', 3.95],
+    ])
+    expect(created).toHaveLength(2)
+    expect(shown.get('b')).toBe(created[1])
+    provider.dispose()
+  })
+
+  it('lets it go once the playhead moves away, but not while the frame on screen shows it', async () => {
+    const { provider, created } = providerMakingElements()
+    provider.prewarm([{ asset, sourceTime: 3.9, key: 'b' }])
+    await vi.advanceTimersByTimeAsync(200)
+    const ready = created[0]!
+    // On screen: the playhead moved into the transition, so the element is no longer kept for it, but is in use.
+    await frame(provider, [['b', 3.95]])
+    provider.prewarm([])
+    expect(ready.released).toBe(false)
+
+    provider.prewarm([{ asset, sourceTime: 3.9, key: 'c' }])
+    await vi.advanceTimersByTimeAsync(200)
+    const other = created.at(-1)!
+    expect(other).not.toBe(ready)
+    await frame(provider, [['b', 1]])
+    provider.prewarm([])
+    expect(other.released).toBe(true)
+    expect(ready.released).toBe(false)
+    provider.dispose()
+  })
+
+  it('does not hand it to another clip of the same footage that needs an element meanwhile', async () => {
+    const { provider, created } = providerMakingElements()
+    provider.prewarm([{ asset, sourceTime: 3.9, key: 'b' }])
+    await vi.advanceTimersByTimeAsync(200)
+    const shown = await frame(provider, [['c', 2]])
+    expect(created).toHaveLength(2)
+    expect(shown.get('c')).toBe(created[1])
+    expect(created[0]!.currentTime).toBeCloseTo(3.9, 3)
+    provider.dispose()
   })
 })

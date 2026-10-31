@@ -349,6 +349,9 @@ const SCRUB_SETTLE_MS = 150
 
 /** Video clips starting within this many seconds get their media element loaded and seeked ahead of time. */
 const LOOKAHEAD = 1.5
+/** While paused, the clips of the transitions this close to the playhead (the nearest few) keep an element loaded. */
+const PREWARM_RANGE = 2
+const PREWARM_TRANSITIONS = 2
 const WARM_EVERY_MS = 200
 /** How long dispose() waits for frames being drawn or captured before it stops the renderer anyway. */
 const DISPOSE_WAIT_MS = 2000
@@ -407,6 +410,7 @@ export class PreviewController {
     this.unsubscribeClock = this.clock.subscribe((state) => {
       this.frames.setPlaying(state === 'playing')
       if (state === 'playing') {
+        this.frames.prewarm([])
         this.scrubbing = false
         this.cancelSettle()
         this.auto.start(performance.now())
@@ -610,6 +614,40 @@ export class PreviewController {
     }
     this.frames.warm(requests)
   }
+
+  /**
+   * While paused, has the frame provider keep elements ready for the clips that the nearest transitions show besides
+   * the clips on screen at `time`. Each is seeked to where the transition is nearest to the playhead.
+   */
+  private prewarmTransitions(time: Seconds): void {
+    const project = this.project
+    if (!project) return
+    const spans: { at: Seconds; distance: number }[] = []
+    for (const clip of Object.values(project.clips)) {
+      if (clip.type === 'audio' || !clip.enabled) continue
+      const end = clip.start + clip.duration
+      const tin = clip.transitionIn?.duration ?? 0
+      const tout = clip.transitionOut?.duration ?? 0
+      for (const [from, to] of [
+        [clip.start, clip.start + tin],
+        [end - tout, end],
+      ] as const) {
+        if (to <= from) continue
+        const at = Math.min(Math.max(time, from), to - 1e-3)
+        const distance = Math.abs(at - time)
+        if (distance <= PREWARM_RANGE) spans.push({ at, distance })
+      }
+    }
+    spans.sort((a, b) => a.distance - b.distance)
+    const shown = new Set(videoRequests(project, planFrame(project, time), time).map((r) => r.key))
+    const requests: Parameters<VideoElementFrameProvider['prewarm']>[0] = []
+    for (const { at } of spans.slice(0, PREWARM_TRANSITIONS))
+      for (const r of videoRequests(project, planFrame(project, at), at))
+        if (!shown.has(r.key) && !requests.some((q) => q.key === r.key))
+          requests.push({ asset: r.asset, sourceTime: r.time, key: r.key })
+    this.frames.prewarm(requests)
+  }
+
   setVolume(volume: number): void {
     this.clock.setVolume(volume)
   }
@@ -822,6 +860,8 @@ export class PreviewController {
           const now = performance.now()
           this.frameLog.push({ at: now, ms: now - started })
           if (still) this.lastStillEnd = now
+          // After the frame, so the clips it shows are not taken for ones to keep ready. A drag waits until it settles.
+          if (still && !this.scrubbing && this.clock.state !== 'playing') this.prewarmTransitions(time)
           while (this.frameLog.length > 0 && now - (this.frameLog[0] as { at: number }).at > 1000)
             this.frameLog.shift()
           for (const listener of this.frameListeners) listener(time)

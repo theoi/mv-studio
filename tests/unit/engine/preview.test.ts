@@ -3,7 +3,8 @@ import type * as Compositor from '../../../src/engine/compositor.ts'
 import type * as Frames from '../../../src/engine/frames.ts'
 import type * as RenderHost from '../../../src/engine/renderHost.ts'
 import { PreviewController } from '../../../src/engine/preview.ts'
-import { createProject } from '../../../src/model/factory.ts'
+import { createProject, createVideoClip } from '../../../src/model/factory.ts'
+import type { Asset } from '../../../src/model/types.ts'
 
 const compositor = vi.hoisted(() => ({
   render: vi.fn<() => Promise<void>>(),
@@ -15,6 +16,7 @@ const compositor = vi.hoisted(() => ({
 const frames = vi.hoisted(() => ({
   setPlaying: vi.fn(),
   warm: vi.fn(),
+  prewarm: vi.fn(),
   dispose: vi.fn(),
   beginFrame: vi.fn(),
   endFrame: vi.fn(),
@@ -324,6 +326,48 @@ describe('scrubbing on the main thread', () => {
     }
     expect(compositor.render.mock.calls.length).toBeGreaterThan(50)
     expect(lowest).toBe(1)
+    preview.dispose()
+  })
+})
+
+describe('keeping media ready for a transition near the paused playhead', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('asks for the clip a transition brings back, at the transition’s nearest frame, and for none once far from it', async () => {
+    compositor.render.mockResolvedValue(undefined)
+    const project = createProject()
+    const track = project.tracks.find((t) => t.kind === 'visual')!
+    const asset = {
+      id: 'v',
+      kind: 'video',
+      name: 'v.mp4',
+      storageKey: 'v',
+      duration: 10,
+      origin: { type: 'import' },
+    } as Asset
+    project.assets.v = asset
+    const a = createVideoClip({ trackId: track.id, assetId: 'v', start: 0, duration: 4, sourceStart: 2 })
+    const b = createVideoClip({ trackId: track.id, assetId: 'v', start: 4, duration: 4 })
+    b.transitionIn = { kind: 'fade', duration: 0.5, easing: 'linear' }
+    project.clips = { [a.id]: a, [b.id]: b }
+    const preview = new PreviewController({
+      canvas: {} as HTMLCanvasElement,
+      media: { getFile: async () => new Blob() },
+      renderer: 'main',
+    })
+    preview.setViewport(320, 180, 1)
+    preview.setProject(project)
+    preview.seek(5.1)
+    await preview.rendered()
+    // At 5.1 only b is on screen; the fade from a ends at 4.5, where a's source is at 2 + 4.5.
+    expect(frames.prewarm).toHaveBeenLastCalledWith([
+      { asset, sourceTime: expect.closeTo(6.499, 3), key: a.id },
+    ])
+    preview.seek(1)
+    await preview.rendered()
+    expect(frames.prewarm).toHaveBeenLastCalledWith([])
     preview.dispose()
   })
 })
