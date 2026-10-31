@@ -212,7 +212,7 @@ export function riskNote(total: number, risks: readonly (readonly CameraRiskAt[]
   const what = has('smear') && has('bend') ? `${smear} or ${bend}` : has('smear') ? smear : bend
   // A still that may do it at any strength is helped only by another motion.
   const lower = risky.some((r) => r[0]!.above > 0)
-  const rest = `may ${what} at this strength. ${lower ? 'Try a lower Strength.' : 'Try another motion.'}`
+  const rest = `may ${what} at this strength. ${lower ? 'Try a lower Strength.' : 'Try another Motion.'}`
   if (total === 1) return `This image ${rest}`
   return `${risky.length === total ? `All ${total}` : `${risky.length} of ${total}`} images ${rest}`
 }

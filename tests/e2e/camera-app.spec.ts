@@ -544,6 +544,68 @@ test('a still whose straight lines a move may bend gets a lower automatic amount
   )
 })
 
+test('every wording of a still’s row in Assist › 3D camera stays inside its text column at 1280 × 720', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openWithFakeDepth(page, '#/editor?t=28', false, 'fence')
+  const clipId = await addStill(page)
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?tab=assist&assist=camera&sel=clip:${id}&t=28`
+  }, clipId)
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await assist.getByRole('slider', { name: 'Strength' }).focus()
+  await page.keyboard.press('End')
+  await assist.getByRole('button', { name: 'Apply to 1 image' }).click()
+  // \s: the row keeps a strength with its number by no-break spaces.
+  const detail = assist.getByText(/^Strength\s100%\s·\smay\s/)
+  await expect(detail).toBeVisible()
+  // The fake depths make a still that smears or one that bends, never both, so the move's safe amounts are set to
+  // each case the row puts into words.
+  for (const [smear, bend, words] of [
+    [0.1, 1, 'may smear above 10%'],
+    [1, 0.45, 'may bend lines above 45%'],
+    [0.4, 0.15, 'may bend lines above 15% and smear above 40%'],
+    [0.35, 0.35, 'may smear or bend lines above 35%'],
+    [0, 1, 'may smear at any strength'],
+    [1, 0, 'may bend lines at any strength'],
+    [0.4, 0, 'may bend lines at any strength and smear above 40%'],
+    [0, 0, 'may smear or bend lines at any strength'],
+  ] as const) {
+    await page.evaluate(
+      ([s, b]) => {
+        const { useCamera } = window.mvStudio.app.camera
+        useCamera.setState((state: Untyped) => ({
+          results: Object.fromEntries(
+            Object.entries(state.results).map(([id, result]: [string, Untyped]) => [
+              id,
+              {
+                ...result,
+                moves: result.moves.map((m: Untyped) => ({
+                  ...m,
+                  safe: { smear: s, bend: b },
+                  safeIntensity: Math.min(s, b),
+                  smearRisk: m.intensity > s,
+                  bendRisk: m.intensity > b,
+                })),
+              },
+            ]),
+          ),
+        }))
+      },
+      [smear, bend] as const,
+    )
+    await expect(detail).toHaveText(`Strength 100% · ${words}`)
+    const spill = await detail.evaluate((el) => {
+      const column = el.parentElement!.getBoundingClientRect()
+      const text = document.createRange()
+      text.selectNodeContents(el)
+      return Math.max(...Array.from(text.getClientRects(), (r) => r.right)) - column.right
+    })
+    expect(spill, words).toBeLessThanOrEqual(0)
+  }
+})
+
 test('one inline suggestion at a time: a selected still’s suggestion takes the lyrics hint’s place, which comes back after', async ({
   page,
 }) => {

@@ -87,7 +87,7 @@ it('says how many of the stills just given a move may smear or bend, and what th
   // Bending at any strength: only another motion helps.
   const always = [{ risk: 'bend' as const, above: 0 }]
   expect(riskNote(1, [always])).toBe(
-    'This image may bend straight lines at this strength. Try another motion.',
+    'This image may bend straight lines at this strength. Try another Motion.',
   )
   expect(riskNote(2, [always, smear])).toBe(
     'All 2 images may smear behind foreground objects or bend straight lines at this strength. Try a lower Strength.',

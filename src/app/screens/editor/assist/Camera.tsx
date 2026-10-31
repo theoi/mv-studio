@@ -203,15 +203,15 @@ export function CameraView() {
         )}
         {riskRows.map(({ move, strength, risks, clip, asset, name }) => {
           const at = `${name} at ${formatTime(clip.start)}`
-          // No-break spaces keep each fact whole, so a narrow panel breaks the line only after the dot or an "and".
-          const facts = riskFacts(risks, 'short').map((f) => f.replaceAll(' ', '\u00a0'))
+          // No-break spaces keep a strength with its number, where a line break would read badly.
+          const facts = riskFacts(risks, 'short').map((f) => f.replace(/ (\d+%)$/, '\u00a0$1'))
           return (
             <StillRow
               key={move.clipId}
               clip={clip}
               asset={asset}
               {...(riskRows.filter((r) => r.name === name).length > 1 ? { title: at } : {})}
-              detail={`Strength\u00a0${strength}%\u00a0· may\u00a0${facts.join('\u00a0and ')}`}
+              detail={`Strength\u00a0${strength}%\u00a0· may ${facts.join(' and ')}`}
               action={
                 <Button
                   size="sm"
