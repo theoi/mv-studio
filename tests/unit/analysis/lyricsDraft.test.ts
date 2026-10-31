@@ -45,6 +45,35 @@ describe('voiceActivity', () => {
   it('returns nothing for silence', () => {
     expect(voiceActivity(new Float32Array(SR * 2), SR)).toEqual([])
   })
+
+  it('given the song, keeps singing 20 dB under it and drops bleed 27 dB under it', () => {
+    /** Noise whose amplitude follows `level` (dB relative to the song) over 12 s. */
+    const noise = (level: (t: number) => number, seed: number) => {
+      const pcm = new Float32Array(12 * SR)
+      for (let i = 0; i < pcm.length; i++) {
+        seed = (seed * 16807) % 2147483647
+        pcm[i] = ((seed / 2147483647) * 2 - 1) * 0.3 * 10 ** (level(i / SR) / 20)
+      }
+      return pcm
+    }
+    const song = noise(() => 0, 7)
+    const vocals = noise(
+      (t) => ((t >= 1 && t < 3) || (t >= 9 && t < 11) ? -20 : t >= 4 && t < 8 ? -27 : -70),
+      1,
+    )
+    const edges = (regions: { start: number; end: number }[]) =>
+      regions.map((r) => [Math.round(r.start * 10) / 10, Math.round(r.end * 10) / 10])
+    expect(edges(voiceActivity(vocals, SR, { pad: 0, mix: song }))).toEqual([
+      [1, 3],
+      [9, 11],
+    ])
+    // Only 7 dB under the singing, the bleed passes the level test on its own.
+    expect(edges(voiceActivity(vocals, SR, { pad: 0 }))).toEqual([
+      [1, 3],
+      [4, 8],
+      [9, 11],
+    ])
+  })
 })
 
 describe('planChunks', () => {

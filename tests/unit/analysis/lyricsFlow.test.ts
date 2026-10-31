@@ -17,12 +17,18 @@ import {
   type WorkerCallContext,
 } from '../../../src/shared/worker.ts'
 
-// Decoded lengths (seconds) by file content, so each test sees which file reached the aligner.
+// Decoded lengths (seconds) by file content, so each test sees which file reached the aligner. The song is stereo.
 const SECONDS: Record<string, number> = { song: 8, 'separated vocals': 3, 'stored vocals': 5 }
-const decode = async (file: Blob, sampleRate: number) => ({
-  sampleRate,
-  channels: [new Float32Array(sampleRate * (SECONDS[await file.text()] ?? 0))],
-})
+const decoded: { name: string; channels: Float32Array[] }[] = []
+const decode = async (file: Blob, sampleRate: number) => {
+  const name = await file.text()
+  const channels = Array.from(
+    { length: name === 'song' ? 2 : 1 },
+    () => new Float32Array(sampleRate * (SECONDS[name] ?? 0)),
+  )
+  decoded.push({ name, channels })
+  return { sampleRate, channels }
+}
 
 const channels: MessageChannel[] = []
 function worker(api: WorkerApi): () => Worker {
@@ -34,6 +40,7 @@ function worker(api: WorkerApi): () => Worker {
   }
 }
 afterEach(() => {
+  decoded.length = 0
   for (const c of channels.splice(0)) {
     c.port1.close()
     c.port2.close()
@@ -46,8 +53,9 @@ const vocab = { ids: { A: 1 }, blank: 0 }
 interface Call {
   method: string
   seconds: number
-  /** Length of the song passed with the vocals. */
+  /** Length and channels of the song passed with the vocals. */
   mixSeconds?: number
+  mixChannels?: number
   sampleRate: number
   reusedEmissions: boolean
 }
@@ -66,6 +74,7 @@ function setup(options: { storedVocals?: boolean; alignFails?: boolean; heard?: 
       method,
       seconds: (args.vocals.channels[0]?.length ?? 0) / args.vocals.sampleRate,
       mixSeconds: args.mix && (args.mix.channels[0]?.length ?? 0) / args.mix.sampleRate,
+      mixChannels: args.mix?.channels.length,
       sampleRate: args.vocals.sampleRate,
       reusedEmissions: 'emissions' in args && args.emissions !== undefined,
     })
@@ -180,8 +189,18 @@ describe('LyricsService.run', () => {
     expect(doc.audioAssetId).toBe(song.id)
     expect(doc.lines.map((l) => l.text)).toEqual(['We were young', 'Hold on tight'])
     expect(calls).toEqual([
-      { method: 'align', seconds: 3, mixSeconds: 8, sampleRate: 16000, reusedEmissions: false },
+      {
+        method: 'align',
+        seconds: 3,
+        mixSeconds: 8,
+        mixChannels: 1,
+        sampleRate: 16000,
+        reusedEmissions: false,
+      },
     ])
+    // The vocals were moved to the worker, not copied.
+    const vocals = decoded.filter((d) => d.name === 'separated vocals').flatMap((d) => d.channels)
+    expect(vocals.map((c) => c.byteLength)).toEqual([0])
     const project = editor.getProject()
     const stems = project.analysis.audio[song.id]?.stems ?? {}
     expect(Object.keys(stems).sort()).toEqual(['drums', 'vocals'])
@@ -215,7 +234,14 @@ describe('LyricsService.run', () => {
     const { service, song, deps, calls } = setup({ storedVocals: true })
     const result = await service.run(song.id, { kind: 'draft' }, deps).promise
     expect(calls).toEqual([
-      { method: 'transcribe', seconds: 5, mixSeconds: 8, sampleRate: 16000, reusedEmissions: false },
+      {
+        method: 'transcribe',
+        seconds: 5,
+        mixSeconds: 8,
+        mixChannels: 1,
+        sampleRate: 16000,
+        reusedEmissions: false,
+      },
     ])
     expect(result.language).toBe('fr')
     expect(result.languageProbability).toBe(0.9)
@@ -304,8 +330,8 @@ describe('LyricsService.prepareRealign', () => {
     await handle.promise
     await service.prepareRealign(song.id, deps).promise
     expect(service.canRealign(song.id)).toBe(true)
-    expect(calls.map((c) => [c.method, c.seconds, c.mixSeconds, c.sampleRate])).toEqual([
-      ['emissions', 5, 8, 16000],
+    expect(calls.map((c) => [c.method, c.seconds, c.mixSeconds, c.mixChannels, c.sampleRate])).toEqual([
+      ['emissions', 5, 8, 1, 16000],
     ])
     expect(separations()).toBe(0)
   })
