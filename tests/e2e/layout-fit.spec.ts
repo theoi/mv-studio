@@ -173,8 +173,10 @@ test('an empty project’s drop hint reaches the right edge of a wide timeline',
   expect(gap).toBeLessThanOrEqual(24)
 })
 
-test('a long context menu fills the window’s height before it scrolls', async ({ page }) => {
-  await small(page)
+test('a long context menu or submenu fills the window’s height before it scrolls', async ({ page }) => {
+  // Every menu fits the smallest supported window, so shorter ones force the scroll: 300 px for the longest menu,
+  // a pad's 12-item Visuals submenu, and 140 px for the pad's 4-item menu.
+  await small(page, { width: 1280, height: 300 })
   await openApp(page)
   await page.evaluate(() => {
     localStorage.setItem('mv-studio.guide-seen', '1')
@@ -183,17 +185,37 @@ test('a long context menu fills the window’s height before it scrolls', async 
   await expect(page.getByRole('img', { name: 'Live output' })).toHaveAttribute('aria-busy', 'false', {
     timeout: 30_000,
   })
-  await page.getByRole('button', { name: 'Rain on glass', exact: true }).click({ button: 'right' })
+  const fillsWindow = async (menu: Locator) => {
+    // Layout sizes: the menu's entrance animation scales its box for a moment.
+    const fit = await menu.evaluate((el: HTMLElement) => ({
+      scrolls: el.scrollHeight > el.clientHeight,
+      height: el.offsetHeight,
+      bottom: el.parentElement!.getBoundingClientRect().top + el.offsetHeight,
+      window: innerHeight,
+    }))
+    // Taller than the window, so it takes the window's height less 8 px margins and scrolls the rest.
+    expect(fit.scrolls).toBe(true)
+    expect(fit.height).toBeGreaterThanOrEqual(fit.window - 2 * 8 - 1)
+    expect(fit.bottom).toBeLessThanOrEqual(fit.window - 8)
+  }
+  const pad = page.getByRole('button', { name: 'Rain on glass', exact: true })
   const menu = page.getByRole('menu')
-  await expect(menu).toBeVisible()
-  // Layout sizes: the menu's entrance animation scales its box for a moment.
-  const fit = await menu.evaluate((el: HTMLElement) => ({
-    scrolls: el.scrollHeight > el.clientHeight,
-    height: el.offsetHeight,
-    bottom: el.parentElement!.getBoundingClientRect().top + el.offsetHeight,
-  }))
-  // The 24 items are taller than the window, so the menu takes its height less 8 px margins and scrolls the rest.
-  expect(fit.scrolls).toBe(true)
-  expect(fit.height).toBeGreaterThanOrEqual(720 - 2 * 8 - 1)
-  expect(fit.bottom).toBeLessThanOrEqual(720 - 8)
+
+  await pad.click({ button: 'right' })
+  await page.mouse.move(5, 5)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await expect(menu.getByRole('menuitem', { name: 'Visuals' })).toBeFocused()
+  await page.keyboard.press('ArrowRight')
+  const visuals = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'Orb' }) })
+  await expect(visuals.getByRole('menuitem')).toHaveCount(12)
+  await fillsWindow(visuals)
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+
+  await small(page, { width: 1280, height: 140 })
+  await pad.click({ button: 'right' })
+  await expect(menu.getByRole('menuitem')).toHaveCount(4)
+  await fillsWindow(menu)
 })
