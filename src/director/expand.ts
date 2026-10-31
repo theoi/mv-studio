@@ -846,21 +846,25 @@ function visiblePart(source: { width: number; height: number }, ctx: Ctx): Box {
 const NEAR_SUBJECT = 0.3
 
 /**
- * Faces (or upper bodies) of people near the camera on screen while a line shows, as frame boxes (top-left origin,
- * cropped to fill).
+ * Faces (or upper bodies) of people near the camera on screen while a line shows, in every shot it spans, as frame
+ * boxes (top-left origin, cropped to fill).
  */
 function facesDuring(start: Seconds, end: Seconds, shots: PlanShot[], ctx: Ctx): Box[] {
-  const at = mediaShotAt((start + end) / 2, shots, ctx)
-  const track = at?.media.subjects
-  if (!at || !track) return []
-  const v = visiblePart(track.sourceSize, ctx)
-  const toFrame = (x: number, y: number) => ({ x: (x - v.x) / v.width, y: (y - v.y) / v.height })
-  return subjectsDuring(at, start, end).flatMap((s) => {
-    if (s.box && s.box.height / v.height < NEAR_SUBJECT) return []
-    const c = toFrame(s.focus.x, s.focus.y)
-    const r = s.source === 'face' ? { w: 0.08, h: 0.12 } : { w: 0.1, h: 0.16 }
-    return [{ x: c.x - r.w, y: c.y - r.h, width: r.w * 2, height: r.h * 2 }]
-  })
+  return shots
+    .filter((s) => s.layer === 'main' && s.start < end && s.end > start)
+    .flatMap((s) => {
+      const at = mediaShotAt(Math.max(start, s.start), shots, ctx)
+      const track = at?.media.subjects
+      if (!at || !track) return []
+      const v = visiblePart(track.sourceSize, ctx)
+      const toFrame = (x: number, y: number) => ({ x: (x - v.x) / v.width, y: (y - v.y) / v.height })
+      return subjectsDuring(at, start, end).flatMap((sample) => {
+        if (sample.box && sample.box.height / v.height < NEAR_SUBJECT) return []
+        const c = toFrame(sample.focus.x, sample.focus.y)
+        const r = sample.source === 'face' ? { w: 0.08, h: 0.12 } : { w: 0.1, h: 0.16 }
+        return [{ x: c.x - r.w, y: c.y - r.h, width: r.w * 2, height: r.h * 2 }]
+      })
+    })
 }
 
 /**

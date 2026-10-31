@@ -274,6 +274,21 @@ test('director drafts on real songs', async ({ page }) => {
             subjectTracks: videos.filter(
               (v) => vision.readSubjectTrack(base.analysis.visual[v.id])?.samples.length,
             ).length,
+            // Per clip: samples by source, and the median subject height and focus.
+            clips: videos.map((v) => {
+              const samples: Untyped[] = vision.readSubjectTrack(base.analysis.visual[v.id])?.samples ?? []
+              const sources: Record<string, number> = {}
+              for (const s of samples) sources[s.source] = (sources[s.source] ?? 0) + 1
+              const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
+              const seen = samples.filter((s) => s.source !== 'none')
+              return {
+                name: v.name,
+                sources,
+                height: median(seen.map((s) => s.box?.height ?? 0)),
+                focusY: median(seen.map((s) => s.focus.y)),
+                confidence: median(seen.map((s) => s.confidence)),
+              }
+            }),
           }
         for (const kind of kinds) {
           // `autocut` is src/vision's auto-cut on the same song and clips, for comparison.
@@ -522,9 +537,8 @@ test('director drafts on real songs', async ({ page }) => {
             lyricLines: base.lyrics.lines.length,
             lyricTexts: lyricTexts.length,
             // Lines moved to the lower or upper third, off the centered default: kept clear of tracked faces.
-            textsOffCenter: plan.texts.filter(
-              (t: { role: string; position: { y: number } }) =>
-                t.role !== 'title' && Math.abs(t.position.y - 0.5) > 0.15,
+            linesOffCenter: lyricTexts.filter(
+              (t: { position: { y: number } }) => Math.abs(t.position.y - 0.5) > 0.15,
             ).length,
             maxCps: lyricStats.length ? Math.max(...lyricStats.map((s: { cps: number }) => s.cps)) : null,
             minShown: lyricStats.length
