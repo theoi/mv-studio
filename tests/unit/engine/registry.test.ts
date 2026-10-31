@@ -56,6 +56,43 @@ describe('plugin registry', () => {
   })
 })
 
+describe('plugin metadata', () => {
+  it('copies library metadata into the catalog only when the plugin declares it', () => {
+    const registry = createPluginRegistry({ builtins: false })
+    registry.register({
+      kind: 'transition',
+      id: 't',
+      name: 'T',
+      category: 'Motion',
+      params: [],
+      fragmentShader: 'vec4 transition(vec2 uv) { return texture(u_to, uv); }',
+      tags: ['beat'],
+      cost: 'low',
+      defaultDuration: 0.4,
+      thumbnail: '/thumbs/t.webp',
+      defaultModulation: { amount: [{ source: { kind: 'beat' }, amount: 1, mode: 'add', smoothing: 0 }] },
+    })
+    registry.register({
+      kind: 'effect',
+      id: 'e',
+      name: 'E',
+      category: 'Color',
+      params: [],
+      fragmentShader: 'vec4 mainImage(vec2 uv) { return texture(u_input, uv); }',
+    })
+    const [t, e] = registry.catalog()
+    expect(t).toMatchObject({
+      tags: ['beat'],
+      cost: 'low',
+      defaultDuration: 0.4,
+      thumbnail: '/thumbs/t.webp',
+    })
+    expect(t?.defaultModulation?.amount?.[0]?.source).toEqual({ kind: 'beat' })
+    expect(Object.keys(e ?? {})).not.toContain('defaultDuration')
+    expect(Object.keys(e ?? {})).not.toContain('tags')
+  })
+})
+
 describe('resolveParams', () => {
   const specs: ParamSpec[] = [
     { key: 'amount', label: 'Amount', type: 'number', default: 1, min: 0, max: 10 },
@@ -96,5 +133,15 @@ describe('resolveParams', () => {
       tint: '#ff0000',
     })
     expect(resolveStaticParams(specs, { amount: -3, mode: 'b' })).toMatchObject({ amount: 0, mode: 'b' })
+  })
+
+  it('keeps image params as asset ids or bundled paths and defaults anything else to none', () => {
+    const lut: ParamSpec[] = [{ key: 'lut', label: 'LUT', type: 'image', default: '', role: 'lut' }]
+    expect(resolveStaticParams(lut, { lut: 'asset-1' })).toEqual({ lut: 'asset-1' })
+    expect(resolveParams(lut, { lut: { value: 'bundled:luts/neutral.png' } }, 0, 0)).toEqual({
+      lut: 'bundled:luts/neutral.png',
+    })
+    expect(resolveStaticParams(lut, { lut: 3 })).toEqual({ lut: '' })
+    expect(resolveStaticParams(lut, {})).toEqual({ lut: '' })
   })
 })

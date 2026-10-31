@@ -8,11 +8,14 @@
  * matte, opacity), then blends in. Adjustment clips process the accumulator itself.
  */
 import type {
+  Animatable,
   BlendMode,
   ColorAdjustmentKey,
   ImageClip,
+  ParamValue,
   Project,
   Seconds,
+  StemName,
   VideoClip,
   VisualClip,
 } from '../model/types.ts'
@@ -82,6 +85,22 @@ const ADJUSTMENT_KEYS: ColorAdjustmentKey[] = [
 ]
 const BAND_UNIFORMS = 16
 const TEXTURE_IDLE_FRAMES = 300
+const STEM_ORDER: StemName[] = ['vocals', 'drums', 'bass', 'other']
+/** Texture units 0 and 1 hold a plugin's own inputs (u_input, or u_from and u_to); image params start here. */
+const FIRST_IMAGE_PARAM_UNIT = 2
+const BUNDLED_PREFIX = 'bundled:'
+
+/**
+ * URL of an image param that refers to a file shipped with the app (`bundled:luts/film.png` is served from
+ * public/luts/film.png), or null for anything else (asset ids).
+ */
+export function bundledImageUrl(ref: string): string | null {
+  if (!ref.startsWith(BUNDLED_PREFIX)) return null
+  const path = ref.slice(BUNDLED_PREFIX.length).replace(/^\/+/, '')
+  return path ? `${import.meta.env.BASE_URL}${path}` : null
+}
+
+const imageParamKey = (ref: string) => `param:${ref}`
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
@@ -163,6 +182,7 @@ export class WebGLCompositor implements Compositor {
   private readonly text: TextRenderer
   private readonly samplers = new WeakMap<Project, AudioSampler>()
   private readonly canvases2d = new Map<string, OffscreenCanvas>()
+  private readonly urlImages = new Map<string, Promise<FrameRef | null>>()
   private gpu: GpuState | null
   private frameIndex = 0
   private queue: Promise<void> = Promise.resolve()
@@ -308,9 +328,32 @@ export class WebGLCompositor implements Compositor {
           },
         ),
       )
+    const images = new Set<string>()
+    const wantImages = (specs: readonly ParamSpec[], read: (key: string) => ParamValue | undefined) => {
+      for (const spec of specs) {
+        if (spec.type !== 'image') continue
+        const ref = read(spec.key)
+        if (typeof ref !== 'string' || !ref || images.has(ref)) continue
+        images.add(ref)
+        const request = this.imageParam(project, ref)
+        if (request) want(imageParamKey(ref), request)
+      }
+    }
+    const animated = (values: Record<string, Animatable<ParamValue>>, local: Seconds) => (key: string) => {
+      const anim = values[key]
+      return anim ? evaluate(anim, local) : undefined
+    }
     const visit = (clip: VisualClip | null) => {
       if (!clip) return
       const local = time - clip.start
+      for (const effect of clip.effects) {
+        const def = effect.enabled ? this.registry.get(effect.effectId) : undefined
+        if (def?.kind === 'effect') wantImages(def.params, animated(effect.params, local))
+      }
+      if (clip.type === 'generator') {
+        const def = this.registry.get(clip.generatorId)
+        if (def?.kind === 'generator') wantImages(def.params, animated(clip.params, local))
+      }
       if (clip.type === 'video' || clip.type === 'image') {
         const asset = project.assets[clip.assetId]
         if (asset && clip.type === 'video')
@@ -334,10 +377,37 @@ export class WebGLCompositor implements Compositor {
       if (layer.kind === 'transition') {
         visit(layer.from)
         visit(layer.to)
+        const def = this.registry.get(layer.transition.kind)
+        if (def?.kind === 'transition') wantImages(def.params, (key) => layer.transition.params?.[key])
       } else visit(layer.clip)
     }
     await Promise.all(tasks)
     return sources
+  }
+
+  /** Decoded image for an image param: an image asset of the project, or a file bundled with the app. */
+  private imageParam(project: Project, ref: string): Promise<FrameRef | null> | null {
+    const asset = project.assets[ref]
+    if (asset) return asset.kind === 'image' ? this.frames.image(asset) : null
+    const url = bundledImageUrl(ref)
+    if (!url) return null
+    let image = this.urlImages.get(url)
+    if (!image) {
+      image = fetch(url)
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          return response.blob()
+        })
+        // WebGL ignores UNPACK_PREMULTIPLY_ALPHA for ImageBitmaps, so premultiply when decoding.
+        .then((blob) => createImageBitmap(blob, { premultiplyAlpha: 'premultiply' }))
+        .then((bitmap): FrameRef => ({ source: bitmap, width: bitmap.width, height: bitmap.height }))
+        .catch((error: unknown) => {
+          console.warn(`Image ${url} could not be loaded`, error)
+          return null
+        })
+      this.urlImages.set(url, image)
+    }
+    return image
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -406,11 +476,9 @@ export class WebGLCompositor implements Compositor {
       gl.disable(gl.BLEND)
       gl.useProgram(program.program)
       this.setCommonUniforms(program, local, s)
-      this.setParamUniforms(
-        program,
-        def.params,
-        resolveParams(def.params, instance.params, local, s.time, s.audio),
-      )
+      const params = resolveParams(def.params, instance.params, local, s.time, s.audio)
+      this.setParamUniforms(program, def.params, params)
+      this.bindImageParams(gpu, program, def.params, params, s)
       this.bindTexture(program, 'u_input', 0, current.texture)
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
       if (owned) gpu.pool.release(current)
@@ -512,7 +580,9 @@ export class WebGLCompositor implements Compositor {
     gl.disable(gl.BLEND)
     gl.useProgram(program.program)
     this.setCommonUniforms(program, clip ? s.time - clip.start : 0, s)
-    this.setParamUniforms(program, def.params, resolveStaticParams(def.params, layer.transition.params))
+    const params = resolveStaticParams(def.params, layer.transition.params)
+    this.setParamUniforms(program, def.params, params)
+    this.bindImageParams(gpu, program, def.params, params, s)
     gl.uniform1f(program.uniform('u_progress'), ease(layer.transition.easing, clamp01(layer.progress)))
     this.bindTexture(program, 'u_from', 0, from?.texture ?? gpu.transparent)
     this.bindTexture(program, 'u_to', 1, to?.texture ?? gpu.transparent)
@@ -614,6 +684,7 @@ export class WebGLCompositor implements Compositor {
       gl.useProgram(program.program)
       this.setCommonUniforms(program, local, s)
       this.setParamUniforms(program, def.params, params)
+      this.bindImageParams(gpu, program, def.params, params, s)
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
       // Render targets store the top row at v = 1, the reverse of DOM sources.
       this.drawQuad(gpu, target, m, { texture: g.texture, flipY: true }, opacity, s)
@@ -739,6 +810,42 @@ export class WebGLCompositor implements Compositor {
     gl.uniform1f(p.uniform('u_downbeat'), a.downbeat)
     gl.uniform1fv(p.uniform('u_bands'), s.bands)
     gl.uniform1f(p.uniform('u_bandCount'), Math.min(BAND_UNIFORMS, a.bands.length))
+    gl.uniform1f(p.uniform('u_beatIndex'), a.beatIndex)
+    gl.uniform1f(p.uniform('u_beatPhase'), a.beatPhase)
+    gl.uniform1f(p.uniform('u_barIndex'), a.barIndex)
+    gl.uniform1f(p.uniform('u_barPhase'), a.barPhase)
+    gl.uniform1f(p.uniform('u_flow'), a.flow)
+    const stems = STEM_ORDER.map((name) => a.stems[name])
+    const [v, d, b, o] = stems.map((stem) => stem?.loudness ?? 0) as [number, number, number, number]
+    const [vo, dO, bo, oo] = stems.map((stem) => stem?.onset ?? 0) as [number, number, number, number]
+    gl.uniform4f(p.uniform('u_stems'), v, d, b, o)
+    gl.uniform4f(p.uniform('u_stemOnsets'), vo, dO, bo, oo)
+    gl.uniform1f(p.uniform('u_hasStems'), stems.some(Boolean) ? 1 : 0)
+  }
+
+  /** Binds image params to texture units from FIRST_IMAGE_PARAM_UNIT; an unset or missing image is transparent. */
+  private bindImageParams(
+    gpu: GpuState,
+    p: Program,
+    specs: readonly ParamSpec[],
+    params: ResolvedParams,
+    s: FrameState,
+  ) {
+    const gl = this.gl
+    let unit = FIRST_IMAGE_PARAM_UNIT
+    for (const spec of specs) {
+      if (spec.type !== 'image') continue
+      const ref = params[spec.key]
+      const frame = typeof ref === 'string' && ref ? s.sources.get(imageParamKey(ref)) : undefined
+      let texture = gpu.transparent
+      if (frame && frame.width > 0 && typeof ref === 'string') {
+        const key = s.project.assets[ref] ? `image:${ref}` : `url:${ref}`
+        texture = this.texture(gpu, key, frame.source, frame.source)
+      }
+      this.bindTexture(p, `u_${spec.key}`, unit++, texture)
+      const size = texture === gpu.transparent || !frame ? [0, 0] : [frame.width, frame.height]
+      gl.uniform2f(p.uniform(`u_${spec.key}Size`), size[0] as number, size[1] as number)
+    }
   }
 
   private setParamUniforms(p: Program, specs: readonly ParamSpec[], params: ResolvedParams): void {
@@ -765,6 +872,9 @@ export class WebGLCompositor implements Compositor {
               spec.options.findIndex((o) => o.value === v),
             ),
           )
+          break
+        case 'image':
+          // Bound as a texture by bindImageParams.
           break
       }
     }
@@ -796,5 +906,8 @@ export class WebGLCompositor implements Compositor {
     }
     this.text.dispose()
     this.canvases2d.clear()
+    for (const image of this.urlImages.values())
+      void image.then((frame) => (frame?.source as ImageBitmap | undefined)?.close())
+    this.urlImages.clear()
   }
 }

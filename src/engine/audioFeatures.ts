@@ -24,6 +24,10 @@ export interface AudioSampler {
 const STEMS: StemName[] = ['vocals', 'drums', 'bass', 'other']
 const SMOOTHING_WINDOW = 0.5
 const SMOOTHING_TAPS = 8
+const FALLBACK_BPM = 120
+const BEATS_PER_BAR = 4
+/** Flow speed (loudness units per second) used when there is no loudness analysis. */
+const FALLBACK_FLOW_RATE = 0.5
 
 function seriesAt(values: readonly number[], rate: number, assetTime: Seconds): number {
   if (values.length === 0) return 0
@@ -59,6 +63,41 @@ function pulse(events: readonly number[] | undefined, t: number, decay: number):
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+/**
+ * Continuous position on an event grid (beats or downbeats) at time t: k at events[k], interpolated between events and
+ * extrapolated with the nearest interval outside them. Null when there are fewer than two events.
+ */
+export function gridPosition(events: readonly number[] | undefined, t: number): number | null {
+  if (!events || events.length < 2) return null
+  const n = events.length
+  const i = lastEventIndex(events, t)
+  const at = (k: number) => events[k] as number
+  if (i < 0) return (t - at(0)) / Math.max(at(1) - at(0), 1e-3)
+  if (i >= n - 1) return n - 1 + (t - at(n - 1)) / Math.max(at(n - 1) - at(n - 2), 1e-3)
+  return i + (t - at(i)) / Math.max(at(i + 1) - at(i), 1e-3)
+}
+
+/** Running integral of a uniformly sampled series: out[k] = sum of values[0..k-1] / rate. */
+function prefixSums(values: readonly number[], rate: number): Float64Array {
+  const out = new Float64Array(values.length + 1)
+  for (let k = 0; k < values.length; k++)
+    out[k + 1] = (out[k] as number) + clamp01(values[k] as number) / rate
+  return out
+}
+
+/** Integral of the series from 0 to t, holding the last value past the end. */
+function integralAt(values: readonly number[], sums: Float64Array, rate: number, t: number): number {
+  if (values.length === 0 || t <= 0) return 0
+  const x = t * rate
+  const i = Math.floor(x)
+  if (i >= values.length)
+    return (
+      (sums[values.length] as number) +
+      ((x - values.length) * clamp01(values[values.length - 1] as number)) / rate
+    )
+  return (sums[i] as number) + ((x - i) * clamp01(values[i] as number)) / rate
+}
 
 export function createAudioSampler(project: Project): AudioSampler {
   const clipsByAsset = new Map<Id, AudioClip[]>()
@@ -147,12 +186,67 @@ export function createAudioSampler(project: Project): AudioSampler {
     return sum / weights
   }
 
+  /**
+   * The song's own time at a timeline time, extrapolated through the nearest song clip when the song is not playing,
+   * so grid and flow positions continue smoothly across gaps. Null without a song clip.
+   */
+  function extrapolatedAssetTime(assetId: Id, time: Seconds): Seconds | null {
+    const clips = clipsByAsset.get(assetId)
+    if (!clips || clips.length === 0) return null
+    let best = clips[0] as AudioClip
+    let bestGap = Infinity
+    for (const c of clips) {
+      const gap =
+        time < c.start ? c.start - time : time >= c.start + c.duration ? time - c.start - c.duration : 0
+      if (gap < bestGap) {
+        best = c
+        bestGap = gap
+      }
+    }
+    return best.sourceStart + (time - best.start) * best.playbackRate
+  }
+
+  const flowSums = new WeakMap<AudioFeatures, Float64Array>()
+  function flowAt(f: AudioFeatures, t: Seconds): number {
+    let sums = flowSums.get(f)
+    if (!sums) {
+      sums = prefixSums(f.loudness, f.rate)
+      flowSums.set(f, sums)
+    }
+    return integralAt(f.loudness, sums, f.rate, t)
+  }
+
+  /** Beat and bar grid positions and flow at a song time. Pure: no state carried between frames. */
+  function motion(analysis: AudioAnalysis | undefined, t: Seconds) {
+    const period = 60 / (analysis?.tempo?.bpm && analysis.tempo.bpm > 0 ? analysis.tempo.bpm : FALLBACK_BPM)
+    const beats = analysis?.beats
+    const beatPos = gridPosition(beats, t) ?? (t - (beats?.[0] ?? 0)) / period
+    let barPos = gridPosition(analysis?.downbeats, t)
+    if (barPos === null) {
+      const first = analysis?.downbeats?.[0]
+      const offset =
+        first !== undefined ? (gridPosition(beats, first) ?? (first - (beats?.[0] ?? 0)) / period) : 0
+      barPos = (beatPos - offset) / BEATS_PER_BAR
+    }
+    const beatIndex = Math.floor(beatPos)
+    const barIndex = Math.floor(barPos)
+    const f = analysis?.features
+    return {
+      beatIndex,
+      beatPhase: beatPos - beatIndex,
+      barIndex,
+      barPhase: barPos - barIndex,
+      flow: f && f.loudness.length > 0 ? flowAt(f, t) : Math.max(0, t) * FALLBACK_FLOW_RATE,
+    }
+  }
+
   function frame(time: Seconds): AudioFrame {
     const assetId = project.songAssetId
     const analysis = assetId ? project.analysis.audio[assetId] : undefined
     const assetTime = assetId ? assetTimeAt(assetId, time) : null
-    const empty: AudioFrame = { loudness: 0, bands: [], onset: 0, beat: 0, downbeat: 0, stems: {} }
-    if (!analysis || assetTime === null) return empty
+    const motionTime = (assetId ? extrapolatedAssetTime(assetId, time) : null) ?? time
+    const silent = { loudness: 0, bands: [], onset: 0, beat: 0, downbeat: 0, stems: {} }
+    if (!analysis || assetTime === null) return { ...silent, ...motion(analysis, motionTime) }
     const f = analysis.features
     const bandCount = f?.bands[0]?.length ?? 0
     const out: AudioFrame = {
@@ -163,6 +257,7 @@ export function createAudioSampler(project: Project): AudioSampler {
       onset: pulse(f?.onsets, assetTime, 0.08),
       beat: pulse(analysis.beats, assetTime, 0.12),
       downbeat: pulse(analysis.downbeats, assetTime, 0.2),
+      ...motion(analysis, assetTime),
       stems: {},
     }
     for (const stem of STEMS) {
@@ -172,6 +267,7 @@ export function createAudioSampler(project: Project): AudioSampler {
       out.stems[stem] = {
         loudness: clamp01(seriesAt(sf.loudness, sf.rate, assetTime)),
         bands: Array.from({ length: n }, (_, b) => clamp01(seriesAt(bandColumn(sf, b), sf.rate, assetTime))),
+        onset: pulse(sf.onsets, assetTime, 0.08),
       }
     }
     return out

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createAudioSampler } from '../../../src/engine/audioFeatures.ts'
+import { createAudioSampler, gridPosition } from '../../../src/engine/audioFeatures.ts'
 import { createAudioClip, createProject, newId } from '../../../src/model/factory.ts'
 import type { Asset, Project } from '../../../src/model/types.ts'
 
@@ -84,5 +84,79 @@ describe('audio sampler', () => {
     const project = songProject(0, 0)
     project.tracks = project.tracks.map((t) => (t.kind === 'audio' ? { ...t, muted: true } : t))
     expect(createAudioSampler(project).sample({ kind: 'loudness' }, 5)).toBe(0)
+  })
+})
+
+describe('audio frame motion and stems', () => {
+  it('places frames on the beat grid, interpolating between uneven beats and extrapolating outside them', () => {
+    const sampler = createAudioSampler(songProject(0, 0))
+    // beats at 1, 2, 3 s
+    expect(sampler.frame(1.5)).toMatchObject({ beatIndex: 0, beatPhase: 0.5 })
+    expect(sampler.frame(2.25)).toMatchObject({ beatIndex: 1 })
+    expect(sampler.frame(2.25).beatPhase).toBeCloseTo(0.25)
+    expect(sampler.frame(4.5)).toMatchObject({ beatIndex: 3, beatPhase: 0.5 })
+    expect(sampler.frame(0.5)).toMatchObject({ beatIndex: -1, beatPhase: 0.5 })
+    expect(gridPosition([0, 1, 3], 2)).toBeCloseTo(1.5)
+    expect(gridPosition([1], 2)).toBeNull()
+  })
+
+  it('derives bars from downbeats, or four beats per bar from the first downbeat', () => {
+    const project = songProject(0, 0)
+    const analysis = Object.values(project.analysis.audio)[0]!
+    analysis.beats = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4]
+    analysis.downbeats = [0.5]
+    const bars = createAudioSampler(project)
+    // First bar starts on the downbeat at 0.5 s (beat 1); 2.5 s is beat 5, one bar later.
+    expect(bars.frame(2.5)).toMatchObject({ barIndex: 1, barPhase: 0 })
+    expect(bars.frame(1.5).barPhase).toBeCloseTo(0.5)
+    analysis.downbeats = [0, 2, 4]
+    expect(createAudioSampler(project).frame(3)).toMatchObject({ barIndex: 1, barPhase: 0.5 })
+  })
+
+  it('follows the tempo, or 120 BPM, without beats', () => {
+    const project = songProject(0, 0)
+    const analysis = Object.values(project.analysis.audio)[0]!
+    delete analysis.beats
+    expect(createAudioSampler(project).frame(1.25)).toMatchObject({ beatIndex: 2, beatPhase: 0.5 })
+    analysis.tempo = { bpm: 60, confidence: 1 }
+    expect(createAudioSampler(project).frame(1.25)).toMatchObject({ beatIndex: 1, barIndex: 0 })
+    expect(createAudioSampler(project).frame(1.25).beatPhase).toBeCloseTo(0.25)
+  })
+
+  it('integrates loudness into flow, statelessly and in song time', () => {
+    // Loudness ramps 0..1 over 10 s, so its integral to t is t^2 / 20.
+    const sampler = createAudioSampler(songProject(0, 0))
+    expect(sampler.frame(4).flow).toBeCloseTo(0.8, 1)
+    expect(sampler.frame(8).flow).toBeCloseTo(3.2, 1)
+    expect(sampler.frame(8).flow).toBeGreaterThan(sampler.frame(7.9).flow)
+    // Scrubbing back and forth gives the same values as playing through.
+    const first = sampler.frame(5).flow
+    sampler.frame(9)
+    expect(sampler.frame(5).flow).toBe(first)
+    expect(createAudioSampler(songProject(0, 0)).frame(5).flow).toBe(first)
+    // Clip at 2 s starting 3 s into the song: timeline 4 s is song 5 s.
+    expect(createAudioSampler(songProject(2, 3)).frame(4).flow).toBeCloseTo(first, 6)
+  })
+
+  it('keeps motion continuous where the song is not playing and without any analysis', () => {
+    const shifted = createAudioSampler(songProject(2, 0))
+    // Before the song clip starts the grid extrapolates backwards from the song's beats.
+    expect(shifted.frame(1.5)).toMatchObject({ loudness: 0, beatIndex: -2, beatPhase: 0.5 })
+    const bare = createAudioSampler(createProject())
+    expect(bare.frame(3)).toMatchObject({ loudness: 0, beatIndex: 6, beatPhase: 0, flow: 1.5 })
+  })
+
+  it('reports stem loudness and onsets only for separated stems', () => {
+    const project = songProject(0, 0)
+    const analysis = Object.values(project.analysis.audio)[0]!
+    expect(createAudioSampler(project).frame(2).stems).toEqual({})
+    analysis.stemFeatures = {
+      drums: { rate: 10, loudness: Array(101).fill(0.8), bands: [], bandEdgesHz: [], onsets: [2] },
+    }
+    const stems = createAudioSampler(project).frame(2).stems
+    expect(Object.keys(stems)).toEqual(['drums'])
+    expect(stems.drums?.loudness).toBeCloseTo(0.8)
+    expect(stems.drums?.onset).toBeCloseTo(1)
+    expect(createAudioSampler(project).frame(2.3).stems.drums?.onset).toBeLessThan(0.1)
   })
 })
