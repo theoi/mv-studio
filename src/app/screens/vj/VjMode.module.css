@@ -115,20 +115,6 @@
 .canvas {
   display: block;
   border-radius: 4px;
-  transition: filter 60ms linear;
-}
-
-.shake {
-  animation: shake 90ms linear infinite;
-}
-
-@keyframes shake {
-  25% {
-    transform: translate(3px, -2px);
-  }
-  75% {
-    transform: translate(-3px, 2px);
-  }
 }
 
 .playHint {
@@ -327,4 +313,18 @@
   background-color: var(--accent);
   box-shadow: 0 0 28px rgb(124 110 246 / 0.6);
   transform: scale(0.97);
+}
+
+.padEmpty {
+  background-color: transparent;
+  border: 1px dashed var(--border-strong);
+}
+
+.padEmpty .padName {
+  color: var(--text-3);
+}
+
+.padLearn {
+  box-shadow: inset 0 0 0 2px var(--accent-line);
+  animation: recPulse 1.2s ease-in-out infinite;
 }

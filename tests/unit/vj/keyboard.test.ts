@@ -33,6 +33,20 @@ describe('keyInput', () => {
     expect(keyInput(key('KeyA', { ctrlKey: true }), false)?.down).toBe(false)
     expect(keyInput(key('KeyA', { repeat: true }), true)?.repeat).toBe(true)
   })
+
+  it('leaves keys in open menus and dialogs to them, except key-ups', () => {
+    const inside = (selector: string | null) =>
+      ({
+        tagName: 'DIV',
+        isContentEditable: false,
+        getAttribute: () => null,
+        closest: (s: string) => (selector && s.includes(selector) ? {} : null),
+      }) as unknown as EventTarget
+    expect(keyInput(key('Escape', { target: inside('[role="menu"]') }), true)).toBeNull()
+    expect(keyInput(key('Space', { target: inside('[role="dialog"]') }), true)).toBeNull()
+    expect(keyInput(key('KeyQ', { target: inside('[role="menu"]') }), false)?.down).toBe(false)
+    expect(keyInput(key('KeyQ', { target: inside(null) }), true)?.code).toBe('KeyQ')
+  })
 })
 
 describe('attachKeyboard', () => {

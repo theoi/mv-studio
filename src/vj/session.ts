@@ -130,7 +130,14 @@ export interface TakeView {
 export interface VjSnapshot {
   /** 'empty': nothing on the timeline to perform over; 'no-song': no song set (VJ still works over the timeline). */
   problem: 'empty' | 'no-song' | null
-  transport: { state: PlaybackState; armed: boolean; recording: boolean; takeStart: Seconds | null }
+  transport: {
+    state: PlaybackState
+    armed: boolean
+    recording: boolean
+    takeStart: Seconds | null
+    /** Pad presses in the take being recorded. */
+    presses: number
+  }
   bank: { index: number; count: number }
   pads: Record<PadRow, (PadView | null)[]>
   takes: TakeView[]
@@ -340,6 +347,9 @@ export class VjSession {
         armed: this.settings.armed,
         recording: this.performance?.armed === true,
         takeStart: this.performance?.take.start ?? null,
+        presses: this.performance?.armed
+          ? this.performance.take.events.filter((e) => e.type === 'press').length
+          : 0,
       },
       bank: { index: this.bank, count: this.layout.clipBanks.length },
       pads: {
