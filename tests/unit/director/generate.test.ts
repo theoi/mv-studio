@@ -317,6 +317,7 @@ describe('generatePlanShots', () => {
     const store = memoryStore()
     const kept: string[] = []
     const billed: number[] = []
+    const keeping: number[] = []
     let settled = false
     const outcome = generatePlanShots({
       plan,
@@ -326,18 +327,21 @@ describe('generatePlanShots', () => {
       ctx,
       onShot: (shotId) => kept.push(shotId),
       onBilled: (usd) => billed.push(usd),
+      onStopping: (n) => keeping.push(n),
     })
       .catch((e: unknown) => e)
       .finally(() => (settled = true))
     await until(() => release.length === 2)
     controller.abort()
-    expect(ctx.updates.at(-1)).toBe('Stopping… keeping 2 clips that are downloading')
+    expect(ctx.updates.at(-1)).toBe('Stopping…')
+    expect(keeping.at(-1)).toBe(2)
     release[0]!()
     await until(() => kept.length === 1)
     // The other clip is still downloading, so the run waits for it instead of ending at the cancel.
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(settled).toBe(false)
-    expect(ctx.updates.at(-1)).toBe('Stopping… keeping 1 clip that is downloading')
+    expect(ctx.updates.at(-1)).toBe('Stopping…')
+    expect(keeping.at(-1)).toBe(1)
     release[1]!()
     const error = await outcome
     expect(error).toBeInstanceOf(JobError)

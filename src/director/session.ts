@@ -161,6 +161,8 @@ export type DirectorState =
       fraction: number
       message: string
       unit: GeneratedUnit
+      /** Set once Cancel was pressed while results fal.ai already made are downloading: how many are kept. */
+      stopping?: { keeping: number }
     }
   | {
       status: 'applied'
@@ -529,6 +531,10 @@ export class DirectorSession {
               if (this.job === handle && this.state.status === 'generating')
                 this.set({ ...this.state, done: counts.done, failed: counts.failed })
             },
+            onStopping: (keeping) => {
+              if (this.job === handle && this.state.status === 'generating')
+                this.set({ ...this.state, stopping: { keeping } })
+            },
           }),
       })
       this.job = handle
@@ -565,8 +571,8 @@ export class DirectorSession {
         if (failed) {
           warnings.push(
             failed === 1
-              ? `1 ${unit} couldn’t be generated. Retry it below; a dark placeholder marks where it goes.`
-              : `${plural(failed, unit)} couldn’t be generated. Retry them below; dark placeholders mark where they go.`,
+              ? `1 ${unit} couldn’t be generated. Retry it below; a dark placeholder marks its place.`
+              : `${plural(failed, unit)} couldn’t be generated. Retry them below; dark placeholders mark their place.`,
           )
         }
       } catch (error) {

@@ -21,7 +21,7 @@ draft. Everything it makes is ordinary project content created through `EditComm
 5. **Generation** (`generate.ts`): only after the user confirms. Each finished shot is kept immediately, so a
    cancel or a later failure never loses paid results. Requests go through `generateKeepingPaid()` (src/cloud): a
    cancel stops a request at once only until fal.ai has finished (and billed) it; a result downloading by then gets
-   30 s more to land and is kept, while the progress line says "Stopping… keeping 2 clips that are downloading".
+   30 s more to land and is kept, while the state's `stopping.keeping` counts them (see `generating` below).
    `onBilled` records each billed request once, even if its result is lost after, but not one fal.ai failed itself
    (a 5xx result, which it doesn't charge). Each request's own progress moves the bar, `onProgress` counts shots
    as they finish or fail, and clips (minutes each) report the time left.
@@ -145,7 +145,9 @@ removes clips whose line is gone or no longer has their words.
   a cost confirmation listing `cost.items`, then calls `apply({ confirmSpend: true })`. "Apply without AI shots"
   calls `apply({ skipGeneration: true })` and leaves dark placeholders.
 - `generating`: "Generating shot 3 of 12" with a progress bar and Cancel; `failed` counts shots that could not be
-  made while the rest go on. Cancel returns to `ready`, keeps the shots already made, and lowers the cost.
+  made while the rest go on. Cancel returns to `ready`, keeps the shots already made, and lowers the cost. While
+  results fal.ai already made are still downloading after Cancel, `stopping` is set: the subtitle and the progress
+  line say "Stopping…", "Keeping 2 clips that are downloading" goes under the bar, and Cancel is disabled.
 - Every state with a plan has `unit`: `'clip'` when all its AI shots are videos ("Generate 12 clips", "Retry 1
   failed clip"), else `'shot'`.
 - `applied`: summary, warnings, Undo (`undo()`; only while the draft is still the latest change) and, when

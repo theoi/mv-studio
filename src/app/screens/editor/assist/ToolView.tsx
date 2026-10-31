@@ -85,16 +85,22 @@ export function Steps({ steps, active }: { steps: string[]; active: number }) {
   )
 }
 
-/** A job's step and progress. `placeholder` names the first step until the job reports one (`label` names the bar). */
+/**
+ * A job's step and progress. `placeholder` names the first step until the job reports one (`label` names the bar).
+ * `note` goes on the line under the bar while there is no time left to show there.
+ */
 export function RunCard({
   job,
   label,
   placeholder,
+  note,
 }: {
   job?: JobSnapshot
   label: string
   placeholder?: string
+  note?: string
 }) {
+  const below = etaText(job) ?? note
   return (
     <div className={styles.runCard}>
       <div className={styles.jobTop}>
@@ -102,7 +108,7 @@ export function RunCard({
         <span className={`${styles.jobPct} tnum`}>{pct(job)}%</span>
       </div>
       <ProgressBar value={job?.progress.fraction ?? 0} label={label} />
-      {etaText(job) && <div className={styles.jobEta}>{etaText(job)}</div>}
+      {below && <div className={styles.jobEta}>{below}</div>}
     </div>
   )
 }
@@ -112,11 +118,14 @@ export function CancelButton({
   job,
   inline = false,
   onCancel,
+  disabled = false,
 }: {
   job?: JobSnapshot
   inline?: boolean
   /** After the cancel is requested, e.g. to move focus off the button before it goes away. */
   onCancel?: () => void
+  /** For a job that took the cancel but is still finishing (it stops on its own). */
+  disabled?: boolean
 }) {
   return (
     <Button
@@ -124,6 +133,7 @@ export function CancelButton({
       size={inline ? 'sm' : 'md'}
       block={!inline}
       icon={<X />}
+      disabled={disabled}
       onClick={() => {
         if (job) jobs.cancel(job.id)
         onCancel?.()

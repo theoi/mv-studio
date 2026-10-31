@@ -164,6 +164,7 @@ describe('DirectorSession', () => {
     for (let i = 0; i < 50 && provider.calls.length < 2; i++) await new Promise((r) => setTimeout(r, 0))
     expect(downloading).toHaveLength(1)
     session.cancel()
+    expect(session.getState()).toMatchObject({ status: 'generating', stopping: { keeping: 1 } })
     downloading[0]!()
     const after = ready(await applying)
     expect(after.preview.warnings).toContain('Generation stopped. 1 clip made so far is kept.')
@@ -253,7 +254,7 @@ describe('DirectorSession', () => {
     expect(applied.failedShots).toBe(1)
     // One note for the failure, pointing at Retry; fal.ai's own words go to the Retry button's tooltip.
     expect(applied.warnings).toContain(
-      '1 clip couldn’t be generated. Retry it below; a dark placeholder marks where it goes.',
+      '1 clip couldn’t be generated. Retry it below; a dark placeholder marks its place.',
     )
     expect(applied.warnings.filter((w) => w.includes('placeholder'))).toHaveLength(1)
     expect(applied.failedReason).toBe('fal.ai said: HTTP 500')

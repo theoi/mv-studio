@@ -375,14 +375,26 @@ function ReadyView({ state }: { state: StateOf<'ready'> }) {
 function GeneratingView({ state }: { state: StateOf<'generating'> }) {
   const job = useJobs().find((j) => j.id === state.jobId)
   const notice = useDirector((s) => s.cancelNotice)
-  const { unit, failed } = state
+  const { unit, failed, stopping } = state
   return (
     <ToolView
       title="Director"
-      subtitle={`Generating ${unit} ${Math.min(state.done + 1, state.total)} of ${state.total}`}
-      footer={<CancelButton job={job} />}
+      subtitle={
+        stopping
+          ? 'Stopping…'
+          : `Generating ${unit} ${Math.min(state.done + 1, state.total)} of ${state.total}`
+      }
+      footer={<CancelButton job={job} disabled={Boolean(stopping)} />}
     >
-      <RunCard job={job} label={`Generating ${unit}s`} />
+      <RunCard
+        job={job}
+        label={`Generating ${unit}s`}
+        note={
+          stopping?.keeping
+            ? `Keeping ${plural(stopping.keeping, unit)} that ${stopping.keeping === 1 ? 'is' : 'are'} downloading`
+            : undefined
+        }
+      />
       {failed > 0 && (
         <div className={styles.callout}>
           <AlertTriangle />

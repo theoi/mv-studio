@@ -87,6 +87,8 @@ export interface GeneratePlanOptions {
   onShot?: (shotId: string, asset: Asset) => void
   /** Once per request the provider finished and billed, with its estimated cost, even if its result is lost after. */
   onBilled?: (usd: number) => void
+  /** After a Cancel, while the run still waits for paid results: how many are downloading, to be kept. */
+  onStopping?: (keeping: number) => void
   /** After each shot settles: how many are finished (made or failed) and how many failed, of `total`. */
   onProgress?: (counts: { done: number; failed: number; total: number }) => void
   /** Requests in flight at once (default 2). */
@@ -135,15 +137,8 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
     shown = Math.max(shown, total ? Math.min(1, (finished + partial) / total) : 1)
     if (o.ctx.signal.aborted) {
       // After a Cancel the run still waits for the results that are downloading, so say the Cancel was received.
-      const keeping = [...underway.values()].filter((u) => u.downloading).length
-      o.ctx.progress({
-        fraction: shown,
-        stage: 'stopping',
-        message: keeping
-          ? `Stopping… keeping ${keeping} ${unit}${keeping === 1 ? ' that is' : 's that are'} downloading`
-          : 'Stopping…',
-        etaSeconds: undefined,
-      })
+      o.ctx.progress({ fraction: shown, stage: 'stopping', message: 'Stopping…', etaSeconds: undefined })
+      o.onStopping?.([...underway.values()].filter((u) => u.downloading).length)
       return
     }
     const waiting = queue.reduce((sum, r) => sum + (typical(r) ?? 0), 0)

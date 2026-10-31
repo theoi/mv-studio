@@ -474,7 +474,7 @@ test('drafts with AI video clips: priced per clip, each clip’s progress shows,
   const retry = page.getByRole('button', { name: /^Retry 1 failed clip · about \$\d+\.\d\d$/ })
   await expect(retry).toBeVisible({ timeout: 30_000 })
   await expect(
-    page.getByText('1 clip couldn’t be generated. Retry it below; a dark placeholder marks where it goes.'),
+    page.getByText('1 clip couldn’t be generated. Retry it below; a dark placeholder marks its place.'),
   ).toBeVisible()
   await expect(page.getByText(/not generated yet/)).toHaveCount(0)
   await expect(retry).toHaveAttribute('title', 'fal.ai said: Internal server error')
@@ -515,6 +515,7 @@ test('cancelling AI video clips stops the one underway at fal.ai and keeps the c
 test('a Cancel while a clip downloads says it is stopping, and keeps the clip fal.ai already made', async ({
   page,
 }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
   // The third clip's download stalls until released; the fourth stays in progress at fal.ai.
   const fal = await mockFalVideo(page, { heldDownload: 3, held: 4 })
   await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
@@ -524,7 +525,22 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
   await expect.poll(() => fal.submits.length, { timeout: 30_000 }).toBe(4)
   await page.getByRole('button', { name: 'Cancel' }).click()
 
-  await expect(page.getByText('Stopping… keeping 1 clip that is downloading')).toBeVisible()
+  // The whole panel agrees it is stopping: the subtitle, the card's line, and a disabled Cancel.
+  await expect(page.getByText('Keeping 1 clip that is downloading')).toBeVisible()
+  await expect(page.getByText('Stopping…', { exact: true })).toHaveCount(2)
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  // At 1280 the card's top line stays on one line, clear of the percent.
+  const top = page
+    .getByRole('progressbar', { name: 'Generating clips' })
+    .locator('xpath=preceding-sibling::div[1]')
+  const message = top.locator('span').first()
+  const percent = top.locator('span').last()
+  await expect(message).toHaveText('Stopping…')
+  await expect(percent).toHaveText(/^\d+%$/)
+  const m = (await message.boundingBox())!
+  const p = (await percent.boundingBox())!
+  expect(m.x + m.width + 4).toBeLessThanOrEqual(p.x)
+  expect(m.height).toBeLessThanOrEqual(p.height + 1)
   await page.screenshot({ path: testInfo.outputPath('director-video-stopping.png') })
   fal.release()
   await expect(page.getByText('Generation stopped. 3 clips made so far are kept.')).toBeVisible()
@@ -534,6 +550,7 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
   expect(fal.cancels).toEqual(['req-4'])
   expect(fal.submits).toHaveLength(4)
 })
+
 test('a tagged song names the project, and the title card shows its title and artist', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {
