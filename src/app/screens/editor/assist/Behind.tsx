@@ -217,10 +217,10 @@ export function BehindView() {
             {label}
           </Button>
           <div className={styles.costLine}>
-            <Lock /> Runs on this device · free
-            {download ? ` · ${formatBytes(download)} download, once` : ''}
-            {behindCount ? ` · ${plural(behindCount, 'clip')} already behind` : ''}
-            {noneSuitable ? ' · no clip has a person to cut out' : ''}
+            <Lock /> Runs on this device&nbsp;·&nbsp;free
+            {download ? `\u00a0· ${formatBytes(download)} download, once` : ''}
+            {behindCount ? `\u00a0· ${plural(behindCount, 'clip')} already behind` : ''}
+            {noneSuitable ? '\u00a0· no clip has a person to cut out' : ''}
           </div>
         </>
       }

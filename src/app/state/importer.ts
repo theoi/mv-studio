@@ -36,9 +36,12 @@ export function registerImportInput(input: HTMLInputElement | null): void {
   fileInput = input
 }
 
+/** Fonts go by extension: few systems give them a MIME type, and accept has no font/* wildcard. */
+const MEDIA_FILE_TYPES = 'audio/*,video/*,image/*,.ttf,.otf,.woff,.woff2,.cube'
+
 export function openImport(what: 'media' | 'song' = 'media'): void {
   if (!fileInput) return
-  fileInput.accept = what === 'song' ? 'audio/*' : 'audio/*,video/*,image/*,.cube'
+  fileInput.accept = what === 'song' ? 'audio/*' : MEDIA_FILE_TYPES
   fileInput.click()
 }
 

@@ -191,8 +191,10 @@
   color: var(--text-1);
 }
 
+/* Pages are flex columns in a scroller: without flex: none a row shrinks to its min-height and its text spills out. */
 .row {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-4);
   min-height: 44px;

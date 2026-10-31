@@ -108,7 +108,7 @@ test('Assist › Match analyzes the clips on request, picks clips for each part 
   // Background analysis is off in automated browsers, so Match offers to analyze, with its cost.
   await expect(assist.getByText('0 clips tagged on this device')).toBeVisible()
   await expect(assist.getByText(/^Your clips aren’t analyzed yet\./)).toBeVisible()
-  await expect(assist.getByText(/Runs on this device · free · \d+ MB download, once/)).toBeVisible()
+  await expect(assist.getByText(/Runs on this device\s·\sfree\s·\s\d+ MB download, once/)).toBeVisible()
   await expect(assist.getByRole('group', { name: /^Picks for / })).toHaveCount(0)
   await assist.getByRole('button', { name: 'Analyze footage' }).click()
   await expect(assist.getByText(/^Analyzing your footage… \d+ of \d+ clips/)).toBeVisible()

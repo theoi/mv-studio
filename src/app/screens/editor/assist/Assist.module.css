@@ -32,6 +32,11 @@
   line-height: var(--lh-md);
 }
 
+/* The box around the input shows the focus. */
+.askInput:focus-visible {
+  outline: none;
+}
+
 .askInput::placeholder {
   color: var(--text-3);
 }
@@ -335,9 +340,20 @@
   border-top: 1px solid var(--border-subtle);
 }
 
+/* When a narrow panel can't fit the buttons side by side they wrap, each onto a full-width line. On one line the
+   .grow button takes nearly all the spare width. */
 .footerRow {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.footerRow > * {
+  flex: 1 1 auto;
+}
+
+.footerRow > .grow {
+  flex-grow: 1000;
 }
 
 .grow {

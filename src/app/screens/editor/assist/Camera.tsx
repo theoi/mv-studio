@@ -182,7 +182,8 @@ export function CameraView() {
             {targets.length ? `Apply to ${plural(targets.length, 'image')}` : 'Apply to images'}
           </Button>
           <div className={styles.costLine}>
-            <Lock /> Runs on this device · free{download ? ` · ${formatBytes(download)} download, once` : ''}
+            <Lock /> Runs on this device&nbsp;·&nbsp;free
+            {download ? `\u00a0· ${formatBytes(download)} download, once` : ''}
           </div>
         </>
       }

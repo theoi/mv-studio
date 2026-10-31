@@ -1422,7 +1422,16 @@ export function Timeline() {
   const sections = sectionsOf(project)
   const lines = lyricLines(project)
   const duration = empty ? 90 : timelineDuration(project)
-  const contentW = duration * pps + 120
+  const [viewW, setViewW] = useState(0)
+  // Lanes reach the right edge, as the ruler does, when the song ends inside the view.
+  const contentW = Math.max(duration * pps + 120, viewW)
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setViewW(el.clientWidth - HEADER_W))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const stems = separatedStems(project)
   const stemTrack = songStemTrack(project)
   const mix = stemMix(project)

@@ -155,7 +155,9 @@ function SongCard({
       </span>
       <div className={styles.songInfo}>
         <div className={styles.songName}>
-          {song.title}{' '}
+          <span className={styles.songTitle} title={song.title}>
+            {song.title}
+          </span>
           <span className={styles.songMeta}>
             {format ? ` · ${format}` : ''}
             {duration ? ` · ${formatTime(duration)}` : ''}

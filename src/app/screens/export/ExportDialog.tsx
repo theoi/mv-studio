@@ -758,7 +758,7 @@ function ExportDialogBody() {
       title="Export"
       description="Make one or more videos from this project. What you see in the preview is what you get."
       width={phase === 'exporting' ? 640 : 920}
-      height={phase === 'exporting' ? undefined : 620}
+      height={phase === 'exporting' ? undefined : 780}
       footer={
         phase === 'setup' ? (
           <>

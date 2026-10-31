@@ -1042,7 +1042,7 @@ export function SettingsDialog() {
       onOpenChange={(o) => set({ dialog: o ? 'settings' : null })}
       title="Settings"
       width={860}
-      height={600}
+      height={720}
     >
       <div className={styles.layout}>
         <nav className={styles.nav} aria-label="Settings sections">

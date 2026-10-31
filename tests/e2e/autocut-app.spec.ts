@@ -183,7 +183,7 @@ test('with matching on, the first cut starts footage analysis (background analys
   await expect(
     assist.getByText(/^Your clips aren’t analyzed yet, so this cut picks them for variety/),
   ).toBeVisible()
-  await expect(assist.getByText(/Runs on this device · free · \d+ MB download, once/)).toBeVisible()
+  await expect(assist.getByText(/Runs on this device\s·\sfree\s·\s\d+ MB download, once/)).toBeVisible()
 
   await assist.getByRole('button', { name: 'Cut to the beat' }).click()
   await expect(assist.getByText(/so they were picked for variety/)).toBeVisible()

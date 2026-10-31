@@ -175,6 +175,8 @@ test('a transition mark sits on its clip’s top edge: the clip still trims and 
   await expect(page.getByRole('menuitem', { name: /^Copy/ })).toBeVisible()
   await expect(page.getByRole('menuitem', { name: /^Remove transition/ })).toHaveCount(0)
   await page.keyboard.press('Escape')
+  // The closed menu hands focus back to the clip from a timer: a Tab sent before it lands would be undone.
+  await expect(clip).toBeFocused()
 
   // In Tab order the mark comes right after its clip, and then the next clip on the track.
   const nextId = await page.evaluate((id) => {

@@ -264,7 +264,7 @@ button.songRow:hover {
 .songText {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -281,15 +281,20 @@ button.songRow:hover {
   font-size: var(--text-xs);
   line-height: var(--lh-xs);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* Gives way to the song's name and summary first: in the narrow library, at full width it pushed "9 sections" under
+   it. */
 .songWave {
   display: flex;
   align-items: center;
   gap: 1px;
-  width: 64px;
+  flex: 0 1000 64px;
+  min-width: 0;
   height: 22px;
-  flex: none;
+  overflow: hidden;
 }
 
 .songWave i {
