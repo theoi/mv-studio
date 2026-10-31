@@ -16,6 +16,8 @@ import { pluginRegistry } from '../engine/registry.ts'
 import { mediaStore } from '../media/mediaStore.ts'
 import { projectStore } from '../media/projectStore.ts'
 import * as model from '../model/index.ts'
+import * as library from '../plugins/library.ts'
+import * as looks from '../plugins/looks.ts'
 import { detectCapabilities } from '../shared/capabilities.ts'
 import { jobs } from '../shared/jobs.ts'
 import * as vision from '../vision/index.ts'
@@ -64,6 +66,7 @@ export function installHarness(): void {
     },
     analysis,
     shared: { jobs, detectCapabilities },
+    plugins: { library, looks },
     testing: { createCompositor, readPixels },
     vision,
     /** Files most recently set on #e2e-file-input (Playwright setInputFiles). */
