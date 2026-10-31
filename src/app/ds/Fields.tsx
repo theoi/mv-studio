@@ -1,0 +1,421 @@
+import { Collapsible, Select as RSelect, Slider as RSlider, Switch as RSwitch, ToggleGroup } from 'radix-ui'
+import {
+  forwardRef,
+  useRef,
+  useState,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from 'react'
+import { Check, ChevronDown, ChevronRight, Diamond, AudioWaveform, Search, X } from 'lucide-react'
+import { Tooltip } from './Tooltip.tsx'
+import styles from './Fields.module.css'
+
+export const Input = forwardRef<
+  HTMLInputElement,
+  InputHTMLAttributes<HTMLInputElement> & { mono?: boolean; trailing?: ReactNode }
+>(function Input({ className, mono, trailing, ...rest }, ref) {
+  return (
+    <span className={[styles.inputWrap, className].filter(Boolean).join(' ')}>
+      <input ref={ref} className={[styles.input, mono && styles.mono].filter(Boolean).join(' ')} {...rest} />
+      {trailing && <span className={styles.inputTrailing}>{trailing}</span>}
+    </span>
+  )
+})
+
+export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function TextArea({ className, ...rest }, ref) {
+    return <textarea ref={ref} className={[styles.textarea, className].filter(Boolean).join(' ')} {...rest} />
+  },
+)
+
+export function SearchInput({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+  ariaLabel?: string
+}) {
+  return (
+    <span className={styles.search}>
+      <Search className={styles.searchIcon} />
+      <input
+        className={styles.searchInput}
+        value={value}
+        placeholder={placeholder}
+        aria-label={ariaLabel ?? placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {value && (
+        <button className={styles.searchClear} aria-label="Clear search" onClick={() => onChange('')}>
+          <X />
+        </button>
+      )}
+    </span>
+  )
+}
+
+/** One inspector row: label, control, then the animate buttons. */
+export function FieldRow({
+  label,
+  children,
+  trailing,
+  hint,
+  stacked,
+}: {
+  label: string
+  children: ReactNode
+  trailing?: ReactNode
+  hint?: string
+  stacked?: boolean
+}) {
+  const row = (
+    <div className={[styles.row, stacked && styles.rowStacked].filter(Boolean).join(' ')}>
+      <span className={styles.rowLabel}>{label}</span>
+      <div className={styles.rowControl}>{children}</div>
+      {trailing !== undefined && <div className={styles.rowTrailing}>{trailing}</div>}
+    </div>
+  )
+  return hint ? (
+    <Tooltip label={hint} side="left">
+      {row}
+    </Tooltip>
+  ) : (
+    row
+  )
+}
+
+/** Keyframe diamond plus the "react to music" toggle that appears on hover or when active. */
+export function AnimateButtons({
+  keyed,
+  reactive,
+  onKey,
+  onReact,
+  property,
+}: {
+  keyed?: boolean
+  reactive?: boolean
+  onKey?: () => void
+  onReact?: () => void
+  property: string
+}) {
+  return (
+    <span className={styles.animate}>
+      <Tooltip
+        label={reactive ? `${property} reacts to the music` : 'React to music'}
+        description={
+          reactive
+            ? 'Driven by: Drums stem'
+            : 'Drive this value with loudness, a frequency band, beats or a stem'
+        }
+        side="left"
+      >
+        <button
+          className={[styles.animateBtn, styles.reactBtn, reactive && styles.reactOn]
+            .filter(Boolean)
+            .join(' ')}
+          aria-label={`React to music: ${property}`}
+          aria-pressed={!!reactive}
+          onClick={onReact}
+        >
+          <AudioWaveform />
+        </button>
+      </Tooltip>
+      <Tooltip label={keyed ? 'Keyframe at playhead' : 'Animate this'} shortcut="Alt K" side="left">
+        <button
+          className={[styles.animateBtn, keyed && styles.keyOn].filter(Boolean).join(' ')}
+          aria-label={`Add keyframe: ${property}`}
+          aria-pressed={!!keyed}
+          onClick={onKey}
+        >
+          <Diamond />
+        </button>
+      </Tooltip>
+    </span>
+  )
+}
+
+export function Section({
+  title,
+  children,
+  defaultOpen = true,
+  actions,
+  badge,
+}: {
+  title: string
+  children: ReactNode
+  defaultOpen?: boolean
+  actions?: ReactNode
+  badge?: ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <Collapsible.Root open={open} onOpenChange={setOpen} className={styles.section}>
+      <div className={styles.sectionHeader}>
+        <Collapsible.Trigger className={styles.sectionTrigger}>
+          <ChevronRight className={[styles.chevron, open && styles.chevronOpen].filter(Boolean).join(' ')} />
+          <span>{title}</span>
+          {badge}
+        </Collapsible.Trigger>
+        {actions && <div className={styles.sectionActions}>{actions}</div>}
+      </div>
+      <Collapsible.Content className={styles.sectionContent}>{children}</Collapsible.Content>
+    </Collapsible.Root>
+  )
+}
+
+interface NumberFieldProps {
+  value: number
+  onChange: (v: number) => void
+  /** Called when a scrub, typed edit or arrow-key step ends, e.g. to close an undo gesture. */
+  onCommit?: () => void
+  step?: number
+  min?: number
+  max?: number
+  unit?: string
+  precision?: number
+  prefix?: string
+  ariaLabel: string
+}
+
+/** Number input that can be scrubbed by dragging horizontally, typed into, or stepped with arrow keys. */
+export function NumberField({
+  value,
+  onChange,
+  onCommit,
+  step = 1,
+  min = -Infinity,
+  max = Infinity,
+  unit,
+  precision = 0,
+  prefix,
+  ariaLabel,
+}: NumberFieldProps) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const [scrubbing, setScrubbing] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const clamp = (v: number) => Math.min(max, Math.max(min, v))
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (document.activeElement === inputRef.current) return
+    e.preventDefault()
+    const startX = e.clientX
+    const startValue = value
+    let moved = false
+    const target = e.currentTarget as HTMLElement
+    target.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX
+      if (!moved && Math.abs(dx) > 2) {
+        moved = true
+        setScrubbing(true)
+      }
+      if (moved)
+        onChange(clamp(+(startValue + Math.round(dx / 2) * step * (ev.shiftKey ? 10 : 1)).toFixed(precision)))
+    }
+    const up = () => {
+      target.removeEventListener('pointermove', move)
+      target.removeEventListener('pointerup', up)
+      setScrubbing(false)
+      if (moved) onCommit?.()
+      if (!moved) {
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      }
+    }
+    target.addEventListener('pointermove', move)
+    target.addEventListener('pointerup', up)
+  }
+
+  return (
+    <span
+      className={[styles.number, scrubbing && styles.numberScrub].filter(Boolean).join(' ')}
+      onPointerDown={onPointerDown}
+    >
+      {prefix && <span className={styles.numberPrefix}>{prefix}</span>}
+      <input
+        ref={inputRef}
+        className={`${styles.numberInput} tnum`}
+        aria-label={ariaLabel}
+        value={draft ?? value.toFixed(precision)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (draft !== null && !Number.isNaN(parseFloat(draft))) onChange(clamp(parseFloat(draft)))
+          setDraft(null)
+          onCommit?.()
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') {
+            setDraft(null)
+            ;(e.target as HTMLInputElement).blur()
+          }
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault()
+            const d = (e.key === 'ArrowUp' ? 1 : -1) * step * (e.shiftKey ? 10 : 1)
+            onChange(clamp(+(value + d).toFixed(precision)))
+            setDraft(null)
+          }
+        }}
+      />
+      {unit && <span className={styles.numberUnit}>{unit}</span>}
+    </span>
+  )
+}
+
+export function Slider({
+  value,
+  onChange,
+  onCommit,
+  min = 0,
+  max = 100,
+  step = 1,
+  ariaLabel,
+}: {
+  value: number
+  onChange: (v: number) => void
+  onCommit?: () => void
+  min?: number
+  max?: number
+  step?: number
+  ariaLabel: string
+}) {
+  return (
+    <RSlider.Root
+      className={styles.slider}
+      value={[value]}
+      min={min}
+      max={max}
+      step={step}
+      onValueChange={(v) => onChange(v[0] ?? value)}
+      onValueCommit={() => onCommit?.()}
+    >
+      <RSlider.Track className={styles.sliderTrack}>
+        <RSlider.Range className={styles.sliderRange} />
+      </RSlider.Track>
+      <RSlider.Thumb className={styles.sliderThumb} aria-label={ariaLabel} />
+    </RSlider.Root>
+  )
+}
+
+export function Switch({
+  checked,
+  onCheckedChange,
+  ariaLabel,
+}: {
+  checked: boolean
+  onCheckedChange: (v: boolean) => void
+  ariaLabel: string
+}) {
+  return (
+    <RSwitch.Root
+      className={styles.switch}
+      checked={checked}
+      onCheckedChange={onCheckedChange}
+      aria-label={ariaLabel}
+    >
+      <RSwitch.Thumb className={styles.switchThumb} />
+    </RSwitch.Root>
+  )
+}
+
+export function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+  size = 'md',
+  block,
+}: {
+  value: T
+  onChange: (v: T) => void
+  options: { value: T; label: ReactNode; title?: string }[]
+  ariaLabel: string
+  size?: 'sm' | 'md'
+  block?: boolean
+}) {
+  return (
+    <ToggleGroup.Root
+      type="single"
+      value={value}
+      onValueChange={(v) => v && onChange(v as T)}
+      aria-label={ariaLabel}
+      className={[styles.segmented, size === 'sm' && styles.segmentedSm, block && styles.segmentedBlock]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      {options.map((o) => (
+        <ToggleGroup.Item
+          key={o.value}
+          value={o.value}
+          className={styles.segment}
+          title={o.title}
+          aria-label={o.title}
+        >
+          {o.label}
+        </ToggleGroup.Item>
+      ))}
+    </ToggleGroup.Root>
+  )
+}
+
+export function Select<T extends string>({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+  size = 'md',
+}: {
+  value: T
+  onChange: (v: T) => void
+  options: { value: T; label: string; description?: string }[]
+  ariaLabel: string
+  size?: 'sm' | 'md'
+}) {
+  return (
+    <RSelect.Root value={value} onValueChange={(v) => onChange(v as T)}>
+      <RSelect.Trigger
+        className={[styles.selectTrigger, size === 'sm' && styles.selectSm].filter(Boolean).join(' ')}
+        aria-label={ariaLabel}
+      >
+        <RSelect.Value />
+        <RSelect.Icon className={styles.selectIcon}>
+          <ChevronDown />
+        </RSelect.Icon>
+      </RSelect.Trigger>
+      <RSelect.Portal>
+        <RSelect.Content
+          className={styles.selectContent}
+          position="popper"
+          sideOffset={4}
+          collisionPadding={8}
+        >
+          <RSelect.Viewport>
+            {options.map((o) => (
+              <RSelect.Item key={o.value} value={o.value} className={styles.selectItem}>
+                <RSelect.ItemText>{o.label}</RSelect.ItemText>
+                {o.description && <span className={styles.selectDesc}>{o.description}</span>}
+                <RSelect.ItemIndicator className={styles.selectCheck}>
+                  <Check />
+                </RSelect.ItemIndicator>
+              </RSelect.Item>
+            ))}
+          </RSelect.Viewport>
+        </RSelect.Content>
+      </RSelect.Portal>
+    </RSelect.Root>
+  )
+}
+
+export function ColorField({ value, ariaLabel }: { value: string; ariaLabel: string }) {
+  return (
+    <span className={styles.color} aria-label={ariaLabel} role="button" tabIndex={0}>
+      <span className={styles.colorSwatch} style={{ background: value }} />
+      <span className="tnum">{value.toUpperCase()}</span>
+    </span>
+  )
+}

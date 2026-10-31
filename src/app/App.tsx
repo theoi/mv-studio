@@ -1,34 +1,32 @@
-import { useEffect, useState } from 'react'
-import { detectCapabilities, type RuntimeCapabilities } from '../shared/capabilities.ts'
+import '@fontsource-variable/inter'
+import { useEffect } from 'react'
+import { TooltipProvider } from './ds/Tooltip.tsx'
+import { initHashSync } from './state/hash.ts'
+import { useUi } from './state/ui.ts'
+import { StartScreen } from './screens/start/StartScreen.tsx'
+import { SetupScreen } from './screens/start/SetupScreen.tsx'
+import { Editor } from './screens/editor/Editor.tsx'
+import { VjMode } from './screens/vj/VjMode.tsx'
+import { SettingsDialog } from './screens/settings/SettingsDialog.tsx'
+import { Toaster } from './screens/common/Toaster.tsx'
+import { ReviewNav } from './screens/common/ReviewNav.tsx'
+import { useGlobalShortcuts } from './shortcuts.ts'
 
-// Placeholder shell. The design and app shell area replaces this screen.
 export function App() {
-  const [caps, setCaps] = useState<RuntimeCapabilities | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void detectCapabilities().then((c) => {
-      if (!cancelled) setCaps(c)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  useEffect(initHashSync, [])
+  useGlobalShortcuts()
+  const screen = useUi((s) => s.screen)
+  const review = useUi((s) => s.review)
 
   return (
-    <main className="placeholder">
-      <h1>MV Studio</h1>
-      <p>Turn a song into a music video, right in your browser. The studio is under construction.</p>
-      <dl className="caps" data-testid="capabilities">
-        <dt>Cross-origin isolated</dt>
-        <dd data-testid="cap-isolated">{caps ? String(caps.crossOriginIsolated) : '…'}</dd>
-        <dt>WASM threads</dt>
-        <dd data-testid="cap-threads">{caps ? caps.wasmThreads : '…'}</dd>
-        <dt>WebCodecs</dt>
-        <dd data-testid="cap-webcodecs">{caps ? String(caps.webCodecs) : '…'}</dd>
-        <dt>WebGPU</dt>
-        <dd data-testid="cap-webgpu">{caps ? String(caps.webgpu.available) : '…'}</dd>
-      </dl>
-    </main>
+    <TooltipProvider>
+      {screen === 'start' && <StartScreen />}
+      {screen === 'setup' && <SetupScreen />}
+      {screen === 'editor' && <Editor />}
+      {screen === 'vj' && <VjMode />}
+      <SettingsDialog />
+      <Toaster />
+      {review && <ReviewNav />}
+    </TooltipProvider>
   )
 }

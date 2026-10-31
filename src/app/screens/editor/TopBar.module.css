@@ -1,0 +1,189 @@
+.bar {
+  grid-area: top;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 2px;
+}
+
+.left,
+.right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.right {
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.home {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  transition: background-color var(--dur-fast);
+}
+
+.home:hover {
+  background: var(--bg-hover);
+}
+
+.project {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 28px;
+  margin-left: 2px;
+  padding: 0 6px 0 8px;
+  border-radius: var(--radius);
+  font-weight: var(--weight-medium);
+  transition: background-color var(--dur-fast);
+}
+
+.project:hover,
+.project[data-state='open'] {
+  background: var(--bg-hover);
+}
+
+.project svg {
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  flex: none;
+}
+
+.projectName {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.saved svg {
+  width: 13px;
+  height: 13px;
+}
+
+.divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 var(--space-2);
+  background: var(--border);
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: clamp(280px, 28vw, 420px);
+  height: 30px;
+  padding: 0 6px 0 10px;
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+  color: var(--text-3);
+  transition:
+    background-color var(--dur-fast),
+    box-shadow var(--dur-fast),
+    color var(--dur-fast);
+}
+
+.search:hover {
+  background: var(--bg-raised);
+  box-shadow: 0 0 0 1px var(--border);
+  color: var(--text-2);
+}
+
+.search > svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.searchText {
+  flex: 1;
+  text-align: left;
+  font-size: var(--text-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-softer);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  transition: background-color var(--dur-fast);
+  animation: fadeSlide var(--dur-slow) var(--ease-out);
+}
+
+.activity:hover {
+  background: var(--accent-soft);
+}
+
+@keyframes fadeSlide {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+
+.activityPct {
+  color: var(--text-2);
+}
+
+.activityMore {
+  color: var(--text-3);
+}
+
+.iconTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  color: var(--text-2);
+  transition:
+    background-color var(--dur-fast),
+    color var(--dur-fast);
+}
+
+.iconTrigger:hover,
+.iconTrigger[data-state='open'] {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.iconTrigger svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.75;
+}
+
+.export {
+  margin-left: var(--space-1);
+}

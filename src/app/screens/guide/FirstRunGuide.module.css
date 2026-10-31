@@ -1,0 +1,78 @@
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-guide);
+}
+
+.spot {
+  position: fixed;
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 2px var(--accent-line),
+    0 0 0 9999px rgb(4 4 7 / 0.62);
+  transition: all var(--dur-slow) var(--ease-out);
+  pointer-events: none;
+}
+
+.card {
+  position: fixed;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-dialog);
+  animation: cardIn var(--dur-slow) var(--ease-out);
+}
+
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    margin-top: 4px;
+  }
+}
+
+.count {
+  color: var(--accent-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.title {
+  margin-top: 2px;
+  font-size: var(--text-lg);
+  line-height: var(--lh-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.body {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: var(--text-md);
+  line-height: var(--lh-md);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--space-4);
+}
+
+.dots {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.18);
+  transition: all var(--dur) var(--ease-out);
+}
+
+.dots .dotOn {
+  width: 16px;
+  border-radius: 3px;
+  background: var(--accent-line);
+}

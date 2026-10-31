@@ -1,0 +1,180 @@
+.root {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: var(--space-4);
+  animation: fade var(--dur) var(--ease-out);
+}
+
+@keyframes fade {
+  from {
+    opacity: 0.4;
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.thumb {
+  flex: none;
+  width: 52px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 0 0 1px var(--border-subtle);
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+
+.icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.headerText {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.value {
+  width: 36px;
+  flex: none;
+  text-align: right;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.trailSpacer {
+  display: block;
+  width: 44px;
+}
+
+.padded {
+  padding: 0 var(--space-3) var(--space-2) var(--space-4);
+}
+
+.timedRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-2);
+}
+
+.lookCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 var(--space-3) var(--space-2) var(--space-4);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+}
+
+.lookThumb {
+  flex: none;
+  width: 44px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background-size: cover;
+  filter: contrast(1.25) saturate(1.4) hue-rotate(-12deg);
+}
+
+.lookText {
+  flex: 1;
+  min-width: 0;
+}
+
+.lookName {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.songBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) 0 var(--space-4);
+}
+
+.inlineActions {
+  display: flex;
+  gap: 2px;
+  padding: var(--space-1) var(--space-3) 0 calc(var(--space-4) - 8px);
+}
+
+.stackActions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+}
+
+.hint {
+  padding: var(--space-5) var(--space-4) 0;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.note {
+  padding: var(--space-1) var(--space-4) 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+}
+
+.effectRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) 0 var(--space-4);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius);
+  background: var(--bg-hover);
+}
+
+.effectIcon {
+  width: 14px;
+  height: 14px;
+  color: var(--accent-text);
+}
+
+.effectName {
+  flex: 1;
+  font-size: var(--text-sm);
+}
+
+.footerAction {
+  padding: var(--space-3) var(--space-3) 0 var(--space-4);
+}

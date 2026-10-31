@@ -23,15 +23,20 @@
   },
   "dependencies": {
     "@fal-ai/client": "~1.10.1",
+    "@fontsource-variable/inter": "^5.3.0",
     "@huggingface/transformers": "^4.3.2",
     "@mediabunny/aac-encoder": "1.65.0",
     "@mediapipe/tasks-vision": "^1.2.0",
+    "cmdk": "^1.1.1",
     "immer": "^11.2.9",
+    "lucide-react": "^1.65.0",
     "mediabunny": "1.65.0",
     "onnxruntime-web": "1.31.1",
+    "radix-ui": "^1.8.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
