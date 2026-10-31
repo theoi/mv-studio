@@ -46,8 +46,10 @@ export function formatUsd(usd: number): string {
   return `$${usd.toFixed(0)}`
 }
 
-export function formatEstimate(summary: Pick<CostSummary, 'usd' | 'approximate'>): string {
-  return `about ${formatUsd(summary.usd)}`
+/** "about $0.27", or "under $0.01" (never "about under $0.01"). */
+export function formatEstimate(summary: Pick<CostSummary, 'usd'>): string {
+  const usd = formatUsd(summary.usd)
+  return usd.startsWith('under') ? usd : `about ${usd}`
 }
 
 /** Whether the UI must ask before spending, based on the user's settings. */

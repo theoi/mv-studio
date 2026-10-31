@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { CloudError, cloudErrorInfo, redactSecrets } from '../../../src/cloud/errors.ts'
 import { CloudSettingsStore, MemoryStorage } from '../../../src/cloud/keys.ts'
 import { extractJson } from '../../../src/cloud/llm/json.ts'
-import { formatUsd, needsSpendConfirmation, sumCosts } from '../../../src/cloud/pricing.ts'
+import { formatEstimate, formatUsd, needsSpendConfirmation, sumCosts } from '../../../src/cloud/pricing.ts'
 import { CloudServices } from '../../../src/cloud/services.ts'
 import { SpendLedger } from '../../../src/cloud/spend.ts'
 import { JobRunner } from '../../../src/shared/jobs.ts'
@@ -112,6 +112,8 @@ describe('cost helpers', () => {
     expect(formatUsd(0.004)).toBe('under $0.01')
     expect(formatUsd(0.27)).toBe('$0.27')
     expect(formatUsd(12.4)).toBe('$12')
+    expect(formatEstimate({ usd: 0.27 })).toBe('about $0.27')
+    expect(formatEstimate({ usd: 0.004 })).toBe('under $0.01')
     const sum = sumCosts([
       { label: 'a', estimate: { usd: 0.2, approximate: false, breakdown: '', pricesCheckedOn: 'x' } },
       { label: 'b', estimate: { usd: 0.105, approximate: true, breakdown: '', pricesCheckedOn: 'x' } },

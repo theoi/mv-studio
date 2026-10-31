@@ -3,9 +3,10 @@ import { ArrowLeft, ArrowRight, AudioLines, Check, Film, Music2, Sparkles, Uploa
 import { Button } from '../../ds/Button.tsx'
 import { TextArea } from '../../ds/Fields.tsx'
 import { Badge, Spinner } from '../../ds/Feedback.tsx'
-import { startDirector } from '../../mock/actions.ts'
 import { sceneThumb, type SceneId } from '../../mock/art.ts'
 import { peaks, song } from '../../mock/song.ts'
+import { useCloud } from '../../state/cloud.ts'
+import { draftFromSetup } from '../../state/director.ts'
 import { openEditor } from '../../state/project.ts'
 import { set, useUi, type Kind } from '../../state/ui.ts'
 import { Logo } from '../common/Logo.tsx'
@@ -106,6 +107,8 @@ export function SetupScreen() {
   const kind = useUi((s) => s.kind)
   const hasSong = useUi((s) => s.setupSong)
   const [visual, setVisual] = useState('spectrum')
+  const [idea, setIdea] = useState('')
+  const falKey = useCloud().falKey
   const t = titles[kind]
 
   return (
@@ -205,12 +208,15 @@ export function SetupScreen() {
                 placeholder="Describe the video, for example: a dreamy night drive through a neon city, ending at sunrise"
                 rows={3}
                 aria-label="Describe your video"
+                value={idea}
+                onChange={(e) => setIdea(e.target.value)}
               />
               <div className={styles.note}>
                 <Info />
                 <span>
-                  Drafts work on this device with your media. Connect fal.ai in Settings to generate new
-                  shots; the cost is shown before anything is generated.
+                  {falKey
+                    ? 'With fal.ai connected, the draft adds AI shots. You see the price before anything is generated.'
+                    : 'Drafts work on this device with your media. Connect fal.ai in Settings to generate new shots; the cost is shown before anything is generated.'}
                 </span>
               </div>
             </>
@@ -225,7 +231,7 @@ export function SetupScreen() {
             disabled={!hasSong}
             onClick={() => {
               openEditor(kind)
-              if (kind === 'ai') startDirector()
+              if (kind === 'ai') draftFromSetup(idea)
             }}
           >
             {kind === 'ai' ? 'Draft my video' : 'Open the editor'}

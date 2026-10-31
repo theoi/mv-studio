@@ -271,7 +271,11 @@ async function askForBrief(
   const rules = ruleBrief(input)
   const messages = briefMessages(input, payload)
   for (let attempt = 0; attempt < 2; attempt++) {
-    ctx.progress({ stage: 'llm', message: attempt === 0 ? 'Asking your AI model for ideas' : 'Asking again' })
+    ctx.progress({
+      stage: 'llm',
+      fraction: attempt === 0 ? 0.4 : 0.6,
+      message: attempt === 0 ? 'Asking your AI model for ideas' : 'Asking again',
+    })
     const result = await client.callTools({
       messages,
       tools: [BRIEF_TOOL_DEFINITION],

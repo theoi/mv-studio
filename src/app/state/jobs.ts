@@ -24,7 +24,9 @@ export function isRunning(kind: string): boolean {
 
 export const JOB_KINDS = {
   stems: 'analysis.stems',
-  director: 'director.draft',
+  director: 'director.plan',
+  directorShots: 'director.generate',
+  ask: 'director.ask',
   autocut: 'edit.autocut',
   camera: 'vision.camera',
   cutout: 'vision.cutout',

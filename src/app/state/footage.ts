@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import type { Id, Project } from '../../model/index.ts'
 import type {
+  DirectorFootageMatcher,
+  FootageMatcher,
   FootageResult,
   FootageService,
   IndexingState,
@@ -38,14 +40,29 @@ export function setVisionBackendsForTests(backends: VisionServiceOptions['backen
   testBackends = backends
 }
 
+let directorDeps: { ranker: FootageMatcher; matcher: DirectorFootageMatcher } | undefined
+
+/** Clip matching for the director (src/director), once the vision service has loaded; undefined before. */
+export function directorFootage() {
+  return directorDeps
+}
+
 /** The app's vision service, shared by footage analysis and the vision tools (auto-cut, 3D camera, cutouts). */
 export function visionService(): Promise<VisionService> {
-  visionLoading ??= import('../../vision/index.ts').then((v) =>
-    v.createVisionService({
+  visionLoading ??= import('../../vision/index.ts').then((v) => {
+    const vision = v.createVisionService({
       backends: testBackends ?? v.createWorkerBackends(),
       cache: testBackends ? v.createMemoryCache() : v.createOpfsCache(),
-    }),
-  )
+    })
+    directorDeps = {
+      ranker: vision.matcher,
+      matcher: v.createDirectorFootageMatcher({
+        matcher: vision.matcher,
+        getProject: () => editor.getProject(),
+      }),
+    }
+    return vision
+  })
   return visionLoading
 }
 

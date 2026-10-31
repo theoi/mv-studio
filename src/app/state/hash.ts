@@ -1,4 +1,5 @@
-import { applyMockStems, startDirector, startMockExport, startStems } from '../mock/actions.ts'
+import { applyMockStems, startMockExport, startStems } from '../mock/actions.ts'
+import { directorRequest, draftVideo, useDirector } from './director.ts'
 import type { Project } from '../../model/index.ts'
 import { startAutoCut } from './autocut.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
@@ -103,8 +104,8 @@ function applyHash(hash: string) {
   if (stems === 'failed') startStems(0.27, true)
   if (stems === 'done') applyMockStems()
   const director = q.get('director')
-  if (director === 'running') startDirector(0.35)
-  if (director === 'done') startDirector(0.999)
+  if ((director === 'running' || director === 'done') && useDirector.getState().state.status === 'idle')
+    void draftVideo(directorRequest('', 'mine'))
   if (q.get('autocut') === 'done') startAutoCut({})
   const behind = q.get('behind') === '1'
   if (behind !== hasAnyCutout(editor.getProject())) {
