@@ -103,7 +103,10 @@ interface Size {
 /** Draws preview frames, on this thread or in the render worker. */
 interface FrameRenderer {
   readonly inWorker: boolean
-  /** With `untilDrawn`, finishes only once the GPU has drawn the frame (a still), not when it is queued. */
+  /**
+   * With `untilDrawn` (a still), finishes only once the GPU has drawn the frame, not when it is queued. The worker
+   * honors it for its first frame only.
+   */
   draw(project: Project, time: Seconds, size: Size, untilDrawn?: boolean): Promise<void>
   /** The GPU is still drawing the last frame, so drawing another now would block the main thread. */
   busy(): boolean
@@ -179,14 +182,19 @@ class WorkerRenderer implements FrameRenderer {
   private sentProject: Project | null = null
   /** Version of the frame last sent per key, so unchanged frames are not sent again. */
   private readonly sentVersions = new Map<string, number | undefined>()
+  private drawn = false
 
   constructor(worker: PreviewWorker, frames: VideoElementFrameProvider) {
     this.worker = worker
     this.frames = frames
   }
 
-  async draw(project: Project, time: Seconds, size: Size): Promise<void> {
-    await this.request(project, time, size, false)
+  async draw(project: Project, time: Seconds, size: Size, untilDrawn = false): Promise<void> {
+    // Only the first still waits for the GPU: until it is drawn the page canvas is blank, while later stills replace
+    // a frame already on screen, and waiting for each would slow drags (the next request would no longer overlap the
+    // GPU work).
+    await this.request(project, time, size, false, untilDrawn && !this.drawn)
+    this.drawn = true
   }
 
   async snapshot(project: Project, time: Seconds, size: Size): Promise<ImageBitmap> {
@@ -234,6 +242,7 @@ class WorkerRenderer implements FrameRenderer {
     time: Seconds,
     size: Size,
     capture: boolean,
+    untilDrawn = false,
   ): Promise<ImageBitmap | null> {
     const plan = visibleLayers(planFrame(project, time), project, time, size, this.sampler(project))
     const requests = videoRequests(project, plan, time)
@@ -272,7 +281,7 @@ class WorkerRenderer implements FrameRenderer {
     this.frames.endFrame()
     try {
       return await this.worker.render(
-        { time, size, project: this.projectChanges(project), videos, capture },
+        { time, size, project: this.projectChanges(project), videos, capture, untilDrawn },
         transfer,
       )
     } catch (error) {
