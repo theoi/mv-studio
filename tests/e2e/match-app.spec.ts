@@ -136,9 +136,10 @@ test('Assist › Match analyzes the clips on request, picks clips for each part 
   })
   const group = assist.getByRole('group', { name: 'Picks for Chorus' })
   await expect(group.getByRole('button')).toHaveCount(3)
-  expect(
-    await group.getByRole('button').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label'))),
-  ).toEqual(chorus.picks.map((p: { name: string }) => `Use ${p.name} in Chorus`))
+  // Match asks for picks again a moment after analysis stops, so until then they can miss the last clip.
+  await expect
+    .poll(() => group.getByRole('button').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label'))))
+    .toEqual(chorus.picks.map((p: { name: string }) => `Use ${p.name} in Chorus`))
   await expect(assist.getByRole('group', { name: /^Picks for / })).toHaveCount(
     await page.evaluate(() => {
       const project = window.mvStudio.app.project.editor.getProject()
