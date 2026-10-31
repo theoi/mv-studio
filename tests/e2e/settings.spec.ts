@@ -118,4 +118,7 @@ test('About opens the licenses of the code in this build, served with the site',
   await licenses.waitForURL(/\/mv-studio\/third-party-licenses\.txt$/)
   await expect(licenses.locator('body')).toContainText('Third-party software in MV Studio')
   await expect(licenses.locator('body')).toContainText(/^react \d+\.\d+\.\d+ \(MIT\)/m)
+  // Read as UTF-8 although the preview server, unlike Pages, sends no charset: curly quotes, not mojibake.
+  await expect(licenses.locator('body')).toContainText('“')
+  await expect(licenses.locator('body')).not.toContainText('â€')
 })

@@ -1005,7 +1005,7 @@ function SimplePage({ page }: { page: SettingsPage }) {
       <Row title="License" desc="MIT. Your videos are yours to use for anything.">
         <span />
       </Row>
-      <Row title="Third-party notices" desc="Fonts, libraries and AI models with their licenses.">
+      <Row title="Third-party notices" desc="Fonts, libraries and AI models with their licenses, on GitHub.">
         <Button
           size="sm"
           variant="ghost"

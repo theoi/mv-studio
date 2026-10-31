@@ -310,7 +310,9 @@ export function thirdPartyLicenses(version: string): { plugin: Plugin; workerPlu
           byKey.set(`${p.name}@${p.version}`, p)
         }
         const packages = [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name))
-        const emit = (fileName: string, source: string) => this.emitFile({ type: 'asset', fileName, source })
+        // A byte order mark, so browsers read the texts as UTF-8 from servers that send no charset (vite preview).
+        const emit = (fileName: string, source: string) =>
+          this.emitFile({ type: 'asset', fileName, source: `\uFEFF${source}` })
         emit(LICENSES_FILE, render(packages, root, version))
         if (packages.some((p) => p.name === 'onnxruntime-web')) {
           emit('licenses/onnxruntime/LICENSE.txt', read(root, 'licenses/onnxruntime/LICENSE') + '\n')
