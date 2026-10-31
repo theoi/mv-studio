@@ -4,7 +4,7 @@ MV Studio turns a song into a finished music video in your browser. Make a lyric
 
 **Open it:** https://theoi.github.io/mv-studio/ (latest desktop Google Chrome or Microsoft Edge)
 
-> **Project status: in development.** The hosted site is currently a clickable design preview that runs on sample data. The engine, export and AI modules described below are in this repository and are being connected to those screens one at a time. Until that work is done, some screens (including Settings) show sample results instead of working on your own files, and this README describes the finished studio.
+> **Early version.** MV Studio is in active development, so expect rough edges. Projects save automatically in your browser. To keep a copy of your own, open the menu under the project name and choose **Download project file**.
 
 <!-- Screenshot placeholder: the editor with a lyric video open (media library, preview, inspector, timeline). -->
 
@@ -17,54 +17,58 @@ MV Studio turns a song into a finished music video in your browser. Make a lyric
 | **Beat-cut footage** | Your own clips, cut automatically to the beats and sections of the song, ready to fine-tune by hand.                                          |
 | **AI music video**   | The AI director drafts a whole video from the song and an optional prompt. With a fal.ai key it can also generate the images and video clips. |
 
-Every automatic or AI result becomes normal project content (clips, keyframes, text and effects) that you can change by hand. Nothing is locked in.
+The Start screen has a starting point for each kind, plus a blank project and **Open project file**. Every automatic or AI result becomes normal project content (clips, keyframes, text and effects) that you can change by hand. Nothing is locked in.
 
 <!-- Screenshot placeholder: one frame of each kind of video, side by side. -->
 
 ## Local-first and private
 
 - **No account and no server.** MV Studio is a static web page. Your projects and imported media are stored in your browser's own storage on your computer.
-- **AI runs on your computer.** Beat and tempo detection, song sections, stem separation, subject cutout, depth and footage tagging all run in the browser. Each model downloads once and then works offline.
+- **AI runs on your computer.** Beat and tempo detection, song sections, stem separation, lyric timing, subject cutout, depth and footage tagging all run in the browser. Each model downloads once and then works offline.
 - **Your media never leaves the browser** unless you use a cloud feature that needs it. fal.ai receives your prompts, plus the image or audio you choose for image-to-video or cloud transcription. An LLM endpoint receives text only: a summary of the song analysis, the lyrics, clip names, footage tags and your request.
 - **Cloud features are optional** and use your own keys. Keys stay in this browser and are sent only to the service they belong to.
 
 ## Features
 
-The studio is built in four tiers. See the project status note above for what the hosted preview runs today.
+**Start and import**
 
-**Essential**
+- Bring in a song (MP3, WAV, FLAC, M4A/AAC, OGG, Opus), video (MP4, MOV, WebM, MKV), images (PNG, JPEG, GIF, WebP, AVIF, SVG) and fonts (TTF, OTF, WOFF, WOFF2). A song's title and artist tags name the project and the director's title card.
+- Open a recent project, duplicate one, or open a project file. A short guide shows you around the editor on your first visit.
 
-- Import a song (MP3, WAV, FLAC, M4A/AAC, OGG) with its waveform on the timeline, plus video clips and images.
-- Multi-track timeline: move, trim, split, snap, zoom, multi-select, copy and paste, reorder tracks, and mute, solo or lock them.
-- Text with fonts and styling, transitions, keyframe animation with easing, blend modes, color adjustments and filters.
-- Real-time preview in sync with the song, undo and redo, autosave, and a portable project file.
-- Aspect ratios 16:9, 9:16, 1:1 and 4:5, and MP4 export (H.264 video with AAC audio) at your choice of resolution and frame rate.
+**Edit**
 
-**Smart**
+- Multi-track timeline with the song's waveform: move, trim, split, snap, zoom, multi-select, copy and paste, and markers. Reorder tracks, and mute, solo, lock or hide them.
+- Clip speed, and the framing of each clip for every aspect ratio.
+- Text with fonts and styling, transitions, keyframe animation, blend modes, color adjustments and filters.
+- Real-time preview in sync with the song: loop a section, set the volume, zoom or go full screen, and move, scale and rotate the selected clip with handles on the canvas.
+- Undo and redo with an edit history, autosave, and a portable project file.
+- The command palette (Ctrl+K, or ⌘K on a Mac) finds commands by name, and most have a keyboard shortcut. Press **?** to see them, or open **Settings › Shortcuts**.
 
-- Tempo and beats within seconds, with beat markers and snap-to-beat. Bar starts follow after a further analysis of about a minute.
+**Music-aware tools**
+
+- Tempo and beats within seconds, with snap to beats. Bar starts follow after a further analysis of about a minute. If the tempo comes out at twice or half the speed, **Half** and **Double** fix it.
 - Song sections, the repeated chorus and an energy curve on the timeline.
 - Auto-cut of your footage to beats and sections.
-- Audio-reactive effects: drive any effect setting from loudness, frequency bands, onsets or a single stem.
+- React to music: drive any effect setting from the kick, snare, hi-hats, bass, vocals, loudness, beat or downbeat.
 - Stem separation into vocals, drums, bass and other, as an opt-in step.
 - Lyrics: paste them, or start from an automatic draft and correct it. Every word is then timed to the vocals, with karaoke highlighting and kinetic typography presets.
-- Visualizer presets and one-click looks that restyle the whole video.
+- Visualizer presets, generative shader visuals and one-click looks that restyle the whole video.
 
-**Futuristic**
+**AI**
 
+- AI director: drafts a complete, editable video. It works without any key. With an LLM it writes richer plans, and with fal.ai it can generate shots.
+- Plain-language edits ("make the chorus more intense") with any OpenAI-compatible LLM, including local ones.
 - AI images and AI video clips (text-to-video and image-to-video) through fal.ai, placed on the timeline as normal clips. The estimated cost is shown before anything is spent.
 - 3D camera moves on still images, using depth estimated on your computer.
 - Lyrics behind the subject: automatic cutout of people in footage, and click-to-select for other objects, so text sits between the subject and the background.
-- AI director: drafts a complete, editable video. It works without any key. With an LLM it writes richer plans, and with fal.ai it can generate shots.
-- Plain-language edits ("make the chorus more intense") with any OpenAI-compatible LLM, including local ones.
-- Generative shader visuals driven by the music.
-
-**Extras**
-
-- Auto-reframe between 9:16, 16:9 and 1:1 that follows the subject, and export of several formats from one project.
-- Chorus teasers (15 to 30 second highlights) and seamless looping clips in the style of Spotify Canvas.
-- Live VJ mode: trigger clips and effects from the keyboard or a MIDI controller during playback. The performance is recorded as editable timeline content.
 - Smart footage matching: local AI tags your clips by content, mood and motion, lets you search them by text, and suggests clips for each lyric line or section.
+
+**Export and perform**
+
+- MP4 export (H.264 video with AAC audio) at 720p, 1080p, 1440p or 4K and 24, 25, 30 or 60 fps, in 16:9, 9:16, 1:1 or 4:5. Quality presets (High, Balanced, Small) show the estimated file size and render time before you start.
+- Several formats from one project in one run, with auto-reframe between 16:9, 9:16, 1:1 and 4:5 that follows the subject.
+- Chorus teasers (15 to 30 second highlights) and seamless looping clips in the style of Spotify Canvas.
+- Live VJ mode: trigger clips and effects from the keyboard or a MIDI controller during playback, quantized to the beat or bar if you like. The performance is recorded as editable timeline content. The default MIDI mapping is in **Settings › VJ and MIDI**.
 
 <!-- Screenshot placeholder: the Assist panel with the director, and VJ mode. -->
 
@@ -145,8 +149,8 @@ Developer notes on the providers, error states and model choice are in [src/clou
 - Word timing can drift in dense, layered vocals and may need touching up by hand.
 - The tempo is sometimes found at half or twice the speed you feel (in testing, in about one in six songs). Half and Double next to the tempo, in Assist › Song analysis, fix it in one click.
 - Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable (in testing, for 12 of 13 such shots).
-- Subject cutout can still take a large animal close to the camera for a person: in testing, 1 of 27 shots with no one in them was offered for text behind the subject, down from 16. In a shot that also has a person, an animal can be cut out with them.
-- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename and adjust sections on the timeline.
+- Subject cutout can still take a large animal close to the camera for a person: in testing, 1 of 27 shots with no one in them was offered for text behind the subject. In a shot that also has a person, an animal can be cut out with them.
+- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename a section on the timeline by double-clicking it.
 - 3D camera moves on stills can bend or stretch edges around the subject, most visibly on large moves.
 - AI images and video clips need your fal.ai key and cost money per use. The richer director and plain-language edits need an LLM endpoint, in the cloud or on your computer.
 - Not planned: AI video or image generation on your computer, accounts or cloud project storage, phone and tablet layouts, and publishing directly to video platforms.
