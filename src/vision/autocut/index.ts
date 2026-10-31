@@ -160,7 +160,7 @@ export async function planAutoCut(
   })
   if (rhythm.grid.estimated)
     warnings.unshift(
-      `The song's beats aren't analyzed yet, so cuts follow an even ${Math.round(rhythm.grid.bpm)} BPM grid.`,
+      `The song’s beats aren’t analyzed yet, so cuts follow an even ${Math.round(rhythm.grid.bpm)} BPM grid.`,
     )
   progress(1, 'done')
   return {

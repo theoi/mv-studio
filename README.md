@@ -32,7 +32,8 @@ The Start screen has a starting point for each kind, plus a blank project and **
 
 ### Start and import
 
-- Bring in a song (MP3, WAV, FLAC, M4A/AAC, OGG, Opus), video (MP4, MOV, WebM, MKV), images (PNG, JPEG, GIF, WebP, AVIF, SVG) and fonts (TTF, OTF, WOFF, WOFF2). A song's title and artist tags name the project and the director's title card.
+- Bring in a song (MP3, WAV, FLAC, M4A/AAC, OGG, Opus), video (MP4, MOV, WebM, MKV), images (PNG, JPEG, GIF, WebP, AVIF, SVG), fonts (TTF, OTF, WOFF, WOFF2) and LUT files (.cube). A song's title and artist tags name the project and the director's title card.
+- Drag media from the Library onto the timeline, or drop files from your computer onto a track. They land at the time you drop them, on that track when it has room and takes that kind of media, otherwise on a new track. A locked track takes nothing.
 - Open a recent project, duplicate one, or open a project file. A short guide shows you around the editor on your first visit.
 
 ### Edit
@@ -40,17 +41,21 @@ The Start screen has a starting point for each kind, plus a blank project and **
 - Multi-track timeline with the song's waveform: move, trim, split, snap, zoom, multi-select, copy and paste, and markers. Reorder tracks, and mute, solo, lock or hide them.
 - Clip speed, and how each clip fills other aspect ratios: following the subject, fitted with bars, or cropped to the center.
 - Text with fonts and styling, transitions, keyframe animation, blend modes, color adjustments and filters.
+- Your own LUTs in the **Color grade** effect: its LUT choice ends with **Load a LUT file…** (a .cube file or a Hald CLUT image), and once one is loaded, **Manage LUT files…** shows how many color grades use each one and removes it.
+- Keyframes show as marks on the selected clip. Click one to go to it, choose its easing (Linear, Ease in, Ease out, Ease in and out or Hold) or remove it. In the Inspector, a value's diamond adds a keyframe at the playhead or removes the one there, and Alt+K (⌥K on a Mac) does the same for the value that has focus.
 - Real-time preview in sync with the song: loop a section, set the volume, zoom or go full screen, and move, scale and rotate the selected clip with handles on the canvas.
 - Undo and redo with an edit history, autosave, and a portable project file.
 - The command palette (Ctrl+K, or ⌘K on a Mac) finds commands by name, and many have a keyboard shortcut. Press **?** to see them, or open **Settings › Shortcuts**.
 
 ### Music-aware tools
 
-- Tempo and beats within seconds, with snap to beats. Bar starts follow after a further analysis of about a minute. If the tempo comes out at twice or half the speed, **Half** and **Double** fix it.
+- Tempo and beats within seconds. Bar starts follow after a further analysis of about a minute. The timeline's beat grid and ruler follow the detected beats and bar starts. If the tempo comes out at twice or half the speed, **Half** and **Double** fix it.
+- Snap to beats, bar starts, sections, clip edges or the playhead, each turned on or off in the menu next to the snapping button.
 - Song sections, the repeated chorus and an energy curve on the timeline.
+- Edit sections on the timeline: drag an edge to move it (two touching sections share their edge), or nudge it with the arrow keys (by a beat, or by a bar with Shift). **Inspector › Section** sets the name, color, start and end. Right-click a section to go to its start, select its clips, cut clips to it or export it as a teaser.
 - Auto-cut of your footage to beats and sections.
 - React to music: drive any effect setting from the kick, snare, hi-hats, bass, vocals, loudness, beat or downbeat.
-- Stem separation into vocals, drums, bass and other, as an opt-in step.
+- Stem separation into vocals, drums, bass and other, as an opt-in step. Each stem then gets a lane under the song track, where you can mute or solo it in the preview and the export.
 - Lyrics: paste them, or start from an automatic draft and correct it. Every word is then timed to the vocals, with karaoke highlighting and kinetic typography presets.
 - Visualizer presets, generative shader visuals and one-click looks that restyle the whole video.
 
@@ -146,12 +151,12 @@ Developer notes on the providers, error states and model choice are in [src/clou
 ## Known limits
 
 - Automatic lyric transcription of sung vocals is a draft and needs correcting. For precise word timing, paste the lyrics and separate the stems.
-- On a 4-core computer without a capable GPU, stem separation (and so precise lyric timing) takes about 1.2 to 1.7 times the song's length, depending on the computer (3.5 to 9 minutes for a 3 to 5 minute song). It is a little faster once the song's analysis has finished, so right after importing a song it takes longest. It needs about 3.5 GB of memory on top of what the browser already uses, which the studio shows as about 4 GB of free memory; the whole browser uses about 4 to 5 GB while it runs (1 GB = 1,000,000,000 bytes). The studio shows an estimate before you start; after your first separation, it is based on how fast your computer was. A capable GPU makes it faster.
+- On a 4-core computer without a capable GPU, stem separation (and so precise lyric timing) takes about 1.2 to 1.7 times the song's length, depending on the computer (3.5 to 9 minutes for a 3 to 5 minute song). It is a little faster once the song's analysis has finished, so right after importing a song it takes longest. It needs about 3.5 GB of memory on top of what the browser already uses, which the studio shows as about 4 GB of free memory; the whole browser uses about 4 to 5 GB while it runs (1 GB = 1,000,000,000 bytes). The studio shows an estimate before you start; after your first separation, it is based on how fast your computer was. A capable GPU is expected to make it faster, but that hasn't been measured yet.
 - Word timing can drift in dense, layered vocals and may need touching up by hand.
 - The tempo is sometimes found at half or twice the speed you feel (in testing, in about one in six songs). Half and Double next to the tempo, in Assist › Song analysis, fix it in one click.
 - Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable (in testing, for 12 of 13 such shots).
 - Subject cutout can still take a large animal close to the camera for a person: in testing, 1 of 27 shots with no one in them was offered for text behind the subject. In a shot that also has a person, an animal can be cut out with them.
-- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename a section on the timeline by double-clicking it.
+- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename a section by double-clicking it on the timeline, or in **Inspector › Section**.
 - 3D camera moves on stills can bend or stretch edges around the subject, most visibly on large moves.
 - AI images and video clips need your fal.ai key and cost money per use. The richer director and plain-language edits need an LLM endpoint, in the cloud or on your computer.
 - Not planned: AI video or image generation on your computer, accounts or cloud project storage, phone and tablet layouts, and publishing directly to video platforms.
