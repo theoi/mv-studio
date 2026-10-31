@@ -900,6 +900,10 @@ function SectionInspector({ id }: { id: string }) {
   const analysis = songAnalysis(project)
   if (!sec || !analysis) return <ProjectInspector />
   const bars = Math.round((sec.end - sec.start) / ((60 / (bpmOf(project) ?? 120)) * 4))
+  const plays =
+    sec.repeatGroup === undefined
+      ? 1
+      : sectionsOf(project).filter((s) => s.repeatGroup === sec.repeatGroup).length
   return (
     <>
       <Header
@@ -927,7 +931,7 @@ function SectionInspector({ id }: { id: string }) {
           />
         </FieldRow>
         <p className={styles.note}>
-          Found automatically{sec.repeatGroup !== undefined ? ', repeats 3 times' : ''}. Drag its edges on the
+          Found automatically{plays > 1 ? `, plays ${plays} times in the song` : ''}. Drag its edges on the
           timeline to adjust.
         </p>
       </Section>

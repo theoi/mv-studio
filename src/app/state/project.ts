@@ -131,11 +131,11 @@ export function timelineDuration(p: Project): number {
 
 export type SectionKind = 'intro' | 'verse' | 'pre' | 'chorus' | 'bridge' | 'outro'
 
-/** Color family for a section. Labels are user-editable, so repeat groups keep a renamed chorus colored as one. */
+/** Color family for a section, from its label. Repeat groups say nothing about the kind: verses repeat too. */
 export function sectionKind(s: SongSection): SectionKind {
   const l = s.label.toLowerCase()
   if (l.includes('pre')) return 'pre'
-  if (s.repeatGroup !== undefined || l.includes('chorus') || l.includes('hook')) return 'chorus'
+  if (l.includes('chorus') || l.includes('hook')) return 'chorus'
   if (l.includes('bridge')) return 'bridge'
   if (l.includes('intro')) return 'intro'
   if (l.includes('outro') || l.includes('end')) return 'outro'
