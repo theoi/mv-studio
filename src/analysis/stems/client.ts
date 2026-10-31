@@ -1,4 +1,4 @@
-import type { Asset, AudioAnalysis, EditCommand, Id, StemName } from '../../model/index.ts'
+import type { Asset, EditCommand, Id, StemName } from '../../model/index.ts'
 import { jobs, type JobHandle, type JobRunner } from '../../shared/jobs.ts'
 import { createWorkerClient, runWorkerCall } from '../../shared/worker.ts'
 import type { MediaStore } from '../../media/types.ts'
@@ -67,12 +67,12 @@ const STEM_LABELS: Record<StemName, string> = {
 
 /**
  * Stores separated stems in the media store and returns the edits that add them as assets and attach them, with
- * their features, to the song's analysis.
+ * their features, to the song's analysis. Dispatch them with `{ history: 'skip' }`: they write only the stems, so
+ * edits made during the separation are kept.
  */
 export async function stemEdits(
   result: StemSeparationResult,
   song: Pick<Asset, 'id' | 'name'>,
-  analysis: AudioAnalysis,
   store: Pick<MediaStore, 'storeBlob'>,
 ): Promise<EditCommand[]> {
   const base = song.name.replace(/\.[^.]+$/, '')
@@ -88,9 +88,6 @@ export async function stemEdits(
     stems[stem.name] = asset.id
     commands.push({ type: 'asset.add', asset })
   }
-  commands.push({
-    type: 'analysis.setAudio',
-    analysis: { ...analysis, stems, stemFeatures: result.stemFeatures },
-  })
+  commands.push({ type: 'analysis.setStems', assetId: song.id, stems, stemFeatures: result.stemFeatures })
   return commands
 }

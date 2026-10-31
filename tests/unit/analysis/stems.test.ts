@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { SEGMENT, type DemucsModel } from '../../../src/analysis/stems/demucs.ts'
 import { stemEdits } from '../../../src/analysis/stems/client.ts'
 import { createStemsApi } from '../../../src/analysis/stems/worker-api.ts'
-import type { Asset, AudioAnalysis } from '../../../src/model/types.ts'
+import type { Asset } from '../../../src/model/types.ts'
 import { JobError } from '../../../src/shared/jobs.ts'
 import { createWorkerClient, exposeWorker, type Endpoint } from '../../../src/shared/worker.ts'
 import { drumLoop, SR } from './synth.ts'
@@ -85,7 +85,6 @@ describe('stemEdits', () => {
         return { id: `asset-${stored.length}`, ...info } as Asset
       },
     }
-    const analysis: AudioAnalysis = { assetId: 'song', version: 'v', beats: [1, 2] }
     const audio = { data: new ArrayBuffer(8), mimeType: 'audio/webm', extension: '.webm' }
     const result = {
       device: 'wasm' as const,
@@ -98,15 +97,15 @@ describe('stemEdits', () => {
         vocals: { rate: 50, loudness: [0.5], bands: [[0.5]], bandEdgesHz: [20, 60], onsets: [] },
       },
     }
-    const commands = await stemEdits(result, { id: 'song', name: 'My Song.mp3' }, analysis, store)
+    const commands = await stemEdits(result, { id: 'song', name: 'My Song.mp3' }, store)
     expect(stored).toEqual([
       { name: 'My Song (vocals).webm', type: 'audio/webm', parent: 'song' },
       { name: 'My Song (drums).webm', type: 'audio/webm', parent: 'song' },
     ])
-    expect(commands.map((c) => c.type)).toEqual(['asset.add', 'asset.add', 'analysis.setAudio'])
-    const set = commands[2]
-    expect(set?.type === 'analysis.setAudio' && set.analysis).toEqual({
-      ...analysis,
+    expect(commands.map((c) => c.type)).toEqual(['asset.add', 'asset.add', 'analysis.setStems'])
+    expect(commands[2]).toEqual({
+      type: 'analysis.setStems',
+      assetId: 'song',
       stems: { vocals: 'asset-1', drums: 'asset-2' },
       stemFeatures: result.stemFeatures,
     })

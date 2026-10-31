@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ANALYZER_VERSION, analyzeSongFast, mergeRefinedAnalysis } from '../../../src/analysis/song.ts'
-import type { AudioAnalysis } from '../../../src/model/types.ts'
+import { ANALYZER_VERSION, analyzeSongFast } from '../../../src/analysis/song.ts'
 import { JobError } from '../../../src/shared/jobs.ts'
 import { chordPad, concat, drumLoop, fmeasure, mix, SR } from './synth.ts'
 
@@ -88,42 +87,5 @@ describe('analyzeSongFast', () => {
     expect(() =>
       analyzeSongFast('x', { sampleRate: SR, channels: [mono] }, { signal: controller.signal }),
     ).toThrow('Cancelled')
-  })
-})
-
-describe('mergeRefinedAnalysis', () => {
-  const fast: AudioAnalysis = {
-    assetId: 'a',
-    version: ANALYZER_VERSION,
-    tempo: { bpm: 120, confidence: 0.5 },
-    beats: [0.5, 1, 1.5],
-    downbeats: [0.5],
-    sections: [{ id: 's1', start: 0, end: 10, label: 'verse' }],
-  }
-  const refined = {
-    tempo: { bpm: 121, confidence: 0.95 },
-    beats: [0.49, 0.99, 1.49],
-    downbeats: [0.99],
-    sections: [{ id: 's2', start: 0, end: 9, label: 'intro' as const }],
-  }
-
-  it('replaces untouched fast results', () => {
-    const merged = mergeRefinedAnalysis(fast, fast, refined)
-    expect(merged.beats).toEqual(refined.beats)
-    expect(merged.downbeats).toEqual(refined.downbeats)
-    expect(merged.tempo).toEqual(refined.tempo)
-    expect(merged.sections).toEqual(refined.sections)
-  })
-
-  it('keeps sections and beats the user edited meanwhile', () => {
-    const edited = {
-      ...fast,
-      downbeats: [1],
-      sections: [{ id: 's1', start: 0, end: 10, label: 'chorus' as const }],
-    }
-    const merged = mergeRefinedAnalysis(edited, fast, refined)
-    expect(merged.downbeats).toEqual([1])
-    expect(merged.beats).toEqual(fast.beats)
-    expect(merged.sections).toEqual(edited.sections)
   })
 })
