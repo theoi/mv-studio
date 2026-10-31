@@ -1,9 +1,10 @@
 import { Layers, Music2 } from 'lucide-react'
-import { settingsForAspect, type AspectPreset } from '../../../../model/index.ts'
+import type { AspectPreset } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { ColorField, FieldRow, Section, Segmented, Select } from '../../../ds/Fields.tsx'
 import { formatBpm, plural } from '../../../format.ts'
 import { bpmOf, dispatch, hasSong, sectionsOf, useProject } from '../../../state/project.ts'
+import { changeAspect } from '../../../state/reframe.ts'
 import { openAssist } from '../../../state/ui.ts'
 import { LookSection } from './Look.tsx'
 import { Header } from './parts.tsx'
@@ -21,12 +22,7 @@ export function ProjectInspector() {
           <Segmented<AspectPreset>
             block
             value={aspect}
-            onChange={(v) =>
-              dispatch(
-                { type: 'project.updateSettings', settings: settingsForAspect(v, fps) },
-                { label: 'Change aspect ratio' },
-              )
-            }
+            onChange={changeAspect}
             ariaLabel="Aspect ratio"
             options={(['16:9', '9:16', '1:1', '4:5'] as const).map((v) => ({ value: v, label: v }))}
           />

@@ -88,15 +88,24 @@ function stillKey(project: Project, planned: PlannedOutput, time: number): strin
   return [versionOf(project), kind, aspect, reframe, `${start}-${end}`, time].join('|')
 }
 
+const CLIP_MODE_NOTES = {
+  auto: 'follows the subject',
+  fill: 'crops the center',
+  fit: 'shows the whole picture with bars',
+} as const
+
 function framingNote(
   project: Project,
   planned: PlannedOutput,
   adjusted: boolean,
+  clipMode: 'auto' | 'fill' | 'fit' | undefined,
   indexing: JobSnapshot | undefined,
 ): ReactNode {
   const { reframe } = planned.spec
-  if (reframe === 'fit') return 'Shows the whole picture with bars.'
   if (adjusted) return 'Adjusted by hand. Double-click the frame to reset this shot.'
+  if (clipMode && clipMode !== reframe)
+    return `This shot ${CLIP_MODE_NOTES[clipMode]}, as set in Inspector › Framing.`
+  if (reframe === 'fit') return 'Shows the whole picture with bars.'
   const unanalysed = planned.unanalysed.length
   if (unanalysed && indexing)
     return `Analyzing footage for framing… ${Math.round((indexing.progress.fraction ?? 0) * 100)}%`
@@ -156,8 +165,9 @@ function Frame({
   const shots = useMemo(() => (same ? [] : shotsOf(project, planned)), [same, project, planned])
   const index = shots.findIndex((s) => time >= s.start && time < s.end)
   const shot = shots[index]
-  const box = shot && spec.reframe !== 'fit' ? cropBox(project, planned, shot.clipId, time) : null
   const override = shot ? framingOverrides(project, spec.aspect)[shot.clipId] : undefined
+  const box =
+    shot && (override?.mode ?? spec.reframe) !== 'fit' ? cropBox(project, planned, shot.clipId, time) : null
   const anchor = shot ? shot.start : time
   const previous = [...shots].reverse().find((s) => s.start < anchor - 1e-3)
   const next = shots.find((s) => s.start > anchor + 1e-3)
@@ -287,7 +297,13 @@ function Frame({
       {!same && (
         <div className={styles.frameNote}>
           <span className={styles.noteText}>
-            {framingNote(project, planned, Boolean(override), indexing)}
+            {framingNote(
+              project,
+              planned,
+              Boolean(override && (override.offsetX || override.offsetY || (override.zoom ?? 1) !== 1)),
+              override?.mode,
+              indexing,
+            )}
           </span>
           {shots.length > 0 && (
             <span className={styles.shotStepper}>

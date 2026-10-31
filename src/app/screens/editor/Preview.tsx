@@ -15,7 +15,7 @@ import {
   Volume2,
 } from 'lucide-react'
 import type { PreviewController } from '../../../engine/preview.ts'
-import { settingsForAspect, type AspectPreset } from '../../../model/index.ts'
+import type { AspectPreset } from '../../../model/index.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
@@ -24,7 +24,6 @@ import { formatTimecode } from '../../format.ts'
 import { jumpSection } from '../../state/playback.ts'
 import {
   bpmOf,
-  dispatch,
   editor,
   hasSong,
   loadSample,
@@ -36,6 +35,7 @@ import {
 import { set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
+import { changeAspect } from '../../state/reframe.ts'
 import { PickOverlay } from './PickOverlay.tsx'
 import { connectPreview, fitStage, selectionOutline } from './stage.ts'
 import styles from './Preview.module.css'
@@ -230,17 +230,7 @@ export function Preview() {
                 key={a.value}
                 icon={a.icon}
                 description={a.desc}
-                onSelect={() => {
-                  dispatch({
-                    type: 'project.updateSettings',
-                    settings: settingsForAspect(a.value, project.settings.fps),
-                  })
-                  if (a.value !== '16:9')
-                    toast(`Switched to ${a.value}. Keep subjects in frame?`, {
-                      label: 'Reframe automatically',
-                      run: () => toast('Clips reframed around their subjects'),
-                    })
-                }}
+                onSelect={() => changeAspect(a.value)}
               >
                 {a.value}
               </MenuItem>

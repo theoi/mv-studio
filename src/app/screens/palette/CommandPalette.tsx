@@ -29,11 +29,11 @@ import {
   Save,
 } from 'lucide-react'
 import { Kbd } from '../../ds/Kbd.tsx'
-import { settingsForAspect } from '../../../model/index.ts'
 import { ask } from '../../state/ask.ts'
 import { openImport } from '../../state/importer.ts'
 import { downloadProjectFile, openProjectFile, saveNow } from '../../state/persistence.ts'
-import { addTextAtPlayhead, dispatch, editor, splitAtPlayhead, undo } from '../../state/project.ts'
+import { changeAspect } from '../../state/reframe.ts'
+import { addTextAtPlayhead, splitAtPlayhead, undo } from '../../state/project.ts'
 import { openAssist, set, useUi } from '../../state/ui.ts'
 import styles from './CommandPalette.module.css'
 
@@ -146,11 +146,7 @@ const actions: Action[] = [
     label: 'Switch to vertical 9:16',
     icon: <RectangleVertical />,
     keywords: 'aspect ratio shorts reels tiktok',
-    run: () =>
-      dispatch({
-        type: 'project.updateSettings',
-        settings: settingsForAspect('9:16', editor.getProject().settings.fps),
-      }),
+    run: () => changeAspect('9:16'),
   },
   {
     group: 'View',
