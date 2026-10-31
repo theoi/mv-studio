@@ -85,7 +85,8 @@ test('a visual dragged onto a free stretch of a track lands there, up to the nex
   const box = (await title.boundingBox())!
   await library
     .getByRole('button', { name: 'Particles', exact: true })
-    .dragTo(title, { targetPosition: { x: box.width + 40, y: box.height / 2 } })
+    // The drop point is on the lane past the title, so skip the check that the title itself is hit.
+    .dragTo(title, { targetPosition: { x: box.width + 40, y: box.height / 2 }, force: true })
   await expect(page.getByText(/^“Particles” added from 0:\d\d to \d+:\d\d$/)).toBeVisible()
   const added = await page.evaluate(() => {
     const project: Project = window.mvStudio.app.project.editor.getProject()
