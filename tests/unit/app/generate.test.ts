@@ -147,6 +147,24 @@ describe('placementCommands', () => {
     expect(clips[0]?.trackId).toBe(clips[1]?.trackId)
     expect(clips[0]?.trackId).not.toBe(track.id)
   })
+
+  it('gives each run at a time where every track is taken its own numbered track: Video 2, then Video 3', () => {
+    const project = createProject({ name: 'Busy' })
+    const track = createTrack('visual', 'Video')
+    const busy = createImageClip({ trackId: track.id, assetId: 'x', start: 0, duration: 60 })
+    editor.load({
+      ...project,
+      tracks: [...project.tracks.filter((t) => t.kind !== 'visual'), track],
+      clips: { [busy.id]: busy },
+    })
+    for (const id of ['a', 'b']) editor.dispatch(placementCommands(editor.getProject(), [image(id)], 12))
+    const p = editor.getProject()
+    const trackOf = (assetId: string) =>
+      p.tracks.find((t) =>
+        Object.values(p.clips).some((c) => 'assetId' in c && c.assetId === assetId && c.trackId === t.id),
+      )
+    expect([trackOf('a')?.name, trackOf('b')?.name]).toEqual(['Video 2', 'Video 3'])
+  })
 })
 
 it('never puts media on the Lyrics track, even where it is free', () => {
