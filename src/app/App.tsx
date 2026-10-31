@@ -5,9 +5,10 @@ import { Editor, SettingsDialog, SetupScreen, VjMode } from './lazy.ts'
 import { preloadDeferred } from './preload.ts'
 import { initHashSync } from './state/hash.ts'
 import { initPersistence, usePersistence } from './state/persistence.ts'
-import { useUi } from './state/ui.ts'
+import { set, useUi } from './state/ui.ts'
 import { StartScreen } from './screens/start/StartScreen.tsx'
 import { Deferred } from './screens/common/Deferred.tsx'
+import { LoadBoundary, ScreenLoadFailed } from './screens/common/LoadBoundary.tsx'
 import { Toaster } from './screens/common/Toaster.tsx'
 import { ReviewNav } from './screens/common/ReviewNav.tsx'
 import { useGlobalShortcuts } from './shortcuts.ts'
@@ -33,12 +34,14 @@ export function App() {
       {screen === 'start' && !restoring && <StartScreen />}
       {/* One boundary per screen: while the next screen's code loads, a shared boundary would only hide the
           previous screen, keeping its effects (preview, VJ session, key handlers) running. */}
-      <Suspense key={screen} fallback={<div className="screen-loading" />}>
-        {screen === 'editor' && !restoring && <Editor />}
-        {screen === 'setup' && <SetupScreen />}
-        {screen === 'vj' && <VjMode />}
-      </Suspense>
-      <Deferred when={settingsOpen}>
+      <LoadBoundary key={screen} fallback={(retry) => <ScreenLoadFailed screen={screen} retry={retry} />}>
+        <Suspense fallback={<div className="screen-loading" />}>
+          {screen === 'editor' && !restoring && <Editor />}
+          {screen === 'setup' && <SetupScreen />}
+          {screen === 'vj' && <VjMode />}
+        </Suspense>
+      </LoadBoundary>
+      <Deferred when={settingsOpen} name="Settings" close={() => set({ dialog: null })}>
         <SettingsDialog />
       </Deferred>
       <Toaster />

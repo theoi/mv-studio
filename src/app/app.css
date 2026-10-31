@@ -103,3 +103,11 @@ p {
   height: 100%;
   background: var(--bg-app);
 }
+
+.screen-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: var(--bg-app);
+}
