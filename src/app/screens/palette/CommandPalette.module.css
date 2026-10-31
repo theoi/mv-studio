@@ -102,6 +102,17 @@
   background: var(--bg-active);
 }
 
+.item[data-disabled='true'],
+.item[data-disabled='true'] .itemIcon {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.itemHint {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
 .itemIcon {
   display: flex;
   color: var(--text-2);

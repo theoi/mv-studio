@@ -753,3 +753,15 @@
   width: 12px;
   height: 12px;
 }
+
+/* Marquee selection: drag on empty track space */
+.marquee {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  border: 1px solid var(--accent-line);
+  border-radius: 2px;
+  background: var(--accent-soft);
+  pointer-events: none;
+}

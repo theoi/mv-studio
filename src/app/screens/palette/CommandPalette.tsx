@@ -2,6 +2,12 @@ import { Command } from 'cmdk'
 import { Dialog as RDialog } from 'radix-ui'
 import { useState, type ReactNode } from 'react'
 import {
+  ClipboardPaste,
+  Copy,
+  CopyPlus,
+  ScissorsLineDashed,
+  SquareDashedMousePointer,
+  Trash2,
   Upload,
   Scissors,
   Layers,
@@ -32,12 +38,21 @@ import {
 import { useReturnFocus } from '../../ds/focus.ts'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { ask } from '../../state/ask.ts'
+import {
+  copySelection,
+  cutSelection,
+  deleteSelection,
+  duplicateSelection,
+  hasClipboard,
+  paste,
+  selectAll,
+} from '../../state/clipboard.ts'
 import { openImport } from '../../state/importer.ts'
 import { downloadProjectFile, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { changeAspect } from '../../state/reframe.ts'
 import { saveFrameFromPalette } from '../../state/stills.ts'
 import { addTextAtPlayhead, splitAtPlayhead, undo } from '../../state/project.ts'
-import { openAssist, set, useUi } from '../../state/ui.ts'
+import { openAssist, selectedClipIds, set, useUi } from '../../state/ui.ts'
 import styles from './CommandPalette.module.css'
 
 interface Action {
@@ -46,6 +61,8 @@ interface Action {
   icon: ReactNode
   shortcut?: string
   keywords?: string
+  /** Shown disabled, with why, until there are selected clips or copied clips. */
+  needs?: 'clips' | 'clipboard'
   run: () => void
 }
 
@@ -115,6 +132,54 @@ const actions: Action[] = [
   },
   { group: 'Edit', label: 'Undo', icon: <Undo2 />, shortcut: 'Mod Z', run: undo },
   { group: 'Edit', label: 'Split at playhead', icon: <Scissors />, shortcut: 'S', run: splitAtPlayhead },
+  {
+    group: 'Edit',
+    label: 'Copy',
+    icon: <Copy />,
+    shortcut: 'Mod C',
+    needs: 'clips',
+    run: () => void copySelection(),
+  },
+  {
+    group: 'Edit',
+    label: 'Cut',
+    icon: <ScissorsLineDashed />,
+    shortcut: 'Mod X',
+    needs: 'clips',
+    run: () => void cutSelection(),
+  },
+  {
+    group: 'Edit',
+    label: 'Paste at playhead',
+    icon: <ClipboardPaste />,
+    shortcut: 'Mod V',
+    needs: 'clipboard',
+    run: paste,
+  },
+  {
+    group: 'Edit',
+    label: 'Duplicate',
+    icon: <CopyPlus />,
+    shortcut: 'Mod D',
+    needs: 'clips',
+    run: () => void duplicateSelection(),
+  },
+  {
+    group: 'Edit',
+    label: 'Delete',
+    icon: <Trash2 />,
+    shortcut: 'Delete',
+    needs: 'clips',
+    run: () => void deleteSelection(),
+  },
+  {
+    group: 'Edit',
+    label: 'Select all on the track',
+    icon: <SquareDashedMousePointer />,
+    shortcut: 'Mod A',
+    keywords: 'select every clip',
+    run: selectAll,
+  },
   { group: 'Edit', label: 'Add text', icon: <Type />, shortcut: 'T', run: addTextAtPlayhead },
   {
     group: 'Edit',
@@ -224,6 +289,15 @@ const groups = ['Suggested', 'Assist', 'Edit', 'View', 'Project', 'Settings', 'H
 export function CommandPalette() {
   const open = useUi((s) => s.paletteOpen)
   const returnFocus = useReturnFocus()
+  const hasClips = useUi((s) => selectedClipIds(s.selection).length > 0)
+  // Read when the palette renders: nothing can be copied while it is open.
+  const canPaste = open && hasClipboard()
+  const unavailable = (a: Action) =>
+    a.needs === 'clips' && !hasClips
+      ? 'Select clips first'
+      : a.needs === 'clipboard' && !canPaste
+        ? 'Copy clips first'
+        : null
   const [search, setSearch] = useState('')
   const close = () => {
     set({ paletteOpen: false })
@@ -278,18 +352,26 @@ export function CommandPalette() {
                 <Command.Group key={g} heading={g} className={styles.group}>
                   {actions
                     .filter((a) => a.group === g)
-                    .map((a) => (
-                      <Command.Item
-                        key={a.label}
-                        value={`${a.label} ${a.keywords ?? ''}`}
-                        className={styles.item}
-                        onSelect={() => run(a.run)}
-                      >
-                        <span className={styles.itemIcon}>{a.icon}</span>
-                        <span className={styles.itemLabel}>{a.label}</span>
-                        {a.shortcut && <Kbd keys={a.shortcut} />}
-                      </Command.Item>
-                    ))}
+                    .map((a) => {
+                      const reason = unavailable(a)
+                      return (
+                        <Command.Item
+                          key={a.label}
+                          value={`${a.label} ${a.keywords ?? ''}`}
+                          className={styles.item}
+                          disabled={reason !== null}
+                          onSelect={() => run(a.run)}
+                        >
+                          <span className={styles.itemIcon}>{a.icon}</span>
+                          <span className={styles.itemLabel}>{a.label}</span>
+                          {reason ? (
+                            <span className={styles.itemHint}>{reason}</span>
+                          ) : (
+                            a.shortcut && <Kbd keys={a.shortcut} />
+                          )}
+                        </Command.Item>
+                      )
+                    })}
                 </Command.Group>
               ))}
             </Command.List>

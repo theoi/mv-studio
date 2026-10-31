@@ -572,6 +572,12 @@ const shortcutGroups: { label: string; items: [string, string][] }[] = [
     label: 'Timeline',
     items: [
       ['Split at playhead', 'S'],
+      ['Copy', 'Mod C'],
+      ['Cut', 'Mod X'],
+      ['Paste at playhead', 'Mod V'],
+      ['Duplicate', 'Mod D'],
+      ['Delete', 'Delete'],
+      ['Select all on the track', 'Mod A'],
       ['Snapping', 'N'],
       ['Beat snapping', 'Shift N'],
       ['Add text', 'T'],

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AudioWaveform,
   ChevronDown,
@@ -23,6 +23,7 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import type {
+  Clip,
   FeatureSeries,
   LyricWord,
   Project,
@@ -62,6 +63,15 @@ import {
 } from '../../../state/lyricEdits.ts'
 import { lineTiming } from '../../../state/lyricTiming.ts'
 import {
+  copySelection,
+  cutSelection,
+  deleteSelection,
+  duplicateSelection,
+  hasClipboard,
+  isSelectableClip,
+  paste,
+} from '../../../state/clipboard.ts'
+import {
   bpmOf,
   dispatch,
   editor,
@@ -74,12 +84,22 @@ import {
   sectionsOf,
   sectionUnsure,
   songAnalysis,
+  splitAtPlayhead,
   timelineDuration,
   useProject,
   viewOf,
   type ClipView,
 } from '../../../state/project.ts'
-import { get, openAssist, select, set, toast, useUi } from '../../../state/ui.ts'
+import {
+  get,
+  openAssist,
+  select,
+  selectClips,
+  selectedClipIds,
+  set,
+  toast,
+  useUi,
+} from '../../../state/ui.ts'
 import {
   droppedLibraryItem,
   dropLibraryItem,
@@ -88,6 +108,7 @@ import {
 } from '../../../state/library.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
+import { registerReveal } from '../../../state/reveal.ts'
 import {
   separatedStems,
   songStemTrack,
@@ -125,6 +146,17 @@ function laneKind(p: Project, t: Track): LaneKind {
   if (clips.length && clips.every((c) => c.type === 'text' && c.lyricLineId)) return 'lyrics'
   if (clips.length && clips.every(isLookClip)) return 'look'
   return clips.length ? 'overlay' : 'video'
+}
+
+/** Top and height of each track's row in the timeline content, below the ruler and the song lane. */
+function trackRows(p: Project, empty: boolean): { trackId: string; top: number; height: number }[] {
+  let top = RULER_H + (empty ? 0 : SONG_H)
+  return p.tracks.map((t) => {
+    const height = laneHeight[laneKind(p, t)]
+    const row = { trackId: t.id, top, height }
+    top += height
+    return row
+  })
 }
 
 /* ---------- viewport canvas: redraws only the visible slice on scroll and zoom ---------- */
@@ -346,7 +378,8 @@ function freeSpot(spans: [number, number][], view: [number, number], width: numb
 
 /* ---------- toolbar ---------- */
 
-function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
+// Memoized, like TrackHeader: a drag re-renders the timeline on every pointer move, and neither depends on the clips.
+const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
   const snap = useUi((s) => s.snap)
   const beatSnap = useUi((s) => s.beatSnap)
   const showEnergy = useUi((s) => s.showEnergy)
@@ -461,7 +494,7 @@ function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
       </div>
     </div>
   )
-}
+})
 
 /* ---------- clips ---------- */
 
@@ -486,17 +519,35 @@ function snapTime(t: number, pps: number, edges: number[], beat: number | null, 
   return { t: best, snapped }
 }
 
-function ClipBlock({
-  clip,
-  pps,
-  selected,
-  onPointerDown,
-}: {
+interface ClipBlockProps {
   clip: ClipView
   pps: number
   selected: boolean
   onPointerDown: (e: React.PointerEvent, clip: ClipView, mode: DragMode) => void
-}) {
+}
+
+const sameView = (a: ClipView, b: ClipView) =>
+  (Object.keys(a) as (keyof ClipView)[]).every((k) => a[k] === b[k]) &&
+  Object.keys(a).length === Object.keys(b).length
+
+/** Shift or Mod click (or Enter or Space): adds the clip to the selection or takes it out. */
+function toggleInSelection(clipId: string) {
+  const picked = selectedClipIds(get().selection)
+  selectClips(picked.includes(clipId) ? picked.filter((id) => id !== clipId) : [...picked, clipId])
+}
+
+/** Re-renders only when its clip, zoom or selection changes: an edit to one clip leaves the others alone. */
+const ClipBlock = memo(
+  ClipBlockView,
+  (a, b) =>
+    a.selected === b.selected &&
+    a.pps === b.pps &&
+    a.onPointerDown === b.onPointerDown &&
+    sameView(a.clip, b.clip),
+)
+
+function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
+  const [canPaste, setCanPaste] = useState(false)
   const width = Math.max(2, (clip.end - clip.start) * pps)
   const isMedia = clip.kind === 'video' || clip.kind === 'image'
   const showLabel = width > 54
@@ -505,7 +556,14 @@ function ClipBlock({
       ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
       : clip.name
   return (
-    <ContextMenu>
+    <ContextMenu
+      onOpenChange={(open) => {
+        if (!open) return
+        // The menu acts on the selection, so a clip outside it becomes the selection.
+        if (!selectedClipIds(get().selection).includes(clip.id)) select({ type: 'clip', id: clip.id })
+        setCanPaste(hasClipboard())
+      }}
+    >
       <ContextMenuTrigger asChild>
         <div
           className={[styles.clip, styles[`clip-${clip.kind}`], selected && styles.selected]
@@ -522,10 +580,10 @@ function ClipBlock({
           aria-pressed={selected}
           onPointerDown={(e) => onPointerDown(e, clip, 'move')}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              select({ type: 'clip', id: clip.id })
-            }
+            if (e.key !== 'Enter' && e.key !== ' ') return
+            e.preventDefault()
+            if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(clip.id)
+            else select({ type: 'clip', id: clip.id })
           }}
         >
           {!isMedia && (
@@ -558,20 +616,26 @@ function ClipBlock({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem shortcut="S" onSelect={() => toast('Split at the playhead')}>
+        <ContextMenuItem shortcut="S" onSelect={() => splitAtPlayhead(clip.id)}>
           Split at playhead
         </ContextMenuItem>
-        <ContextMenuItem shortcut="Mod D">Duplicate</ContextMenuItem>
-        <ContextMenuItem shortcut="Mod C">Copy</ContextMenuItem>
+        <ContextMenuItem shortcut="Mod D" onSelect={duplicateSelection}>
+          Duplicate
+        </ContextMenuItem>
+        <ContextMenuItem shortcut="Mod C" onSelect={copySelection}>
+          Copy
+        </ContextMenuItem>
+        <ContextMenuItem shortcut="Mod X" onSelect={cutSelection}>
+          Cut
+        </ContextMenuItem>
+        <ContextMenuItem shortcut="Mod V" disabled={!canPaste} onSelect={paste}>
+          Paste
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
         <ContextMenuItem onSelect={() => openAssist('match')}>Find similar clips…</ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem
-          danger
-          shortcut="Delete"
-          onSelect={() => dispatch({ type: 'clip.remove', clipIds: [clip.id] })}
-        >
+        <ContextMenuItem danger shortcut="Delete" onSelect={deleteSelection}>
           Delete
         </ContextMenuItem>
       </ContextMenuContent>
@@ -581,7 +645,15 @@ function ClipBlock({
 
 /* ---------- headers ---------- */
 
-function TrackHeader({ track, height, stems }: { track: Track; height: number; stems?: StemMix | null }) {
+const TrackHeader = memo(function TrackHeader({
+  track,
+  height,
+  stems,
+}: {
+  track: Track
+  height: number
+  stems?: StemMix | null
+}) {
   const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
     dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
   const isAudio = track.kind === 'audio'
@@ -654,7 +726,7 @@ function TrackHeader({ track, height, stems }: { track: Track; height: number; s
       )}
     </div>
   )
-}
+})
 
 /** A stem lane's header under the song track: mute and solo for that stem of the song. */
 function StemHeader({ name, track }: { name: StemName; track: Track | undefined }) {
@@ -833,9 +905,12 @@ function Playhead({ height, head }: { height?: number; head?: boolean }) {
 
 export function Timeline() {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const marqueeRef = useRef<HTMLDivElement>(null)
   const project = useProject()
   const pps = useUi((s) => s.pxPerSec)
   const selection = useUi((s) => s.selection)
+  const selIds = useMemo(() => new Set(selectedClipIds(selection)), [selection])
   const showEnergy = useUi((s) => s.showEnergy)
   const beatSnap = useUi((s) => s.beatSnap)
   const [snapLine, setSnapLine] = useState<number | null>(null)
@@ -980,12 +1055,44 @@ export function Timeline() {
     [],
   )
 
-  const fit = () => {
+  const fit = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
     set({ pxPerSec: Math.max(MIN_PPS, (el.clientWidth - HEADER_W - 24) / duration) })
     requestAnimationFrame(() => (el.scrollLeft = 0))
-  }
+  }, [duration])
+
+  // Pasted or duplicated clips can land off screen, or on a new track that pushes them down.
+  useEffect(
+    () =>
+      registerReveal((ids) =>
+        requestAnimationFrame(() => {
+          const el = scrollRef.current
+          const p = editor.getProject()
+          const clips = ids.flatMap((id) => (p.clips[id] ? [p.clips[id]] : []))
+          if (!el || !clips.length) return
+          const rows = new Map(trackRows(p, !hasSong(p)).map((r) => [r.trackId, r]))
+          const spans = clips.flatMap((c) => {
+            const row = rows.get(c.trackId)
+            return row ? [row] : []
+          })
+          const pps = get().pxPerSec
+          const x0 = Math.min(...clips.map((c) => c.start)) * pps
+          const x1 = Math.max(...clips.map((c) => c.start + c.duration)) * pps
+          const visW = el.clientWidth - HEADER_W
+          if (x0 < el.scrollLeft || x1 > el.scrollLeft + visW)
+            el.scrollLeft = Math.max(0, x0 - Math.max(24, (visW - (x1 - x0)) / 2))
+          if (!spans.length) return
+          const top = Math.min(...spans.map((r) => r.top))
+          const bottom = Math.max(...spans.map((r) => r.top + r.height))
+          // The ruler row stays at the top while scrolling, over the first RULER_H pixels.
+          if (top < el.scrollTop + RULER_H) el.scrollTop = top - RULER_H
+          else if (bottom > el.scrollTop + el.clientHeight)
+            el.scrollTop = Math.min(top - RULER_H, bottom - el.clientHeight)
+        }),
+      ),
+    [],
+  )
 
   const scrubFrom = (e: React.PointerEvent<HTMLDivElement>) => {
     const lane = e.currentTarget
@@ -1002,68 +1109,188 @@ export function Timeline() {
     lane.addEventListener('pointerup', up)
   }
 
-  const onClipPointerDown = (e: React.PointerEvent, clip: ClipView, mode: DragMode) => {
-    if (e.button !== 0) return
-    e.preventDefault()
-    select({ type: 'clip', id: clip.id })
-    const p = editor.getProject()
-    const track = p.tracks.find((t) => t.id === clip.trackId)
-    if (track?.locked) {
-      toast(`The ${track.name} track is locked. Unlock it to edit.`)
-      return
-    }
-    const same = clipsOnTrack(p, clip.trackId).filter((c) => c.id !== clip.id)
-    const min = same
-      .filter((c) => c.start + c.duration <= clip.start + 0.001)
-      .reduce((a, c) => Math.max(a, c.start + c.duration), 0)
-    const max = same
-      .filter((c) => c.start >= clip.end - 0.001)
-      .reduce((a, c) => Math.min(a, c.start), duration)
-    const edges = same.flatMap((c) => [c.start, c.start + c.duration])
-    const sectionStarts = sectionsOf(p).map((s) => s.start)
-    const key = `drag:${e.pointerId}:${clip.id}:${Date.now()}`
-    const x0 = e.clientX
-    let moved = false
-    const target = e.currentTarget as HTMLElement
-    target.setPointerCapture(e.pointerId)
-    const move = (ev: PointerEvent) => {
-      const dx = ev.clientX - x0
-      if (!moved && Math.abs(dx) < 3) return
-      moved = true
-      const scale = get().pxPerSec
-      const dt = dx / scale
-      const len = clip.end - clip.start
-      if (mode === 'move') {
-        const r = snapTime(clip.start + dt, scale, edges, beat, sectionStarts)
-        const start = Math.min(max - len, Math.max(min, r.t))
-        setSnapLine(r.snapped !== null && Math.abs(r.snapped - start) < 0.001 ? r.snapped : null)
-        dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start }] }, { coalesceKey: key })
-      } else if (mode === 'start') {
-        const r = snapTime(clip.start + dt, scale, edges, beat, sectionStarts)
-        const start = Math.min(clip.end - 0.25, Math.max(min, r.t))
-        setSnapLine(r.snapped)
-        dispatch(
-          { type: 'clip.trim', clipId: clip.id, start, duration: clip.end - start },
-          { coalesceKey: key },
-        )
-      } else {
-        const r = snapTime(clip.end + dt, scale, edges, beat, sectionStarts)
-        const end = Math.max(clip.start + 0.25, Math.min(max, r.t))
-        setSnapLine(r.snapped)
-        dispatch(
-          { type: 'clip.trim', clipId: clip.id, start: clip.start, duration: end - clip.start },
-          { coalesceKey: key },
-        )
+  const onClipPointerDown = useCallback(
+    (e: React.PointerEvent, clip: ClipView, mode: DragMode) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      const picked = selectedClipIds(get().selection)
+      if (mode === 'move' && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+        toggleInSelection(clip.id)
+        return
       }
+      // Dragging a clip of a multi-selection moves them all; trimming acts on one clip.
+      const group = mode === 'move' && picked.length > 1 && picked.includes(clip.id)
+      if (!group) select({ type: 'clip', id: clip.id })
+      const p = editor.getProject()
+      const self = p.clips[clip.id]
+      if (!self) return
+      const moving = (group ? picked : [clip.id]).flatMap((id) => {
+        const c = p.clips[id]
+        return c ? [c] : []
+      })
+      const locked = p.tracks.find((t) => t.locked && moving.some((c) => c.trackId === t.id))
+      if (locked) {
+        toast(`The ${locked.name} track is locked. Unlock it to edit.`)
+        return
+      }
+      const movingIds = new Set(moving.map((c) => c.id))
+      const bounds = (c: Clip) => {
+        const others = clipsOnTrack(p, c.trackId).filter((o) => !movingIds.has(o.id))
+        const end = c.start + c.duration
+        return {
+          min: others
+            .filter((o) => o.start + o.duration <= c.start + 0.001)
+            .reduce((a, o) => Math.max(a, o.start + o.duration), 0),
+          max: others.filter((o) => o.start >= end - 0.001).reduce((a, o) => Math.min(a, o.start), duration),
+        }
+      }
+      const { min, max } = bounds(self)
+      // How far the whole selection can move before one of its clips meets a clip that stays.
+      let minShift = -Infinity
+      let maxShift = Infinity
+      for (const c of moving) {
+        const b = bounds(c)
+        minShift = Math.max(minShift, b.min - c.start)
+        maxShift = Math.min(maxShift, b.max - (c.start + c.duration))
+      }
+      const same = clipsOnTrack(p, clip.trackId).filter((c) => !movingIds.has(c.id))
+      const edges = same.flatMap((c) => [c.start, c.start + c.duration])
+      const sectionStarts = sectionsOf(p).map((s) => s.start)
+      const key = `drag:${e.pointerId}:${clip.id}:${Date.now()}`
+      const x0 = e.clientX
+      let moved = false
+      const target = e.currentTarget as HTMLElement
+      target.setPointerCapture(e.pointerId)
+      const move = (ev: PointerEvent) => {
+        const dx = ev.clientX - x0
+        if (!moved && Math.abs(dx) < 3) return
+        moved = true
+        const scale = get().pxPerSec
+        const dt = dx / scale
+        if (mode === 'move') {
+          const r = snapTime(clip.start + dt, scale, edges, beat, sectionStarts)
+          const shift = Math.min(maxShift, Math.max(minShift, r.t - clip.start))
+          setSnapLine(
+            r.snapped !== null && Math.abs(r.snapped - (clip.start + shift)) < 0.001 ? r.snapped : null,
+          )
+          dispatch(
+            { type: 'clip.move', moves: moving.map((c) => ({ clipId: c.id, start: c.start + shift })) },
+            { coalesceKey: key },
+          )
+        } else if (mode === 'start') {
+          const r = snapTime(clip.start + dt, scale, edges, beat, sectionStarts)
+          const start = Math.min(clip.end - 0.25, Math.max(min, r.t))
+          setSnapLine(r.snapped)
+          dispatch(
+            { type: 'clip.trim', clipId: clip.id, start, duration: clip.end - start },
+            { coalesceKey: key },
+          )
+        } else {
+          const r = snapTime(clip.end + dt, scale, edges, beat, sectionStarts)
+          const end = Math.max(clip.start + 0.25, Math.min(max, r.t))
+          setSnapLine(r.snapped)
+          dispatch(
+            { type: 'clip.trim', clipId: clip.id, start: clip.start, duration: end - clip.start },
+            { coalesceKey: key },
+          )
+        }
+      }
+      const up = () => {
+        editor.endGesture()
+        setSnapLine(null)
+        if (!moved && group) select({ type: 'clip', id: clip.id })
+        target.removeEventListener('pointermove', move)
+        target.removeEventListener('pointerup', up)
+      }
+      target.addEventListener('pointermove', move)
+      target.addEventListener('pointerup', up)
+    },
+    [beat, duration],
+  )
+
+  /** Drag on empty track space: selects the clips the rectangle touches (added to the selection with Shift or Mod). */
+  const startMarquee = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || e.target !== e.currentTarget) return
+    const content = contentRef.current
+    const box = marqueeRef.current
+    if (!content || !box) return
+    const lane = e.currentTarget
+    const origin = content.getBoundingClientRect()
+    const x0 = e.clientX - origin.left
+    const y0 = e.clientY - origin.top
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey
+    const before = get().selection
+    const base = additive ? selectedClipIds(before) : []
+    const p = editor.getProject()
+    const rows = trackRows(p, empty)
+    let pointer = { x: e.clientX, y: e.clientY }
+    let moved = false
+    let frame = 0
+    let shown: string | null = null
+    lane.setPointerCapture(e.pointerId)
+    const update = () => {
+      frame = 0
+      const r = content.getBoundingClientRect()
+      const x1 = pointer.x - r.left
+      const y1 = pointer.y - r.top
+      const left = Math.max(HEADER_W, Math.min(x0, x1))
+      const right = Math.max(left, x0, x1)
+      const top = Math.min(y0, y1)
+      const bottom = Math.max(y0, y1)
+      box.style.transform = `translate(${left}px, ${top}px)`
+      box.style.width = `${right - left}px`
+      box.style.height = `${bottom - top}px`
+      box.hidden = false
+      const scale = get().pxPerSec
+      const t0 = (left - HEADER_W) / scale
+      const t1 = (right - HEADER_W) / scale
+      const tracks = new Set(
+        rows.filter((row) => row.top < bottom && row.top + row.height > top).map((row) => row.trackId),
+      )
+      const hits = Object.values(p.clips)
+        .filter(
+          (c) => tracks.has(c.trackId) && isSelectableClip(c) && c.start < t1 && c.start + c.duration > t0,
+        )
+        .sort((a, b) => a.start - b.start)
+        .map((c) => c.id)
+      const ids = [...new Set([...base, ...hits])]
+      const key = ids.join(',')
+      if (key === shown) return
+      shown = key
+      selectClips(ids)
+    }
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return
+      moved = true
+      pointer = { x: ev.clientX, y: ev.clientY }
+      frame ||= requestAnimationFrame(update)
+    }
+    const end = () => {
+      cancelAnimationFrame(frame)
+      box.hidden = true
+      lane.removeEventListener('pointermove', move)
+      lane.removeEventListener('pointerup', up)
+      lane.removeEventListener('pointercancel', up)
+      window.removeEventListener('keydown', onKey, true)
     }
     const up = () => {
-      editor.endGesture()
-      setSnapLine(null)
-      target.removeEventListener('pointermove', move)
-      target.removeEventListener('pointerup', up)
+      end()
+      if (moved) update()
+      else if (!additive) set({ selection: { type: 'none' } })
     }
-    target.addEventListener('pointermove', move)
-    target.addEventListener('pointerup', up)
+    // Esc cancels the marquee and keeps the selection it started with; captured before the global Esc deselects.
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return
+      ev.preventDefault()
+      ev.stopPropagation()
+      end()
+      if (lane.hasPointerCapture(e.pointerId)) lane.releasePointerCapture(e.pointerId)
+      set({ selection: before })
+    }
+    lane.addEventListener('pointermove', move)
+    lane.addEventListener('pointerup', up)
+    lane.addEventListener('pointercancel', up)
+    window.addEventListener('keydown', onKey, true)
   }
 
   /**
@@ -1127,7 +1354,11 @@ export function Timeline() {
     <div className={styles.root}>
       <Toolbar onFit={fit} bpm={bpm} />
       <div ref={scrollRef} className={`${styles.scroller} scroll`} data-timeline-scroller>
-        <div className={styles.content} style={{ width: HEADER_W + contentW, height: totalH }}>
+        <div
+          ref={contentRef}
+          className={styles.content}
+          style={{ width: HEADER_W + contentW, height: totalH }}
+        >
           <div className={styles.row} style={{ height: RULER_H }}>
             <div className={[styles.header, styles.corner].join(' ')} />
             <div className={styles.ruler} style={{ width: contentW }} onPointerDown={scrubFrom}>
@@ -1232,9 +1463,7 @@ export function Timeline() {
                   <div
                     className={[styles.lane, beatSnap && beat && styles.grid].filter(Boolean).join(' ')}
                     style={{ width: contentW, ...gridStyle }}
-                    onPointerDown={(e) => {
-                      if (e.target === e.currentTarget) set({ selection: { type: 'none' } })
-                    }}
+                    onPointerDown={startMarquee}
                     onContextMenu={(e) =>
                       openLaneMenu(
                         e,
@@ -1357,7 +1586,7 @@ export function Timeline() {
                             key={c.id}
                             clip={c}
                             pps={pps}
-                            selected={selId === c.id}
+                            selected={selIds.has(c.id)}
                             onPointerDown={onClipPointerDown}
                           />
                         )
@@ -1402,6 +1631,7 @@ export function Timeline() {
               style={{ transform: `translateX(${HEADER_W + snapLine * pps}px)`, height: totalH }}
             />
           )}
+          <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />
           <Playhead height={totalH} />
         </div>
       </div>

@@ -70,16 +70,19 @@ export function redo() {
   else toast('Nothing to redo')
 }
 
-/** Splits the selected clip, or the video clip under the playhead, at the playhead. */
-export function splitAtPlayhead() {
+/** Splits a clip (the selected one, else the video clip under the playhead) at the playhead. */
+export function splitAtPlayhead(clipId?: string) {
   const p = editor.getProject()
   const { playhead: t, selection } = get()
   const inside = (c: Clip) => t > c.start + 0.02 && t < c.start + c.duration - 0.02
-  const selected = selection.type === 'clip' ? p.clips[selection.id] : undefined
+  const chosen = clipId ?? (selection.type === 'clip' ? selection.id : undefined)
+  const selected = chosen ? p.clips[chosen] : undefined
   const target =
     selected && inside(selected)
       ? selected
-      : clipsAt(p, t).find((c) => (c.type === 'video' || c.type === 'image') && inside(c))
+      : clipId
+        ? undefined
+        : clipsAt(p, t).find((c) => (c.type === 'video' || c.type === 'image') && inside(c))
   if (!target) {
     toast('Move the playhead over a clip to split it')
     return

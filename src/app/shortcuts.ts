@@ -1,5 +1,14 @@
 import { useEffect } from 'react'
 import { nudgeLine } from './state/lyricEdits.ts'
+import {
+  copySelection,
+  cutSelection,
+  deleteSelection,
+  duplicateSelection,
+  hasClipboard,
+  paste,
+  selectAll,
+} from './state/clipboard.ts'
 import { jumpSection, stepPlayhead } from './state/playback.ts'
 import { openImport } from './state/importer.ts'
 import { saveNow } from './state/persistence.ts'
@@ -34,6 +43,8 @@ function isTyping(el: EventTarget | null, mod: boolean) {
 export function useGlobalShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Keys a focused control already handled (Space on a timeline clip; Esc in a Radix select, menu or popover).
+      if (e.defaultPrevented) return
       const s = get()
       const mod = e.metaKey || e.ctrlKey
       const key = e.key.toLowerCase()
@@ -78,6 +89,22 @@ export function useGlobalShortcuts() {
       } else if (mod && key === 'i') {
         e.preventDefault()
         openImport()
+      } else if (mod && key === 'c') {
+        // Without selected clips, the browser copies as usual (selected text, for example).
+        if (copySelection()) e.preventDefault()
+      } else if (mod && key === 'x') {
+        if (cutSelection()) e.preventDefault()
+      } else if (mod && key === 'v') {
+        if (hasClipboard()) {
+          e.preventDefault()
+          paste()
+        }
+      } else if (mod && key === 'd') {
+        e.preventDefault()
+        duplicateSelection()
+      } else if (mod && key === 'a') {
+        e.preventDefault()
+        selectAll()
       } else if (mod && (key === '=' || key === '+')) {
         e.preventDefault()
         set({ pxPerSec: Math.min(80, s.pxPerSec * 1.4) })
@@ -127,6 +154,8 @@ export function useGlobalShortcuts() {
         set({ screen: 'vj' })
       } else if (e.key === '?') {
         set({ dialog: 'settings', settingsPage: 'shortcuts' })
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (deleteSelection()) e.preventDefault()
       } else if (e.key === 'Escape') {
         set({ selection: { type: 'none' } })
       } else if (key === 'z' && e.shiftKey) {
