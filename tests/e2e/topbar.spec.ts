@@ -132,6 +132,7 @@ test('Help › Replay the guide and Settings › General › Replay show the gui
   await expect(guide).toContainText('2 of 4')
   await page.keyboard.press('Escape')
   await expect(guide).toBeHidden()
+  await expect(bar.getByRole('button', { name: 'Help' })).toBeFocused()
 
   await bar.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
@@ -139,6 +140,28 @@ test('Help › Replay the guide and Settings › General › Replay show the gui
   await settings.getByRole('button', { name: 'Replay' }).click()
   await expect(settings).toBeHidden()
   await expect(guide).toContainText('1 of 4')
+  // Replayed from inside Settings, which closed: focus goes back to what opened Settings.
+  await guide.getByRole('button', { name: 'Skip' }).click()
+  await expect(guide).toBeHidden()
+  await expect(bar.getByRole('button', { name: 'Settings', exact: true })).toBeFocused()
+})
+
+test('the guide takes focus on Next, and closing a guide that opened by itself puts focus on the search field', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    // As after the setup screen: the guide opens with the editor, before anything has focus.
+    window.location.hash = '#/editor?t=67&guide=0'
+  })
+  const guide = page.getByRole('dialog', { name: 'Getting started guide' })
+  await expect(guide).toContainText('1 of 4')
+  await expect(guide.getByRole('button', { name: 'Next' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(guide).toBeHidden()
+  // Opened by itself on the first visit: focus lands on the search field the guide ends on.
+  await expect(page.getByRole('banner').getByRole('button', { name: /^Search actions/ })).toBeFocused()
 })
 
 test('the gear opens Settings where it was left, Help › Keyboard shortcuts opens Shortcuts, and closing gives focus back', async ({
