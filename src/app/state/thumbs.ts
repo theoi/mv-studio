@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import type { Asset } from '../../model/index.ts'
+import { createFrameThumbnails } from '../../vision/index.ts'
 import { sceneThumb } from '../mock/art.ts'
 import { sceneOf } from '../mock/demoProject.ts'
 import { appMedia } from './media.ts'
@@ -101,4 +102,21 @@ export function useThumbnail(asset: Asset): string | undefined {
   }, [asset, scene])
   if (scene) return sceneThumb(scene)
   return made ?? undefined
+}
+
+const frames = createFrameThumbnails(appMedia)
+
+/**
+ * A 160×90 frame of a clip's video at `sourceTime` (usually the clip's in-point, `clip.sourceStart`), e.g. for a
+ * timeline clip. Images, sample media and videos whose frame is still being made get the asset's thumbnail.
+ */
+export function useFrameThumbnail(asset: Asset, sourceTime: number): string | undefined {
+  const scene = sceneOf(asset)
+  const whole = useThumbnail(asset)
+  const frame = useSyncExternalStore(frames.subscribe, () =>
+    scene ? undefined : frames.get(asset, sourceTime),
+  )
+  useEffect(() => (scene ? undefined : frames.want(asset, sourceTime)), [asset, scene, sourceTime])
+  if (scene) return sceneThumb(scene, 160, 90)
+  return frame ?? whole
 }
