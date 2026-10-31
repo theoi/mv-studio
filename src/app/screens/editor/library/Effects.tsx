@@ -19,7 +19,8 @@ import { previewHandlers } from '../../../state/tilePreview.ts'
 import styles from '../Library.module.css'
 import { TilePreview } from './TilePreview.tsx'
 
-function Pills({
+/** Effects, filters or transitions as thumbnail tiles: a click adds one, a drag drops it on the timeline. */
+function Tiles({
   label,
   kind,
   items,
@@ -34,17 +35,24 @@ function Pills({
   return (
     <>
       <div className={styles.groupLabel}>{label}</div>
-      <div className={styles.pills}>
+      <div className={styles.tiles}>
         {items.map((item) => (
           <button
             key={item.id}
-            className={styles.pill}
+            className={styles.tile}
             draggable
             onDragStart={(e) => startLibraryDrag(e.nativeEvent, { kind, id: item.id })}
             onDragEnd={endLibraryDrag}
             onClick={() => onAdd(item.id)}
+            {...previewHandlers({ kind: 'plugin', id: item.id })}
           >
-            {item.name}
+            <span
+              className={styles.tileArt}
+              style={item.thumbnail ? { backgroundImage: `url(${item.thumbnail})` } : undefined}
+            >
+              <TilePreview item={{ kind: 'plugin', id: item.id }} />
+            </span>
+            <span className={styles.tileName}>{item.name}</span>
           </button>
         ))}
       </div>
@@ -99,14 +107,14 @@ export function EffectsTab() {
               </div>
             </>
           )}
-          <Pills
+          <Tiles
             label="Transitions · go on a cut"
             kind="transition"
             items={transitions}
             onAdd={addTransition}
           />
-          <Pills label="Effects" kind="effect" items={effects} onAdd={addEffect} />
-          <Pills label="Filters" kind="effect" items={filters} onAdd={addEffect} />
+          <Tiles label="Effects" kind="effect" items={effects} onAdd={addEffect} />
+          <Tiles label="Filters" kind="effect" items={filters} onAdd={addEffect} />
         </div>
       )}
     </>

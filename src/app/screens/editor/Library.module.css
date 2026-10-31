@@ -529,27 +529,6 @@ button.songRow:hover {
   height: 64%;
 }
 
-.pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.pill {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius);
-  background: var(--bg-hover);
-  color: var(--text-1);
-  font-size: var(--text-sm);
-  cursor: grab;
-  transition: background-color var(--dur-fast);
-}
-
-.pill:hover {
-  background: var(--bg-active);
-}
-
 .emptyWrap {
   flex: 1;
   display: flex;

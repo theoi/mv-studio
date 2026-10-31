@@ -76,3 +76,17 @@ test('with Settings › Reduce motion on, tiles keep their still thumbnails on h
   await page.waitForTimeout(800)
   expect(await motion(page, tile)).toBeLessThan(0.5)
 })
+
+test('transition and effect tiles play their preview on hover, and a click still adds them', async ({
+  page,
+}) => {
+  const library = await openEffectsTab(page)
+  for (const name of ['Whip pan', 'RGB split']) {
+    const tile = library.getByRole('button', { name, exact: true })
+    await tile.scrollIntoViewIfNeeded()
+    await tile.hover()
+    await expect.poll(() => motion(page, tile)).toBeGreaterThan(1)
+  }
+  await library.getByRole('button', { name: 'RGB split', exact: true }).click()
+  await expect(page.getByText(/^“RGB split” added to /)).toBeVisible()
+})
