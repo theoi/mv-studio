@@ -10,8 +10,12 @@ import {
   presetParams,
   setFont,
   setLinePosition,
+  setDecoration,
   setPreset,
   setPresetParam,
+  setStyleValue,
+  setWeight,
+  weightChoice,
 } from '../../../src/app/state/textStyle.ts'
 import { get, set } from '../../../src/app/state/ui.ts'
 
@@ -148,5 +152,47 @@ describe('apply style to all lines', () => {
     expect(get().toasts.at(-1)?.message).toBe('Style applied to all 2 lyric lines')
     get().toasts.at(-1)?.action?.run()
     expect(clip(b.id).animation).toBeUndefined()
+  })
+})
+
+describe('weight, values, outline, shadow and background', () => {
+  it('offers the weights the font has, plus the text’s own', () => {
+    const { a } = scene()
+    const space = weightChoice({ ...a.style, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 650 })
+    expect(space.value).toBe('650')
+    expect(space.options.map((o) => o.label)).toEqual([
+      'Light',
+      'Regular',
+      'Medium',
+      'Semibold',
+      '650',
+      'Bold',
+    ])
+    // A font that isn't bundled gets every weight.
+    expect(weightChoice({ ...a.style }).options).toHaveLength(9)
+    setWeight(clip(a.id), 300)
+    expect(clip(a.id).style.fontWeight).toBe(300)
+    expect(editor.undoLabel()).toBe('Weight: Light')
+  })
+
+  it('turns an outline on from its starting values and off again, one undo step each', () => {
+    const { a } = scene()
+    setDecoration(clip(a.id), 'stroke', true)
+    expect(clip(a.id).style.stroke).toEqual({ color: '#000000', width: 4 })
+    expect(editor.undoLabel()).toBe('Outline on')
+    setDecoration(clip(a.id), 'stroke', false)
+    expect(clip(a.id).style.stroke).toBeUndefined()
+    editor.undo()
+    expect(clip(a.id).style.stroke).toEqual({ color: '#000000', width: 4 })
+  })
+
+  it('a slider drag on a style value is one undo step', () => {
+    const { a } = scene()
+    setDecoration(clip(a.id), 'shadow', true)
+    for (const blur of [20, 24, 30]) setStyleValue(clip(a.id), ['shadow', 'blur'], blur, { gesture: true })
+    editor.endGesture()
+    expect(clip(a.id).style.shadow?.blur).toBe(30)
+    editor.undo()
+    expect(clip(a.id).style.shadow?.blur).toBe(16)
   })
 })
