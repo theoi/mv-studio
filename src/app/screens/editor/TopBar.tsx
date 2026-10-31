@@ -31,6 +31,8 @@ import styles from './TopBar.module.css'
 const viewForKind: Record<string, AssistView> = {
   [JOB_KINDS.stems]: 'stems',
   [JOB_KINDS.director]: 'director',
+  [JOB_KINDS.directorShots]: 'director',
+  [JOB_KINDS.ask]: 'home',
   [JOB_KINDS.autocut]: 'autocut',
   [JOB_KINDS.camera]: 'camera',
   [JOB_KINDS.lyrics]: 'lyrics',

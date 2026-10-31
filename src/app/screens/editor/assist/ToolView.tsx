@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ArrowLeft, Check, X } from 'lucide-react'
 import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { jobs } from '../../../../shared/jobs.ts'
@@ -81,4 +81,15 @@ export function CancelButton({ job }: { job?: JobSnapshot }) {
       Cancel
     </Button>
   )
+}
+
+/** "1:12" since `since`, ticking every second. Hidden from screen readers, which would hear every tick. */
+export function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  const s = Math.max(0, Math.round((now - since) / 1000))
+  return <span aria-hidden="true">{`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`}</span>
 }

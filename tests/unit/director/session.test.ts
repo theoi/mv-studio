@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { CloudError } from '../../../src/cloud/errors.ts'
 import { SpendLedger } from '../../../src/cloud/spend.ts'
 import { MemoryStorage } from '../../../src/cloud/keys.ts'
 import {
@@ -36,6 +37,16 @@ function setup(o: { provider?: FakeProvider; videos?: number; confirmAboveUsd?: 
   })
   return { project, editor, session, ledger, store, states }
 }
+
+/** A server error: the shot fails, the others keep going. */
+const providerDown = () =>
+  new CloudError({
+    kind: 'server',
+    provider: 'fal',
+    title: 'fal.ai had a problem',
+    message: 'HTTP 500',
+    status: 500,
+  })
 
 function ready(state: DirectorState) {
   if (state.status !== 'ready') throw new Error(`expected ready, got ${state.status}`)
@@ -124,6 +135,66 @@ describe('DirectorSession', () => {
     const callsBefore = provider.calls.length
     expect((await session.apply({ confirmSpend: true })).status).toBe('applied')
     expect(provider.calls.length - callsBefore).toBe(total - kept)
+  })
+
+  it('keeps paid shots in the project after undo, and reuses them instead of paying again', async () => {
+    const provider = fakeProvider()
+    const { session, editor } = setup({ provider, videos: 0, confirmAboveUsd: 5 })
+    const request = {
+      kind: 'ai' as const,
+      seed: 3,
+      generate: { mode: 'images' as const, tier: 'draft' as const },
+    }
+    const planned = ready(await session.plan(request))
+    const paid = planned.cost!.count
+    expect((await session.apply()).status).toBe('applied')
+    expect(provider.calls).toHaveLength(paid)
+    const generatedAssets = () =>
+      Object.values(editor.getProject().assets).filter((a) => a.origin.type === 'generated').length
+
+    expect(session.undo()).toBe(true)
+    const undone = ready(session.getState())
+    expect(undone.generatedShots).toBe(paid)
+    expect(undone.actionLabel).toBe('Make video')
+    expect(generatedAssets()).toBe(paid)
+    expect((await session.apply()).status).toBe('applied')
+    expect(provider.calls).toHaveLength(paid)
+
+    session.undo()
+    session.reset()
+    const again = ready(await session.plan(request))
+    expect(again.cost?.count ?? 0).toBe(0)
+    expect((await session.apply()).status).toBe('applied')
+    expect(provider.calls).toHaveLength(paid)
+  })
+
+  it('prices a retry of failed shots and asks first when the policy says so', async () => {
+    const provider = fakeProvider({ failOn: (i) => (i < 2 ? providerDown() : undefined) })
+    const { session } = setup({ provider, videos: 0, confirmAboveUsd: 0.001 })
+    ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    const applied = await session.apply({ confirmSpend: true })
+    if (applied.status !== 'applied') throw new Error(`expected applied, got ${applied.status}`)
+    expect(applied.failedShots).toBe(2)
+    expect(applied.cost?.count).toBe(2)
+    expect(applied.confirmRequired).toBe(true)
+    const calls = provider.calls.length
+    const refused = await session.apply().catch((e: unknown) => e)
+    expect((refused as DirectorError).reason).toBe('needs-confirmation')
+    expect(provider.calls).toHaveLength(calls)
+  })
+
+  it('goes back from a failed generation to the plan with its price', async () => {
+    const provider = fakeProvider({ failOn: () => providerDown() })
+    const { session } = setup({ provider, videos: 0, confirmAboveUsd: 0.001 })
+    const planned = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    const failed = await session.apply({ confirmSpend: true })
+    if (failed.status !== 'error') throw new Error(`expected error, got ${failed.status}`)
+    expect(failed.cost?.count).toBe(planned.cost!.count)
+    expect(failed.confirmRequired).toBe(true)
+    expect(failed.generatedShots).toBe(0)
+    const back = ready(session.backToPlan())
+    expect(back.plan.id).toBe(planned.plan.id)
+    expect(back.actionLabel).toBe(planned.actionLabel)
   })
 
   it('applies with placeholders when asked to skip generation', async () => {

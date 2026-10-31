@@ -723,3 +723,8 @@
   background-size: cover;
   background-position: center;
 }
+
+/* Director: the free option under the paid button in the footer. */
+.footerAlt {
+  margin-top: 4px;
+}

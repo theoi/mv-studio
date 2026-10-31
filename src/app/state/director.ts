@@ -3,9 +3,11 @@ import type {
   DirectorRequest,
   DirectorSession,
   DirectorState,
+  PlanCost,
   PlanDescription,
   VideoKind,
 } from '../../director/index.ts'
+import type { Id } from '../../model/types.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import type { Project } from '../../model/index.ts'
@@ -34,6 +36,8 @@ interface DirectorUi {
   cancelNotice: string
   /** A free draft is planned and about to go on the timeline. */
   applying: boolean
+  /** The last planning job, so its finished progress stays on screen while a free draft is applied. */
+  planJobId?: string
 }
 
 export const useDirector = create<DirectorUi>(() => ({
@@ -81,7 +85,8 @@ function directorSession(): Promise<DirectorSession> {
       const state = s.getState()
       useDirector.setState({
         state,
-        applying: autoApply && state.status === 'ready' && !state.cost,
+        ...(state.status === 'planning' ? { planJobId: state.jobId } : {}),
+        applying: autoApply && state.status === 'ready' && !paidCost(state.cost),
         description: 'plan' in state && state.plan ? d.describePlan(state.plan, editor.getProject()) : null,
       })
     })
@@ -110,9 +115,14 @@ export function directorRequest(idea: string, shots: ShotSource): DirectorReques
   }
 }
 
+/** The cost only when something will be paid for; a plan that reuses earlier AI shots is free. */
+export function paidCost(cost: PlanCost | null | undefined): PlanCost | null {
+  return cost && cost.count > 0 ? cost : null
+}
+
 async function applyIfFree(state: DirectorState) {
   try {
-    if (state.status === 'ready' && !state.cost) await applyDraft()
+    if (state.status === 'ready' && !paidCost(state.cost)) await applyDraft()
   } finally {
     autoApply = false
     useDirector.setState({ applying: false })
@@ -124,6 +134,13 @@ export async function draftVideo(request: DirectorRequest): Promise<void> {
   const s = await directorSession()
   autoApply = true
   await applyIfFree(await s.plan(request))
+}
+
+/** Plans again with another seed: different clips, prompts and camera moves. */
+export async function tryAnotherVersion(): Promise<void> {
+  const s = await directorSession()
+  autoApply = true
+  await applyIfFree(await s.tryAnother())
 }
 
 /** Stops waiting for the AI model and drafts with the built-in planner. */
@@ -139,13 +156,7 @@ export async function applyDraft(options: { confirmSpend?: boolean; skipGenerati
   try {
     const state = await s.apply(options)
     if (state.status !== 'applied') return
-    const label = state.label
-    toast('Your draft is on the timeline', {
-      label: 'Undo',
-      run: () => {
-        if (editor.undoLabel() === label) void undoDraft()
-      },
-    })
+    toast('Your draft is on the timeline', { label: 'Undo', run: () => void undoDraft() })
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error))
   }
@@ -158,8 +169,9 @@ export async function undoDraft(): Promise<boolean> {
     toast('The draft has changed since. Use Undo in the top bar to step back.')
     return false
   }
+  // A draft with AI shots stays on its plan, so applying it again reuses the shots instead of paying again.
   const state = s.getState()
-  if (state.status === 'ready' && !state.cost) s.reset()
+  if (state.status === 'ready' && !paidCost(state.cost) && state.generatedShots === 0) s.reset()
   toast('Draft removed from the timeline')
   return true
 }
@@ -168,7 +180,22 @@ export function cancelDirector(): void {
   void directorSession().then((s) => s.cancel())
 }
 
-/** Back to the start of the panel. Paid shots made for the last plan are kept for reuse. */
+/** From a failed generation, back to the plan with its price. */
+export function backToPlan(): void {
+  void directorSession().then((s) => s.backToPlan())
+}
+
+/** Shows the user's tracks that a draft hid, as one undo step. */
+export function showTracks(trackIds: Id[]): void {
+  const hidden = editor.getProject().tracks.filter((t) => t.hidden && trackIds.includes(t.id))
+  if (!hidden.length) return
+  editor.dispatch(
+    hidden.map((t) => ({ type: 'track.update' as const, trackId: t.id, patch: { hidden: false } })),
+    { label: 'Show your tracks' },
+  )
+}
+
+/** Back to the start of the panel. AI shots already made stay in the project's media and are reused. */
 export function resetDirector(): void {
   void directorSession().then((s) => s.reset())
 }

@@ -75,6 +75,8 @@ export interface CompileOptions {
   generated?: ReadonlyMap<string, Asset>
   /** Remove clips from earlier director drafts (default true). */
   replacePrevious?: boolean
+  /** For a plan not applied yet: the placeholder note says what happens if AI shots are skipped. */
+  placeholderNote?: 'applied' | 'if-skipped'
 }
 
 export interface CompileStats {
@@ -84,6 +86,8 @@ export interface CompileStats {
   placeholders: number
   removedClips: number
   addedTracks: number
+  /** The user's tracks under the draft's full-frame shots, hidden by this draft (nothing is deleted). */
+  hiddenTracks: Id[]
 }
 
 export interface CompiledPlan {
@@ -644,7 +648,32 @@ function placeTracks(project: Project, needed: Set<DirectorTrackRole>, cleanup: 
     trackFor.set(role, track.id)
     added++
   }
-  return { commands, trackFor, added }
+  return { commands, trackFor, added, order }
+}
+
+/**
+ * The user's tracks under the draft's main shots when those shots fill the frame for nearly the whole song. They
+ * can't be seen there but would still be decoded in playback and export, and edits to them would seem to do nothing.
+ */
+function coveredTracks(project: Project, plan: EditPlan, placed: ReturnType<typeof placeTracks>): Id[] {
+  const shotsTrack = placed.trackFor.get('shots')
+  if (!shotsTrack) return []
+  const covered = plan.shots
+    .filter((s) => s.layer === 'main' && (s.source.type === 'media' || s.source.type === 'generate'))
+    .reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0)
+  if (covered < plan.duration * 0.95) return []
+  const ours = new Set(placed.trackFor.values())
+  return placed.order.slice(placed.order.indexOf(shotsTrack) + 1).filter((id) => {
+    const track = project.tracks.find((t) => t.id === id)
+    return (
+      track &&
+      track.kind === 'visual' &&
+      !track.hidden &&
+      !track.locked &&
+      !ours.has(id) &&
+      clipsOnTrack(project, id).some((c) => !directorMeta(c))
+    )
+  })
 }
 
 /** Puts the song on the timeline when no clip plays it yet. */
@@ -691,7 +720,14 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     warnings: [],
     source: audioSourceMapper(project, plan.songAssetId ?? project.songAssetId),
   }
-  const stats: CompileStats = { shots: 0, texts: 0, placeholders: 0, removedClips: 0, addedTracks: 0 }
+  const stats: CompileStats = {
+    shots: 0,
+    texts: 0,
+    placeholders: 0,
+    removedClips: 0,
+    addedTracks: 0,
+    hiddenTracks: [],
+  }
   const cleanup: Cleanup =
     options.replacePrevious === false
       ? { commands: [], reused: new Map(), removedTracks: new Set(), removedClips: 0 }
@@ -757,9 +793,12 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     ).size
     warn(
       ctx,
-      `${pending} AI ${pending === 1 ? 'shot is' : 'shots are'} not generated yet; dark placeholders mark where they go.`,
+      options.placeholderNote === 'if-skipped'
+        ? `If you apply without AI shots, dark placeholders mark where the ${pending} AI ${pending === 1 ? 'shot goes' : 'shots go'}.`
+        : `${pending} AI ${pending === 1 ? 'shot is' : 'shots are'} not generated yet; dark placeholders mark where they go.`,
     )
   }
+  stats.hiddenTracks = coveredTracks(project, plan, placed)
 
   return {
     commands: [
@@ -768,6 +807,11 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
       ...assetCommands,
       ...songCommands(project, plan, cleanup.removedTracks),
       ...clips.map((clip): EditCommand => ({ type: 'clip.add', clip })),
+      ...stats.hiddenTracks.map((trackId): EditCommand => ({
+        type: 'track.update',
+        trackId,
+        patch: { hidden: true },
+      })),
     ],
     label: `Director: ${plan.title}`,
     warnings: ctx.warnings,

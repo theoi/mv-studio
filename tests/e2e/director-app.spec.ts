@@ -36,10 +36,14 @@ async function openDirector(page: Page, cloud?: Record<string, unknown>, kind = 
 const draftState = (page: Page) =>
   page.evaluate(() => {
     const editor = window.mvStudio.app.project.editor
-    const clips = Object.values(editor.getProject().clips) as { meta?: { director?: unknown } }[]
+    const project = editor.getProject()
+    const clips = Object.values(project.clips) as { id: string; meta?: { director?: unknown } }[]
+    const ours = clips.filter((c) => c.meta?.director)
     return {
       clips: clips.length,
-      director: clips.filter((c) => c.meta?.director).length,
+      director: ours.length,
+      ids: ours.map((c) => c.id).sort(),
+      hiddenTracks: (project.tracks as { hidden: boolean }[]).filter((t) => t.hidden).length,
       undo: editor.undoLabel() as string | undefined,
     }
   })
@@ -78,11 +82,18 @@ test('drafts a lyric video on this device, lists the plan, and undoes it', async
   const after = await draftState(page)
   expect(after.director).toBeGreaterThan(10)
   expect(after.undo).toBe('Director: neon night drive')
+  // The sample's own tracks are covered by the draft's shots, so the same step hides them.
+  expect(after.hiddenTracks).toBeGreaterThan(before.hiddenTracks)
+  await expect(page.getByText('Your own tracks are kept below the draft, hidden.')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('director-done.png') })
 
   await page.getByRole('button', { name: 'Undo draft' }).click()
   await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
-  expect(await draftState(page)).toMatchObject({ clips: before.clips, director: 0 })
+  expect(await draftState(page)).toMatchObject({
+    clips: before.clips,
+    director: 0,
+    hiddenTracks: before.hiddenTracks,
+  })
 })
 
 test('drafts from the setup screen with the idea typed there', async ({ page }) => {
@@ -93,7 +104,20 @@ test('drafts from the setup screen with the idea typed there', async ({ page }) 
   await page.getByRole('button', { name: 'Use a sample song' }).click()
   await page.getByRole('button', { name: 'Draft my video' }).click()
   await expect(placed(page)).toBeVisible({ timeout: 30_000 })
-  expect((await draftState(page)).undo).toBe('Director: a rainy city at dawn')
+  const first = await draftState(page)
+  expect(first.undo).toBe('Director: a rainy city at dawn')
+
+  await page.getByRole('button', { name: 'Show them' }).click()
+  await expect(page.getByText('Your own tracks are kept below the draft, hidden.')).toBeHidden()
+  expect((await draftState(page)).hiddenTracks).toBe(0)
+
+  // The built-in planner only takes the mood from Refine, so it offers another version instead.
+  await expect(
+    page.getByText('The built-in planner takes the look and mood from your words.', { exact: false }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Try another version' }).click()
+  await expect.poll(async () => (await draftState(page)).ids.join()).not.toBe(first.ids.join())
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
 })
 
 test('uses the language model’s creative plan when it answers', async ({ page }) => {
@@ -194,4 +218,38 @@ test('shows the price of AI shots and asks before spending anything', async ({ p
   await expect(placed(page)).toBeVisible()
   expect((await draftState(page)).director).toBeGreaterThan(10)
   expect(fal).toEqual([])
+})
+
+test('a retry after failed AI shots shows its price and asks again; Back returns to the plan', async ({
+  page,
+}, testInfo) => {
+  const fal = await recordRequests(page, /https:\/\/(queue\.)?fal\.run\/.*/, (route) =>
+    route.fulfill({ status: 500, headers: CORS, body: '{}' }),
+  )
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  await page.getByRole('radio', { name: 'Mix' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  const generate = page.getByRole('button', { name: /^Generate \d+ shots? · about \$\d+\.\d\d$/ })
+  await generate.click()
+  const dialog = page.getByRole('dialog', { name: /^Generate \d+ shots?\?$/ })
+  await dialog.getByRole('button', { name: /^Generate \d+ shots? · about/ }).click()
+
+  const retry = page.getByRole('button', { name: /^Retry · about \$\d+\.\d\d$/ })
+  await expect(retry).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText(/Your project is unchanged\.$/)).toBeVisible()
+  const sent = fal.length
+  expect(sent).toBeGreaterThan(0)
+  expect((await draftState(page)).director).toBe(0)
+  await page.screenshot({ path: testInfo.outputPath('director-failed.png') })
+
+  await retry.click()
+  await expect(dialog).toBeVisible()
+  expect(fal).toHaveLength(sent)
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toBeHidden()
+
+  await page.getByRole('button', { name: 'Back to the plan' }).click()
+  await expect(generate).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Apply without AI shots' })).toBeVisible()
+  expect(fal).toHaveLength(sent)
 })

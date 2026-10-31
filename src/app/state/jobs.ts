@@ -26,6 +26,7 @@ export const JOB_KINDS = {
   stems: 'analysis.stems',
   director: 'director.plan',
   directorShots: 'director.generate',
+  ask: 'director.ask',
   autocut: 'edit.autocut',
   camera: 'vision.camera',
   export: 'export.outputs',

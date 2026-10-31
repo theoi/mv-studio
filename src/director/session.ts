@@ -130,6 +130,11 @@ export type DirectorState =
       warnings: string[]
       /** AI shots that failed and show as placeholders; apply again to retry just those. */
       failedShots: number
+      /** What retrying the failed shots costs, and whether that needs the user's OK first. */
+      cost: PlanCost | null
+      confirmRequired: boolean
+      /** The user's tracks under the draft that it hid (nothing is deleted; undo shows them again). */
+      hiddenTracks: Id[]
     }
   | {
       status: 'error'
@@ -139,6 +144,11 @@ export type DirectorState =
       title: string
       message: string
       steps: string[]
+      /** With a plan: what finishing it costs, and whether that needs the user's OK first. */
+      cost: PlanCost | null
+      confirmRequired: boolean
+      /** AI shots already made for the plan; they are kept. */
+      generatedShots: number
     }
 
 const DEFAULT_POLICY: SpendPolicy = { alwaysConfirmPaid: false, confirmAboveUsd: 1, monthlyReminderUsd: 0 }
@@ -261,19 +271,30 @@ export class DirectorSession {
     return this.plan({ ...request, seed: (request.seed ?? 1) + 1 })
   }
 
-  private readyState(request: DirectorRequest, plan: EditPlan, extraWarnings: string[] = []): DirectorState {
-    const project = this.deps.editor.getProject()
+  /** What generating the plan's remaining AI shots costs, and whether the spend policy asks first. */
+  private spendFor(plan: EditPlan): { cost: PlanCost | null; confirmRequired: boolean; toMake: number } {
     const done = this.generatedFor(plan)
-    const compiled = compilePlan(plan, project, { catalog: this.catalog(), generated: done })
-    const preview = previewCommands(project, compiled.commands)
     const cost = this.costOf(plan, done)
-    const usd = cost?.usd ?? 0
     const confirmRequired = requiresConfirmation(
-      usd,
+      cost?.usd ?? 0,
       this.deps.spendPolicy?.() ?? DEFAULT_POLICY,
       this.deps.ledger,
     )
     const toMake = cost?.requests.filter((r) => !done.has(r.shot.id)).length ?? 0
+    return { cost, confirmRequired, toMake }
+  }
+
+  private readyState(request: DirectorRequest, plan: EditPlan, extraWarnings: string[] = []): DirectorState {
+    const project = this.deps.editor.getProject()
+    const done = this.generatedFor(plan)
+    const compiled = compilePlan(plan, project, {
+      catalog: this.catalog(),
+      generated: done,
+      placeholderNote: 'if-skipped',
+    })
+    const preview = previewCommands(project, compiled.commands)
+    const { cost, confirmRequired, toMake } = this.spendFor(plan)
+    const usd = cost?.usd ?? 0
     return {
       status: 'ready',
       request,
@@ -355,6 +376,7 @@ export class DirectorSession {
             onShot: (shotId, asset, spent) => {
               done.set(shotId, asset)
               this.deps.ledger?.record(spent, `Director: ${plan.title}`)
+              this.keep(asset)
             },
           }),
       })
@@ -417,6 +439,7 @@ export class DirectorSession {
       return this.state
     }
     this.appliedLabel = compiled.label
+    const retry = failed > 0 ? this.spendFor(plan) : { cost: null, confirmRequired: false }
     this.set({
       status: 'applied',
       request,
@@ -425,7 +448,28 @@ export class DirectorSession {
       summary: plan.summary,
       warnings: [...new Set([...plan.warnings, ...compiled.warnings, ...warnings])],
       failedShots: failed,
+      cost: retry.cost,
+      confirmRequired: retry.confirmRequired,
+      hiddenTracks: compiled.stats.hiddenTracks,
     })
+    return this.state
+  }
+
+  /**
+   * Paid media goes into the project's media as soon as it is made, outside any undo step, so undoing or replacing
+   * a draft never throws away what the user paid for; later plans with the same request reuse it.
+   */
+  private keep(asset: Asset) {
+    const editor = this.deps.editor
+    if (editor.getProject().assets[asset.id]) return
+    editor.dispatch({ type: 'asset.add', asset }, { history: 'skip' })
+  }
+
+  /** From a failed generation: back to the plan, with its price and "apply without AI shots". */
+  backToPlan(): DirectorState {
+    const current = this.state
+    if (current.status === 'error' && current.plan && current.request)
+      this.set(this.readyState(current.request, current.plan))
     return this.state
   }
 
@@ -458,10 +502,14 @@ export class DirectorSession {
       return
     }
     const cloud = cloudErrorInfo(err)
+    const spend = plan ? this.spendFor(plan) : { cost: null, confirmRequired: false }
     this.set({
       status: 'error',
       ...(request ? { request } : {}),
       ...(plan ? { plan } : {}),
+      cost: spend.cost,
+      confirmRequired: spend.confirmRequired,
+      generatedShots: plan ? this.generatedFor(plan).size : 0,
       error: err.toJSON(),
       title:
         cloud?.title ??

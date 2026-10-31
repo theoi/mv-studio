@@ -11,7 +11,7 @@ import {
 import { BAND_EDGES_HZ } from '../../../src/analysis/features/features.ts'
 import { planFrame } from '../../../src/engine/layout.ts'
 import { describeReaction } from '../../../src/plugins/reactions.ts'
-import { createTextClip } from '../../../src/model/factory.ts'
+import { createTextClip, createTrack } from '../../../src/model/factory.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import type { Asset, Clip, ImageClip, Project, TextClip, VideoClip } from '../../../src/model/types.ts'
 import { fakeProvider, makeProject, SONG_ID, type FixtureOptions } from './fixtures.ts'
@@ -45,6 +45,28 @@ describe('compilePlan', () => {
     editor.undo()
     expect(editor.getProject()).toEqual(project)
     expect(editor.canUndo()).toBe(false)
+  })
+
+  it('hides the user’s tracks under full-frame shots in the same undo step, deleting nothing', async () => {
+    const { project: base, plan } = await setup('beat-cut')
+    const editor = new ProjectEditor(base)
+    const track = createTrack('visual', 'My titles')
+    editor.dispatch([
+      { type: 'track.add', track },
+      { type: 'clip.add', clip: createTextClip({ trackId: track.id, start: 2, duration: 4, text: 'Mine' }) },
+    ])
+    const empty = editor.getProject().tracks.find((t) => t.kind === 'visual' && t.id !== track.id)
+    const project = editor.getProject()
+    const compiled = compilePlan(plan, project)
+    expect(compiled.stats.hiddenTracks).toEqual([track.id])
+    editor.dispatch(compiled.commands, { label: compiled.label })
+    const after = editor.getProject()
+    expect(after.tracks.find((t) => t.id === track.id)?.hidden).toBe(true)
+    // Tracks with nothing on them are left as they are.
+    if (empty) expect(after.tracks.find((t) => t.id === empty.id)?.hidden).toBe(false)
+    expect(clips(after).some((c) => c.type === 'text' && c.text === 'Mine')).toBe(true)
+    editor.undo()
+    expect(editor.getProject()).toEqual(project)
   })
 
   it('turns plan shots into clips with the planned timing, source window and mute', async () => {
