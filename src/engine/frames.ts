@@ -69,8 +69,11 @@ interface VideoSlot {
   lastUsed: number
 }
 
-/** Re-seek a playing video only when it drifts this far from the clock. */
+/** Re-seek a playing video only when it drifts this far (in timeline seconds) from the clock. */
 const PLAYBACK_DRIFT = 0.12
+/** HTMLMediaElement.playbackRate range Chrome plays; other rates show exact frames by seeking instead. */
+const MIN_MEDIA_RATE = 0.0625
+const MAX_MEDIA_RATE = 16
 const PAUSE_AFTER_FRAMES = 2
 const RELEASE_AFTER_FRAMES = 900
 
@@ -145,21 +148,25 @@ export class VideoElementFrameProvider implements FrameProvider {
     return slot
   }
 
-  async videoFrame(asset: Asset, sourceTime: Seconds, key: string): Promise<FrameRef | null> {
+  async videoFrame(asset: Asset, sourceTime: Seconds, key: string, rate = 1): Promise<FrameRef | null> {
     const slot = this.slot(asset, `${key}:${asset.id}`)
     slot.lastUsed = this.frame
     if (!(await slot.ready)) return null
     const { video } = slot
     const t = clampSourceTime(asset, sourceTime)
-    if (this.playing) {
-      video.playbackRate = this.rate
+    const mediaRate = rate * this.rate
+    if (this.playing && mediaRate >= MIN_MEDIA_RATE && mediaRate <= MAX_MEDIA_RATE) {
+      if (video.playbackRate !== mediaRate) video.playbackRate = mediaRate
+      // Drift is measured in source time, which moves at mediaRate; allow at least two source frames.
+      const tolerance = Math.max(PLAYBACK_DRIFT * mediaRate, 2 / (asset.frameRate ?? 30))
       if (video.paused) {
         video.currentTime = t
         void video.play().catch(() => undefined)
-      } else if (Math.abs(video.currentTime - t) > PLAYBACK_DRIFT) {
+      } else if (Math.abs(video.currentTime - t) > tolerance) {
         video.currentTime = t
       }
     } else {
+      // Paused transport, a freeze (rate 0) or a rate the element cannot play: show the exact frame.
       if (!video.paused) video.pause()
       slot.target = t
       slot.seeking = slot.seeking.then(() => this.seek(slot))
