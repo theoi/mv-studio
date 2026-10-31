@@ -65,6 +65,30 @@ describe('markers', () => {
     expect(markers()).toEqual([['Marker 1', 7]])
   })
 
+  it("leaves a later edit alone: the toast's Undo only removes the marker while adding it is still the last edit", () => {
+    set({ playhead: 4 })
+    const id = addMarkerAtPlayhead()!
+    const undoAdd = get().toasts.at(-1)!.action!.run
+
+    renameMarker(id, 'Drop')
+    undoAdd()
+    expect(markers()).toEqual([['Drop', 4]])
+
+    // Another add has the same label.
+    editor.undo()
+    set({ playhead: 9 })
+    addMarkerAtPlayhead()
+    undoAdd()
+    expect(markers()).toEqual([
+      ['Marker 1', 4],
+      ['Marker 2', 9],
+    ])
+
+    editor.undo()
+    undoAdd()
+    expect(markers()).toEqual([])
+  })
+
   it('names a new marker with the lowest free number', () => {
     const at = (label: string) => ({ id: label, time: 0, kind: 'user' as const, label })
     expect(nextMarkerName([])).toBe('Marker 1')

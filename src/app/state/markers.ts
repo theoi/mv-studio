@@ -31,10 +31,21 @@ export function addMarkerAtPlayhead(): string | null {
     return there.id
   }
   const marker: Marker = { id: newId(), time, kind: 'user', label: nextMarkerName(markers) }
-  if (!dispatch({ type: 'marker.add', marker }, { label: 'Add marker' })) return null
-  toast(`Added ${marker.label} at ${formatTime(time, true)}`, { label: 'Undo', run: undo })
+  if (!dispatch({ type: 'marker.add', marker }, { label: ADD_LABEL })) return null
+  const after = editor.getProject().markers
+  toast(`Added ${marker.label} at ${formatTime(time, true)}`, {
+    label: 'Undo',
+    run: () => {
+      // Every add has this label, so the markers tell whether the last one is still this add.
+      const now = editor.getProject().markers
+      const same = now.length === after.length && now.every((m, i) => m.id === after[i]?.id)
+      if (editor.undoLabel() === ADD_LABEL && same) undo()
+    },
+  })
   return marker.id
 }
+
+const ADD_LABEL = 'Add marker'
 
 /** Moves a marker, kept within the timeline. A drag passes `gesture` so all its moves are one undo step. */
 export function moveMarker(id: string, time: number, gesture = false): void {
