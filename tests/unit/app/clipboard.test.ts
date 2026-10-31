@@ -349,14 +349,14 @@ describe('lyric lines among several clips', () => {
     set({ playhead: 40 })
     paste()
     expect(onTrack(s.footage.id)).toContainEqual([40, 4])
-    expect(lastToast()).toBe('Pasted 2 clips, with 1 lyric line as text')
+    expect(lastToast()).toBe('Pasted 1 clip and 1 lyric line as text')
     expect(Object.values(project().clips).filter((c) => c.trackId === lyricsTrack)).toHaveLength(2)
   })
 
   it('duplicates a lyric line as text, and a lone lyric chip selects its line', () => {
     selectClips([s.a.id, line2.id])
     duplicateSelection()
-    expect(lastToast()).toBe('Duplicated 2 clips, with 1 lyric line as text')
+    expect(lastToast()).toBe('Duplicated 1 clip and 1 lyric line as text')
     expect(Object.values(project().clips).filter((c) => c.trackId === lyricsTrack)).toHaveLength(2)
 
     selectTimelineClips(project(), [line2.id])

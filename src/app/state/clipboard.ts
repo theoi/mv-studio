@@ -68,12 +68,20 @@ function selectedClips(p: Project): Clip[] {
 const clipCount = (n: number) => (n === 1 ? 'clip' : `${n} clips`)
 const lineCount = (n: number) => (n === 1 ? 'lyric line' : `${n} lyric lines`)
 
-/** "2 clips", "2 lyric lines", "1 clip and 1 lyric line": lyric chips are named as the lines they remove or copy. */
-function clipsNamed(clips: Clip[]): string {
+/** For toasts: "1 clip", "2 lyric lines", "1 clip and 2 lyric lines". Lyric chips are named as their lines. */
+function clipsCounted(clips: Clip[]): string {
   const lines = clips.filter(isLyricClip).length
   const others = clips.length - lines
-  if (!lines) return clipCount(others)
-  return others ? `${plural(others, 'clip')} and ${plural(lines, 'lyric line')}` : lineCount(lines)
+  return [others && plural(others, 'clip'), lines && plural(lines, 'lyric line')]
+    .filter(Boolean)
+    .join(' and ')
+}
+
+/** For undo labels: "clip", "2 clips", "2 lyric lines", "1 clip and 1 lyric line". */
+function clipsNamed(clips: Clip[]): string {
+  const lines = clips.filter(isLyricClip).length
+  if (!lines) return clipCount(clips.length)
+  return lines === clips.length ? lineCount(lines) : clipsCounted(clips)
 }
 
 export function hasClipboard(): boolean {
@@ -119,7 +127,7 @@ export function copySelection(): boolean {
   const clips = selectedClips(p)
   if (!clips.length) return false
   copy(p, clips)
-  toast(`Copied ${clips.length === 1 ? '1 clip' : clipsNamed(clips)}`)
+  toast(`Copied ${clipsCounted(clips)}`)
   return true
 }
 
@@ -226,12 +234,7 @@ function place(source: ClipboardContent, verb: 'Paste' | 'Duplicate', offset: nu
   revealClips(ids)
   const lines = source.clips.filter(isLyricClip).length
   if (!lines) return
-  const done = verb === 'Paste' ? 'Pasted' : 'Duplicated'
-  toast(
-    lines === ids.length
-      ? `${done} ${plural(lines, 'lyric line')} as text`
-      : `${done} ${plural(ids.length, 'clip')}, with ${plural(lines, 'lyric line')} as text`,
-  )
+  toast(`${verb === 'Paste' ? 'Pasted' : 'Duplicated'} ${clipsCounted(source.clips)} as text`)
 }
 
 /**

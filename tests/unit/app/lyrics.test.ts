@@ -94,10 +94,10 @@ it('rounds the time of timing that separates the vocals up, like the stems estim
 
 describe('removeLyricLinesCommands', () => {
   /** Lines n1 and n2 with their clips on a Lyrics track, and a director's emphasized word for each line. */
-  function withLines(locked = false) {
+  function withLines(locked = false, wordsLocked = false) {
     const project = createProject({ name: 'p' })
     const track = { ...createTrack('visual', 'Lyrics'), locked }
-    const words = createTrack('visual', 'Words')
+    const words = { ...createTrack('visual', 'Words'), locked: wordsLocked }
     project.tracks.unshift(track, words)
     project.lyrics = doc
     const lineClip = (lineId: string, text: string, start: number) => ({
@@ -128,8 +128,8 @@ describe('removeLyricLinesCommands', () => {
     // The other line's clip is the same clip, where it was.
     expect(after.clips[clips.n2.id]).toEqual(clips.n2)
     editor.undo()
-    expect(editor.getProject().lyrics?.lines.map((l) => l.id)).toEqual(['n1', 'n2'])
-    expect(Object.keys(editor.getProject().clips)).toHaveLength(4)
+    expect(editor.getProject().lyrics).toEqual(project.lyrics)
+    expect(editor.getProject().clips).toEqual(project.clips)
   })
 
   it('changes nothing for lines that are not in the lyrics, and a locked track refuses the edit', () => {
@@ -139,5 +139,12 @@ describe('removeLyricLinesCommands', () => {
     const editor = new ProjectEditor(locked)
     expect(() => editor.dispatch(removeLyricLinesCommands(locked, ['n1']))).toThrow('Track is locked')
     expect(editor.getProject().lyrics?.lines).toHaveLength(2)
+  })
+
+  it('is refused as a whole when a deleted line’s emphasized word is on a locked track', () => {
+    const { project } = withLines(false, true)
+    const editor = new ProjectEditor(project)
+    expect(() => editor.dispatch(removeLyricLinesCommands(project, ['n1']))).toThrow('Track is locked')
+    expect(editor.getProject()).toEqual(project)
   })
 })

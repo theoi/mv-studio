@@ -1594,6 +1594,7 @@ export function Timeline() {
         const c = p.clips[id]
         return c && !isLyricClip(c) ? [c] : []
       })
+      const staying = group && picked.some((id) => isLyricClip(p.clips[id]))
       const locked = p.tracks.find((t) => t.locked && moving.some((c) => c.trackId === t.id))
       if (locked) {
         toast(`The ${locked.name} track is locked. Unlock it to edit.`)
@@ -1665,6 +1666,9 @@ export function Timeline() {
         editor.endGesture()
         setSnapLine(null)
         if (!moved && group) select({ type: 'clip', id: clip.id })
+        // The chips didn't follow the drag, so say why they stayed.
+        if (moved && staying)
+          toast(`Moved ${plural(moving.length, 'clip')}. Lyric lines stay with the vocals.`)
         target.removeEventListener('pointermove', move)
         target.removeEventListener('pointerup', up)
       }

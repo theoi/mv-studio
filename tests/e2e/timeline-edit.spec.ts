@@ -514,6 +514,9 @@ test('lyric chips join Shift and Mod click and marquee selections; Delete takes 
   await expect(singer).toHaveAttribute('aria-pressed', 'true')
   await expect(chip1).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByText('2 clips', { exact: true })).toBeVisible()
+  // A selected chip shows the selection's outline, as a selected clip does, hovered or not.
+  const shadow = (l: Locator) => l.evaluate((el) => getComputedStyle(el).boxShadow)
+  expect(await shadow(chip1)).toBe(await shadow(singer))
   await chip1.click({ modifiers: [mod] })
   await expect(chip1).toHaveAttribute('aria-pressed', 'false')
   await expect(singer).toHaveAttribute('aria-pressed', 'true')
@@ -547,7 +550,7 @@ test('lyric chips join Shift and Mod click and marquee selections; Delete takes 
   await expect(page.getByRole('status').getByText('Copied 1 clip and 1 lyric line')).toBeVisible()
   await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 150 }))
   await page.keyboard.press(`${mod}+v`)
-  await expect(page.getByRole('status').getByText('Pasted 2 clips, with 1 lyric line as text')).toBeVisible()
+  await expect(page.getByRole('status').getByText('Pasted 1 clip and 1 lyric line as text')).toBeVisible()
   const pasted = await page.evaluate(() => {
     const p = window.mvStudio.app.project.editor.getProject()
     const track = p.tracks.find((t: { name: string }) => t.name === 'Text')
@@ -566,6 +569,28 @@ test('lyric chips join Shift and Mod click and marquee selections; Delete takes 
   await scroller.evaluate((el, x) => (el.scrollLeft = x), scrolled)
   await expect(chip1).toBeVisible()
   const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
+
+  // A group drag moves the clips and leaves the chips with their sung lines; the toast says so.
+  await page.keyboard.press('n')
+  const spectrum = page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' })
+  await spectrum.click()
+  await chip1.click({ modifiers: ['Shift'] })
+  const chipStart = () =>
+    page.evaluate((id) => window.mvStudio.app.project.editor.getProject().clips[id].start as number, first.id)
+  const chipBefore = await chipStart()
+  const from = (await spectrum.boundingBox())!
+  await page.mouse.move(from.x + 20, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 20 - 2 * pps, from.y + from.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await expect(
+    page.getByRole('status').getByText('Moved 1 clip. Lyric lines stay with the vocals.'),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Spectrum bars, 1:02.0 to 1:34.0' })).toBeVisible()
+  expect(await chipStart()).toBe(chipBefore)
+  await page.keyboard.press(`${mod}+z`)
+  await page.keyboard.press('n')
+
   const spec = (await page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' }).boundingBox())!
   const lyricRow = (await chip1.boundingBox())!
   const xAt = (t: number) => spec.x + (t - 64) * pps
