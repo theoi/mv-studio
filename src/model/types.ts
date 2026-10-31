@@ -118,7 +118,7 @@ export interface AudioModulation {
   source: AudioFeatureSource
   /** Defaults to project.songAssetId. */
   audioAssetId?: Id
-  /** Feature value (0..1) times amount is added to, or multiplied with, the parameter. */
+  /** 'add': value + feature * amount. 'multiply': value * (1 + feature * amount). Feature values are 0..1. */
   amount: number
   mode: 'add' | 'multiply'
   /** 0 = raw, towards 1 = smoother (attack/release smoothing). */

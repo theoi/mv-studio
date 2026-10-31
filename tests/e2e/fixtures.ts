@@ -45,3 +45,17 @@ export async function openApp(page: Page, path = './', timeoutMs = 20_000): Prom
   }
   await page.waitForLoadState('domcontentloaded')
 }
+
+declare global {
+  interface Window {
+    // The harness exposes untyped engine modules to page.evaluate callbacks.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mvStudio: any
+  }
+}
+
+/** Opens the app with the e2e harness (window.mvStudio) installed. */
+export async function openHarness(page: Page): Promise<void> {
+  await openApp(page, './?e2e=1')
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+}

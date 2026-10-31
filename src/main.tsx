@@ -11,3 +11,7 @@ createRoot(root).render(
     <App />
   </StrictMode>,
 )
+
+if (new URLSearchParams(location.search).has('e2e')) {
+  void import('./testing/harness.ts').then((m) => m.installHarness())
+}
