@@ -69,6 +69,8 @@ test('connects a model on this computer, saves it, and keeps it after a reload',
   // The recommended local model is preselected and saved.
   await expect(llm.getByRole('combobox', { name: 'Model' })).toHaveText('qwen2.5:7b')
   await expect(llm.getByText('Recommended: qwen2.5:7b.')).toBeVisible()
+  // Once it works, the setup hint for local runners goes away.
+  await expect(llm.getByText('OLLAMA_ORIGINS=')).toBeHidden()
   expect((await saved(page)).llm).toMatchObject({
     preset: 'ollama',
     baseUrl: 'http://localhost:11434/v1',
@@ -95,6 +97,12 @@ test('connects a model on this computer, saves it, and keeps it after a reload',
   await expect(llm.getByText('Connected', { exact: true })).toBeVisible()
   await expect(llm.getByRole('combobox', { name: 'Model' })).toHaveText('qwen2.5:3b')
   await expect(llm.getByRole('combobox', { name: 'Answer time limit' })).toHaveText('2 min')
+
+  // Looking at another provider's untested fields doesn't claim they are connected.
+  await llm.getByRole('radio', { name: 'OpenAI' }).click()
+  await expect(llm.getByText('Ollama connected')).toBeVisible()
+  await llm.getByRole('radio', { name: 'Ollama' }).click()
+  await expect(llm.getByText('Connected', { exact: true })).toBeVisible()
 
   await llm.getByRole('button', { name: 'Remove this connection' }).click()
   await expect(llm.getByText('Not connected')).toBeVisible()

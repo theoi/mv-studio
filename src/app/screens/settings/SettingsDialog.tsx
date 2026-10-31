@@ -185,6 +185,14 @@ function FalCard({ falKey }: { falKey: string }) {
   )
 }
 
+const PROVIDER_NAME: Record<LlmSettings['preset'], string> = {
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+  ollama: 'Ollama',
+  lmstudio: 'LM Studio',
+  custom: 'Other endpoint',
+}
+
 const sameEndpoint = (a: LlmSettings, b: LlmSettings) =>
   a.preset === b.preset && a.baseUrl === b.baseUrl && a.apiKey === b.apiKey
 
@@ -238,10 +246,12 @@ function LlmCard({ saved }: { saved: LlmSettings | null }) {
       title="Language model"
       desc="Plain-language edits and richer director plans. Works with any OpenAI-compatible endpoint, including Ollama and LM Studio on this computer."
       status={
-        saved ? (
+        connected ? (
           <Badge tone="success" icon={<Check />}>
             Connected
           </Badge>
+        ) : saved ? (
+          <Badge>{PROVIDER_NAME[saved.preset]} connected</Badge>
         ) : (
           <Badge>Not connected</Badge>
         )
@@ -335,7 +345,7 @@ function LlmCard({ saved }: { saved: LlmSettings | null }) {
           <span>{hint}</span>
         </div>
       )}
-      {choice !== 'openai' && preset !== 'openrouter' && !(result && 'error' in result) && (
+      {!connected && choice !== 'openai' && preset !== 'openrouter' && !(result && 'error' in result) && (
         <div className={styles.hintBox}>
           <Info />
           <span>
