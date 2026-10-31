@@ -3,7 +3,6 @@ import { JobError, jobs, type JobHandle, type JobRunner } from '../shared/jobs.t
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../shared/worker.ts'
 import type { DecodedAudio } from './beats/fast.ts'
 import type { RefinedFields } from './song.ts'
-import { mergeRefinedAnalysis } from './song.ts'
 import type { AnalysisWorkerApi } from './worker-api.ts'
 
 export type { DecodedAudio }
@@ -34,9 +33,10 @@ export interface SongAnalysisOptions {
 /**
  * Runs song analysis in a dedicated worker as jobs. Typical flow:
  *   const fast = service.analyze(assetId, audio)            // seconds: tempo, beats, sections, energy, features
- *   editor.dispatch(setAnalysisCommand(await fast.promise))
+ *   const fastResult = await fast.promise
+ *   editor.dispatch(setAnalysisCommand(fastResult), { history: 'skip' })
  *   const refined = service.refine(assetId)                 // ~15-60 s: downbeats and refined beats
- *   editor.dispatch(setAnalysisCommand(mergeRefinedAnalysis(current, fastResult, await refined.promise)))
+ *   editor.dispatch(refinedAnalysisCommand(fastResult, await refined.promise), { history: 'skip' })
  */
 export class SongAnalysisService {
   private client: WorkerClient<AnalysisWorkerApi> | undefined
@@ -102,11 +102,36 @@ export class SongAnalysisService {
   }
 }
 
+/**
+ * The edit that stores a fresh analysis (stems already attached are kept). Dispatch the first analysis after import
+ * with `{ history: 'skip' }`; a re-analysis the user asks for is a normal dispatch, so undo brings back their
+ * corrections.
+ */
 export function setAnalysisCommand(analysis: AudioAnalysis): EditCommand {
-  return { type: 'analysis.setAudio', analysis }
+  const detected = { ...analysis }
+  delete detected.stems
+  delete detected.stemFeatures
+  return { type: 'analysis.setDetected', analysis: detected }
 }
 
-export { mergeRefinedAnalysis }
+/**
+ * The edit that applies a refinement of `fast`, the analysis it started from: the beat grid and the sections each
+ * change only if the user has not corrected them since. Dispatch with `{ history: 'skip' }`.
+ */
+export function refinedAnalysisCommand(fast: AudioAnalysis, refined: RefinedFields): EditCommand {
+  const fields = (a: RefinedFields): RefinedFields => ({
+    tempo: a.tempo,
+    beats: a.beats,
+    downbeats: a.downbeats,
+    sections: a.sections,
+  })
+  return {
+    type: 'analysis.setRefined',
+    assetId: fast.assetId,
+    refined: fields(refined),
+    baseline: fields(fast),
+  }
+}
 export {
   STEM_MODEL_BYTES,
   StemSeparationService,

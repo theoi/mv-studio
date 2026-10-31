@@ -14,7 +14,9 @@ const analysis: AudioAnalysis = {
 
 describe('beat grid corrections', () => {
   it('doubles the beat level, keeping downbeats', () => {
-    const doubled = rescaleTempo(analysis, 2)
+    const edit = rescaleTempo(analysis, 2)
+    expect(edit).toMatchObject({ type: 'analysis.setGrid', assetId: 'a' })
+    const doubled = edit.grid
     expect(doubled.tempo).toEqual({ bpm: 240, confidence: 1 })
     expect(doubled.beats).toHaveLength(31)
     expect(doubled.beats?.[1]).toBe(1.25)
@@ -22,15 +24,15 @@ describe('beat grid corrections', () => {
   })
 
   it('halves the beat level, keeping downbeats', () => {
-    const halved = rescaleTempo(analysis, 0.5)
+    const halved = rescaleTempo(analysis, 0.5).grid
     expect(halved.tempo?.bpm).toBeCloseTo(60, 5)
     expect(halved.downbeats).toEqual(analysis.downbeats)
     expect(halved.beats).toEqual(beats.filter((_, i) => i % 2 === 1))
   })
 
   it('moves the downbeat and renumbers the bars', () => {
-    const moved = moveDownbeat(analysis, 2)
+    const moved = moveDownbeat(analysis, 2).grid
     expect(moved.downbeats).toEqual([2, 4, 6, 8])
-    expect(moveDownbeat(analysis, 0, 3).downbeats).toEqual([1, 2.5, 4, 5.5, 7, 8.5])
+    expect(moveDownbeat(analysis, 0, 3).grid.downbeats).toEqual([1, 2.5, 4, 5.5, 7, 8.5])
   })
 })

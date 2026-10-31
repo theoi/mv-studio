@@ -118,30 +118,3 @@ export async function refineSongBeats(
   state.grid = grid
   return { fields: { ...gridFields(grid), sections: sectionFields(sections) }, grid }
 }
-
-function sameJson(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
-/**
- * Applies refined beats/sections without discarding user edits: a field is replaced only if the project still
- * holds the fast-path value it was computed from.
- */
-export function mergeRefinedAnalysis(
-  current: AudioAnalysis,
-  fastBaseline: AudioAnalysis,
-  refined: RefinedFields,
-): AudioAnalysis {
-  const next: AudioAnalysis = { ...current }
-  const gridUntouched =
-    sameJson(current.beats, fastBaseline.beats) &&
-    sameJson(current.downbeats, fastBaseline.downbeats) &&
-    sameJson(current.tempo, fastBaseline.tempo)
-  if (gridUntouched) {
-    next.tempo = refined.tempo
-    next.beats = refined.beats
-    next.downbeats = refined.downbeats
-  }
-  if (sameJson(current.sections, fastBaseline.sections)) next.sections = refined.sections
-  return next
-}

@@ -1,8 +1,9 @@
-/** Pure helpers for user corrections to song analysis; the results go into an `analysis.setAudio` edit. */
+/** User corrections to song analysis as undoable `analysis.setGrid` edits (normal dispatches, not skipped). */
+import type { EditCommand } from '../model/commands.ts'
 import type { AudioAnalysis } from '../model/types.ts'
 import { type BeatGrid, makeGrid, rescaleGrid, setDownbeat } from './beats/grid.ts'
 
-export type BeatGridFields = Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'>
+export type GridEdit = Extract<EditCommand, { type: 'analysis.setGrid' }>
 
 function gridFromAnalysis(analysis: AudioAnalysis): BeatGrid {
   const beats = analysis.beats ?? []
@@ -24,21 +25,21 @@ function gridFromAnalysis(analysis: AudioAnalysis): BeatGrid {
   return makeGrid('dsp', beats, { beatsPerBar, positions }, [], downIdx.length > 0)
 }
 
-function fields(grid: BeatGrid): BeatGridFields {
-  return { tempo: { bpm: grid.bpm, confidence: 1 }, beats: grid.beats, downbeats: grid.downbeats }
+function gridEdit(assetId: string, grid: BeatGrid): GridEdit {
+  return {
+    type: 'analysis.setGrid',
+    assetId,
+    grid: { tempo: { bpm: grid.bpm, confidence: 1 }, beats: grid.beats, downbeats: grid.downbeats },
+  }
 }
 
 /** Doubles (2) or halves (0.5) the beat level, keeping downbeats. */
-export function rescaleTempo(analysis: AudioAnalysis, factor: 2 | 0.5): BeatGridFields {
-  return fields(rescaleGrid(gridFromAnalysis(analysis), factor))
+export function rescaleTempo(analysis: AudioAnalysis, factor: 2 | 0.5): GridEdit {
+  return gridEdit(analysis.assetId, rescaleGrid(gridFromAnalysis(analysis), factor))
 }
 
 /** Makes beat `beatIndex` a downbeat and renumbers bars from it (optionally with a new meter). */
-export function moveDownbeat(
-  analysis: AudioAnalysis,
-  beatIndex: number,
-  beatsPerBar?: number,
-): BeatGridFields {
+export function moveDownbeat(analysis: AudioAnalysis, beatIndex: number, beatsPerBar?: number): GridEdit {
   const grid = gridFromAnalysis(analysis)
-  return fields(setDownbeat(grid, beatIndex, beatsPerBar ?? grid.beatsPerBar))
+  return gridEdit(analysis.assetId, setDownbeat(grid, beatIndex, beatsPerBar ?? grid.beatsPerBar))
 }
