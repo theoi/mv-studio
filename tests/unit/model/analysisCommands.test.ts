@@ -74,6 +74,13 @@ describe('section label confidence', () => {
     expect(analysis()?.sections?.[0]).toMatchObject({ label: 'Hook', confidence: 1 })
     editor.undo()
     expect(analysis()?.sections?.[0]).toMatchObject({ label: 'chorus', confidence: 0.4 })
+    editor.dispatch({
+      type: 'analysis.updateSection',
+      assetId: song.id,
+      sectionId: 's1',
+      patch: { label: 'Chorus', confidence: 0.8 },
+    })
+    expect(analysis()?.sections?.[0]).toMatchObject({ label: 'Chorus', confidence: 0.8 })
   })
 })
 
