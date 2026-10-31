@@ -3,6 +3,8 @@
  * COEP "credentialless" is hard-coded. Upstream learns the policy from a postMessage sent after the page loads, so the
  * navigation that first makes the page isolated gets "require-corp" and no-cors images from hosts without a CORP header
  * fail to load. The pilot measured both behaviours (see THIRD_PARTY_NOTICES.md).
+ * Also reloads on "controllerchange": upstream's "updatefound" listener is attached after register() resolves and can
+ * miss the event, which left about 1 in 10 first visits without isolation.
  */
 /*! coi-serviceworker v0.1.7 - Guido Zuidhof and contributors, licensed under MIT */
 // Hard-coded: the page cannot tell the SW its policy before the navigation request is served.
@@ -99,6 +101,7 @@ if (typeof window === 'undefined') {
 
         // In some environments (e.g. Chrome incognito mode) this won't be available
         if (n.serviceWorker) {
+            n.serviceWorker.addEventListener("controllerchange", () => coi.doReload());
             n.serviceWorker.register(window.document.currentScript.src).then(
                 (registration) => {
                     !coi.quiet && console.log("COOP/COEP Service Worker registered", registration.scope);

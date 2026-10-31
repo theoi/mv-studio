@@ -2,10 +2,13 @@ import { expect, openApp, test } from './fixtures.ts'
 
 test('loads cross-origin isolated from the static sub-path via the service worker', async ({ page }) => {
   await openApp(page)
-  await expect(page.getByRole('heading', { name: 'MV Studio' })).toBeVisible()
-  await expect(page.getByTestId('cap-isolated')).toHaveText('true')
+  await expect(page.getByRole('heading', { name: 'What are you making?' })).toBeVisible()
   expect(await page.evaluate(() => typeof SharedArrayBuffer)).toBe('function')
-  expect(Number(await page.getByTestId('cap-threads').textContent())).toBeGreaterThanOrEqual(1)
+
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('button', { name: 'This device' }).click()
+  await expect(page.getByTestId('cap-isolated')).toHaveAttribute('data-value', 'true')
+  expect(Number(await page.getByTestId('cap-threads').getAttribute('data-value'))).toBeGreaterThanOrEqual(1)
 
   await page.reload()
   expect(await page.evaluate(() => window.crossOriginIsolated)).toBe(true)

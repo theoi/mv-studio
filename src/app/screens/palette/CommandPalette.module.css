@@ -1,0 +1,147 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  background: rgb(5 5 8 / 0.5);
+  animation: fadeIn var(--dur) var(--ease-out);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+.content {
+  position: fixed;
+  top: 14vh;
+  left: 50%;
+  z-index: var(--z-dialog);
+  width: min(620px, calc(100vw - 48px));
+  transform: translateX(-50%);
+  border-radius: var(--radius-lg);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-dialog);
+  overflow: hidden;
+  animation: paletteIn var(--dur-slow) var(--ease-out);
+}
+
+@keyframes paletteIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px) scale(0.985);
+  }
+}
+
+.command {
+  display: flex;
+  flex-direction: column;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 52px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.inputIcon {
+  width: 18px;
+  height: 18px;
+  color: var(--text-3);
+  flex: none;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  font-size: var(--text-lg);
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.list {
+  max-height: min(420px, 52vh);
+  overflow: auto;
+  padding: var(--space-2);
+  scrollbar-width: thin;
+}
+
+.empty {
+  padding: var(--space-8) var(--space-4);
+  color: var(--text-2);
+  text-align: center;
+}
+
+.group :global([cmdk-group-heading]) {
+  padding: var(--space-2) var(--space-2) 4px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius);
+  color: var(--text-1);
+  cursor: default;
+}
+
+.item[data-selected='true'] {
+  background: var(--bg-active);
+}
+
+.itemIcon {
+  display: flex;
+  color: var(--text-2);
+}
+
+.itemIcon svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.75;
+}
+
+.askIcon {
+  color: var(--accent-text);
+}
+
+.itemLabel {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 36px;
+  padding: 0 var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.footerRight {
+  margin-left: auto;
+}

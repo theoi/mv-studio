@@ -4,11 +4,11 @@ MV Studio is MIT-licensed. It includes or loads the following third-party softwa
 
 ## Vendored code
 
-| Component                                        | Source                                                                              | License                                                                                            | Notes                                                                         |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| coi-serviceworker 0.1.7                          | https://github.com/gzuidhof/coi-serviceworker                                       | MIT (Copyright (c) 2021 Guido Zuidhof)                                                             | `public/coi-serviceworker.js`, modified to hard-code COEP `credentialless`.   |
-| Hash without Sine                                | https://www.shadertoy.com/view/4djSRW                                               | MIT (Copyright (c) 2014 David Hoskins)                                                             | GLSL hash functions adapted in `src/engine/plugins/` (film grain, particles). |
-| Beat This! preprocessing and inference windowing | https://github.com/CPJKU/beat_this (1.1.0) and https://github.com/jgorset/beat-this | MIT (Copyright (c) 2024 Institute of Computational Perception, JKU Linz, Austria; Johannes Gorset) | Adapted in `src/analysis/beats/beatThis.ts`.                                  |
+| Component                                        | Source                                                                              | License                                                                                            | Notes                                                                                                           |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| coi-serviceworker 0.1.7                          | https://github.com/gzuidhof/coi-serviceworker                                       | MIT (Copyright (c) 2021 Guido Zuidhof)                                                             | `public/coi-serviceworker.js`, modified to hard-code COEP `credentialless` and to reload on `controllerchange`. |
+| Hash without Sine                                | https://www.shadertoy.com/view/4djSRW                                               | MIT (Copyright (c) 2014 David Hoskins)                                                             | GLSL hash functions adapted in `src/engine/plugins/` (film grain, particles).                                   |
+| Beat This! preprocessing and inference windowing | https://github.com/CPJKU/beat_this (1.1.0) and https://github.com/jgorset/beat-this | MIT (Copyright (c) 2024 Institute of Computational Perception, JKU Linz, Austria; Johannes Gorset) | Adapted in `src/analysis/beats/beatThis.ts`.                                                                    |
 
 ## Runtime dependencies (bundled)
 
@@ -23,6 +23,10 @@ MV Studio is MIT-licensed. It includes or loads the following third-party softwa
 | @mediapipe/tasks-vision   | Apache-2.0 | Vision workers (segmentation, face detection, click-to-select)                                                                                                                                                                                                         |
 | mediabunny                | MPL-2.0    | Unmodified; source at https://github.com/Vanilagy/mediabunny                                                                                                                                                                                                           |
 | @mediabunny/aac-encoder   | MPL-2.0    | Contains a WebAssembly build of FFmpeg's AAC encoder (LGPL-2.1-or-later, built without GPL or nonfree components, https://ffmpeg.org). Loaded lazily as a separate file only when the browser has no native AAC encoder; it can be replaced by rebuilding the package. |
+| radix-ui                  | MIT        |                                                                                                                                                                                                                                                                        |
+| cmdk                      | MIT        |                                                                                                                                                                                                                                                                        |
+| zustand                   | MIT        |                                                                                                                                                                                                                                                                        |
+| lucide-react              | ISC        |                                                                                                                                                                                                                                                                        |
 
 ## Models loaded at runtime
 
@@ -44,4 +48,8 @@ Runtime WebAssembly loaded from https://cdn.jsdelivr.net: MediaPipe Tasks Vision
 
 ## Fonts and other assets
 
-None yet.
+| Asset                                            | Source                        | License                                                              | Notes                                          |
+| ------------------------------------------------ | ----------------------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
+| Inter (variable, via @fontsource-variable/inter) | https://github.com/rsms/inter | SIL Open Font License 1.1 (Copyright 2016 The Inter Project Authors) | Bundled WOFF2 files, self-hosted with the app. |
+
+The design preview's sample media (scenes, song data and lyrics) is drawn procedurally in `src/app/mock` and written for this project; no third-party media is included.

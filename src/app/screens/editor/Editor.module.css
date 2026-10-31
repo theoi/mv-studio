@@ -1,0 +1,131 @@
+.editor {
+  --gap: 6px;
+  display: grid;
+  height: 100%;
+  min-width: 1200px;
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--tl-h, var(--timeline-h));
+  grid-template-columns: var(--lib-w, var(--library-w)) minmax(0, 1fr) var(--right-w, var(--inspector-w));
+  grid-template-areas:
+    'top top top'
+    'library preview right'
+    'timeline timeline timeline';
+  gap: var(--gap);
+  padding: 0 var(--gap) var(--gap);
+  background: var(--bg-app);
+}
+
+.noLibrary {
+  grid-template-columns: 0 minmax(0, 1fr) var(--right-w, var(--inspector-w));
+  column-gap: 0;
+}
+
+.noLibrary .preview {
+  margin-right: var(--gap);
+}
+
+.panel {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+}
+
+.library {
+  composes: panel;
+  grid-area: library;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview {
+  composes: panel;
+  grid-area: preview;
+  display: flex;
+  flex-direction: column;
+  background: #0d0e11;
+}
+
+.right {
+  composes: panel;
+  grid-area: right;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline {
+  composes: panel;
+  grid-area: timeline;
+  display: flex;
+  flex-direction: column;
+}
+
+.splitter {
+  position: absolute;
+  z-index: 5;
+}
+
+.splitter::after {
+  content: '';
+  position: absolute;
+  background: transparent;
+  transition: background-color var(--dur) var(--ease-out);
+}
+
+.splitter:hover::after,
+.splitter[data-dragging]::after {
+  background: var(--accent-line);
+  transition-delay: 120ms;
+}
+
+.splitterV {
+  top: 8px;
+  bottom: 8px;
+  width: 9px;
+  cursor: col-resize;
+}
+
+.splitterV::after {
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+}
+
+.splitterH {
+  left: 8px;
+  right: 8px;
+  height: 9px;
+  cursor: row-resize;
+}
+
+.splitterH::after {
+  top: 4px;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+}
+
+.splitLib {
+  right: -8px;
+}
+
+.splitRight {
+  left: -8px;
+}
+
+.splitTimeline {
+  top: -8px;
+}
+
+/* Panel headers shared by library, right panel and preview */
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  height: var(--panel-header-h);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
