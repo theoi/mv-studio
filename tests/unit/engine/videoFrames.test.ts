@@ -178,4 +178,52 @@ describe('seeking a paused preview video', () => {
     expect(own).toBeDefined()
     expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
   })
+
+  it.each([
+    { reports: 29.9, has: 30 },
+    { reports: 30, has: 60 },
+  ])(
+    'does not take a late frame of the seek before for the next frame of footage reporting $reports fps that has $has fps there',
+    async ({ reports, has }) => {
+      const video = new FakeVideo()
+      video.shows = (t) => Math.floor(t * has + 1e-9) / has
+      // The seek to 4 s presents its frame 125 ms after it ends, once its own wait (120 ms) is over.
+      video.presentAfter = (t) => (t < 4.01 ? 125 : 30)
+      const footage = { ...asset, frameRate: reports }
+      const provider = pausedProvider(video)
+      void provider.videoFrame(footage, 4, 'clip')
+      await vi.advanceTimersByTimeAsync(20)
+      let resolvedAt = -1
+      void provider.videoFrame(footage, 4 + 1 / has, 'clip').then(() => (resolvedAt = performance.now()))
+      await vi.advanceTimersByTimeAsync(400)
+      provider.dispose()
+      const own = video.presented.find((p) => p.t > 4.01)
+      expect(video.presented[0]?.t).toBeLessThan(4.01)
+      expect(own).toBeDefined()
+      expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
+    },
+  )
+
+  it('does not take a frame from playback, presented after the pause, for the next frame', async () => {
+    const video = new FakeVideo()
+    // 60 fps footage, though the asset reports 30 fps.
+    video.shows = (t) => Math.floor(t * 60 + 1e-9) / 60
+    // Starting playback seeks to 4.5 s; that frame is presented 8 ms after the seek ends, once paused again.
+    video.presentAfter = (t) => (t > 4.49 && t < 4.51 ? 8 : 30)
+    const provider = pausedProvider(video)
+    void provider.videoFrame(asset, 4, 'clip')
+    await vi.advanceTimersByTimeAsync(100)
+    provider.setPlaying(true)
+    void provider.videoFrame(asset, 4.5, 'clip')
+    await vi.advanceTimersByTimeAsync(12)
+    provider.setPlaying(false)
+    let resolvedAt = -1
+    void provider.videoFrame(asset, 4.5 + 1 / 60, 'clip').then(() => (resolvedAt = performance.now()))
+    await vi.advanceTimersByTimeAsync(300)
+    provider.dispose()
+    const own = video.presented.find((p) => p.t > 4.51)
+    expect(video.presented.some((p) => p.t > 4.49 && p.t < 4.51)).toBe(true)
+    expect(own).toBeDefined()
+    expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
+  })
 })
