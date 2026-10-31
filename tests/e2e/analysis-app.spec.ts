@@ -30,17 +30,22 @@ async function grid(page: Page): Promise<Grid> {
   })
 }
 
-/** Clicks Tap tempo `count` times, `seconds` apart, timed in the page so the taps are even. */
-async function tapAlong(page: Page, count: number, seconds: number): Promise<void> {
+/**
+ * Taps Tap tempo `count` times, `seconds` apart, timed in the page so the taps are even: pointer presses, or Space
+ * key presses on the focused button.
+ */
+async function tapAlong(page: Page, count: number, seconds: number, via: 'pointer' | 'space'): Promise<void> {
   await page.evaluate(
-    async ({ count, seconds }) => {
+    async ({ count, seconds, via }) => {
       const button = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Tap tempo')!
+      button.focus()
       for (let i = 0; i < count; i++) {
-        button.click()
+        if (via === 'pointer') button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+        else button.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }))
         await new Promise((r) => setTimeout(r, seconds * 1000))
       }
     },
-    { count, seconds },
+    { count, seconds, via },
   )
 }
 
@@ -64,8 +69,13 @@ test('Assist › Song analysis taps the tempo, sets the first beat and analyzes 
   await expect(panel.getByText(`${Math.round(found.bpm)} BPM · 4/4`)).toBeVisible()
   await shot(page, 'analysis-idle')
 
-  // Tapping half the tempo halves the beat level at once.
-  await tapAlong(page, 5, 120 / found.bpm)
+  // Two taps are not enough yet; the count says how many are needed.
+  await tapAlong(page, 2, 0.5, 'pointer')
+  await expect(panel.getByText('Tapping… 2 of 4')).toBeVisible()
+  await expect(panel.getByText(`${Math.round(found.bpm)} BPM · 4/4`)).toBeVisible()
+
+  // Tapping half the tempo with Space on the focused button halves the beat level at once, without playing.
+  await tapAlong(page, 5, 120 / found.bpm, 'space')
   await expect(panel.getByText(/^Tapping · \d+ BPM$/)).toBeVisible()
   await shot(page, 'analysis-tapping')
   await expect(page.getByText(`Tempo set to ${Math.round(found.bpm / 2)} BPM`)).toBeVisible()
@@ -73,11 +83,12 @@ test('Assist › Song analysis taps the tempo, sets the first beat and analyzes 
   expect(halved.undoLabel).toBe('Set tempo')
   expect(halved.bpm).toBeCloseTo(found.bpm / 2, 0)
   expect(halved.beats.length).toBeLessThan(found.beats.length * 0.6)
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().playing)).toBe(false)
   await page.getByRole('button', { name: 'Undo' }).last().click()
   await expect.poll(async () => (await grid(page)).beats.length).toBe(found.beats.length)
 
   // A tempo the beats do not follow at any level tracks the beats again around it, as a job.
-  await tapAlong(page, 6, 0.75)
+  await tapAlong(page, 6, 0.75, 'pointer')
   await expect(page.getByText(/^Tempo set to (7[6-9]|8[0-4]) BPM$/)).toBeVisible({ timeout: 30_000 })
   const tracked = await grid(page)
   expect(tracked.undoLabel).toBe('Set tempo')
@@ -105,4 +116,51 @@ test('Assist › Song analysis taps the tempo, sets the first beat and analyzes 
   expect(Math.abs(again.bpm - found.bpm)).toBeLessThan(3)
   await page.getByRole('button', { name: 'Undo' }).last().click()
   await expect.poll(async () => (await grid(page)).downbeats).toEqual(moved.downbeats)
+})
+
+/**
+ * The failed and cancelled states, with a stand-in for analysis on the real job runner: a run that fails on demand
+ * and a tempo job that only ends when cancelled.
+ */
+test('Assist › Song analysis goes back from a failed run and cancels re-tracking a tapped tempo', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    const { app, shared } = window.mvStudio
+    const pending = (kind: string, title: string, fail?: string) =>
+      shared.jobs.run({
+        kind,
+        title,
+        run: (ctx: { progress: (p: object) => void; signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            ctx.progress({ fraction: 0.3, stage: 'beats', message: title })
+            if (fail) setTimeout(() => reject(new shared.JobError('decode', fail)), 300)
+            ctx.signal.addEventListener('abort', () => reject(new shared.JobError('cancelled', 'Cancelled')))
+          }),
+      })
+    app.songAnalysis.setSongAnalysisServiceForTests({
+      analyzeAgain: () =>
+        pending('analysis.song', 'Analyzing the song', 'This audio file could not be decoded'),
+      trackAtTempo: () => pending('analysis.tempo', 'Following your tempo'),
+    })
+    window.location.hash = '#/editor?tab=assist&assist=analysis&t=73.6'
+  })
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
+
+  await panel.getByRole('button', { name: 'Analyze again' }).click()
+  await expect(panel.getByRole('alert')).toContainText('This audio file could not be decoded')
+  await expect(panel.getByRole('alert')).toContainText('Your project is unchanged.')
+  await shot(page, 'analysis-failed')
+  await panel.getByRole('button', { name: 'Back' }).click()
+  await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
+
+  // 90 BPM is no beat level of the sample's 120 BPM, so the beats are tracked again; Cancel stops it.
+  await tapAlong(page, 5, 60 / 90, 'pointer')
+  await expect(panel.getByText('Following your tempo… 30%')).toBeVisible()
+  await panel.getByRole('button', { name: 'Cancel' }).click()
+  await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
+  expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).not.toBe('Set tempo')
 })

@@ -40,6 +40,7 @@ function undoable(label: string, message: string, commands: EditCommand | EditCo
     label: 'Undo',
     run: () => {
       if (editor.undoLabel() === label) editor.undo()
+      else toast('The project has changed since. Use Undo in the top bar to step back.')
     },
   })
 }

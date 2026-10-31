@@ -18,7 +18,7 @@ import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { jobTarget, openJob, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { bpmOf, hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
 import { openAssist, useUi, type AssistView } from '../../../state/ui.ts'
-import { AnalysisView } from './Analysis.tsx'
+import { AnalysisBadge, AnalysisView } from './Analysis.tsx'
 import { AskBox } from './Ask.tsx'
 import { AutocutBadge, AutocutView } from './Autocut.tsx'
 import { BehindBadge, BehindView } from './Behind.tsx'
@@ -92,6 +92,7 @@ function SongStatus() {
           {stems ? ' · stems ready' : ''}
         </span>
       </span>
+      <AnalysisBadge />
       <ChevronRight className={styles.chev} />
     </button>
   )

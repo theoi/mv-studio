@@ -9,7 +9,7 @@ import { JOB_KINDS } from '../../../state/jobs.ts'
 import { hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
 import { analyzeAgain, applyTappedTempo, setFirstBeat } from '../../../state/songAnalysis.ts'
 import { get } from '../../../state/ui.ts'
-import { pct, useJob } from './jobState.ts'
+import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -22,8 +22,23 @@ function FoundBadge({ count }: { count: number }) {
   )
 }
 
-/** Taps on Tap tempo; a pause of TAP_RESET_SECONDS uses the tempo they give. */
-function useTaps(): { taps: number[]; tap: () => void } {
+/** Status on the song row of Assist's home: the analysis job's progress or failure. */
+export function AnalysisBadge() {
+  const { job, phase } = useJob(JOB_KINDS.analysis)
+  const tempo = useJob(JOB_KINDS.tempo)
+  if (phase === 'running') return <Badge tone="accent">{pct(job)}%</Badge>
+  if (tempo.phase === 'running') return <Badge tone="accent">{pct(tempo.job)}%</Badge>
+  if (phase === 'failed') return <Badge tone="danger">Failed</Badge>
+  return null
+}
+
+const TAP_KEYS = new Set([' ', 'Enter', 't', 'T'])
+
+/**
+ * Taps on Tap tempo, timed by the event (pointer down, or Space, Enter or T while focused); a pause of
+ * TAP_RESET_SECONDS uses the tempo they give.
+ */
+function useTaps(): { taps: number[]; tap: (timeStamp: number) => void } {
   const [taps, setTaps] = useState<number[]>([])
   useEffect(() => {
     if (!taps.length) return
@@ -34,7 +49,7 @@ function useTaps(): { taps: number[]; tap: () => void } {
     }, TAP_RESET_SECONDS * 1000)
     return () => clearTimeout(id)
   }, [taps])
-  return { taps, tap: () => setTaps((t) => [...t, performance.now() / 1000]) }
+  return { taps, tap: (timeStamp) => setTaps((t) => [...t, timeStamp / 1000]) }
 }
 
 export function AnalysisView() {
@@ -55,9 +70,19 @@ export function AnalysisView() {
         title="Song analysis"
         subtitle={name}
         footer={
-          <Button variant="primary" block icon={<RotateCcw />} onClick={() => void analyzeAgain()}>
-            Try again
-          </Button>
+          <div className={styles.footerRow}>
+            <Button variant="secondary" onClick={() => dismiss(job)}>
+              Back
+            </Button>
+            <Button
+              variant="primary"
+              icon={<RotateCcw />}
+              className={styles.grow}
+              onClick={() => void analyzeAgain()}
+            >
+              Try again
+            </Button>
+          </div>
         }
       >
         <div className={styles.failure} role="alert">
@@ -74,14 +99,16 @@ export function AnalysisView() {
   }
 
   let tempoText = analysis?.tempo ? `${formatBpm(analysis.tempo.bpm)} · 4/4` : 'Not found'
-  if (taps.length) tempoText = tapped ? `Tapping · ${formatBpm(tapped)}` : 'Tapping…'
+  if (taps.length)
+    tempoText = tapped ? `Tapping · ${formatBpm(tapped)}` : `Tapping… ${taps.length} of ${MIN_TAPS}`
   else if (tempo.phase === 'running') tempoText = `Following your tempo… ${pct(tempo.job)}%`
+  const running = phase === 'running' ? job : tempo.phase === 'running' ? tempo.job : undefined
 
   return (
     <ToolView
       title="Song analysis"
       subtitle={name}
-      footer={phase === 'running' ? <CancelButton job={job} /> : undefined}
+      footer={running ? <CancelButton job={running} /> : undefined}
     >
       {phase === 'running' && <RunCard job={job} label="Song analysis progress" />}
       <div className={styles.facts}>
@@ -116,14 +143,21 @@ export function AnalysisView() {
       <div className={styles.linkRow}>
         <Tooltip
           label="Tap tempo"
-          description={`Play the song and tap along with the beat, at least ${MIN_TAPS} times. Stop for ${TAP_RESET_SECONDS} seconds to use the tempo.`}
+          description={`Play the song and tap along with the beat, at least ${MIN_TAPS} times, or press Space or T while the button is focused. Stop for ${TAP_RESET_SECONDS} seconds to use the tempo.`}
         >
           <Button
             size="sm"
             variant="secondary"
             icon={<Activity />}
             disabled={!analysis || busy}
-            onClick={tap}
+            onPointerDown={(e) => tap(e.timeStamp)}
+            onKeyDown={(e) => {
+              if (!TAP_KEYS.has(e.key)) return
+              // Space and T are also editor shortcuts (play, add text); here they only tap.
+              e.preventDefault()
+              e.stopPropagation()
+              if (!e.repeat) tap(e.timeStamp)
+            }}
           >
             Tap tempo
           </Button>
