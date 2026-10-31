@@ -15,6 +15,7 @@ import {
   type Project,
   type SongSection,
 } from '../../model/index.ts'
+import { directorMeta } from '../../director/meta.ts'
 import { TRACK_IDS, buildDemoProject, sceneOf } from '../mock/demoProject.ts'
 import type { SceneId } from '../mock/art.ts'
 import { editorPreset, get, maybeStartGuide, select, set, toast, type Kind } from './ui.ts'
@@ -192,7 +193,12 @@ export function lyricAt(p: Project, t: number): LyricLine | undefined {
   )
 }
 
-export type ClipKindView = 'video' | 'image' | 'text' | 'lyric' | 'visualizer' | 'audio' | 'other'
+export type ClipKindView = 'video' | 'image' | 'text' | 'lyric' | 'visualizer' | 'audio' | 'look' | 'other'
+
+/** A look layer: the adjustment clip a look (from the Library or a director draft) puts over the whole video. */
+export function isLookClip(c: Clip): boolean {
+  return c.type === 'adjustment' && (c.meta?.role === 'look' || directorMeta(c)?.role === 'look')
+}
 
 export interface ClipView {
   id: string
@@ -203,6 +209,8 @@ export interface ClipView {
   end: number
   scene?: SceneId
   lyricLineId?: string
+  /** Look layers: how strongly the look applies (the clip's opacity, 0..1). */
+  amount?: number
 }
 
 export function viewOf(p: Project, c: Clip): ClipView {
@@ -221,6 +229,10 @@ export function viewOf(p: Project, c: Clip): ClipView {
       return { ...base, kind: 'visualizer', name: c.name ?? c.generatorId }
     case 'audio':
       return { ...base, kind: 'audio', name: c.name ?? p.assets[c.assetId]?.name ?? 'Audio' }
+    case 'adjustment':
+      return isLookClip(c)
+        ? { ...base, kind: 'look', name: c.name ?? 'Look', amount: c.opacity.value }
+        : { ...base, kind: 'other', name: c.name ?? 'Adjustment' }
     default:
       return { ...base, kind: 'other', name: c.name ?? c.type }
   }
