@@ -144,20 +144,33 @@ export function coverAsset(project: Project): Asset | undefined {
   return clip ? project.assets[clip.assetId] : undefined
 }
 
-async function thumbnailFor(project: Project): Promise<Blob | undefined> {
+/** A new thumbnail when the project's cover changed since its last one was stored, else undefined. */
+async function thumbnailFor(project: Project): Promise<{ cover: Id | null; blob?: Blob } | undefined> {
   const asset = coverAsset(project)
-  const id = asset?.id ?? null
-  if (covers.has(project.id) && covers.get(project.id) === id) return undefined
+  const cover = asset?.id ?? null
+  if (covers.has(project.id) && covers.get(project.id) === cover) return undefined
   const blob = asset ? await thumbnailBlob(asset).catch(() => null) : null
-  covers.set(project.id, id)
-  return blob ?? undefined
+  return blob ? { cover, blob } : { cover }
 }
 
-async function writeProject(project: Project): Promise<void> {
+let writes = 0
+/** The newest write of each project, so an older one still making its thumbnail doesn't overwrite it. */
+const latestWrite = new Map<Id, number>()
+
+/**
+ * Stores the project. When the page is `leaving`, it is written at once without making a thumbnail: decoding a frame
+ * takes longer than a closing page lives, and the card keeps its earlier thumbnail until the next save.
+ */
+async function writeProject(project: Project, leaving = false): Promise<void> {
   if (removed.has(project.id)) return
+  const write = ++writes
+  latestWrite.set(project.id, write)
   try {
     if (failSaves) throw new JobError(failSaves, 'Save failed for the test')
-    await store.save(project, await thumbnailFor(project))
+    const thumbnail = leaving ? undefined : await thumbnailFor(project)
+    if (latestWrite.get(project.id) !== write) return
+    await store.save(project, thumbnail?.blob)
+    if (thumbnail) covers.set(project.id, thumbnail.cover)
   } catch (error) {
     const failure = new Error(saveErrorMessage(error), { cause: error })
     failure.name = 'SaveError'
@@ -172,9 +185,9 @@ async function writeProject(project: Project): Promise<void> {
   if (get().screen === 'start') void refreshRecents()
 }
 
-async function autosaveProject(project: Project): Promise<void> {
+async function autosaveProject(project: Project, { leaving }: { leaving: boolean }): Promise<void> {
   if (!storedIds.has(project.id) && !edited) return
-  await writeProject(project)
+  await writeProject(project, leaving)
   if (editor.getProject().id === project.id && get().screen === 'editor') rememberLast(project.id)
   syncCurrent()
 }
@@ -218,7 +231,7 @@ function startSaving(seconds: number) {
 function onBeforeUnload(e: BeforeUnloadEvent) {
   const { status, tracked } = usePersistence.getState()
   if (!tracked || status === 'saved' || status === 'idle') return
-  void autosave?.flush()
+  void autosave?.flush({ leaving: true })
   e.preventDefault()
 }
 

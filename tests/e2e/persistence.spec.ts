@@ -126,6 +126,112 @@ test('a project comes back after a reload: edits, imported media, analysis and l
   expect((await snapshot(page)).id).toBe(before.id)
 })
 
+test('an edit made right before a reload or closing the tab is kept, and the project keeps its thumbnail', async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(120_000)
+  // Leaving with a change not saved yet asks first; the user leaves anyway.
+  const leaveAnyway = (p: Page) =>
+    p.on('dialog', (d) => void (d.type() === 'beforeunload' ? d.accept() : d.dismiss()))
+  const status = (p: Page) =>
+    p.evaluate(() => window.mvStudio.app.persistence.usePersistence.getState().status as string)
+  leaveAnyway(page)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    // Saves wait 5 s after the last change, so every edit below is still unsaved when the page goes away.
+    localStorage.setItem('mv-studio.prefs', JSON.stringify({ autosaveSeconds: 30 }))
+    window.location.hash = '#/editor'
+  })
+  await waitForPreview(page)
+  await page.keyboard.press(`${mod}+s`)
+  await expect(page.getByText('Saved in this browser')).toBeVisible()
+  const { id } = await snapshot(page)
+  expect(page.url()).toContain(`project=${id}`)
+  // A fresh page: its first save makes the card's thumbnail from a frame of the footage.
+  await page.reload()
+  await waitForPreview(page)
+
+  let current = 'Neon Skyline'
+  let open = page
+  for (const [i, leave] of (['reload', 'reload', 'close'] as const).entries()) {
+    const name = `Night drive ${i + 1}`
+    await renameOpenProject(open, current, name)
+    expect(await status(open)).toBe('pending')
+    if (leave === 'reload') {
+      await open.reload()
+    } else {
+      const url = open.url()
+      const closed = new Promise((resolve) => open.once('close', resolve))
+      await open.close({ runBeforeUnload: true })
+      await closed
+      open = await context.newPage()
+      leaveAnyway(open)
+      await openApp(open, url.slice(url.indexOf('/mv-studio/') + '/mv-studio/'.length).replace(/^/, './'))
+    }
+    await open.waitForFunction(() => window.mvStudio?.ready === true)
+    await expect(open.getByRole('button', { name: `Project: ${name}` })).toBeVisible()
+    expect((await snapshot(open)).id).toBe(id)
+    current = name
+  }
+  const thumbnail = await open.evaluate(
+    async (projectId) =>
+      ((await window.mvStudio.media.projectStore.list()) as { id: string; thumbnail?: Blob }[]).find(
+        (s) => s.id === projectId,
+      )?.thumbnail?.size ?? 0,
+    id,
+  )
+  expect(thumbnail).toBeGreaterThan(0)
+})
+
+test('a new sample never saves over a kept one, from a fresh #/editor or from Use a sample', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  const kept = () =>
+    page.evaluate(async () =>
+      ((await window.mvStudio.media.projectStore.list()) as { id: string; name: string }[])
+        .map((s) => `${s.id === 'demo-neon-skyline' ? 'legacy' : 'own'}:${s.name}`)
+        .sort(),
+    )
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor'
+  })
+  await waitForPreview(page)
+  // A sample kept before samples had ids of their own: every one had this id.
+  await page.evaluate(async () => {
+    const sample = window.mvStudio.app.project.editor.getProject()
+    await window.mvStudio.media.projectStore.save({ ...sample, id: 'demo-neon-skyline', name: 'Mine A' })
+  })
+  await page.keyboard.press(`${mod}+s`)
+  await expect(page.getByText('Saved in this browser')).toBeVisible()
+  await renameOpenProject(page, 'Neon Skyline', 'Mine B')
+  await expect.poll(kept).toEqual(['legacy:Mine A', 'own:Mine B'])
+
+  // A fresh visit to #/editor shows a new sample; an edit keeps it as a project of its own.
+  await page.evaluate(() => (window.location.hash = '#/editor'))
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await waitForPreview(page)
+  await renameOpenProject(page, 'Neon Skyline', 'Other 1')
+  await expect.poll(kept).toEqual(['legacy:Mine A', 'own:Mine B', 'own:Other 1'])
+
+  // So does Use a sample on an empty project.
+  await page.evaluate(() => (window.location.hash = '#/editor?project=empty&kind=blank'))
+  await expect(page.getByText('Start with a song')).toBeVisible()
+  await page.getByRole('button', { name: 'Use a sample' }).click()
+  await waitForPreview(page)
+  await renameOpenProject(page, 'Neon Skyline', 'Other 2')
+  await expect.poll(kept).toEqual(['legacy:Mine A', 'own:Mine B', 'own:Other 1', 'own:Other 2'])
+
+  // The kept sample with the old id still opens from a link.
+  await page.evaluate(() => (window.location.hash = '#/editor?project=demo-neon-skyline'))
+  await expect(page.getByRole('button', { name: 'Project: Mine A' })).toBeVisible()
+})
+
 test('the sample is only kept once it changes or Mod S is pressed', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {
