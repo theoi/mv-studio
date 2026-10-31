@@ -1,13 +1,12 @@
 /**
- * The song's beat grid as the timeline and preview use it: the detected beats, else beats from the tempo starting at
- * 0 s, and the bar starts once they are found (by the analysis's refinement step or the user; until then nothing
- * snaps to or counts bars). Snapping, ruler ticks, the beat grid and the preview's readout all read it, so they agree
- * with each other and with the shaders' beat grid.
+ * The song's beat grid as the timeline uses it, in timeline time: the detected beats, else beats from the tempo
+ * starting at 0 s, and the bar starts once they are found (`barsState`; until then nothing snaps to or counts bars).
+ * Snapping, ruler ticks, the beat grid and section bar counts all read it, so they agree with each other, with the
+ * preview's readout and with the shaders' beat grid.
  */
-import { gridPosition } from '../../engine/audioFeatures.ts'
-import type { AudioAnalysis, Project } from '../../model/index.ts'
+import { hasFoundBars, type Project } from '../../model/index.ts'
 import { songAnalysis, timelineDuration } from './project.ts'
-import type { BarsState } from './songAnalysis.ts'
+import { barsState, songBeatsOnTimeline } from './songAnalysis.ts'
 
 export interface BeatGrid {
   /** Beat times in seconds, ascending. */
@@ -52,28 +51,33 @@ export function nearestEvent(events: readonly number[], t: number): number | und
   return t - before <= after - t ? before : after
 }
 
-// Keyed by the arrays and tempo themselves, which edits elsewhere in the analysis (a section drag) leave as they are.
+// Keyed by the analysis's beat array, which edits elsewhere in the analysis (a section drag) leave as it is; the
+// first and last beat on the timeline change when the song clip moves or is trimmed.
 const fromBeats = new WeakMap<
   readonly number[],
-  { downbeats: AudioAnalysis['downbeats']; grid: BeatGrid | null }
+  {
+    downbeats: readonly number[] | undefined
+    first: number
+    last: number
+    count: number
+    grid: BeatGrid | null
+  }
 >()
 const fromTempo = new WeakMap<object, { end: number; grid: BeatGrid }>()
 
-function detectedGrid(a: AudioAnalysis): BeatGrid | null {
-  const beats = a.beats ?? []
+function detectedGrid(beats: number[], found: number[]): BeatGrid | null {
   if (beats.length < 2) return null
   const beat = median(beats.slice(1).map((t, i) => t - (beats[i] as number)))
-  const detected = (a.downbeats?.length ?? 0) >= 2
+  const detected = hasFoundBars({ downbeats: found })
   let beatsPerBar = 4
   if (detected) {
-    const counts = (a.downbeats ?? []).slice(1).map((d, i) => {
-      const from = lastIndexAt(beats, (a.downbeats?.[i] as number) + beat / 2)
+    const counts = found.slice(1).map((d, i) => {
+      const from = lastIndexAt(beats, (found[i] as number) + beat / 2)
       return lastIndexAt(beats, d + beat / 2) - from
     })
     beatsPerBar = Math.min(7, Math.max(2, Math.round(median(counts)) || 4))
   }
-  const downbeats = detected ? [...(a.downbeats ?? [])] : []
-  return { beats, downbeats, beatsPerBar, detectedBars: detected, beat }
+  return { beats, downbeats: detected ? found : [], beatsPerBar, detectedBars: detected, beat }
 }
 
 /** The beat grid of the project's song, or null without a song or tempo. */
@@ -81,9 +85,20 @@ export function beatGrid(p: Project): BeatGrid | null {
   const a = songAnalysis(p)
   if (!a) return null
   if (a.beats) {
+    const beats = songBeatsOnTimeline(p)
+    const first = beats[0] ?? -1
+    const last = beats.at(-1) ?? -1
     let hit = fromBeats.get(a.beats)
-    if (!hit || hit.downbeats !== a.downbeats) {
-      hit = { downbeats: a.downbeats, grid: detectedGrid(a) }
+    if (
+      !hit ||
+      hit.downbeats !== a.downbeats ||
+      hit.first !== first ||
+      hit.last !== last ||
+      hit.count !== beats.length
+    ) {
+      const bars = barsState(p)
+      const grid = detectedGrid(beats, bars.status === 'ready' ? bars.downbeats : [])
+      hit = { downbeats: a.downbeats, first, last, count: beats.length, grid }
       fromBeats.set(a.beats, hit)
     }
     if (hit.grid) return hit.grid
@@ -154,47 +169,9 @@ export function snapTo(
   return { t: best, snapped }
 }
 
-/** Bar and beat at t, both counted from 1, as in "Bar 12, beat 3"; null until the bars are found. */
-export function barAt(grid: BeatGrid, t: number): { bar: number; beat: number } | null {
-  if (!grid.detectedBars) return null
-  const barPos = gridPosition(grid.downbeats, t) ?? 0
-  const bar = Math.floor(barPos)
-  const barStart = grid.downbeats[bar] ?? grid.downbeats[0] ?? 0
-  const beatPos = gridPosition(grid.beats, t) ?? 0
-  const startPos = gridPosition(grid.beats, barStart) ?? 0
-  const beat = Math.floor(beatPos - Math.round(startPos) + 1e-6)
-  return {
-    bar: Math.max(1, bar + 1),
-    beat: Math.min(grid.beatsPerBar, Math.max(1, beat + 1)),
-  }
-}
-
-/** Whether a beat time is also a bar start. */
-export function isDownbeat(grid: BeatGrid, t: number): boolean {
-  const d = nearestEvent(grid.downbeats, t)
-  return d !== undefined && Math.abs(d - t) < grid.beat / 4
-}
-
-/** The beat at t, counted from 1 at the first beat. */
-export function beatAt(grid: BeatGrid, t: number): number {
-  return Math.max(1, Math.floor((gridPosition(grid.beats, t) ?? 0) + 1e-6) + 1)
-}
-
 /** Bars from start to end: the bar starts in between, or the length in typical bars; null until the bars are found. */
 export function barsBetween(grid: BeatGrid | null, start: number, end: number): number | null {
   if (!grid?.detectedBars) return null
   const inside = grid.downbeats.filter((d) => d >= start - grid.beat / 4 && d < end - grid.beat / 4).length
   return inside || Math.max(1, Math.round((end - start) / (grid.beat * grid.beatsPerBar)))
-}
-
-/**
- * Why nothing snaps to or counts bars yet, in the words the snap menu, the tempo tooltip and the preview's readout
- * share; undefined once they are found or when there is no analyzed song.
- */
-export function barsNote(status: BarsState['status'], short = false): string | undefined {
-  if (status === 'finding') return 'Finding bars…'
-  if (status !== 'unavailable') return undefined
-  return short
-    ? 'Bars not found yet'
-    : 'Bars not found yet. Analyze again in Assist › Song analysis to look for them.'
 }

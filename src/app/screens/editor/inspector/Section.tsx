@@ -1,6 +1,8 @@
 import { Film } from 'lucide-react'
+import { ToggleGroup } from 'radix-ui'
 import { Button } from '../../../ds/Button.tsx'
-import { FieldRow, Input, NumberField, Section, Segmented } from '../../../ds/Fields.tsx'
+import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
+import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatTime } from '../../../format.ts'
 import { barsBetween, beatGrid } from '../../../state/beats.ts'
 import {
@@ -17,8 +19,7 @@ import {
   type SectionKind,
 } from '../../../state/project.ts'
 import { exportSectionTeaser } from '../../../state/exports.ts'
-import { moveBoundary, sectionEdge } from '../../../state/sections.ts'
-import { openAssist } from '../../../state/ui.ts'
+import { cutClipsToSection, moveBoundary, sectionEdge } from '../../../state/sections.ts'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
 import styles from '../Inspector.module.css'
@@ -91,24 +92,27 @@ export function SectionInspector({ id }: { id: string }) {
           />
         </FieldRow>
         <FieldRow label="Color">
-          <Segmented
-            size="sm"
+          {/* Swatches that wrap: the inspector is too narrow at 1280 px for Auto and six colors in one row. */}
+          <ToggleGroup.Root
+            type="single"
             value={picked}
-            onChange={(v) => update({ color: v === 'auto' ? '' : v }, 'Change section color')}
-            ariaLabel="Section color"
-            options={[
-              {
-                value: 'auto',
-                title: `Auto (${colorNames[sectionKind(sec)]}, from the name)`,
-                label: <span className={styles.autoSwatch}>Auto</span>,
-              },
-              ...kinds.map((k) => ({
-                value: k,
-                title: colorNames[k],
-                label: <span className={styles.swatch} style={{ background: sectionColor[k] }} />,
-              })),
-            ]}
-          />
+            onValueChange={(v) => v && update({ color: v === 'auto' ? '' : v }, 'Change section color')}
+            aria-label="Section color"
+            className={styles.swatches}
+          >
+            <Tooltip label={`Auto: ${colorNames[sectionKind(sec)]}`} description="From the section's name">
+              <ToggleGroup.Item value="auto" className={styles.swatchAuto} aria-label="Auto">
+                Auto
+              </ToggleGroup.Item>
+            </Tooltip>
+            {kinds.map((k) => (
+              <Tooltip key={k} label={colorNames[k]}>
+                <ToggleGroup.Item value={k} className={styles.swatchItem} aria-label={colorNames[k]}>
+                  <span className={styles.swatch} style={{ background: sectionColor[k] }} />
+                </ToggleGroup.Item>
+              </Tooltip>
+            ))}
+          </ToggleGroup.Root>
         </FieldRow>
         <FieldRow label="Start">{edge('start')}</FieldRow>
         <FieldRow label="End">{edge('end')}</FieldRow>
@@ -125,7 +129,7 @@ export function SectionInspector({ id }: { id: string }) {
       </Section>
       <Section title="Do more with this section">
         <div className={styles.stackActions}>
-          <Button size="sm" variant="secondary" block onClick={() => openAssist('autocut')}>
+          <Button size="sm" variant="secondary" block onClick={() => cutClipsToSection(sec.id)}>
             Cut clips to this section
           </Button>
           <Button size="sm" variant="ghost" block onClick={() => exportSectionTeaser(sec.id)}>

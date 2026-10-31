@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createProject, createVideoClip, type AudioAnalysis, type Project } from '../../../src/model/index.ts'
-import {
-  barAt,
-  barsBetween,
-  beatAt,
-  beatGrid,
-  snapTo,
-  type SnapOptions,
-} from '../../../src/app/state/beats.ts'
+import { barsBetween, beatGrid, snapTo, type SnapOptions } from '../../../src/app/state/beats.ts'
 import { timelineDuration } from '../../../src/app/state/project.ts'
 
 function song(analysis: Partial<AudioAnalysis>): Project {
@@ -30,12 +23,9 @@ describe('beat grid', () => {
     expect(grid?.beats).toEqual(beats)
   })
 
-  it('has no bars until they are found: no bar starts, bar readout or bar count, and the beat counts instead', () => {
+  it('has no bars until they are found: no bar starts, bar count or bar snapping', () => {
     const grid = beatGrid(song({ beats }))!
     expect(grid).toMatchObject({ beatsPerBar: 4, detectedBars: false, downbeats: [] })
-    expect(barAt(grid, 3)).toBeNull()
-    expect(beatAt(grid, 0.3)).toBe(1)
-    expect(beatAt(grid, 3)).toBe(6)
     expect(barsBetween(grid, 0, 8)).toBeNull()
     const barsOnly: SnapOptions = {
       snap: true,
@@ -63,17 +53,6 @@ describe('beat grid', () => {
     const a = waltz.analysis.audio.song!
     const edited = { ...waltz, analysis: { ...waltz.analysis, audio: { song: { ...a, sections: [] } } } }
     expect(beatGrid(edited)).toBe(beatGrid(waltz))
-  })
-
-  it.each([
-    [0.1, 1, 1],
-    [0.3, 1, 1],
-    [1.3, 1, 3],
-    [1.8, 2, 1],
-    [3.0, 2, 3],
-    [3.3, 3, 1],
-  ])('at %s s it is bar %s, beat %s', (t, bar, beat) => {
-    expect(barAt(beatGrid(waltz)!, t)).toEqual({ bar, beat })
   })
 
   it('counts the bars of a stretch by its bar starts', () => {

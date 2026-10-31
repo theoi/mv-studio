@@ -3,7 +3,10 @@
  * other; an edge with a gap beside it moves alone, up to the neighbor.
  */
 import type { EditCommand, Project, SongSection } from '../../model/index.ts'
+import { setAutoCutChoices } from './autocut.ts'
+import { isSelectableClip } from './clipboard.ts'
 import { dispatch, editor, songAnalysis, timelineDuration } from './project.ts'
+import { openAssist, set } from './ui.ts'
 
 /** Sections closer than this share a boundary. */
 const TOUCH = 0.05
@@ -74,4 +77,25 @@ export function moveBoundary(b: SectionBoundary, t: number, coalesceKey?: string
     label: 'Move section edge',
     ...(coalesceKey ? { coalesceKey } : {}),
   })
+}
+
+/**
+ * The clips "Select its clips" picks: those that play during the section, left to right. Adjustment layers such as a
+ * look that run past the section are left out, since they belong to more than this section.
+ */
+export function sectionClipIds(p: Project, s: SongSection): string[] {
+  return Object.values(p.clips)
+    .filter((c) => isSelectableClip(c) && c.start < s.end - TOUCH && c.start + c.duration > s.start + TOUCH)
+    .filter(
+      (c) => c.type !== 'adjustment' || (c.start >= s.start - TOUCH && c.start + c.duration <= s.end + TOUCH),
+    )
+    .sort((a, b) => a.start - b.start)
+    .map((c) => c.id)
+}
+
+/** Opens Assist › Auto-cut set to cut this section only. */
+export function cutClipsToSection(id: string): void {
+  set({ selection: { type: 'section', id } })
+  setAutoCutChoices({ range: 'section' })
+  openAssist('autocut')
 }

@@ -90,12 +90,18 @@ test('snapping, the meter and the bar readout follow the detected beats and down
       { history: 'skip' },
     )
   })
-  await expect(page.getByText(/^Beat \d+$/)).toBeVisible()
+  // The readout shows the section only: no bar guessed from the tempo, and no beat count.
+  await expect(page.getByText('Chorus', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText(/^(Bar|Beat) \d+$/)).toHaveCount(0)
   await expect(page.getByRole('button', { name: /· \d\/4$/ })).toHaveCount(0)
   await page.getByRole('button', { name: 'Snapping options' }).click()
+  // Off while it can't snap (the choice is kept), with the short reason; the long hint is in the tempo tooltip.
   const barStarts = page.getByRole('menuitemcheckbox', { name: /^Bar starts/ })
   await expect(barStarts).toBeDisabled()
+  await expect(barStarts).toHaveAttribute('aria-checked', 'false')
   await expect(barStarts).toContainText('Bars not found yet')
+  await expect(barStarts).not.toContainText('Analyze again')
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().barSnap)).toBe(true)
   await page.keyboard.press('Escape')
 
   // A waltz whose beats start at 0.25 s: bar starts every 1.5 s, at 0.25, 1.75, ..., 66.25, 67.75.
@@ -166,13 +172,15 @@ test('a section edge drags with its neighbor, snaps to the beat, nudges with the
   const y = box.y + box.height / 2
   await settle(page)
 
-  // 2.1 s to the right snaps to the beat (and bar start) at 66 s.
+  // 2.1 s to the right snaps to the beat (and bar start) at 66 s, showing the time beside the edge.
   const drag = await measured(page, async () => {
     await page.mouse.move(x, y)
     await page.mouse.down()
     await page.mouse.move(x + 2.1 * pps, y, { steps: 40 })
-    await page.mouse.up()
   })
+  await expect(page.getByText('1:06.0', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await expect(page.getByText('1:06.0', { exact: true })).toBeHidden()
   expect(await span(page, 's-pre')).toMatchObject({ start: 48, end: 66 })
   expect(await span(page, 's-c1')).toMatchObject({ start: 66, end: 96 })
   await expect(page.getByRole('button', { name: 'Section Chorus, 1:06 to 1:36' })).toBeVisible()
@@ -198,6 +206,10 @@ test('a section edge drags with its neighbor, snaps to the beat, nudges with the
   expect(await span(page, 's-c1')).toMatchObject({ start: 66 })
   expect(await span(page, 's-pre')).toMatchObject({ end: 66 })
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().playhead)).toBe(67)
+  // The two nudges are one undo step (the edge, a slider, keeps its keys while focused).
+  await edge.blur()
+  await page.keyboard.press(`${mod}+z`)
+  expect(await span(page, 's-c1')).toMatchObject({ start: 64 })
 
   console.log('section edge drag main thread', JSON.stringify(drag))
   expect(drag.inputDelayP95Ms).toBeLessThan(100)
@@ -209,7 +221,8 @@ test('the section inspector sets color, start and end; the section menu selects 
 }) => {
   await openEditor(page, '#/editor?t=67')
   const chorus = page.getByRole('button', { name: 'Section Chorus, 1:04 to 1:36' })
-  await chorus.dispatchEvent('pointerdown')
+  // A mouse pointerdown: one without a pointer type counts as touch, whose long press opens the section menu.
+  await chorus.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
   await expect(page.getByText(/^Section: Chorus/)).toBeVisible()
   await expect(page.getByText('1:04 – 1:36 · 16 bars')).toBeVisible()
 
@@ -247,19 +260,39 @@ test('the section inspector sets color, start and end; the section menu selects 
       }[]
     )
       .filter((c) => c.type !== 'audio' && !c.lyricLineId && c.start < 127 && c.start + c.duration > 62)
+      // The look runs the whole song, so it is not this section's.
+      .filter((c) => c.type !== 'adjustment' || (c.start >= 62 && c.start + c.duration <= 127))
       .map((c) => c.id),
   )
   expect(expected.length).toBeGreaterThan(3)
+  const look: string = await page.evaluate(
+    () =>
+      (
+        Object.values(window.mvStudio.app.project.editor.getProject().clips) as { id: string; type: string }[]
+      ).find((c) => c.type === 'adjustment')!.id,
+  )
   const selected: string[] = await page.evaluate(() => {
     const { ui } = window.mvStudio.app
     return ui.selectedClipIds(ui.get().selection)
   })
   expect(new Set(selected)).toEqual(new Set(expected))
+  expect(selected).not.toContain(look)
   await expect(page.getByText(`${expected.length} clips`, { exact: true })).toBeVisible()
 
   await moved.click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Go to its start' }).click()
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().playhead)).toBe(62)
+
+  // Cut clips to it opens Auto-cut set to this section.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 10 }))
+  await moved.click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Cut clips to it…' }).click()
+  expect(
+    await page.evaluate(() => {
+      const { autocut, ui } = window.mvStudio.app
+      return { range: autocut.useAutoCut.getState().choices.range, selection: ui.get().selection }
+    }),
+  ).toEqual({ range: 'section', selection: { type: 'section', id: 's-c1' } })
 
   await moved.click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Export as a teaser…' }).click()

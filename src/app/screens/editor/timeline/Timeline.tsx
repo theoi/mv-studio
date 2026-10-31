@@ -32,7 +32,7 @@ import type {
   StemName,
   Track,
 } from '../../../../model/index.ts'
-import { clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
+import { BARS_NOTES, clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
 import {
@@ -103,7 +103,7 @@ import {
   toast,
   useUi,
 } from '../../../state/ui.ts'
-import { barsNote, beatGrid, lastIndexAt, snapTo, type BeatGrid } from '../../../state/beats.ts'
+import { beatGrid, lastIndexAt, snapTo, type BeatGrid } from '../../../state/beats.ts'
 import { useBars, type BarsState } from '../../../state/songAnalysis.ts'
 import {
   droppedLibraryItem,
@@ -124,7 +124,13 @@ import {
   type KeyframeMark,
 } from '../../../state/keyframes.ts'
 import { registerReveal } from '../../../state/reveal.ts'
-import { moveBoundary, sectionBoundaries, type SectionBoundary } from '../../../state/sections.ts'
+import {
+  cutClipsToSection,
+  moveBoundary,
+  sectionBoundaries,
+  sectionClipIds,
+  type SectionBoundary,
+} from '../../../state/sections.ts'
 import {
   separatedStems,
   songStemTrack,
@@ -473,6 +479,10 @@ const Toolbar = memo(function Toolbar({
   const showGrid = useUi((s) => s.showGrid)
   const pps = useUi((s) => s.pxPerSec)
   const tool = useUi((s) => s.tool)
+  // While the bars are not found, "Bar starts" is off (the choice is kept for when they are).
+  const waiting = bars === 'finding' || bars === 'unavailable'
+  const barsShort =
+    bars === 'finding' ? BARS_NOTES.finding : bars === 'unavailable' ? BARS_NOTES.notFound : undefined
   const sliderVal = Math.round((Math.log(pps / MIN_PPS) / Math.log(MAX_PPS / MIN_PPS)) * 100)
   return (
     <div className={styles.toolbar}>
@@ -514,10 +524,10 @@ const Toolbar = memo(function Toolbar({
                 Beats
               </MenuCheckItem>
               <MenuCheckItem
-                checked={barSnap}
+                checked={barSnap && !waiting}
                 onCheckedChange={(v) => set({ barSnap: v })}
-                disabled={bars === 'finding' || bars === 'unavailable'}
-                description={barsNote(bars)}
+                disabled={waiting}
+                description={barsShort}
               >
                 Bar starts
               </MenuCheckItem>
@@ -542,7 +552,9 @@ const Toolbar = memo(function Toolbar({
             description={
               grid?.detectedBars || bars === 'none'
                 ? 'Adjust in Assist › Song analysis'
-                : `${barsNote(bars)} The meter shows once they are found.`
+                : bars === 'finding'
+                  ? `${BARS_NOTES.finding} The meter shows once they are found.`
+                  : `${BARS_NOTES.notFound}. ${BARS_NOTES.analyzeAgain} The meter shows once they are found.`
             }
           >
             <button className={`${styles.bpm} tnum`} onClick={() => openAssist('analysis')}>
@@ -1155,7 +1167,7 @@ function SectionSuggestion({ section }: { section: SongSection }) {
           id={cutId}
           variant="chip"
           action="Cut clips to it"
-          onAction={() => openAssist('autocut')}
+          onAction={() => cutClipsToSection(section.id)}
         >
           Re-cut this {label} to the beat
         </InlineSuggestion>
@@ -1203,6 +1215,9 @@ export function Timeline() {
   const showEnergy = useUi((s) => s.showEnergy)
   const showGrid = useUi((s) => s.showGrid)
   const [snapLine, setSnapLine] = useState<number | null>(null)
+  // Where a dragged section edge is, shown beside it.
+  const [edgeTime, setEdgeTime] = useState<number | null>(null)
+  const nudgeEnd = useRef(0)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
@@ -1555,11 +1570,13 @@ export function Timeline() {
       const r = snapTime(b.t + dx / scale, scale, grid, [], [])
       const t = Math.min(b.max, Math.max(b.min, r.t))
       setSnapLine(r.snapped !== null && Math.abs(r.snapped - t) < 0.001 ? r.snapped : null)
+      setEdgeTime(t)
       moveBoundary(b, t, key)
     }
     const up = () => {
       editor.endGesture()
       setSnapLine(null)
+      setEdgeTime(null)
       handle.removeEventListener('pointermove', move)
       handle.removeEventListener('pointerup', up)
       handle.removeEventListener('pointercancel', up)
@@ -1585,7 +1602,10 @@ export function Timeline() {
       const i = lastIndexAt(events, b.t + (dir * grid.beat) / 4)
       t = (dir > 0 ? events[i + steps] : events[i - steps + 1]) ?? t
     }
-    moveBoundary(b, t)
+    // A run of nudges, until a pause, is one undo step.
+    moveBoundary(b, t, `edge-nudge:${b.before?.id ?? ''}|${b.after?.id ?? ''}`)
+    window.clearTimeout(nudgeEnd.current)
+    nudgeEnd.current = window.setTimeout(() => editor.endGesture(), 800)
   }
 
   /** Drag on empty track space: selects the clips the rectangle touches (added to the selection with Shift or Mod). */
@@ -1885,23 +1905,11 @@ export function Timeline() {
                         <ContextMenuItem onSelect={() => set({ playhead: s.start, playing: false })}>
                           Go to its start
                         </ContextMenuItem>
-                        <ContextMenuItem
-                          onSelect={() =>
-                            selectClips(
-                              Object.values(editor.getProject().clips)
-                                .filter(
-                                  (c) =>
-                                    isSelectableClip(c) && c.start < s.end && c.start + c.duration > s.start,
-                                )
-                                .sort((a, b) => a.start - b.start)
-                                .map((c) => c.id),
-                            )
-                          }
-                        >
+                        <ContextMenuItem onSelect={() => selectClips(sectionClipIds(editor.getProject(), s))}>
                           Select its clips
                         </ContextMenuItem>
                         <ContextMenuSeparator />
-                        <ContextMenuItem onSelect={() => openAssist('autocut')}>
+                        <ContextMenuItem onSelect={() => cutClipsToSection(s.id)}>
                           Cut clips to it…
                         </ContextMenuItem>
                         <ContextMenuItem onSelect={() => exportSectionTeaser(s.id)}>
@@ -1935,7 +1943,12 @@ export function Timeline() {
                       onKeyDown={(e) => nudgeEdge(e, b)}
                     />
                   )
-                })}{' '}
+                })}
+                {edgeTime !== null && (
+                  <div className={`${styles.edgeTime} tnum`} style={{ left: edgeTime * pps }}>
+                    {formatTime(edgeTime, true)}
+                  </div>
+                )}
               </div>
             </div>
           )}

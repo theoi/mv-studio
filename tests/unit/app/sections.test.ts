@@ -1,5 +1,12 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { createProject, type SongSection } from '../../../src/model/index.ts'
+import {
+  createProject,
+  createSolidClip,
+  createTextClip,
+  createVideoClip,
+  type Clip,
+  type SongSection,
+} from '../../../src/model/index.ts'
 import {
   editor,
   sectionColor,
@@ -14,6 +21,7 @@ import {
   moveBoundary,
   moveBoundaryCommands,
   sectionBoundaries,
+  sectionClipIds,
   sectionEdge,
 } from '../../../src/app/state/sections.ts'
 
@@ -120,5 +128,39 @@ describe('section edges', () => {
       [10, 20],
       [24, 30],
     ])
+  })
+})
+
+describe('sectionClipIds', () => {
+  it('picks the clips that play during the section, but not an adjustment layer that runs past it', () => {
+    const p = createProject({ name: 'select' })
+    const track = p.tracks[0]!.id
+    const add = (clip: Clip) => (p.clips[clip.id] = clip)
+    const adjustment = (id: string, start: number, end: number): Clip => {
+      const { color: _color, ...base } = createSolidClip({
+        trackId: track,
+        color: '#000',
+        start,
+        duration: end - start,
+      })
+      return { ...base, id, type: 'adjustment' }
+    }
+    add({ ...createVideoClip({ trackId: track, assetId: 'a', start: 12, duration: 4 }), id: 'inside' })
+    add({ ...createVideoClip({ trackId: track, assetId: 'a', start: 6, duration: 5 }), id: 'across-start' })
+    add({ ...createVideoClip({ trackId: track, assetId: 'a', start: 20, duration: 4 }), id: 'after' })
+    add({
+      ...createVideoClip({ trackId: track, assetId: 'a', start: 4, duration: 4 }),
+      id: 'touching-before',
+    })
+    add(adjustment('look', 0, 60))
+    add(adjustment('flash', 14, 15))
+    add({
+      ...createTextClip({ trackId: track, text: 'la', start: 13, duration: 1 }),
+      id: 'line',
+      lyricLineId: 'l1',
+    })
+
+    const chorus: SongSection = { id: 'c', label: 'Chorus', start: 8, end: 20, energy: 0.8 }
+    expect(sectionClipIds(p, chorus)).toEqual(['across-start', 'inside', 'flash'])
   })
 })

@@ -253,8 +253,9 @@
   top: 0;
   bottom: 0;
   z-index: 4;
-  width: 9px;
-  margin-left: -4px;
+  /* A 24 px hit area centered on the boundary. */
+  width: 24px;
+  margin-left: -12px;
   cursor: ew-resize;
   touch-action: none;
 }
@@ -264,7 +265,7 @@
   position: absolute;
   top: 3px;
   bottom: 3px;
-  left: 3px;
+  left: calc(50% - 1.5px);
   width: 3px;
   border-radius: 2px;
   background: var(--accent-line);
@@ -964,4 +965,21 @@
 .scroller[data-tool='split'] .lane:not([data-locked]) .clip,
 .scroller[data-tool='split'] .lane:not([data-locked]) .clip .handle {
   cursor: crosshair;
+}
+
+/* The time of a section edge while it is dragged, beside the edge. */
+.edgeTime {
+  position: absolute;
+  top: 50%;
+  z-index: 5;
+  margin-left: 14px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-1);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
