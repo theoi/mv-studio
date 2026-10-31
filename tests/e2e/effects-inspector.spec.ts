@@ -137,15 +137,15 @@ test('the 3D camera move is set in Motion only, and a LUT choice lists LUT files
   await page.keyboard.press('Escape')
 })
 
-/** A 2×2×2 .cube LUT that lifts the shadows toward teal. */
-const cubeFile = (name: string, title: string) => ({
+/** A 2×2×2 .cube LUT that lifts the shadows by `lift` toward teal, so different lifts are different LUTs. */
+const cubeFile = (name: string, title: string, lift = 0.1) => ({
   name,
   mimeType: 'text/plain',
   buffer: Buffer.from(
     [
       `TITLE "${title}"`,
       'LUT_3D_SIZE 2',
-      ...['0 0.1 0.1', '1 0 0', '0 1 0', '1 1 0', '0 0 1', '1 0 1', '0 1 1', '1 1 1'],
+      ...[`0 ${lift} ${lift}`, '1 0 0', '0 1 0', '1 1 0', '0 0 1', '1 0 1', '0 1 1', '1 1 1'],
     ].join('\n'),
   ),
 })
@@ -165,12 +165,35 @@ async function png(page: Page, name: string, side: number) {
   return { name, mimeType: 'image/png', buffer: Buffer.from(bytes) }
 }
 
-test('a LUT file loads from the LUT choice as one undo step, a Hald image too, and Import media takes .cube files', async ({
+type TestFile = { name: string; mimeType: string; buffer: Buffer }
+
+/** The color grade's LUT choice in the Inspector, and loading a file through its "Load a LUT file…". */
+function lutChoice(page: Page) {
+  const lut = page
+    .getByRole('tabpanel', { name: 'Inspector' })
+    .getByRole('combobox', { name: 'Color grade LUT' })
+  const load = async (file: TestFile) => {
+    await lut.click()
+    const chooser = page.waitForEvent('filechooser')
+    await page.getByRole('option', { name: /^Load a LUT file…/ }).click()
+    await (await chooser).setFiles(file)
+  }
+  const options = async () => {
+    await lut.click()
+    const texts = await page.getByRole('option').allInnerTexts()
+    await page.keyboard.press('Escape')
+    return texts.map((o) => o.split('\n')[0])
+  }
+  return { lut, load, options }
+}
+
+const toastText = (page: Page, text: string | RegExp) => page.getByRole('status').getByText(text)
+
+test('a LUT file loads from the LUT choice as one undo step, once per file, and Import media takes .cube files', async ({
   page,
 }) => {
   await openWithEffects(page, ['Color grade'])
-  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
-  const lut = inspector.getByRole('combobox', { name: 'Color grade LUT' })
+  const { lut, load, options } = lutChoice(page)
   await expect(lut).toHaveText('None')
   /** The color grade's LUT setting, and the name of the file it points to. */
   const lutSetting = () =>
@@ -183,43 +206,53 @@ test('a LUT file loads from the LUT choice as one undo step, a Hald image too, a
       }
       return null
     })
-  const load = async (file: { name: string; mimeType: string; buffer: Buffer }) => {
-    await lut.click()
-    const chooser = page.waitForEvent('filechooser')
-    await page.getByRole('option', { name: /^Load a LUT file…/ }).click()
-    await (await chooser).setFiles(file)
-  }
 
   await load(cubeFile('teal.cube', 'Teal push'))
   await expect(lut).toHaveText('Teal push')
   expect((await lutSetting())?.file).toBe('Teal push')
   expect(await undoLabel(page)).toBe('Add LUT Teal push')
   // Ctrl+Z stays with the focused LUT choice, so the toast offers Undo; it removes the file too.
-  await expect(page.getByRole('status').getByText('Added the LUT “Teal push”')).toBeVisible()
+  await expect(toastText(page, 'Added the LUT “Teal push”')).toBeVisible()
   await page.getByRole('status').getByRole('button', { name: 'Undo' }).last().click()
   await expect(lut).toHaveText('None')
   expect(await lutSetting()).toEqual({ value: '', file: null })
 
+  // The same file again adds nothing and chooses the LUT already there; another file with a taken name is numbered.
+  await load(cubeFile('teal.cube', 'Teal push'))
+  await expect(lut).toHaveText('Teal push')
   await load(await png(page, 'identity-hald.png', 8))
   await expect(lut).toHaveText('identity-hald')
+  await load(cubeFile('teal copy.cube', 'Teal push'))
+  await expect(toastText(page, '“Teal push” is already in this project.')).toBeVisible()
+  await expect(lut).toHaveText('Teal push')
+  await load(cubeFile('teal-v2.cube', 'Teal push', 0.3))
+  await expect(lut).toHaveText('Teal push 2')
+
   await load(await png(page, 'photo.png', 10))
+  await expect(toastText(page, 'photo.png was not loaded: it isn’t a LUT image.')).toBeVisible()
+  await load({ name: 'broken.cube', mimeType: 'text/plain', buffer: Buffer.from('not a LUT') })
   await expect(
-    page.getByRole('status').getByText(/^photo\.png was not loaded: This image is not a Hald CLUT/),
+    toastText(page, 'broken.cube was not loaded: the file couldn’t be read as a LUT.'),
   ).toBeVisible()
-  await expect(lut).toHaveText('identity-hald')
+  await expect(lut).toHaveText('Teal push 2')
 
   // A .cube file from Import media joins the LUT choice; it is not media, so the toast says where it went.
-  await page.getByLabel('Import media files').setInputFiles(cubeFile('warm.cube', 'Warm'))
-  await expect(
-    page.getByRole('status').getByText('Imported the LUT “Warm”. Choose it in a Color grade’s LUT.'),
-  ).toBeVisible()
+  const importInput = page.getByLabel('Import media files')
+  await importInput.setInputFiles(cubeFile('warm.cube', 'Warm', 0.5))
+  await expect(toastText(page, 'Imported the LUT “Warm”. Choose it in a Color grade’s LUT.')).toBeVisible()
   await expect(page.getByRole('tab', { name: 'Effects', selected: true })).toBeVisible()
+  await importInput.setInputFiles(cubeFile('warm.cube', 'Warm', 0.5))
+  await expect(toastText(page, '“Warm” is already in this project.')).toBeVisible()
+  await importInput.setInputFiles([cubeFile('a.cube', 'Dawn', 0.6), cubeFile('b.cube', 'Dusk', 0.7)])
+  await expect(toastText(page, 'Imported 2 LUTs. Choose them in a Color grade’s LUT.')).toBeVisible()
+  await importInput.setInputFiles([cubeFile('c.cube', 'Cold', 0.8), await png(page, 'still.png', 10)])
+  await expect(toastText(page, 'Imported 2 files: 1 clip or image, 1 LUT.')).toBeVisible()
 
   // Dropped on a track, a .cube file is a LUT too, and no clip.
   const clipCount = () =>
     page.evaluate(() => Object.keys(window.mvStudio.app.project.editor.getProject().clips).length)
   const clips = await clipCount()
-  const cube = cubeFile('cool.cube', 'Cool').buffer.toString('base64')
+  const cube = cubeFile('cool.cube', 'Cool', 0.9).buffer.toString('base64')
   await page
     .locator('[data-timeline-scroller] div[class*="row"]')
     .filter({ has: page.locator('span[class*="trackName"]', { hasText: /^Video$/ }) })
@@ -239,18 +272,100 @@ test('a LUT file loads from the LUT choice as one undo step, a Hald image too, a
       el.dispatchEvent(new DragEvent('dragover', init))
       el.dispatchEvent(new DragEvent('drop', init))
     }, cube)
-  await expect(
-    page.getByRole('status').getByText('Imported the LUT “Cool”. Choose it in a Color grade’s LUT.'),
-  ).toBeVisible()
+  await expect(toastText(page, 'Imported the LUT “Cool”. Choose it in a Color grade’s LUT.')).toBeVisible()
   expect(await clipCount()).toBe(clips)
-  await lut.click()
-  const options = await page.getByRole('option').allInnerTexts()
-  expect(options.map((o) => o.split('\n')[0])).toEqual([
+
+  expect(await options()).toEqual([
     'None',
+    'Neutral',
+    'Teal push',
     'identity-hald',
+    'Teal push 2',
     'Warm',
+    'Dawn',
+    'Dusk',
+    'Cold',
     'Cool',
     'Load a LUT file…',
+    'Manage LUT files…',
   ])
+})
+
+test('Manage LUT files lists what uses each LUT, and Remove puts those grades back to no LUT as one undo step', async ({
+  page,
+}) => {
+  await openWithEffects(page, ['Color grade'])
+  const { lut, options } = lutChoice(page)
+  // A picker closed without a file changes nothing and gives focus back to the choice.
+  await lut.click()
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('option', { name: /^Load a LUT file…/ }).click()
+  await (await chooser).element().dispatchEvent('cancel')
+  await expect(lut).toBeFocused()
+  await expect(lut).toHaveText('None')
+  expect(await options()).toEqual(['None', 'Neutral', 'Load a LUT file…'])
+
+  await page
+    .getByLabel('Import media files')
+    .setInputFiles([
+      cubeFile('teal.cube', 'Teal push', 0.1),
+      cubeFile('warm.cube', 'Warm', 0.3),
+      cubeFile('cool.cube', 'Cool', 0.5),
+    ])
+  await expect(toastText(page, 'Imported 3 LUTs. Choose them in a Color grade’s LUT.')).toBeVisible()
+  await lut.click()
+  await page.getByRole('option', { name: 'Teal push' }).click()
+  await expect(lut).toHaveText('Teal push')
+  // The look's own color grade uses it too.
+  await page.evaluate(() => {
+    const { app, plugins } = window.mvStudio
+    const project: Project = app.project.editor.getProject()
+    const teal = Object.values(project.assets).find((a) => a.name === 'Teal push')!
+    const grade = plugins.library.createEffectInstance('color-grade')
+    grade.params.lut = { value: teal.id }
+    app.project.editor.dispatch({ type: 'effect.add', clipId: 'c-look', effect: grade })
+  })
+
+  await lut.click()
+  await page.getByRole('option', { name: 'Manage LUT files…' }).click()
+  const dialog = page.getByRole('dialog', { name: 'LUT files' })
+  await expect(dialog.getByRole('listitem')).toHaveText([
+    /^Teal push\s*Used by 2 color grades$/,
+    /^Warm\s*Not used$/,
+    /^Cool\s*Not used$/,
+  ])
+  await dialog.getByRole('button', { name: 'Remove Teal push' }).click()
+  await expect(toastText(page, 'Removed the LUT “Teal push”. 2 color grades no longer use it.')).toBeVisible()
+  expect(await undoLabel(page)).toBe('Remove LUT Teal push')
+  await expect(dialog.getByRole('button', { name: 'Remove Warm' })).toBeFocused()
+  await expect(dialog.getByRole('listitem')).toHaveCount(2)
+  // The toast's Undo brings the LUT back, with both grades set to it again.
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).last().click()
+  // It comes back last, as the latest file added.
+  await expect(dialog.getByRole('listitem')).toHaveText([
+    /^Warm\s*Not used$/,
+    /^Cool\s*Not used$/,
+    /^Teal push\s*Used by 2 color grades$/,
+  ])
+  expect(
+    await page.evaluate(() => {
+      const project: Project = window.mvStudio.app.project.editor.getProject()
+      const teal = Object.values(project.assets).find((a) => a.name === 'Teal push')
+      return Object.values(project.clips).filter(
+        (c) => c.type !== 'audio' && c.effects.some((e) => teal && e.params.lut?.value === teal.id),
+      ).length
+    }),
+  ).toBe(2)
+
+  // Focus goes to the next Remove, else the previous one, else Load a LUT file….
+  await dialog.getByRole('button', { name: 'Remove Cool' }).click()
+  await expect(dialog.getByRole('button', { name: 'Remove Teal push' })).toBeFocused()
+  await dialog.getByRole('button', { name: 'Remove Teal push' }).click()
+  await expect(dialog.getByRole('button', { name: 'Remove Warm' })).toBeFocused()
+  await dialog.getByRole('button', { name: 'Remove Warm' }).click()
+  await expect(dialog.getByRole('button', { name: 'Load a LUT file…' })).toBeFocused()
+  await expect(dialog.getByText('No LUT files in this project.')).toBeVisible()
   await page.keyboard.press('Escape')
+  await expect(lut).toHaveText('None')
+  expect(await options()).toEqual(['None', 'Neutral', 'Load a LUT file…'])
 })

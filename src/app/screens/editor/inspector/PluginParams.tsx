@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import type { ParamSpec } from '../../../../engine/types.ts'
-import type { Clip, Id, Project, PropertyPath } from '../../../../model/index.ts'
+import type { Clip, Project, PropertyPath } from '../../../../model/index.ts'
 import {
   AnimateButtons,
   ColorField,
@@ -11,13 +12,11 @@ import {
   Switch,
 } from '../../../ds/Fields.tsx'
 import { formatParam } from '../../../format.ts'
-import { importLut, isLutAsset } from '../../../../plugins/lut.ts'
-import { JobError, jobs } from '../../../../shared/jobs.ts'
-import { JOB_KINDS } from '../../../state/jobs.ts'
-import { undoAction } from '../../../state/library.ts'
-import { dispatch, editor, useProject } from '../../../state/project.ts'
-import { toast } from '../../../state/ui.ts'
+import { BUILT_IN_LUTS, isLutAsset } from '../../../../plugins/lut.ts'
+import { LUT_FILE_TYPES, loadLut, lutFiles, pickFile } from '../../../state/luts.ts'
+import { editor, useProject } from '../../../state/project.ts'
 import { settingName, useAnimatable, valueAtCommands } from './animatable.ts'
+import { LutFilesDialog } from './LutFiles.tsx'
 import styles from '../Inspector.module.css'
 
 const spacer = <span className={styles.trailSpacer} />
@@ -28,8 +27,9 @@ const stepOf = (spec: NumberSpec) => spec.step ?? (spec.max - spec.min) / 100
 
 /** Stands for no image: a select option can't have an empty value. */
 const NONE = 'none'
-/** The LUT choice's action that asks for a LUT file. */
+/** The LUT choice's actions: ask for a LUT file, and open the project's LUT files. */
 const LOAD_LUT = 'load-lut'
+const MANAGE_LUTS = 'manage-luts'
 
 /** A built-in file's name as a choice: "bundled:luts/neutral.png" reads "Neutral". */
 function builtInName(value: string): string {
@@ -40,27 +40,39 @@ function builtInName(value: string): string {
   return file.charAt(0).toUpperCase() + file.slice(1).replace(/[-_]/g, ' ')
 }
 
+type Option = { value: string; label: string; description?: string; disabled?: boolean }
+
 /**
- * The choices for an image setting: none, the project's images (only LUT files for a LUT, since a photo there breaks
- * the colors), and the value when it is a built-in file, such as the LUT a look set.
+ * The choices for an image setting: none and the project's images, with the value when it is none of them. A LUT
+ * lists LUT files only, since a photo there breaks the colors: the built-in ones, the imported ones, then Load a LUT
+ * file… and, once there are imported ones, Manage LUT files….
  */
-function imageOptions(project: Project, value: string, role: 'lut' | 'texture' | undefined) {
-  const images = Object.values(project.assets).filter((asset) =>
-    role === 'lut' ? isLutAsset(asset) : asset.kind === 'image',
-  )
-  const options: { value: string; label: string; description?: string; disabled?: boolean }[] = [
-    { value: NONE, label: 'None' },
-    ...images.map((asset) => ({ value: asset.id, label: asset.name })),
-  ]
+function imageOptions(project: Project, value: string, role: 'lut' | 'texture' | undefined): Option[] {
+  const options: Option[] = [{ value: NONE, label: 'None' }]
+  if (role === 'lut') {
+    const luts = lutFiles(project)
+    const builtIn =
+      BUILT_IN_LUTS.includes(value) || !value.startsWith('bundled:')
+        ? BUILT_IN_LUTS
+        : [...BUILT_IN_LUTS, value]
+    options.push(
+      ...builtIn.map((v) => ({ value: v, label: builtInName(v), description: 'Built in' })),
+      ...luts.map((asset) => ({ value: asset.id, label: asset.name })),
+    )
+    if (!options.some((o) => o.value === value)) options.push({ value, label: 'Missing LUT' })
+    options.push({ value: LOAD_LUT, label: 'Load a LUT file…', description: '.cube file or Hald CLUT image' })
+    if (luts.length) options.push({ value: MANAGE_LUTS, label: 'Manage LUT files…' })
+    return options
+  }
+  const images = Object.values(project.assets).filter((asset) => asset.kind === 'image' && !isLutAsset(asset))
+  options.push(...images.map((asset) => ({ value: asset.id, label: asset.name })))
   if (!options.some((o) => o.value === value))
     options.push(
       value.startsWith('bundled:')
         ? { value, label: builtInName(value), description: 'Built in' }
         : { value, label: project.assets[value]?.name ?? 'Missing image' },
     )
-  if (role === 'lut')
-    options.push({ value: LOAD_LUT, label: 'Load a LUT file…', description: '.cube file or Hald CLUT image' })
-  else if (!images.length)
+  if (!images.length)
     options.push({
       value: 'no-images',
       label: 'No images yet',
@@ -70,40 +82,49 @@ function imageOptions(project: Project, value: string, role: 'lut' | 'texture' |
   return options
 }
 
-/** Asks for a .cube file or Hald CLUT image, then adds it and makes it the clip's LUT at `path`, as one undo step. */
-function loadLutFile(clipId: Id, path: PropertyPath) {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.cube,image/*'
-  input.addEventListener('change', () => {
-    const file = input.files?.[0]
-    if (file) void addLut(clipId, path, file)
-  })
-  input.click()
-}
-
-async function addLut(clipId: Id, path: PropertyPath, file: File) {
-  try {
-    const { mediaStore } = await import('../../../../media/mediaStore.ts')
-    const asset = await jobs.run({
-      kind: JOB_KINDS.import,
-      title: `Loading ${file.name}`,
-      run: () => importLut(file, mediaStore),
-    }).promise
-    const clip = editor.getProject().clips[clipId]
-    const label = `Add LUT ${asset.name}`
-    if (
-      dispatch([{ type: 'asset.add', asset }, ...(clip ? valueAtCommands(clip, path, asset.id, 0) : [])], {
-        label,
-      })
-    )
-      toast(`Added the LUT “${asset.name}”`, undoAction(label))
-  } catch (error) {
-    if (error instanceof JobError && error.code === 'cancelled') return
-    toast(`${file.name} was not loaded: ${error instanceof Error ? error.message : String(error)}`)
+/** An image setting's choice; for a LUT, also loading a LUT file into it and managing the project's LUT files. */
+function ImageRow({
+  clip,
+  path,
+  spec,
+  name,
+  value,
+  choose,
+}: {
+  clip: Clip
+  path: PropertyPath
+  spec: Extract<ParamSpec, { type: 'image' }>
+  name: string
+  value: string
+  choose: (value: string) => void
+}) {
+  const project = useProject()
+  const [managing, setManaging] = useState(false)
+  const focusChoice = () =>
+    document.querySelector<HTMLElement>(`[role="combobox"][aria-label="${CSS.escape(name)}"]`)?.focus()
+  const load = async () => {
+    const file = await pickFile(LUT_FILE_TYPES)
+    if (!file) return focusChoice()
+    await loadLut(file, (assetId) => {
+      const now = editor.getProject().clips[clip.id]
+      return now && assetId !== value ? valueAtCommands(now, path, assetId, 0) : []
+    })
   }
+  return (
+    // A file name needs the row's width, so the choice takes the buttons' space too.
+    <FieldRow label={spec.label}>
+      <Select
+        value={value}
+        onChange={(v) =>
+          v === LOAD_LUT ? void load() : v === MANAGE_LUTS ? setManaging(true) : choose(v === NONE ? '' : v)
+        }
+        ariaLabel={name}
+        options={imageOptions(project, value, spec.role)}
+      />
+      {spec.role === 'lut' && <LutFilesDialog open={managing} onOpenChange={setManaging} />}
+    </FieldRow>
+  )
 }
-
 /**
  * One plugin parameter (of a generator or an effect) as an inspector row, for the Animatable at `path`. With an
  * `owner` (an effect's name), its controls and undo steps name it too ("RGB split amount"), so settings of several
@@ -120,7 +141,6 @@ export function ParamRow({
   spec: ParamSpec
   owner?: string
 }) {
-  const project = useProject()
   const a = useAnimatable(clip, path, spec.default, { label: spec.label, owner })
   const name = owner ? settingName(spec.label, owner) : spec.label
   const once = (value: string | boolean) => {
@@ -195,19 +215,17 @@ export function ParamRow({
           <Switch checked={!!a.value} onCheckedChange={once} ariaLabel={name} />
         </FieldRow>
       )
-    case 'image': {
-      const value = String(a.value ?? '') || NONE
+    case 'image':
       return (
-        <FieldRow label={spec.label} trailing={spacer}>
-          <Select
-            value={value}
-            onChange={(v) => (v === LOAD_LUT ? loadLutFile(clip.id, path) : once(v === NONE ? '' : v))}
-            ariaLabel={name}
-            options={imageOptions(project, value, spec.role)}
-          />
-        </FieldRow>
+        <ImageRow
+          clip={clip}
+          path={path}
+          spec={spec}
+          name={name}
+          value={String(a.value ?? '') || NONE}
+          choose={once}
+        />
       )
-    }
     default:
       return null
   }
