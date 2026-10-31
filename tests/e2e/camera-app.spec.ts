@@ -84,7 +84,9 @@ function stills(page: Page): Promise<{ clips: Still[]; depthAssets: string[] }> 
   })
 }
 
-test('Assist › 3D camera adds a depth camera move to every still in one undo step', async ({ page }) => {
+test('Assist › 3D camera adds a depth camera move to every still in one undo step; Strength is automatic until set', async ({
+  page,
+}) => {
   await openWithFakeDepth(page, '#/editor?tab=assist&assist=camera&t=28')
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   const before = await stills(page)
@@ -95,9 +97,22 @@ test('Assist › 3D camera adds a depth camera move to every still in one undo s
   await expect(assist.getByText(/^Image · on the timeline at /)).toHaveCount(before.clips.length)
 
   await assist.getByRole('radio', { name: 'Orbit' }).click()
+  // Strength starts automatic: each image gets as much as it can take, up to 50%.
   const strength = assist.getByRole('slider', { name: 'Strength' })
+  const autoHint = assist.getByText('Each image gets as much as it can take without smearing.')
+  const reset = assist.getByRole('button', { name: 'Back to automatic strength' })
+  await expect(assist.getByText('Auto', { exact: true })).toBeVisible()
+  await expect(strength).toHaveAttribute('aria-valuetext', 'Automatic, 50% or less for each image')
+  await expect(strength).toHaveAttribute('aria-valuenow', '50')
+  await expect(autoHint).toBeVisible()
+  await expect(reset).toHaveCount(0)
+  // A strength the user sets shows as a percent and goes on every image as it is.
   await strength.focus()
   for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowRight')
+  await expect(assist.getByText('60%', { exact: true })).toBeVisible()
+  await expect(strength).not.toHaveAttribute('aria-valuetext')
+  await expect(autoHint).toHaveCount(0)
+  await expect(reset).toBeVisible()
   await apply.click()
   await expect(assist.getByText(`Added a 3D camera move to ${before.clips.length} images`)).toBeVisible()
 
@@ -119,6 +134,17 @@ test('Assist › 3D camera adds a depth camera move to every still in one undo s
   await assist.getByRole('button', { name: 'Undo' }).click()
   await expect(apply).toBeVisible()
   expect((await stills(page)).clips.every((c) => !c.camera)).toBe(true)
+
+  // The chosen strength stays for the session; reset goes back to automatic, which gives 50% on this smooth depth.
+  await expect(assist.getByText('60%', { exact: true })).toBeVisible()
+  await reset.click()
+  await expect(assist.getByText('Auto', { exact: true })).toBeVisible()
+  await expect(strength).toBeFocused()
+  await expect(strength).toHaveAttribute('aria-valuenow', '50')
+  await expect(autoHint).toBeVisible()
+  await apply.click()
+  await expect(assist.getByText(`Added a 3D camera move to ${before.clips.length} images`)).toBeVisible()
+  expect((await stills(page)).clips.map((c) => c.camera?.intensity)).toEqual(before.clips.map(() => 0.5))
 })
 
 test('the image inspector’s suggestion adds a 3D camera move to the selected still', async ({ page }) => {

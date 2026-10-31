@@ -305,6 +305,7 @@ export function Slider({
   step = 1,
   ariaLabel,
   ariaDescribedBy,
+  valueText,
 }: {
   value: number
   onChange: (v: number) => void
@@ -315,6 +316,8 @@ export function Slider({
   ariaLabel: string
   /** Id of a note about the value, read after the slider's name. */
   ariaDescribedBy?: string
+  /** What screen readers say for the value instead of the number, e.g. "Automatic". */
+  valueText?: string
 }) {
   return (
     <RSlider.Root
@@ -333,6 +336,7 @@ export function Slider({
         className={styles.sliderThumb}
         aria-label={ariaLabel}
         aria-describedby={ariaDescribedBy}
+        aria-valuetext={valueText}
       />
     </RSlider.Root>
   )

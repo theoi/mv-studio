@@ -380,6 +380,28 @@
   line-height: var(--lh-xs);
 }
 
+.fieldLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 20px;
+}
+
+/* A slider with its value at the right, like the Inspector's. */
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sliderValue {
+  flex: none;
+  min-width: 36px;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
 .twoCol {
   display: grid;
   grid-template-columns: 1fr 1fr;

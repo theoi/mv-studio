@@ -37,10 +37,24 @@ export function ToolView({
   )
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+export function Field({
+  label,
+  children,
+  hint,
+  action,
+}: {
+  label: string
+  children: ReactNode
+  hint?: string
+  /** A small button at the label's right end, such as a reset. */
+  action?: ReactNode
+}) {
   return (
     <div className={styles.field}>
-      <div className={styles.fieldLabel}>{label}</div>
+      <div className={action ? styles.fieldLabelRow : styles.fieldLabel}>
+        {action ? <span className={styles.fieldLabel}>{label}</span> : label}
+        {action}
+      </div>
       {children}
       {hint && <div className={styles.fieldHint}>{hint}</div>}
     </div>

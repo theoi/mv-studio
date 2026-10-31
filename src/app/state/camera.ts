@@ -93,6 +93,11 @@ export function useDepthDownload(needed: boolean): number {
 
 const depthMedia = { getFile: appMedia.getFile, storeBlob: mediaStore.storeBlob.bind(mediaStore) }
 
+/** Back to the automatic amount, with the slider at 50%, the most it gives. */
+export function resetStrength(): void {
+  useCamera.setState({ strength: DEFAULT_CAMERA_INTENSITY * 100, strengthSet: false })
+}
+
 /** The intensity new moves get: the Strength the user set, else undefined for vision's automatic amount. */
 export function chosenIntensity(): number | undefined {
   const { strength, strengthSet } = useCamera.getState()
