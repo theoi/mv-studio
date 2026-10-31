@@ -114,6 +114,25 @@ function setCheck(assetId: Id, check: Suitability) {
   useBehind.setState((s) => ({ checks: { ...s.checks, [assetId]: check } }))
 }
 
+/**
+ * Forgets the checks made without the person detector, so the panel or inspector that shows them checks again, now
+ * with the detector. Runs when the browser comes back online.
+ */
+export function retryPeopleSkipped(): void {
+  useBehind.setState((s) => {
+    const stale = Object.keys(s.checks).filter((id) => {
+      const check = s.checks[id]!
+      return check.status === 'checked' && check.peopleSkipped
+    })
+    if (!stale.length) return s
+    const checks = { ...s.checks }
+    for (const id of stale) checks[id] = { status: 'unchecked' }
+    return { checks }
+  })
+}
+
+if (typeof window !== 'undefined') window.addEventListener('online', retryPeopleSkipped)
+
 const fromReport = (r: SuitabilityReport): Extract<Suitability, { status: 'checked' }> => ({
   status: 'checked',
   verdict: r.verdict,

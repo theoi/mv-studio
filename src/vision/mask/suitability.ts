@@ -94,9 +94,12 @@ export interface PeopleAt {
   scores?: number[]
 }
 
-/** The people in a frame's detections, with each box's score to 3 decimals. */
+/**
+ * The people in a frame's detections, with each box's score rounded down to 3 decimals: rounding to nearest would
+ * store a box just under a limit (0.2995 under 0.3) at the limit, so it would count.
+ */
 export function detectedPeople(t: number, found: ReadonlyArray<{ box: Rect; score: number }> = []): PeopleAt {
-  return { t, boxes: found.map((p) => p.box), scores: found.map((p) => Math.round(p.score * 1000) / 1000) }
+  return { t, boxes: found.map((p) => p.box), scores: found.map((p) => Math.floor(p.score * 1000) / 1000) }
 }
 
 /**

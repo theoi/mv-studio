@@ -17,8 +17,10 @@ import { jointBilateralUpsample } from '../../../../src/vision/mask/upsample.ts'
 import {
   assessFrame,
   assessSuitability,
+  detectedPeople,
   keepPeople,
   peopleNear,
+  PERSON_MIN_SCORE,
   POP_MIN_SHARE,
   suitabilityInRange,
 } from '../../../../src/vision/mask/suitability.ts'
@@ -377,6 +379,17 @@ describe('person evidence for the verdict', () => {
     // Boxes stored without scores all passed the detector's former 0.3 floor.
     const older = unsure.map(({ t, boxes }) => ({ t, boxes }))
     expect(assessSuitability(samples, 0.2, {}, older).verdict).toBe('good')
+  })
+
+  it('stores a box scored just under the limit below it, so it still does not count', () => {
+    const samples = Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask: subject }))
+    for (const score of [0.2995, 0.2999]) {
+      const found = samples.map((s) => detectedPeople(s.t, [{ box: around, score }]))
+      expect(found[0]!.scores![0]).toBeLessThan(PERSON_MIN_SCORE)
+      expect(assessSuitability(samples, 0.2, {}, found).verdict).toBe('unsuitable')
+    }
+    const atLimit = samples.map((s) => detectedPeople(s.t, [{ box: around, score: PERSON_MIN_SCORE }]))
+    expect(assessSuitability(samples, 0.2, {}, atLimit).verdict).toBe('good')
   })
 
   it('keeps a person the detector sees in every other frame', () => {

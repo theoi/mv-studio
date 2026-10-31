@@ -126,9 +126,10 @@ test('a clip with no one in it says why it cannot be cut out', async ({ page }) 
 test('a clip is cut out when the person and face detectors cannot download, and says the people check was skipped', async ({
   page,
 }) => {
-  test.setTimeout(150_000)
+  test.setTimeout(240_000)
   let blocked = 0
-  await page.context().route(/\/(efficientdet_lite0|blaze_face_short_range)\.tflite$/, (route) => {
+  const detectors = /\/(efficientdet_lite0|blaze_face_short_range)\.tflite$/
+  await page.context().route(detectors, (route) => {
     blocked++
     return route.abort('internetdisconnected')
   })
@@ -148,6 +149,7 @@ test('a clip is cut out when the person and face detectors cannot download, and 
     expect.objectContaining({ track: 'Subject', mask: expect.objectContaining({ kind: 'video' }) }),
   ])
   expect(blocked).toBeGreaterThan(0)
+  await assist.getByRole('button', { name: 'Show' }).click()
 
   const block = page.getByRole('button', { name: /^people-interview, \d/ })
   await block.focus()
@@ -159,6 +161,15 @@ test('a clip is cut out when the person and face detectors cannot download, and 
     inspector.getByRole('switch', { name: 'Put text and effects behind the subject' }),
   ).toBeChecked()
   await expect(inspector.getByText(note, { exact: true })).toBeVisible()
+
+  // Back online, the footage is checked again, now with the person detector.
+  await page.context().unroute(detectors)
+  await page.context().setOffline(true)
+  await page.context().setOffline(false)
+  await page.getByRole('tab', { name: 'Assist' }).click()
+  await expect(row.getByText(/^(Person found|Works in parts of this shot\. .+) · 1 clip$/)).toBeVisible({
+    timeout: 90_000,
+  })
 })
 
 test('Assist › Behind the subject does not offer a shot of an animal, which the person segmenter cuts out', async ({

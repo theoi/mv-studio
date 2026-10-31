@@ -6,10 +6,12 @@ import {
   cutoutCommands,
   findPersonMask,
   footageRows,
+  retryPeopleSkipped,
   suitabilityOf,
   suitabilityText,
   suitableClips,
   type Suitability,
+  useBehind,
 } from '../../../src/app/state/behind.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 
@@ -125,6 +127,24 @@ describe('suitability', () => {
         peopleSkipped: true,
       }).why,
     ).toBe('People are too small in this wide shot.')
+  })
+
+  it('forgets the checks made without the person detector, so they are made again once back online', () => {
+    const withDetector: Suitability = { status: 'checked', verdict: 'good', reasons: [] }
+    useBehind.setState({
+      checks: {
+        'a-offline': { ...withDetector, peopleSkipped: true },
+        'a-online': withDetector,
+        'a-failed': { status: 'failed', message: 'The clip could not be read.' },
+      },
+    })
+    retryPeopleSkipped()
+    expect(useBehind.getState().checks).toEqual({
+      'a-offline': { status: 'unchecked' },
+      'a-online': withDetector,
+      'a-failed': { status: 'failed', message: 'The clip could not be read.' },
+    })
+    useBehind.setState({ checks: {} })
   })
 
   it('says why a failed check failed and that only video clips have people', () => {
