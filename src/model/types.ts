@@ -194,7 +194,10 @@ export interface Transition {
 export interface Matte {
   /** A mask asset produced by src/vision (grayscale video or image, aligned with sourceAssetId). */
   maskAssetId: Id
-  /** The footage asset the mask was computed for, so the mask follows that clip's timing. */
+  /**
+   * The footage asset the mask was computed for. The mask follows the clip showing it (timing and transform); while no
+   * clip shows it, the matted clip draws unmasked.
+   */
   sourceAssetId: Id
   mode: 'inside' | 'outside'
   feather: number
