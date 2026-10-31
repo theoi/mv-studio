@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import type { Asset } from '../../model/index.ts'
-import { createFrameThumbnails } from '../../vision/index.ts'
+import { coverJpeg, coverSide, createFrameThumbnails, openVideoFrames } from '../../vision/index.ts'
 import { sceneThumb } from '../mock/art.ts'
 import { sceneOf } from '../mock/demoProject.ts'
 import { appMedia } from './media.ts'
@@ -9,7 +9,12 @@ import { appMedia } from './media.ts'
 
 const WIDTH = 320
 const HEIGHT = 180
+/** Thumbnails made at once, so importing many clips does not open a video decoder for each of them together. */
+const AT_ONCE = 2
+/** Object URLs of made thumbnails by asset id; null while one is waiting or being made, or when it cannot be. */
 const thumbs = new Map<string, string | null>()
+const queue: Asset[] = []
+let running = 0
 const listeners = new Set<() => void>()
 
 function subscribe(listener: () => void) {
@@ -17,88 +22,74 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener)
 }
 
-function once(target: EventTarget, ok: string, fail = 'error'): Promise<void> {
-  return new Promise((resolve, reject) => {
-    target.addEventListener(ok, () => resolve(), { once: true })
-    target.addEventListener(fail, () => reject(new Error(`${fail} while making a thumbnail`)), { once: true })
-  })
-}
-
-interface Frame {
-  source: CanvasImageSource
-  width: number
-  height: number
-  close(): void
-}
-
-async function frameOf(asset: Asset, file: Blob): Promise<Frame> {
+/** A frame of the asset decoded at about thumbnail size, so drawing it on the page stays cheap. */
+async function frameOf(asset: Asset, file: Blob): Promise<ImageBitmap> {
   if (asset.kind === 'image') {
-    const bitmap = await createImageBitmap(file)
-    return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() }
+    const { width = 0, height = 0 } = asset
+    const side = coverSide({ width, height }, WIDTH, HEIGHT)
+    if (!side || side >= Math.max(width, height)) return createImageBitmap(file)
+    const scale = side / Math.max(width, height)
+    return createImageBitmap(file, {
+      resizeWidth: Math.ceil(width * scale),
+      resizeHeight: Math.ceil(height * scale),
+      resizeQuality: 'medium',
+    })
   }
-  const url = URL.createObjectURL(file)
-  const video = document.createElement('video')
-  video.muted = true
-  video.preload = 'auto'
-  video.src = url
+  const video = await openVideoFrames(file, asset.id)
   try {
-    await once(video, 'loadeddata')
-    video.currentTime = Math.min(1, (video.duration || 0) * 0.1)
-    await once(video, 'seeked')
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    canvas.getContext('2d')?.drawImage(video, 0, 0)
-    return { source: canvas, width: canvas.width, height: canvas.height, close: () => undefined }
+    const side = coverSide(video, WIDTH, HEIGHT)
+    return await video.frameAt(Math.min(1, (video.duration || 0) * 0.1), side ? { maxSide: side } : {})
   } finally {
-    video.removeAttribute('src')
-    video.load()
-    URL.revokeObjectURL(url)
+    video.dispose()
   }
 }
 
-async function makeThumb(asset: Asset): Promise<string | null> {
+async function makeThumb(asset: Asset): Promise<Blob | null> {
   if (asset.kind !== 'image' && asset.kind !== 'video') return null
   const frame = await frameOf(asset, await appMedia.getFile(asset))
   try {
-    const { width: sw, height: sh } = frame
-    const canvas = document.createElement('canvas')
-    canvas.width = WIDTH
-    canvas.height = HEIGHT
-    const ctx = canvas.getContext('2d')
-    if (!ctx || !sw || !sh) return null
-    const scale = Math.max(WIDTH / sw, HEIGHT / sh)
-    ctx.drawImage(frame.source, (WIDTH - sw * scale) / 2, (HEIGHT - sh * scale) / 2, sw * scale, sh * scale)
-    return canvas.toDataURL('image/jpeg', 0.84)
+    return await coverJpeg(frame, WIDTH, HEIGHT, 0.84)
   } finally {
     frame.close()
+  }
+}
+
+function pump(): void {
+  while (running < AT_ONCE && queue.length) {
+    const asset = queue.shift()!
+    running++
+    void makeThumb(asset)
+      .catch(() => null)
+      .then((blob) => {
+        running--
+        thumbs.set(asset.id, blob ? URL.createObjectURL(blob) : null)
+        for (const l of listeners) l()
+        pump()
+      })
   }
 }
 
 function request(asset: Asset): void {
   if (thumbs.has(asset.id)) return
   thumbs.set(asset.id, null)
-  void makeThumb(asset)
-    .catch(() => null)
-    .then((url) => {
-      thumbs.set(asset.id, url)
-      for (const l of listeners) l()
-    })
+  queue.push(asset)
+  pump()
 }
 
 /** A thumbnail image of an image or video asset, e.g. for a project's card on the start screen. */
 export async function thumbnailBlob(asset: Asset): Promise<Blob | null> {
   const scene = sceneOf(asset)
-  const url = scene ? sceneThumb(scene) : (thumbs.get(asset.id) ?? (await makeThumb(asset)))
-  return url ? (await fetch(url)).blob() : null
+  if (scene) return (await fetch(sceneThumb(scene))).blob()
+  const made = thumbs.get(asset.id)
+  return made ? (await fetch(made)).blob() : makeThumb(asset)
 }
 
 /** The thumbnail URL for an asset, or undefined while it is being made (or for audio). */
-export function useThumbnail(asset: Asset): string | undefined {
+export function useThumbnail(asset: Asset | undefined): string | undefined {
   const scene = sceneOf(asset)
-  const made = useSyncExternalStore(subscribe, () => thumbs.get(asset.id))
+  const made = useSyncExternalStore(subscribe, () => (asset ? thumbs.get(asset.id) : undefined))
   useEffect(() => {
-    if (!scene) request(asset)
+    if (asset && !scene) request(asset)
   }, [asset, scene])
   if (scene) return sceneThumb(scene)
   return made ?? undefined
@@ -110,13 +101,13 @@ const frames = createFrameThumbnails(appMedia)
  * A 160×90 frame of a clip's video at `sourceTime` (usually the clip's in-point, `clip.sourceStart`), e.g. for a
  * timeline clip. Images, sample media and videos whose frame is still being made get the asset's thumbnail.
  */
-export function useFrameThumbnail(asset: Asset, sourceTime: number): string | undefined {
+export function useFrameThumbnail(asset: Asset | undefined, sourceTime: number): string | undefined {
   const scene = sceneOf(asset)
   const whole = useThumbnail(asset)
   const frame = useSyncExternalStore(frames.subscribe, () =>
-    scene ? undefined : frames.get(asset, sourceTime),
+    asset && !scene ? frames.get(asset, sourceTime) : undefined,
   )
-  useEffect(() => (scene ? undefined : frames.want(asset, sourceTime)), [asset, scene, sourceTime])
+  useEffect(() => (asset && !scene ? frames.want(asset, sourceTime) : undefined), [asset, scene, sourceTime])
   if (scene) return sceneThumb(scene, 160, 90)
   return frame ?? whole
 }

@@ -1,14 +1,16 @@
 import type { MediaFileSource } from '../../engine/types.ts'
 import type { Asset } from '../../model/types.ts'
-import { createVideoElementSource, type FrameSource } from './frames.ts'
+import type { Size } from '../types.ts'
+import type { FrameSource } from './frames.ts'
+import { openVideoFrames } from './videoFrames.ts'
 
 /**
  * Small frames of videos at a source time, for per-clip thumbnails such as timeline clips. Each video keeps one
- * decoder that seeks for every frame, a few videos decode at once, the newest request goes first, and requests
+ * decoder (in a worker, see `openVideoFrames`) that seeks for every frame, a few videos decode at once, the newest request goes first, and requests
  * released before their turn are skipped, so dragging a clip's in-point decodes only where the drag stops.
  */
 export interface FrameThumbnails {
-  /** JPEG data URL of `asset` at `sourceTime`; undefined until it is made, when it cannot be decoded, or for non-video assets. */
+  /** JPEG object URL of `asset` at `sourceTime`; undefined until it is made, when it cannot be decoded, or for non-video assets. */
   get(asset: Asset, sourceTime: number): string | undefined
   /** Asks for the frame. Call the returned function once it is no longer shown. */
   want(asset: Asset, sourceTime: number): () => void
@@ -31,10 +33,10 @@ export interface FrameThumbnailOptions {
   idleMs?: number
   /** Frames kept; the least recently requested ones that are not shown go first. Default 500. */
   maxEntries?: number
-  /** Opens a decoder for a video file. Default: an HTMLVideoElement that seeks per frame. */
+  /** Opens a decoder for a video file. Default: `openVideoFrames`. */
   open?: (asset: Asset, file: Blob) => Promise<OpenedSource>
-  /** Turns a decoded frame into an image URL of the given size. Default: a centered cover crop as JPEG. */
-  draw?: (frame: ImageBitmap, width: number, height: number) => string
+  /** Turns a decoded frame into an image URL of the given size. Default: an object URL of `coverJpeg()`. */
+  draw?: (frame: ImageBitmap, width: number, height: number) => string | Promise<string>
 }
 
 interface Holder {
@@ -51,17 +53,36 @@ interface Decoder {
   timer?: ReturnType<typeof setTimeout>
 }
 
-function drawCover(frame: ImageBitmap, width: number, height: number): string {
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
+/** The longest side to decode a `source`-sized image at so it still covers `width`×`height`; undefined when its size is unknown. */
+export function coverSide(source: Size, width: number, height: number): number | undefined {
+  const cover = Math.max(width / source.width, height / source.height)
+  return Number.isFinite(cover) && cover > 0
+    ? Math.ceil(Math.max(source.width, source.height) * cover)
+    : undefined
+}
+
+/**
+ * A centered cover crop of `frame` as a `width`×`height` JPEG. Decode the frame at about that size first (see
+ * `coverSide`): drawing a full-size video frame on the page costs tens of milliseconds, while this small draw is
+ * cheap and the encoding does not block the page.
+ */
+export function coverJpeg(frame: ImageBitmap, width: number, height: number, quality = 0.8): Promise<Blob> {
+  const canvas = new OffscreenCanvas(width, height)
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('No 2D canvas for a thumbnail')
   const scale = Math.max(width / frame.width, height / frame.height)
   const w = frame.width * scale
   const h = frame.height * scale
   ctx.drawImage(frame, (width - w) / 2, (height - h) / 2, w, h)
-  return canvas.toDataURL('image/jpeg', 0.8)
+  return canvas.convertToBlob({ type: 'image/jpeg', quality })
+}
+
+async function drawCover(frame: ImageBitmap, width: number, height: number): Promise<string> {
+  return URL.createObjectURL(await coverJpeg(frame, width, height))
+}
+
+const revoke = (url: string | null | undefined) => {
+  if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
 }
 
 export function createFrameThumbnails(
@@ -77,7 +98,7 @@ export function createFrameThumbnails(
   const open =
     options.open ??
     ((asset: Asset, file: Blob) =>
-      createVideoElementSource(file, asset.id, asset.frameRate ? { frameRate: asset.frameRate } : {}))
+      openVideoFrames(file, asset.id, asset.frameRate ? { frameRate: asset.frameRate } : {}))
   const draw = options.draw ?? drawCover
 
   const holders = new Map<string, Holder>()
@@ -108,7 +129,9 @@ export function createFrameThumbnails(
     if (made.size <= maxEntries) return
     for (const key of made.keys()) {
       if (made.size <= maxEntries) return
-      if (!holders.has(key)) made.delete(key)
+      if (holders.has(key)) continue
+      revoke(made.get(key))
+      made.delete(key)
     }
   }
 
@@ -153,13 +176,10 @@ export function createFrameThumbnails(
       try {
         const source = await decoder.source
         opened = true
-        const cover = Math.max(width / source.width, height / source.height)
-        const maxSide = Number.isFinite(cover)
-          ? Math.ceil(Math.max(source.width, source.height) * cover)
-          : undefined
+        const maxSide = coverSide(source, width, height)
         const bitmap = await source.frameAt(time, maxSide !== undefined ? { maxSide } : {})
         try {
-          url = draw(bitmap, width, height)
+          url = await draw(bitmap, width, height)
         } finally {
           bitmap.close()
         }
@@ -168,7 +188,7 @@ export function createFrameThumbnails(
         if (!opened) failed.add(asset.id)
       }
       inFlight.delete(key)
-      if (disposed) return
+      if (disposed) return revoke(url)
       decoder.busy = false
       decoder.lastUsed = ++uses
       if (failed.has(asset.id)) close(asset.id)
@@ -231,6 +251,7 @@ export function createFrameThumbnails(
       disposed = true
       for (const id of [...decoders.keys()]) close(id)
       holders.clear()
+      for (const url of made.values()) revoke(url)
       made.clear()
       listeners.clear()
     },

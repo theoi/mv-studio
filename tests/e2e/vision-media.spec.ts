@@ -176,7 +176,7 @@ test('frame thumbnails show the frame at each requested source time, cover-cropp
       const at = (x: number) => ctx.getImageData(x, 45, 1, 1).data[0]
       // frames.mp4 encodes frame N as gray levels: left half (N mod 16)*16+8, right half floor(N/16)*16+8.
       const frame = Math.round((at(120) - 8) / 16) * 16 + Math.round((at(40) - 8) / 16)
-      return { width: bitmap.width, height: bitmap.height, frame, url: url.slice(0, 23) }
+      return { width: bitmap.width, height: bitmap.height, frame, url: url.slice(0, 5) }
     }
     const out = await Promise.all(times.map((t) => read(thumbs.get(asset, t)!)))
     thumbs.dispose()
@@ -184,7 +184,7 @@ test('frame thumbnails show the frame at each requested source time, cover-cropp
   })
   console.log('frame thumbnails', JSON.stringify(r))
   for (const t of r) {
-    expect(t).toMatchObject({ width: 160, height: 90, url: 'data:image/jpeg;base64,' })
+    expect(t).toMatchObject({ width: 160, height: 90, url: 'blob:' })
   }
   expect(Math.abs(r[0].frame - 30)).toBeLessThanOrEqual(1)
   expect(Math.abs(r[1].frame - 75)).toBeLessThanOrEqual(1)

@@ -7,8 +7,11 @@ export { createVisionService, type VisionService, type VisionServiceOptions } fr
 export { createWorkerBackends, type WorkerBackends } from './workers/backends.ts'
 export { createOpfsCache, createMemoryCache, type BlobCache } from './runtime/cache.ts'
 export { createVideoElementSource, type FrameSource } from './runtime/frames.ts'
+export { openVideoFrames } from './runtime/videoFrames.ts'
 export { createAssetFrameSource } from './runtime/assetSource.ts'
 export {
+  coverJpeg,
+  coverSide,
   createFrameThumbnails,
   type FrameThumbnailOptions,
   type FrameThumbnails,
