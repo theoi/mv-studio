@@ -246,17 +246,19 @@ export interface ImageClip extends VisualClipBase {
   fit: MediaFit
 }
 
+/** Pixel sizes (fontSize, stroke, shadow, background) are at a 1080-pixel-tall canvas and scale with it. */
 export interface TextStyle {
   fontFamily: string
   /** When the font is an imported font asset. */
   fontAssetId?: Id
-  /** Pixels at a 1080-pixel-tall canvas; scaled proportionally for other sizes. */
   fontSize: number
   fontWeight: number
   italic: boolean
   color: string
   align: 'left' | 'center' | 'right'
+  /** Multiple of the font size. */
   lineHeight: number
+  /** Extra space between letters, in em (multiple of the font size). */
   letterSpacing: number
   /** Wrap width as a fraction of the canvas width. */
   maxWidth: number
@@ -372,6 +374,10 @@ export interface VisualAnalysis {
   data: JsonObject
 }
 
+/**
+ * Word and line times are seconds in the lyrics audio asset (LyricsDoc.audioAssetId, else the song). The renderer maps
+ * them to timeline time through the audio clip that plays the asset.
+ */
 export interface LyricWord {
   text: string
   start: Seconds

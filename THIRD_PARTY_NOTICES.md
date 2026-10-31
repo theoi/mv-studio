@@ -4,9 +4,10 @@ MV Studio is MIT-licensed. It includes or loads the following third-party softwa
 
 ## Vendored code
 
-| Component               | Source                                        | License                                | Notes                                                                       |
-| ----------------------- | --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------- |
-| coi-serviceworker 0.1.7 | https://github.com/gzuidhof/coi-serviceworker | MIT (Copyright (c) 2021 Guido Zuidhof) | `public/coi-serviceworker.js`, modified to hard-code COEP `credentialless`. |
+| Component               | Source                                        | License                                | Notes                                                                         |
+| ----------------------- | --------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
+| coi-serviceworker 0.1.7 | https://github.com/gzuidhof/coi-serviceworker | MIT (Copyright (c) 2021 Guido Zuidhof) | `public/coi-serviceworker.js`, modified to hard-code COEP `credentialless`.   |
+| Hash without Sine       | https://www.shadertoy.com/view/4djSRW         | MIT (Copyright (c) 2014 David Hoskins) | GLSL hash functions adapted in `src/engine/plugins/` (film grain, particles). |
 
 ## Runtime dependencies (bundled)
 
