@@ -52,6 +52,35 @@ export { CAMERA_PRESETS, cameraPoseAt, defaultCameraMove, requiredOverscan } fro
 export { createParallaxRenderer, type ParallaxRenderer } from './render/parallax.ts'
 export { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from './render/cameraEffect.ts'
 export {
+  AUTOCUT_JOB,
+  autoCut,
+  applyAutoCut,
+  autoCutCommands,
+  planAutoCut,
+  type AutoCutDeps,
+  type AutoCutOn,
+  type AutoCutOptions,
+  type AutoCutOrder,
+  type AutoCutPace,
+  type AutoCutPlan,
+  type AutoCutResult,
+  type AutoCutShot,
+} from './autocut/index.ts'
+export { AUTOCUT_TRACK_NAME, isUntouchedAutoCut } from './autocut/apply.ts'
+export {
+  createFootageService,
+  FOOTAGE_INDEX_JOB,
+  STRONG_MATCH,
+  type AssetIndexStatus,
+  type FootageIndexer,
+  type FootageQueryOptions,
+  type FootageResult,
+  type FootageService,
+  type FootageServiceDeps,
+  type IndexingState,
+} from './footage/service.ts'
+export { createImageFrameSource } from './runtime/imageSource.ts'
+export {
   addCameraMove,
   cameraMoveCommands,
   cameraMoveEffect,
