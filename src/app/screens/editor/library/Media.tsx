@@ -402,7 +402,7 @@ export function MediaTab() {
         <EmptyState
           icon={<Upload />}
           title="Bring in your media"
-          description="Drop a song, clips and images anywhere, or Import. Files stay on this device."
+          description="Drop a song, clips and images anywhere, or Import. Files are kept in this browser."
           action={
             <Button variant="secondary" icon={<Plus />} onClick={() => openImport()}>
               Import

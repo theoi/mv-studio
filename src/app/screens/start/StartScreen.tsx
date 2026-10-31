@@ -327,7 +327,7 @@ export function StartScreen() {
 
       <footer className={styles.footer}>
         <Lock />
-        Everything runs in your browser. Your songs and footage never leave this device.
+        Runs in your browser. Your songs and footage stay on this device unless you use a cloud feature.
       </footer>
     </div>
   )
