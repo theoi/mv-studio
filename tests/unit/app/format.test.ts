@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { editedAgo, formatParam } from '../../../src/app/format.ts'
+import { aboutMinutes, editedAgo, formatParam } from '../../../src/app/format.ts'
 
 const now = new Date(2026, 9, 31, 15, 0).getTime()
 const at = (...parts: [number, number, number, number, number]) => new Date(...parts).toISOString()
@@ -30,4 +30,10 @@ it('shows a setting’s value with its unit, as a percentage for amounts and as 
   )
   expect(formatParam(number({ min: 0, max: 360, step: 1, unit: '°' }), 30)).toBe('30°')
   expect(formatParam(number({ min: 1, max: 6, step: 0.1 }), 2.5)).toBe('2.5')
+})
+
+it('rounds a wait up to the next minute, so "About 5 min" never stands for 5 min 26 s', () => {
+  expect(aboutMinutes(45)).toBe('Under a minute')
+  expect(aboutMinutes(300)).toBe('About 5 min')
+  expect(aboutMinutes(326)).toBe('About 6 min')
 })

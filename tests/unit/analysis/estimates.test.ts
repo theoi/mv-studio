@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { part } from '../../../src/analysis/jobContext.ts'
+import { aboutMinutes } from '../../../src/app/format.ts'
 import { lyricsSeconds } from '../../../src/analysis/lyrics/client.ts'
 import {
   deviceSlowdown,
@@ -24,6 +25,24 @@ describe('stem separation estimate', () => {
       const estimate = stemJobSeconds(song, 'wasm', 3)
       expect(estimate, `${song} s song`).toBeGreaterThanOrEqual(wall)
       expect(estimate, `${song} s song`).toBeLessThanOrEqual(wall * 1.15)
+    }
+  })
+
+  it('covers the reference runs with room to spare, also right after import, and the shown minutes too', () => {
+    // Separate to Ready on a 4-core machine without a GPU (3 WASM threads), with no measured pace: each song alone,
+    // and two of them separated right after import while song analysis was still finishing (it overlapped the first
+    // 35 and 63 s).
+    const runs = [
+      { song: 179.4, alone: 294, afterImport: 299 },
+      { song: 244.3, alone: 379 },
+      { song: 317.1, alone: 499, afterImport: 538 },
+    ]
+    for (const { song, alone, afterImport = alone } of runs) {
+      const estimate = stemJobSeconds(song, 'wasm', 3)
+      expect(estimate, `${song} s song`).toBeGreaterThanOrEqual(afterImport * 1.05)
+      expect(estimate, `${song} s song`).toBeLessThanOrEqual(alone * 1.2)
+      const minutes = Number(/About (\d+) min/.exec(aboutMinutes(estimate))?.[1])
+      expect(minutes * 60, `${song} s song`).toBeGreaterThanOrEqual(estimate)
     }
   })
 
