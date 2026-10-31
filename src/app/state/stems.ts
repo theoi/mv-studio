@@ -171,12 +171,6 @@ export function stemExportWarning(mix: StemMix): string {
   return mix.muted.length ? `${only}, without ${stemList(mix.muted)}.` : `${only}.`
 }
 
-/** The one-click fix next to the export warning. */
-export function stemFixLabel(mix: StemMix): string {
-  if (mix.solo.length && mix.muted.length) return 'Play all stems'
-  return mix.solo.length ? 'Unsolo' : 'Unmute'
-}
-
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
@@ -208,21 +202,25 @@ export function toggleStem(name: StemName, flag: 'muted' | 'solo'): void {
   )
 }
 
-/** Undo label for clearing the stem flags: "Unsolo stems", "Unmute stems" or "Play all stems". */
-export function resetStemsLabel(stems: TrackStems | undefined): string {
-  const flags = Object.values(stems ?? {})
-  const solo = flags.some((f) => f?.solo)
-  const muted = flags.some((f) => f?.muted)
-  if (solo && muted) return 'Play all stems'
-  return solo ? 'Unsolo stems' : 'Unmute stems'
-}
-
-/** Clears every stem mute and solo of the song track, as one undo step. */
+/** Clears every stem mute and solo of the song track, as one undo step ("Play all stems"). */
 export function resetStems(): void {
   const track = songStemTrack(editor.getProject())
   if (!track?.stems || !Object.values(track.stems).some((f) => f?.muted || f?.solo)) return
-  dispatch(
-    { type: 'track.update', trackId: track.id, patch: { stems: {} } },
-    { label: resetStemsLabel(track.stems) },
-  )
+  dispatch({ type: 'track.update', trackId: track.id, patch: { stems: {} } }, { label: 'Play all stems' })
+}
+
+/**
+ * The toast for a stem the preview could not play, in stem words: the stem's file name means nothing to the user.
+ * Other audio keeps the engine's message.
+ */
+export function audioErrorText(project: Project, error: JobError): string {
+  const assetId = (error.details as { assetId?: string } | undefined)?.assetId
+  const origin = assetId ? project.assets[assetId]?.origin : undefined
+  const parentId = origin?.type === 'stem' ? origin.parentAssetId : undefined
+  const stems = parentId ? project.analysis.audio[parentId]?.stems : undefined
+  const name = stems && STEM_NAMES.find((n) => stems[n] === assetId)
+  if (!name) return `${error.message} Playing the full song instead.`
+  return error.code === 'out-of-memory'
+    ? `There is not enough memory to play ${stemList([name])} separately. Playing the full song instead.`
+    : `The ${STEM_LABELS[name].toLowerCase()} stem could not be decoded. Playing the full song instead.`
 }

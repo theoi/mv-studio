@@ -89,7 +89,7 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   await page.getByRole('button', { name: 'Export', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Export' })
   await expect(dialog.getByRole('button', { name: /^Export \d+ file/ })).toBeVisible()
-  await expect(dialog.getByRole('alert')).toHaveCount(0)
+  await expect(dialog.getByRole('status')).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
 
@@ -115,6 +115,38 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   await expect(lane('vocals')).not.toHaveClass(/rowHidden/)
   await shot(page, 'stems-solo-panel')
 
+  // At 1280x720, the narrowest panel, "Unsolo" still fits beside "Almost silent" (a soloed stem that is nearly
+  // silent), and the song header shows the badge.
+  const viewport = page.viewportSize()
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.evaluate(() => {
+    const editor = window.mvStudio.app.project.editor
+    const project = editor.getProject()
+    const analysis = project.analysis.audio[project.songAssetId]
+    const vocals = analysis.stemFeatures.vocals
+    editor.dispatch(
+      {
+        type: 'analysis.setStems',
+        assetId: project.songAssetId,
+        stems: analysis.stems,
+        stemFeatures: {
+          ...analysis.stemFeatures,
+          vocals: { ...vocals, loudness: vocals.loudness.map(() => 0.01) },
+        },
+      },
+      { history: 'skip' },
+    )
+  })
+  await expect(row('Vocals').getByText('Almost silent')).toBeVisible()
+  const unsolo = await row('Vocals').getByRole('button', { name: 'Unsolo' }).boundingBox()
+  const panelBox = await panel.boundingBox()
+  expect(unsolo && panelBox && unsolo.x + unsolo.width <= panelBox.x + panelBox.width).toBe(true)
+  await shot(page, 'stems-solo-panel-1280x720')
+  await badge.scrollIntoViewIfNeeded()
+  await expect(badge).toBeInViewport()
+  await shot(page, 'stems-badge-1280x720')
+  if (viewport) await page.setViewportSize(viewport)
+
   // Mute from the drums lane.
   await page.getByRole('button', { name: 'Mute drums', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Unmute drums', exact: true })).toBeVisible()
@@ -126,7 +158,7 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
 
   // The export dialog warns, and one click plays all stems again as one undo step.
   await page.keyboard.press('ControlOrMeta+e')
-  const warning = dialog.getByRole('alert')
+  const warning = dialog.getByRole('status')
   await expect(warning).toContainText('Only the vocals will play in this export, without the drums.')
   await shot(page, 'export-stems-warning')
   await warning.getByRole('button', { name: 'Play all stems' }).click()
@@ -139,4 +171,31 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   await page.evaluate(() => window.mvStudio.app.project.editor.undo())
   expect(await songStems(page)).toEqual({ vocals: { solo: true }, drums: { muted: true } })
   await expect(badge).toHaveText('Stems: vocals solo · drums muted')
+
+  // The stem lanes follow the song's track wherever it is.
+  await page.evaluate(() =>
+    window.mvStudio.app.project.editor.dispatch({ type: 'track.move', trackId: 't-song', toIndex: 0 }),
+  )
+  const neighbors = await page.evaluate(() => {
+    const name = (el: Element | null | undefined) =>
+      el?.querySelector('[class*="trackName"], [class*="stemName"]')?.textContent ?? null
+    const first = document.querySelector('[data-stem="vocals"]')
+    const last = document.querySelector('[data-stem="other"]')
+    return [name(first?.previousElementSibling), name(last?.nextElementSibling)]
+  })
+  expect(neighbors).toEqual(['Song', 'Lyrics'])
+
+  // Lanes draw only measured loudness: a stem without features gets an empty clip, not made-up peaks.
+  await page.evaluate(() => {
+    const editor = window.mvStudio.app.project.editor
+    const project = editor.getProject()
+    const analysis = project.analysis.audio[project.songAssetId]
+    const { other: _, ...stemFeatures } = analysis.stemFeatures
+    editor.dispatch(
+      { type: 'analysis.setStems', assetId: project.songAssetId, stems: analysis.stems, stemFeatures },
+      { history: 'skip' },
+    )
+  })
+  await expect(lane('other').locator('canvas')).toHaveCount(0)
+  await expect(lane('bass').locator('canvas')).toHaveCount(1)
 })

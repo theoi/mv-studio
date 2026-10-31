@@ -253,8 +253,6 @@ function makeEnergy(series: FeatureSeries | undefined): DrawFn {
   }
 }
 
-const stemWaves = [0, 1, 2, 3].map((i) => makeWave('#56658a', i * 997 + 31, 0.9))
-
 /* ---------- lyric chips ---------- */
 
 const LABEL_PAD = 12
@@ -705,7 +703,6 @@ function StemLanes({
   height,
   width,
   clipWidth,
-  fallback,
 }: {
   project: Project
   names: StemName[]
@@ -714,21 +711,22 @@ function StemLanes({
   height: number
   width: number
   clipWidth: number
-  fallback: DrawFn
 }) {
   const features = songAnalysis(project)?.stemFeatures
+  // Only measured loudness is drawn: a stem without features (separated by an older version) gets an empty clip.
   const draws = useMemo(
     () =>
-      STEM_NAMES.map((name, i) => {
+      STEM_NAMES.map((name) => {
         const f = features?.[name]
         return f?.loudness.length
           ? makeWave('#56658a', 0, 0.9, { rate: f.rate, values: f.loudness })
-          : (stemWaves[i] ?? fallback)
+          : undefined
       }),
-    [features, fallback],
+    [features],
   )
   return names.map((name) => {
     const silent = !!mix && (mix.muted.includes(name) || (mix.solo.length > 0 && !mix.solo.includes(name)))
+    const draw = draws[STEM_NAMES.indexOf(name)]
     return (
       <div
         key={name}
@@ -739,7 +737,7 @@ function StemLanes({
         <StemHeader name={name} track={track} />
         <div className={styles.lane} style={{ width }}>
           <div className={styles.stemClip} style={{ width: clipWidth }}>
-            <ViewportCanvas height={height - 4} draw={draws[STEM_NAMES.indexOf(name)] ?? fallback} />
+            {draw && <ViewportCanvas height={height - 4} draw={draw} />}
           </div>
         </div>
       </div>
@@ -906,6 +904,17 @@ export function Timeline() {
         ? makeWave('#7f91b3', 0, 1, { rate: features.rate, values: features.loudness })
         : makeFlatWave('#7f91b3'),
     [features],
+  )
+  const stemLanes = stems.length > 0 && (
+    <StemLanes
+      project={project}
+      names={stems}
+      track={stemTrack}
+      mix={mix}
+      height={stemH}
+      width={contentW}
+      clipWidth={duration * pps}
+    />
   )
 
   const updateView = useCallback(() => {
@@ -1372,18 +1381,7 @@ export function Timeline() {
             )
           })}
 
-          {stems.length > 0 && (
-            <StemLanes
-              project={project}
-              names={stems}
-              track={stemTrack}
-              mix={mix}
-              height={stemH}
-              width={contentW}
-              clipWidth={duration * pps}
-              fallback={songWave}
-            />
-          )}
+          {stemLanes}
 
           {empty && (
             <div className={styles.dropHint} style={{ top: RULER_H, left: HEADER_W }}>

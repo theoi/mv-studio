@@ -264,8 +264,8 @@
   flex: 1 0 100%;
   min-width: 0;
   margin-top: -2px;
-  color: var(--warning);
-  font-size: 10px;
+  color: var(--accent-text);
+  font-size: var(--text-xs);
   line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
@@ -273,7 +273,7 @@
 }
 
 .stemBadgeSolo {
-  color: var(--accent-text);
+  color: var(--warning);
 }
 
 .trackName {

@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import {
+  audioErrorText,
   resetStems,
-  resetStemsLabel,
   songStemTrack,
   stemBadgeText,
   stemBars,
   stemExportWarning,
-  stemFixLabel,
   stemMix,
   stemNoteText,
   toggledStems,
@@ -15,6 +14,7 @@ import {
   type StemMix,
 } from '../../../src/app/state/stems.ts'
 import { STEM_NAMES, type Asset, type StemName, type Track } from '../../../src/model/index.ts'
+import { JobError } from '../../../src/shared/jobs.ts'
 
 describe('stemBars', () => {
   it('draws each bar at the loudest moment of its stretch, so short hits stay visible', () => {
@@ -107,11 +107,27 @@ describe('stem mix description', () => {
     expect(stemExportWarning(mix(['vocals'], ['drums']))).toBe(
       'Only the vocals will play in this export, without the drums.',
     )
-    expect([mix(['vocals'], []), mix([], ['drums']), mix(['vocals'], ['drums'])].map(stemFixLabel)).toEqual([
-      'Unsolo',
-      'Unmute',
-      'Play all stems',
-    ])
+  })
+})
+
+describe('audioErrorText', () => {
+  it('names the stem the preview could not play instead of its file, and keeps other messages', () => {
+    withStems()
+    const project = editor.getProject()
+    const failure = (code: 'out-of-memory' | 'decode', assetId: string) =>
+      new JobError(code, `The audio of "${assetId}.ogg" failed.`, { details: { assetId } })
+    expect(audioErrorText(project, failure('out-of-memory', 'stem-vocals'))).toBe(
+      'There is not enough memory to play the vocals separately. Playing the full song instead.',
+    )
+    expect(audioErrorText(project, failure('out-of-memory', 'stem-other'))).toBe(
+      'There is not enough memory to play the other stem separately. Playing the full song instead.',
+    )
+    expect(audioErrorText(project, failure('decode', 'stem-drums'))).toBe(
+      'The drums stem could not be decoded. Playing the full song instead.',
+    )
+    expect(audioErrorText(project, failure('decode', 'a-song'))).toBe(
+      'The audio of "a-song.ogg" failed. Playing the full song instead.',
+    )
   })
 })
 
@@ -134,7 +150,7 @@ describe('stem mute and solo commands', () => {
     expect(songTrack().stems).toEqual({ drums: { muted: true }, vocals: { muted: true } })
   })
 
-  it('resets every flag in one step, labelled after what was set', () => {
+  it('resets every flag in one step', () => {
     withStems()
     toggleStem('vocals', 'solo')
     toggleStem('drums', 'muted')
@@ -144,9 +160,9 @@ describe('stem mute and solo commands', () => {
     expect(songTrack().stems).toEqual({})
     editor.undo()
     expect(songTrack().stems).toEqual({ vocals: { solo: true }, drums: { muted: true } })
-
-    expect(resetStemsLabel({ bass: { solo: true } })).toBe('Unsolo stems')
-    expect(resetStemsLabel({ bass: { muted: true } })).toBe('Unmute stems')
+    toggleStem('bass', 'muted')
+    resetStems()
+    expect(editor.undoLabel()).toBe('Play all stems')
     expect(toggledStems({ bass: { solo: true } }, 'bass', 'solo')).toEqual({})
   })
 })
