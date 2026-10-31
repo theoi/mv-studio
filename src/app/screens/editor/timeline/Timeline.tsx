@@ -373,9 +373,9 @@ type LyricDrag = { type: 'line'; edge: LineEdge } | { type: 'word'; index: numbe
 
 /**
  * Where a suggestion `width` px wide sits in a lane without covering its clips (`spans`, px): the first gap from the
- * left of the view (`view`, px) that fits it inside the view, else just after the last clip.
+ * left of the view (`view`, px) that fits it inside the view, else null.
  */
-function freeSpot(spans: [number, number][], view: [number, number], width: number, gap = 8): number {
+function freeSpot(spans: [number, number][], view: [number, number], width: number, gap = 8): number | null {
   const sorted = [...spans].sort((a, b) => a[0] - b[0])
   let x = view[0] + gap
   for (const [a, b] of sorted) {
@@ -383,8 +383,7 @@ function freeSpot(spans: [number, number][], view: [number, number], width: numb
     if (a - gap >= x + width) break
     x = b + gap
   }
-  if (x + width <= view[1] - gap) return x
-  return sorted.reduce((end, s) => Math.max(end, s[1]), 0) + gap
+  return x + width <= view[1] - gap ? x : null
 }
 
 /* ---------- toolbar ---------- */
@@ -1033,7 +1032,7 @@ export function Timeline() {
           [Math.max(0, view.t0) * pps, view.t1 * pps - HEADER_W],
           suggestW,
         )
-      : 0
+      : null
   const lanesH = lanes.reduce((a, l) => a + l.height, 0) + stems.length * stemH
   const totalH = RULER_H + (empty ? 0 : SONG_H) + lanesH
 
@@ -1734,18 +1733,25 @@ export function Timeline() {
                       })}
                     {suggestTiming && track.id === lyricsTrackId && (
                       <div
-                        ref={measureSuggest}
-                        className={styles.untimedSuggest}
-                        style={{ left: suggestLeft }}
+                        className={[styles.untimedLayer, suggestLeft === null && styles.untimedPinned]
+                          .filter(Boolean)
+                          .join(' ')}
                       >
-                        <InlineSuggestion
-                          id="time-lyrics"
-                          variant="chip"
-                          action="Time words to the vocals"
-                          onAction={() => openAssist('lyrics')}
+                        <div
+                          ref={measureSuggest}
+                          className={styles.untimedSuggest}
+                          style={suggestLeft === null ? undefined : { left: suggestLeft }}
                         >
-                          {plural(untimed, 'line')} not timed yet
-                        </InlineSuggestion>
+                          <InlineSuggestion
+                            id="time-lyrics"
+                            variant="chip"
+                            ambient
+                            action="Time words to the vocals"
+                            onAction={() => openAssist('lyrics')}
+                          >
+                            {plural(untimed, 'line')} not timed yet
+                          </InlineSuggestion>
+                        </div>
                       </div>
                     )}
                   </div>

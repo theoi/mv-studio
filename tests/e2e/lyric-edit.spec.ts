@@ -232,8 +232,17 @@ test('Untimed lyric lines suggest timing them, and Karaoke highlight opens any t
   })
   const suggestion = page.getByRole('note').filter({ hasText: '2 lines not timed yet' })
   await expect(suggestion).toBeVisible()
-  // It sits where it covers no lyric chip: in the intro before the first line when that fits (zoomed in), else after
-  // the last line.
+  // It sits where it covers no lyric chip when a free spot fits in view (the intro, zoomed in). Else it stays at the
+  // visible lane's right edge, over the chips, as at the default zoom and at Fit.
+  const scroller = page.locator('[data-timeline-scroller]')
+  const inView = async () => {
+    const note = (await suggestion.boundingBox())!
+    const view = (await scroller.boundingBox())!
+    return note.x >= view.x && note.x + note.width <= view.x + view.width
+  }
+  await expect.poll(inView).toBe(true)
+  await page.keyboard.press('Shift+Z')
+  await expect.poll(inView).toBe(true)
   const overlaps = async () => {
     const note = (await suggestion.boundingBox())!
     const chips = page.getByRole('button', { name: /^Lyric: / })
@@ -251,7 +260,6 @@ test('Untimed lyric lines suggest timing them, and Karaoke highlight opens any t
     }
     return hits
   }
-  expect(await overlaps()).toEqual([])
   await page.evaluate(() => {
     window.mvStudio.app.ui.set({ pxPerSec: 30 })
     document.querySelector<HTMLElement>('[data-timeline-scroller]')!.scrollLeft = 0
