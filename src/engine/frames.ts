@@ -78,6 +78,10 @@ interface VideoSlot {
 
 /** Re-seek a playing video only when it drifts this far (in timeline seconds) from the clock. */
 const PLAYBACK_DRIFT = 0.12
+/** Smaller drift is steered out by speeding the video up or slowing it down, over about this many seconds. */
+const DRIFT_CATCH_UP = 0.5
+/** Largest relative speed change used for steering. */
+const MAX_NUDGE = 0.25
 /** HTMLMediaElement.playbackRate range Chrome plays; other rates show exact frames by seeking instead. */
 const MIN_MEDIA_RATE = 0.0625
 const MAX_MEDIA_RATE = 16
@@ -219,16 +223,27 @@ export class VideoElementFrameProvider implements FrameProvider {
       // Upload only frames the video presented since the last upload (a 30 fps clip in a 60 fps preview skips every
       // other upload). Exact seeks below always upload: a seek does not reliably present a new frame callback.
       if (slot.presented > 0) version = slot.presented
-      if (video.playbackRate !== mediaRate) video.playbackRate = mediaRate
       // Drift is measured in source time, which moves at mediaRate; allow at least two source frames.
-      const tolerance = Math.max(PLAYBACK_DRIFT * mediaRate, 2 / (asset.frameRate ?? 30))
+      const frame = 1 / (asset.frameRate ?? 30)
+      const tolerance = Math.max(PLAYBACK_DRIFT * mediaRate, 2 * frame)
+      const drift = t - video.currentTime
+      let speed = mediaRate
       if (video.paused) {
         // A warmed or taken-over element is usually already there; seeking anyway would stall its first frames.
-        if (Math.abs(video.currentTime - t) > tolerance) video.currentTime = t
+        if (Math.abs(drift) > tolerance) video.currentTime = t
         void video.play().catch(() => undefined)
-      } else if (Math.abs(video.currentTime - t) > tolerance) {
+      } else if (Math.abs(drift) > tolerance) {
         video.currentTime = t
+      } else if (Math.abs(drift) > frame / 2) {
+        // Seeking a playing video stalls it, so smaller drift (playback start-up latency, clock skew) is steered
+        // out instead; left alone it would show frames a few frames early or late for the rest of the clip.
+        const nudge = Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / (DRIFT_CATCH_UP * mediaRate)))
+        speed = Math.min(
+          MAX_MEDIA_RATE,
+          Math.max(MIN_MEDIA_RATE, mediaRate * (1 + Math.round(nudge * 20) / 20)),
+        )
       }
+      if (video.playbackRate !== speed) video.playbackRate = speed
     } else {
       // Paused transport, a freeze (rate 0) or a rate the element cannot play: show the exact frame.
       if (!video.paused) video.pause()
