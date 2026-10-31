@@ -37,6 +37,15 @@ async function previewStats(page: Page): Promise<{ mean: number; spread: number 
 
 test('importing a song into an empty project makes it the song and analyzes it', async ({ page }) => {
   await openEmptyEditor(page)
+  // Every text Inspector › Song shows from the import until the facts are in.
+  await page.evaluate(() => {
+    const seen: string[] = []
+    ;(window as unknown as { factsSeen: string[] }).factsSeen = seen
+    new MutationObserver(() => {
+      const text = document.querySelector('[data-testid="song-facts"]')?.textContent
+      if (text && seen.at(-1) !== text) seen.push(text)
+    }).observe(document.body, { subtree: true, childList: true, characterData: true })
+  })
   const chooser = page.waitForEvent('filechooser')
   await page.getByRole('button', { name: 'Import a song' }).click()
   await (await chooser).setFiles(path.join(FIXTURE_DIR, 'song.mp3'))
@@ -45,6 +54,10 @@ test('importing a song into an empty project makes it the song and analyzes it',
   await expect(page.getByRole('tabpanel', { name: 'Media' }).getByText('song.mp3')).toBeVisible()
   // The fixture is a 120 BPM kick pattern; the analysis result lands in the song row.
   await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('song-facts')).toHaveText(/BPM/)
+  const seen = await page.evaluate(() => (window as unknown as { factsSeen: string[] }).factsSeen)
+  expect(seen[0]).toBe('Analyzing the song…')
+  expect(seen).not.toContain('Not analyzed yet')
   await expect(page.getByRole('button', { name: 'Project: song' })).toBeVisible()
 
   // Undo removes the import; the analysis has no undo step of its own.

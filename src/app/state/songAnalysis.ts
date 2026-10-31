@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react'
+import { create } from 'zustand'
 import { nearestBeatIndex } from '../../analysis/beats/grid.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
 import { fitTappedTempo, moveDownbeat, rescaleTempo } from '../../analysis/edits.ts'
@@ -36,6 +37,19 @@ let service: Promise<AnalysisBackend> | null = null
 export function analysisService(): Promise<AnalysisBackend> {
   service ??= import('../../analysis/client.ts').then((m) => new m.SongAnalysisService())
   return service
+}
+
+/** Songs whose first analysis is asked for but has not started yet (the file is still loading). */
+const usePendingSongs = create<{ ids: Id[] }>(() => ({ ids: [] }))
+
+export function markSongPending(songId: Id, pending: boolean): void {
+  usePendingSongs.setState((s) => ({
+    ids: pending ? [...s.ids.filter((id) => id !== songId), songId] : s.ids.filter((id) => id !== songId),
+  }))
+}
+
+export function useSongPending(songId: Id | undefined): boolean {
+  return usePendingSongs((s) => !!songId && s.ids.includes(songId))
 }
 
 /** For end-to-end tests: a stand-in for song analysis. */
