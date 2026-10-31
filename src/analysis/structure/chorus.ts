@@ -51,6 +51,23 @@ const COVERS_SECTION = 0.6
 const MIN_SUNG_WORDS = 6
 /** How much the lyrics may extend a detected chorus they repeat in, at both ends together, as a share of its length. */
 const MAX_EXTENSION = 0.1
+/**
+ * Shortest a lyric chorus's occurrences last (median), as a share of the song's median section, before it can add a
+ * chorus or show that a detected one is a verse. Shorter, it is a line repeated (say the first line of each verse in
+ * lyrics that leave the chorus out) and only confirms. On the dev songs lyric choruses last a third of a section or
+ * more, except where the aligner bunched one up.
+ */
+const MIN_LYRIC_CHORUS_SHARE = 0.2
+/**
+ * The median section `MIN_LYRIC_CHORUS_SHARE` is taken of, at most (seconds): coarse sections (32 bars, 100 s or
+ * more) would otherwise set the bar above a real chorus. Dev songs' median sections are 37 s at most.
+ */
+const MAX_TYPICAL_SECTION = 40
+/**
+ * A detected chorus whose repeat group the lyrics confirm elsewhere is a verse only when fewer than this share of its
+ * words are sung elsewhere: a last chorus sung with new words still repeats some, a verse none.
+ */
+const REWRITTEN_CHORUS_SHARE = 0.25
 /** How far a chorus edge may move to reach a downbeat (or a beat when bars are not found), in seconds. */
 const SNAP = 2
 
@@ -296,25 +313,39 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
  * chorus without overriding a good one:
  * - A detected chorus the lyrics repeat in is confirmed and never shrinks. The lyrics extend it by at most a tenth
  *   of its length (a longer occurrence also spans a lead-in line or a neighbouring part that repeats with it).
- * - A detected chorus the lyrics do not repeat in stays only where mostly repeated words are sung: an instrumental
- *   passage or a verse is not the chorus when the lyrics show where it is.
+ * - A detected chorus the lyrics do not repeat in stays only where words are sung, and only where they are mostly
+ *   repeated words: an instrumental passage or a verse is not the chorus when the lyrics show where it is. When the
+ *   lyrics confirm another section of its repeat group, a quarter of repeated words is enough, so a last chorus sung
+ *   with new words stays.
  * - A lyric chorus elsewhere takes over the sections it covers most of.
- * Ranges the lyrics confirm or add get `LYRIC_CHORUS_CONFIDENCE`.
+ * A lyric chorus much shorter than the sections (`MIN_LYRIC_CHORUS_SHARE`) only confirms: it adds no chorus and turns
+ * no sung detected chorus into a verse. Ranges the lyrics confirm or add get `LYRIC_CHORUS_CONFIDENCE`.
  */
 export function lyricChorusRanges(sections: readonly SongSection[], chorus: LyricChorus): ChorusRange[] {
   const sungIn = (range: TimeRange) =>
     chorus.words.filter((w) => (w.start + w.end) / 2 >= range.start && (w.start + w.end) / 2 < range.end)
-  const verse = (range: TimeRange) => {
-    const sung = sungIn(range)
-    return sung.length >= MIN_SUNG_WORDS && sung.filter((w) => !w.repeated).length > sung.length / 2
-  }
+  const hitsIn = (s: SongSection) =>
+    chorus.ranges.filter((r) => overlap(r, s) >= Math.min(1, (r.end - r.start) / 2))
+  const median = (values: number[]) => values.sort((a, b) => a - b)[(values.length - 1) >> 1] ?? 0
+  const repeatedLine =
+    median(chorus.ranges.map((r) => r.end - r.start)) <
+    MIN_LYRIC_CHORUS_SHARE * Math.min(MAX_TYPICAL_SECTION, median(sections.map((s) => s.end - s.start)))
+  const confirmedGroups = new Set(
+    sections
+      .filter((s) => s.label === 'chorus' && isDetected(s) && s.repeatGroup !== undefined && hitsIn(s).length)
+      .map((s) => s.repeatGroup),
+  )
   const ranges: ChorusRange[] = []
   const used = new Set<TimeRange>()
   for (const s of sections) {
     if (s.label !== 'chorus' || !isDetected(s)) continue
-    const hits = chorus.ranges.filter((r) => overlap(r, s) >= Math.min(1, (r.end - r.start) / 2))
+    const hits = hitsIn(s)
     if (!hits.length) {
-      if (sungIn(s).length >= MIN_SUNG_WORDS && !verse(s))
+      const sung = sungIn(s)
+      const share =
+        s.repeatGroup !== undefined && confirmedGroups.has(s.repeatGroup) ? REWRITTEN_CHORUS_SHARE : 0.5
+      const verse = !repeatedLine && sung.filter((w) => w.repeated).length < share * sung.length
+      if (sung.length >= MIN_SUNG_WORDS && !verse)
         ranges.push({ start: s.start, end: s.end, confidence: s.confidence ?? AUDIO_CHORUS_CONFIDENCE })
       continue
     }
@@ -329,7 +360,7 @@ export function lyricChorusRanges(sections: readonly SongSection[], chorus: Lyri
     })
   }
   for (const r of chorus.ranges) {
-    if (used.has(r)) continue
+    if (used.has(r) || repeatedLine) continue
     const covered = sections.filter(
       (s) => isDetected(s) && overlap(r, s) >= COVERS_SECTION * (s.end - s.start),
     )
