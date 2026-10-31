@@ -1376,7 +1376,7 @@ export function Timeline() {
         pps,
         grid,
         edges,
-        sections.map((x) => x.start),
+        sections.flatMap((x) => [x.start, x.end]),
       ).t,
     )
   }
