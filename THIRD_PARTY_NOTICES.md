@@ -82,3 +82,5 @@ The design preview's sample media (scenes, song data and lyrics) is drawn proced
 | Rxbyn - Bad Side             | https://www.jamendo.com/track/1556580/bad-side      | CC BY    |
 | Cortez - Feel (Stripped)     | https://www.jamendo.com/track/1481500/feel-stripped | CC BY    |
 | Lower Loveday - Is It Right? | https://www.jamendo.com/track/1559614/is-it-right   | CC BY-SA |
+
+`tests/fixtures/people-interview.webm` is a 3-second, 320×180 excerpt of “Entrevista Maricarmen Canales - TECMTY” by NachoCHOCO (https://commons.wikimedia.org/wiki/File:Entrevista_Maricarmen_Canales_-_TECMTY.webm), CC0 1.0, re-encoded without audio.

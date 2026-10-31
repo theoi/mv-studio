@@ -27,6 +27,8 @@ export const JOB_KINDS = {
   director: 'director.draft',
   autocut: 'edit.autocut',
   camera: 'vision.camera',
+  cutout: 'vision.cutout',
+  suitability: 'vision.suitability',
   export: 'export.outputs',
   footage: 'vision.index',
   lyrics: 'analysis.lyrics',
