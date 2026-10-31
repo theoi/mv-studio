@@ -76,3 +76,54 @@ test('timeline, inspector and library controls take clicks over at least 24 by 2
   if (!lyric || lyric.height < 24) small.push(`lyric chip height ${lyric?.height}`)
   expect(small).toEqual([])
 })
+
+test('stem lane mute and solo take clicks over at least 24 by 24 px', async ({ page }) => {
+  await openAt720(page)
+  // Four stems on the song, so its stem lanes show. They need files and features, not sound.
+  await page.evaluate(async () => {
+    const { app, media } = window.mvStudio
+    const editor = app.project.editor
+    const song = editor.getProject().songAssetId
+    const n = 4800
+    const data = new DataView(new ArrayBuffer(44 + n * 2))
+    const text = (at: number, s: string) => [...s].forEach((c, i) => data.setUint8(at + i, c.charCodeAt(0)))
+    text(0, 'RIFF')
+    data.setUint32(4, 36 + n * 2, true)
+    text(8, 'WAVEfmt ')
+    data.setUint32(16, 16, true)
+    data.setUint16(20, 1, true)
+    data.setUint16(22, 1, true)
+    data.setUint32(24, 48_000, true)
+    data.setUint32(28, 96_000, true)
+    data.setUint16(32, 2, true)
+    data.setUint16(34, 16, true)
+    text(36, 'data')
+    data.setUint32(40, n * 2, true)
+    const commands: object[] = []
+    const stems: Record<string, string> = {}
+    const stemFeatures: Record<string, object> = {}
+    for (const name of ['vocals', 'drums', 'bass', 'other']) {
+      const asset = await media.mediaStore.storeBlob(new Blob([data.buffer], { type: 'audio/wav' }), {
+        kind: 'audio',
+        name: `song (${name}).wav`,
+        origin: { type: 'stem', parentAssetId: song },
+      })
+      commands.push({ type: 'asset.add', asset })
+      stems[name] = asset.id
+      stemFeatures[name] = { rate: 4, loudness: [0.5, 0.5], bands: [], bandEdgesHz: [], onsets: [] }
+    }
+    commands.push({ type: 'analysis.setStems', assetId: song, stems, stemFeatures })
+    editor.dispatch(commands, { history: 'skip' })
+  })
+
+  // Neighboring lanes would cover each other's areas if the lanes were shorter than 24 px.
+  const small: string[] = []
+  for (const name of ['Mute vocals', 'Solo vocals', 'Mute drums', 'Solo drums']) {
+    const target = page.getByRole('button', { name, exact: true })
+    await expect(target, name).toBeVisible()
+    await target.scrollIntoViewIfNeeded()
+    const size = await hitSize(target)
+    if (size.width < 24 || size.height < 24) small.push(`${name} ${size.width}×${size.height}`)
+  }
+  expect(small).toEqual([])
+})
