@@ -122,6 +122,63 @@ describe('alignLines and realignFrom', () => {
   })
 })
 
+describe('alignLines across instrumental stretches', () => {
+  /** Mostly blank emissions; `spell` writes words from frame `start`, a word every 10 frames, a letter every 2. */
+  const blank = (frames: number) => emissions(frames, {})
+  function spell(em: CtcEmissions, text: string, start: number, p: number) {
+    text.split(' ').forEach((word, w) =>
+      [...alignmentKey(word)].forEach((c, k) => {
+        const row = (start + 10 * w + 2 * k) * V
+        em.logProbs.fill(Math.log(0.01 / (V - 2)), row, row + V)
+        em.logProbs[row + vocab.blank] = Math.log(0.99 - p)
+        em.logProbs[row + (vocab.ids[c] as number)] = Math.log(p)
+      }),
+    )
+  }
+
+  it('keeps a line out of a long instrumental in the middle where the vocals only bleed, but can still place it there', () => {
+    // "go" is sung at 30 s; at 10 s, in the instrumental, bleed sounds even more like it.
+    const em = blank(1600)
+    spell(em, 'no', 50, 0.9)
+    spell(em, 'go', 500, 0.9)
+    spell(em, 'go', 1500, 0.6)
+    const lines = [{ text: 'no' }, { text: 'go' }]
+    expect(alignLines(em, vocab, lines)[1]?.start).toBe(10)
+    const voiced = [
+      { start: 0.5, end: 2 },
+      { start: 29.5, end: 31 },
+    ]
+    expect(alignLines(em, vocab, lines, { voiced })[1]?.start).toBe(30)
+    // A cost, not a ban: a line the voice detector missed is still timed where it is sung.
+    const quiet = blank(1600)
+    spell(quiet, 'no', 50, 0.9)
+    spell(quiet, 'go', 1500, 0.6)
+    expect(alignLines(quiet, vocab, lines, { voiced: voiced.slice(0, 1) })[1]?.start).toBe(30)
+  })
+
+  it('keeps the words of a line together instead of starting it in an instrumental', () => {
+    const em = blank(1700)
+    spell(em, 'hold', 500, 0.9)
+    spell(em, 'hold on tight', 1500, 0.6)
+    const words = ['hold', 'on', 'tight']
+    expect(alignWords(em, vocab, words)[0]?.start).toBe(10)
+    expect(alignLines(em, vocab, [{ text: 'hold on tight' }])[0]?.start).toBe(30)
+  })
+
+  it('does not squeeze lyrics pasted without line breaks to avoid an instrumental between them', () => {
+    const first = 'sun sky red sea day old new far end way one two six'
+    const second = 'big cat dog fox hat jam kit log map net owl pig rug'
+    const em = blank(2200)
+    spell(em, first, 50, 0.9)
+    // Bleed right after the first part sounds a little like the second, sung after a 36 s instrumental.
+    spell(em, second, 250, 0.45)
+    spell(em, second, 2000, 0.6)
+    const startOfSecond = (lines: { text: string }[]) =>
+      alignLines(em, vocab, lines).flatMap((l) => l.words)[13]?.start
+    expect(startOfSecond([{ text: first }, { text: second }])).toBe(40)
+    expect(startOfSecond([{ text: `${first} ${second}` }])).toBe(40)
+  })
+})
 describe('lyrics text', () => {
   it('drops section markers and blank lines', () => {
     expect(parseLyricsText('[Chorus]\nHold on\n\n(x2)\n  tight  now ')).toEqual([

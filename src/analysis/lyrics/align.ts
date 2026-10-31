@@ -3,6 +3,7 @@ import type { LyricLine, LyricWord } from '../../model/types.ts'
 import { newId } from '../../model/factory.ts'
 import { type CtcEmissions, forcedAlign } from './ctc.ts'
 import { alignmentKey } from './text.ts'
+import type { TimeRange } from './vad.ts'
 
 export interface CtcVocabulary {
   /** Token id per character (A-Z and apostrophe). */
@@ -32,18 +33,44 @@ export interface AlignOptions {
    * letter of a line can lock onto a stray sound (an ad-lib, a breath) long before the line is sung.
    */
   intraWordPause?: number
+  /**
+   * Where someone sings (`voiceActivity` on the vocals stem). A letter placed outside costs `unvoicedCost`
+   * (log-probability per frame): separation leaves faint bleed in instrumental stretches, which otherwise draws lines
+   * into a long instrumental ending or gap. A cost rather than a ban, so a quiet line the detector misses can still be
+   * placed there.
+   */
+  voiced?: readonly TimeRange[]
+  unvoicedCost?: number
+  /**
+   * Cost (log-probability per frame) of a pause between two words of the same line, so a line does not straddle a long
+   * instrumental. Applies to lines of up to 24 words when the caller gives the line lengths.
+   */
+  linePause?: number
 }
 
 const DEFAULT_MAX_HOLD = 0.6
 /** Best of 0, 0.05 and 0.1 on the dev songs: word onsets within 0.3 s 88.3% -> 89.1%, mean error 0.49 -> 0.44 s. */
 const DEFAULT_INTRA_WORD_PAUSE = 0.05
+/*
+ * With both on 21 dev songs: word onsets within 0.3 s 92.9% -> 94.5%, mean error 0.33 -> 0.11 s, words off by more
+ * than 5 s 72 -> 7, and the same with a 40 s instrumental inserted mid-song or after the last line (without them:
+ * 0.40 and 0.51 s). The unvoiced cost alone gives 0.22 s; 2 to 8 and voice thresholds of 20 to 30 dB do the same.
+ */
+const DEFAULT_UNVOICED_COST = 4
+const DEFAULT_LINE_PAUSE = 0.1
+/** Longer "lines" are lyrics pasted without line breaks, where a pause between two words says nothing. */
+const MAX_PAUSED_LINE_WORDS = 24
 
-/** Times for `words` (display text) sung in order within the range. Words without alignable letters are interpolated. */
+/**
+ * Times for `words` (display text) sung in order within the range. Words without alignable letters are interpolated.
+ * `lineLengths` (words per line, in order) lets pauses inside a line cost `linePause`.
+ */
 export function alignWords(
   em: CtcEmissions,
   vocab: CtcVocabulary,
   words: readonly string[],
   options: AlignOptions = {},
+  lineLengths?: readonly number[],
 ): LyricWord[] {
   const fs = em.frameSeconds
   const from = Math.max(0, Math.floor((options.from ?? 0) / fs))
@@ -52,7 +79,15 @@ export function alignWords(
   const ranges: ([number, number] | null)[] = []
   const pauseCost: number[] = []
   const intraWordPause = options.intraWordPause ?? DEFAULT_INTRA_WORD_PAUSE
-  for (const word of words) {
+  const linePause = options.linePause ?? DEFAULT_LINE_PAUSE
+  // Words after the first of their line, in lines short enough for a pause inside them to mean something.
+  const continuesLine = new Uint8Array(words.length)
+  let lineStart = 0
+  for (const n of lineLengths ?? []) {
+    if (n <= MAX_PAUSED_LINE_WORDS) continuesLine.fill(1, lineStart + 1, lineStart + n)
+    lineStart += n
+  }
+  for (const [i, word] of words.entries()) {
     const ids = [...alignmentKey(word)]
       .map((c) => vocab.ids[c])
       .filter((id): id is number => id !== undefined)
@@ -60,12 +95,21 @@ export function alignWords(
       ranges.push(null)
       continue
     }
+    const inLine = continuesLine[i] === 1 && tokens.length > 0
+    if (inLine) pauseCost[tokens.length] = linePause
     if (tokens.length && vocab.wordDelimiter !== undefined) tokens.push(vocab.wordDelimiter)
+    if (inLine) pauseCost[tokens.length] = linePause
     ranges.push([tokens.length, tokens.length + ids.length])
     for (let k = 1; k < ids.length; k++) pauseCost[tokens.length + k] = intraWordPause
     tokens.push(...ids)
   }
-  const spans = forcedAlign(em, tokens, vocab.blank, from, to, pauseCost)
+  let unvoiced: Float32Array | undefined
+  if (options.voiced) {
+    unvoiced = new Float32Array(em.frames).fill(options.unvoicedCost ?? DEFAULT_UNVOICED_COST)
+    for (const r of options.voiced)
+      unvoiced.fill(0, Math.max(0, Math.floor(r.start / fs)), Math.ceil(r.end / fs))
+  }
+  const spans = forcedAlign(em, tokens, vocab.blank, from, to, pauseCost, unvoiced)
   const timed: (LyricWord | null)[] = words.map((text, i) => {
     const r = ranges[i]
     if (!spans || !r) return null
@@ -126,7 +170,13 @@ export function alignLines(
   options: AlignOptions = {},
 ): LyricLine[] {
   const split = lines.map((l) => l.text.split(/\s+/).filter(Boolean))
-  const words = alignWords(em, vocab, split.flat(), options)
+  const words = alignWords(
+    em,
+    vocab,
+    split.flat(),
+    options,
+    split.map((s) => s.length),
+  )
   let k = 0
   return lines.map((line, i) => {
     const own = words.slice(k, k + (split[i] as string[]).length)
@@ -161,7 +211,13 @@ export function realignFrom(
     ...lines.slice(lineIndex + 1).map((l) => ({ id: l.id, text: l.text, words: l.words })),
   ]
   const tailWords = tail.flatMap((l) => l.words.map((w) => w.text))
-  const aligned = alignWords(em, vocab, tailWords, { ...options, from: time })
+  const aligned = alignWords(
+    em,
+    vocab,
+    tailWords,
+    { ...options, from: time },
+    tail.map((l) => l.words.length),
+  )
   if (aligned[0]) aligned[0] = { ...aligned[0], start: round(time) }
   let k = 0
   const retimed = tail.map((l) => {

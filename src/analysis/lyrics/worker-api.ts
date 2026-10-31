@@ -74,7 +74,9 @@ export function createLyricsApi(deps: LyricsWorkerDeps) {
       const { em, vocab } = args.emissions
         ? { em: args.emissions, vocab: (await deps.ctcModel(ctx)).vocab }
         : await emissionsFor(pcm, ctx, 0, 0.95)
-      const lines: LyricLine[] = alignLines(em, vocab, args.lines)
+      const lines: LyricLine[] = alignLines(em, vocab, args.lines, {
+        voiced: voiceActivity(pcm, CTC_SAMPLE_RATE),
+      })
       return transfer({ lines, emissions: em, vocab }, [em.logProbs.buffer])
     },
 
