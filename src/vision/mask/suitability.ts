@@ -79,14 +79,37 @@ export interface PeopleAt {
  * spreading over the shot.
  */
 export function peopleNear(people: ReadonlyArray<PeopleAt>, t: number, hold = PERSON_HOLD_SECONDS): Rect[] {
+  return peopleIndex(people, hold)(t)
+}
+
+/** `peopleNear` for many times: sorts the detections once, so each lookup is a binary search plus the hold window. */
+export function peopleIndex(
+  people: ReadonlyArray<PeopleAt>,
+  hold = PERSON_HOLD_SECONDS,
+): (t: number) => Rect[] {
   const eps = 1e-6
-  const near = people.filter((p) => p.boxes.length && Math.abs(p.t - t) <= hold + eps)
-  if (!near.length) return []
-  const first = Math.min(...people.map((p) => p.t))
-  const last = Math.max(...people.map((p) => p.t))
-  const before = near.some((p) => p.t <= t + eps) || t - first <= hold + eps
-  const after = near.some((p) => p.t >= t - eps) || last - t <= hold + eps
-  return before && after ? near.flatMap((p) => p.boxes) : []
+  const hits = people.filter((p) => p.boxes.length).sort((a, b) => a.t - b.t)
+  let first = Infinity
+  let last = -Infinity
+  for (const p of people) {
+    first = Math.min(first, p.t)
+    last = Math.max(last, p.t)
+  }
+  return (t) => {
+    let lo = 0
+    let hi = hits.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (hits[mid]!.t < t - hold - eps) lo = mid + 1
+      else hi = mid
+    }
+    let end = lo
+    while (end < hits.length && hits[end]!.t <= t + hold + eps) end++
+    if (end === lo) return []
+    const before = hits[lo]!.t <= t + eps || t - first <= hold + eps
+    const after = hits[end - 1]!.t >= t - eps || last - t <= hold + eps
+    return before && after ? hits.slice(lo, end).flatMap((p) => p.boxes) : []
+  }
 }
 
 /** The mask with everything outside the (grown) boxes cleared. */
@@ -145,10 +168,8 @@ export function assessSuitability(
   people?: ReadonlyArray<PeopleAt>,
 ): SuitabilityReport {
   const o = { ...DEFAULTS, ...options }
-  const hold = Math.max(PERSON_HOLD_SECONDS, spacing)
-  const frames = samples.map((s) =>
-    assessFrame(s.t, people ? keepPeople(s.mask, peopleNear(people, s.t, hold)) : s.mask, o),
-  )
+  const near = people && peopleIndex(people, Math.max(PERSON_HOLD_SECONDS, spacing))
+  const frames = samples.map((s) => assessFrame(s.t, near ? keepPeople(s.mask, near(s.t)) : s.mask, o))
   const n = frames.length
   if (n === 0) {
     return {
