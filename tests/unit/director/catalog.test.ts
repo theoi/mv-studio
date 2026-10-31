@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { bestByTags, catalogFromPlugins, DEFAULT_CATALOG } from '../../../src/director/index.ts'
 import type { PluginCatalogEntry } from '../../../src/engine/types.ts'
+import { lookRegistry } from '../../../src/plugins/looks.ts'
 
 const entry = (
   id: string,
@@ -32,5 +33,9 @@ describe('catalogFromPlugins', () => {
     ])
     expect(catalog.textPresets[0]?.id).toBe('spin')
     expect(bestByTags(catalog.effects.slice(1), ['peak'])?.id).toBe('chromatic-burst')
+  })
+
+  it('offers the looks of the shared look registry', () => {
+    expect(DEFAULT_CATALOG.looks.map((l) => l.id)).toEqual(lookRegistry.list().map((l) => l.id))
   })
 })

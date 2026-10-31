@@ -1,12 +1,13 @@
 /**
  * What the director may use: effects, transitions, generators, text animations and looks, by id. DEFAULT_CATALOG
  * comes from the engine's plugin registry, so plans only reference plugins that exist; director tags (moods a plugin
- * suits) are layered on top. Pass catalogFromPlugins(registry.catalog()) to include plugins added later. Unknown ids
- * are dropped at compile time with a warning.
+ * suits) are layered on top. Looks come from the shared look registry. Pass catalogFromPlugins(registry.catalog()) to
+ * include plugins and looks added later. Unknown ids are dropped at compile time with a warning.
  */
 import { pluginRegistry } from '../engine/registry.ts'
 import type { PluginCatalogEntry } from '../engine/types.ts'
-import type { ColorAdjustmentKey, ParamValue } from '../model/types.ts'
+import type { ParamValue } from '../model/types.ts'
+import { lookRegistry, type LookDefinition } from '../plugins/looks.ts'
 
 export interface CatalogParam {
   key: string
@@ -26,18 +27,12 @@ export interface CatalogItem {
   params?: CatalogParam[]
 }
 
-export interface LookPreset {
-  id: string
-  name: string
-  tags: string[]
-  adjustments: Partial<Record<ColorAdjustmentKey, number>>
-  effects: { effectId: string; params?: Record<string, ParamValue> }[]
-  /** Default text colors that suit the look. */
-  textColor: string
-  accentColor: string
-  /** Appended to generation prompts so shots share one visual style. */
-  promptStyle: string
-}
+/** The parts of a look (src/plugins/looks.ts) the director uses. */
+export type LookPreset = Pick<
+  LookDefinition,
+  'id' | 'name' | 'tags' | 'adjustments' | 'effects' | 'textColor' | 'accentColor' | 'promptStyle'
+> &
+  Partial<Pick<LookDefinition, 'palette' | 'text'>>
 
 export interface DirectorCatalog {
   effects: CatalogItem[]
@@ -66,102 +61,6 @@ export const DIRECTOR_TAGS: Record<string, string[]> = {
   typewriter: ['minimal', 'vintage'],
 }
 
-export const DEFAULT_LOOKS: LookPreset[] = [
-  {
-    id: 'clean',
-    name: 'Clean',
-    tags: ['clean', 'natural', 'simple'],
-    adjustments: { contrast: 0.05 },
-    effects: [],
-    textColor: '#ffffff',
-    accentColor: '#facc15',
-    promptStyle: 'natural light, clean composition, high detail',
-  },
-  {
-    id: 'neon',
-    name: 'Neon night',
-    tags: ['neon', 'cyberpunk', 'night', 'city', 'club', 'electronic', 'synth'],
-    adjustments: { contrast: 0.15, saturation: 0.25, temperature: -0.15 },
-    effects: [{ effectId: 'glow', params: { intensity: 0.8 } }],
-    textColor: '#f5f3ff',
-    accentColor: '#22d3ee',
-    promptStyle: 'neon-lit night, magenta and cyan light, reflections on wet streets, cinematic',
-  },
-  {
-    id: 'warm',
-    name: 'Golden hour',
-    tags: ['warm', 'sunset', 'summer', 'golden', 'beach', 'sun', 'happy'],
-    adjustments: { temperature: 0.25, saturation: 0.1, contrast: 0.05 },
-    effects: [],
-    textColor: '#fffbeb',
-    accentColor: '#fb923c',
-    promptStyle: 'golden hour sunlight, warm tones, soft lens flare, cinematic',
-  },
-  {
-    id: 'vintage',
-    name: 'Vintage film',
-    tags: ['vintage', 'retro', 'film', '70s', '80s', '90s', 'vhs', 'nostalgic', 'old'],
-    adjustments: { contrast: -0.05, saturation: -0.15, temperature: 0.1 },
-    effects: [
-      { effectId: 'film-grain', params: { amount: 0.3 } },
-      { effectId: 'vignette', params: { amount: 0.35 } },
-    ],
-    textColor: '#fef3c7',
-    accentColor: '#f87171',
-    promptStyle: 'shot on 35mm film, faded colors, grain, nostalgic',
-  },
-  {
-    id: 'moody',
-    name: 'Moody',
-    tags: ['dark', 'moody', 'noir', 'sad', 'melancholy', 'lonely', 'rain', 'night'],
-    adjustments: { exposure: -0.1, saturation: -0.3, contrast: 0.15 },
-    effects: [{ effectId: 'vignette', params: { amount: 0.5 } }],
-    textColor: '#e5e7eb',
-    accentColor: '#93c5fd',
-    promptStyle: 'low-key lighting, deep shadows, muted colors, atmospheric',
-  },
-  {
-    id: 'dreamy',
-    name: 'Dreamy',
-    tags: ['dream', 'dreamy', 'soft', 'ethereal', 'calm', 'love', 'romantic', 'pastel'],
-    adjustments: { contrast: -0.1, brightness: 0.05, saturation: -0.05 },
-    effects: [{ effectId: 'glow', params: { intensity: 0.6 } }],
-    textColor: '#fdf4ff',
-    accentColor: '#f0abfc',
-    promptStyle: 'soft focus, pastel colors, hazy light, dreamlike',
-  },
-  {
-    id: 'mono',
-    name: 'Black and white',
-    tags: ['black and white', 'monochrome', 'mono', 'b&w', 'grayscale'],
-    adjustments: { saturation: -1, contrast: 0.2 },
-    effects: [{ effectId: 'film-grain', params: { amount: 0.2 } }],
-    textColor: '#ffffff',
-    accentColor: '#d4d4d4',
-    promptStyle: 'black and white photography, high contrast, dramatic',
-  },
-  {
-    id: 'vivid',
-    name: 'Vivid',
-    tags: ['energetic', 'party', 'hype', 'bright', 'colorful', 'pop', 'dance', 'fun'],
-    adjustments: { saturation: 0.3, contrast: 0.1 },
-    effects: [],
-    textColor: '#ffffff',
-    accentColor: '#f472b6',
-    promptStyle: 'vibrant saturated colors, bold, high energy',
-  },
-  {
-    id: 'cinematic',
-    name: 'Cinematic',
-    tags: ['cinematic', 'epic', 'movie', 'film', 'dramatic', 'story'],
-    adjustments: { contrast: 0.08, saturation: -0.05, temperature: 0.05 },
-    effects: [{ effectId: 'vignette', params: { amount: 0.3 } }],
-    textColor: '#ffffff',
-    accentColor: '#fbbf24',
-    promptStyle: 'cinematic lighting, anamorphic lens, shallow depth of field, film still',
-  },
-]
-
 function toItem(entry: PluginCatalogEntry): CatalogItem {
   return {
     id: entry.id,
@@ -185,7 +84,7 @@ function toItem(entry: PluginCatalogEntry): CatalogItem {
 /** Builds a catalog from the engine's plugin catalog (registry.catalog()). */
 export function catalogFromPlugins(
   entries: readonly PluginCatalogEntry[],
-  looks: LookPreset[] = DEFAULT_LOOKS,
+  looks: LookPreset[] = lookRegistry.list(),
 ): DirectorCatalog {
   const of = (kind: PluginCatalogEntry['kind']) => entries.filter((e) => e.kind === kind).map(toItem)
   return {

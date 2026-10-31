@@ -169,6 +169,29 @@ describe('OpenAI-compatible client: structured calls', () => {
     expect(body.tools.map((t) => t.function.name)).toEqual(['set_opacity', 'ask_clarification'])
   })
 
+  it('forces a named tool, as `required` when it is the only tool (llama.cpp ignores the object form)', async () => {
+    const call = {
+      id: 'call_q',
+      type: 'function' as const,
+      function: { name: 'ask_clarification', arguments: '{"question":"Which one?"}' },
+    }
+    const server = new MockLlmServer({ flavor: 'openai', apiKey: KEY, models: ['gpt-test'] }).reply(
+      { content: '', tool_calls: [call] },
+      { content: '', tool_calls: [call] },
+    )
+    const { llm } = client(
+      { [OPENAI]: server.handler() },
+      { baseUrl: `${OPENAI}/v1`, apiKey: KEY, model: 'gpt-test', preset: 'openai' },
+    )
+    const messages = [{ role: 'user' as const, content: 'x' }]
+    await llm.callTools({ messages, tools, toolChoice: { name: 'ask_clarification' } })
+    await llm.callTools({ messages, tools: [tools[1]!], toolChoice: { name: 'ask_clarification' } })
+    expect(server.chatBodies.map((b) => b.tool_choice)).toEqual([
+      { type: 'function', function: { name: 'ask_clarification' } },
+      'required',
+    ])
+  })
+
   it('falls back to JSON mode when the model has no tool support, and remembers it', async () => {
     const server = new MockLlmServer({
       flavor: 'ollama',

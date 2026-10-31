@@ -264,8 +264,7 @@ export class OpenAICompatibleClient {
           type: 'function',
           function: { name: t.name, description: t.description, parameters: t.parameters },
         })),
-        tool_choice:
-          typeof choice === 'object' ? { type: 'function', function: { name: choice.name } } : choice,
+        tool_choice: wireToolChoice(choice, request.tools.length),
       }
       let response: Record<string, unknown>
       try {
@@ -634,6 +633,12 @@ export class OpenAICompatibleClient {
   ): CloudError {
     return new CloudError({ kind, provider: 'llm', ...o })
   }
+}
+
+/** llama.cpp's server ignores an object tool choice (it only reads strings); with one tool, `required` forces the same call. */
+function wireToolChoice(choice: ToolChoice, toolCount: number): unknown {
+  if (typeof choice !== 'object') return choice
+  return toolCount === 1 ? 'required' : { type: 'function', function: { name: choice.name } }
 }
 
 function firstMessage(response: Record<string, unknown>): { content?: unknown; tool_calls?: unknown } {

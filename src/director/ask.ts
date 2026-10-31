@@ -73,7 +73,7 @@ export const ASK_SYSTEM_PROMPT = [
   `Call exactly one tool: ${EDIT_TOOL} to make changes, ${ASK_TOOL} to ask a question, or ${REPLY_TOOL} to answer.`,
   'Project facts:',
   '- Times are seconds on the timeline. Tracks are listed top layer first. Song sections (s1, s2, ...) give the song structure.',
-  '- x and y are canvas positions from 0 to 1 (0.5 is the center, y grows downward). scale 1 is the fitted size. opacity is 0 to 1.',
+  '- x and y are canvas positions from 0 to 1 (0.5 is the center, y grows downward: the top is about y 0.12, the bottom about y 0.88). scale 1 is the fitted size. opacity is 0 to 1.',
   '- Color adjustments (exposure, brightness, contrast, saturation, temperature, tint, hue) go from -1 to 1, 0 is neutral.',
   '- Use ids exactly as given. Clips you add get ids n1, n2, ... in order, and later operations may use them.',
   '- To change many clips, use a selector such as {"type":"text","section":"s3"} instead of listing ids.',
@@ -85,8 +85,10 @@ export const ASK_SYSTEM_PROMPT = [
   '- Lyrics and titles are text clips: target them with {"type":"text"}; their size is fontSize. Footage is type video or image.',
   '- Write the summary in plain words for a non-expert.',
   'Examples of operations:',
-  '- "make the text in the chorus bigger": {"op":"set","clips":{"type":"text","section":"s3"},"property":"fontSize","value":110}',
-  '- "fade in the first clip": {"op":"animate","clips":["c2"],"property":"opacity","keyframes":[{"time":0,"value":0},{"time":1,"value":1}]}',
+  '- "make the lyrics bigger": {"op":"set","clips":{"type":"text"},"property":"fontSize","value":110}',
+  '- "make the chorus text red", when the chorus sections are s3 and s5: {"op":"set","clips":{"type":"text","section":"s3"},"property":"color","value":"#ff0000"} and the same with "section":"s5"',
+  '- "fade out the last clip": {"op":"fade","clips":["c9"],"direction":"out"}',
+  '- "slowly zoom in on the first clip": {"op":"animate","clips":["c2"],"property":"scale","keyframes":[{"time":0,"value":1},{"time":4,"value":1.2}]}',
   '- "pulse the footage on the beat": {"op":"react","clips":{"type":"video"},"property":"scale","source":"beat","amount":0.08}',
 ].join('\n')
 
