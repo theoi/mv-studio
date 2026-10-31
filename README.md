@@ -49,8 +49,10 @@ The Start screen has a starting point for each kind, plus a blank project and **
 
 ### Music-aware tools
 
-- Tempo and beats within seconds, with snap to beats. Bar starts follow after a further analysis of about a minute. If the tempo comes out at twice or half the speed, **Half** and **Double** fix it.
+- Tempo and beats within seconds. Bar starts follow after a further analysis of about a minute. The timeline's beat grid and ruler follow the detected beats and bar starts. If the tempo comes out at twice or half the speed, **Half** and **Double** fix it.
+- Snap to beats, bar starts, sections, clip edges or the playhead, each turned on or off in the menu next to the snapping button.
 - Song sections, the repeated chorus and an energy curve on the timeline.
+- Edit sections on the timeline: drag an edge to move it (two touching sections share their edge), or nudge it by a beat with the arrow keys. **Inspector › Section** sets the name, color, start and end. Right-click a section to go to its start, select its clips, cut clips to it or export it as a teaser.
 - Auto-cut of your footage to beats and sections.
 - React to music: drive any effect setting from the kick, snare, hi-hats, bass, vocals, loudness, beat or downbeat.
 - Stem separation into vocals, drums, bass and other, as an opt-in step. Each stem then gets a lane under the song track, where you can mute or solo it in the preview and the export.
@@ -154,7 +156,7 @@ Developer notes on the providers, error states and model choice are in [src/clou
 - The tempo is sometimes found at half or twice the speed you feel (in testing, in about one in six songs). Half and Double next to the tempo, in Assist › Song analysis, fix it in one click.
 - Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable (in testing, for 12 of 13 such shots).
 - Subject cutout can still take a large animal close to the camera for a person: in testing, 1 of 27 shots with no one in them was offered for text behind the subject. In a shot that also has a person, an animal can be cut out with them.
-- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename a section on the timeline by double-clicking it.
+- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename a section by double-clicking it on the timeline, or in **Inspector › Section**.
 - 3D camera moves on stills can bend or stretch edges around the subject, most visibly on large moves.
 - AI images and video clips need your fal.ai key and cost money per use. The richer director and plain-language edits need an LLM endpoint, in the cloud or on your computer.
 - Not planned: AI video or image generation on your computer, accounts or cloud project storage, phone and tablet layouts, and publishing directly to video platforms.
