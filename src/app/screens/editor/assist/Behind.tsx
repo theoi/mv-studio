@@ -187,7 +187,7 @@ export function BehindView() {
                 The clips have no person large enough to cut out, or already have a cutout.
               </div>
             )}
-            {result.refused?.map((r) => (
+            {[...(result.refused ?? []), ...(result.flickers ?? [])].map((r) => (
               <div key={r.assetId} className={styles.muted}>
                 {`${r.name}: ${r.why}`}
               </div>

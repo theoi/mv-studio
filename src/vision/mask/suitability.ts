@@ -14,7 +14,10 @@ export interface SuitabilityOptions {
   goodFraction?: number
   /** Minimum usable fraction for 'marginal' (offered on suitable ranges only). */
   marginalFraction?: number
-  /** Stability below this marks the mask unstable. Measured only on samples that come with their neighbouring frames. */
+  /**
+   * Stability (the share of frames without a visible pop, `POP_MIN_SHARE`) below this marks the mask unstable: a pop in
+   * more than one frame in ten. Measured only on the person track, which keeps each frame's pop share.
+   */
   minStability?: number
   /** Ranges shorter than this (seconds) are dropped. */
   minRangeSeconds?: number
@@ -27,7 +30,7 @@ const DEFAULTS: Required<SuitabilityOptions> = {
   noSubjectCoverage: 0.004,
   goodFraction: 0.7,
   marginalFraction: 0.25,
-  minStability: 0.8,
+  minStability: 0.9,
   minRangeSeconds: 1,
 }
 
@@ -54,7 +57,7 @@ export function assessFrame(t: number, mask: Mask, options: SuitabilityOptions =
 }
 
 /** Bumped whenever the verdict for the same masks changes, so stored reports are judged again. */
-export const SUITABILITY_VERSION = 3
+export const SUITABILITY_VERSION = 4
 
 /**
  * The person segmenter also cuts out animals and some vehicles, so the verdict counts only the mask inside boxes an
@@ -142,45 +145,32 @@ export function keepPeople(mask: Mask, boxes: ReadonlyArray<Rect>, margin = PERS
   return { width: w, height: h, data }
 }
 
-/** A sampled mask, optionally with the frames just before and after it (needed to measure flicker). */
 export interface SuitabilitySample {
   t: number
   mask: Mask
-  prev?: Mask
-  next?: Mask
 }
 
 /**
- * Share of the subject that flickers at the middle of three consecutive frames: pixels on in the middle frame and
- * off in both neighbours, or the other way round. A subject that moves smoothly changes each edge pixel once, so
- * movement does not count, only a mask that jumps back and forth.
+ * A frame pops visibly when at least this share of the subject switches off and back on, or on and off (`mask/pops.ts`).
+ * On the dev set's person tracks, smaller pops were mostly the outline shifting by a pixel and back; from about 8 % they
+ * are a limb, a leg or a blob beside the person blinking.
  */
-export function flicker(prev: Mask, cur: Mask, next: Mask, threshold = 128): number {
-  let flips = 0
-  let area = 0
-  for (let i = 0; i < cur.data.length; i++) {
-    const a = prev.data[i]! >= threshold
-    const b = cur.data[i]! >= threshold
-    const c = next.data[i]! >= threshold
-    if (a || b || c) area++
-    if (a === c && a !== b) flips++
-  }
-  return area ? flips / area : 0
-}
+export const POP_MIN_SHARE = 0.08
 
 /**
  * Decides whether "text behind the subject" works for a shot, from masks sampled across it (ascending times). The
  * quick check and the stored person track both judge with this, so they agree on the same masks. `spacing` is the
- * nominal time between samples, used to turn usable samples into time ranges. Stability is measured on the samples
- * that come with their neighbouring frames (the person track), and is null without them (the quick check). With
- * `people`, each frame is judged only on its mask inside the people found near it (`peopleNear`); flicker is still
- * measured on the whole mask, since the export cuts out all of it.
+ * nominal time between samples, used to turn usable samples into time ranges. Stability is the share of frames without
+ * a visible pop, from the person track's per-frame `pops` (every frame, not just the samples); the quick check has
+ * none and reports null. With `people`, each frame is judged only on its mask inside the people found near it
+ * (`peopleNear`); flicker is still measured on the whole mask, since the export cuts out all of it.
  */
 export function assessSuitability(
   samples: ReadonlyArray<SuitabilitySample>,
   spacing: number,
   options: SuitabilityOptions = {},
   people?: ReadonlyArray<PeopleAt>,
+  pops?: ReadonlyArray<number>,
 ): SuitabilityReport {
   const o = { ...DEFAULTS, ...options }
   const near = people && peopleIndex(people)
@@ -201,16 +191,16 @@ export function assessSuitability(
   const usableFraction = usable / n
   const meanCoverage = frames.reduce((a, f) => a + f.coverage, 0) / n
 
-  let stability: number | null = null
-  const triples = samples.filter((s) => s.prev && s.next)
-  if (triples.length >= 3)
-    stability = 1 - triples.reduce((a, s) => a + flicker(s.prev!, s.mask, s.next!), 0) / triples.length
+  const stability = pops?.length ? 1 - pops.filter((p) => p >= POP_MIN_SHARE).length / pops.length : null
 
   const counts = new Map<SuitabilityReason, number>()
   for (const f of frames) if (f.verdict !== 'ok') counts.set(f.verdict, (counts.get(f.verdict) ?? 0) + 1)
   const reasons = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([r]) => r)
   const unstable = stability !== null && stability < o.minStability
-  if (unstable) reasons.push('unstable-mask')
+  // When flicker is all that keeps the shot from good, it comes first: the few frames without a usable person are not
+  // why the shot is marginal.
+  if (unstable && usableFraction >= o.goodFraction) reasons.unshift('unstable-mask')
+  else if (unstable) reasons.push('unstable-mask')
 
   const suitableRanges = usableRanges(frames, spacing, o.minRangeSeconds)
   let verdict: SuitabilityReport['verdict'] = 'unsuitable'

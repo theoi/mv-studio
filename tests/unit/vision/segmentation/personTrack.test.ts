@@ -3,7 +3,7 @@ import { centroid } from '../../../../src/vision/mask/ops.ts'
 import { appendFrame, createPackedTrack, createTrackReader } from '../../../../src/vision/mask/track.ts'
 import {
   buildPersonTrack,
-  findTrackPeople,
+  findTrackEvidence,
   trackSuitability,
 } from '../../../../src/vision/segmentation/personTrack.ts'
 import type { JobProgress as Progress } from '../../../../src/shared/jobs.ts'
@@ -114,14 +114,53 @@ describe('buildPersonTrack', () => {
     expect(noOne.suitability).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
   })
 
+  /** A person whose mask drops out for 3 frames in every 12, as the segmenter sometimes does. */
+  const dropouts = (t: number, s: { width: number; height: number }) =>
+    discMask(s, s.width / 2, s.height / 2, Math.round(t * 25) % 12 < 3 ? 0 : s.height / 3)
+
+  it('measures each frame’s pops through the temporal filter and calls a cutout that keeps popping unstable', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const popping = await buildPersonTrack({ segmentation: fakeSegmentation(dropouts) }, source, {
+      faceFps: 0,
+    })
+    expect(popping.track.meta.pops).toHaveLength(50)
+    expect(popping.suitability.stability!).toBeLessThan(0.9)
+    expect(popping.suitability.reasons).toContain('unstable-mask')
+    // A person who moves smoothly does not pop.
+    const moving = await buildPersonTrack(
+      {
+        segmentation: fakeSegmentation((t, s) =>
+          discMask(s, s.width * (0.3 + 0.2 * t), s.height / 2, s.height / 3),
+        ),
+      },
+      source,
+      { faceFps: 0 },
+    )
+    expect(moving.suitability).toMatchObject({ verdict: 'good', stability: 1 })
+  })
+
   it('finds the people in a stored track without segmenting', async () => {
     const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const built = await buildPersonTrack({ segmentation: fakeSegmentation() }, source, { faceFps: 0 })
     const seg = fakeSegmentation()
-    const people = await findTrackPeople(seg, source, { start: 0, fps: 25, frameCount: 50 })
+    const { people, pops } = await findTrackEvidence(seg, source, built.track, { people: true, pops: false })
     expect(people).toHaveLength(10)
-    expect(people[0]!.boxes).toEqual([{ x: 0, y: 0, width: 1, height: 1 }])
-    expect(seg.analyzed.every((a) => a.people && !a.mask)).toBe(true)
+    expect(people![0]!.boxes).toEqual([{ x: 0, y: 0, width: 1, height: 1 }])
+    expect(pops).toBeUndefined()
+    expect(seg.analyzed.every((a) => a.people && !a.mask && !a.gray)).toBe(true)
     expect(seg.calls).not.toContain('configure')
+  })
+
+  it('measures the pops of a stored track from every frame, as the build does', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const built = await buildPersonTrack({ segmentation: fakeSegmentation(dropouts) }, source, { faceFps: 0 })
+    const { pops: stored, ...meta } = built.track.meta
+    const seg = fakeSegmentation()
+    const found = await findTrackEvidence(seg, source, { ...built.track, meta }, { people: true, pops: true })
+    expect(found.pops).toEqual(stored)
+    expect(found.people).toHaveLength(10)
+    expect(seg.analyzed).toHaveLength(50)
+    expect(seg.analyzed.every((a) => a.gray && !a.mask)).toBe(true)
   })
 
   it('requires an ONNX backend for high-quality ranges', async () => {
@@ -149,30 +188,24 @@ describe('trackSuitability', () => {
     for (let y = 4; y < 36; y++) for (let x = x0; x < x1; x++) data[y * 64 + x] = 255
     return { width: 64, height: 36, data }
   }
-  const track = (frame: (k: number) => ReturnType<typeof rect>) => {
+  const track = () => {
     const t = createPackedTrack(meta)
-    for (let k = 0; k < 50; k++) appendFrame(t, frame(k), 0.3)
+    for (let k = 0; k < 50; k++) appendFrame(t, rect(20, 40), 0.3)
     return t
   }
+  const hold = Array.from({ length: 10 }, (_, i) => ({
+    t: i * 0.2,
+    boxes: [{ x: 0, y: 0, width: 1, height: 1 }],
+  }))
 
-  const everywhere = [{ t: 0, boxes: [{ x: 0, y: 0, width: 1, height: 1 }] }]
-  const hold = (n: number) => Array.from({ length: n }, (_, i) => ({ ...everywhere[0]!, t: i * 0.2 }))
-
-  it('reports a cutout that flickers between frames, measured on the frames next to each sample', () => {
-    const r = trackSuitability(
-      track((k) => (k % 2 ? rect(20, 30) : rect(20, 40))),
-      hold(10),
-    )
-    expect(r.stability!).toBeLessThan(0.7)
-    expect(r.reasons).toContain('unstable-mask')
-  })
-
-  it('keeps a subject that moves and changes shape smoothly stable and good', () => {
-    const r = trackSuitability(
-      track((k) => rect(4 + Math.floor(k / 2), 20 + k)),
-      hold(10),
-    )
-    expect(r.stability!).toBeGreaterThan(0.95)
-    expect(r.verdict).toBe('good')
+  it('judges stability from the pops stored with the track, or given for a track stored without them', () => {
+    const stored = track()
+    expect(trackSuitability(stored, hold).stability).toBeNull()
+    stored.meta.pops = Array.from({ length: 50 }, (_, i) => (i % 4 ? 0 : 0.2))
+    expect(trackSuitability(stored, hold)).toMatchObject({ stability: 0.74, reasons: ['unstable-mask'] })
+    expect(trackSuitability(stored, hold, undefined, new Array<number>(50).fill(0))).toMatchObject({
+      verdict: 'good',
+      stability: 1,
+    })
   })
 })

@@ -71,6 +71,11 @@ export interface MaskTrackMeta {
   coverage: number[]
   /** Selection tracks: frame indices where tracking was lost and the mask is held or empty. */
   lostFrames?: number[]
+  /**
+   * Person tracks: share of the subject that pops on or off at each frame (`mask/pops.ts`); missing in tracks stored
+   * before it was measured.
+   */
+  pops?: number[]
 }
 
 export interface MaskTrack {

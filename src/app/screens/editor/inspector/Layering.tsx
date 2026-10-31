@@ -62,8 +62,10 @@ function useBehindState(clip: MediaClip) {
 function cutOut(hostId: string) {
   putBehind([hostId])?.promise.then(
     (result) => {
+      const done = 'Lyrics now sit behind the person on this clip'
+      const flicker = result.flickers?.[0]
       if (result.count)
-        toast('Lyrics now sit behind the person on this clip', {
+        toast(flicker ? `${done}. ${flicker.why}` : done, {
           label: 'Undo',
           run: () => {
             if (editor.undoLabel() === result.label) editor.undo()

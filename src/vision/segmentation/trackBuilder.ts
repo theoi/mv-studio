@@ -2,6 +2,7 @@ import type { GrayImage, Mask, MaskTrackMeta, PackedMaskTrack, Rect, RgbaImage }
 import { fitSize } from '../runtime/frames.ts'
 import { boundingBox, coverage, iou, resizeMask } from '../mask/ops.ts'
 import { createTemporalFilter, type TemporalFilter, type TemporalFilterOptions } from '../mask/smoothing.ts'
+import { createPopMeter } from '../mask/pops.ts'
 import { appendFrame, createPackedTrack } from '../mask/track.ts'
 import { downsampleRgba, jointBilateralUpsample, type UpsampleOptions } from '../mask/upsample.ts'
 
@@ -16,6 +17,8 @@ export interface MaskTrackBuildConfig {
   /** Zero-lag temporal joint-bilateral filtering; false disables it. */
   temporal?: TemporalFilterOptions | false
   upsample?: UpsampleOptions
+  /** Measure the stored masks' pops per frame into `meta.pops` (person tracks). */
+  pops?: boolean
 }
 
 export interface TrackFrameInput {
@@ -63,8 +66,17 @@ export function createMaskTrackBuilder(config: MaskTrackBuildConfig): MaskTrackB
   const filter: TemporalFilter | null =
     config.temporal === false ? null : createTemporalFilter(config.temporal ?? {})
   let finished = false
+  const meter = config.pops ? createPopMeter(config.meta.fps) : null
+  const pops: number[] = []
+  // Frame luma waiting for its filtered mask, which the temporal filter emits a few frames later.
+  const grays: GrayImage[] = []
 
-  const append = (mask: Mask) => appendFrame(track, mask, coverage(mask))
+  const append = (mask: Mask) => {
+    appendFrame(track, mask, coverage(mask))
+    if (!meter) return
+    const share = meter.push(mask, grays.shift()!)
+    if (share !== null) pops.push(share)
+  }
 
   return {
     push(frame) {
@@ -87,11 +99,12 @@ export function createMaskTrackBuilder(config: MaskTrackBuildConfig): MaskTrackB
         )
       }
       const stats = { coverage: coverage(mask), box: boundingBox(mask) }
+      const gray =
+        (!filter && !meter) || (frame.gray.width === width && frame.gray.height === height)
+          ? frame.gray
+          : resizeMask(frame.gray, width, height)
+      if (meter) grays.push(gray)
       if (filter) {
-        const gray =
-          frame.gray.width === width && frame.gray.height === height
-            ? frame.gray
-            : resizeMask(frame.gray, width, height)
         const out = filter.push(mask, gray)
         if (out) append(out)
       } else {
@@ -100,7 +113,13 @@ export function createMaskTrackBuilder(config: MaskTrackBuildConfig): MaskTrackB
       return stats
     },
     finish() {
-      if (!finished && filter) for (const m of filter.flush()) append(m)
+      if (!finished) {
+        if (filter) for (const m of filter.flush()) append(m)
+        if (meter) {
+          pops.push(...meter.flush())
+          track.meta.pops = pops.map((p) => Math.round(p * 1000) / 1000)
+        }
+      }
       finished = true
       return track
     },

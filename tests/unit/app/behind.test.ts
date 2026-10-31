@@ -87,7 +87,7 @@ describe('suitability', () => {
     expect(suitabilityOf(project, project.clips[clip.id], { [asset.id]: checked })).toBe(checked)
     expect(suitabilityText(checked)).toEqual({
       status: 'Person found',
-      why: 'Works in parts of this shot. The cutout flickers in this shot.',
+      why: 'The cutout flickers in places, so what is behind the person can show through for a moment.',
       ok: true,
     })
   })

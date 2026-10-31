@@ -142,8 +142,14 @@ test('Assist › Behind the subject does not offer a shot of an animal, which th
  * Model-free vision: the quick check finds a person, but the export track's detector finds no one, as when a shot is
  * offered and the cutout then turns it down.
  */
-async function offeredThenRefused(page: Page) {
-  await page.evaluate(() => {
+const offeredThenRefused = (page: Page) => modelFreeVision(page, { trackFindsPeople: false })
+
+/**
+ * Model-free vision with a person in every frame of the quick check. The export track finds them too when
+ * `trackFindsPeople`, and with `popEvery` its stored pops say the cutout pops in every nth frame.
+ */
+async function modelFreeVision(page: Page, opts: { trackFindsPeople: boolean; popEvery?: number }) {
+  await page.evaluate((opts) => {
     const { vision } = window.mvStudio
     const hang = () => new Promise(() => undefined)
     const person = (width: number, height: number) => {
@@ -180,10 +186,22 @@ async function offeredThenRefused(page: Page) {
           box: { x: 0.35, y: 0.15, width: 0.3, height: 0.85 },
           usedHq: false,
           ...(req.faces ? { faces: [] } : {}),
-          ...(req.people ? { people: [] } : {}),
+          ...(req.people
+            ? {
+                people: opts.trackFindsPeople
+                  ? [{ box: { x: 0.3, y: 0.1, width: 0.4, height: 0.9 }, score: 0.9 }]
+                  : [],
+              }
+            : {}),
         }
       },
-      endTrack: async () => track,
+      endTrack: async () => {
+        const every = opts.popEvery
+        track.meta.pops = Array.from({ length: track.meta.frameCount }, (_, i) =>
+          every && i % every === 0 ? 0.2 : 0,
+        )
+        return track
+      },
       cancelTrack: async () => undefined,
     }
     window.mvStudio.app.footage.setVisionBackendsForTests({
@@ -191,7 +209,7 @@ async function offeredThenRefused(page: Page) {
         new Proxy(seg, { get: (t, key) => (key === 'then' ? undefined : (t[key as string] ?? hang)) }),
       onnx: () => new Proxy({}, { get: (_target, key) => (key === 'then' ? undefined : hang) }) as Untyped,
     })
-  })
+  }, opts)
 }
 
 /** Clips of an imported asset (by file name) that got no cutout. */
@@ -234,6 +252,25 @@ test('Assist › Behind the subject lists a shot the cutout turned down, with wh
     assist.getByText('people-interview: No one in this shot is large enough to cut out.'),
   ).toBeVisible()
   expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
+})
+
+test('Assist › Behind the subject cuts out a shot whose cutout flickers, and then says so', async ({
+  page,
+}) => {
+  await open(page, '#/editor?t=10')
+  await modelFreeVision(page, { trackFindsPeople: true, popEvery: 4 })
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const row = assist.getByText('people-interview', { exact: true }).locator('..').locator('..')
+  await expect(row.getByText('Person found · 1 clip')).toBeVisible()
+  await assist.getByRole('button', { name: /^Apply to \d+ suitable clips?$/ }).click()
+  await expect(
+    assist.getByText(
+      'people-interview: The cutout flickers in places, so what is behind the person can show through for a moment.',
+    ),
+  ).toBeVisible()
+  expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: true })])
 })
 
 test('while clips are being checked, the top bar opens Behind the subject, not Export', async ({ page }) => {

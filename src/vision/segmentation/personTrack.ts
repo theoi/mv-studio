@@ -1,6 +1,8 @@
 import type { Delegate, OnnxBackend, PersonModel, SegmentationBackend } from '../backends.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
+import { resizeMask } from '../mask/ops.ts'
+import { createPopMeter } from '../mask/pops.ts'
 import { createTrackReader } from '../mask/track.ts'
 import {
   assessSuitability,
@@ -108,6 +110,7 @@ export async function buildPersonTrack(
       },
       refineFrom: MODEL_OUTPUT_SIDE,
       temporal: {},
+      pops: true,
     },
     { signal },
   )
@@ -170,58 +173,83 @@ export async function buildPersonTrack(
 }
 
 /**
- * Finds the people in the frames of a stored track at `peopleFps`, for a track stored before it kept them. Needs only
- * the person detector, not the segmenter.
+ * What the report needs that a track stored by an older version may lack: the people in its frames (at `peopleFps`)
+ * and each frame's pop share, which needs every frame's luma. Needs only the person detector and the decoder, not the
+ * segmenter.
  */
-export async function findTrackPeople(
+export async function findTrackEvidence(
   segmentation: SegmentationBackend,
   source: FrameSource,
-  meta: Pick<PackedMaskTrack['meta'], 'start' | 'fps' | 'frameCount'>,
+  track: PackedMaskTrack,
+  need: { people: boolean; pops: boolean },
   options: TaskOptions & { peopleFps?: number } = {},
-): Promise<PeopleAt[]> {
+): Promise<{ people?: PeopleAt[]; pops?: number[] }> {
   const { signal } = options
+  const { meta } = track
   const every = Math.max(1, Math.round(meta.fps / (options.peopleFps ?? PEOPLE_FPS)))
-  const times: number[] = []
-  for (let i = 0; i < meta.frameCount; i += every) times.push(meta.start + i / meta.fps)
+  const indices: number[] = []
+  for (let i = 0; i < meta.frameCount; i += need.pops ? 1 : every) indices.push(i)
   const progress = createProgress(options.onProgress)
   const people: PeopleAt[] = []
+  const pops: number[] = []
+  const meter = need.pops ? createPopMeter(meta.fps) : null
+  const reader = createTrackReader(track, 2)
+  const { width, height } = meta.maskSize
   try {
-    const frames = prefetch(iterateFrames(source, times, { maxSide: DEFAULT_MAX_SIDE, signal }), 2, (f) =>
-      f.bitmap.close(),
+    const times = indices.map((i) => meta.start + i / meta.fps)
+    const frames = prefetch(
+      iterateFrames(source, times, { maxSide: Math.max(width, height), signal }),
+      2,
+      (f) => f.bitmap.close(),
     )
+    let n = 0
     for await (const { t, bitmap } of frames) {
+      const i = indices[n++]!
+      const withPeople = need.people && i % every === 0
       const res = await segmentation.analyze(
-        { bitmap, timestampMs: Math.round(t * 1000), people: true },
+        { bitmap, timestampMs: Math.round(t * 1000), people: withPeople, gray: !!meter },
         { signal, transfer: [bitmap] },
       )
-      people.push({ t, boxes: (res.people ?? []).map((p) => p.box) })
-      progress(people.length / times.length, 'analyzing')
+      if (withPeople) people.push({ t, boxes: (res.people ?? []).map((p) => p.box) })
+      if (meter) {
+        if (!res.gray) throw new JobError('internal', 'The frame luma is missing.')
+        const gray =
+          res.gray.width === width && res.gray.height === height
+            ? res.gray
+            : resizeMask(res.gray, width, height)
+        const share = meter.push(reader.frame(i), gray)
+        if (share !== null) pops.push(share)
+      }
+      progress(n / indices.length, 'analyzing')
     }
     if (signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
-    return people
+    if (n < indices.length)
+      throw new JobError('decode', `Only ${n} of ${indices.length} frames could be decoded.`)
+    if (meter) pops.push(...meter.flush())
+    return {
+      ...(need.people ? { people } : {}),
+      ...(meter ? { pops: pops.map((p) => Math.round(p * 1000) / 1000) } : {}),
+    }
   } catch (err) {
     throw visionError(err, 'internal')
   }
 }
 
 /**
- * Suitability of a stored track, judged on frames about 0.2 s apart, each with the frames just before and after it
- * for the flicker measure, and counting only the mask near the `people` found.
+ * Suitability of a stored track, judged on frames about 0.2 s apart, counting only the mask near the `people` found,
+ * with its stability from every frame's pop share (`meta.pops`, or `pops` for a track stored without them).
  */
 export function trackSuitability(
   track: PackedMaskTrack,
   people: ReadonlyArray<PeopleAt>,
   options?: SuitabilityOptions,
+  pops = track.meta.pops,
 ): SuitabilityReport {
   const { meta } = track
   const step = Math.max(1, Math.round(meta.fps * 0.2))
-  const reader = createTrackReader(track, 3)
+  const reader = createTrackReader(track, 1)
   const samples: SuitabilitySample[] = []
-  for (let i = 0; i < meta.frameCount; i += step) {
-    const prev = i > 0 && i + 1 < meta.frameCount ? reader.frame(i - 1) : undefined
-    const mask = reader.frame(i)
-    const next = prev ? reader.frame(i + 1) : undefined
-    samples.push({ t: meta.start + i / meta.fps, mask, ...(prev && next ? { prev, next } : {}) })
-  }
-  return assessSuitability(samples, step / meta.fps, options, people)
+  for (let i = 0; i < meta.frameCount; i += step)
+    samples.push({ t: meta.start + i / meta.fps, mask: reader.frame(i) })
+  return assessSuitability(samples, step / meta.fps, options, people, pops)
 }
