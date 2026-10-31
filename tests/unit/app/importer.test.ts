@@ -1,9 +1,15 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import type * as AnalysisClient from '../../../src/analysis/client.ts'
 import type { RefinedFields } from '../../../src/analysis/song.ts'
-import { createProject, type Asset, type AudioAnalysis } from '../../../src/model/index.ts'
+import {
+  createProject,
+  createVideoClip,
+  type Asset,
+  type AudioAnalysis,
+  type EditCommand,
+} from '../../../src/model/index.ts'
 import { dispatch, editor } from '../../../src/app/state/project.ts'
-import { importFiles } from '../../../src/app/state/importer.ts'
+import { assetPlacement, importFiles } from '../../../src/app/state/importer.ts'
 import { findBars } from '../../../src/app/state/songAnalysis.ts'
 
 const analyses = vi.hoisted(() => [] as ((analysis: AudioAnalysis) => void)[])
@@ -92,4 +98,38 @@ it('refines beats and bars in the background after the fast analysis, without an
   await vi.waitFor(() => expect(editor.getProject().analysis.audio['a-song']?.downbeats).toEqual([0, 1.984]))
   expect(editor.getProject().analysis.audio['a-song']?.tempo?.bpm).toBe(121)
   expect(editor.undoLabel()).toBe('Import song.mp3')
+})
+
+it('puts a clip on a new numbered track when every footage track is taken at the playhead', () => {
+  const clip: Asset = {
+    id: 'v',
+    kind: 'video',
+    name: 'clip.mp4',
+    mimeType: 'video/mp4',
+    byteSize: 1,
+    storageKey: 'media/v',
+    duration: 4,
+    origin: { type: 'import' },
+    createdAt: new Date(0).toISOString(),
+  }
+  const placedOn = (names: string[]) => {
+    const p = createProject({ name: 'p' })
+    const visual = p.tracks.find((t) => t.kind === 'visual')!
+    const tracks = names.map((name, i) => ({ ...visual, id: `t${i}`, name }))
+    p.tracks = [...tracks, ...p.tracks.filter((t) => t.kind !== 'visual')]
+    p.assets = { v: clip }
+    for (const t of tracks) {
+      const taken = createVideoClip({ trackId: t.id, assetId: 'v', start: 0, duration: 4 })
+      p.clips[taken.id] = taken
+    }
+    const add = assetPlacement(p, clip, { start: 1 })?.commands.find(
+      (c): c is Extract<EditCommand, { type: 'track.add' }> => c.type === 'track.add',
+    )
+    return add?.track.name
+  }
+  expect(placedOn(['Video'])).toBe('Video 2')
+  expect(placedOn(['Video 1'])).toBe('Video 2')
+  expect(placedOn(['Video', 'Video 2'])).toBe('Video 3')
+  expect(placedOn(['Footage'])).toBe('Video')
+  expect(placedOn(['Video 2024'])).toBe('Video')
 })

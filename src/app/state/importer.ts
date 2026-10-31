@@ -11,6 +11,7 @@ import {
 } from '../../model/index.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
 import { TRACK_IDS } from '../mock/demoProject.ts'
+import { numberedName } from './clipboard.ts'
 import { backgroundAnalysisOn } from './footage.ts'
 import { JOB_KINDS } from './jobs.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
@@ -226,7 +227,7 @@ export function assetPlacement(
   const free = (t: Track) => !busyAt(project, t.id, start, start + duration)
   let track = candidates.find((t) => t.id === at.trackId && free(t)) ?? candidates.find(free)
   if (!track) {
-    track = createTrack(kind, kind === 'audio' ? 'Audio' : 'Video')
+    track = createTrack(kind, numberedName(project.tracks, kind === 'audio' ? 'Audio' : 'Video'))
     const footage = project.tracks.findIndex((t) => isFootageTrack(project, t))
     commands.push({
       type: 'track.add',
