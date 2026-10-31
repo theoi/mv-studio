@@ -58,7 +58,7 @@ director.undo()
 - `idle`: kind picker (Lyric video, Visualizer, Beat cut, AI video), optional prompt, "Use my clips" toggle, and
   "AI shots" (Off, Stills, Video; draft or quality) when fal.ai is connected.
 - `planning`: `message` in place with Cancel. Planning is free. After a few seconds `slow` turns true: show "Still
-  working…" and, when `canUseLocal` is true (the AI model is planning), a "Use the local draft instead" button that
+  working…" with the time since `startedAt` ("Still working… 1:12") and, when `canUseLocal` is true (the AI model is planning), a "Use the local draft instead" button that
   calls `useLocalDraft()`. It stops waiting for the model and makes the draft with the built-in planner.
 - `ready`: `preview.summary`, `preview.changes`, `preview.items` behind "Show changes", `preview.warnings` as
   notes, sections with mood and pace, "Try another version" (`tryAnother()`), and the main button labeled
@@ -94,7 +94,8 @@ repair rounds), so nothing half-applies.
 
 - `idle`: the Ask box with placeholder examples ("Make the chorus more intense"). `ask(text, { selection, playhead })`.
 - `thinking`: `message` ("Thinking", then "Fixing the edit (attempt 2 of 3)" during repair rounds) with Cancel. After
-  a few seconds `slow` turns true: show "Still working…" and keep Cancel visible. Each answer is limited by the
+  a few seconds `slow` turns true: show "Still working…" with the time since `startedAt` and keep Cancel visible.
+  Each answer is limited by the
   answer time limit (`llmTimeoutSeconds()` in `src/cloud`), and there are at most 3 answers per request.
 - `question`: the model's question with `choices` as quick replies; `answer(text)` continues the same conversation.
 - `review`: `summary`, `changes` and `items` with Apply (`accept()`) and Discard (`reject()`). Show the items

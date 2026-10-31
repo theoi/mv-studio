@@ -81,6 +81,8 @@ export type DirectorState =
       slow: boolean
       /** The AI model is planning; offer "Use the local draft instead" (useLocalDraft()). */
       canUseLocal: boolean
+      /** Date.now() when planning started, for an elapsed-time counter. */
+      startedAt: number
     }
   | {
       status: 'ready'
@@ -207,6 +209,7 @@ export class DirectorSession {
       message: 'Planning your video',
       slow: false,
       canUseLocal: planner !== local,
+      startedAt: Date.now(),
     })
     const planning = (patch: { message?: string; slow?: boolean }) => {
       if (this.job === handle && this.state.status === 'planning') this.set({ ...this.state, ...patch })

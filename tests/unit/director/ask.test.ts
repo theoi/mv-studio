@@ -358,9 +358,15 @@ describe('AskSession feedback and review', () => {
   it('turns slow after a while and returns to idle on Cancel', async () => {
     const editor = new ProjectEditor(await draft())
     const ask = new AskSession({ editor, jobs: new JobRunner(), client: () => hanging, slowAfterMs: 5 })
+    const before = Date.now()
     const pending = ask.ask('bigger')
     expect(ask.getState()).toMatchObject({ status: 'thinking', slow: false, message: 'Thinking' })
-    await vi.waitFor(() => expect(ask.getState()).toMatchObject({ status: 'thinking', slow: true }))
+    const { startedAt } = ask.getState() as { startedAt: number }
+    expect(startedAt).toBeGreaterThanOrEqual(before)
+    expect(startedAt).toBeLessThanOrEqual(Date.now())
+    await vi.waitFor(() =>
+      expect(ask.getState()).toMatchObject({ status: 'thinking', slow: true, startedAt }),
+    )
     ask.cancel()
     expect((await pending).status).toBe('idle')
   })

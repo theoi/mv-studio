@@ -44,10 +44,10 @@ under it when the configured local model is small (under 7B). The same hint can 
   2.5 tokens per second. A Mac with Apple Silicon, a GPU, or a cloud model gives a much better experience.
 
 **Answer time limit.** Each answer is limited to `llmTimeoutSeconds(settings.llm)`: 90 s for cloud endpoints and
-120 s for local ones, because the first local request also loads the model. Users can change it from 20 to 600 s
+300 s for local ones, because the first local request also loads the model and a 7B model on a CPU without a GPU
+needs minutes for a correct answer (Cancel stays visible meanwhile). Users can change it from 20 to 600 s
 (`LlmSettings.timeoutSeconds`, Settings › AI and cloud › "Answer time limit"). When it runs out, the `timeout`
-error says so and points to the setting. Prompts for Ask are about 6,000 tokens, so on a CPU without a GPU a
-local model may need the longer limit.
+error says so and points to the setting.
 
 ## Notes
 

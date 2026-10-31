@@ -264,6 +264,8 @@ export type AskState =
       message: string
       /** Still waiting after a few seconds: show "Still working" with Cancel. */
       slow: boolean
+      /** Date.now() when the request started, for an elapsed-time counter ("Still working… 1:12"). */
+      startedAt: number
     }
   | { status: 'question'; request: string; question: string; choices: string[] }
   | {
@@ -415,6 +417,7 @@ export class AskSession {
       jobId: handle.id,
       message: 'Thinking',
       slow: false,
+      startedAt: Date.now(),
     })
     const thinking = (patch: Partial<Extract<AskState, { status: 'thinking' }>>) => {
       if (this.job === handle && this.state.status === 'thinking') this.set({ ...this.state, ...patch })
