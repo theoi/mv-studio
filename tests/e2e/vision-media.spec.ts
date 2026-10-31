@@ -217,3 +217,217 @@ test('depth estimation and the parallax renderer produce a camera move', async (
   expect(r.moveDiff).toBeGreaterThan(2)
   expect(errors).toEqual([])
 })
+
+test('the 3D camera move effect renders the parallax renderer’s camera for every preset, and leaves letterboxes alone', async ({
+  page,
+}) => {
+  test.setTimeout(180_000)
+  const errors = collectErrors(page)
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'image.png')])
+  const r = await page.evaluate(async () => {
+    const { model, media, testing, vision } = window.mvStudio
+    const file: File = window.mvStudio.files()[0]
+    const still = await media.mediaStore.importFile(file)
+    // Far ramp with a near box, at the still's aspect so the stored PNG keeps these exact values.
+    const dw = 160
+    const dh = 90
+    const data = new Uint8Array(dw * dh)
+    for (let y = 0; y < dh; y++)
+      for (let x = 0; x < dw; x++)
+        data[y * dw + x] = x > 50 && x < 110 && y > 25 && y < 65 ? 230 : Math.round(40 + (80 * y) / dh)
+    const depth = {
+      version: 1,
+      width: dw,
+      height: dh,
+      data,
+      sourceSize: { width: 640, height: 360 },
+      model: 'test',
+      quality: 'full',
+    }
+    const depthAsset = await media.mediaStore.storeBlob(await vision.encodeDepthImage(depth), {
+      kind: 'image',
+      name: 'depth.png',
+      origin: { type: 'derived', parentAssetId: still.id },
+    })
+    const p = model.createProject({ name: 'camera' })
+    p.assets[still.id] = still
+    p.assets[depthAsset.id] = depthAsset
+    const track = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    const clip = model.createImageClip({ trackId: track.id, assetId: still.id, start: 0, duration: 4 })
+    p.clips[clip.id] = clip
+    const meanDiff = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
+      let s = 0
+      for (let i = 0; i < a.length; i += 4)
+        s += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])
+      return s / (a.length / 4) / 3
+    }
+
+    const W = 320
+    const H = 180
+    const { compositor } = testing.createCompositor('export', W, H)
+    const renderer = vision.createParallaxRenderer()
+    renderer.setImage(await createImageBitmap(file))
+    renderer.setDepth(depth)
+    await compositor.render(p, 1)
+    const plain = testing.readPixels(compositor.canvas, W, H)
+    const results: { preset: string; progress: number; diff: number; moved: number }[] = []
+    for (const preset of vision.CAMERA_PRESETS) {
+      for (const progress of [0.3, 1]) {
+        const effect = vision.cameraMoveEffect(clip, depthAsset.id, { focus: 0.4, preset, intensity: 0.8 })
+        effect.params.progress = { value: progress }
+        clip.effects = [effect]
+        await compositor.render(p, 1)
+        const fx = testing.readPixels(compositor.canvas, W, H)
+        renderer.render(vision.cameraPoseAt({ preset, intensity: 0.8, focus: 0.4 }, progress), {
+          width: W,
+          height: H,
+        })
+        const ref = testing.readPixels(renderer.canvas, W, H)
+        results.push({ preset, progress, diff: meanDiff(fx, ref), moved: meanDiff(fx, plain) })
+      }
+    }
+    compositor.dispose()
+    renderer.dispose()
+
+    // Contain on a square canvas: 16:9 image with letterbox bands above and below.
+    const S = 180
+    const square = testing.createCompositor('export', S, S).compositor
+    p.settings = model.createProject({ name: 'square', aspect: '1:1' }).settings
+    p.settings.backgroundColor = '#0000ff'
+    clip.fit = 'contain'
+    clip.effects = []
+    await square.render(p, 1)
+    const containPlain = testing.readPixels(square.canvas, S, S)
+    const effect = vision.cameraMoveEffect(clip, depthAsset.id, {
+      focus: 0.4,
+      preset: 'orbit-left',
+      intensity: 1,
+    })
+    effect.params.progress = { value: 1 }
+    clip.effects = [effect]
+    await square.render(p, 1)
+    const containFx = testing.readPixels(square.canvas, S, S)
+    square.dispose()
+    let bandChanged = 0
+    let imageChanged = 0
+    for (let y = 0; y < S; y++)
+      for (let x = 0; x < S; x++) {
+        const i = (y * S + x) * 4
+        const d = Math.abs(containFx[i] - containPlain[i]) + Math.abs(containFx[i + 2] - containPlain[i + 2])
+        // The image spans rows 39.4 to 140.6.
+        if (y < 36 || y >= S - 36) bandChanged = Math.max(bandChanged, d)
+        else if (d > 30) imageChanged++
+      }
+    return { results, bandChanged, imageChanged }
+  })
+  console.log(
+    'camera effect vs renderer',
+    JSON.stringify(r.results.map((x) => [x.preset, x.progress, +x.diff.toFixed(2), +x.moved.toFixed(1)])),
+  )
+  expect(r.results).toHaveLength(20)
+  for (const x of r.results) expect(x.diff, `${x.preset} at ${x.progress}`).toBeLessThan(3)
+  // Dolly out ends on the plain view, so compare the larger change of the two progress values.
+  for (const preset of new Set(r.results.map((x) => x.preset))) {
+    const moved = Math.max(...r.results.filter((x) => x.preset === preset).map((x) => x.moved))
+    expect(moved, `${preset} moves the picture`).toBeGreaterThan(3)
+  }
+  expect(r.bandChanged).toBeLessThan(8)
+  expect(r.imageChanged).toBeGreaterThan(500)
+  expect(errors).toEqual([])
+})
+
+test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyframed camera effect', async ({
+  page,
+}) => {
+  test.setTimeout(240_000)
+  const errors = collectErrors(page)
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'image.png')])
+  const r = await page.evaluate(async () => {
+    const { model, media, testing, vision } = window.mvStudio
+    const still = await media.mediaStore.importFile(window.mvStudio.files()[0])
+    const p = model.createProject({ name: 'camera' })
+    p.assets[still.id] = still
+    const track = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    const clip = model.createImageClip({ trackId: track.id, assetId: still.id, start: 1, duration: 4 })
+    p.clips[clip.id] = clip
+    const editor = new model.ProjectEditor(p)
+    const backends = vision.createWorkerBackends()
+    const service = vision.createVisionService({ backends, cache: vision.createMemoryCache() })
+    const deps = { editor, media: media.mediaStore, depth: service.depth }
+    const stages: string[] = []
+    const first = await vision.addCameraMove(deps, clip.id, {
+      onProgress: (pr: { stage?: string }) => {
+        if (pr.stage && !stages.includes(pr.stage)) stages.push(pr.stage)
+      },
+    })
+    const added = editor.getProject()
+    const effects = added.clips[clip.id].effects
+    const depthAsset = added.assets[first.depthAssetId]
+
+    const W = 320
+    const H = 180
+    const { compositor } = testing.createCompositor('export', W, H)
+    const frame = async (t: number) => {
+      await compositor.render(editor.getProject(), t)
+      return testing.readPixels(compositor.canvas, W, H)
+    }
+    const a = await frame(1)
+    const b = await frame(4.99)
+    let moved = 0
+    for (let i = 0; i < a.length; i += 4) moved += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1])
+    compositor.dispose()
+
+    editor.undo()
+    const undone = editor.getProject()
+    const afterUndo = {
+      effects: undone.clips[clip.id].effects.length,
+      hasDepth: first.depthAssetId in undone.assets,
+      canUndo: editor.canUndo(),
+    }
+    editor.redo()
+    const second = await vision.addCameraMove(deps, clip.id, { preset: 'orbit-left' })
+    const final = editor.getProject()
+    backends.dispose()
+    return {
+      stages,
+      effect: {
+        id: effects[0].effectId,
+        count: effects.length,
+        keyframes: effects[0].params.progress.keyframes,
+      },
+      depth: {
+        kind: depthAsset.kind,
+        parent: depthAsset.origin.parentAssetId,
+        stillId: still.id,
+        width: depthAsset.width,
+        height: depthAsset.height,
+      },
+      moved: moved / (a.length / 4) / 2,
+      afterUndo,
+      second: {
+        sameDepth: second.depthAssetId === first.depthAssetId,
+        cameraEffects: final.clips[clip.id].effects.filter(
+          (e: { effectId: string }) => e.effectId === 'camera-3d',
+        ).length,
+        preset: final.clips[clip.id].effects[0].params.preset.value,
+        assets: Object.keys(final.assets).length,
+      },
+    }
+  })
+  console.log('add camera move', JSON.stringify(r))
+  expect(r.effect).toMatchObject({ id: 'camera-3d', count: 1 })
+  expect(r.effect.keyframes.map((k: { time: number; value: number }) => [k.time, k.value])).toEqual([
+    [0, 0],
+    [4, 1],
+  ])
+  expect(r.depth.kind).toBe('image')
+  expect(r.depth.parent).toBe(r.depth.stillId)
+  expect(r.depth.width / r.depth.height).toBeCloseTo(640 / 360, 2)
+  expect(r.moved).toBeGreaterThan(2)
+  expect(r.afterUndo).toEqual({ effects: 0, hasDepth: false, canUndo: false })
+  expect(r.second).toEqual({ sameDepth: true, cameraEffects: 1, preset: 'orbit-left', assets: 2 })
+  expect(r.stages).toContain('saving')
+  expect(errors).toEqual([])
+})
