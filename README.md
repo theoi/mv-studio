@@ -142,7 +142,7 @@ Developer notes on the providers, error states and model choice are in [src/clou
 - Word timing can drift in dense, layered vocals and may need touching up by hand.
 - Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable (in testing, for 12 of 13 such shots).
 - Subject cutout can still take a large animal close to the camera for a person: in testing, 1 of 27 shots with no one in them was offered for text behind the subject, down from 16. In a shot that also has a person, an animal can be cut out with them.
-- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found. You can rename and adjust sections on the timeline.
+- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename and adjust sections on the timeline.
 - 3D camera moves on stills can bend or stretch edges around the subject, most visibly on large moves.
 - AI images and video clips need your fal.ai key and cost money per use. The richer director and plain-language edits need an LLM endpoint, in the cloud or on your computer.
 - Not planned: AI video or image generation on your computer, accounts or cloud project storage, phone and tablet layouts, and publishing directly to video platforms.
