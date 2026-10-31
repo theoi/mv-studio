@@ -49,7 +49,6 @@ import {
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { sceneThumb } from '../../../mock/art.ts'
-import { peakRate, peaks } from '../../../mock/song.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import {
   lineDeltaRange,
@@ -206,10 +205,8 @@ function makeFlatWave(color: string): DrawFn {
   }
 }
 
-/** Waveform envelope from analyzed loudness; without one (the stem lanes, for now), the sample song's peaks. */
-function makeWave(color: string, seed = 0, scaleY = 1, envelope?: FeatureSeries): DrawFn {
-  const values = envelope?.values.length ? envelope.values : peaks
-  const rate = envelope?.values.length ? envelope.rate : peakRate
+/** Waveform envelope from analyzed loudness. */
+function makeWave(color: string, scaleY: number, { values, rate }: FeatureSeries): DrawFn {
   return (ctx, t0, pps, w, h) => {
     const mid = h / 2
     ctx.fillStyle = color
@@ -219,7 +216,7 @@ function makeWave(color: string, seed = 0, scaleY = 1, envelope?: FeatureSeries)
       if (i0 >= values.length) break
       let m = 0
       for (let i = i0; i < i0 + perPx; i++) {
-        const v = values[(i + seed) % values.length] ?? 0
+        const v = values[i] ?? 0
         if (v > m) m = v
       }
       const a = Math.max(1, m * (h - 6) * 0.5 * scaleY)
@@ -718,9 +715,7 @@ function StemLanes({
     () =>
       STEM_NAMES.map((name) => {
         const f = features?.[name]
-        return f?.loudness.length
-          ? makeWave('#56658a', 0, 0.9, { rate: f.rate, values: f.loudness })
-          : undefined
+        return f?.loudness.length ? makeWave('#56658a', 0.9, { rate: f.rate, values: f.loudness }) : undefined
       }),
     [features],
   )
@@ -901,7 +896,7 @@ export function Timeline() {
   const songWave = useMemo(
     () =>
       features?.loudness.length
-        ? makeWave('#7f91b3', 0, 1, { rate: features.rate, values: features.loudness })
+        ? makeWave('#7f91b3', 1, { rate: features.rate, values: features.loudness })
         : makeFlatWave('#7f91b3'),
     [features],
   )
