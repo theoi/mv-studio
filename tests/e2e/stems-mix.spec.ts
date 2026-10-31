@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
 async function shot(page: Page, name: string): Promise<void> {
@@ -7,16 +7,16 @@ async function shot(page: Page, name: string): Promise<void> {
 
 /**
  * Opens the demo project in Assist › Stems and attaches four short synthetic stems (WAV tones, no model) to its song,
- * with loudness features so the stem lanes draw them.
+ * with loudness features so the stem lanes draw them. The `broken` stem's file is overwritten with bytes no decoder reads.
  */
-async function openWithStems(page: Page): Promise<void> {
+async function openWithStems(page: Page, broken?: string): Promise<void> {
   await openHarness(page)
   await page.evaluate(() => {
     localStorage.setItem('mv-studio.guide-seen', '1')
     window.location.hash = '#/editor?tab=assist&assist=stems&t=10'
   })
   await waitForPreview(page)
-  await page.evaluate(async () => {
+  await page.evaluate(async (broken) => {
     const { app, media } = window.mvStudio
     const sr = 48_000
     const n = sr * 2
@@ -39,6 +39,7 @@ async function openWithStems(page: Page): Promise<void> {
         data.setInt16(44 + i * 2, Math.round(3000 * Math.sin((2 * Math.PI * hz * i) / sr)), true)
       return new Blob([data.buffer], { type: 'audio/wav' })
     }
+    Object.assign(window, { e2eStemWav: wav })
     const editor = app.project.editor
     const song = editor.getProject().songAssetId
     const tones: Record<string, number> = { vocals: 1000, drums: 150, bass: 80, other: 300 }
@@ -51,6 +52,7 @@ async function openWithStems(page: Page): Promise<void> {
         name: `song (${name}).wav`,
         origin: { type: 'stem', parentAssetId: song },
       })
+      if (name === broken) await media.mediaStore.restore(asset, new Blob([new Uint8Array(4096).fill(7)]))
       commands.push({ type: 'asset.add', asset })
       stems[name] = asset.id
       stemFeatures[name] = {
@@ -63,7 +65,27 @@ async function openWithStems(page: Page): Promise<void> {
     }
     commands.push({ type: 'analysis.setStems', assetId: song, stems, stemFeatures })
     editor.dispatch(commands, { history: 'skip' })
-  })
+  }, broken ?? null)
+}
+
+/** Overwrites the vocals stem's file with a playable tone, or with bytes no decoder reads. */
+const setVocalsFile = (page: Page, playable: boolean) =>
+  page.evaluate(async (playable) => {
+    const { app, media } = window.mvStudio
+    const project = app.project.editor.getProject()
+    const id = project.analysis.audio[project.songAssetId].stems.vocals
+    const tone = (window as unknown as { e2eStemWav: (hz: number) => Blob }).e2eStemWav
+    await media.mediaStore.restore(
+      project.assets[id],
+      playable ? tone(1000) : new Blob([new Uint8Array(4096).fill(7)]),
+    )
+  }, playable)
+
+/** The song header's stem badge: its short form, and the full line in its tooltip and for screen readers. */
+async function expectBadge(badge: Locator, text: string, full: string): Promise<void> {
+  await expect(badge.locator('[aria-hidden="true"]')).toHaveText(text)
+  await expect(badge).toHaveAttribute('title', full)
+  await expect(badge.locator('.sr-only')).toHaveText(full)
 }
 
 const undoLabel = (page: Page) => page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())
@@ -79,7 +101,7 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   await openWithStems(page)
   const panel = page.getByRole('tabpanel', { name: 'Assist' })
   const row = (stem: string) => panel.getByText(stem, { exact: true }).locator('xpath=..')
-  const badge = page.getByText(/^Stems: /)
+  const badge = page.locator('[class*="stemBadge"]')
   const note = panel.getByRole('status')
   await expect(row('Vocals').getByRole('button', { name: 'Solo' })).toBeVisible()
 
@@ -104,8 +126,7 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
     'aria-pressed',
     'false',
   )
-  await expect(badge).toHaveText('Stems: vocals solo')
-  await expect(badge).toHaveAttribute('title', 'Stems: vocals solo')
+  await expectBadge(badge, 'Vocals solo', 'Stems: vocals solo')
   await expect(note).toHaveText('Only the vocals play, in the preview and the export.')
   expect(await undoLabel(page)).toBe('Solo vocals')
   expect(await songStems(page)).toEqual({ vocals: { solo: true } })
@@ -151,7 +172,7 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   await page.getByRole('button', { name: 'Mute drums', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Unmute drums', exact: true })).toBeVisible()
   await expect(note).toHaveText('Only the vocals play, in the preview and the export. The drums are muted.')
-  await expect(badge).toHaveText('Stems: vocals solo · drums muted')
+  await expectBadge(badge, 'Vocals solo', 'Stems: vocals solo · drums muted')
   expect(await undoLabel(page)).toBe('Mute drums')
   await lane('bass').scrollIntoViewIfNeeded()
   await shot(page, 'stems-lanes')
@@ -170,7 +191,7 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   await expect(note).toHaveCount(0)
   await page.evaluate(() => window.mvStudio.app.project.editor.undo())
   expect(await songStems(page)).toEqual({ vocals: { solo: true }, drums: { muted: true } })
-  await expect(badge).toHaveText('Stems: vocals solo · drums muted')
+  await expectBadge(badge, 'Vocals solo', 'Stems: vocals solo · drums muted')
 
   // The stem lanes follow the song's track wherever it is.
   await page.evaluate(() =>
@@ -198,4 +219,68 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   })
   await expect(lane('other').locator('canvas')).toHaveCount(0)
   await expect(lane('bass').locator('canvas')).toHaveCount(1)
+})
+
+const WHY = 'The vocals stem could not be decoded, so the preview plays the full song.'
+
+test('the song header and Assist › Stems say the full song plays while a heard stem cannot be decoded', async ({
+  page,
+}) => {
+  await openWithStems(page, 'vocals')
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  const row = (stem: string) => panel.getByText(stem, { exact: true }).locator('xpath=..')
+  const badge = page.locator('[class*="stemBadge"]')
+  const note = panel.getByRole('status')
+  const scheduled = () =>
+    page.evaluate(() =>
+      window.mvStudio.app
+        .stagePreview()
+        .clock.scheduledClips.map((c: { stem?: string }) => c.stem ?? 'song')
+        .join(),
+    )
+
+  await row('Vocals').getByRole('button', { name: 'Solo' }).click()
+  await expect(
+    page.getByText('The vocals stem could not be decoded. Playing the full song instead.'),
+  ).toBeVisible()
+  await expectBadge(badge, 'Full song plays', `Stems: full song plays · vocals solo. ${WHY}`)
+  await expect(note).toHaveText(`${WHY} The export tries the stem again.`)
+  expect(await scheduled()).toBe('song')
+  await shot(page, 'stems-fallback')
+
+  // The drums alone decode, so they play and the texts say so.
+  await row('Drums').getByRole('button', { name: 'Solo' }).click()
+  await expectBadge(badge, 'Full song plays', `Stems: full song plays · vocals, drums solo. ${WHY}`)
+  await row('Vocals').getByRole('button', { name: 'Unsolo' }).click()
+  await expectBadge(badge, 'Drums solo', 'Stems: drums solo')
+  await expect(note).toHaveText('Only the drums play, in the preview and the export.')
+  await expect.poll(scheduled).toBe('drums')
+
+  // Once no stem is heard the failure is forgotten: with the file playable again, the next solo plays the vocals.
+  await panel.getByRole('button', { name: 'Unsolo' }).click()
+  await expect(badge).toHaveCount(0)
+  await setVocalsFile(page, true)
+  await row('Vocals').getByRole('button', { name: 'Solo' }).click()
+  await expect.poll(scheduled).toBe('vocals')
+  await expectBadge(badge, 'Vocals solo', 'Stems: vocals solo')
+  await expect(note).toHaveText('Only the vocals play, in the preview and the export.')
+
+  // An export decodes a failed stem again in the same audio cache. Once the preview plays it, the texts say so.
+  await row('Vocals').getByRole('button', { name: 'Unsolo' }).click()
+  await setVocalsFile(page, false)
+  await row('Vocals').getByRole('button', { name: 'Solo' }).click()
+  await expectBadge(badge, 'Full song plays', `Stems: full song plays · vocals solo. ${WHY}`)
+  await setVocalsFile(page, true)
+  await page.evaluate(async () => {
+    const { app, engine } = window.mvStudio
+    const preview = app.stagePreview()
+    await engine.audio.renderMix(app.project.editor.getProject(), preview.clock.buffers, {
+      start: 10,
+      end: 11,
+    })
+    await preview.play()
+  })
+  await expect.poll(scheduled).toBe('vocals')
+  await expectBadge(badge, 'Vocals solo', 'Stems: vocals solo')
+  await page.evaluate(() => window.mvStudio.app.stagePreview().pause())
 })

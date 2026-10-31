@@ -6,7 +6,7 @@ import { appMedia } from '../../state/media.ts'
 import { prefs, usePrefs } from '../../state/prefs.ts'
 import { loopRange } from '../../state/previewControls.ts'
 import { editor } from '../../state/project.ts'
-import { audioErrorText } from '../../state/stems.ts'
+import { audioErrorText, forgetStemPlaybackErrors, noteStemPlaybackError } from '../../state/stems.ts'
 import { get, set, toast, useUi, type Selection } from '../../state/ui.ts'
 
 /** Assets whose audio failure was already shown, so a preview that fails again on them stays quiet. */
@@ -54,15 +54,28 @@ export function connectPreview(
   // Size and time first, so the first frame drawn is the one the user sees.
   preview.setViewport(viewport.width, viewport.height)
   preview.seek(get().playhead)
-  shown = editor.getProject()
-  preview.setProject(shown)
+  // Before the first project, so stems this preview cannot play are reported by it, even ones that failed before.
+  const offAudioError = preview.clock.onAudioError((error) => {
+    noteStemPlaybackError(editor.getProject(), error)
+    const details = error.details as { assetId?: string } | undefined
+    const key = details?.assetId ?? error.message
+    if (reportedAudio.has(key)) return
+    reportedAudio.add(key)
+    toast(audioErrorText(editor.getProject(), error))
+  })
+  const showProject = (project: Project) => {
+    shown = project
+    preview.setProject(project)
+    forgetStemPlaybackErrors(project, preview.clock.scheduledClips)
+  }
+  showProject(editor.getProject())
   preview.setVolume(prefs().previewVolume)
   applyLoop(get().playhead)
   if (get().playing) set({ playing: false })
   const unsubscribe = [
+    offAudioError,
     editor.subscribe((project) => {
-      shown = project
-      preview.setProject(project)
+      showProject(project)
       applyLoop(get().playhead)
     }),
     usePrefs.subscribe((p, prev) => {
@@ -84,6 +97,8 @@ export function connectPreview(
       }
     }),
     preview.subscribe(() => {
+      // Play reschedules, and plays stems an export decoded meanwhile.
+      forgetStemPlaybackErrors(editor.getProject(), preview.clock.scheduledClips)
       const { state, time } = preview.getSnapshot()
       const playing = state === 'playing'
       if (playing && get().starting) set({ starting: false })
@@ -97,13 +112,6 @@ export function connectPreview(
       if (preview.clock.state !== 'playing') return
       fromClock = time
       set({ playhead: time })
-    }),
-    preview.clock.onAudioError((error) => {
-      const details = error.details as { assetId?: string } | undefined
-      const key = details?.assetId ?? error.message
-      if (reportedAudio.has(key)) return
-      reportedAudio.add(key)
-      toast(audioErrorText(editor.getProject(), error))
     }),
   ]
   return {
