@@ -6,14 +6,18 @@ import {
   cutoutCommands,
   findPersonMask,
   footageRows,
+  personMaskRecord,
   refusalText,
+  replaceMaskCommands,
   retryPeopleSkipped,
   suitabilityOf,
   suitabilityText,
   suitableClips,
+  type PersonMaskRecord,
   type Suitability,
   useBehind,
 } from '../../../src/app/state/behind.ts'
+import { PERSON_TRACK_VERSION } from '../../../src/vision/segmentation/personTrack.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 
 beforeEach(() => loadDemoProject())
@@ -392,12 +396,111 @@ describe('cutout commands', () => {
     expect(findPersonMask(project, asset.id)).toBeUndefined()
 
     const mask = personMask(asset.id)
-    const { commands, count } = cutoutCommands(project, [clip.id], new Map([[asset.id, mask]]))
+    const { commands, count } = cutoutCommands(
+      project,
+      [clip.id],
+      new Map([[asset.id, mask]]),
+      new Map([[mask.id, { trackVersion: PERSON_TRACK_VERSION }]]),
+    )
     expect(count).toBe(1)
     editor.dispatch(commands)
     const after = editor.getProject()
     expect(findPersonMask(after, asset.id)).toEqual(mask)
+    expect(personMaskRecord(after, mask.id)).toEqual({ trackVersion: PERSON_TRACK_VERSION })
     const cut = Object.values(after.clips).find((c) => c.meta?.behindSubjectOf === clip.id)
     expect(cut).toMatchObject({ matte: { maskAssetId: mask.id, sourceAssetId: asset.id, mode: 'inside' } })
+  })
+
+  it('reuse a person mask for a new cutout only when the current person track made it with the people looked for', () => {
+    const { asset } = importFootage()
+    const mask = personMask(asset.id)
+    const withRecord = (record: PersonMaskRecord | null) => {
+      loadDemoProject()
+      const { clip } = importFootage()
+      const records = new Map(record ? [[mask.id, record]] : [])
+      editor.dispatch(
+        cutoutCommands(editor.getProject(), [clip.id], new Map([[asset.id, mask]]), records).commands,
+      )
+      return findPersonMask(editor.getProject(), asset.id)
+    }
+    expect(withRecord({ trackVersion: PERSON_TRACK_VERSION })).toEqual(mask)
+    // Made before masks had a record, by an older track version, or without the person detector.
+    expect(withRecord(null)).toBeUndefined()
+    expect(withRecord({ trackVersion: PERSON_TRACK_VERSION - 1 })).toBeUndefined()
+    expect(withRecord({ trackVersion: PERSON_TRACK_VERSION, peopleSkipped: true })).toBeUndefined()
+  })
+})
+
+describe('a cutout made without the person detector', () => {
+  /** An imported clip cut out with a mask made offline, after a cutout of the sample singer (an earlier undo step). */
+  function cutOutOffline() {
+    const { asset, clip } = importFootage()
+    const offline = personMask(asset.id)
+    const project = editor.getProject()
+    editor.dispatch(
+      cutoutCommands(
+        project,
+        [clip.id],
+        new Map([[asset.id, offline]]),
+        new Map([[offline.id, { trackVersion: PERSON_TRACK_VERSION, peopleSkipped: true }]]),
+      ).commands,
+    )
+    return { asset, clip, offline }
+  }
+  const remade: Asset = { ...personMask('a-interview'), id: 'mask-again', storageKey: 'opfs/mask-again' }
+
+  it('keeps saying no one was looked for after a check with the detector, until its mask is made again', () => {
+    const { asset, clip, offline } = cutOutOffline()
+    const checks: Record<string, Suitability> = {
+      [asset.id]: { status: 'checked', verdict: 'good', reasons: [] },
+    }
+    const note = (project: Project) => suitabilityText(suitabilityOf(project, project.clips[clip.id], checks))
+    expect(note(editor.getProject())).toMatchObject({ brief: 'Not checked for people', ok: true })
+
+    editor.dispatch(
+      replaceMaskCommands(editor.getProject(), offline.id, remade, { trackVersion: PERSON_TRACK_VERSION }),
+      { history: 'skip' },
+    )
+    expect(note(editor.getProject())).toEqual({ status: 'Person found', ok: true })
+  })
+
+  it('gets the new mask in every cutout that used it, without an undo step of its own', () => {
+    const { asset, clip, offline } = cutOutOffline()
+    const before = editor.getProject()
+    const second = { ...structuredClone(before.clips[clip.id]!), id: 'c-interview-2', start: 3 } as Clip
+    editor.dispatch({ type: 'clip.add', clip: second })
+    editor.dispatch(cutoutCommands(editor.getProject(), [second.id], new Map([[asset.id, offline]])).commands)
+    const masksOf = (project: Project) =>
+      Object.values(project.clips)
+        .filter((c) => c.meta?.behindSubjectOf)
+        .map((c) => (c as Extract<Clip, { type: 'video' }>).matte?.maskAssetId)
+    expect(masksOf(editor.getProject()).filter((m) => m === offline.id)).toHaveLength(2)
+    const undo = editor.history().undo.length
+
+    editor.dispatch(
+      replaceMaskCommands(editor.getProject(), offline.id, remade, { trackVersion: PERSON_TRACK_VERSION }),
+      { history: 'skip' },
+    )
+    const after = editor.getProject()
+    expect(masksOf(after).filter((m) => m === offline.id)).toEqual([])
+    expect(masksOf(after).filter((m) => m === remade.id)).toHaveLength(2)
+    expect(after.assets[offline.id]).toBeUndefined()
+    expect(personMaskRecord(after, offline.id)).toBeUndefined()
+    expect(findPersonMask(after, asset.id)).toEqual(remade)
+    expect(editor.history().undo.length).toBe(undo)
+
+    // Undoing the cutouts removes them; redoing brings them back as they were made, with the offline mask.
+    editor.undo()
+    editor.undo()
+    editor.undo()
+    expect(masksOf(editor.getProject()).filter((m) => m === remade.id)).toEqual([])
+    editor.redo()
+    const redone = editor.getProject()
+    const mask = masksOf(redone).find(
+      (m) => m !== undefined && redone.assets[m]?.origin.parentAssetId === asset.id,
+    )
+    expect(mask).toBe(offline.id)
+    expect(redone.assets[offline.id]).toEqual(offline)
+    expect(personMaskRecord(redone, offline.id)).toMatchObject({ peopleSkipped: true })
   })
 })

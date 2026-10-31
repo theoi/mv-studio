@@ -28,6 +28,25 @@ function cutouts(page: Page) {
   })
 }
 
+/** The person mask of the cutout of an imported clip (by file name), with what the project says it was made with. */
+function cutoutMask(page: Page, name: string) {
+  return page.evaluate((name) => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clips = Object.values(project.clips as Record<string, Untyped>)
+    const host = clips.find(
+      (c) => project.assets[c.assetId]?.name?.startsWith(name) && !c.meta?.behindSubjectOf,
+    )
+    const id = clips.find((c) => c.meta?.behindSubjectOf === host?.id)?.matte?.maskAssetId as
+      string | undefined
+    if (!id) return null
+    return {
+      id,
+      inProject: !!project.assets[id],
+      made: project.extensions?.['vision.person-masks']?.[id] ?? null,
+    }
+  }, name)
+}
+
 async function open(page: Page, hash: string) {
   await openHarness(page)
   await page.evaluate((h) => {
@@ -123,7 +142,7 @@ test('a clip with no one in it says why it cannot be cut out', async ({ page }) 
   expect(await cutouts(page)).toEqual([])
 })
 
-test('a clip is cut out when the person and face detectors cannot download, and says the people check was skipped', async ({
+test('a clip is cut out when the person and face detectors cannot download, says the people check was skipped, and is cut out again once back online', async ({
   page,
 }) => {
   test.setTimeout(240_000)
@@ -164,11 +183,32 @@ test('a clip is cut out when the person and face detectors cannot download, and 
     inspector.getByRole('switch', { name: 'Put text and effects behind the subject' }),
   ).toBeChecked()
   await expect(inspector.getByText(note, { exact: true })).toBeVisible()
+  const offline = await cutoutMask(page, 'people-interview')
+  expect(offline).toEqual({
+    id: expect.any(String),
+    inProject: true,
+    made: { trackVersion: expect.any(Number), peopleSkipped: true },
+  })
 
-  // Back online, the footage is checked again, now with the person detector.
+  // Back online, the mask is made again with the person detector, and the cutout uses it. The note stays until then,
+  // whatever the check says meanwhile.
   await page.context().unroute(detectors)
   await page.context().setOffline(true)
   await page.context().setOffline(false)
+  await expect(inspector.getByText(note, { exact: true })).toBeVisible()
+  await expect
+    .poll(
+      async () => {
+        const mask = await cutoutMask(page, 'people-interview')
+        return mask?.id === offline!.id ? null : mask
+      },
+      { timeout: 120_000 },
+    )
+    .toEqual({ id: expect.any(String), inProject: true, made: { trackVersion: offline!.made.trackVersion } })
+  await expect(inspector.getByText(note, { exact: true })).toBeHidden()
+  expect(
+    await page.evaluate((id) => id in window.mvStudio.app.project.editor.getProject().assets, offline!.id),
+  ).toBe(false)
   await page.getByRole('tab', { name: 'Assist' }).click()
   await expect(row.getByText(/^(Person found|Works in parts of this shot.+)\s· 1 clip$/)).toBeVisible({
     timeout: 90_000,

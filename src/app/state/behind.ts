@@ -5,6 +5,7 @@ import { mediaStore } from '../../media/mediaStore.ts'
 import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
 import type {
+  PackedMaskTrack,
   SelectionClick,
   SuitabilityEvidence,
   SuitabilityReason,
@@ -12,7 +13,9 @@ import type {
   SuitabilityVerdict,
   TimeRange,
 } from '../../vision/index.ts'
+import type * as Vision from '../../vision/index.ts'
 import { suitabilityInRange } from '../../vision/mask/suitability.ts'
+import { PERSON_TRACK_VERSION } from '../../vision/segmentation/personTrack.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { mediaById } from '../mock/media.ts'
 import { maskStorageKey, sceneOf } from '../mock/demoProject.ts'
@@ -135,8 +138,6 @@ export function retryPeopleSkipped(): void {
     return { checks }
   })
 }
-
-if (typeof window !== 'undefined') window.addEventListener('online', retryPeopleSkipped)
 
 const fromReport = (r: SuitabilityReport): Extract<Suitability, { status: 'checked' }> => ({
   status: 'checked',
@@ -266,7 +267,12 @@ export function suitabilityOf(
 ): Suitability {
   const footage = footageOf(project, clip)
   if (!footage) return { status: 'unsupported' }
-  return clipSuitability(assetSuitability(footage.asset, checks), footage.clip, footage.asset)
+  const s = clipSuitability(assetSuitability(footage.asset, checks), footage.clip, footage.asset)
+  // A check made with the person detector does not make a cutout made without it any less whole: its note stays
+  // until the mask is made again.
+  return s.status === 'checked' && !s.peopleSkipped && cutOutWithoutPeople(project, footage.clip.id)
+    ? { ...s, peopleSkipped: true }
+    : s
 }
 
 /** The part of its footage a clip shows, in media seconds. */
@@ -318,15 +324,111 @@ export function hasCutout(project: Project, clipId: string): boolean {
   return cutoutsOf(project, clipId).length > 0
 }
 
-/** The person mask video already made for an imported asset, if the project still has it. */
-export function findPersonMask(project: Pick<Project, 'assets'>, assetId: Id): Asset | undefined {
-  return Object.values(project.assets).find(
+/**
+ * What a person mask video was made with, kept in the project for each mask (`project.extensions`, under
+ * `MASK_RECORDS`, by mask id): the person track version, and whether no one was looked for because the person
+ * detector could not be downloaded, which leaves the mask whole, animals and objects included. Masks made before the
+ * record existed have none and count as made by an older version.
+ */
+export interface PersonMaskRecord {
+  trackVersion: number
+  peopleSkipped?: true
+}
+
+const MASK_RECORDS = 'vision.person-masks'
+
+function maskRecords(project: Pick<Project, 'extensions'>): JsonObject {
+  const records = project.extensions?.[MASK_RECORDS]
+  return records && typeof records === 'object' && !Array.isArray(records) ? records : {}
+}
+
+export function personMaskRecord(
+  project: Pick<Project, 'extensions'>,
+  maskId: Id,
+): PersonMaskRecord | undefined {
+  const r = maskRecords(project)[maskId]
+  if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.trackVersion !== 'number') return undefined
+  return { trackVersion: r.trackVersion, ...(r.peopleSkipped === true ? { peopleSkipped: true } : {}) }
+}
+
+/** The command that sets the records of some masks (null removes one), keeping the others in `project`. */
+function recordsCommand(
+  project: Pick<Project, 'extensions'>,
+  changes: ReadonlyMap<Id, PersonMaskRecord | null>,
+) {
+  const records = { ...maskRecords(project) }
+  for (const [id, r] of changes)
+    if (r) records[id] = { trackVersion: r.trackVersion, ...(r.peopleSkipped ? { peopleSkipped: true } : {}) }
+    else delete records[id]
+  const value = Object.keys(records).length ? records : null
+  return { type: 'project.setExtension', key: MASK_RECORDS, value } satisfies EditCommand
+}
+
+/** The person mask videos made for an imported asset (all of them when `assetId` is undefined) that the project has. */
+function personMasks(project: Pick<Project, 'assets'>, assetId?: Id): Asset[] {
+  return Object.values(project.assets).filter(
     (a) =>
       a.kind === 'video' &&
       a.origin.type === 'derived' &&
-      a.origin.parentAssetId === assetId &&
-      a.origin.provider === PERSON_MASK,
+      a.origin.provider === PERSON_MASK &&
+      (assetId === undefined || a.origin.parentAssetId === assetId),
   )
+}
+
+/**
+ * The person mask video a new cutout of an imported asset can use as it is: made by the current person track, with
+ * the people looked for. A cutout applied to footage whose mask was made offline or by an older version gets a new
+ * mask; the cutouts already using the old one keep it (except a mask made offline, see `remakeOfflineMasks`).
+ */
+export function findPersonMask(
+  project: Pick<Project, 'assets' | 'extensions'>,
+  assetId: Id,
+): Asset | undefined {
+  return personMasks(project, assetId).find((m) => {
+    const record = personMaskRecord(project, m.id)
+    return record?.trackVersion === PERSON_TRACK_VERSION && !record.peopleSkipped
+  })
+}
+
+const matteMask = (clip: Clip): Id | undefined => ('matte' in clip ? clip.matte?.maskAssetId : undefined)
+
+/** Whether a footage clip has a cutout whose person mask was made without the person detector. */
+function cutOutWithoutPeople(project: Project, clipId: Id): boolean {
+  return cutoutsOf(project, clipId).some((c) => {
+    const mask = matteMask(c)
+    return !!mask && !!personMaskRecord(project, mask)?.peopleSkipped
+  })
+}
+
+/**
+ * The note for a clip whose cutout uses a person mask made without the person detector, whatever the check says
+ * meanwhile: the cutout may include animals or objects until its mask is made again.
+ */
+export function cutoutNote(project: Project, clipId: Id): string | undefined {
+  return cutOutWithoutPeople(project, clipId) ? PEOPLE_SKIPPED : undefined
+}
+
+/**
+ * Commands that put `mask` in place of the person mask `oldId`: every clip whose matte uses the old mask (in
+ * `project`, the current state) uses the new one, and the old mask and its record go. `record` is the new mask's,
+ * when the project does not have the new mask yet.
+ */
+export function replaceMaskCommands(
+  project: Project,
+  oldId: Id,
+  mask: Asset,
+  record?: PersonMaskRecord,
+): EditCommand[] {
+  const commands: EditCommand[] = []
+  if (!project.assets[mask.id]) commands.push({ type: 'asset.add', asset: mask })
+  for (const c of Object.values(project.clips))
+    if (matteMask(c) === oldId)
+      commands.push({ type: 'clip.set', clipId: c.id, path: ['matte', 'maskAssetId'], value: mask.id })
+  commands.push({ type: 'asset.remove', assetId: oldId })
+  commands.push(
+    recordsCommand(project, new Map([[oldId, null], ...(record ? [[mask.id, record] as const] : [])])),
+  )
+  return commands
 }
 
 /** Footage clips on the timeline whose shot is known to have a person to cut out. */
@@ -436,16 +538,19 @@ export function subjectTrack(project: Project): { track: Track; commands: EditCo
 
 /**
  * Commands that cut the subject out of each clip onto the Subject track (added when missing), using the sample
- * scene masks, the person masks in the project, or `newMasks` (stored but not in the project yet).
+ * scene masks, `newMasks` (by footage asset id, stored but maybe not in the project yet, with their `records` by mask
+ * id), or the person masks in the project that are current (`findPersonMask`).
  */
 export function cutoutCommands(
   project: Project,
   clipIds: readonly string[],
   newMasks: ReadonlyMap<Id, Asset> = new Map(),
+  records: ReadonlyMap<Id, PersonMaskRecord> = new Map(),
 ): { commands: EditCommand[]; count: number } {
   const commands: EditCommand[] = []
   const { track, commands: trackCommands } = subjectTrack(project)
   const added = new Set<Id>()
+  const recorded = new Map<Id, PersonMaskRecord>()
   let count = 0
   for (const id of new Set(clipIds)) {
     const footage = footageOf(project, project.clips[id])
@@ -475,12 +580,14 @@ export function cutoutCommands(
         })
       }
     } else {
-      const mask = findPersonMask(project, asset.id) ?? newMasks.get(asset.id)
+      const mask = newMasks.get(asset.id) ?? findPersonMask(project, asset.id)
       if (!mask) continue
       maskId = mask.id
       if (!project.assets[mask.id] && !added.has(mask.id)) {
         added.add(mask.id)
         commands.push({ type: 'asset.add', asset: mask })
+        const record = records.get(mask.id)
+        if (record) recorded.set(mask.id, record)
       }
     }
     commands.push({
@@ -496,6 +603,7 @@ export function cutoutCommands(
     })
     count++
   }
+  if (recorded.size) commands.push(recordsCommand(project, recorded))
   return { commands: count ? [...trackCommands, ...commands] : [], count }
 }
 
@@ -573,6 +681,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
         needMask.set(asset.id, asset)
       }
       const newMasks = new Map<Id, Asset>()
+      const records = new Map<Id, PersonMaskRecord>()
       const refused: NonNullable<CutoutResult['refused']> = []
       const warnings: NonNullable<CutoutResult['warnings']> = []
       /** Clips the person track turned down for the part of the footage they show. */
@@ -611,17 +720,24 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
               if (warns && why && !warnings.some((w) => w.assetId === asset.id)) warnings.push(note)
             }
             if (!kept) continue
-            const blob = await v.encodeMaskVideo(person.track, {
-              duration: asset.duration ?? source.duration,
-              signal: ctx.signal,
-            })
+            const peopleSkipped = !!person.suitability.peopleSkipped
+            // Still without the detector, a mask made offline by this version is as good as a new one.
+            const offline = peopleSkipped
+              ? personMasks(start, asset.id).find(
+                  (m) => personMaskRecord(start, m.id)?.trackVersion === PERSON_TRACK_VERSION,
+                )
+              : undefined
+            if (offline) {
+              newMasks.set(asset.id, offline)
+              continue
+            }
+            const mask = await storePersonMask(v, asset, person.track, source, ctx.signal)
             step(0.95)
-            const info = v.maskAssetInfo(asset, blob)
-            const mask = await mediaStore.storeBlob(blob, {
-              ...info,
-              origin: { type: 'derived', parentAssetId: asset.id, provider: PERSON_MASK },
-            })
             newMasks.set(asset.id, mask)
+            records.set(mask.id, {
+              trackVersion: PERSON_TRACK_VERSION,
+              ...(peopleSkipped ? { peopleSkipped: true } : {}),
+            })
           } finally {
             source.dispose()
           }
@@ -632,6 +748,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
         editor.getProject(),
         wanted.filter((id) => !turnedDown.has(id)),
         newMasks,
+        records,
       )
       const result: CutoutResult = {
         count,
@@ -651,8 +768,87 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
   })
   jobId = handle.id
   useBehind.setState((s) => ({ requests: { ...s.requests, [jobId]: { clips: clipIds, object: false } } }))
+  // The person detector may be available by now, for the masks made without it.
+  handle.promise.then(
+    () => remakeOfflineMasks(),
+    () => undefined,
+  )
   return handle
 }
+
+/** Encodes a person track as the mask video of an imported asset and stores it. */
+async function storePersonMask(
+  v: typeof Vision,
+  asset: Asset,
+  track: PackedMaskTrack,
+  source: { duration: number },
+  signal: AbortSignal,
+): Promise<Asset> {
+  const blob = await v.encodeMaskVideo(track, { duration: asset.duration ?? source.duration, signal })
+  return mediaStore.storeBlob(blob, {
+    ...v.maskAssetInfo(asset, blob),
+    origin: { type: 'derived', parentAssetId: asset.id, provider: PERSON_MASK },
+  })
+}
+
+/**
+ * Makes the person masks that were made without the person detector again, now with it, and points their cutouts at
+ * the new masks, so a cutout made offline ends up as one made online. A mask is left as it is while the detector still
+ * cannot be downloaded. Runs when the browser comes back online, when a project opens and after a cutout. Not an undo
+ * step, like other results of background work: the cutout itself was the user's edit.
+ */
+export function remakeOfflineMasks(): JobHandle<void> | undefined {
+  if (typeof navigator === 'undefined' || !navigator.onLine) return undefined
+  if (isRunning(JOB_KINDS.cutout) || isRunning(JOB_KINDS.cutoutRemake)) return undefined
+  const project = editor.getProject()
+  const offline = personMasks(project).filter((m) => personMaskRecord(project, m.id)?.peopleSkipped)
+  if (!offline.length) return undefined
+  return jobs.run({
+    kind: JOB_KINDS.cutoutRemake,
+    title: 'Cutting out the person again',
+    run: async (ctx) => {
+      const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
+      for (const [i, old] of offline.entries()) {
+        const now = editor.getProject()
+        const asset = now.assets[old.origin.parentAssetId ?? '']
+        if (!now.assets[old.id] || asset?.kind !== 'video') continue
+        let mask = findPersonMask(now, asset.id)
+        let record: PersonMaskRecord | undefined
+        if (!mask) {
+          const message = `Cutting out the person again · ${asset.name}`
+          const step = (f: number) => ctx.progress({ fraction: (i + f) / offline.length, message })
+          step(0)
+          const source = v.createAssetFrameSource(asset, appMedia)
+          try {
+            const person = await vision.personTrack(source, {
+              signal: ctx.signal,
+              onProgress: (p) => step(0.9 * (p.fraction ?? 0)),
+            })
+            if (person.suitability.peopleSkipped) continue
+            setCheck(asset.id, fromReport(person.suitability))
+            mask = await storePersonMask(v, asset, person.track, source, ctx.signal)
+            record = { trackVersion: PERSON_TRACK_VERSION }
+          } finally {
+            source.dispose()
+          }
+        }
+        ctx.throwIfCancelled()
+        const current = editor.getProject()
+        if (current.assets[old.id])
+          dispatch(replaceMaskCommands(current, old.id, mask, record), { history: 'skip' })
+      }
+    },
+  })
+}
+
+if (typeof window !== 'undefined')
+  window.addEventListener('online', () => {
+    retryPeopleSkipped()
+    remakeOfflineMasks()
+  })
+editor.subscribe((_project, change) => {
+  if (change.source === 'load') remakeOfflineMasks()
+})
 
 export function bringToFront(clipIds: string[]): boolean {
   const project = editor.getProject()

@@ -9,6 +9,7 @@ import {
   bringToFront,
   canTryCutout,
   checkFootage,
+  cutoutNote,
   cutoutsOf,
   hasCutout,
   objectOf,
@@ -51,6 +52,7 @@ function useBehindState(clip: MediaClip) {
     behind: !!cutoutOf || hasCutout(project, clip.id),
     object: objectOf(cutoutsOf(project, hostId)[0]),
     suitability,
+    maskNote: cutoutNote(project, hostId),
     busy: phase === 'running',
     cutting: asked && phase === 'running' ? job : undefined,
     failure: asked && phase === 'failed' ? job?.error?.message : undefined,
@@ -126,8 +128,19 @@ function ObjectTracking({ host, pick, disabled }: { host: VideoClip; pick: Objec
 }
 
 export function LayeringSection({ clip }: { clip: MediaClip }) {
-  const { hostId, host, assetId, behind, object, suitability, busy, cutting, failure, objectFailure } =
-    useBehindState(clip)
+  const {
+    hostId,
+    host,
+    assetId,
+    behind,
+    object,
+    suitability,
+    maskNote,
+    busy,
+    cutting,
+    failure,
+    objectFailure,
+  } = useBehindState(clip)
   const text = suitabilityText(suitability)
   // Flicker is known only once the cutout exists, so its warning stays while the clip is behind, as does the note
   // that no one was looked for.
@@ -164,8 +177,10 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
         </p>
       ) : behind && object && host ? (
         <ObjectTracking host={host} pick={object} disabled={busy} />
+      ) : (!behind || warns) && text.why ? (
+        <p className={styles.note}>{text.why}</p>
       ) : (
-        (!behind || warns) && text.why && <p className={styles.note}>{text.why}</p>
+        behind && maskNote && <p className={styles.note}>{maskNote}</p>
       )}
       {host && (
         <div className={styles.inlineActions}>
