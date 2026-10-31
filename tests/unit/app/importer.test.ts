@@ -131,4 +131,5 @@ it('puts a clip on a new numbered track when every footage track is taken at the
   expect(placedOn(['Video 1'])).toBe('Video 2')
   expect(placedOn(['Video', 'Video 2'])).toBe('Video 3')
   expect(placedOn(['Footage'])).toBe('Video')
+  expect(placedOn(['Video 2024'])).toBe('Video')
 })

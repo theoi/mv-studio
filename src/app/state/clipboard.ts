@@ -166,11 +166,11 @@ function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplic
 
 /**
  * "Video 2", "Video 3": a name the other tracks don't have, so a new track can be told apart in the headers. Next to a
- * numbered "Video 1", a new "Video" is numbered too.
+ * numbered "Video 1", a new "Video" is numbered too (a track number, 1 to 99, not a name like "Video 2024").
  */
 export function numberedName(tracks: readonly Track[], name: string): string {
   const names = new Set(tracks.map((t) => t.name))
-  const isNumbered = (n: string) => n.startsWith(`${name} `) && /^\d+$/.test(n.slice(name.length + 1))
+  const isNumbered = (n: string) => n.startsWith(`${name} `) && /^[1-9]\d?$/.test(n.slice(name.length + 1))
   if (!names.has(name) && !tracks.some((t) => isNumbered(t.name))) return name
   const base = name.replace(/ \d+$/, '')
   let n = 2
