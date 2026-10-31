@@ -1,6 +1,9 @@
-/** User corrections to song analysis as undoable `analysis.setGrid` edits (normal dispatches, not skipped). */
+/**
+ * User corrections to song analysis: undoable `analysis.setGrid` edits (normal dispatches, not skipped), and the
+ * sections the user named kept across a new analysis.
+ */
 import type { EditCommand } from '../model/commands.ts'
-import type { AudioAnalysis } from '../model/types.ts'
+import type { AudioAnalysis, SongSection } from '../model/types.ts'
 import { barsOfFour, type BeatGrid, makeGrid, rescaleGrid, setDownbeat } from './beats/grid.ts'
 
 export type GridEdit = Extract<EditCommand, { type: 'analysis.setGrid' }>
@@ -90,4 +93,73 @@ export function fitTappedTempo(analysis: AudioAnalysis, bpm: number): TappedTemp
 export function moveDownbeat(analysis: AudioAnalysis, beatIndex: number, beatsPerBar?: number): GridEdit {
   const grid = gridFromAnalysis(analysis)
   return gridEdit(analysis.assetId, setDownbeat(grid, beatIndex, beatsPerBar ?? grid.beatsPerBar))
+}
+
+/** A section the user named. */
+export function userSection(section: SongSection): boolean {
+  return section.confidence === 1
+}
+
+/** Fresh pieces shorter than this join a fresh neighbour instead of standing alone. */
+const MIN_PIECE_SECONDS = 1
+
+/**
+ * The sections of a new analysis with the sections the user named in `previous` kept as they were (times, name, id):
+ * fresh sections are cut around them. A kept section takes the repeat group of the fresh section it mostly covers,
+ * since the old groups mean nothing in the new analysis.
+ */
+export function keepUserSections(
+  fresh: readonly SongSection[],
+  previous: readonly SongSection[],
+): SongSection[] {
+  const kept = previous.filter(userSection)
+  if (kept.length === 0) return [...fresh]
+  const out: { section: SongSection; kept: boolean }[] = []
+  for (const s of fresh) {
+    let pieces = [{ start: s.start, end: s.end }]
+    for (const k of kept)
+      pieces = pieces.flatMap((p) =>
+        k.end <= p.start || k.start >= p.end
+          ? [p]
+          : [
+              ...(k.start > p.start ? [{ start: p.start, end: k.start }] : []),
+              ...(k.end < p.end ? [{ start: k.end, end: p.end }] : []),
+            ],
+      )
+    pieces.forEach((p, i) =>
+      out.push({ section: { ...s, id: i === 0 ? s.id : `${s.id}.${i}`, ...p }, kept: false }),
+    )
+  }
+  for (const k of kept) {
+    let group: number | undefined
+    let most = 0
+    for (const s of fresh) {
+      const overlap = Math.min(s.end, k.end) - Math.max(s.start, k.start)
+      if (overlap > most) [most, group] = [overlap, s.repeatGroup]
+    }
+    const section = { ...k }
+    if (group === undefined) delete section.repeatGroup
+    else section.repeatGroup = group
+    out.push({ section, kept: true })
+  }
+  out.sort((a, b) => a.section.start - b.section.start)
+  const result: typeof out = []
+  for (let i = 0; i < out.length; i++) {
+    const cur = out[i]!
+    const { section } = cur
+    if (!cur.kept && section.end - section.start < MIN_PIECE_SECONDS) {
+      const last = result.at(-1)
+      const next = out[i + 1]
+      if (last && !last.kept && last.section.end === section.start) {
+        last.section.end = section.end
+        continue
+      }
+      if (next && !next.kept && next.section.start === section.end) {
+        next.section.start = section.start
+        continue
+      }
+    }
+    result.push(cur)
+  }
+  return result.map((r) => r.section)
 }

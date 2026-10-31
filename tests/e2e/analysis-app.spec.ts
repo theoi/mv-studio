@@ -106,14 +106,39 @@ test('Assist › Song analysis taps the tempo, sets the first beat and analyzes 
   expect(moved.downbeats).toContain(third)
   expect(moved.beats).toEqual(tracked.beats)
 
-  // Analyzing again replaces the corrections as one step; undo brings them back.
+  // Analyzing again replaces the corrections as one step but keeps the section the user named; undo brings the
+  // corrections back.
+  const labels = () =>
+    page.evaluate(() => {
+      const project = window.mvStudio.app.project.editor.getProject()
+      return (project.analysis.audio[project.songAssetId ?? '']?.sections ?? []).map(
+        (s: { label: string }) => s.label,
+      )
+    })
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    const project = editor.getProject()
+    const assetId = project.songAssetId ?? ''
+    const section = project.analysis.audio[assetId]?.sections?.[0]
+    if (section)
+      editor.dispatch({
+        type: 'analysis.updateSection',
+        assetId,
+        sectionId: section.id,
+        patch: { label: 'Hook' },
+      })
+  })
+  expect(await labels()).toEqual(['Hook'])
   await panel.getByRole('button', { name: 'Analyze again' }).click()
   await expect(panel.getByRole('progressbar', { name: 'Song analysis progress' })).toBeVisible()
   await shot(page, 'analysis-running')
-  await expect(page.getByText(/^Found 1[12]\d BPM and 1 section$/)).toBeVisible({ timeout: 180_000 })
+  await expect(page.getByText(/^Found 1[12]\d BPM and 1 section\. Kept 1 section you named$/)).toBeVisible({
+    timeout: 180_000,
+  })
   const again = await grid(page)
   expect(again.undoLabel).toBe('Analyze again')
   expect(Math.abs(again.bpm - found.bpm)).toBeLessThan(3)
+  expect(await labels()).toEqual(['Hook'])
   await page.getByRole('button', { name: 'Undo' }).last().click()
   await expect.poll(async () => (await grid(page)).downbeats).toEqual(moved.downbeats)
 })
