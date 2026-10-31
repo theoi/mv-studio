@@ -38,7 +38,8 @@ export class SongAnalysisService {
   }
 
   private worker(): WorkerClient<AnalysisWorkerApi> {
-    this.client ??= createWorkerClient<AnalysisWorkerApi>(this.createWorker())
+    // A worker that crashed is replaced on the next call (it no longer holds earlier songs).
+    this.client ??= createWorkerClient<AnalysisWorkerApi>(() => this.createWorker())
     return this.client
   }
 

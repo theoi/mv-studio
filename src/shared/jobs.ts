@@ -14,6 +14,8 @@ export type JobErrorCode =
   | 'encode'
   | 'storage-quota'
   | 'out-of-memory'
+  /** The worker running the task died; a fresh one is used on retry. */
+  | 'worker-crashed'
   | 'provider'
   | 'timeout'
   | 'internal'
@@ -38,7 +40,8 @@ export class JobError extends Error {
     super(message, { cause: options.cause })
     this.name = 'JobError'
     this.code = code
-    this.retryable = options.retryable ?? (code === 'network' || code === 'timeout')
+    this.retryable =
+      options.retryable ?? (code === 'network' || code === 'timeout' || code === 'worker-crashed')
     this.details = options.details
   }
 
@@ -50,17 +53,30 @@ export class JobError extends Error {
     return new JobError(e.code, e.message, { retryable: e.retryable, details: e.details })
   }
 
-  /** Normalizes anything thrown into a JobError (AbortError becomes 'cancelled', QuotaExceededError 'storage-quota'). */
+  /**
+   * Normalizes anything thrown into a JobError (AbortError becomes 'cancelled', QuotaExceededError 'storage-quota',
+   * exhausted memory 'out-of-memory').
+   */
   static from(error: unknown): JobError {
     if (error instanceof JobError) return error
     if (isDomException(error, 'AbortError')) return new JobError('cancelled', 'Cancelled', { cause: error })
     if (isDomException(error, 'QuotaExceededError'))
       return new JobError('storage-quota', 'Not enough browser storage space', { cause: error })
-    if (error instanceof RangeError && /memory|allocation/i.test(error.message))
-      return new JobError('out-of-memory', error.message, { cause: error })
     const message = error instanceof Error ? error.message : String(error)
+    if ((error instanceof RangeError && /memory|allocation/i.test(message)) || isOutOfMemoryMessage(message))
+      return new JobError('out-of-memory', message, { cause: error })
     return new JobError('internal', message || 'Unknown error', { cause: error })
   }
+}
+
+/**
+ * Whether an error message says memory ran out, in the words of V8 ("Array buffer allocation failed"), WebAssembly
+ * ("Maximum memory size exceeded"), Emscripten ("Out of memory", "OOM") and ONNX Runtime ("bad_alloc").
+ */
+export function isOutOfMemoryMessage(message: string): boolean {
+  return /out of memory|\bOOM\b|bad_alloc|allocation failed|could not allocate|memory size exceeded|grow (instance )?memory/i.test(
+    message,
+  )
 }
 
 function isDomException(error: unknown, name: string): boolean {
