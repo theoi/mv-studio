@@ -64,7 +64,10 @@
 
 .toastClose {
   display: inline-flex;
-  padding: 4px;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius-sm);
   color: var(--text-3);
 }

@@ -203,6 +203,8 @@ export interface GenerateOutcome {
   assets: Asset[]
   start: number
   usd: number
+  /** The clips it put on the timeline, for Show. */
+  clipIds: string[]
 }
 
 const outcomes = new Map<string, GenerateOutcome>()
@@ -288,7 +290,7 @@ export async function startGenerate(at?: number): Promise<void> {
       const blob = image ? await appMedia.getFile(image) : undefined
       ctx.throwIfCancelled()
       const assets: Asset[] = []
-      let placed: string[] = []
+      let placed: string[]
       let usd = 0
       try {
         for (let i = 0; i < count; i++) {
@@ -321,13 +323,13 @@ export async function startGenerate(at?: number): Promise<void> {
         // fal.ai bills every finished request, even when a later one fails or the run is cancelled.
         if (usd > 0) spendLedger.record(usd, label)
       }
-      const outcome = { label, assets, start, usd }
+      const outcome = { label, assets, start, usd, clipIds: placed }
       outcomes.set(jobId, outcome)
       const name = assets.length === 1 ? (assets[0]?.name ?? 'the result') : `${assets.length} images`
       toast(
         `Added ${name} at ${formatTime(start)}`,
         { label: 'Undo', run: () => undoOutcome(outcome) },
-        { show: () => showClips(placed) },
+        { show: () => showClips(outcome.clipIds) },
       )
       return outcome
     },
