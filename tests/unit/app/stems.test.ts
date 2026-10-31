@@ -2,15 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import {
   audioErrorText,
+  forgetStemPlaybackErrors,
+  noteStemPlaybackError,
   resetStems,
   songStemTrack,
   stemBadgeText,
   stemBars,
   stemExportWarning,
+  stemFallbackText,
   stemMix,
   stemNoteText,
   toggledStems,
   toggleStem,
+  unplayableStem,
   type StemMix,
 } from '../../../src/app/state/stems.ts'
 import { STEM_NAMES, type Asset, type StemName, type Track } from '../../../src/model/index.ts'
@@ -164,5 +168,50 @@ describe('stem mute and solo commands', () => {
     resetStems()
     expect(editor.undoLabel()).toBe('Play all stems')
     expect(toggledStems({ bass: { solo: true } }, 'bass', 'solo')).toEqual({})
+  })
+})
+
+describe('a stem the preview cannot play', () => {
+  const failure = (code: 'out-of-memory' | 'decode', assetId: string) =>
+    new JobError(code, 'A stem could not be decoded.', { details: { assetId } })
+  const project = () => editor.getProject()
+
+  it('says the full song plays while the stem should be heard, until no stem is heard', () => {
+    withStems()
+    forgetStemPlaybackErrors(project())
+    toggleStem('vocals', 'solo')
+    noteStemPlaybackError(project(), failure('decode', 'a-song'))
+    expect(unplayableStem(project())).toBeNull()
+    noteStemPlaybackError(project(), failure('decode', 'stem-vocals'))
+    expect(unplayableStem(project())).toEqual({ name: 'vocals', failure: 'decode' })
+
+    // Still heard with another solo; not heard once the drums play alone, and the preview keeps the failure.
+    toggleStem('drums', 'solo')
+    forgetStemPlaybackErrors(project())
+    expect(unplayableStem(project())).toEqual({ name: 'vocals', failure: 'decode' })
+    toggleStem('vocals', 'solo')
+    forgetStemPlaybackErrors(project())
+    expect(unplayableStem(project())).toBeNull()
+    toggleStem('bass', 'muted')
+    toggleStem('drums', 'solo')
+    forgetStemPlaybackErrors(project())
+    expect(stemMix(project())).toEqual({ solo: [], muted: ['bass'] })
+    expect(unplayableStem(project())).toEqual({ name: 'vocals', failure: 'decode' })
+
+    // With every stem playing, the preview forgets the failure and decodes the stem again next time.
+    resetStems()
+    forgetStemPlaybackErrors(project())
+    toggleStem('vocals', 'solo')
+    expect(unplayableStem(project())).toBeNull()
+  })
+
+  it('words the badge and the panel note', () => {
+    expect(stemBadgeText({ solo: ['vocals'], muted: [] }, true)).toBe('Stems: full song plays · vocals solo')
+    expect(stemFallbackText({ name: 'vocals', failure: 'decode' })).toBe(
+      'The vocals stem could not be decoded, so the preview plays the full song.',
+    )
+    expect(stemFallbackText({ name: 'other', failure: 'out-of-memory' })).toBe(
+      'There is not enough memory to play the other stem separately, so the preview plays the full song.',
+    )
   })
 })

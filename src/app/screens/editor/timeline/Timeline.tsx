@@ -118,6 +118,7 @@ import {
   stemBadgeText,
   stemMix,
   toggleStem,
+  useUnplayableStem,
   type StemMix,
 } from '../../../state/stems.ts'
 import { moveAnnouncement, moveTrack, moveTrackBy, trackMoveRange } from '../../../state/tracks.ts'
@@ -668,6 +669,7 @@ const TrackHeader = memo(function TrackHeader({
   canMoveDown,
   onGripPointerDown,
   onAnnounce,
+  fullSong,
 }: {
   track: Track
   height: number
@@ -676,11 +678,13 @@ const TrackHeader = memo(function TrackHeader({
   canMoveDown: boolean
   onGripPointerDown: (e: React.PointerEvent<HTMLElement>, track: Track) => void
   onAnnounce: (message: string) => void
+  /** The preview plays the full song: a stem it should play could not be decoded. */
+  fullSong?: boolean
 }) {
   const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
     dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
   const isAudio = track.kind === 'audio'
-  const badge = stems && stemBadgeText(stems)
+  const badge = stems && stemBadgeText(stems, fullSong)
   const grip = useRef<HTMLButtonElement>(null)
   // Set by Move up and Move down, so the closing menu hands focus to this track's grip instead of the page.
   const movedFromMenu = useRef(false)
@@ -1001,6 +1005,7 @@ export function Timeline() {
   const stems = separatedStems(project)
   const stemTrack = songStemTrack(project)
   const mix = stemMix(project)
+  const unplayable = useUnplayableStem(project)
   const timingLyrics = runningJobs(useJobs()).some((j) => j.kind === JOB_KINDS.lyrics)
 
   const lanes = project.tracks.map((t) => {
@@ -1589,6 +1594,7 @@ export function Timeline() {
                       canMoveDown={index < trackMoveRange(project, track.id).max}
                       onGripPointerDown={startTrackDrag}
                       onAnnounce={announce}
+                      fullSong={track.id === stemTrack?.id && unplayable !== null}
                     />
                   </div>
                   <div

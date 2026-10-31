@@ -1,4 +1,7 @@
+import { useMemo } from 'react'
+import { create } from 'zustand'
 import type { StemsEstimate, StemSeparationService, StemStore } from '../../analysis/stems/client.ts'
+import { audibleClips } from '../../engine/audio.ts'
 import {
   STEM_NAMES,
   type AudioFeatures,
@@ -146,11 +149,15 @@ export function stemList(names: readonly StemName[]): string {
 const singular = (names: readonly StemName[]) =>
   names.length === 1 && (names[0] === 'bass' || names[0] === 'other')
 
-/** Header badge of the song track: "Stems: vocals solo · drums muted". */
-export function stemBadgeText(mix: StemMix): string {
+/**
+ * Header badge of the song track: "Stems: vocals solo · drums muted". While the preview cannot play a stem it should,
+ * "full song plays" comes first, so the narrow header shows it before cutting the text off.
+ */
+export function stemBadgeText(mix: StemMix, fullSong = false): string {
   const part = (names: StemName[], what: string) =>
     names.length ? `${names.map((n) => STEM_LABELS[n].toLowerCase()).join(', ')} ${what}` : ''
-  return `Stems: ${[part(mix.solo, 'solo'), part(mix.muted, 'muted')].filter(Boolean).join(' · ')}`
+  const parts = [fullSong ? 'full song plays' : '', part(mix.solo, 'solo'), part(mix.muted, 'muted')]
+  return `Stems: ${parts.filter(Boolean).join(' · ')}`
 }
 
 /** Assist › Stems note: what plays, in the preview and the export. */
@@ -220,7 +227,68 @@ export function audioErrorText(project: Project, error: JobError): string {
   const stems = parentId ? project.analysis.audio[parentId]?.stems : undefined
   const name = stems && STEM_NAMES.find((n) => stems[n] === assetId)
   if (!name) return `${error.message} Playing the full song instead.`
-  return error.code === 'out-of-memory'
-    ? `There is not enough memory to play ${stemList([name])} separately. Playing the full song instead.`
-    : `The ${STEM_LABELS[name].toLowerCase()} stem could not be decoded. Playing the full song instead.`
+  return `${stemFailureText({ name, failure: stemFailure(error) })}. Playing the full song instead.`
+}
+
+/* ---------- stems the preview cannot play ---------- */
+
+type StemFailure = 'out-of-memory' | 'decode'
+
+const stemFailure = (error: JobError): StemFailure =>
+  error.code === 'out-of-memory' ? 'out-of-memory' : 'decode'
+
+/**
+ * Stems the preview could not decode, by asset id. Kept as long as the preview's audio cache keeps the failure: until
+ * no stem is heard (the cache then decodes the stem again the next time it is heard) or the stem leaves the project.
+ */
+const useStemFailures = create<Readonly<Record<string, StemFailure>>>(() => ({}))
+
+/** Records a stem the preview could not play, from the playback clock's audio errors. Other audio is ignored. */
+export function noteStemPlaybackError(project: Project, error: JobError): void {
+  const assetId = (error.details as { assetId?: string } | undefined)?.assetId
+  if (!assetId || project.assets[assetId]?.origin.type !== 'stem') return
+  useStemFailures.setState({ [assetId]: stemFailure(error) })
+}
+
+/** Forgets the failures the preview's audio cache forgets when it gets this project. */
+export function forgetStemPlaybackErrors(project: Project): void {
+  const failures = Object.entries(useStemFailures.getState())
+  if (failures.length === 0) return
+  const heard = audibleClips(project).some((c) => c.stem !== undefined)
+  const kept = heard ? failures.filter(([id]) => project.assets[id]) : []
+  if (kept.length < failures.length) useStemFailures.setState(Object.fromEntries(kept), true)
+}
+
+/** A stem that should be heard but that the preview could not decode, so it plays the full song instead. */
+export interface UnplayableStem {
+  name: StemName
+  failure: StemFailure
+}
+
+export function unplayableStem(
+  project: Project,
+  failures: Readonly<Record<string, StemFailure>> = useStemFailures.getState(),
+): UnplayableStem | null {
+  if (Object.keys(failures).length === 0) return null
+  for (const clip of audibleClips(project)) {
+    const failure = clip.stem && failures[clip.assetId]
+    if (clip.stem && failure) return { name: clip.stem, failure }
+  }
+  return null
+}
+
+export function useUnplayableStem(project: Project): UnplayableStem | null {
+  const failures = useStemFailures()
+  return useMemo(() => unplayableStem(project, failures), [project, failures])
+}
+
+/** Assist › Stems note while the preview plays the full song instead of the stems. */
+export function stemFallbackText(stem: UnplayableStem): string {
+  return `${stemFailureText(stem)}, so the preview plays the full song.`
+}
+
+function stemFailureText({ name, failure }: UnplayableStem): string {
+  return failure === 'out-of-memory'
+    ? `There is not enough memory to play ${stemList([name])} separately`
+    : `The ${STEM_LABELS[name].toLowerCase()} stem could not be decoded`
 }

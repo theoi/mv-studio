@@ -10,9 +10,11 @@ import {
   songStemTrack,
   startStems,
   stemBars,
+  stemFallbackText,
   stemMix,
   stemNoteText,
   toggleStem,
+  useUnplayableStem,
 } from '../../../state/stems.ts'
 import { pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, Steps, ToolView } from './ToolView.tsx'
@@ -54,6 +56,7 @@ export function StemsView() {
   const { job, phase } = useJob(JOB_KINDS.stems)
   const analysis = songAnalysis(project)
   const ready = !!analysis?.stems
+  const unplayable = useUnplayableStem(project)
   // Timing lyrics separates the stems itself when the song has none; a second separation would double the memory.
   const jobs = useJobs()
   const lyricsSeparating = !ready && runningJobs(jobs).some((j) => j.kind === JOB_KINDS.lyrics)
@@ -157,7 +160,7 @@ export function StemsView() {
         })}
         {mix && (
           <p className={styles.stemMixNote} role="status">
-            {stemNoteText(mix)}
+            {unplayable ? stemFallbackText(unplayable) : stemNoteText(mix)}
           </p>
         )}
         <p className={styles.muted}>

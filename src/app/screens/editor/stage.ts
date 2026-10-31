@@ -6,7 +6,7 @@ import { appMedia } from '../../state/media.ts'
 import { prefs, usePrefs } from '../../state/prefs.ts'
 import { loopRange } from '../../state/previewControls.ts'
 import { editor } from '../../state/project.ts'
-import { audioErrorText } from '../../state/stems.ts'
+import { audioErrorText, forgetStemPlaybackErrors, noteStemPlaybackError } from '../../state/stems.ts'
 import { get, set, toast, useUi, type Selection } from '../../state/ui.ts'
 
 /** Assets whose audio failure was already shown, so a preview that fails again on them stays quiet. */
@@ -54,15 +54,18 @@ export function connectPreview(
   // Size and time first, so the first frame drawn is the one the user sees.
   preview.setViewport(viewport.width, viewport.height)
   preview.seek(get().playhead)
-  shown = editor.getProject()
-  preview.setProject(shown)
+  const showProject = (project: Project) => {
+    shown = project
+    preview.setProject(project)
+    forgetStemPlaybackErrors(project)
+  }
+  showProject(editor.getProject())
   preview.setVolume(prefs().previewVolume)
   applyLoop(get().playhead)
   if (get().playing) set({ playing: false })
   const unsubscribe = [
     editor.subscribe((project) => {
-      shown = project
-      preview.setProject(project)
+      showProject(project)
       applyLoop(get().playhead)
     }),
     usePrefs.subscribe((p, prev) => {
@@ -99,6 +102,7 @@ export function connectPreview(
       set({ playhead: time })
     }),
     preview.clock.onAudioError((error) => {
+      noteStemPlaybackError(editor.getProject(), error)
       const details = error.details as { assetId?: string } | undefined
       const key = details?.assetId ?? error.message
       if (reportedAudio.has(key)) return
