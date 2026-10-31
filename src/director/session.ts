@@ -148,6 +148,8 @@ export type DirectorState =
       /** AI shots already generated for this plan (kept after a cancel). */
       generatedShots: number
       unit: GeneratedUnit
+      /** After a Cancel, the note that says so ("Generation stopped. 3 clips made so far are kept."), also in warnings. */
+      stopped?: string
     }
   | {
       status: 'generating'
@@ -427,7 +429,7 @@ export class DirectorSession {
     return { cost, confirmRequired, toMake }
   }
 
-  private readyState(request: DirectorRequest, plan: EditPlan, extraWarnings: string[] = []): DirectorState {
+  private readyState(request: DirectorRequest, plan: EditPlan, stopped?: string): DirectorState {
     const project = this.deps.editor.getProject()
     const done = this.generatedFor(plan)
     const compiled = compilePlan(plan, project, {
@@ -447,7 +449,7 @@ export class DirectorSession {
         summary: plan.summary,
         changes: preview.ok ? preview.summary : preview.message,
         items: preview.ok ? preview.items : [],
-        warnings: [...new Set([...plan.warnings, ...compiled.warnings, ...extraWarnings])],
+        warnings: [...new Set([...plan.warnings, ...compiled.warnings, ...(stopped ? [stopped] : [])])],
       },
       cost,
       confirmRequired,
@@ -455,6 +457,7 @@ export class DirectorSession {
         toMake > 0 ? `Generate ${plural(toMake, unit)} · ${formatEstimate({ usd })}` : 'Make video',
       generatedShots: done.size,
       unit,
+      ...(stopped ? { stopped } : {}),
     }
   }
 
@@ -583,7 +586,7 @@ export class DirectorSession {
           const kept = done.size
             ? ` ${plural(done.size, unit)} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
             : ''
-          this.set(this.readyState(request, plan, [`Generation stopped.${kept}`]))
+          this.set(this.readyState(request, plan, `Generation stopped.${kept}`))
         } else {
           this.failOrReset(err, request, plan)
         }

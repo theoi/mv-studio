@@ -1,4 +1,4 @@
-import { useState, type ReactNode, type RefObject } from 'react'
+import { useId, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -68,13 +68,30 @@ function sentence(text: string): string {
   return /[.!?…]$/.test(t) ? t : `${t}.`
 }
 
-function Notes({ warnings }: { warnings: string[] }) {
+/** `stopped` is the note after a Cancel, which gets `stoppedId` and `stoppedRef` so the next action can point to it. */
+function Notes({
+  warnings,
+  stopped,
+  stoppedId,
+  stoppedRef,
+}: {
+  warnings: string[]
+  stopped?: string
+  stoppedId?: string
+  stoppedRef?: RefObject<HTMLLIElement | null>
+}) {
   if (!warnings.length) return null
   return (
     <ul className={styles.tips}>
-      {warnings.map((w) => (
-        <li key={w}>{w}</li>
-      ))}
+      {warnings.map((w) =>
+        w === stopped ? (
+          <li key={w} id={stoppedId} ref={stoppedRef}>
+            {w}
+          </li>
+        ) : (
+          <li key={w}>{w}</li>
+        ),
+      )}
     </ul>
   )
 }
@@ -330,12 +347,16 @@ function PlanningView({ state }: { state: StateOf<'planning'> | StateOf<'ready'>
 function ReadyView({
   state,
   actionRef,
+  stoppedRef,
 }: {
   state: StateOf<'ready'>
   /** The Generate button, which takes focus after a Cancel. */
   actionRef: RefObject<HTMLButtonElement | null>
+  /** The note that says a Cancel stopped generation. */
+  stoppedRef: RefObject<HTMLLIElement | null>
 }) {
   const description = useDirector((s) => s.description)
+  const stoppedId = useId()
   const cost = paidCost(state.cost)
   const spend = useSpend(state.cost, state.confirmRequired, state.actionLabel, state.unit)
   return (
@@ -350,6 +371,8 @@ function ReadyView({
             block
             icon={cost ? <Sparkles /> : <Clapperboard />}
             onClick={spend.start}
+            // Focus lands here after a Cancel; screen readers then read the note that says what was kept.
+            aria-describedby={state.stopped ? stoppedId : undefined}
           >
             {state.actionLabel}
           </Button>
@@ -373,7 +396,12 @@ function ReadyView({
       }
     >
       <p className={styles.lede}>{state.preview.summary}</p>
-      <Notes warnings={state.preview.warnings} />
+      <Notes
+        warnings={state.preview.warnings}
+        stopped={state.stopped}
+        stoppedId={stoppedId}
+        stoppedRef={stoppedRef}
+      />
       <PlanList description={description} />
       <div className={styles.rowActions}>
         <Button size="sm" variant="ghost" onClick={resetDirector}>
@@ -596,12 +624,17 @@ function ErrorView({ state }: { state: StateOf<'error'> }) {
 export function DirectorView() {
   const state = useDirector((s) => s.state)
   const applying = useDirector((s) => s.applying)
-  const focus = useFocusAfterCancel(state.status === 'generating')
+  const stopped = useRef<HTMLLIElement>(null)
+  const focus = useFocusAfterCancel(state.status === 'generating', stopped)
   switch (state.status) {
     case 'planning':
       return <PlanningView state={state} />
     case 'ready':
-      return applying ? <PlanningView state={state} /> : <ReadyView state={state} actionRef={focus.target} />
+      return applying ? (
+        <PlanningView state={state} />
+      ) : (
+        <ReadyView state={state} actionRef={focus.target} stoppedRef={stopped} />
+      )
     case 'generating':
       return <GeneratingView state={state} onCancel={focus.cancelled} />
     case 'applied':

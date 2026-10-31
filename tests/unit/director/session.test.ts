@@ -138,7 +138,10 @@ describe('DirectorSession', () => {
     expect(session.getState().status).toBe('generating')
     session.cancel()
     const after = ready(await applying)
-    expect(after.preview.warnings.some((w) => w.startsWith('Generation stopped.'))).toBe(true)
+    // The note is marked, so the panel can describe its Generate button with it.
+    expect(planned.stopped).toBeUndefined()
+    expect(after.stopped).toBe('Generation stopped. 2 shots made so far are kept.')
+    expect(after.preview.warnings).toContain(after.stopped)
     const kept = after.generatedShots
     expect(kept).toBe(2)
     expect(after.cost?.count).toBe(total - kept)

@@ -508,8 +508,12 @@ test('cancelling AI video clips stops the one underway at fal.ai, keeps the clip
 
   await expect(page.getByText(`Generation stopped. ${count - 1} clips made so far are kept.`)).toBeVisible()
   const again = page.getByRole('button', { name: /^Generate 1 clip · about \$\d+\.\d\d$/ })
-  await expect(again).toBeVisible()
   await expect(again).toBeFocused()
+  await expect(again).toBeInViewport()
+  // A screen reader hears what the Cancel kept as focus lands on Generate.
+  await expect(again).toHaveAccessibleDescription(
+    `Generation stopped. ${count - 1} clips made so far are kept.`,
+  )
   expect(fal.cancels).toEqual(['req-3'])
   expect(fal.submits).toHaveLength(count)
   expect((await draftState(page)).director).toBe(0)
@@ -558,8 +562,10 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
   const again = page.getByRole('button', {
     name: new RegExp(`^Generate ${count - 3} clips · about \\$\\d+\\.\\d\\d$`),
   })
-  await expect(again).toBeVisible()
+  // At 1280 the note is too far above the button to show with it: the focused button is scrolled into view.
   await expect(again).toBeFocused()
+  await expect(again).toBeInViewport()
+  await expect(again).toHaveAccessibleDescription('Generation stopped. 3 clips made so far are kept.')
   expect(fal.cancels).toEqual(['req-4'])
   expect(fal.submits).toHaveLength(4)
 })
