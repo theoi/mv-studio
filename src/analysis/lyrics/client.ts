@@ -1,13 +1,12 @@
 import type { ProjectEditor } from '../../model/editor.ts'
 import type { Asset, EditCommand, Id, LyricsDoc, Project } from '../../model/index.ts'
-import type { MediaStore } from '../../media/types.ts'
 import { JobError, jobs, type JobContext, type JobHandle, type JobRunner } from '../../shared/jobs.ts'
 import { modelCache, type ModelDescriptor } from '../../shared/models.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../../shared/worker.ts'
 import type { DecodedAudio } from '../beats/fast.ts'
 import { decodeAudioFile } from '../decode.ts'
 import { DEMUCS_MODEL, WAV2VEC2_MODEL, WHISPER_MODELS, whisperFileUrls, type WhisperSize } from '../models.ts'
-import { separateRate, StemSeparationService } from '../stems/client.ts'
+import { separateRate, StemSeparationService, type StemStore } from '../stems/client.ts'
 import { lyricChorusCommand } from '../structure/chorus.ts'
 import { realignFrom, realignLine, type CtcVocabulary } from './align.ts'
 import type { CtcEmissions } from './ctc.ts'
@@ -51,7 +50,7 @@ export interface LyricsEstimate {
 
 export interface LyricsDeps {
   editor: Pick<ProjectEditor, 'getProject' | 'dispatch'>
-  store: Pick<MediaStore, 'getFile' | 'storeBlob'>
+  store: StemStore
 }
 
 export interface LyricsServiceOptions {
@@ -164,11 +163,12 @@ export class LyricsService {
 
   /**
    * Listens to the song's vocals so `realignFrom` and `realignLine` work, e.g. after the project was reloaded: job
-   * `analysis.lyrics`, separating stems first when the song has none. Does nothing when they already work.
+   * `analysis.realign` (its own kind, so it never shows as a lyrics run), separating stems first when the song has
+   * none. Does nothing when they already work.
    */
   prepareRealign(songId: Id, deps: LyricsDeps): JobHandle<void> {
     return this.runner.run({
-      kind: 'analysis.lyrics',
+      kind: 'analysis.realign',
       title: 'Listening to the vocals',
       run: async (ctx) => {
         const current = vocalsAsset(deps.editor.getProject(), songId)
