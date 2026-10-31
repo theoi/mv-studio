@@ -127,6 +127,20 @@ describe('frame thumbnails', () => {
     expect(openAttempts).toEqual(['a', 'b', 'c'])
   })
 
+  it('finishes the open video’s frames before switching videos, so interleaved clips do not reopen it', async () => {
+    const { thumbs, decoded, openAttempts, finishNext } = fakeVideos({ manual: true, maxOpen: 1 })
+    const a = asset('a')
+    const b = asset('b')
+    thumbs.want(a, 1)
+    thumbs.want(b, 1)
+    thumbs.want(a, 2)
+    thumbs.want(b, 2)
+    await flush()
+    for (let i = 0; i < 4; i++) await finishNext()
+    expect(decoded).toEqual(['a@1', 'a@2', 'b@2', 'b@1'])
+    expect(openAttempts).toEqual(['a', 'b'])
+  })
+
   it('closes a video after idleMs without work', async () => {
     vi.useFakeTimers()
     const { thumbs, disposed } = fakeVideos({ idleMs: 5000 })

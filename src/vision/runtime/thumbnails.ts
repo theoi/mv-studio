@@ -186,12 +186,16 @@ export function createFrameThumbnails(
       .filter(([key, h]) => !made.has(key) && !inFlight.has(key) && !failed.has(h.asset.id))
       .sort((a, b) => b[1].asked - a[1].asked)
     const started = new Set<string>()
-    for (const [key, holder] of waiting) {
-      if (started.has(holder.asset.id)) continue
-      const decoder = decoderFor(holder.asset)
-      if (!decoder) continue
-      started.add(holder.asset.id)
-      run(key, holder, decoder)
+    // Open videos go first, so clips of a few videos interleaved on the timeline do not reopen one for every frame.
+    for (const alreadyOpen of [true, false]) {
+      for (const [key, holder] of waiting) {
+        const id = holder.asset.id
+        if (started.has(id) || decoders.has(id) !== alreadyOpen) continue
+        const decoder = decoderFor(holder.asset)
+        if (!decoder) continue
+        started.add(id)
+        run(key, holder, decoder)
+      }
     }
   }
 
