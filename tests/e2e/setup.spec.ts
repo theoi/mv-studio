@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
 import { FIXTURE_DIR } from './global-setup.ts'
@@ -313,21 +314,31 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
   expect(placed).toEqual({ offVideo: 0, autoCutTrack: false })
 })
 
-for (const { failure, error, note } of [
+for (const { failure, error, file, note } of [
   {
     failure: 'stops with an error',
     error: 'Array buffer allocation failed',
-    note: 'Footage analysis ran out of memory, so your clip was picked for variety.',
+    file: 'clip.mp4',
+    note: 'Footage analysis ran out of memory, so your clip was picked for variety. Try again in Match footage, then cut again to match the mood.',
   },
   {
     failure: 'can’t read the clip',
     error: 'Corrupt frame',
+    file: 'clip.mp4',
     note: '“clip.mp4” couldn’t be analyzed, so it was picked for variety.',
+  },
+  {
+    failure: 'can’t read a clip with a long name',
+    error: 'Corrupt frame',
+    file: 'my_holiday_footage_from_the_beach_2024_final_version_v2.mp4',
+    note: '“my_holiday_foot…_v2.mp4” couldn’t be analyzed, so it was picked for variety.',
   },
 ])
   test(`when footage analysis ${failure}, Cut my clips still cuts and says why the clips were picked for variety`, async ({
     page,
   }) => {
+    // The narrowest editor layout, where the Assist panel's notes have the least room.
+    await page.setViewportSize({ width: 1280, height: 720 })
     await startKind(page, /Beat-cut footage/)
     await page.evaluate((message) => {
       const onnx = {
@@ -350,7 +361,9 @@ for (const { failure, error, note } of [
         },
       })
     }, error)
-    await page.getByLabel('Clip files').setInputFiles([fixture('clip.mp4')])
+    await page
+      .getByLabel('Clip files')
+      .setInputFiles([{ name: file, mimeType: 'video/mp4', buffer: readFileSync(fixture('clip.mp4')) }])
     await expect(page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')).toHaveCount(1, {
       timeout: 30_000,
     })
@@ -360,8 +373,15 @@ for (const { failure, error, note } of [
     await waitForPreview(page)
     const assist = page.getByRole('tabpanel', { name: 'Assist' })
     await expect(assist.getByText(/^On the Video track\./)).toBeVisible({ timeout: 60_000 })
-    await expect(assist.getByText(note, { exact: true })).toBeVisible()
+    const shown = assist.getByText(note, { exact: true })
+    await expect(shown).toBeVisible()
     await expect(assist.getByText(/analyzed yet/)).toHaveCount(0)
+    // The note wraps inside its callout instead of running out of it.
+    const overflow = await shown.evaluate((el) => {
+      const callout = el.closest('[role="status"]')!.getBoundingClientRect()
+      return Math.round(el.getBoundingClientRect().right - callout.right)
+    })
+    expect(overflow).toBeLessThanOrEqual(0)
     const cut = await page.evaluate(
       () =>
         Object.values(

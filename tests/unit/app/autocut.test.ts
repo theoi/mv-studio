@@ -94,16 +94,25 @@ it('says why clips were cut without matching when footage analysis stopped, was 
   })
   const stopped = (code: JobErrorCode) => state({ status: 'error', error: { code, message: 'technical' } })
   expect(unanalyzedWarning(['a', 'b'], true, stopped('out-of-memory'))).toBe(
-    'Footage analysis ran out of memory, so your clips were picked for variety.',
+    'Footage analysis ran out of memory, so your clips were picked for variety. Try again in Match footage, then cut again to match the mood.',
   )
   expect(unanalyzedWarning(['a'], true, stopped('network'))).toBe(
-    'Footage analysis couldn’t download its model, so your clip was picked for variety.',
+    'Footage analysis couldn’t finish its download, so your clip was picked for variety. Check your connection, then try again in Match footage.',
   )
   expect(unanalyzedWarning(['a', 'b'], false, stopped('internal'))).toBe(
-    'Footage analysis stopped, so 2 clips were picked for variety.',
+    'Footage analysis stopped, so 2 clips were picked for variety. Try again in Match footage, then cut again to match the mood.',
   )
   expect(unanalyzedWarning(['a'], false, state({ status: 'paused' }))).toBe(
-    'Footage analysis was cancelled, so 1 clip was picked for variety.',
+    'Footage analysis was cancelled, so 1 clip was picked for variety. Analyze it again in Match footage, then cut again to match the mood.',
+  )
+  expect(unanalyzedWarning(['a'], true, stopped('storage-quota'))).toBe(
+    'Footage analysis ran out of browser storage, so your clip was picked for variety. Free space in Settings › Storage, then try again in Match footage.',
+  )
+  expect(unanalyzedWarning(['a'], true, stopped('unsupported'))).toBe(
+    'Footage analysis can’t run in this browser, so your clip was picked for variety.',
+  )
+  expect(unanalyzedWarning(['a'], true, stopped('model-load'))).toBe(
+    'Footage analysis couldn’t start, so your clip was picked for variety. Try again in Match footage, then cut again to match the mood.',
   )
   const failed = [
     { assetId: 'a', name: 'beach.mp4', message: 'Could not read this media file.' },
@@ -111,6 +120,10 @@ it('says why clips were cut without matching when footage analysis stopped, was 
   ]
   expect(unanalyzedWarning(['a'], false, state({ failed }))).toBe(
     '“beach.mp4” couldn’t be analyzed, so it was picked for variety.',
+  )
+  const long = [{ ...failed[0]!, name: 'my_holiday_footage_from_the_beach_2024_final_version_v2.mp4' }]
+  expect(unanalyzedWarning(['a'], true, state({ failed: long }))).toBe(
+    '“my_holiday_foot…_v2.mp4” couldn’t be analyzed, so it was picked for variety.',
   )
   expect(unanalyzedWarning(['a', 'b'], true, state({ failed }))).toBe(
     'Your clips couldn’t be analyzed, so they were picked for variety.',

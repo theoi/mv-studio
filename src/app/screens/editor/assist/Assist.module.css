@@ -437,6 +437,7 @@
   color: var(--text-2);
   font-size: var(--text-sm);
   line-height: var(--lh-sm);
+  overflow-wrap: anywhere;
 }
 
 .callout > svg {

@@ -10,7 +10,7 @@ import type {
   IndexingState,
 } from '../../vision/index.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
-import { plural } from '../format.ts'
+import { plural, shortFileName } from '../format.ts'
 import { analyzeFootageAndWait, useFootage, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { editor, sectionAt, sectionsOf } from './project.ts'
@@ -98,13 +98,24 @@ export function analysisBacklog(
   return { waiting: left.length - unreadable.length, unreadable }
 }
 
-/** What stopped footage analysis, by its error's code, for the cut's note. */
-const ANALYSIS_STOPPED: Partial<Record<JobErrorCode, string>> = {
-  network: 'couldn’t download its model',
-  'model-load': 'couldn’t load its model',
-  'out-of-memory': 'ran out of memory',
-  'storage-quota': 'ran out of browser storage',
-  unsupported: 'can’t run in this browser',
+const TRY_AGAIN = 'Try again in Match footage, then cut again to match the mood.'
+
+/**
+ * What stopped footage analysis, by its error's code, for the cut's note, with what the user can do about it (none
+ * when `next` is empty, Try again in Match footage when it is left out).
+ */
+const ANALYSIS_STOPPED: Partial<Record<JobErrorCode, { why: string; next?: string }>> = {
+  network: {
+    why: 'couldn’t finish its download',
+    next: 'Check your connection, then try again in Match footage.',
+  },
+  'model-load': { why: 'couldn’t start' },
+  'out-of-memory': { why: 'ran out of memory' },
+  'storage-quota': {
+    why: 'ran out of browser storage',
+    next: 'Free space in Settings › Storage, then try again in Match footage.',
+  },
+  unsupported: { why: 'can’t run in this browser', next: '' },
 }
 
 /**
@@ -124,15 +135,19 @@ export function unanalyzedWarning(
       : 'your clips were'
     : `${plural(n, 'clip')} ${n === 1 ? 'was' : 'were'}`
   if (indexing.status === 'error') {
-    const why = (indexing.error && ANALYSIS_STOPPED[indexing.error.code]) ?? 'stopped'
-    return `Footage analysis ${why}, so ${clips} picked for variety.`
+    const { why, next = TRY_AGAIN } = (indexing.error && ANALYSIS_STOPPED[indexing.error.code]) ?? {
+      why: 'stopped',
+    }
+    return `Footage analysis ${why}, so ${clips} picked for variety.${next ? ` ${next}` : ''}`
   }
-  if (indexing.status === 'paused') return `Footage analysis was cancelled, so ${clips} picked for variety.`
+  if (indexing.status === 'paused')
+    return `Footage analysis was cancelled, so ${clips} picked for variety. Analyze it again in Match footage, then cut again to match the mood.`
   const ids = new Set(assetIds)
   const failed = indexing.failed.filter((f) => ids.has(f.assetId))
   if (failed.length < n) return undefined
   const [first] = failed
-  if (n === 1 && first) return `“${first.name}” couldn’t be analyzed, so it was picked for variety.`
+  if (n === 1 && first)
+    return `“${shortFileName(first.name)}” couldn’t be analyzed, so it was picked for variety.`
   return `${all ? 'Your clips' : plural(n, 'clip')} couldn’t be analyzed, so they were picked for variety.`
 }
 
