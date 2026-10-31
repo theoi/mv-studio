@@ -25,7 +25,7 @@ describe('prepareDepthForParallax', () => {
     const m = depthMap(200, 50, (x, y) =>
       y === 49 && x < 100 ? (x % 2 ? 255 : 0) : 100 + Math.round((x / 199) * 50),
     )
-    const out = prepareDepthForParallax(m, { dilate: 0, blur: 0 })
+    const out = prepareDepthForParallax(m, { dilate: 0, blur: 0, thinRadius: 0 })
     const ramp = (x: number) => at(out, x, 1)
     expect(ramp(2)).toBeLessThan(15)
     expect(ramp(197)).toBeGreaterThan(240)
@@ -39,14 +39,14 @@ describe('prepareDepthForParallax', () => {
 
   it('does not amplify a nearly flat map into strong relief', () => {
     const m = depthMap(64, 64, (x, y) => 128 + ((x + y) % 5) - 2)
-    const out = prepareDepthForParallax(m, { dilate: 0, blur: 0 })
+    const out = prepareDepthForParallax(m, { dilate: 0, blur: 0, thinRadius: 0 })
     expect(Math.max(...out.data) - Math.min(...out.data)).toBeLessThan(64)
   })
 
   it('dilation grows the near region beyond the subject silhouette', () => {
     const disk = depthMap(100, 60, (x, y) => (Math.hypot(x - 50, y - 30) <= 10 ? 230 : 20))
-    const plain = prepareDepthForParallax(disk, { dilate: 0, blur: 0 })
-    const dilated = prepareDepthForParallax(disk, { dilate: 0.05, blur: 0 })
+    const plain = prepareDepthForParallax(disk, { dilate: 0, blur: 0, thinRadius: 0 })
+    const dilated = prepareDepthForParallax(disk, { dilate: 0.05, blur: 0, thinRadius: 0 })
     const near = (v: number) => v >= 128
     expect(count(dilated, near)).toBeGreaterThan(count(plain, near) * 1.8)
     expect(near(at(plain, 64, 30))).toBe(false)
@@ -58,7 +58,7 @@ describe('prepareDepthForParallax', () => {
   it('sharpens a soft depth edge into a step but leaves a gentle gradient alone', () => {
     const soft = depthMap(120, 10, (x) => Math.max(0, Math.min(255, Math.round((x - 54) * 21))))
     const gentle = depthMap(120, 10, (x) => Math.round(x * 2))
-    const opts = { dilate: 0, blur: 0, sharpen: 0.05 }
+    const opts = { dilate: 0, blur: 0, thinRadius: 0, sharpen: 0.05 }
     const mid = (m: DepthMap) =>
       Array.from({ length: 120 }, (_, x) => at(m, x, 5)).filter((v) => v > 10 && v < 245).length
     expect(mid(prepareDepthForParallax(soft, { ...opts, sharpen: 0 }))).toBeGreaterThanOrEqual(10)
@@ -70,14 +70,29 @@ describe('prepareDepthForParallax', () => {
 
   it('blurs the dilated step into a short ramp', () => {
     const step = depthMap(100, 20, (x) => (x < 50 ? 0 : 255))
-    const hard = prepareDepthForParallax(step, { dilate: 0, blur: 0 })
-    const soft = prepareDepthForParallax(step, { dilate: 0, blur: 0.03 })
+    const hard = prepareDepthForParallax(step, { dilate: 0, blur: 0, thinRadius: 0 })
+    const soft = prepareDepthForParallax(step, { dilate: 0, blur: 0.03, thinRadius: 0 })
     const mid = (m: DepthMap) =>
       Array.from({ length: 100 }, (_, x) => at(m, x, 10)).filter((v) => v > 20 && v < 235).length
     expect(mid(hard)).toBe(0)
     expect(mid(soft)).toBeGreaterThanOrEqual(4)
     expect(at(soft, 0, 10)).toBe(0)
     expect(at(soft, 99, 10)).toBe(255)
+  })
+
+  it('ramps long around thin near structures and short beside a large near region', () => {
+    // A wide near block, and near posts 2 px wide every 20 px, over a far background.
+    const m = depthMap(240, 60, (x) => ((x >= 20 && x < 90) || (x >= 140 && x % 20 < 2) ? 230 : 20))
+    const ramped = (out: DepthMap, from: number, to: number) =>
+      Array.from({ length: to - from }, (_, i) => at(out, from + i, 30)).filter((v) => v > 40 && v < 210)
+        .length
+    const both = prepareDepthForParallax(m)
+    const shortOnly = prepareDepthForParallax(m, { thinRadius: 0 })
+    // Beside the block: the short ramp, as if there were no thin structures at all.
+    expect(ramped(both, 90, 125)).toBe(ramped(shortOnly, 90, 125))
+    expect(ramped(both, 90, 125)).toBeLessThanOrEqual(4)
+    // Between the posts the long ramp leaves no flat background, the short one does.
+    expect(ramped(both, 162, 178)).toBeGreaterThan(2 * ramped(shortOnly, 162, 178))
   })
 
   it('rejects maps whose data does not match their size', () => {

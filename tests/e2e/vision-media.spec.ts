@@ -451,7 +451,15 @@ test('the smear prediction follows the parallax renderer’s rays for every pres
         s += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])
       return s / (a.length / 4) / 3
     }
-    const results: { preset: string; progress: number; diff: number; shifted: number }[] = []
+    // Share of pixels with a channel more than 8 levels off: a few rays hitting another layer would hide in the mean.
+    const offShare = (a: Uint8ClampedArray, b: Uint8ClampedArray) => {
+      let n = 0
+      for (let i = 0; i < a.length; i += 4)
+        if (Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])) > 8)
+          n++
+      return n / (a.length / 4)
+    }
+    const results: { preset: string; progress: number; diff: number; off: number; shifted: number }[] = []
     for (const preset of vision.CAMERA_PRESETS)
       for (const progress of [0, 1]) {
         const pose = vision.cameraPoseAt({ preset, intensity: 0.8, focus: 0.4 }, progress)
@@ -462,7 +470,14 @@ test('the smear prediction follows the parallax renderer’s rays for every pres
         const sample = sampler(pose)
         // What sampling one output pixel off would cost, as the scale for an error.
         const off = (u: number, v: number) => sample(u + 1 / W, v)
-        results.push({ preset, progress, diff: meanDiff(cpu(sample), gpu), shifted: meanDiff(cpu(off), gpu) })
+        const ray = cpu(sample)
+        results.push({
+          preset,
+          progress,
+          diff: meanDiff(ray, gpu),
+          off: offShare(ray, gpu),
+          shifted: meanDiff(cpu(off), gpu),
+        })
       }
     renderer.dispose()
     image.close()
@@ -470,12 +485,21 @@ test('the smear prediction follows the parallax renderer’s rays for every pres
   })
   console.log(
     'smear sampler vs renderer',
-    JSON.stringify(r.map((x) => [x.preset, x.progress, +x.diff.toFixed(2), +x.shifted.toFixed(2)])),
+    JSON.stringify(
+      r.map((x) => [
+        x.preset,
+        x.progress,
+        +x.diff.toFixed(2),
+        +(100 * x.off).toFixed(3),
+        +x.shifted.toFixed(2),
+      ]),
+    ),
   )
   expect(r).toHaveLength(20)
   for (const x of r) {
     expect(x.diff, `${x.preset} at ${x.progress}`).toBeLessThan(1.5)
     expect(x.diff, `${x.preset} at ${x.progress}`).toBeLessThan(x.shifted / 3)
+    expect(x.off, `${x.preset} at ${x.progress}`).toBeLessThan(0.002)
   }
   expect(errors).toEqual([])
 })

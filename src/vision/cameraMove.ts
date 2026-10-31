@@ -59,8 +59,9 @@ export interface CameraMovesResult {
 
 /**
  * "Add 3D camera move" on an image clip: estimates the still's depth (cached), stores it as a derived image asset
- * (reused when the project already has one for this still) and adds the camera effect with its progress keyframed
- * from the start to the end of the clip. The project changes in a single dispatch, so it is one undo step. A camera
+ * and adds the camera effect with its progress keyframed from the start to the end of the clip. When the project
+ * already has a depth image for this still it is reused as it is, and the focus and the smear prediction come from
+ * it, since that is what the move renders. The project changes in a single dispatch, so it is one undo step. A camera
  * move already on the clip is replaced.
  */
 export async function addCameraMove(
@@ -96,16 +97,20 @@ export async function addCameraMoves(
       if (stills.has(still.id)) continue
       const step = (f: number, stage?: string) => progress((i + f) / ids.length, stage)
       step(0, 'loading')
-      const { depth, gray } = await estimateDepth(deps, still, signal, step)
-      const prepared = prepareDepthForParallax(depth)
-      const focus = suggestFocus(prepared)
-      const scene: SmearScene = { depth: prepared, contrast: localContrast(gray) }
-      let newAsset: Asset | null = null
       let depthAsset = findDepthAsset(deps.editor.getProject(), still.id)
-      if (!depthAsset) {
+      let newAsset: Asset | null = null
+      let scene: SmearScene
+      if (depthAsset) {
+        // The move renders the stored image, which may come from an older preparation, so predict from it.
+        scene = await storedScene(deps.media, still, depthAsset)
+      } else {
+        const { depth, gray } = await estimateDepth(deps, still, signal, step)
+        const prepared = prepareDepthForParallax(depth)
+        scene = { depth: prepared, contrast: localContrast(gray) }
         newAsset = await storeDepth(deps, still, prepared, step)
         depthAsset = newAsset
       }
+      const focus = suggestFocus(scene.depth)
       stills.set(still.id, {
         depthAsset,
         newAsset,
@@ -222,6 +227,19 @@ export async function safeCameraIntensity(
   const focus = effect.params.focus?.value
   const current = effect.params.preset?.value
   const move = preset ?? CAMERA_PRESETS.find((p) => p === current) ?? DEFAULT_CAMERA_PRESET
+  return safeIntensity(
+    await storedScene(media, still, depthAsset),
+    move,
+    typeof focus === 'number' ? focus : 0.5,
+  )
+}
+
+/** The smear scene of a stored depth image and its still, cached for the last few depth images. */
+function storedScene(
+  media: Pick<CameraMoveDeps['media'], 'getFile'>,
+  still: Asset,
+  depthAsset: Asset,
+): Promise<SmearScene> {
   let scene = scenes.get(depthAsset.id)
   if (!scene) {
     scene = loadScene(media, still, depthAsset)
@@ -229,7 +247,7 @@ export async function safeCameraIntensity(
     scene.catch(() => scenes.delete(depthAsset.id))
     if (scenes.size > SCENE_CACHE_SIZE) scenes.delete(scenes.keys().next().value!)
   }
-  return safeIntensity(await scene, move, typeof focus === 'number' ? focus : 0.5)
+  return scene
 }
 
 async function loadScene(

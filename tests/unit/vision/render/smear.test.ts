@@ -110,12 +110,12 @@ describe('smear prediction', () => {
       height: h,
       data: Uint8Array.from({ length: w * h }, (_, i) => ((((i % w) >> 1) + ((i / w) >> 1)) % 2 ? 200 : 60)),
     })
-    const prepared = (options?: { dilate: number; blur: number }): SmearScene => ({
+    const prepared = (options?: { thinRadius: number }): SmearScene => ({
       depth: prepareDepthForParallax({ ...raw, model: 'test', quality: 'full' }, options),
       contrast,
     })
     const move = { preset: 'orbit-left' as const, intensity: 0.5, focus: 0.5 }
-    const narrowRamp = smearOf(prepared({ dilate: 0.007, blur: 0.0025 }), move)
+    const narrowRamp = smearOf(prepared({ thinRadius: 0 }), move)
     expect(narrowRamp).toBeGreaterThan(SMEAR_LIMIT * 10)
     expect(smearOf(prepared(), move)).toBeLessThan(narrowRamp / 10)
   })

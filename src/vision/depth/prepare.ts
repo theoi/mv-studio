@@ -10,6 +10,13 @@ export interface PrepareDepthOptions {
   dilate?: number
   /** Box-blur radius (applied twice) as a fraction of the map width. 0 disables blurring. */
   blur?: number
+  /**
+   * Near structures narrower than about twice this (fraction of the map width) count as thin: branches, wires,
+   * railings. Around them `thinDilate` and `thinBlur` replace `dilate` and `blur`. 0 treats everything as large.
+   */
+  thinRadius?: number
+  thinDilate?: number
+  thinBlur?: number
   /** Percentiles mapped to 0 and 255. */
   low?: number
   high?: number
@@ -18,13 +25,22 @@ export interface PrepareDepthOptions {
 const DEFAULTS: Required<PrepareDepthOptions> = {
   sharpen: 0.008,
   edgeThreshold: 0.12,
-  dilate: 0.015,
-  blur: 0.01,
+  dilate: 0.007,
+  blur: 0.0025,
+  thinRadius: 0.012,
+  thinDilate: 0.015,
+  thinBlur: 0.01,
   low: 0.02,
   high: 0.98,
 }
 /** Below this input range (out of 255) the map is treated as nearly flat and not stretched, so noise stays noise. */
 const MIN_RANGE = 24
+/**
+ * A pixel is near when it is `edgeThreshold` nearer than the farthest point within this radius (fraction of width).
+ * Inside a large region only a band this wide along its edge is near, so this must stay above 2·`thinRadius` or
+ * that band would count as thin.
+ */
+const NEAR_RADIUS = 0.04
 
 /**
  * Conditions a model depth map for the parallax renderer:
@@ -36,11 +52,11 @@ const MIN_RANGE = 24
  *    inside the object, so without this the renderer stretches the object's own edge pixels across the
  *    revealed background ("rubber sheet" tearing); with it, the stretched pixels are background.
  * 4. A blur that turns the dilated step into a ramp. The background the camera reveals beside a near object is
- *    filled from the ramp, so a ramp a few pixels wide stretches a few background pixels into streaks; behind
- *    thin occluders (branches, fences) over a detailed background those streaks cover much of the frame. A ramp
- *    about 2 % of the width wide (with the dilation keeping it outside the object) spreads the fill over enough
- *    background to stay below twice the move's zoom on the dev stills, at the cost of slightly more bending of
- *    straight background lines right next to the subject on strong moves.
+ *    filled from the ramp. Beside a large object (a person, an umbrella) a short ramp keeps straight background
+ *    lines straight up to the silhouette; a long one bends them over its whole width. Around thin near
+ *    structures (branches, fences) over a detailed background, a short ramp stretches a few background pixels
+ *    into streaks that cover much of the frame, so there the dilation and the ramp are about 2 % of the width,
+ *    which spreads the fill and moves a tangle of twigs as one layer.
  */
 export function prepareDepthForParallax(depth: DepthMap, opts: PrepareDepthOptions = {}): DepthMap {
   const o = { ...DEFAULTS, ...opts }
@@ -48,29 +64,120 @@ export function prepareDepthForParallax(depth: DepthMap, opts: PrepareDepthOptio
   const n = width * height
   if (depth.data.length !== n)
     throw new JobError('invalid-input', `Depth data has ${depth.data.length} values, expected ${n}`)
-  const out = normalizeRange(depth.data, o.low, o.high)
+  const base = normalizeRange(depth.data, o.low, o.high)
   const sharpenRadius = Math.round(o.sharpen * width)
-  if (sharpenRadius > 0) sharpenEdges(out, width, height, sharpenRadius, Math.round(o.edgeThreshold * 255))
-  const dilateRadius = Math.round(o.dilate * width)
+  const edgeStep = Math.round(o.edgeThreshold * 255)
+  if (sharpenRadius > 0) sharpenEdges(base, width, height, sharpenRadius, edgeStep)
+  const out = ramp(base, width, height, o.dilate, o.blur)
+  const thin = Math.round(o.thinRadius * width)
+  if (thin <= 0) return { ...depth, data: out }
+  const weight = thinWeight(base, width, height, thin, edgeStep)
+  if (!weight) return { ...depth, data: out }
+  // The long ramp reaches this far from a thin structure; the weight covers it, then fades out.
+  const spread = Math.round((o.thinDilate + 2 * o.thinBlur) * width)
+  separable(weight, width, height, (src, dst, start, stride, len) =>
+    slidingExtreme(src, dst, start, stride, len, spread, 1),
+  )
+  const fade = Math.max(1, Math.round(o.thinBlur * width))
+  for (let pass = 0; pass < 2; pass++)
+    separable(weight, width, height, (src, dst, start, stride, len) =>
+      boxBlur(src, dst, start, stride, len, fade),
+    )
+  const long = ramp(base, width, height, o.thinDilate, o.thinBlur)
+  for (let i = 0; i < n; i++) out[i] = Math.round(out[i]! + ((long[i]! - out[i]!) * weight[i]!) / 255)
+  return { ...depth, data: out }
+}
+
+/** Dilation by `dilate`, then a box blur of radius `blur` applied twice (both fractions of the width). */
+function ramp(base: Uint8Array, width: number, height: number, dilate: number, blur: number): Uint8Array {
+  const out = base.slice()
+  const dilateRadius = Math.round(dilate * width)
   if (dilateRadius > 0)
     separable(out, width, height, (src, dst, start, stride, len) =>
       slidingExtreme(src, dst, start, stride, len, dilateRadius, 1),
     )
-  const blurRadius = Math.round(o.blur * width)
+  const blurRadius = Math.round(blur * width)
   if (blurRadius > 0) {
     for (let pass = 0; pass < 2; pass++)
       separable(out, width, height, (src, dst, start, stride, len) =>
         boxBlur(src, dst, start, stride, len, blurRadius),
       )
   }
-  return { ...depth, data: out }
+  return out
 }
 
+/**
+ * 255 on near pixels that belong to a structure thinner than 2·`radius`, else 0; null when there are none. Near
+ * means at least `step` nearer than the farthest point around. A near pixel is thin when no near pixel within
+ * `radius` lies deeper than `radius` inside its region, so the edge of a large region never counts as thin.
+ */
+function thinWeight(
+  base: Uint8Array,
+  width: number,
+  height: number,
+  radius: number,
+  step: number,
+): Uint8Array | null {
+  const far = base.slice()
+  const r = Math.max(1, Math.round(NEAR_RADIUS * width))
+  separable(far, width, height, (src, dst, start, stride, len) =>
+    slidingExtreme(src, dst, start, stride, len, r, -1),
+  )
+  const near = new Uint8Array(base.length)
+  for (let i = 0; i < near.length; i++) near[i] = base[i]! - far[i]! >= step ? 1 : 0
+  const inside = distanceInside(near, width, height)
+  separable(inside, width, height, (src, dst, start, stride, len) =>
+    slidingExtreme(src, dst, start, stride, len, radius, 1),
+  )
+  const weight = new Uint8Array(base.length)
+  let any = false
+  for (let i = 0; i < weight.length; i++)
+    if (near[i] && inside[i]! < radius) {
+      weight[i] = 255
+      any = true
+    }
+  return any ? weight : null
+}
+
+/** Distance in pixels (3-4 chamfer, capped at 255) from each pixel of `mask` to the nearest pixel outside it. */
+function distanceInside(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const d = new Int32Array(mask.length)
+  for (let i = 0; i < d.length; i++) d[i] = mask[i] ? 1 << 20 : 0
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (!d[i]) continue
+      let v = d[i]!
+      if (x > 0) v = Math.min(v, d[i - 1]! + 3)
+      if (y > 0) {
+        v = Math.min(v, d[i - width]! + 3)
+        if (x > 0) v = Math.min(v, d[i - width - 1]! + 4)
+        if (x < width - 1) v = Math.min(v, d[i - width + 1]! + 4)
+      }
+      d[i] = v
+    }
+  for (let y = height - 1; y >= 0; y--)
+    for (let x = width - 1; x >= 0; x--) {
+      const i = y * width + x
+      if (!d[i]) continue
+      let v = d[i]!
+      if (x < width - 1) v = Math.min(v, d[i + 1]! + 3)
+      if (y < height - 1) {
+        v = Math.min(v, d[i + width]! + 3)
+        if (x < width - 1) v = Math.min(v, d[i + width + 1]! + 4)
+        if (x > 0) v = Math.min(v, d[i + width - 1]! + 4)
+      }
+      d[i] = v
+    }
+  const out = new Uint8Array(mask.length)
+  for (let i = 0; i < out.length; i++) out[i] = Math.min(255, Math.round(d[i]! / 3))
+  return out
+}
 /**
  * Depth (0..1) to keep fixed during a move: a near, centre-weighted value, which lands on the main subject
  * in typical footage. Call it on the same map that is passed to the renderer.
  */
-export function suggestFocus(depth: DepthMap): number {
+export function suggestFocus(depth: Pick<DepthMap, 'width' | 'height' | 'data'>): number {
   const { width, height, data } = depth
   if (width <= 0 || height <= 0 || data.length < width * height) return 0.5
   const hist = new Float64Array(256)
