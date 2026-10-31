@@ -27,6 +27,10 @@ interface Fal {
   submits: { endpoint: string; input: Record<string, unknown> }[]
   cancels: string[]
   uploads: string[]
+  /** Result downloads started (GETs of fal.ai's media host). */
+  downloads: number
+  /** With `holdDownload`, lets the held downloads finish. */
+  release: () => void
 }
 
 const json = (route: Route, status: number, body: unknown) =>
@@ -34,8 +38,14 @@ const json = (route: Route, status: number, body: unknown) =>
 
 async function mockFal(
   page: Page,
-  init: Partial<Pick<Fal, 'statuses' | 'submitError' | 'output'>> = {},
+  {
+    holdDownload = false,
+    ...init
+  }: Partial<Pick<Fal, 'statuses' | 'submitError' | 'output'>> & {
+    holdDownload?: boolean
+  } = {},
 ): Promise<Fal> {
+  const held: (() => void)[] = []
   const fal: Fal = {
     statuses: ['IN_QUEUE', 'IN_PROGRESS', 'COMPLETED'],
     output: 'image',
@@ -43,6 +53,11 @@ async function mockFal(
     submits: [],
     cancels: [],
     uploads: [],
+    downloads: 0,
+    release: () => {
+      holdDownload = false
+      for (const go of held.splice(0)) go()
+    },
   }
   const polls = new Map<string, number>()
   let next = 1
@@ -111,6 +126,8 @@ async function mockFal(
       fal.uploads.push(request.url())
       return route.fulfill({ status: 200, headers: CORS, body: '' })
     }
+    fal.downloads++
+    if (holdDownload) await new Promise<void>((go) => held.push(go))
     const video = request.url().endsWith('.mp4')
     return route.fulfill({
       status: 200,
@@ -336,6 +353,31 @@ test('asks before spending when Settings says so, and Cancel stops the request a
   await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeVisible()
   await expect.poll(() => fal.cancels).toEqual(['req-1'])
   await expect(page.locator('[aria-label^="AI video: "]')).toHaveCount(0)
+})
+
+test('a Cancel while the video downloads says it is stopping, and keeps the video fal.ai made in Media only', async ({
+  page,
+}, testInfo) => {
+  const fal = await mockFal(page, { output: 'video', holdDownload: true })
+  await openGenerate(page, { falKey: KEY })
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Slow aerial over a neon city')
+  await page.getByRole('button', { name: 'Generate · about $0.20' }).click()
+  await expect.poll(() => fal.downloads, { timeout: 20_000 }).toBe(1)
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+  await expect(page.getByText('Stopping… keeping 1 video that is downloading')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('generate-stopping-1440x900.png') })
+  fal.release()
+  const kept = page
+    .locator('[data-toast]')
+    .filter({ hasText: 'Generation stopped. 1 video made so far is kept in Media.' })
+  await expect(kept).toBeVisible()
+  await kept.hover()
+  await page.screenshot({ path: testInfo.outputPath('generate-kept-1440x900.png') })
+  await expect(libraryCard(page, 'AI video: Slow aerial over a neon city')).toBeVisible()
+  await expect(page.locator('[aria-label^="AI video: Slow aerial over a neon city, "]')).toHaveCount(1)
+  expect(fal.cancels).toEqual([])
+  await expect(page.getByRole('button', { name: 'Generate · about $0.20' })).toBeVisible()
 })
 
 test('errors say what to do: a rejected key opens Settings, and Try again recovers from a fal.ai outage', async ({

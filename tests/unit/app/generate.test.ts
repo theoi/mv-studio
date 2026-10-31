@@ -5,7 +5,8 @@ import type {
   MediaGenerationProvider,
 } from '../../../src/cloud/types.ts'
 import { createProject, createTrack, createImageClip, type Asset } from '../../../src/model/index.ts'
-import { jobs } from '../../../src/shared/jobs.ts'
+import { PAID_RESULT_GRACE_MS } from '../../../src/cloud/media.ts'
+import { jobs, JobError, type JobContext } from '../../../src/shared/jobs.ts'
 import type * as cloudState from '../../../src/app/state/cloud.ts'
 import { cloudSettings, spendLedger } from '../../../src/app/state/cloud.ts'
 import {
@@ -25,6 +26,7 @@ import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
 import { editor } from '../../../src/app/state/project.ts'
 import { buildDemoProject, TRACK_IDS } from '../../../src/app/mock/demoProject.ts'
 import { laneItemsAt } from '../../../src/app/screens/editor/timeline/laneMenu.ts'
+import { toast } from '../../../src/app/state/ui.ts'
 
 const fake = vi.hoisted(() => ({
   provider: undefined as MediaGenerationProvider | undefined,
@@ -49,16 +51,24 @@ vi.mock('../../../src/app/state/cloud.ts', async (original) => ({
 vi.mock('../../../src/media/mediaStore.ts', () => ({
   mediaStore: {
     getFile: async () => new Blob(),
-    storeBlob: async (blob: Blob, info: Pick<Asset, 'kind' | 'name' | 'origin'>): Promise<Asset> => ({
-      id: `gen-${++fake.stored}`,
-      kind: info.kind,
-      name: info.name,
-      origin: info.origin,
-      mimeType: blob.type,
-      byteSize: blob.size,
-      storageKey: `media/gen-${fake.stored}`,
-      createdAt: '2026-10-31T00:00:00.000Z',
-    }),
+    storeBlob: async (
+      blob: Blob,
+      info: Pick<Asset, 'kind' | 'name' | 'origin'>,
+      ctx?: JobContext,
+    ): Promise<Asset> => {
+      // Like the real store, which checks for a cancel before it writes.
+      ctx?.throwIfCancelled()
+      return {
+        id: `gen-${++fake.stored}`,
+        kind: info.kind,
+        name: info.name,
+        origin: info.origin,
+        mimeType: blob.type,
+        byteSize: blob.size,
+        storageKey: `media/gen-${fake.stored}`,
+        createdAt: '2026-10-31T00:00:00.000Z',
+      }
+    },
   },
 }))
 
@@ -111,7 +121,54 @@ function provider(progress: number[][] = [], failOnCall?: number): MediaGenerati
   }
 }
 
+function result(request: GenerationRequest, n: number): GenerationResult {
+  const video = request.task !== 'text-to-image'
+  return {
+    requestId: `r${n}`,
+    modelId: request.modelId,
+    task: request.task,
+    media: [
+      {
+        kind: video ? 'video' : 'image',
+        blob: new Blob(['x'], { type: video ? 'video/mp4' : 'image/jpeg' }),
+        mimeType: video ? 'video/mp4' : 'image/jpeg',
+        sourceUrl: '',
+      },
+    ],
+    estimate: { usd: 0.003, approximate: false, breakdown: '', pricesCheckedOn: '' },
+  }
+}
+
+/** Like FalProvider: each request reports its stage and waits to be released, and a cancel that reaches it rejects it. */
+function heldProvider(stages: string[] = []) {
+  const release: (() => void)[] = []
+  const held: MediaGenerationProvider = {
+    ...provider(),
+    async generate(request, ctx) {
+      const n = release.length
+      ctx.progress({ stage: stages[n] ?? 'generate', fraction: 0.5 })
+      await new Promise<void>((resolve, reject) => {
+        release.push(resolve)
+        ctx.signal.addEventListener('abort', () => reject(new JobError('cancelled', 'Cancelled')), {
+          once: true,
+        })
+      })
+      ctx.progress({ stage: 'download', fraction: 0.95, message: 'Downloading the video' })
+      return result(request, n)
+    },
+  }
+  return { held, release }
+}
+
+const runningJob = () => jobs.list().find((j) => j.kind === JOB_KINDS.generate && j.status === 'running')
+const statusOf = (id: string) => jobs.list().find((j) => j.id === id)?.status
+const generatedAssets = () => Object.keys(editor.getProject().assets).filter((id) => id.startsWith('gen-'))
+const generatedClips = () =>
+  Object.values(editor.getProject().clips).filter((c) => 'assetId' in c && c.assetId.startsWith('gen-'))
+const toasts = () => vi.mocked(toast).mock.calls.map((c) => c[0])
+
 beforeEach(() => {
+  vi.mocked(toast).mockClear()
   editor.load(createProject({ name: 'Test' }))
   cloudSettings.update({
     falKey: 'id:secret',
@@ -226,6 +283,117 @@ describe('startGenerate', () => {
     await vi.waitFor(() => expect(jobs.list().find((j) => j.id === job?.id)?.status).toBe('failed'))
     expect(Object.keys(editor.getProject().clips)).toHaveLength(clipsBefore)
     expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
+  })
+})
+
+describe('a Cancel after fal.ai made something', () => {
+  it('keeps a video whose download the Cancel lands in, in Media only, and records its price once', async () => {
+    const { held, release } = heldProvider(['download'])
+    fake.provider = held
+    setGenerateForm({ kind: 'video', prompt: 'neon city', startImageId: null, target: null })
+    const before = spendLedger.monthTotal()
+    await startGenerate()
+    const job = runningJob()!
+    await vi.waitFor(() => expect(release).toHaveLength(1))
+    jobs.cancel(job.id)
+    // The Cancel took: the job's line says so while the paid video lands.
+    expect(jobs.list().find((j) => j.id === job.id)?.progress.message).toBe(
+      'Stopping… keeping 1 video that is downloading',
+    )
+    release[0]!()
+    await vi.waitFor(() => expect(statusOf(job.id)).toBe('cancelled'))
+    expect(jobs.list().find((j) => j.id === job.id)?.progress.message).toBe(
+      'Stopping… keeping 1 video that is downloading',
+    )
+    expect(generatedAssets()).toHaveLength(1)
+    expect(generatedClips()).toEqual([])
+    expect(editor.undoLabel()).toBe('Generate video')
+    expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
+    expect(toasts()).toEqual(['Generation stopped. 1 video made so far is kept in Media.'])
+  })
+
+  it('keeps an image that came back just before the Cancel, saves it all the same, and asks for no more', async () => {
+    let calls = 0
+    fake.provider = {
+      ...provider(),
+      async generate(request, ctx) {
+        ctx.progress({ stage: 'download', fraction: 1 })
+        // The Cancel lands as the result comes back, before it is saved.
+        queueMicrotask(() => jobs.cancel(runningJob()!.id))
+        return result(request, calls++)
+      },
+    }
+    setGenerateForm({ kind: 'image', prompt: 'neon city', count: 2, target: null })
+    const before = spendLedger.monthTotal()
+    await startGenerate()
+    const job = runningJob()!
+    await vi.waitFor(() => expect(statusOf(job.id)).toBe('cancelled'))
+    expect(generatedAssets()).toHaveLength(1)
+    expect(generatedClips()).toEqual([])
+    expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
+    expect(toasts()).toEqual(['Generation stopped. 1 image made so far is kept in Media.'])
+    expect(calls).toBe(1)
+  })
+
+  it('keeps the images made before the Cancel in a run of four, as one undo step, each charged once', async () => {
+    const { held, release } = heldProvider()
+    fake.provider = held
+    setGenerateForm({ kind: 'image', prompt: 'neon city', count: 4, target: null })
+    const before = spendLedger.monthTotal()
+    await startGenerate()
+    const job = runningJob()!
+    for (const n of [1, 2]) {
+      await vi.waitFor(() => expect(release).toHaveLength(n))
+      release[n - 1]!()
+    }
+    await vi.waitFor(() => expect(release).toHaveLength(3))
+    jobs.cancel(job.id)
+    await vi.waitFor(() => expect(statusOf(job.id)).toBe('cancelled'))
+    expect(generatedAssets()).toHaveLength(2)
+    expect(generatedClips()).toEqual([])
+    expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.006, 6)
+    expect(toasts()).toEqual(['Generation stopped. 2 images made so far are kept in Media.'])
+    expect(editor.undoLabel()).toBe('Generate 4 images')
+    expect(editor.undo()).toBe(true)
+    expect(generatedAssets()).toEqual([])
+  })
+
+  it('gives up on a download still stalled 30 s after the Cancel, and still records what fal.ai billed', async () => {
+    const { held, release } = heldProvider(['download'])
+    fake.provider = held
+    setGenerateForm({ kind: 'image', prompt: 'neon city', count: 1, target: null })
+    const before = spendLedger.monthTotal()
+    await startGenerate()
+    const job = runningJob()!
+    await vi.waitFor(() => expect(release).toHaveLength(1))
+    vi.useFakeTimers()
+    try {
+      jobs.cancel(job.id)
+      await vi.advanceTimersByTimeAsync(PAID_RESULT_GRACE_MS - 1)
+      expect(statusOf(job.id)).toBe('running')
+      await vi.advanceTimersByTimeAsync(1)
+    } finally {
+      vi.useRealTimers()
+    }
+    await vi.waitFor(() => expect(statusOf(job.id)).toBe('cancelled'))
+    expect(generatedAssets()).toEqual([])
+    expect(spendLedger.monthTotal()).toBeCloseTo(before + 0.003, 6)
+    expect(toasts()).toEqual([])
+  })
+
+  it('says nothing and changes nothing when the Cancel stops the only request before fal.ai finished', async () => {
+    const { held, release } = heldProvider()
+    fake.provider = held
+    setGenerateForm({ kind: 'image', prompt: 'neon city', count: 1, target: null })
+    const before = spendLedger.monthTotal()
+    await startGenerate()
+    const job = runningJob()!
+    await vi.waitFor(() => expect(release).toHaveLength(1))
+    jobs.cancel(job.id)
+    await vi.waitFor(() => expect(statusOf(job.id)).toBe('cancelled'))
+    expect(generatedAssets()).toEqual([])
+    expect(spendLedger.monthTotal()).toBeCloseTo(before, 6)
+    expect(toasts()).toEqual([])
   })
 })
 

@@ -1,7 +1,7 @@
 import { produce } from 'immer'
 import { useSyncExternalStore } from 'react'
 import { DEFAULT_FAL_MODELS, FAL_MODELS, snapDuration, type FalModel } from '../../cloud/fal/catalog.ts'
-import { storeGeneratedMedia } from '../../cloud/media.ts'
+import { generateKeepingPaid, storeGeneratedMedia } from '../../cloud/media.ts'
 import { formatEstimate, needsSpendConfirmation, roundUsd } from '../../cloud/pricing.ts'
 import type { GenerationRequest, GenerationTask } from '../../cloud/types.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
@@ -14,7 +14,7 @@ import {
   type Project,
 } from '../../model/index.ts'
 import { jobs, type JobContext, type JobProgress } from '../../shared/jobs.ts'
-import { formatTime } from '../format.ts'
+import { formatTime, plural } from '../format.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
 import { assetPlacement } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
@@ -27,7 +27,7 @@ import { get, openAssist, set, toast } from './ui.ts'
 /*
  * Assist › Generate: AI images and video clips with the user's fal.ai key. The form is kept here so a result or an
  * error returns to the same settings. Each run is one job; its results are stored as project media and placed on the
- * timeline at the playhead as one undo step.
+ * timeline at the playhead as one undo step. A Cancel keeps what fal.ai already made (and billed) in Media only.
  */
 
 export type GenerateKind = 'image' | 'video'
@@ -232,29 +232,63 @@ export function undoOutcome(outcome: GenerateOutcome): boolean {
   return editor.undo()
 }
 
-/** Maps one request's progress into its share of the job, and keeps the time left only while generating. */
-function share(ctx: JobContext, from: number, to: number, prefix: string): JobContext {
+/**
+ * Maps one request's progress into its share of the job, and keeps the time left only while generating. After a
+ * Cancel the job's line keeps saying it is stopping.
+ */
+function share(
+  ctx: JobContext,
+  from: number,
+  to: number,
+  prefix: string,
+  onDownload: () => void,
+): JobContext {
   return {
     signal: ctx.signal,
     throwIfCancelled: () => ctx.throwIfCancelled(),
-    progress: (p: JobProgress) =>
+    progress: (p: JobProgress) => {
+      if (p.stage === 'download') onDownload()
+      if (ctx.signal.aborted) return
       ctx.progress({
         ...p,
         ...(p.fraction !== undefined ? { fraction: from + (to - from) * p.fraction } : {}),
         ...(p.message ? { message: `${prefix}${p.message}` } : {}),
         etaSeconds: p.stage === 'generate' ? p.etaSeconds : undefined,
-      }),
+      })
+    },
   }
 }
 
-/** Storing reports its own stages and fractions; the job shows one "saving" step instead. */
+/**
+ * Storing reports its own stages and fractions; the job shows one "saving" step instead. A Cancel doesn't stop it,
+ * since the result is already paid for, and the job's line keeps saying it is stopping.
+ */
 function saving(ctx: JobContext, fraction: number, prefix: string): JobContext {
   return {
-    signal: ctx.signal,
-    throwIfCancelled: () => ctx.throwIfCancelled(),
-    progress: () =>
-      ctx.progress({ stage: 'store', fraction, message: `${prefix}Saving to your media library` }),
+    signal: new AbortController().signal,
+    throwIfCancelled: () => undefined,
+    progress: () => {
+      if (!ctx.signal.aborted)
+        ctx.progress({ stage: 'store', fraction, message: `${prefix}Saving to your media library` })
+    },
   }
+}
+
+/** After a Cancel, what fal.ai already made goes into Media (not the timeline) as one undo step. */
+function keepInMedia(assets: Asset[], label: string, unit: string, start: number, usd: number): void {
+  if (assets.length === 0) return
+  if (
+    !dispatch(
+      assets.map((asset) => ({ type: 'asset.add', asset })),
+      { label },
+    )
+  )
+    return
+  const kept: GenerateOutcome = { label, assets, start, usd, clipIds: [] }
+  toast(
+    `Generation stopped. ${plural(assets.length, unit)} made so far ${assets.length === 1 ? 'is' : 'are'} kept in Media.`,
+    { label: 'Undo', run: () => undoOutcome(kept) },
+  )
 }
 
 /**
@@ -292,17 +326,29 @@ export async function startGenerate(at?: number): Promise<void> {
       const assets: Asset[] = []
       let placed: string[]
       let usd = 0
+      let downloading = false
+      // A result fal.ai already billed still downloads for a while after a Cancel: say the Cancel was received.
+      const stopping = () => {
+        if (downloading)
+          ctx.progress({
+            stage: 'stopping',
+            message: `Stopping… keeping 1 ${model.output} that is downloading`,
+            etaSeconds: undefined,
+          })
+      }
+      ctx.signal.addEventListener('abort', stopping, { once: true })
       try {
-        for (let i = 0; i < count; i++) {
+        for (let i = 0; i < count && !ctx.signal.aborted; i++) {
           const prefix = count > 1 ? `Image ${i + 1} of ${count} · ` : ''
           const from = i / count
           const to = (i + 1) / count
-          const result = await provider.generate(
+          const result = await generateKeepingPaid(
+            provider,
             { ...request, ...(blob ? { image: blob } : {}) },
-            share(ctx, from, from + (to - from) * 0.96, prefix),
+            share(ctx, from, from + (to - from) * 0.96, prefix, () => (downloading = true)),
+            { onBilled: (billed) => (usd += billed) },
           )
-          usd += result.estimate.usd
-          ctx.throwIfCancelled()
+          downloading = false
           assets.push(
             ...(await storeGeneratedMedia(
               result,
@@ -319,8 +365,13 @@ export async function startGenerate(at?: number): Promise<void> {
         placed = placement.flatMap((c) => (c.type === 'clip.add' ? [c.clip.id] : []))
         // The next run goes to the playhead again, unless another place was picked meanwhile.
         if (target && form.target === target) setGenerateForm({ target: null })
+      } catch (error) {
+        if (ctx.signal.aborted) keepInMedia(assets, label, model.output, start, usd)
+        throw error
       } finally {
-        // fal.ai bills every finished request, even when a later one fails or the run is cancelled.
+        ctx.signal.removeEventListener('abort', stopping)
+        // fal.ai bills every finished request, even when a later one fails, the run is cancelled or the result is
+        // lost after.
         if (usd > 0) spendLedger.record(usd, label)
       }
       const outcome = { label, assets, start, usd, clipIds: placed }
