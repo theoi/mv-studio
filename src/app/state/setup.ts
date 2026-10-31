@@ -14,9 +14,8 @@ import {
   type VideoKind,
 } from '../../plugins/templates.ts'
 import { sampleSong } from '../mock/demoProject.ts'
-import { autoCutOptions, matchesMood, startAutoCut, unanalyzedClipCount, useAutoCut } from './autocut.ts'
+import { autoCutOptions, startAutoCut, useAutoCut } from './autocut.ts'
 import { draftFromSetup } from './director.ts'
-import { analyzeFootageNow, useFootage } from './footage.ts'
 import { analyzeSong, storeFiles } from './importer.ts'
 import { startLyrics } from './lyrics.ts'
 import { loadSetupDraft, startProject } from './persistence.ts'
@@ -250,17 +249,19 @@ export function setupAction(kind: Kind, s: Pick<SetupState, 'lyrics' | 'footage'
   return 'open'
 }
 
-/** Auto-cut of the whole song with every clip, as Assist › Auto-cut's "Cut to the beat" with its default choices. */
+/**
+ * Auto-cut of the whole song with every clip, as Assist › Auto-cut's "Cut to the beat" with its default choices. It
+ * analyzes the clips first, so the project's first cut is already matched to the mood.
+ */
 function cutEveryClip(): void {
   const choices = useAutoCut.getState().choices
-  const project = editor.getProject()
-  if (
-    matchesMood(choices) &&
-    unanalyzedClipCount(project) &&
-    useFootage.getState().indexing?.status !== 'indexing'
+  const options = autoCutOptions(
+    { ...choices, range: 'all', clips: 'all' },
+    editor.getProject(),
+    { type: 'none' },
+    0,
   )
-    analyzeFootageNow()
-  startAutoCut(autoCutOptions({ ...choices, range: 'all', clips: 'all' }, project, { type: 'none' }, 0))
+  startAutoCut(options, { analyzeFirst: true })
 }
 
 /**

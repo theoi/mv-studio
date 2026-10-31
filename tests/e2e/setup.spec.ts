@@ -224,10 +224,14 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
   page,
 }) => {
   await startKind(page, /Beat-cut footage/)
-  // Model-free footage analysis (mean color), so the cut downloads nothing.
+  // Model-free footage analysis (mean color), so the cut downloads nothing. It waits for __embedGate, so the test
+  // decides when the clips are analyzed.
   await page.evaluate(() => {
+    const w = window as unknown as { __embedGate: Promise<void>; __releaseEmbed: () => void }
+    w.__embedGate = new Promise((resolve) => (w.__releaseEmbed = resolve))
     const onnx = {
       async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        await w.__embedGate
         for (const b of bitmaps) b.close()
         return { dim: 2, data: new Float32Array(bitmaps.flatMap(() => [0.6, 0.8])) }
       },
@@ -270,7 +274,19 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
   const project = await opened(page)
   expect(project.assets).toEqual(['clip.mp4', 'neon-skyline.wav'])
   expect(project.panel).toBe('assist:autocut')
-  // The clips are cut to the beat without another click.
+  // The cut first waits for the clips to be analyzed, so it can match them to the mood.
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(assist.getByText('Analyzing your footage… 0 of 1 clip')).toBeVisible()
+  const videoClips = () =>
+    page.evaluate(
+      () =>
+        Object.values(
+          window.mvStudio.app.project.editor.getProject().clips as Record<string, { type: string }>,
+        ).filter((c) => c.type === 'video').length,
+    )
+  expect(await videoClips()).toBe(0)
+  await page.evaluate(() => (window as unknown as { __releaseEmbed: () => void }).__releaseEmbed())
+  // Then the clips are cut to the beat without another click, on the template's Video track.
   await expect
     .poll(
       () =>
@@ -283,6 +299,18 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
       { timeout: 60_000 },
     )
     .toBeGreaterThan(1)
+  await expect(assist.getByText(/^On the Video track\./)).toBeVisible()
+  await expect(assist.getByText(/picked for variety/)).toHaveCount(0)
+  const placed = await page.evaluate(() => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    const video = p.extensions.template.tracks.video as string
+    const clips = Object.values(p.clips as Record<string, { type: string; trackId: string }>)
+    return {
+      offVideo: clips.filter((c) => c.type === 'video' && c.trackId !== video).length,
+      autoCutTrack: (p.tracks as { name: string }[]).some((t) => t.name === 'Auto-cut'),
+    }
+  })
+  expect(placed).toEqual({ offVideo: 0, autoCutTrack: false })
 })
 
 test('a file that is not audio is refused as the song, and Skip for now opens the template without one', async ({
