@@ -139,11 +139,10 @@ test('Shift Z fits the whole song, V picks the select tool and Alt K keyframes t
   await page.keyboard.press('v')
   await expect(page.getByRole('radio', { name: 'Select (V)' })).toHaveAttribute('aria-checked', 'true')
 
-  const diamond = page.getByRole('button', { name: 'Add keyframe: Opacity' })
-  await expect(diamond).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByRole('button', { name: 'Add keyframe: Opacity' })).toBeVisible()
   await page.getByRole('slider', { name: 'Opacity' }).focus()
   await page.keyboard.press('Alt+K')
-  await expect(diamond).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: 'Remove keyframe: Opacity' })).toBeVisible()
   await page.locator('body').click({ position: { x: 1, y: 1 } })
   await page.keyboard.press('Alt+K')
   await expect(

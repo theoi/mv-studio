@@ -112,7 +112,7 @@ export function AnimateButtons({
   keyAtPlayhead,
 }: {
   keyed?: boolean
-  /** A keyframe sits at the playhead, so an edit changes it rather than adding one. */
+  /** A keyframe sits at the playhead, so an edit changes it and the keyframe button removes it. */
   keyAtPlayhead?: boolean
   reactive?: boolean
   onKey?: () => void
@@ -163,7 +163,7 @@ export function AnimateButtons({
         <span className={styles.reactSpacer} />
       )}
       <Tooltip
-        label={keyAtPlayhead ? 'Keyframe at playhead' : keyed ? 'Add keyframe at playhead' : 'Animate this'}
+        label={keyAtPlayhead ? 'Remove keyframe' : keyed ? 'Add keyframe at playhead' : 'Animate this'}
         shortcut="Alt K"
         side="left"
       >
@@ -171,9 +171,9 @@ export function AnimateButtons({
           className={[styles.animateBtn, keyed && styles.keyOn, keyAtPlayhead && styles.keyAt]
             .filter(Boolean)
             .join(' ')}
-          aria-label={`Add keyframe: ${property}`}
-          aria-pressed={!!keyAtPlayhead}
+          aria-label={`${keyAtPlayhead ? 'Remove' : 'Add'} keyframe: ${property}`}
           onClick={onKey}
+          data-keyframe
         >
           <Diamond />
         </button>

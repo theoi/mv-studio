@@ -150,10 +150,10 @@ interface RowOptions {
 }
 
 /**
- * Binds one animatable clip property to the edit API: value edits coalesce per gesture, the keyframe button, and the
- * react button, which opens the music reactions for the property. A clip that lacks the property shows `fallback`
- * and gets the property on its first edit. Once the property has keyframes, the row shows its value at the playhead,
- * and an edit sets the keyframe there.
+ * Binds one animatable clip property to the edit API: value edits coalesce per gesture, the keyframe button (which
+ * adds a keyframe at the playhead, or removes the one there), and the react button, which opens the music reactions
+ * for the property. A clip that lacks the property shows `fallback` and gets the property on its first edit. Once
+ * the property has keyframes, the row shows its value at the playhead, and an edit sets the keyframe there.
  */
 export function animatableRow(
   clip: Clip,
@@ -181,6 +181,18 @@ export function animatableRow(
   const key = () => {
     const time = keyTime(clip, get().playhead)
     const now = current()
+    const existing = keyframeAt(animatableAt(now, path), time)
+    if (existing) {
+      dispatch(
+        paths.flatMap((p): EditCommand[] => {
+          const at = keyframeAt(animatableAt(now, p), time)
+          return at ? [{ type: 'keyframe.remove', clipId: clip.id, path: p, time: at.time }] : []
+        }),
+        { label: 'Remove keyframe' },
+      )
+      toast(`Keyframe removed at ${formatTime(clip.start + existing.time, true)}`)
+      return
+    }
     dispatch(
       paths.flatMap((p): EditCommand[] => {
         const value = shownValue(animatableAt(now, p), fallback, time) ?? 0

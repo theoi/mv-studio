@@ -284,7 +284,7 @@ export const SHORTCUTS = [
   },
   {
     id: 'keyframe',
-    label: 'Add keyframe to the focused property',
+    label: 'Add or remove a keyframe on the focused property',
     group: 'Timeline',
     keys: ['Alt K'],
     inFields: true,
