@@ -144,13 +144,13 @@ export function analyzeImportsInBackground(): () => void {
 
 /**
  * Whether footage analysis is running and has not made this clip searchable yet, so search and suggestions leave it
- * out for now.
+ * out for now: 'analyzing' for the clip being analyzed, 'waiting' for the ones after it, else null.
  */
-export function useClipAnalyzing(assetId: Id): boolean {
+export function useClipAnalyzing(assetId: Id): 'analyzing' | 'waiting' | null {
   return useFootage((s) => {
-    if (s.indexing?.status !== 'indexing' || !s.service) return false
+    if (s.indexing?.status !== 'indexing' || !s.service) return null
     const status = s.service.indexing.statusOf(assetId)
-    return status === 'queued' || status === 'indexing'
+    return status === 'indexing' ? 'analyzing' : status === 'queued' ? 'waiting' : null
   })
 }
 

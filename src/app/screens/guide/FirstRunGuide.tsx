@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '../../ds/Button.tsx'
+import { focusOrigin } from '../../ds/focus.ts'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { hasSong, useProject } from '../../state/project.ts'
 import { set, useUi } from '../../state/ui.ts'
@@ -38,6 +39,26 @@ export function FirstRunGuide() {
   const steps = hasSong(useProject()) ? allSteps : allSteps.slice(1)
   const [rect, setRect] = useState<DOMRect | null>(null)
   const current = step === null ? null : steps[step]
+  const open = step !== null
+
+  // Declared first, so it notes what had focus before the effect below moves focus into the guide. On close, focus goes
+  // back there (or to the search field when the guide opened by itself), unless something else has taken it.
+  useLayoutEffect(() => {
+    if (!open) return
+    const from = focusOrigin()
+    return () => {
+      const active = document.activeElement
+      if (active && active !== document.body && active.isConnected) return
+      const back = from?.isConnected ? from : document.querySelector<HTMLElement>('[data-guide="search"]')
+      back?.focus({ preventScroll: true })
+    }
+  }, [open])
+
+  const next = useRef<HTMLButtonElement>(null)
+  const shown = !!current && !!rect
+  useLayoutEffect(() => {
+    if (shown) next.current?.focus({ preventScroll: true })
+  }, [shown, step])
 
   useLayoutEffect(() => {
     if (!current) return
@@ -116,7 +137,7 @@ export function FirstRunGuide() {
             variant="primary"
             size="sm"
             onClick={() => set({ guideStep: last ? null : step + 1 })}
-            autoFocus
+            ref={next}
           >
             {last ? 'Start editing' : 'Next'}
           </Button>

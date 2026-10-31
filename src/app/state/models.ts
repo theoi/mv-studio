@@ -53,9 +53,12 @@ export const LOCAL_MODELS: LocalModel[] = [
   local('tagger', 'Footage tagger', 'Search and match clips', VISION_MODELS.clipB32),
 ]
 
+/** How much of a model is in the browser's model cache: every file, some (an interrupted download) or none. */
+export type ModelDownload = 'all' | 'some' | 'none'
+
 interface ModelsState {
-  /** Whether every file of each model is in the browser's model cache (null until checked). */
-  cached: Record<string, boolean> | null
+  /** How much of each model is downloaded (null until checked). */
+  cached: Record<string, ModelDownload> | null
   /** Bytes the model cache holds, every model included (null until checked). */
   bytes: number | null
 }
@@ -65,10 +68,11 @@ export const useModels = create<ModelsState>(() => ({ cached: null, bytes: null 
 export async function refreshModels(): Promise<void> {
   const [entries, usage] = await Promise.all([
     Promise.all(
-      LOCAL_MODELS.map(
-        async (m) =>
-          [m.id, (await Promise.all(m.urls.map((u) => modelCache.has(u)))).every(Boolean)] as const,
-      ),
+      LOCAL_MODELS.map(async (m) => {
+        const has = await Promise.all(m.urls.map((u) => modelCache.has(u)))
+        const download: ModelDownload = has.every(Boolean) ? 'all' : has.some(Boolean) ? 'some' : 'none'
+        return [m.id, download] as const
+      }),
     ),
     modelCache.usage(),
   ])

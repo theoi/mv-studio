@@ -45,12 +45,18 @@ test('Library › Media marks clips that footage analysis has not finished, and 
   await expect(page.getByText('Analyzing…')).toHaveCount(0)
 
   await page.evaluate(() => (window as Untyped).mvStudio.app.footage.analyzeFootageNow())
-  await expect(card).toHaveAccessibleName('Night city, video, analyzing')
-  await expect(card.getByText('Analyzing…')).toBeVisible()
-  const marked = await page.getByText('Analyzing…').count()
-  expect(marked).toBeGreaterThanOrEqual(8)
+  await expect(card).toHaveAccessibleName(/^Night city, video, (analyzing|waiting to be analyzed)$/)
+  // One clip is analyzed at a time; the others wait their turn.
+  await expect(page.getByText('Analyzing…')).toHaveCount(1)
+  const analyzed = page.getByLabel(/, analyzing$/)
+  await expect(analyzed.getByText('Analyzing…')).toBeVisible()
+  expect(await page.getByText('Waiting', { exact: true }).count()).toBeGreaterThanOrEqual(7)
+  // Hovering shows the card's +; the mark keeps only its spinner so the two don't touch.
+  await analyzed.hover()
+  await expect(analyzed.getByText('Analyzing…')).toBeHidden()
 
   await page.evaluate(() => (window as Untyped).releaseAnalysis())
   await expect(page.getByText('Analyzing…')).toHaveCount(0, { timeout: 60_000 })
+  await expect(page.getByText('Waiting', { exact: true })).toHaveCount(0)
   await expect(card).toHaveAccessibleName('Night city, video')
 })

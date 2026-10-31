@@ -55,6 +55,7 @@ import {
   removeModel,
   useModels,
   type LocalModel,
+  type ModelDownload,
 } from '../../state/models.ts'
 import { setPref, usePrefs } from '../../state/prefs.ts'
 import { set, toast, useUi, type SettingsPage } from '../../state/ui.ts'
@@ -663,7 +664,7 @@ function useThreadLimit(): [string | null, (value: string) => void] {
   const choose = (value: string) => {
     setLimit(value)
     saveThreadLimit(value === 'auto' ? null : Number(value)).catch(() =>
-      toast('The thread setting could not be saved in this browser.'),
+      toast('The thread setting couldn’t be saved in this browser.'),
     )
   }
   return [limit, choose]
@@ -734,24 +735,28 @@ function LocalPage() {
       </Row>
       <div className={styles.scLabel}>Models · downloaded once, then used offline</div>
       {LOCAL_MODELS.map((m) => (
-        <ModelRow key={m.id} model={m} cached={cached && cached[m.id]} />
+        <ModelRow key={m.id} model={m} cached={cached?.[m.id] ?? null} />
       ))}
     </>
   )
 }
 
-function ModelRow({ model, cached }: { model: LocalModel; cached: boolean | null }) {
+function ModelRow({ model, cached }: { model: LocalModel; cached: ModelDownload | null }) {
   const [removing, setRemoving] = useState(false)
   const row = useRef<HTMLDivElement>(null)
   const remove = async () => {
     setRemoving(true)
     try {
       await removeModel(model.id)
-      toast(`${model.title} removed (${formatBytes(model.bytes)}). It downloads again when needed.`)
+      toast(
+        cached === 'some'
+          ? `The partial download of ${model.title} was removed. It downloads again when needed.`
+          : `${model.title} removed (${formatBytes(model.bytes)}). It downloads again when needed.`,
+      )
       // The Remove button unmounts with the download; keep focus inside the dialog.
       row.current?.focus()
     } catch {
-      toast(`${model.title} could not be removed. Try again after closing other tabs of MV Studio.`)
+      toast(`${model.title} couldn’t be removed. Try again after closing other tabs of MV Studio.`)
     } finally {
       setRemoving(false)
     }
@@ -763,10 +768,11 @@ function ModelRow({ model, cached }: { model: LocalModel; cached: boolean | null
         <div className={styles.rowDesc}>{model.desc}</div>
       </div>
       <span className={`${styles.size} tnum`}>{formatBytes(model.bytes)}</span>
-      {cached !== null &&
-        (cached ? <Badge tone="success">On this device</Badge> : <Badge>Downloads when used</Badge>)}
+      {cached === 'all' && <Badge tone="success">On this device</Badge>}
+      {cached === 'some' && <Badge>Partly downloaded</Badge>}
+      {cached === 'none' && <Badge>Downloads when used</Badge>}
       <span className={styles.modelAction}>
-        {cached && (
+        {(cached === 'all' || cached === 'some') && (
           <Button
             size="sm"
             variant="ghost"
@@ -804,7 +810,7 @@ function StoragePage() {
       const freed = await clearModels()
       toast(`Removed ${formatBytes(freed)} of models. They download again when needed.`)
     } catch {
-      toast('The model cache could not be cleared. Try again after closing other tabs of MV Studio.')
+      toast('The model cache couldn’t be cleared. Try again after closing other tabs of MV Studio.')
     } finally {
       setClearing(false)
       reload()

@@ -29,6 +29,7 @@ import {
   Save,
   ImageDown,
 } from 'lucide-react'
+import { useReturnFocus } from '../../ds/focus.ts'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { ask } from '../../state/ask.ts'
 import { openImport } from '../../state/importer.ts'
@@ -222,6 +223,7 @@ const groups = ['Suggested', 'Assist', 'Edit', 'View', 'Project', 'Settings', 'H
 
 export function CommandPalette() {
   const open = useUi((s) => s.paletteOpen)
+  const returnFocus = useReturnFocus()
   const [search, setSearch] = useState('')
   const close = () => {
     set({ paletteOpen: false })
@@ -237,7 +239,7 @@ export function CommandPalette() {
     <RDialog.Root open={open} onOpenChange={(o) => (o ? set({ paletteOpen: true }) : close())}>
       <RDialog.Portal>
         <RDialog.Overlay className={styles.overlay} />
-        <RDialog.Content className={styles.content} aria-describedby={undefined}>
+        <RDialog.Content className={styles.content} aria-describedby={undefined} {...returnFocus}>
           <RDialog.Title className="sr-only">Command palette</RDialog.Title>
           <Command label="Command palette" className={styles.command} loop>
             <div className={styles.inputRow}>
@@ -247,7 +249,6 @@ export function CommandPalette() {
                 onValueChange={setSearch}
                 placeholder="Search actions, tools and settings, or describe a change"
                 className={styles.input}
-                autoFocus
               />
               <Kbd keys="Esc" />
             </div>
