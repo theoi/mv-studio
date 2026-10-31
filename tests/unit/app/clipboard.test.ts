@@ -94,7 +94,7 @@ describe('copy and paste', () => {
     expect(onTrack(s.footage.id)).toHaveLength(4)
   })
 
-  it('puts the copies on a new track like the source, above it, when the source track is taken there', () => {
+  it('puts the copies on a new numbered track like the source, above it, when the source track is taken there', () => {
     selectClips([s.a.id, s.c.id])
     copySelection()
     set({ playhead: 2 })
@@ -102,7 +102,7 @@ describe('copy and paste', () => {
     const tracks = project().tracks
     const index = tracks.findIndex((t) => t.id === s.footage.id)
     const added = tracks[index - 1]!
-    expect(added).toMatchObject({ kind: 'visual', name: 'Footage', locked: false })
+    expect(added).toMatchObject({ kind: 'visual', name: 'Footage 2', locked: false })
     expect(added.id).not.toBe(s.locked.id)
     expect(onTrack(added.id)).toEqual([
       [2, 4],
@@ -145,7 +145,7 @@ describe('duplicate, cut and delete', () => {
     selectClips([s.b.id])
     duplicateSelection()
     const above = project().tracks[project().tracks.findIndex((t) => t.id === s.footage.id) - 1]!
-    expect(above.name).toBe('Footage')
+    expect(above.name).toBe('Footage 2')
     expect(onTrack(above.id)).toEqual([[8, 4]])
   })
 

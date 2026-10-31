@@ -413,6 +413,7 @@ export function Select<T extends string>({
   ariaLabel,
   size = 'md',
   disabled = false,
+  placeholder,
 }: {
   value: T
   onChange: (v: T) => void
@@ -420,6 +421,8 @@ export function Select<T extends string>({
   ariaLabel: string
   size?: 'sm' | 'md'
   disabled?: boolean
+  /** Shown while the value matches no option, e.g. "Mixed" for several items that differ. */
+  placeholder?: string
 }) {
   return (
     <RSelect.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
@@ -427,7 +430,7 @@ export function Select<T extends string>({
         className={[styles.selectTrigger, size === 'sm' && styles.selectSm].filter(Boolean).join(' ')}
         aria-label={ariaLabel}
       >
-        <RSelect.Value />
+        <RSelect.Value placeholder={placeholder} />
         <RSelect.Icon className={styles.selectIcon}>
           <ChevronDown />
         </RSelect.Icon>

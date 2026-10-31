@@ -2,6 +2,12 @@ import { Command } from 'cmdk'
 import { Dialog as RDialog } from 'radix-ui'
 import { useState, type ReactNode } from 'react'
 import {
+  ClipboardPaste,
+  Copy,
+  CopyPlus,
+  ScissorsLineDashed,
+  SquareDashedMousePointer,
+  Trash2,
   Upload,
   Scissors,
   Layers,
@@ -32,6 +38,14 @@ import {
 import { useReturnFocus } from '../../ds/focus.ts'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { ask } from '../../state/ask.ts'
+import {
+  copySelection,
+  cutSelection,
+  deleteSelection,
+  duplicateSelection,
+  paste,
+  selectAll,
+} from '../../state/clipboard.ts'
 import { openImport } from '../../state/importer.ts'
 import { downloadProjectFile, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { changeAspect } from '../../state/reframe.ts'
@@ -115,6 +129,31 @@ const actions: Action[] = [
   },
   { group: 'Edit', label: 'Undo', icon: <Undo2 />, shortcut: 'Mod Z', run: undo },
   { group: 'Edit', label: 'Split at playhead', icon: <Scissors />, shortcut: 'S', run: splitAtPlayhead },
+  { group: 'Edit', label: 'Copy', icon: <Copy />, shortcut: 'Mod C', run: () => void copySelection() },
+  {
+    group: 'Edit',
+    label: 'Cut',
+    icon: <ScissorsLineDashed />,
+    shortcut: 'Mod X',
+    run: () => void cutSelection(),
+  },
+  { group: 'Edit', label: 'Paste at playhead', icon: <ClipboardPaste />, shortcut: 'Mod V', run: paste },
+  {
+    group: 'Edit',
+    label: 'Duplicate',
+    icon: <CopyPlus />,
+    shortcut: 'Mod D',
+    run: () => void duplicateSelection(),
+  },
+  { group: 'Edit', label: 'Delete', icon: <Trash2 />, shortcut: 'Delete', run: () => void deleteSelection() },
+  {
+    group: 'Edit',
+    label: 'Select all on the track',
+    icon: <SquareDashedMousePointer />,
+    shortcut: 'Mod A',
+    keywords: 'select every clip',
+    run: selectAll,
+  },
   { group: 'Edit', label: 'Add text', icon: <Type />, shortcut: 'T', run: addTextAtPlayhead },
   {
     group: 'Edit',

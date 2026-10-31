@@ -13,6 +13,7 @@ import {
   type Track,
 } from '../../model/index.ts'
 import { dispatch, editor } from './project.ts'
+import { revealClips } from './reveal.ts'
 import { get, selectClips, selectedClipIds, toast } from './ui.ts'
 
 interface ClipboardContent {
@@ -141,7 +142,7 @@ function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplic
     if (!target) {
       const like = own ?? source.tracks.find((t) => t.id === trackId)
       const kind = like?.kind ?? (group[0]?.type === 'audio' ? 'audio' : 'visual')
-      target = createTrack(kind, like?.name ?? (kind === 'audio' ? 'Audio' : 'Video'))
+      target = createTrack(kind, numberedName(tracks, like?.name ?? (kind === 'audio' ? 'Audio' : 'Video')))
       const at = tracks.findIndex((t) => t.id === trackId)
       const index = at >= 0 ? at : kind === 'audio' ? tracks.length : 0
       tracks.splice(index, 0, target)
@@ -158,7 +159,19 @@ function place(source: ClipboardContent, offset: number, verb: 'Paste' | 'Duplic
       commands.push({ type: 'clip.add', clip: copy })
     }
   }
-  if (dispatch(commands, { label: `${verb} ${clipCount(ids.length)}` })) selectClips(ids)
+  if (!dispatch(commands, { label: `${verb} ${clipCount(ids.length)}` })) return
+  selectClips(ids)
+  revealClips(ids)
+}
+
+/** "Video 2", "Video 3": a name the other tracks don't have, so a new track can be told apart in the headers. */
+function numberedName(tracks: readonly Track[], name: string): string {
+  const names = new Set(tracks.map((t) => t.name))
+  if (!names.has(name)) return name
+  const base = name.replace(/ \d+$/, '')
+  let n = 2
+  while (names.has(`${base} ${n}`)) n++
+  return `${base} ${n}`
 }
 
 /** Mod A: every clip on the selected clip's track, or every clip in the project when no clip is selected. */

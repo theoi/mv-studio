@@ -108,6 +108,7 @@ import {
 } from '../../../state/library.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
+import { registerReveal } from '../../../state/reveal.ts'
 import {
   separatedStems,
   songStemTrack,
@@ -529,6 +530,12 @@ const sameView = (a: ClipView, b: ClipView) =>
   (Object.keys(a) as (keyof ClipView)[]).every((k) => a[k] === b[k]) &&
   Object.keys(a).length === Object.keys(b).length
 
+/** Shift or Mod click (or Enter or Space): adds the clip to the selection or takes it out. */
+function toggleInSelection(clipId: string) {
+  const picked = selectedClipIds(get().selection)
+  selectClips(picked.includes(clipId) ? picked.filter((id) => id !== clipId) : [...picked, clipId])
+}
+
 /** Re-renders only when its clip, zoom or selection changes: an edit to one clip leaves the others alone. */
 const ClipBlock = memo(
   ClipBlockView,
@@ -573,10 +580,10 @@ function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
           aria-pressed={selected}
           onPointerDown={(e) => onPointerDown(e, clip, 'move')}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              select({ type: 'clip', id: clip.id })
-            }
+            if (e.key !== 'Enter' && e.key !== ' ') return
+            e.preventDefault()
+            if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(clip.id)
+            else select({ type: 'clip', id: clip.id })
           }}
         >
           {!isMedia && (
@@ -1055,6 +1062,38 @@ export function Timeline() {
     requestAnimationFrame(() => (el.scrollLeft = 0))
   }, [duration])
 
+  // Pasted or duplicated clips can land off screen, or on a new track that pushes them down.
+  useEffect(
+    () =>
+      registerReveal((ids) =>
+        requestAnimationFrame(() => {
+          const el = scrollRef.current
+          const p = editor.getProject()
+          const clips = ids.flatMap((id) => (p.clips[id] ? [p.clips[id]] : []))
+          if (!el || !clips.length) return
+          const rows = new Map(trackRows(p, !hasSong(p)).map((r) => [r.trackId, r]))
+          const spans = clips.flatMap((c) => {
+            const row = rows.get(c.trackId)
+            return row ? [row] : []
+          })
+          const pps = get().pxPerSec
+          const x0 = Math.min(...clips.map((c) => c.start)) * pps
+          const x1 = Math.max(...clips.map((c) => c.start + c.duration)) * pps
+          const visW = el.clientWidth - HEADER_W
+          if (x0 < el.scrollLeft || x1 > el.scrollLeft + visW)
+            el.scrollLeft = Math.max(0, x0 - Math.max(24, (visW - (x1 - x0)) / 2))
+          if (!spans.length) return
+          const top = Math.min(...spans.map((r) => r.top))
+          const bottom = Math.max(...spans.map((r) => r.top + r.height))
+          // The ruler row stays at the top while scrolling, over the first RULER_H pixels.
+          if (top < el.scrollTop + RULER_H) el.scrollTop = top - RULER_H
+          else if (bottom > el.scrollTop + el.clientHeight)
+            el.scrollTop = Math.min(top - RULER_H, bottom - el.clientHeight)
+        }),
+      ),
+    [],
+  )
+
   const scrubFrom = (e: React.PointerEvent<HTMLDivElement>) => {
     const lane = e.currentTarget
     const rect = lane.getBoundingClientRect()
@@ -1076,7 +1115,7 @@ export function Timeline() {
       e.preventDefault()
       const picked = selectedClipIds(get().selection)
       if (mode === 'move' && (e.shiftKey || e.metaKey || e.ctrlKey)) {
-        selectClips(picked.includes(clip.id) ? picked.filter((id) => id !== clip.id) : [...picked, clip.id])
+        toggleInSelection(clip.id)
         return
       }
       // Dragging a clip of a multi-selection moves them all; trimming acts on one clip.
@@ -1180,7 +1219,8 @@ export function Timeline() {
     const x0 = e.clientX - origin.left
     const y0 = e.clientY - origin.top
     const additive = e.shiftKey || e.metaKey || e.ctrlKey
-    const base = additive ? selectedClipIds(get().selection) : []
+    const before = get().selection
+    const base = additive ? selectedClipIds(before) : []
     const p = editor.getProject()
     const rows = trackRows(p, empty)
     let pointer = { x: e.clientX, y: e.clientY }
@@ -1225,18 +1265,32 @@ export function Timeline() {
       pointer = { x: ev.clientX, y: ev.clientY }
       frame ||= requestAnimationFrame(update)
     }
-    const up = () => {
+    const end = () => {
       cancelAnimationFrame(frame)
-      if (moved) update()
-      else if (!additive) set({ selection: { type: 'none' } })
       box.hidden = true
       lane.removeEventListener('pointermove', move)
       lane.removeEventListener('pointerup', up)
       lane.removeEventListener('pointercancel', up)
+      window.removeEventListener('keydown', onKey, true)
+    }
+    const up = () => {
+      end()
+      if (moved) update()
+      else if (!additive) set({ selection: { type: 'none' } })
+    }
+    // Esc cancels the marquee and keeps the selection it started with; captured before the global Esc deselects.
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return
+      ev.preventDefault()
+      ev.stopPropagation()
+      end()
+      if (lane.hasPointerCapture(e.pointerId)) lane.releasePointerCapture(e.pointerId)
+      set({ selection: before })
     }
     lane.addEventListener('pointermove', move)
     lane.addEventListener('pointerup', up)
     lane.addEventListener('pointercancel', up)
+    window.addEventListener('keydown', onKey, true)
   }
 
   /**

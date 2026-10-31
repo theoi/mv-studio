@@ -92,6 +92,34 @@ test('Shift and Mod click select several clips, and copy, paste, duplicate, cut 
   await next.click({ modifiers: [mod] })
   expect(await selectedIds(page)).toHaveLength(2)
 
+  // From the keyboard: Enter selects the focused clip; with Shift or Mod, Enter or Space adds or removes it.
+  await singer.focus()
+  await page.keyboard.press('Enter')
+  expect(await selectedIds(page)).toHaveLength(1)
+  await next.focus()
+  await page.keyboard.press('Shift+Enter')
+  await expect(next).toHaveAttribute('aria-pressed', 'true')
+  await expect(singer).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press(`${mod}+Space`)
+  await expect(next).toHaveAttribute('aria-pressed', 'false')
+  await page.keyboard.press('Shift+Space')
+  expect(await selectedIds(page)).toHaveLength(2)
+
+  // Blend reads "Mixed" while the selected clips differ.
+  const blend = page.getByRole('combobox', { name: 'Blend mode' })
+  const before = (await blend.textContent()) ?? ''
+  expect(before).not.toBe('Mixed')
+  await page.evaluate(
+    (id) => {
+      window.mvStudio.app.project.editor.dispatch(
+        { type: 'clip.set', clipId: id, path: ['blendMode'], value: 'screen' },
+        { history: 'skip' },
+      )
+    },
+    (await selectedIds(page))[0]!,
+  )
+  await expect(blend).toHaveText('Mixed')
+
   const tracks = await trackCount(page)
   await page.keyboard.press(`${mod}+c`)
   await expect(page.getByText('Copied 2 clips')).toBeVisible()
@@ -189,6 +217,18 @@ test('a marquee and Mod A select clips, and dragging and trimming move them, smo
   expect(new Set(await selectedIds(page))).toEqual(new Set(touched))
   await expect(page.getByText(`${touched.length} clips`, { exact: true })).toBeVisible()
 
+  // Esc while drawing a marquee cancels it and keeps the selection it started with.
+  await singer.click()
+  await page.mouse.move(xAt(50.5), spec.y + spec.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(xAt(69.5), video.y + video.height / 2, { steps: 10 })
+  expect((await selectedIds(page)).length).toBeGreaterThan(1)
+  await page.keyboard.press('Escape')
+  await page.mouse.move(xAt(70), video.y + video.height / 2, { steps: 2 })
+  await page.mouse.up()
+  await expect(singer).toHaveAttribute('aria-pressed', 'true')
+  expect(await selectedIds(page)).toHaveLength(1)
+
   // Mod A takes every clip on the selected clip's track.
   await spectrum.click()
   await page.keyboard.press(`${mod}+a`)
@@ -238,4 +278,36 @@ test('a marquee and Mod A select clips, and dragging and trimming move them, smo
     expect(sample.inputDelayP95Ms).toBeLessThan(100)
     expect(sample.longTaskMaxMs).toBeLessThan(200)
   }
+})
+
+test('pasted and duplicated clips are scrolled into view, on a numbered track when theirs is taken; the palette runs them', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  const singer = page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' })
+  await singer.click()
+  await page.keyboard.press(`${mod}+c`)
+  // Zoomed in and scrolled to the start, 1:07 is far off to the right.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ pxPerSec: 40 }))
+  const scroller = page.locator('[data-timeline-scroller]')
+  await scroller.evaluate((el) => (el.scrollLeft = 0))
+  const pasted = page.getByRole('button', { name: 'Singer close-up, 1:07.0 to 1:09.0' })
+  await page.keyboard.press(`${mod}+v`)
+  await expect(pasted).toBeInViewport()
+  // The Video track is taken at 1:07, so the copy goes on a new track named apart from it.
+  expect(
+    await page.evaluate(() =>
+      window.mvStudio.app.project.editor.getProject().tracks.map((t: { name: string }) => t.name),
+    ),
+  ).toContain('Video 2')
+
+  await scroller.evaluate((el) => (el.scrollLeft = 0))
+  await page.keyboard.press(`${mod}+k`)
+  const palette = page.getByRole('dialog')
+  await palette.getByRole('combobox').fill('Duplicate')
+  await page.keyboard.press('Enter')
+  await expect(palette).toBeHidden()
+  const copy = page.getByRole('button', { name: 'Singer close-up, 1:09.0 to 1:11.0' })
+  await expect(copy).toHaveAttribute('aria-pressed', 'true')
+  await expect(copy).toBeInViewport()
 })

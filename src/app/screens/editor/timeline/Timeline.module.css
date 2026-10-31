@@ -761,6 +761,7 @@
   left: 0;
   z-index: 4;
   border: 1px solid var(--accent-line);
-  background: var(--accent-softer);
+  border-radius: 2px;
+  background: var(--accent-soft);
   pointer-events: none;
 }

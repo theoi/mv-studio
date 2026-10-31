@@ -29,6 +29,9 @@ export function ClipsInspector({ ids }: { ids: string[] }) {
         meta={`${formatTime(start)} – ${formatTime(end)}`}
       />
       {visual.length > 0 && <SharedCompositing clips={visual} />}
+      <p className={styles.note}>
+        Shift-click or Mod-click a clip to add or remove it. Drag across empty track space to select an area.
+      </p>
     </>
   )
 }
@@ -77,6 +80,7 @@ function SharedCompositing({ clips }: { clips: VisualClip[] }) {
               )
           }}
           options={blendModes}
+          placeholder="Mixed"
           ariaLabel="Blend mode"
         />
       </FieldRow>
