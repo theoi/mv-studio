@@ -7,9 +7,11 @@ import { undoAction } from './library.ts'
 import { dispatch, editor } from './project.ts'
 import { toast } from './ui.ts'
 
-/** The LUT files imported into the project, oldest first. */
+/** The LUT files imported into the project, oldest first (Undo of a removal adds one back last, so not asset order). */
 export function lutFiles(project: Project): Asset[] {
-  return Object.values(project.assets).filter(isLutAsset)
+  return Object.values(project.assets)
+    .filter(isLutAsset)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }
 
 /** The effect settings set to a LUT file: one per color grade that uses it. */

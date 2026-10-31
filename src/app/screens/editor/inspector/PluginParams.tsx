@@ -121,7 +121,16 @@ function ImageRow({
         ariaLabel={name}
         options={imageOptions(project, value, spec.role)}
       />
-      {spec.role === 'lut' && <LutFilesDialog open={managing} onOpenChange={setManaging} />}
+      {spec.role === 'lut' && (
+        <LutFilesDialog
+          open={managing}
+          onOpenChange={(open) => {
+            setManaging(open)
+            // The dialog opened from an option of this choice, which is gone by then, so it has nothing to go back to.
+            if (!open) requestAnimationFrame(focusChoice)
+          }}
+        />
+      )}
     </FieldRow>
   )
 }

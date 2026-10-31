@@ -275,20 +275,21 @@ test('a LUT file loads from the LUT choice as one undo step, once per file, and 
   await expect(toastText(page, 'Imported the LUT “Cool”. Choose it in a Color grade’s LUT.')).toBeVisible()
   expect(await clipCount()).toBe(clips)
 
-  expect(await options()).toEqual([
+  // Oldest first; two files imported together may finish in either order.
+  const listed = await options()
+  expect([...listed.slice(0, 6), ...listed.slice(8)]).toEqual([
     'None',
     'Neutral',
     'Teal push',
     'identity-hald',
     'Teal push 2',
     'Warm',
-    'Dawn',
-    'Dusk',
     'Cold',
     'Cool',
     'Load a LUT file…',
     'Manage LUT files…',
   ])
+  expect(listed.slice(6, 8).sort()).toEqual(['Dawn', 'Dusk'])
 })
 
 test('Manage LUT files lists what uses each LUT, and Remove puts those grades back to no LUT as one undo step', async ({
@@ -305,14 +306,16 @@ test('Manage LUT files lists what uses each LUT, and Remove puts those grades ba
   await expect(lut).toHaveText('None')
   expect(await options()).toEqual(['None', 'Neutral', 'Load a LUT file…'])
 
-  await page
-    .getByLabel('Import media files')
-    .setInputFiles([
-      cubeFile('teal.cube', 'Teal push', 0.1),
-      cubeFile('warm.cube', 'Warm', 0.3),
-      cubeFile('cool.cube', 'Cool', 0.5),
-    ])
-  await expect(toastText(page, 'Imported 3 LUTs. Choose them in a Color grade’s LUT.')).toBeVisible()
+  for (const [file, title, lift] of [
+    ['teal.cube', 'Teal push', 0.1],
+    ['warm.cube', 'Warm', 0.3],
+    ['cool.cube', 'Cool', 0.5],
+  ] as const) {
+    await page.getByLabel('Import media files').setInputFiles(cubeFile(file, title, lift))
+    await expect(
+      toastText(page, `Imported the LUT “${title}”. Choose it in a Color grade’s LUT.`),
+    ).toBeVisible()
+  }
   await lut.click()
   await page.getByRole('option', { name: 'Teal push' }).click()
   await expect(lut).toHaveText('Teal push')
@@ -326,27 +329,26 @@ test('Manage LUT files lists what uses each LUT, and Remove puts those grades ba
     app.project.editor.dispatch({ type: 'effect.add', clipId: 'c-look', effect: grade })
   })
 
-  await lut.click()
-  await page.getByRole('option', { name: 'Manage LUT files…' }).click()
+  const manage = async () => {
+    await lut.click()
+    await page.getByRole('option', { name: 'Manage LUT files…' }).click()
+  }
   const dialog = page.getByRole('dialog', { name: 'LUT files' })
-  await expect(dialog.getByRole('listitem')).toHaveText([
-    /^Teal push\s*Used by 2 color grades$/,
-    /^Warm\s*Not used$/,
-    /^Cool\s*Not used$/,
-  ])
+  const rows = [/^Teal push\s*Used by 2 color grades$/, /^Warm\s*Not used$/, /^Cool\s*Not used$/]
+  // Closing the dialog gives focus back to the LUT choice it was opened from.
+  await manage()
+  await expect(dialog.getByRole('listitem')).toHaveText(rows)
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await expect(lut).toBeFocused()
+  await manage()
   await dialog.getByRole('button', { name: 'Remove Teal push' }).click()
   await expect(toastText(page, 'Removed the LUT “Teal push”. 2 color grades no longer use it.')).toBeVisible()
   expect(await undoLabel(page)).toBe('Remove LUT Teal push')
   await expect(dialog.getByRole('button', { name: 'Remove Warm' })).toBeFocused()
   await expect(dialog.getByRole('listitem')).toHaveCount(2)
-  // The toast's Undo brings the LUT back, with both grades set to it again.
+  // The toast's Undo brings the LUT back where it was, with both grades set to it again.
   await page.getByRole('status').getByRole('button', { name: 'Undo' }).last().click()
-  // It comes back last, as the latest file added.
-  await expect(dialog.getByRole('listitem')).toHaveText([
-    /^Warm\s*Not used$/,
-    /^Cool\s*Not used$/,
-    /^Teal push\s*Used by 2 color grades$/,
-  ])
+  await expect(dialog.getByRole('listitem')).toHaveText(rows)
   expect(
     await page.evaluate(() => {
       const project: Project = window.mvStudio.app.project.editor.getProject()
@@ -359,13 +361,14 @@ test('Manage LUT files lists what uses each LUT, and Remove puts those grades ba
 
   // Focus goes to the next Remove, else the previous one, else Load a LUT file….
   await dialog.getByRole('button', { name: 'Remove Cool' }).click()
-  await expect(dialog.getByRole('button', { name: 'Remove Teal push' })).toBeFocused()
+  await expect(dialog.getByRole('button', { name: 'Remove Warm' })).toBeFocused()
   await dialog.getByRole('button', { name: 'Remove Teal push' }).click()
   await expect(dialog.getByRole('button', { name: 'Remove Warm' })).toBeFocused()
   await dialog.getByRole('button', { name: 'Remove Warm' }).click()
   await expect(dialog.getByRole('button', { name: 'Load a LUT file…' })).toBeFocused()
   await expect(dialog.getByText('No LUT files in this project.')).toBeVisible()
   await page.keyboard.press('Escape')
+  await expect(lut).toBeFocused()
   await expect(lut).toHaveText('None')
   expect(await options()).toEqual(['None', 'Neutral', 'Load a LUT file…'])
 })
