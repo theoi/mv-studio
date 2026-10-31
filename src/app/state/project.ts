@@ -93,6 +93,16 @@ export function splitAtPlayhead(clipId?: string) {
   )
 }
 
+/** Splits a clip at `t` (a click with the split tool) as one undo step; nothing when `t` is at either end. */
+export function splitClipAt(clipId: string, t: number): boolean {
+  const clip = editor.getProject().clips[clipId]
+  if (!clip || t <= clip.start + 0.02 || t >= clip.start + clip.duration - 0.02) return false
+  return dispatch(
+    { type: 'clip.split', clipId, time: t, newClipId: crypto.randomUUID() },
+    { label: 'Split clip' },
+  )
+}
+
 /** Adds a text clip at the playhead on the first free overlay track, adding a Text track when none is free. */
 export function addTextAtPlayhead() {
   const p = editor.getProject()

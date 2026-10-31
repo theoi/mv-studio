@@ -887,3 +887,9 @@
   background: var(--accent-line);
   pointer-events: none;
 }
+
+/* The split tool cuts a clip where it is clicked, so clips and their trim handles show where, not drag or resize. */
+.scroller[data-tool='split'] .clip,
+.scroller[data-tool='split'] .handle {
+  cursor: crosshair;
+}

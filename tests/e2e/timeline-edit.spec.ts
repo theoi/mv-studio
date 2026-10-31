@@ -398,3 +398,53 @@ test('Paste here on an empty stretch of a lane pastes at that time, on that trac
   expect(snapped.start).not.toBeCloseTo(61.37, 2)
   expect(snapped.beats.some((b) => Math.abs(b - snapped.start) < 1e-6)).toBe(true)
 })
+
+test('with the split tool, a click cuts a clip where it is clicked, snapping to the playhead, as one undo step; Esc or V puts it down', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  // 40 px a second, so the snap distance (8 px) is 0.2 s.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ pxPerSec: 40 }))
+  const split = page.getByRole('radio', { name: 'Split: click a clip to cut it' })
+  const selectTool = page.getByRole('radio', { name: 'Select (V)' })
+  const singer = page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' })
+  // Clips are drawn only where the timeline is scrolled to.
+  await page.locator('[data-timeline-scroller]').evaluate((el) => (el.scrollLeft = 66 * 40 - 200))
+  await expect(singer).toBeVisible()
+  const h = (await singer.boundingBox())!.height
+  const undoDepth = () =>
+    page.evaluate(() => window.mvStudio.app.project.editor.history().undo.length as number)
+  const before = await undoDepth()
+
+  await split.click()
+  await expect(split).toHaveAttribute('aria-checked', 'true')
+  // 4 px after the playhead at 1:07.0: the cut snaps to the playhead.
+  await singer.click({ position: { x: 1.1 * 40, y: h / 2 } })
+  await expect(page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:07.0' })).toBeVisible()
+  const right = page.getByRole('button', { name: 'Singer close-up, 1:07.0 to 1:08.0' })
+  await expect(right).toBeVisible()
+  expect(await undoDepth()).toBe(before + 1)
+  expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBe('Split clip')
+
+  // Away from anything to snap to, it cuts at the click point.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ snap: false }))
+  await right.click({ position: { x: 0.6 * 40, y: h / 2 } })
+  const cut = (await clipsOn(page, ['t-video'])).find((c) => Math.abs(c.end - 67.6) < 0.05)
+  expect(cut?.start).toBeCloseTo(67, 5)
+  await page.keyboard.press(`${mod}+z`)
+  await page.keyboard.press(`${mod}+z`)
+  await expect(singer).toBeVisible()
+  expect(await undoDepth()).toBe(before)
+
+  // Esc puts the split tool down without clearing the selection; so does V.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ snap: true }))
+  await selectTool.click()
+  await singer.click()
+  await split.click()
+  await page.keyboard.press('Escape')
+  await expect(selectTool).toHaveAttribute('aria-checked', 'true')
+  await expect(singer).toHaveAttribute('aria-pressed', 'true')
+  await split.click()
+  await page.keyboard.press('v')
+  await expect(selectTool).toHaveAttribute('aria-checked', 'true')
+})
