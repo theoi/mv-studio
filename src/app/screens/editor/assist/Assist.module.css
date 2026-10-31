@@ -886,3 +886,22 @@
 .matchPick:hover {
   box-shadow: 0 0 0 1px var(--border-strong);
 }
+
+/* Song analysis: while it runs, the progress card takes focus, and the hidden actions keep their space under the
+   status line, so nothing below moves. */
+.analysisRun {
+  border-radius: var(--radius-md);
+}
+
+.analysisActions {
+  display: grid;
+}
+
+.analysisActions > * {
+  grid-area: 1 / 1;
+  align-self: center;
+}
+
+.keepSpace {
+  visibility: hidden;
+}

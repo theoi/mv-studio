@@ -70,6 +70,30 @@ describe('analysis worker API', () => {
     expect(refined.sections?.length).toBeGreaterThan(0)
   })
 
+  it('never sends progress back when the beat model downloads first', async () => {
+    channel = new MessageChannel()
+    const api = createAnalysisApi({
+      beatThisModel: async (ctx) => {
+        for (const fraction of [0, 0.5, 1]) ctx.progress({ stage: 'download', fraction })
+        return fakeBeatThis
+      },
+    })
+    exposeWorker(api, channel.port1 as unknown as Endpoint)
+    const client = createWorkerClient<typeof api>(channel.port2 as unknown as Endpoint)
+    // Long enough for Beat This! to run in several chunks, each reporting its progress.
+    const loop = drumLoop({ bpm: 120, seconds: 70, offset: 0.3, seed: 5 })
+    await client.call('analyzeFast', { assetId: 'a', audio: { sampleRate: SR, channels: [loop.audio] } })
+    const fractions: number[] = []
+    await client.call(
+      'refineBeats',
+      { assetId: 'a' },
+      { onProgress: (p) => fractions.push(p.fraction ?? NaN) },
+    )
+    expect(fractions.length).toBeGreaterThan(6)
+    expect(fractions.every((f, i) => i === 0 || f >= fractions[i - 1]!)).toBe(true)
+    expect(fractions.at(-1)).toBe(1)
+  })
+
   it('needs the audio again to refine a song it does not hold', async () => {
     const client = connect()
     const error = await client.call('refineBeats', { assetId: 'unknown' }).catch((e: unknown) => e)

@@ -271,6 +271,8 @@ test('Assist › Song analysis goes back from a failed run and cancels re-tracki
   await panel.getByRole('button', { name: 'Analyze again' }).click()
   await expect(panel.getByRole('alert')).toContainText('This audio file could not be decoded')
   await expect(panel.getByRole('alert')).toContainText('Your project is unchanged.')
+  // The run was started here, so focus goes to what comes next.
+  await expect(panel.getByRole('button', { name: 'Try again' })).toBeFocused()
   await shot(page, 'analysis-failed')
   await panel.getByRole('button', { name: 'Back' }).click()
   await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
@@ -355,6 +357,138 @@ test('Analyze again keeps a section whose color the user picked', async ({ page 
   await shot(page, 'analysis-kept-edited-section')
 })
 
+/**
+ * While the song is analyzed, Song analysis says it is finding each fact instead of "None found", and offers only
+ * Cancel: Tap tempo, Set first beat, Analyze again and Half/Double come back with the result, and keep their space
+ * meanwhile. A run started here puts focus on the progress card, in view at 1280×720, and gives it back to Analyze
+ * again when it ends. With a stand-in for analysis on the real job runner that stays at 0% until the test finishes it.
+ */
+test('Assist › Song analysis shows a running state with only Cancel while the song is analyzed', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    const { app, shared } = window.mvStudio
+    const w = window as unknown as { finishAnalysis?: () => void }
+    const beats = Array.from({ length: 16 }, (_, i) => i * 0.5)
+    const pending = (assetId: string) =>
+      shared.jobs.run({
+        kind: 'analysis.song',
+        title: 'Analyzing the song',
+        run: (ctx: { signal: AbortSignal }) =>
+          new Promise((resolve, reject) => {
+            w.finishAnalysis = () =>
+              resolve({
+                assetId,
+                version: 'test',
+                tempo: { bpm: 120, confidence: 0.9 },
+                beats,
+                downbeats: beats.filter((_, i) => i % 4 === 0),
+                sections: [{ id: 's1', start: 0, end: 8, label: 'verse', repeatGroup: 0, confidence: 0.4 }],
+              })
+            ctx.signal.addEventListener('abort', () => reject(new shared.JobError('cancelled', 'Cancelled')))
+          }),
+      })
+    app.songAnalysis.setSongAnalysisServiceForTests({
+      analyze: pending,
+      analyzeAgain: pending,
+      refine: () =>
+        shared.jobs.run({
+          kind: 'analysis.downbeats',
+          title: 'Finding bars and refining beats',
+          run: () => Promise.reject(new shared.JobError('cancelled', 'Cancelled')),
+        }),
+      release: async () => true,
+    } as never)
+    window.location.hash = '#/editor?project=empty&kind=blank'
+  })
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Import a song' }).click()
+  await (await chooser).setFiles(path.join(FIXTURE_DIR, 'song.mp3'))
+  await page.getByRole('tab', { name: 'Assist' }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  await panel.getByRole('button', { name: /^Analyzing the song…/ }).click()
+  const row = (label: string) => panel.getByText(label, { exact: true }).locator('..')
+  const actions = [
+    panel.getByRole('button', { name: 'Tap tempo' }),
+    panel.getByRole('button', { name: 'Set first beat' }),
+    panel.getByRole('button', { name: 'Analyze again' }),
+  ]
+  const again = actions[2]!
+  const levels = panel.getByRole('button', { name: /^(Half|Double) tempo/ })
+  const status = panel.getByRole('status').filter({ hasText: 'Analyzing the song…' })
+  const card = panel.getByRole('group', { name: 'Analyzing the song…' })
+  const finish = () =>
+    page.evaluate(() => (window as unknown as { finishAnalysis: () => void }).finishAnalysis())
+
+  // Before the first step reports, the card names it.
+  await expect(card).toContainText('Reading the song')
+  await expect(panel.getByRole('progressbar', { name: 'Song analysis progress' })).toBeVisible()
+  for (const label of ['Tempo', 'Beats', 'Bar starts', 'Sections', 'Energy curve'])
+    await expect(row(label)).toHaveText(`${label}Finding…`)
+  await expect(panel.getByText('None found')).toHaveCount(0)
+  for (const action of actions) await expect(action).toHaveCount(0)
+  await expect(status).toBeVisible()
+  await expect(panel.getByRole('button', { name: 'Cancel' })).toBeVisible()
+  await shot(page, 'analysis-first-run')
+
+  await finish()
+  await expect(row('Tempo')).toContainText('120 BPM · 4/4')
+  await expect(row('Beats')).toHaveText('Beats16 found')
+  await expect(row('Bar starts')).toHaveText('Bar starts4 found')
+  await expect(row('Sections')).toHaveText('Sections1')
+  for (const action of actions) await expect(action).toBeEnabled()
+  await expect(levels).toHaveCount(2)
+  await expect(panel.getByRole('button', { name: 'Cancel' })).toHaveCount(0)
+  // The actions in the row look alike: Tap tempo is no outlined button among borderless ones.
+  const look = (i: number) =>
+    actions[i]!.evaluate((el) => {
+      const s = getComputedStyle(el)
+      return [s.borderTopColor, s.backgroundColor]
+    })
+  expect(await look(0)).toEqual(await look(2))
+  await shot(page, 'analysis-found')
+  // The Tempo row's height (Half and Double wrap under the tempo at this width) and what lies between the facts and
+  // the note under the actions.
+  const layout = async () => {
+    const tempo = (await row('Tempo').boundingBox())!
+    const sections = (await row('Sections').boundingBox())!
+    const note = (await panel.getByText(/^Section names are best guesses/).boundingBox())!
+    return { tempo: Math.round(tempo.height), toNote: Math.round(note.y - sections.y) }
+  }
+  const idle = await layout()
+
+  // Analyzing again keeps the facts found so far until the new ones arrive, with only Cancel, and nothing under the
+  // progress card moves. Focus goes to the card, which stays in view, so another Enter does nothing.
+  await again.focus()
+  await page.keyboard.press('Enter')
+  await expect(card).toBeFocused()
+  const body = (await panel.locator('[class*="viewBody"]').boundingBox())!
+  const shown = (await card.boundingBox())!
+  expect(shown.y).toBeGreaterThanOrEqual(body.y - 1)
+  expect(shown.y + shown.height).toBeLessThanOrEqual(body.y + body.height + 1)
+  await page.keyboard.press('Enter')
+  await expect(panel.getByRole('progressbar', { name: 'Song analysis progress' })).toBeVisible()
+  await expect(row('Beats')).toHaveText('Beats16 found')
+  for (const action of actions) await expect(action).toHaveCount(0)
+  await expect(levels).toHaveCount(0)
+  expect(await layout()).toEqual(idle)
+  await shot(page, 'analysis-running-again')
+
+  // When the run ends, focus is back on Analyze again: after the result, and after Cancel.
+  await finish()
+  await expect(again).toBeFocused()
+  expect(await layout()).toEqual(idle)
+  await again.click()
+  await expect(card).toBeFocused()
+  await panel.getByRole('button', { name: 'Cancel' }).click()
+  await expect(again).toBeFocused()
+  await expect(row('Tempo')).toContainText('120 BPM · 4/4')
+  for (const action of actions) await expect(action).toBeEnabled()
+  await expect(levels).toHaveCount(2)
+})
 /**
  * Bars come from the refinement step, which runs in the background: with a stand-in for it on the real job runner,
  * the Bar starts row says it is finding them until they are found.

@@ -70,10 +70,11 @@ export function StemsView() {
   const download = estimate?.downloadBytes ?? 0
 
   if (phase === 'running') {
+    // The progress card says what is happening; the subtitle names the song, as Song analysis does.
     return (
       <ToolView
         title="Stems"
-        subtitle="Separating vocals, drums, bass and other"
+        subtitle={project.songAssetId ? project.assets[project.songAssetId]?.name : undefined}
         footer={<CancelButton job={job} />}
       >
         <RunCard job={job} label="Stem separation progress" />
