@@ -42,7 +42,7 @@ export function App() {
         <SettingsDialog />
       </Deferred>
       <Toaster />
-      {review && <ReviewNav />}
+      {import.meta.env.DEV && review && <ReviewNav />}
     </TooltipProvider>
   )
 }

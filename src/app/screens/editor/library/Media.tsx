@@ -6,7 +6,6 @@ import { SearchInput } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { mediaById } from '../../../mock/media.ts'
-import { peaks } from '../../../mock/song.ts'
 import type { Asset, Project } from '../../../../model/index.ts'
 import type { FootageResult } from '../../../../vision/index.ts'
 import { useFootage, useFootageResults } from '../../../state/footage.ts'
@@ -101,10 +100,11 @@ function MediaCard({ item }: { item: LibraryItem }) {
 
 const WAVE_BARS = 40
 
-/** Bar heights (0..1) for the song row: the analyzed loudness when available, else the mock peaks. */
+/** Bar heights (0..1) for the song row from the analyzed loudness; low and even until the song is analyzed. */
 function songBars(project: Project): number[] {
   const loudness = songAnalysis(project)?.features?.loudness
-  const values = loudness?.length ? loudness : peaks
+  if (!loudness?.length) return Array.from({ length: WAVE_BARS }, () => 0.12)
+  const values = loudness
   const step = values.length / WAVE_BARS
   return Array.from({ length: WAVE_BARS }, (_, i) => {
     let m = 0

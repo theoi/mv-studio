@@ -2,6 +2,7 @@ import { applyMockStems, startMockExport, startStems } from '../mock/actions.ts'
 import { directorRequest, draftVideo, useDirector } from './director.ts'
 import type { Project } from '../../model/index.ts'
 import { startAutoCut } from './autocut.ts'
+import { isRunning, JOB_KINDS } from './jobs.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
 import { isStored, openFromLink, untracked, usePersistence } from './persistence.ts'
 import { editor, loadDemoProject, loadEmptyProject } from './project.ts'
@@ -65,7 +66,7 @@ export function stateToHash(s: UiState, project: Project): string {
     if (hasAnyCutout(project)) q.set('behind', '1')
   }
   if (s.screen === 'start' && s.dialog === 'settings') q.set('dialog', 'settings')
-  if (!s.review) q.set('review', '0')
+  if (s.review) q.set('review', '1')
   const qs = q.toString()
   return `#/${s.screen}${qs ? `?${qs}` : ''}`
 }
@@ -90,7 +91,7 @@ export function hashToState(hash: string): Partial<UiState> {
     exportPhase: (q.get('export') as ExportPhase | null) ?? 'setup',
     paletteOpen: q.get('palette') === '1',
     guideStep: guide === null ? null : Number(guide),
-    review: q.get('review') !== '0',
+    review: q.get('review') === '1',
   }
 }
 
@@ -101,10 +102,13 @@ function applyHash(hash: string) {
   // A kept project opens as it was saved; the preview's project and job parameters apply to the sample only.
   if (project && !wantEmpty) openFromLink(project)
   else untracked(() => applyPreviewProject(q, wantEmpty))
+  const next = hashToState(hash)
+  // An export doesn't survive a reload: a link to one in progress opens the export setup.
+  if (next.exportPhase === 'exporting' && !isRunning(JOB_KINDS.export)) next.exportPhase = 'setup'
   set({
     ...initialUi,
     ...(wantEmpty ? { playhead: 0 } : {}),
-    ...hashToState(hash),
+    ...next,
     toasts: get().toasts,
     libraryOpen: get().libraryOpen,
     playing: false,
@@ -117,6 +121,17 @@ function applyPreviewProject(q: URLSearchParams, wantEmpty: boolean) {
     if (wantEmpty) loadEmptyProject()
     else loadDemoProject()
   }
+  // Stand-in jobs for reviewing the design in a dev build. Production builds leave them out entirely.
+  if (import.meta.env.DEV) startReviewJobs(q)
+  const behind = q.get('behind') === '1'
+  if (behind !== hasAnyCutout(editor.getProject())) {
+    const project = editor.getProject()
+    if (behind) putBehind(suitableClips(project))
+    else bringToFront(Object.keys(project.clips))
+  }
+}
+
+function startReviewJobs(q: URLSearchParams) {
   const stems = q.get('stems')
   if (stems === 'running') startStems(0.42)
   if (stems === 'failed') startStems(0.27, true)
@@ -125,12 +140,6 @@ function applyPreviewProject(q: URLSearchParams, wantEmpty: boolean) {
   if ((director === 'running' || director === 'done') && useDirector.getState().state.status === 'idle')
     void draftVideo(directorRequest('', 'mine'))
   if (q.get('autocut') === 'done') startAutoCut({})
-  const behind = q.get('behind') === '1'
-  if (behind !== hasAnyCutout(editor.getProject())) {
-    const project = editor.getProject()
-    if (behind) putBehind(suitableClips(project))
-    else bringToFront(Object.keys(project.clips))
-  }
   if (q.get('export') === 'exporting') startMockExport(0.31)
 }
 

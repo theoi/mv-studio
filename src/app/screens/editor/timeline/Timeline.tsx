@@ -160,7 +160,15 @@ function makeRuler(beat: number | null): DrawFn {
   }
 }
 
-/** Waveform envelope: the song's analyzed loudness when there is one, else the design preview's mock peaks. */
+/** A flat line where a song's waveform goes until its loudness is analyzed. */
+function makeFlatWave(color: string): DrawFn {
+  return (ctx, _t0, _pps, w, h) => {
+    ctx.fillStyle = color
+    ctx.fillRect(0, Math.round(h / 2) - 1, w, 2)
+  }
+}
+
+/** Waveform envelope from analyzed loudness; without one (the stem lanes, for now), the sample song's peaks. */
 function makeWave(color: string, seed = 0, scaleY = 1, envelope?: FeatureSeries): DrawFn {
   const values = envelope?.values.length ? envelope.values : peaks
   const rate = envelope?.values.length ? envelope.rate : peakRate
@@ -651,7 +659,10 @@ export function Timeline() {
   const energyDraw = useMemo(() => makeEnergy(analysis?.energy), [analysis?.energy])
   const features = analysis?.features
   const songWave = useMemo(
-    () => makeWave('#7f91b3', 0, 1, features && { rate: features.rate, values: features.loudness }),
+    () =>
+      features?.loudness.length
+        ? makeWave('#7f91b3', 0, 1, { rate: features.rate, values: features.loudness })
+        : makeFlatWave('#7f91b3'),
     [features],
   )
 
