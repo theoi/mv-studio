@@ -33,6 +33,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 ### Start and import
 
 - Bring in a song (MP3, WAV, FLAC, M4A/AAC, OGG, Opus), video (MP4, MOV, WebM, MKV), images (PNG, JPEG, GIF, WebP, AVIF, SVG) and fonts (TTF, OTF, WOFF, WOFF2). A song's title and artist tags name the project and the director's title card.
+- Drag media from the Library onto the timeline, or drop files from your computer onto a track, and they land where you drop them.
 - Open a recent project, duplicate one, or open a project file. A short guide shows you around the editor on your first visit.
 
 ### Edit
@@ -50,7 +51,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 - Song sections, the repeated chorus and an energy curve on the timeline.
 - Auto-cut of your footage to beats and sections.
 - React to music: drive any effect setting from the kick, snare, hi-hats, bass, vocals, loudness, beat or downbeat.
-- Stem separation into vocals, drums, bass and other, as an opt-in step.
+- Stem separation into vocals, drums, bass and other, as an opt-in step. Each stem then gets a lane under the song track, where you can mute or solo it in the preview and the export.
 - Lyrics: paste them, or start from an automatic draft and correct it. Every word is then timed to the vocals, with karaoke highlighting and kinetic typography presets.
 - Visualizer presets, generative shader visuals and one-click looks that restyle the whole video.
 
