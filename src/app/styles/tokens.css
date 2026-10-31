@@ -146,3 +146,10 @@
     --dur-slow: 0ms;
   }
 }
+
+/* Settings › General › Reduce motion */
+:root[data-reduce-motion] {
+  --dur-fast: 0ms;
+  --dur: 0ms;
+  --dur-slow: 0ms;
+}

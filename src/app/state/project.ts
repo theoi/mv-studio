@@ -17,6 +17,7 @@ import {
 } from '../../model/index.ts'
 import { TRACK_IDS, buildDemoProject, sceneOf } from '../mock/demoProject.ts'
 import type { SceneId } from '../mock/art.ts'
+import { barsToSeconds, prefs } from './prefs.ts'
 import { editorPreset, get, maybeStartGuide, select, set, toast, type Kind } from './ui.ts'
 
 /** The app's single editor. The design preview starts it with the demo project. */
@@ -31,7 +32,7 @@ export function loadDemoProject() {
 }
 
 export function loadEmptyProject() {
-  editor.load(createProject({ name: 'Untitled video' }))
+  editor.load(createProject({ name: 'Untitled video', fps: prefs().defaultFps }))
 }
 
 /** Replaces an empty project with the sample project, keeping the current workspace. */
@@ -99,7 +100,7 @@ export function splitAtPlayhead() {
 export function addTextAtPlayhead() {
   const p = editor.getProject()
   const start = get().playhead
-  const duration = 4
+  const duration = barsToSeconds(prefs().textBars, bpmOf(p))
   const busy = (trackId: string) =>
     Object.values(p.clips).some(
       (c) => c.trackId === trackId && c.start < start + duration && c.start + c.duration > start,

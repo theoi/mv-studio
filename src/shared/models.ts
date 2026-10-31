@@ -6,7 +6,7 @@
  * and Google CDNs (the pilot verified huggingface.co resolve URLs). Models without CDN CORS are self-hosted under
  * public/models/ and referenced with a base-relative URL (see modelUrl()).
  */
-import { detectCapabilities, wasmThreadCount, type RuntimeCapabilities } from './capabilities.ts'
+import { detectCapabilities, type RuntimeCapabilities } from './capabilities.ts'
 import { JobError, type JobProgress } from './jobs.ts'
 
 export interface ModelFile {
@@ -218,7 +218,7 @@ export async function configureOnnxEnv(
   options: { numThreads?: number } = {},
 ): Promise<number> {
   const caps = await detectCapabilities()
-  const threads = options.numThreads ?? wasmThreadCount(caps.crossOriginIsolated, caps.hardwareConcurrency)
+  const threads = options.numThreads ?? caps.wasmThreads
   env.wasm.numThreads = threads
   env.wasm.proxy = false
   return threads

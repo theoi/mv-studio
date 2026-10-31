@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Sparkles, X } from 'lucide-react'
 import { Button } from '../../ds/Button.tsx'
+import { usePrefs } from '../../state/prefs.ts'
 import { set, useUi } from '../../state/ui.ts'
 import styles from './Suggestion.module.css'
 
@@ -15,7 +16,8 @@ interface Props {
 /** The single inline-suggestion pattern: quiet, in context, one click to apply, dismissible. */
 export function InlineSuggestion({ id, children, action, onAction, variant = 'card' }: Props) {
   const dismissed = useUi((s) => s.dismissed.includes(id))
-  if (dismissed) return null
+  const on = usePrefs((p) => p.suggestions)
+  if (dismissed || !on) return null
   const dismiss = () => set((s) => ({ dismissed: [...s.dismissed, id] }))
   if (variant === 'chip') {
     return (
