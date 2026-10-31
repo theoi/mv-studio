@@ -104,6 +104,9 @@ test('preview plays in step with the audio clock, pauses, seeks, loops and stops
     preview.setProject(p)
     preview.setViewport(480, 270, 1)
     await preview.rendered()
+    // The controller drew the frame at the viewport size, whatever the page shows yet.
+    const drawn = preview.stats()
+    const drawnSize = [drawn.width, drawn.height]
     // With the render worker, the page's canvas is a placeholder that takes the worker canvas's size only once a frame
     // reaches the page, which can be after rendered() on a busy machine.
     for (let i = 0; i < 120 && canvas.width !== 480; i++) await new Promise((r) => requestAnimationFrame(r))
@@ -155,6 +158,7 @@ test('preview plays in step with the audio clock, pauses, seeks, loops and stops
     const ended = preview.getSnapshot()
     preview.dispose()
     return {
+      drawnSize,
       size,
       elapsed,
       advanced,
@@ -170,6 +174,7 @@ test('preview plays in step with the audio clock, pauses, seeks, loops and stops
     }
   })
   console.log('preview playback', JSON.stringify(r))
+  expect(r.drawnSize).toEqual([480, 270])
   expect(r.size).toEqual([480, 270])
   // The clock follows real time, minus the scheduling lookahead and output latency at the start.
   expect(r.advanced).toBeGreaterThan(r.elapsed - 0.25)
