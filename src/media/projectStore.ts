@@ -50,6 +50,8 @@ function openDb(): Promise<IDBDatabase> {
 
 export class IdbProjectStore implements ProjectStore {
   private readonly media: OpfsMediaStore
+  /** Each project's stored thumbnail as last read or written, so a save can keep it without reading first. */
+  private readonly thumbnails = new Map<Id, Blob | undefined>()
 
   constructor(media: OpfsMediaStore = mediaStore) {
     this.media = media
@@ -60,29 +62,49 @@ export class IdbProjectStore implements ProjectStore {
     const all = await request(
       db.transaction(SUMMARIES).objectStore(SUMMARIES).getAll() as IDBRequest<ProjectSummary[]>,
     )
+    for (const s of all) this.thumbnails.set(s.id, s.thumbnail)
     return all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
 
   async load(id: Id): Promise<Project> {
     const db = await openDb()
-    const data = await request(db.transaction(PROJECTS).objectStore(PROJECTS).get(id))
+    const tx = db.transaction([PROJECTS, SUMMARIES])
+    const [data, summary] = await Promise.all([
+      request(tx.objectStore(PROJECTS).get(id)),
+      request(tx.objectStore(SUMMARIES).get(id) as IDBRequest<ProjectSummary | undefined>),
+    ])
     if (!data) throw new JobError('invalid-input', 'Project not found')
+    this.thumbnails.set(id, summary?.thumbnail)
     return parseProject(data)
   }
 
+  /**
+   * Writes the project and its summary in one transaction whose writes are all issued at once and committed right
+   * away. A save started as the page closes (autosave on pagehide) then still lands: a transaction that is still
+   * waiting to read something when the page goes away is aborted. The summary keeps its thumbnail when none is given.
+   */
   async save(project: Project, thumbnail?: Blob): Promise<void> {
     const db = await openDb()
+    if (!thumbnail && !this.thumbnails.has(project.id)) {
+      const previous = await request(
+        db.transaction(SUMMARIES).objectStore(SUMMARIES).get(project.id) as IDBRequest<
+          ProjectSummary | undefined
+        >,
+      )
+      if (!this.thumbnails.has(project.id)) this.thumbnails.set(project.id, previous?.thumbnail)
+    }
+    const kept = thumbnail ?? this.thumbnails.get(project.id)
+    this.thumbnails.set(project.id, kept)
     const tx = db.transaction([PROJECTS, SUMMARIES], 'readwrite')
     tx.objectStore(PROJECTS).put(project)
-    const summaries = tx.objectStore(SUMMARIES)
-    const previous = (await request(summaries.get(project.id))) as ProjectSummary | undefined
     const summary: ProjectSummary = {
       id: project.id,
       name: project.name,
       updatedAt: project.updatedAt,
-      thumbnail: thumbnail ?? previous?.thumbnail,
+      thumbnail: kept,
     }
-    summaries.put(summary)
+    tx.objectStore(SUMMARIES).put(summary)
+    tx.commit()
     try {
       await done(tx)
     } catch (error) {
@@ -99,6 +121,7 @@ export class IdbProjectStore implements ProjectStore {
     tx.objectStore(PROJECTS).delete(id)
     tx.objectStore(SUMMARIES).delete(id)
     await done(tx)
+    this.thumbnails.delete(id)
     if (!project) return
     const others = (await request(db.transaction(PROJECTS).objectStore(PROJECTS).getAll())) as Project[]
     const inUse = new Set(others.flatMap((p) => Object.values(p.assets).map((a) => a.storageKey)))

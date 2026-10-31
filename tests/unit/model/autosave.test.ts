@@ -58,6 +58,35 @@ describe('autosave', () => {
     autosave.stop()
   })
 
+  it('when the page hides during a save, writes the latest project at once instead of waiting behind it', async () => {
+    const editor = new ProjectEditor(createProject())
+    const calls: { name: string; leaving: boolean; finish: () => void }[] = []
+    const save = (p: Project, { leaving }: { leaving: boolean }) =>
+      new Promise<void>((resolve) => calls.push({ name: p.name, leaving, finish: resolve }))
+    const target = new EventTarget()
+    const autosave = startAutosave(editor, save, { delayMs: 100, target })
+    editor.dispatch({ type: 'project.rename', name: 'A' })
+    await vi.advanceTimersByTimeAsync(100)
+    // The first save is still running (making its thumbnail, say) when the user edits again and closes the tab.
+    editor.dispatch({ type: 'project.rename', name: 'B' })
+    target.dispatchEvent(new Event('pagehide'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls.map(({ name, leaving }) => ({ name, leaving }))).toEqual([
+      { name: 'A', leaving: false },
+      { name: 'B', leaving: true },
+    ])
+    calls[1]!.finish()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(autosave.getState().status).toBe('saved')
+    // The older save finishing later doesn't change what the status says.
+    calls[0]!.finish()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(autosave.getState()).toMatchObject({ status: 'saved' })
+    await autosave.flush({ leaving: true })
+    expect(calls).toHaveLength(2)
+    autosave.stop()
+  })
+
   it('saves derived writes that skip the undo history', async () => {
     const editor = new ProjectEditor(createProject())
     const saved: Project[] = []

@@ -16,8 +16,11 @@ export interface AutosaveState {
 export interface AutosaveController {
   getState(): AutosaveState
   subscribe(listener: (state: AutosaveState) => void): () => void
-  /** Saves any pending change now and resolves when it is written. */
-  flush(): Promise<void>
+  /**
+   * Saves any pending change now and resolves when it is written. `leaving` (the page is closing) writes the latest
+   * project at once, even while an earlier save is still running, and tells `save` so it can skip slow extras.
+   */
+  flush(options?: { leaving?: boolean }): Promise<void>
   stop(): void
 }
 
@@ -32,7 +35,7 @@ export interface AutosaveOptions {
 
 export function startAutosave(
   editor: ProjectEditor,
-  save: (project: Project) => Promise<void>,
+  save: (project: Project, options: { leaving: boolean }) => Promise<void>,
   options: AutosaveOptions = {},
 ): AutosaveController {
   const delay = options.delayMs ?? 800
@@ -49,26 +52,33 @@ export function startAutosave(
     for (const l of listeners) l(state)
   }
 
-  async function run(): Promise<void> {
+  async function run(leaving = false): Promise<void> {
     if (timer) clearTimeout(timer)
     timer = undefined
     firstPendingAt = undefined
-    if (inFlight) {
+    // A closing page may not live until a running save finishes (it can still be making a thumbnail), so leaving
+    // writes the latest project right away instead of waiting behind it.
+    while (inFlight && !leaving) {
       await inFlight
       if (!dirty) return
     }
-    if (!dirty) return
+    if (!dirty && !(leaving && inFlight)) return
     dirty = false
     const project = editor.getProject()
     set({ status: 'saving' })
-    inFlight = save(project).then(
-      () => set({ status: dirty ? 'pending' : 'saved', lastSavedAt: project.updatedAt, error: undefined }),
+    const attempt: Promise<void> = save(project, { leaving }).then(
+      () => {
+        if (inFlight === attempt)
+          set({ status: dirty ? 'pending' : 'saved', lastSavedAt: project.updatedAt, error: undefined })
+      },
       (error: unknown) => {
         dirty = true
         set({ status: 'error', error: error instanceof Error ? error.message : String(error) })
       },
     )
-    await inFlight
+    inFlight = attempt
+    await attempt
+    if (inFlight !== attempt) return
     inFlight = undefined
     if (dirty && state.status === 'pending') schedule()
   }
@@ -89,7 +99,7 @@ export function startAutosave(
   })
 
   const onHide = () => {
-    if (dirty) void run()
+    if (dirty || inFlight) void run(true)
   }
   options.target?.addEventListener('pagehide', onHide)
   options.target?.addEventListener('visibilitychange', onHide)
@@ -100,7 +110,7 @@ export function startAutosave(
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    flush: () => run(),
+    flush: (o = {}) => run(o.leaving),
     stop() {
       if (timer) clearTimeout(timer)
       unsubscribe()
