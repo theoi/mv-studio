@@ -404,6 +404,20 @@
   /* clip, not hidden: hidden would make each clip a scroll container and stop its label from sticking. Clips are placed
      with left, not a transform, for the same reason: sticky offsets ignore transforms. */
   overflow: clip;
+  container-type: inline-size;
+}
+
+/* By width here, not in render: a zoom step crossing these widths would re-render every clip at once. */
+@container (width <= 54px) {
+  .clipName {
+    display: none;
+  }
+}
+
+@container (width <= 36px) {
+  .mediaLabel {
+    display: none;
+  }
 }
 
 .clip:active {

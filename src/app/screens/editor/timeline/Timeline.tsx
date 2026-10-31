@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { flushSync } from 'react-dom'
 import {
   ArrowDown,
   ArrowUp,
@@ -227,9 +228,20 @@ function trackRows(p: Project, empty: boolean, kinds?: ReadonlyMap<string, LaneK
 
 type DrawFn = (ctx: CanvasRenderingContext2D, t0: number, pps: number, w: number, h: number) => void
 
+/** A wheel zoom step's scroll position, set once the step's new widths are in the DOM (see the wheel handler). */
+let zoomScroll: { el: HTMLElement; left: number } | null = null
+
+function applyZoomScroll() {
+  if (!zoomScroll) return
+  const { el, left } = zoomScroll
+  zoomScroll = null
+  el.scrollLeft = left
+}
+
 function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const pps = useUi((s) => s.pxPerSec)
+  const repaint = useRef<() => void>(() => {})
   useLayoutEffect(() => {
     const canvas = ref.current
     // Looked up through the DOM: a child's layout effect runs before the parent's ref is attached on mount.
@@ -237,9 +249,18 @@ function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
     const ctx = canvas?.getContext('2d')
     if (!canvas || !scroller || !ctx) return
     let frame = 0
+    let painted = ''
     const paint = () => {
+      // During a zoom step this canvas paints before the timeline scrolls to keep the pointer's time in place.
+      applyZoomScroll()
       const w = Math.max(1, scroller.clientWidth - HEADER_W)
       const dpr = Math.min(2, window.devicePixelRatio || 1)
+      const pps = get().pxPerSec
+      const t0 = scroller.scrollLeft / pps
+      // A zoom step paints from its layout effect, then the scroll it sets and the resize observer ask again.
+      const key = `${t0} ${pps} ${w} ${dpr}`
+      if (key === painted) return
+      painted = key
       if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(height * dpr)) {
         canvas.width = Math.round(w * dpr)
         canvas.height = Math.round(height * dpr)
@@ -248,12 +269,13 @@ function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, w, height)
-      draw(ctx, scroller.scrollLeft / pps, pps, w, height)
+      draw(ctx, t0, pps, w, height)
     }
     const schedule = () => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(paint)
     }
+    repaint.current = paint
     paint()
     scroller.addEventListener('scroll', schedule, { passive: true })
     const ro = new ResizeObserver(schedule)
@@ -263,7 +285,9 @@ function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
       ro.disconnect()
       cancelAnimationFrame(frame)
     }
-  }, [pps, height, draw])
+  }, [height, draw])
+  // In the same commit as the clips, so the canvas never shows a frame at the old zoom under them.
+  useLayoutEffect(() => repaint.current(), [pps])
   return <canvas ref={ref} className={styles.vcanvas} aria-hidden />
 }
 
@@ -971,8 +995,8 @@ function zoomedLook(clip: ClipView, pps: number) {
 
 /**
  * Re-renders only when its clip or selection changes, so an edit to one clip leaves the others alone. Its position
- * and width are percentages of the clip layer, so a zoom step re-renders only the clips whose label appears or goes,
- * those with transition marks and the one showing keyframes: hundreds of clips each with a menu would take too long.
+ * and width are percentages of the clip layer and its name hides by container query, so a zoom step re-renders only
+ * the clips with transition marks and the one showing keyframes: hundreds of clips each with a menu would take too long.
  */
 const ClipBlock = memo(
   ClipBlockView,
@@ -983,11 +1007,7 @@ const ClipBlock = memo(
     a.onPointerDown === b.onPointerDown &&
     a.unit === b.unit &&
     sameView(a.clip, b.clip) &&
-    (a.pps === b.pps ||
-      (!b.marks &&
-        !b.clip.transitionIn &&
-        !b.clip.transitionOut &&
-        zoomedLook(a.clip, a.pps).showLabel === zoomedLook(b.clip, b.pps).showLabel)),
+    (a.pps === b.pps || (!b.marks && !b.clip.transitionIn && !b.clip.transitionOut)),
 )
 
 /** The cut without a transition at either end of a clip, the one nearer `time`; `clipId` is the clip after it. */
@@ -1065,10 +1085,10 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
             {!isMedia && (
               <span className={styles.clipLabel}>
                 {clip.kind === 'text' ? <Type /> : clip.kind === 'look' ? <Palette /> : <AudioWaveform />}
-                {showLabel && label}
+                <span className={styles.clipName}>{label}</span>
               </span>
             )}
-            {isMedia && showLabel && (
+            {isMedia && (showLabel || !(inW || outW)) && (
               <span
                 className={styles.mediaLabel}
                 style={inW || outW ? { left: inW + 3, maxWidth: width - inW - outW - 6 } : undefined}
@@ -1643,18 +1663,18 @@ export function Timeline() {
     let zoomDelta = 0
     let zoomPx = 0
     let zoomFrame = 0
-    let scrollFrame = 0
     const zoom = () => {
       zoomFrame = 0
       const { pxPerSec } = get()
       const tAt = (el.scrollLeft + zoomPx) / pxPerSec
       const next = Math.min(MAX_PPS, Math.max(MIN_PPS, pxPerSec * Math.exp(-zoomDelta * 0.0025)))
-      const px = zoomPx
       zoomDelta = 0
-      set({ pxPerSec: next })
-      scrollFrame = requestAnimationFrame(() => {
-        el.scrollLeft = tAt * next - px
-      })
+      if (next === pxPerSec) return
+      // The new zoom and its scroll position land in the same frame: a scroll a frame later would draw the step
+      // twice, the first time around the wrong point.
+      zoomScroll = { el, left: tAt * next - zoomPx }
+      flushSync(() => set({ pxPerSec: next }))
+      applyZoomScroll()
     }
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
@@ -1671,7 +1691,6 @@ export function Timeline() {
     return () => {
       el.removeEventListener('wheel', onWheel)
       cancelAnimationFrame(zoomFrame)
-      cancelAnimationFrame(scrollFrame)
     }
   }, [])
 
