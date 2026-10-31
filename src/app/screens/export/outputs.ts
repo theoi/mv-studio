@@ -273,8 +273,8 @@ export function cropBox(
 }
 
 /**
- * Sets (or with null clears) the framing of a shot in one format as one undo step, together with the cutouts that
- * put text behind its subject, so they stay aligned with it.
+ * Sets (or with null resets) the framing of a shot in one format as one undo step, together with the cutouts that
+ * put text behind its subject, so they stay aligned with it. A reset keeps the clip's choice from Inspector › Framing.
  */
 export function adjustFraming(aspect: AspectPreset, clipId: string, patch: FramingOverride | null): void {
   const project = editor.getProject()
@@ -287,7 +287,8 @@ export function adjustFraming(aspect: AspectPreset, clipId: string, patch: Frami
   const coalesceKey = `framing:${clipId}:${Date.now()}`
   for (const id of ids) {
     const current = editor.getProject()
-    const next = patch && { ...framingOverrides(current, aspect)[id], ...patch }
+    const existing = framingOverrides(current, aspect)[id]
+    const next = patch ? { ...existing, ...patch } : existing?.mode ? { mode: existing.mode } : null
     dispatch(setFramingCommand(current, aspect, id, next), { label: 'Adjust framing', coalesceKey })
   }
   editor.endGesture()

@@ -36,6 +36,7 @@ import {
 import { set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
+import { reframeProject } from '../../state/reframe.ts'
 import { PickOverlay } from './PickOverlay.tsx'
 import { connectPreview, fitStage, selectionOutline } from './stage.ts'
 import styles from './Preview.module.css'
@@ -231,14 +232,15 @@ export function Preview() {
                 icon={a.icon}
                 description={a.desc}
                 onSelect={() => {
+                  const from = project.settings
                   dispatch({
                     type: 'project.updateSettings',
                     settings: settingsForAspect(a.value, project.settings.fps),
                   })
-                  if (a.value !== '16:9')
+                  if (a.value !== from.aspect)
                     toast(`Switched to ${a.value}. Keep subjects in frame?`, {
                       label: 'Reframe automatically',
-                      run: () => toast('Clips reframed around their subjects'),
+                      run: () => reframeProject(from),
                     })
                 }}
               >

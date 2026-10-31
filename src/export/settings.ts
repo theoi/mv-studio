@@ -5,7 +5,7 @@
 import { z } from 'zod'
 import type { EditCommand } from '../model/commands.ts'
 import type { AspectPreset, Id, JsonValue, Project } from '../model/types.ts'
-import type { FramingOverride } from './formats.ts'
+import type { FramingOverride, ReframeMode } from './formats.ts'
 import type { OutputSpec } from './types.ts'
 
 export const EXPORT_EXTENSION_KEY = 'export'
@@ -95,4 +95,29 @@ export function setFramingCommand(
 export function setOutputsCommand(project: Project, outputs: OutputSpec[] | null): EditCommand {
   const { outputs: _previous, ...prefs } = exportPreferences(project)
   return write(project, outputs ? { ...prefs, outputs } : prefs)
+}
+
+/**
+ * Sets how clips fill every format (Inspector › Framing): follow the subject, crop the center, or fit with bars.
+ * Their framing adjustments (offsets and zoom) stay.
+ */
+export function setReframeModeCommand(
+  project: Project,
+  clipIds: readonly Id[],
+  mode: ReframeMode,
+): EditCommand {
+  const prefs = exportPreferences(project)
+  const framing = { ...prefs.framing }
+  for (const format of aspect.options) {
+    const byClip = { ...framing[format] }
+    for (const id of clipIds) byClip[id] = { ...byClip[id], mode }
+    framing[format] = byClip
+  }
+  return write(project, { ...prefs, framing })
+}
+
+/** How a clip fills other formats when it was chosen for it (Inspector › Framing). */
+export function reframeModeOf(project: Project, clipId: Id): ReframeMode | undefined {
+  const framing = exportPreferences(project).framing
+  return [project.settings.aspect, ...aspect.options].map((f) => framing[f]?.[clipId]?.mode).find(Boolean)
 }

@@ -4,6 +4,7 @@ import { formatTime } from '../../../format.ts'
 import { sceneThumb } from '../../../mock/art.ts'
 import { sceneOf } from '../../../mock/demoProject.ts'
 import { dispatch, editor, useProject } from '../../../state/project.ts'
+import { clipReframeMode, framingHint, setClipReframe } from '../../../state/reframe.ts'
 import { CameraSection, CameraSuggestion } from './Camera.tsx'
 import { ColorSection, EffectsSection } from './Effects.tsx'
 import { BehindSuggestion, LayeringSection } from './Layering.tsx'
@@ -35,8 +36,8 @@ export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string 
       <Section title="Framing" defaultOpen={false}>
         <FieldRow label="Reframe" trailing={<span className={styles.trailSpacer} />}>
           <Select
-            value="auto"
-            onChange={() => undefined}
+            value={clipReframeMode(project, clip.id)}
+            onChange={(mode) => setClipReframe(clip.id, mode)}
             ariaLabel="Reframe"
             options={[
               { value: 'auto', label: 'Follow the subject' },
@@ -45,6 +46,7 @@ export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string 
             ]}
           />
         </FieldRow>
+        <p className={styles.note}>{framingHint(project, clip)}</p>
       </Section>
       {clip.type === 'video' && (
         <Section title="Speed" defaultOpen={false}>
