@@ -4,6 +4,7 @@ import type { RefinedFields } from '../../../src/analysis/song.ts'
 import { createProject, type Asset, type AudioAnalysis } from '../../../src/model/index.ts'
 import { dispatch, editor } from '../../../src/app/state/project.ts'
 import { importFiles } from '../../../src/app/state/importer.ts'
+import { findBars } from '../../../src/app/state/songAnalysis.ts'
 
 const analyses = vi.hoisted(() => [] as ((analysis: AudioAnalysis) => void)[])
 const refinements = vi.hoisted(() => [] as ((fields: RefinedFields) => void)[])
@@ -69,6 +70,10 @@ it('writes the song analysis without an undo step, keeping edits made while it r
   await vi.waitFor(() => expect(editor.getProject().analysis.audio['a-song']?.tempo?.bpm).toBe(120))
   expect(editor.undoLabel()).toBe('Import song.mp3')
   expect(editor.redoLabel()).toBe('Rename')
+  // Finishes finding bars, which started after the analysis, so the next test imports the song afresh.
+  await vi.waitFor(() => expect(refinements).toHaveLength(1))
+  refinements[0]?.({})
+  expect(await findBars('a-song')).toBe(false)
 })
 
 it('refines beats and bars in the background after the fast analysis, without an undo step', async () => {

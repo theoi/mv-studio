@@ -215,6 +215,32 @@ export function rescaleGrid(grid: BeatGrid, factor: 2 | 0.5): BeatGrid {
   )
 }
 
+/** How much of the beat interval a downbeat may be away from a beat and still fall on it. */
+const FIT_TOLERANCE = 0.25
+/** Share of the downbeats inside the beats' span that must fall on a beat for the bars to fit. */
+const FIT_SHARE = 0.8
+
+/**
+ * Bars found on one grid (`downbeats`, e.g. Beat This!'s) put on the beats of another (the user's tempo, a grid
+ * tracked again): each downbeat moves to the beat it falls on, within a quarter of the beat interval and 70 ms.
+ * Null when fewer than 80% of them fall on a beat (a different beat level or phase), or fewer than two do.
+ */
+export function fitDownbeats(beats: readonly number[], downbeats: readonly number[]): number[] | null {
+  if (beats.length < 2) return null
+  const first = beats[0] as number
+  const last = beats[beats.length - 1] as number
+  const inside = downbeats.filter((d) => d >= first - 0.07 && d <= last + 0.07)
+  const fitted = new Set<number>()
+  for (const d of inside) {
+    const i = nearestBeatIndex({ beats: beats as number[] }, d)
+    const b = beats[i] as number
+    const neighbour = beats[i + 1 < beats.length ? i + 1 : i - 1] as number
+    if (Math.abs(b - d) <= Math.min(0.07, FIT_TOLERANCE * Math.abs(neighbour - b))) fitted.add(b)
+  }
+  if (fitted.size < 2 || fitted.size < FIT_SHARE * inside.length) return null
+  return [...fitted].sort((a, b) => a - b)
+}
+
 /** User override: make beat `index` the first beat of a bar and renumber the rest. */
 export function setDownbeat(grid: BeatGrid, index: number, beatsPerBar = grid.beatsPerBar): BeatGrid {
   if (index < 0 || index >= grid.beats.length) throw new RangeError('beat index out of range')

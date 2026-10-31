@@ -2,6 +2,7 @@ import type { AudioAnalysis, EditCommand, Id } from '../model/index.ts'
 import { JobError, jobs, type JobHandle, type JobRunner } from '../shared/jobs.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../shared/worker.ts'
 import type { DecodedAudio } from './beats/fast.ts'
+import { fitDownbeats } from './beats/grid.ts'
 import { decodeAudioFile } from './decode.ts'
 import { part } from './jobContext.ts'
 import type { RefinedFields } from './song.ts'
@@ -65,19 +66,30 @@ export class SongAnalysisService {
     })
   }
 
-  /** Beat This! refinement. Pass `audio` if the worker may no longer hold the song (e.g. after reloading a project). */
-  refine(assetId: Id, audio?: DecodedAudio): JobHandle<RefinedFields> {
+  /**
+   * Beat This! refinement: bars and steadier beats. When the worker may no longer hold the song (e.g. after reloading
+   * a project), pass its decoded `audio`, or a function returning its file, which is read only if the worker does not
+   * hold the song.
+   */
+  refine(assetId: Id, source?: DecodedAudio | (() => Promise<Blob>)): JobHandle<RefinedFields> {
     return this.runner.run({
       kind: 'analysis.downbeats',
       title: 'Finding bars and refining beats',
-      run: (ctx) =>
-        runWorkerCall(
+      run: async (ctx) => {
+        let audio = typeof source === 'function' ? undefined : source
+        if (typeof source === 'function' && !(await this.worker().call('holds', { assetId }))) {
+          ctx.progress({ stage: 'decode', fraction: 0, message: 'Reading the song' })
+          audio = await this.decode(await source())
+          ctx.throwIfCancelled()
+        }
+        return runWorkerCall(
           this.worker(),
           'refineBeats',
           { assetId, audio },
           ctx,
           audio?.channels.map((c) => c.buffer),
-        ),
+        )
+      },
     })
   }
 
@@ -167,22 +179,59 @@ export function setAnalysisCommand(analysis: AudioAnalysis): EditCommand {
   return { type: 'analysis.setDetected', analysis: detected }
 }
 
+const refinedFields = (a: RefinedFields): RefinedFields => ({
+  tempo: a.tempo,
+  beats: a.beats,
+  downbeats: a.downbeats,
+  sections: a.sections,
+})
+
 /**
  * The edit that applies a refinement of `fast`, the analysis it started from: the beat grid and the sections each
  * change only if the user has not corrected them since. Dispatch with `{ history: 'skip' }`.
  */
 export function refinedAnalysisCommand(fast: AudioAnalysis, refined: RefinedFields): EditCommand {
-  const fields = (a: RefinedFields): RefinedFields => ({
-    tempo: a.tempo,
-    beats: a.beats,
-    downbeats: a.downbeats,
-    sections: a.sections,
-  })
   return {
     type: 'analysis.setRefined',
     assetId: fast.assetId,
-    refined: fields(refined),
-    baseline: fields(fast),
+    refined: refinedFields(refined),
+    baseline: refinedFields(fast),
+  }
+}
+
+/**
+ * The edit that brings the bars of a refinement into `current`, the song's analysis as it is now; `baseline` is the
+ * analysis the refinement started from. Untouched detected beats take the refined grid (and the refined sections
+ * when `sections` is set, for a refinement right after the first analysis; later the sections may hold the user's
+ * edits). Beats the user set (tempo confidence 1) or changed meanwhile are kept, and get the refined bars that fall
+ * on them. Null when bars exist already or the refined bars fit none of the beats. Dispatch with
+ * `{ history: 'skip' }`.
+ */
+export function refinedBarsCommand(
+  current: AudioAnalysis,
+  baseline: AudioAnalysis,
+  refined: RefinedFields,
+  options: { sections?: boolean } = {},
+): EditCommand | null {
+  if (current.downbeats?.length || !refined.downbeats?.length) return null
+  const grid = (a: RefinedFields) => ({ tempo: a.tempo, beats: a.beats, downbeats: a.downbeats })
+  const untouched = JSON.stringify(grid(current)) === JSON.stringify(grid(baseline))
+  if (untouched && current.tempo?.confidence !== 1) {
+    if (options.sections) return refinedAnalysisCommand(baseline, refined)
+    return {
+      type: 'analysis.setRefined',
+      assetId: current.assetId,
+      refined: grid(refined),
+      baseline: grid(current),
+    }
+  }
+  const downbeats = fitDownbeats(current.beats ?? [], refined.downbeats)
+  if (!downbeats) return null
+  return {
+    type: 'analysis.setRefined',
+    assetId: current.assetId,
+    refined: { ...grid(current), downbeats },
+    baseline: grid(current),
   }
 }
 export {

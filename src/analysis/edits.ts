@@ -7,7 +7,11 @@ export type GridEdit = Extract<EditCommand, { type: 'analysis.setGrid' }>
 
 function gridFromAnalysis(analysis: AudioAnalysis): BeatGrid {
   const beats = analysis.beats ?? []
-  const down = new Set(analysis.downbeats ?? [])
+  if (!analysis.downbeats?.length) {
+    // No bars found yet: counted in fours only so the grid is well formed; gridEdit stores none.
+    return makeGrid('dsp', beats, { beatsPerBar: 4, positions: beats.map((_, i) => (i % 4) + 1) }, [], false)
+  }
+  const down = new Set(analysis.downbeats)
   const downIdx = beats.flatMap((t, i) => (down.has(t) ? [i] : []))
   const gaps = downIdx
     .slice(1)
@@ -25,15 +29,20 @@ function gridFromAnalysis(analysis: AudioAnalysis): BeatGrid {
   return makeGrid('dsp', beats, { beatsPerBar, positions }, [], downIdx.length > 0)
 }
 
+/** The edit storing `grid`; without bars found its downbeats are removed (explicitly undefined), never guessed. */
 function gridEdit(assetId: string, grid: BeatGrid): GridEdit {
   return {
     type: 'analysis.setGrid',
     assetId,
-    grid: { tempo: { bpm: grid.bpm, confidence: 1 }, beats: grid.beats, downbeats: grid.downbeats },
+    grid: {
+      tempo: { bpm: grid.bpm, confidence: 1 },
+      beats: grid.beats,
+      downbeats: grid.downbeatsReliable ? grid.downbeats : undefined,
+    },
   }
 }
 
-/** Doubles (2) or halves (0.5) the beat level, keeping downbeats. */
+/** Doubles (2) or halves (0.5) the beat level, keeping downbeats (and keeping none when none were found). */
 export function rescaleTempo(analysis: AudioAnalysis, factor: 2 | 0.5): GridEdit {
   return gridEdit(analysis.assetId, rescaleGrid(gridFromAnalysis(analysis), factor))
 }

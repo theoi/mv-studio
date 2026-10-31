@@ -1,7 +1,7 @@
 import type { AudioAnalysis } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
 import type { WorkerCallContext } from '../shared/worker.ts'
-import type { BeatThisModel } from './beats/beatThis.ts'
+import type { BeatThisLogits, BeatThisModel } from './beats/beatThis.ts'
 import type { DecodedAudio } from './beats/fast.ts'
 import {
   analyzeSongFast,
@@ -18,11 +18,20 @@ export interface AnalysisWorkerDeps {
 /** Worker methods for song analysis. Kept free of worker globals so tests can drive them over a MessageChannel. */
 export function createAnalysisApi(deps: AnalysisWorkerDeps) {
   const states = new Map<string, SongState>()
+  // Beat This! output outlives a released state (it is ~100 kB a song), so finding bars again skips the network.
+  const logits = new Map<string, BeatThisLogits>()
   const keep = (assetId: string, state: SongState) => {
+    state.logits ??= logits.get(assetId)
     states.delete(assetId)
     states.set(assetId, state)
     // Two songs at most: each state holds ~20 MB of PCM and spectra.
     while (states.size > 2) states.delete(states.keys().next().value as string)
+  }
+  const remember = (assetId: string, state: SongState) => {
+    if (!state.logits) return
+    logits.delete(assetId)
+    logits.set(assetId, state.logits)
+    while (logits.size > 8) logits.delete(logits.keys().next().value as string)
   }
   return {
     async analyzeFast(
@@ -47,9 +56,12 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
         state = analyzeSongFast(args.assetId, args.audio, { signal: ctx.signal }).state
         keep(args.assetId, state)
       }
-      const model = await deps.beatThisModel(ctx)
       ctx.progress({ stage: 'downbeats', fraction: 0, message: 'Finding bars and refining beats' })
-      const { fields } = await refineSongBeats(state, model, { signal: ctx.signal, onProgress: ctx.progress })
+      const { fields } = await refineSongBeats(state, () => deps.beatThisModel(ctx), {
+        signal: ctx.signal,
+        onProgress: ctx.progress,
+      })
+      remember(args.assetId, state)
       return fields
     },
 

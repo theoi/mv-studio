@@ -30,6 +30,21 @@ describe('beat grid corrections', () => {
     expect(halved.beats).toEqual(beats.filter((_, i) => i % 2 === 1))
   })
 
+  it('keeps no downbeats when doubling or halving beats whose bars are not found yet', () => {
+    const unbarred: AudioAnalysis = { ...analysis, downbeats: undefined }
+    for (const factor of [2, 0.5] as const) {
+      const { grid } = rescaleTempo(unbarred, factor)
+      expect('downbeats' in grid).toBe(true)
+      expect(grid.downbeats).toBeUndefined()
+      expect(grid.beats?.length).toBe(factor === 2 ? 31 : 8)
+    }
+  })
+
+  it('sets bars from the first beat when none were found yet', () => {
+    const moved = moveDownbeat({ ...analysis, downbeats: undefined }, 1).grid
+    expect(moved.downbeats).toEqual([1.5, 3.5, 5.5, 7.5])
+  })
+
   it('moves the downbeat and renumbers the bars', () => {
     const moved = moveDownbeat(analysis, 2).grid
     expect(moved.downbeats).toEqual([2, 4, 6, 8])

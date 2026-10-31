@@ -11,7 +11,22 @@ export class ProjectLoadError extends Error {
 type Migration = (project: Record<string, unknown>) => Record<string, unknown>
 
 /** MIGRATIONS[n] upgrades schema version n to n + 1. */
-const MIGRATIONS: Record<number, Migration> = {}
+const MIGRATIONS: Record<number, Migration> = {
+  // Version 2 stores downbeats only once bars are found. Version 1 also stored the fast analysis's guesses, which are
+  // mostly a beat or two off. Downbeats a refinement set (tempo confidence 0.95, which the fast analysis never gives)
+  // or the user set (confidence 1) stay; the rest are dropped, and the app finds those songs' bars again.
+  1: (project) => {
+    const audio = (project.analysis as { audio?: Record<string, Record<string, unknown>> } | undefined)?.audio
+    if (!audio) return project
+    for (const [id, analysis] of Object.entries(audio)) {
+      const confidence = (analysis.tempo as { confidence?: number } | undefined)?.confidence
+      if (!('downbeats' in analysis) || confidence === 1 || confidence === 0.95) continue
+      const { downbeats: _guessed, ...rest } = analysis
+      audio[id] = rest
+    }
+    return project
+  },
+}
 
 /** Validates the basic shape and upgrades older schema versions. Throws ProjectLoadError for unusable data. */
 export function parseProject(input: unknown): Project {

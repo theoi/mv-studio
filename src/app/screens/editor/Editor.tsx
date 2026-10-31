@@ -10,6 +10,7 @@ import { CommandPalette, ExportDialog, FirstRunGuide } from '../../lazy.ts'
 import { Deferred } from '../common/Deferred.tsx'
 import { Splitter } from './Splitter.tsx'
 import { analyzeImportsInBackground } from '../../state/footage.ts'
+import { findBarsInBackground } from '../../state/songAnalysis.ts'
 import { importFiles, registerImportInput } from '../../state/importer.ts'
 import styles from './Editor.module.css'
 
@@ -96,7 +97,14 @@ export function Editor() {
   useEffect(() => {
     // After the preview's first frames, so analysis does not compete with opening the editor.
     let stop = () => {}
-    const timer = window.setTimeout(() => (stop = analyzeImportsInBackground()), 1500)
+    const timer = window.setTimeout(() => {
+      const stopFootage = analyzeImportsInBackground()
+      const stopBars = findBarsInBackground()
+      stop = () => {
+        stopFootage()
+        stopBars()
+      }
+    }, 1500)
     return () => {
       window.clearTimeout(timer)
       stop()

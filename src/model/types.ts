@@ -1,5 +1,5 @@
 /**
- * MV Studio project model, schema version 1. A project is plain JSON: it is saved to IndexedDB, bundled into the
+ * MV Studio project model, schema version 2. A project is plain JSON: it is saved to IndexedDB, bundled into the
  * portable project file, and rendered identically by preview and export. Change it only through edit commands
  * (./commands.ts) so every change is undoable and AI features produce ordinary editable content.
  *
@@ -14,7 +14,7 @@
 export type Id = string
 export type Seconds = number
 
-export const PROJECT_SCHEMA_VERSION = 1
+export const PROJECT_SCHEMA_VERSION = 2
 
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
@@ -379,6 +379,10 @@ export interface AudioAnalysis {
   version: string
   tempo?: { bpm: number; confidence: number }
   beats?: Seconds[]
+  /**
+   * Bar starts that were found, by the refinement step (Beat This!) or by the user. Absent until then: the fast
+   * analysis's guesses are not stored, so anything reading downbeats can trust them.
+   */
   downbeats?: Seconds[]
   sections?: SongSection[]
   energy?: FeatureSeries
