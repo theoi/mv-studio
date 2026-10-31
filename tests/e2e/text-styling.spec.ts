@@ -54,6 +54,10 @@ test('a text clip’s weight, alignment, spacing, outline, shadow and animation 
   expect((await textClip(page, 'o-title')).style.shadow).toBeUndefined()
   await page.keyboard.press(undo)
   await expect.poll(async () => (await textClip(page, 'o-title')).style.shadow).toEqual(before.style.shadow)
+  // The sample's shadow is rgba(0,0,0,0.55): a picked color keeps that alpha.
+  await expect(page.getByText('#0000008C')).toBeVisible()
+  await page.getByLabel('Shadow color', { exact: true }).fill('#ff0000')
+  expect((await textClip(page, 'o-title')).style.shadow?.color).toBe('#ff00008c')
 
   await page.getByRole('button', { name: 'Animation', exact: true }).click()
   await page.getByRole('combobox', { name: 'Kinetic preset' }).click()
