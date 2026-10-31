@@ -1,5 +1,5 @@
 import { createElement } from 'react'
-import type { Animatable, Clip, ParamValue, PropertyPath } from '../../../../model/index.ts'
+import type { Animatable, Clip, EditCommand, ParamValue, PropertyPath } from '../../../../model/index.ts'
 import {
   canReact,
   describeReaction,
@@ -38,14 +38,33 @@ export function reactionTarget(clip: Clip, path: PropertyPath): ReactionTarget |
   return null
 }
 
+/**
+ * The command that gives the clip the property at `path` with `value`, or null when the clip has it. Older projects
+ * can lack a plugin parameter, and a clip has no color adjustment until one is changed.
+ */
+function createAt(clip: Clip, path: PropertyPath, value: ParamValue): EditCommand | null {
+  let node: unknown = clip
+  for (let i = 0; i < path.length; i++) {
+    const next = (node as Record<string | number, unknown>)[path[i] as string | number]
+    if (next === undefined || next === null) {
+      let created: unknown = { value }
+      for (let j = path.length - 1; j > i; j--) created = { [path[j] as string]: created }
+      return { type: 'clip.set', clipId: clip.id, path: path.slice(0, i + 1), value: created }
+    }
+    node = next
+  }
+  return null
+}
+
 /** The react button without a panel turns this reaction on and off. */
 const QUICK_REACTION = 'kick'
 
 /**
  * Binds one animatable clip property to the edit API: value edits coalesce per gesture, the keyframe button, and the
- * react button, which opens the music reactions for the property. Spread `buttons` into AnimateButtons.
+ * react button, which opens the music reactions for the property. Spread `buttons` into AnimateButtons. A clip that
+ * lacks the property shows `fallback` and gets the property on its first edit.
  */
-export function useAnimatable(clip: Clip, path: PropertyPath) {
+export function useAnimatable(clip: Clip, path: PropertyPath, fallback?: ParamValue) {
   let node: unknown = clip
   for (const k of path) node = (node as Record<string | number, unknown> | undefined)?.[k]
   const anim = node as Animatable<ParamValue> | undefined
@@ -63,14 +82,15 @@ export function useAnimatable(clip: Clip, path: PropertyPath) {
       : active
         ? 'Custom mapping'
         : undefined
+  const current = () => editor.getProject().clips[clip.id] ?? clip
   const key = () => {
     const time = Math.max(0, get().playhead - clip.start)
-    dispatch({
-      type: 'keyframe.set',
-      clipId: clip.id,
-      path,
-      keyframe: { time, value: anim?.value ?? 0, easing: 'ease-in-out' },
-    })
+    const value = anim?.value ?? fallback ?? 0
+    const create = createAt(current(), path, value)
+    dispatch([
+      ...(create ? [create] : []),
+      { type: 'keyframe.set', clipId: clip.id, path, keyframe: { time, value, easing: 'ease-in-out' } },
+    ])
     toast(`Keyframe added at ${formatTime(get().playhead, true)}`)
   }
   const react = () => {
@@ -80,14 +100,21 @@ export function useAnimatable(clip: Clip, path: PropertyPath) {
     else dispatch(reactionCommands(p, [target], QUICK_REACTION), { label: 'React to music: Pulse with kick' })
   }
   return {
-    value: anim?.value,
+    value: anim?.value ?? fallback,
     keyed: !!anim?.keyframes?.length,
     reactive,
     reaction,
     set: (value: ParamValue) =>
       dispatch(
-        { type: 'clip.set', clipId: clip.id, path: [...path, 'value'], value },
-        { coalesceKey: gesture },
+        createAt(current(), path, value) ?? {
+          type: 'clip.set',
+          clipId: clip.id,
+          path: [...path, 'value'],
+          value,
+        },
+        {
+          coalesceKey: gesture,
+        },
       ),
     commit: () => editor.endGesture(),
     key,

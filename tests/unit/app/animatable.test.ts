@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createEffectInstance, createGeneratorClip } from '../../../src/plugins/library.ts'
 import { createTextClip } from '../../../src/model/index.ts'
-import { reactionTarget } from '../../../src/app/screens/editor/inspector/animatable.ts'
+import { reactionTarget, useAnimatable } from '../../../src/app/screens/editor/inspector/animatable.ts'
+import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 
 describe('react button targets', () => {
   it('maps inspector properties to what reacts to the music', () => {
@@ -31,5 +32,43 @@ describe('react button targets', () => {
       duration: 4,
     })
     expect(reactionTarget(bars, ['params', 'height'])).toEqual({ clipId: bars.id, param: 'height' })
+  })
+})
+
+describe('a row for a property the clip lacks', () => {
+  beforeEach(() => loadDemoProject())
+  // The keyframe toast times itself out with window.setTimeout.
+  beforeEach(() => vi.stubGlobal('window', { setTimeout: () => 0 }))
+  afterEach(() => vi.unstubAllGlobals())
+
+  const bareText = () => {
+    const project = editor.getProject()
+    const clip = Object.values(project.clips).find((c) => c.type === 'text' && !c.adjustments?.contrast)
+    if (clip?.type !== 'text') throw new Error('The demo project has no text clip without contrast')
+    return clip
+  }
+
+  it('creates the property on the first edit, which then coalesces into one undo step', () => {
+    const clip = bareText()
+    const row = useAnimatable(clip, ['adjustments', 'contrast'], 0)
+    expect(row.value).toBe(0)
+    row.set(0.2)
+    useAnimatable(editor.getProject().clips[clip.id]!, ['adjustments', 'contrast'], 0).set(0.4)
+    row.commit()
+    const after = editor.getProject().clips[clip.id]
+    expect(after?.type === 'text' && after.adjustments?.contrast?.value).toBe(0.4)
+    editor.undo()
+    const undone = editor.getProject().clips[clip.id]
+    expect(undone?.type === 'text' && undone.adjustments?.contrast).toBeFalsy()
+  })
+
+  it('creates the property with its fallback value when a keyframe is added', () => {
+    const clip = bareText()
+    useAnimatable(clip, ['adjustments', 'contrast'], 0).key()
+    const after = editor.getProject().clips[clip.id]
+    expect(after?.type === 'text' && after.adjustments?.contrast).toMatchObject({
+      value: 0,
+      keyframes: [{ value: 0 }],
+    })
   })
 })

@@ -55,3 +55,46 @@ test('the react button opens the music reactions: pick one, change its amount, s
   expect(await lookModulation(page)).toEqual([])
   await expect(react).toHaveAttribute('aria-pressed', 'false')
 })
+
+/** A color adjustment of the sample's first chorus clip. */
+function adjustment(page: Page, key: string) {
+  return page.evaluate((key) => {
+    const project: Project = window.mvStudio.app.project.editor.getProject()
+    const clip = project.clips['c-s-c1-1']
+    const anim = clip && 'adjustments' in clip ? clip.adjustments?.[key as 'contrast'] : undefined
+    return {
+      value: anim?.value ?? 0,
+      keyframes: anim?.keyframes?.length ?? 0,
+      reactions: anim?.modulation?.length ?? 0,
+    }
+  }, key)
+}
+
+test('each color adjustment can be keyframed and react to the music', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?sel=clip:c-s-c1-1&t=67.2'
+  })
+  await waitForPreview(page)
+  await page.getByRole('button', { name: 'Color', exact: true }).click()
+
+  await page.getByRole('button', { name: 'Add keyframe: Exposure' }).click()
+  expect((await adjustment(page, 'exposure')).keyframes).toBe(1)
+  await expect(page.getByRole('button', { name: 'Add keyframe: Exposure' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+
+  await page.getByRole('button', { name: 'React to music: Contrast' }).click()
+  const panel = page.getByRole('dialog', { name: 'React to music: Contrast' })
+  await panel.getByRole('combobox', { name: 'Reaction' }).click()
+  await page.getByRole('option', { name: /^Pulse with kick/ }).click()
+  expect((await adjustment(page, 'contrast')).reactions).toBe(1)
+  await page.keyboard.press('Escape')
+
+  const before = (await adjustment(page, 'saturation')).value
+  await page.getByRole('slider', { name: 'Saturation' }).focus()
+  await page.keyboard.press('ArrowRight')
+  expect((await adjustment(page, 'saturation')).value).toBeGreaterThan(before)
+})
