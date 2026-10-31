@@ -36,26 +36,27 @@ describe('checkSuitability', () => {
     expect(report).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
   })
 
-  it('looks for people on 512 px frames, makes masks at 256 px, and can skip frames for people', async () => {
+  it('looks for people in every sample, on 512 px frames, and makes masks at 256 px', async () => {
     const seg = fakeSegmentation()
     const { source } = fakeSource({ duration: 2 })
-    const report = await checkSuitability(seg, source, { peopleEvery: 2 })
+    const report = await checkSuitability(seg, source)
     expect(report.verdict).toBe('good')
     expect(seg.analyzed).toHaveLength(10)
-    expect(seg.analyzed.map((a) => !!a.people)).toEqual([
-      true,
-      false,
-      true,
-      false,
-      true,
-      false,
-      true,
-      false,
-      true,
-      false,
-    ])
+    expect(seg.analyzed.every((a) => a.people)).toBe(true)
     expect(seg.analyzed[0]!.size).toEqual({ width: 512, height: 288 })
     expect(seg.analyzed[0]!.maskSize).toEqual({ width: 256, height: 144 })
+  })
+
+  it('bridges a missed detection on a long shot, whose samples are further apart than the hold', async () => {
+    // 60 s in 90 samples: one every 0.67 s. The detector misses the person in every other one.
+    let calls = 0
+    const seg = fakeSegmentation(undefined, () =>
+      calls++ % 2 ? [] : [{ box: { x: 0, y: 0, width: 1, height: 1 }, score: 0.9 }],
+    )
+    const { source } = fakeSource({ duration: 60 })
+    const report = await checkSuitability(seg, source)
+    expect(report.sampledFrames).toBe(90)
+    expect(report).toMatchObject({ verdict: 'good', usableFraction: 1 })
   })
 })
 

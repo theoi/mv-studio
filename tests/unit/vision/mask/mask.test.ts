@@ -264,14 +264,35 @@ describe('person evidence for the verdict', () => {
     expect(kept.data[(H / 2) * W + W / 2]).toBe(255)
   })
 
-  it('uses the people found within the hold of each frame', () => {
-    const people = [
-      { t: 0, boxes: [around] },
-      { t: 1, boxes: [{ x: 0, y: 0, width: 0.1, height: 0.1 }] },
-    ]
-    expect(peopleNear(people, 0.3)).toEqual([around])
-    expect(peopleNear(people, 0.5)).toEqual([])
-    expect(peopleNear(people, 0.7)).toHaveLength(1)
+  it('bridges a missed detection between two hits, but does not spread a stray hit', () => {
+    const other = { x: 0, y: 0, width: 0.1, height: 0.1 }
+    const hits = new Map([
+      [1, around],
+      [3, around],
+      [7, other],
+    ])
+    const people = Array.from({ length: 12 }, (_, i) => ({
+      t: i * 0.2,
+      boxes: hits.has(i) ? [hits.get(i)!] : [],
+    }))
+    // The clip's first frame needs a hit after it only.
+    expect(peopleNear(people, 0)).toEqual([around])
+    expect(peopleNear(people, 0.4)).toEqual([around, around])
+    expect(peopleNear(people, 0.8)).toEqual([])
+    expect(peopleNear(people, 1.2)).toEqual([])
+    expect(peopleNear(people, 1.4)).toEqual([other])
+    expect(peopleNear(people, 1.6)).toEqual([])
+    // Within the hold of the last frame, a hit before it is enough.
+    expect(peopleNear(people, 1.8)).toEqual([other])
+  })
+
+  it('does not let an animal the detector takes for a person now and then cover the shot', () => {
+    const samples = Array.from({ length: 30 }, (_, i) => ({ t: i * 0.2, mask: subject }))
+    const now = samples.map((s, i) => ({ t: s.t, boxes: i % 5 ? [] : [around] }))
+    expect(assessSuitability(samples, 0.2, {}, now)).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['no-subject'],
+    })
   })
 
   it('finds no one in a mask the detector does not see as a person', () => {

@@ -61,7 +61,7 @@ export const SUITABILITY_VERSION = 3
  * object detector labels "person". These were chosen on the 65-clip dev set (see src/vision/README.md).
  */
 export const PERSON_MIN_SCORE = 0.3
-/** A frame uses the people found within this many seconds of it, so a person the detector misses for a frame or two stays. */
+/** A frame between two detections of a person at most this many seconds away on each side counts as having them. */
 export const PERSON_HOLD_SECONDS = 0.4
 /** Each side of a person box grows by this share of its size, for hair, raised arms and loose clothes. */
 export const PERSON_BOX_MARGIN = 0.15
@@ -72,9 +72,21 @@ export interface PeopleAt {
   boxes: Rect[]
 }
 
-/** Boxes of the people found within `hold` seconds of `t`. */
+/**
+ * Boxes of the people found around `t`, when someone was found within `hold` seconds both before and after it (one
+ * side is enough within `hold` of the first or last frame looked at). This bridges a person the detector misses for a
+ * few frames, but a stray hit (an animal it takes for a person now and then) covers only its own frame instead of
+ * spreading over the shot.
+ */
 export function peopleNear(people: ReadonlyArray<PeopleAt>, t: number, hold = PERSON_HOLD_SECONDS): Rect[] {
-  return people.filter((p) => Math.abs(p.t - t) <= hold + 1e-6).flatMap((p) => p.boxes)
+  const eps = 1e-6
+  const near = people.filter((p) => p.boxes.length && Math.abs(p.t - t) <= hold + eps)
+  if (!near.length) return []
+  const first = Math.min(...people.map((p) => p.t))
+  const last = Math.max(...people.map((p) => p.t))
+  const before = near.some((p) => p.t <= t + eps) || t - first <= hold + eps
+  const after = near.some((p) => p.t >= t - eps) || last - t <= hold + eps
+  return before && after ? near.flatMap((p) => p.boxes) : []
 }
 
 /** The mask with everything outside the (grown) boxes cleared. */
@@ -122,8 +134,9 @@ export function flicker(prev: Mask, cur: Mask, next: Mask, threshold = 128): num
  * quick check and the stored person track both judge with this, so they agree on the same masks. `spacing` is the
  * nominal time between samples, used to turn usable samples into time ranges. Stability is measured on the samples
  * that come with their neighbouring frames (the person track), and is null without them (the quick check). With
- * `people`, each frame is judged only on its mask inside the people found near it (`peopleNear`); flicker is still
- * measured on the whole mask, since the export cuts out all of it.
+ * `people`, each frame is judged only on its mask inside the people found near it (`peopleNear`, within
+ * `PERSON_HOLD_SECONDS` or one sample spacing, whichever is longer, so a long shot's spread-out samples still bridge a
+ * miss); flicker is still measured on the whole mask, since the export cuts out all of it.
  */
 export function assessSuitability(
   samples: ReadonlyArray<SuitabilitySample>,
@@ -132,8 +145,9 @@ export function assessSuitability(
   people?: ReadonlyArray<PeopleAt>,
 ): SuitabilityReport {
   const o = { ...DEFAULTS, ...options }
+  const hold = Math.max(PERSON_HOLD_SECONDS, spacing)
   const frames = samples.map((s) =>
-    assessFrame(s.t, people ? keepPeople(s.mask, peopleNear(people, s.t)) : s.mask, o),
+    assessFrame(s.t, people ? keepPeople(s.mask, peopleNear(people, s.t, hold)) : s.mask, o),
   )
   const n = frames.length
   if (n === 0) {

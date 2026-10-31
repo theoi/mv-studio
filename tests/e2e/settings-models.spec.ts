@@ -120,4 +120,8 @@ test('Settings › This device counts the person detector in Person cutout and r
     urls,
   )
   expect(left).toEqual(urls.map(() => false))
+  // The matte the cutout uses where text overlaps the person is listed on its own.
+  const matte = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'Cutout edges' })
+  await expect(matte.getByText('7 MB')).toBeVisible()
+  await expect(matte.getByText('Downloads when used')).toBeVisible()
 })

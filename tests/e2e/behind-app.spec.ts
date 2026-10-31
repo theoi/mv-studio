@@ -138,6 +138,104 @@ test('Assist › Behind the subject does not offer a shot of an animal, which th
   await expect(row.getByText('Not suitable')).toBeVisible()
 })
 
+/**
+ * Model-free vision: the quick check finds a person, but the export track's detector finds no one, as when a shot is
+ * offered and the cutout then turns it down.
+ */
+async function offeredThenRefused(page: Page) {
+  await page.evaluate(() => {
+    const { vision } = window.mvStudio
+    const hang = () => new Promise(() => undefined)
+    const person = (width: number, height: number) => {
+      const data = new Uint8Array(width * height)
+      for (let y = Math.floor(height * 0.15); y < height; y++)
+        data.fill(255, y * width + Math.floor(width * 0.35), y * width + Math.floor(width * 0.65))
+      return { width, height, data }
+    }
+    let track: Untyped
+    const seg: Record<string, (...args: Untyped[]) => Promise<Untyped>> = {
+      configure: async () => undefined,
+      resetStream: async () => undefined,
+      analyze: async (req) => {
+        const size = req.maskSize ?? { width: req.bitmap.width, height: req.bitmap.height }
+        req.bitmap.close()
+        return {
+          ...(req.mask ? { mask: person(size.width, size.height) } : {}),
+          ...(req.people
+            ? { people: [{ box: { x: 0.3, y: 0.1, width: 0.4, height: 0.9 }, score: 0.9 }] }
+            : {}),
+          ...(req.faces ? { faces: [] } : {}),
+        }
+      },
+      beginTrack: async ({ meta }) => {
+        track = vision.createPackedTrack(meta)
+        return { id: 1 }
+      },
+      pushTrackFrame: async (req) => {
+        req.bitmap.close()
+        const { width, height } = track.meta.maskSize
+        vision.appendFrame(track, person(width, height), 0.26)
+        return {
+          coverage: 0.26,
+          box: { x: 0.35, y: 0.15, width: 0.3, height: 0.85 },
+          usedHq: false,
+          ...(req.faces ? { faces: [] } : {}),
+          ...(req.people ? { people: [] } : {}),
+        }
+      },
+      endTrack: async () => track,
+      cancelTrack: async () => undefined,
+    }
+    window.mvStudio.app.footage.setVisionBackendsForTests({
+      segmentation: () =>
+        new Proxy(seg, { get: (t, key) => (key === 'then' ? undefined : (t[key as string] ?? hang)) }),
+      onnx: () => new Proxy({}, { get: (_target, key) => (key === 'then' ? undefined : hang) }) as Untyped,
+    })
+  })
+}
+
+/** Clips of an imported asset (by file name) that got no cutout. */
+function uncut(page: Page, name: string) {
+  return page.evaluate((name) => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clips = Object.values(project.clips as Record<string, Untyped>)
+    const hosts = new Set(clips.map((c) => c.meta?.behindSubjectOf).filter(Boolean))
+    return clips
+      .filter((c) => project.assets[c.assetId]?.name?.startsWith(name) && !c.meta?.behindSubjectOf)
+      .map((c) => ({ id: c.id as string, cut: hosts.has(c.id) }))
+  }, name)
+}
+
+test('a shot the check offers but the cutout turns down says why in the inspector', async ({ page }) => {
+  await open(page, '#/editor?t=10')
+  await offeredThenRefused(page)
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await inspector.getByRole('button', { name: 'Layering' }).click()
+  const toggle = inspector.getByRole('switch', { name: 'Put text and effects behind the subject' })
+  await toggle.click()
+  await expect(
+    page.getByRole('status').getByText('No one in this shot is large enough to cut out.'),
+  ).toBeVisible()
+  await expect(toggle).not.toBeChecked()
+  expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
+})
+
+test('Assist › Behind the subject lists a shot the cutout turned down, with why', async ({ page }) => {
+  await open(page, '#/editor?t=10')
+  await offeredThenRefused(page)
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const row = assist.getByText('people-interview', { exact: true }).locator('..').locator('..')
+  await expect(row.getByText('Suitable', { exact: true })).toBeVisible()
+  await assist.getByRole('button', { name: /^Apply to \d+ suitable clips?$/ }).click()
+  await expect(
+    assist.getByText('people-interview: No one in this shot is large enough to cut out.'),
+  ).toBeVisible()
+  expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
+})
+
 test('while clips are being checked, the top bar opens Behind the subject, not Export', async ({ page }) => {
   await open(page, '#/editor?t=10')
   await page.evaluate(() => {
