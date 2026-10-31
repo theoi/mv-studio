@@ -5,13 +5,13 @@
  */
 import { CloudError } from '../cloud/errors.ts'
 import { DEFAULT_FAL_MODELS } from '../cloud/fal/catalog.ts'
-import { storeGeneratedMedia, type GeneratedMediaStore } from '../cloud/media.ts'
+import { generateKeepingPaid, storeGeneratedMedia, type GeneratedMediaStore } from '../cloud/media.ts'
 import type { GenerationModel, GenerationTier, MediaGenerationProvider } from '../cloud/types.ts'
 import type { Asset, Id, Project } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
 import { planRequests, type ShotRequest } from './cost.ts'
 import type { GenerationOptions } from './inputs.ts'
-import type { EditPlan } from './plan.ts'
+import { generatedUnit, type EditPlan } from './plan.ts'
 
 /** Errors that would fail every remaining shot too, so generation stops at the first one. */
 const STOP_KINDS = new Set([
@@ -84,7 +84,13 @@ export interface GeneratePlanOptions {
   done?: ReadonlyMap<string, Asset>
   /** Reads the still for image-to-video shots. */
   readAsset?: (assetId: Id) => Promise<Blob>
-  onShot?: (shotId: string, asset: Asset, usd: number) => void
+  onShot?: (shotId: string, asset: Asset) => void
+  /** Once per request the provider finished and billed, with its estimated cost, even if its result is lost after. */
+  onBilled?: (usd: number) => void
+  /** After a Cancel, while the run still waits for paid results: how many are downloading, to be kept. */
+  onStopping?: (keeping: number) => void
+  /** After each shot settles: how many are finished (made or failed) and how many failed, of `total`. */
+  onProgress?: (counts: { done: number; failed: number; total: number }) => void
   /** Requests in flight at once (default 2). */
   concurrency?: number
 }
@@ -93,8 +99,14 @@ export interface GeneratedShots {
   /** Generated or reused media by shot id, including `done`. */
   assets: Map<string, Asset>
   failed: { shotId: string; label: string; error: JobError }[]
-  /** Estimated spend of the requests that succeeded in this run. */
+  /** Estimated spend of the requests the provider finished (and billed) in this run. */
   spentUsd: number
+}
+
+interface Underway {
+  fraction: number
+  eta?: number
+  downloading: boolean
 }
 
 function isStopError(error: JobError): boolean {
@@ -111,15 +123,39 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
   let spentUsd = 0
   let finished = 0
   let stop: JobError | undefined
-  const report = () =>
+  const unit = generatedUnit(o.plan)
+  const workers = Math.max(1, Math.min(o.concurrency ?? 2, total))
+  const typical = (r: ShotRequest) => o.provider.getModel(r.request.modelId)?.typicalSeconds
+  /** Shots underway: their own progress, the seconds they still need, and whether their result is downloading. */
+  const underway = new Map<ShotRequest, Underway>()
+  let shown = 0
+  const report = () => {
+    // Shots underway count by their own progress, so the bar moves during a clip that takes minutes. Each one's
+    // progress only grows, and a shot that settles moves to 1, so the sum never goes back.
+    let partial = 0
+    for (const u of underway.values()) partial += u.fraction
+    shown = Math.max(shown, total ? Math.min(1, (finished + partial) / total) : 1)
+    if (o.ctx.signal.aborted) {
+      // After a Cancel the run still waits for the results that are downloading, so say the Cancel was received.
+      o.ctx.progress({ fraction: shown, stage: 'stopping', message: 'Stopping…', etaSeconds: undefined })
+      o.onStopping?.([...underway.values()].filter((u) => u.downloading).length)
+      return
+    }
+    const waiting = queue.reduce((sum, r) => sum + (typical(r) ?? 0), 0)
+    const etas = [...underway.values()].map((u) => u.eta ?? 0)
+    const etaSeconds = Math.round(Math.max(0, ...etas) + waiting / workers)
     o.ctx.progress({
-      fraction: total ? finished / total : 1,
+      fraction: shown,
       stage: 'generate',
       message: total
-        ? `Generating shot ${Math.min(total, finished + 1)} of ${total}`
-        : 'Using shots made earlier',
+        ? `Generating ${unit} ${Math.min(total, finished + 1)} of ${total}`
+        : `Using ${unit}s made earlier`,
+      // Clips take minutes each, so they say how long is left; images are done in seconds.
+      ...(unit === 'clip' && total && etaSeconds > 0 ? { etaSeconds } : {}),
     })
+  }
   report()
+  o.ctx.signal.addEventListener('abort', report, { once: true })
 
   const runOne = async (r: ShotRequest) => {
     const request = { ...r.request }
@@ -130,27 +166,44 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
         throw new JobError('invalid-input', 'This shot needs a still image to animate.')
       request.image = await o.readAsset(still)
     }
-    // Overall progress counts shots; per-request progress would make the bar jump back and forth.
-    const quiet: JobContext = {
+    const own: Underway = { fraction: 0, eta: typical(r), downloading: false }
+    underway.set(r, own)
+    // A request's progress feeds the shot's share of the bar; its message stays its own, under the shot count.
+    const shotCtx: JobContext = {
       signal: o.ctx.signal,
       throwIfCancelled: () => o.ctx.throwIfCancelled(),
-      progress: () => undefined,
+      progress: (p) => {
+        if (p.stage === 'download') own.downloading = true
+        if (p.fraction === undefined && p.etaSeconds === undefined) return
+        if (p.fraction !== undefined) own.fraction = Math.max(own.fraction, Math.min(0.95, p.fraction))
+        if (p.etaSeconds !== undefined) own.eta = p.etaSeconds
+        report()
+      },
     }
-    const result = await o.provider.generate(request, quiet)
-    o.ctx.throwIfCancelled()
+    // A cancel stops the request only until the provider has finished (and billed) it; a result downloading by then
+    // is kept.
+    const result = await generateKeepingPaid(o.provider, request, shotCtx, {
+      onBilled: (usd) => {
+        spentUsd += usd
+        o.onBilled?.(usd)
+      },
+    })
     const [asset] = await storeGeneratedMedia(result, o.store, {
       prompt: request.prompt,
       name: r.shot.label ? `AI: ${r.shot.label}` : undefined,
     })
     if (!asset) throw new JobError('provider', 'The provider returned no media for this shot.')
     assets.set(r.shot.id, asset)
-    spentUsd += result.estimate.usd
-    o.onShot?.(r.shot.id, asset, result.estimate.usd)
+    o.onShot?.(r.shot.id, asset)
   }
 
   const worker = async () => {
     while (queue.length > 0 && !stop) {
-      o.ctx.throwIfCancelled()
+      // Stop without throwing, so the run waits for a shot another worker is still downloading and keeps it.
+      if (o.ctx.signal.aborted) {
+        stop ??= new JobError('cancelled', 'Cancelled')
+        break
+      }
       const r = queue.shift() as ShotRequest
       try {
         await runOne(r)
@@ -159,13 +212,19 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
           ? new JobError('cancelled', 'Cancelled', { cause: error })
           : JobError.from(error)
         if (isStopError(err)) stop ??= err
-        else failed.push({ shotId: r.shot.id, label: r.shot.label ?? 'AI shot', error: err })
+        else failed.push({ shotId: r.shot.id, label: r.shot.label ?? `AI ${unit}`, error: err })
       }
+      underway.delete(r)
       finished++
       report()
+      o.onProgress?.({ done: finished, failed: failed.length, total })
     }
   }
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(o.concurrency ?? 2, total)) }, worker))
+  try {
+    await Promise.all(Array.from({ length: workers }, worker))
+  } finally {
+    o.ctx.signal.removeEventListener('abort', report)
+  }
   if (stop) throw stop
   if (total > 0 && failed.length === total) throw failed[0]?.error
   return { assets, failed, spentUsd }

@@ -2,7 +2,8 @@
 import type { MediaStore } from '../media/types.ts'
 import type { EditCommand } from '../model/commands.ts'
 import type { Asset } from '../model/types.ts'
-import type { JobContext, JobHandle, JobRunner } from '../shared/jobs.ts'
+import { JobError, type JobContext, type JobHandle, type JobRunner } from '../shared/jobs.ts'
+import { CloudError } from './errors.ts'
 import { formatUsd } from './pricing.ts'
 import type { GenerationRequest, GenerationResult, GenerationTask, MediaGenerationProvider } from './types.ts'
 
@@ -78,4 +79,58 @@ export function startGenerationJob(
     title: `Generating ${what} · about ${cost}`,
     run: (ctx) => generateIntoLibrary(provider, request, store, ctx),
   })
+}
+
+/** How long a cancelled job still waits for a result that is downloading. It is paid for by then. */
+export const PAID_RESULT_GRACE_MS = 30_000
+
+export interface PaidRequestOptions {
+  /** Called once, when the provider has finished the request and billed it. */
+  onBilled?: (usd: number) => void
+  graceMs?: number
+}
+
+/**
+ * Runs one paid request. Cancelling `ctx` stops it at once only until the provider has finished it. From stage
+ * `download` on (fal.ai reports it at COMPLETED, when it bills), the result is paid for: the request then gets
+ * `graceMs` more to bring it back, to be kept, and is aborted only if it is still stalled after that. `onBilled`
+ * runs once the request settles: when it returns, or when it fails after `download` (a billed result that is lost
+ * still counts), unless the provider marks the failure `uncharged`.
+ */
+export async function generateKeepingPaid(
+  provider: MediaGenerationProvider,
+  request: GenerationRequest,
+  ctx: JobContext,
+  options: PaidRequestOptions = {},
+): Promise<GenerationResult> {
+  const abort = new AbortController()
+  let finished = false
+  let grace: ReturnType<typeof setTimeout> | undefined
+  const bill = () => options.onBilled?.(provider.estimate(request).usd)
+  const onCancel = () => {
+    if (!finished) abort.abort(ctx.signal.reason)
+    else grace ??= setTimeout(() => abort.abort(ctx.signal.reason), options.graceMs ?? PAID_RESULT_GRACE_MS)
+  }
+  if (ctx.signal.aborted) onCancel()
+  else ctx.signal.addEventListener('abort', onCancel, { once: true })
+  try {
+    const result = await provider.generate(request, {
+      signal: abort.signal,
+      throwIfCancelled: () => {
+        if (abort.signal.aborted) throw new JobError('cancelled', 'Cancelled')
+      },
+      progress: (p) => {
+        if (p.stage === 'download') finished = true
+        ctx.progress(p)
+      },
+    })
+    bill()
+    return result
+  } catch (error) {
+    if (finished && !(error instanceof CloudError && error.uncharged)) bill()
+    throw error
+  } finally {
+    ctx.signal.removeEventListener('abort', onCancel)
+    clearTimeout(grace)
+  }
 }

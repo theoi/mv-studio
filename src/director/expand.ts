@@ -585,7 +585,10 @@ async function shotsForSection(
         source = { ...source, sameAs: reuse[i % reuse.length] }
       } else if (ctx.generated.length >= g.maxShots && ctx.generated.length > 0) {
         source = { ...source, sameAs: ctx.generated[(ctx.shotIndex + i) % ctx.generated.length] }
-        warn(ctx, `Limited to ${g.maxShots} generated shots to keep the cost down; the rest reuse them.`)
+        warn(
+          ctx,
+          `Limited to ${g.maxShots} generated ${g.mode === 'video' ? 'clips' : 'shots'} to keep the cost down; the rest reuse them.`,
+        )
       } else {
         ctx.generated.push(id)
         own.push(id)
@@ -1429,6 +1432,25 @@ function buildTexts(
   return texts
 }
 
+/**
+ * Asks for each AI video clip as long as the longest shot that shows it, once every shot has its final times: a clip
+ * reused in a longer shot (a repeated chorus, the shot limit) would otherwise run out before the shot ends.
+ */
+function clipLengths(shots: PlanShot[]): PlanShot[] {
+  const needed = new Map<string, Seconds>()
+  for (const s of shots) {
+    if (s.source.type !== 'generate' || s.source.task === 'text-to-image') continue
+    const id = s.source.sameAs ?? s.id
+    needed.set(id, Math.max(needed.get(id) ?? 0, s.end - s.start))
+  }
+  return shots.map((s) => {
+    const length = needed.get(s.id)
+    return s.source.type === 'generate' && !s.source.sameAs && length !== undefined
+      ? { ...s, source: { ...s.source, duration: round3(length) } }
+      : s
+  })
+}
+
 function summarize(plan: Omit<EditPlan, 'summary'>, ctx: Ctx): string {
   const main = plan.shots.filter((s) => s.layer === 'main')
   const mediaIds = new Set(main.flatMap((s) => (s.source.type === 'media' ? [s.source.assetId] : [])))
@@ -1523,7 +1545,7 @@ export async function expandBrief(
     }
     shots.push(...sectionShots)
   }
-  shots = openAndClose(await chooseFootage(shots, ctx), ctx)
+  shots = clipLengths(openAndClose(await chooseFootage(shots, ctx), ctx))
   const titleText = input.song.title ?? (meta.planner === 'llm' ? brief.title.trim() : '')
   const texts = buildTexts(sections, briefs, shots, ctx, titleText)
   await scrimBrightText(texts, shots, ctx)

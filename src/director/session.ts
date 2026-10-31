@@ -3,7 +3,7 @@
  * change preview and the generation cost, waits for the user to confirm any spend, generates AI shots as a job,
  * then applies everything as one undo step. React: useSyncExternalStore(session.subscribe, session.getState).
  */
-import { cloudErrorInfo } from '../cloud/errors.ts'
+import { CloudError, cloudErrorInfo } from '../cloud/errors.ts'
 import type { GeneratedMediaStore } from '../cloud/media.ts'
 import { formatEstimate } from '../cloud/pricing.ts'
 import type { MediaGenerationProvider } from '../cloud/types.ts'
@@ -32,7 +32,7 @@ import {
   type VideoKind,
 } from './inputs.ts'
 import { planLocally } from './local-planner.ts'
-import { shotsToGenerate, type EditPlan, type Pace } from './plan.ts'
+import { generatedUnit, shotsToGenerate, type EditPlan, type Pace } from './plan.ts'
 
 export interface DirectorRequest {
   kind: VideoKind
@@ -109,6 +109,9 @@ export interface PlanPreview {
 
 export type PlanStage = 'song' | 'bars' | 'plan'
 
+/** What the plan's AI shots are called in the panel: "clip" when they are all videos. */
+export type GeneratedUnit = 'shot' | 'clip'
+
 export type DirectorState =
   | { status: 'idle' }
   | {
@@ -144,16 +147,22 @@ export type DirectorState =
       actionLabel: string
       /** AI shots already generated for this plan (kept after a cancel). */
       generatedShots: number
+      unit: GeneratedUnit
     }
   | {
       status: 'generating'
       request: DirectorRequest
       plan: EditPlan
       jobId: string
+      /** Shots finished (made or failed) and failed so far, of `total`. */
       done: number
+      failed: number
       total: number
       fraction: number
       message: string
+      unit: GeneratedUnit
+      /** Set once Cancel was pressed while results fal.ai already made are downloading: how many are kept. */
+      stopping?: { keeping: number }
     }
   | {
       status: 'applied'
@@ -165,11 +174,14 @@ export type DirectorState =
       warnings: string[]
       /** AI shots that failed and show as placeholders; apply again to retry just those. */
       failedShots: number
+      /** The first failure in its source's words, for a tooltip ("fal.ai said: …" when from fal.ai); the warning stays plain. */
+      failedReason?: string
       /** What retrying the failed shots costs, and whether that needs the user's OK first. */
       cost: PlanCost | null
       confirmRequired: boolean
       /** The user's tracks under the draft that it hid (nothing is deleted; undo shows them again). */
       hiddenTracks: Id[]
+      unit: GeneratedUnit
     }
   | {
       status: 'error'
@@ -184,6 +196,7 @@ export type DirectorState =
       confirmRequired: boolean
       /** AI shots already made for the plan; they are kept. */
       generatedShots: number
+      unit: GeneratedUnit
     }
 
 const DEFAULT_POLICY: SpendPolicy = { alwaysConfirmPaid: false, confirmAboveUsd: 1, monthlyReminderUsd: 0 }
@@ -425,6 +438,7 @@ export class DirectorSession {
     const preview = previewCommands(project, compiled.commands)
     const { cost, confirmRequired, toMake } = this.spendFor(plan)
     const usd = cost?.usd ?? 0
+    const unit = generatedUnit(plan)
     return {
       status: 'ready',
       request,
@@ -438,8 +452,9 @@ export class DirectorSession {
       cost,
       confirmRequired,
       actionLabel:
-        toMake > 0 ? `Generate ${plural(toMake, 'shot')} · ${formatEstimate({ usd })}` : 'Make video',
+        toMake > 0 ? `Generate ${plural(toMake, unit)} · ${formatEstimate({ usd })}` : 'Make video',
       generatedShots: done.size,
+      unit,
     }
   }
 
@@ -469,10 +484,11 @@ export class DirectorSession {
     const usd = cost?.usd ?? 0
     const needsGeneration = !options.skipGeneration && shotsToGenerate(plan).some((s) => !done.has(s.id))
     const provider = this.deps.provider?.()
+    const unit = generatedUnit(plan)
     if (needsGeneration && (!provider || !this.deps.store)) {
       throw new DirectorError(
         'no-provider',
-        'Connect fal.ai in Settings to generate shots, or apply with placeholders.',
+        `Connect fal.ai in Settings to generate ${unit}s, or apply with placeholders.`,
       )
     }
     if (
@@ -487,13 +503,16 @@ export class DirectorSession {
     }
 
     let failed = 0
+    let failedReason: string | undefined
     const warnings: string[] = []
     if (needsGeneration && provider && this.deps.store) {
       const store = this.deps.store
       const total = cost?.count ?? 0
       const handle = this.deps.jobs.run({
         kind: 'director.generate',
-        title: total ? `Generating ${plural(total, 'shot')} · ${formatEstimate({ usd })}` : 'Preparing shots',
+        title: total
+          ? `Generating ${plural(total, unit)} · ${formatEstimate({ usd })}`
+          : `Preparing ${unit}s`,
         run: (ctx) =>
           generatePlanShots({
             plan,
@@ -503,21 +522,27 @@ export class DirectorSession {
             project: this.deps.editor.getProject(),
             done,
             readAsset: this.deps.readAsset,
-            onShot: (shotId, asset, spent) => {
+            onShot: (shotId, asset) => {
               done.set(shotId, asset)
-              this.deps.ledger?.record(spent, `Director: ${plan.title}`)
               this.keep(asset)
+            },
+            onBilled: (usd) => this.deps.ledger?.record(usd, `Director: ${plan.title}`),
+            onProgress: (counts) => {
+              if (this.job === handle && this.state.status === 'generating')
+                this.set({ ...this.state, done: counts.done, failed: counts.failed })
+            },
+            onStopping: (keeping) => {
+              if (this.job === handle && this.state.status === 'generating')
+                this.set({ ...this.state, stopping: { keeping } })
             },
           }),
       })
       this.job = handle
       const unsubscribe = handle.subscribe((snap) => {
         if (this.job !== handle || this.state.status !== 'generating') return
-        const fraction = snap.progress.fraction ?? 0
         this.set({
           ...this.state,
-          fraction,
-          done: Math.round(fraction * total),
+          fraction: snap.progress.fraction ?? 0,
           message: snap.progress.message ?? '',
         })
       })
@@ -527,18 +552,27 @@ export class DirectorSession {
         plan,
         jobId: handle.id,
         done: 0,
+        failed: 0,
         total,
         fraction: 0,
         message: 'Starting',
+        unit,
       })
       try {
         const result = await handle.promise
         for (const [id, asset] of result.assets) done.set(id, asset)
         failed = result.failed.length
+        const first = result.failed[0]?.error
+        if (first?.message)
+          failedReason =
+            first instanceof CloudError && first.provider === 'fal'
+              ? `fal.ai said: ${first.message}`
+              : first.message
         if (failed) {
-          const reason = result.failed[0]?.error.message
           warnings.push(
-            `${plural(failed, 'shot')} couldn't be generated${reason ? ` (${reason})` : ''}. Apply again to retry just those.`,
+            failed === 1
+              ? `1 ${unit} couldn’t be generated. Retry it below; a dark placeholder marks its place.`
+              : `${plural(failed, unit)} couldn’t be generated. Retry them below; dark placeholders mark their place.`,
           )
         }
       } catch (error) {
@@ -546,7 +580,7 @@ export class DirectorSession {
         const err = JobError.from(error)
         if (err.code === 'cancelled') {
           const kept = done.size
-            ? ` ${plural(done.size, 'shot')} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
+            ? ` ${plural(done.size, unit)} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
             : ''
           this.set(this.readyState(request, plan, [`Generation stopped.${kept}`]))
         } else {
@@ -562,7 +596,11 @@ export class DirectorSession {
     const project = this.deps.editor.getProject()
     let compiled: CompiledPlan
     try {
-      compiled = compilePlan(plan, project, { catalog: this.catalog(), generated: done })
+      compiled = compilePlan(plan, project, {
+        catalog: this.catalog(),
+        generated: done,
+        ...(failed ? { placeholderNote: 'none' as const } : {}),
+      })
       this.deps.editor.dispatch(compiled.commands, { label: compiled.label })
     } catch (error) {
       this.failOrReset(error, request, plan)
@@ -578,9 +616,11 @@ export class DirectorSession {
       summary: plan.summary,
       warnings: [...new Set([...plan.warnings, ...compiled.warnings, ...warnings])],
       failedShots: failed,
+      ...(failed && failedReason ? { failedReason } : {}),
       cost: retry.cost,
       confirmRequired: retry.confirmRequired,
       hiddenTracks: compiled.stats.hiddenTracks,
+      unit,
     })
     return this.state
   }
@@ -640,6 +680,7 @@ export class DirectorSession {
       cost: spend.cost,
       confirmRequired: spend.confirmRequired,
       generatedShots: plan ? this.generatedFor(plan).size : 0,
+      unit: plan ? generatedUnit(plan) : 'shot',
       error: err.toJSON(),
       title:
         cloud?.title ??

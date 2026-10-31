@@ -72,8 +72,17 @@ export class CloudError extends JobError {
   readonly title: string
   readonly steps: string[]
   readonly helpUrl?: string
+  /** The request had finished but the provider doesn't charge for this failure (fal.ai's own server errors). */
+  readonly uncharged: boolean
 
-  constructor(info: Omit<CloudErrorInfo, 'steps'> & { steps?: string[]; message: string; cause?: unknown }) {
+  constructor(
+    info: Omit<CloudErrorInfo, 'steps'> & {
+      steps?: string[]
+      message: string
+      cause?: unknown
+      uncharged?: boolean
+    },
+  ) {
     const steps = info.steps ?? []
     const cloud: CloudErrorInfo = {
       kind: info.kind,
@@ -95,6 +104,7 @@ export class CloudError extends JobError {
     this.title = info.title
     this.steps = steps
     this.helpUrl = info.helpUrl
+    this.uncharged = info.uncharged ?? false
   }
 
   get info(): CloudErrorInfo {

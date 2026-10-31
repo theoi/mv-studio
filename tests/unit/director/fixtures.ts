@@ -133,8 +133,8 @@ export interface FakeProvider extends MediaGenerationProvider {
   calls: GenerationRequest[]
   /** Return a CloudError for the n-th call (0-based) or every call. */
   failOn?: (index: number, request: GenerationRequest) => CloudError | undefined
-  /** Holds the n-th generate call until the promise resolves or the job is cancelled. */
-  gate?: (index: number) => Promise<void>
+  /** Holds the n-th generate call until the promise resolves or the job is cancelled; may report its progress. */
+  gate?: (index: number, ctx: JobContext) => Promise<void>
 }
 
 /** Behaves like FalProvider with real fal prices, without any network. */
@@ -158,7 +158,7 @@ export function fakeProvider(overrides: Partial<Pick<FakeProvider, 'failOn' | 'g
         const aborted = new Promise<never>((_, reject) =>
           ctx.signal.addEventListener('abort', () => reject(new JobError('cancelled', 'Cancelled'))),
         )
-        await Promise.race([provider.gate(index), aborted])
+        await Promise.race([provider.gate(index, ctx), aborted])
       }
       ctx.throwIfCancelled()
       const failure = provider.failOn?.(index, request)

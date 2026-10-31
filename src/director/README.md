@@ -16,9 +16,15 @@ draft. Everything it makes is ordinary project content created through `EditComm
    (unless the brief chooses them) and the visualizer palette. Unknown ids fall back with a warning; the result is
    validated with zod.
 4. **Cost** (`cost.ts`): one request per AI shot; repeated choruses reuse shots (`sameAs`), and media generated
-   earlier from the same request is reused for free.
+   earlier from the same request is reused for free. A video clip is requested as long as the longest shot that shows
+   it, and `byModel` adds up the clips' seconds at the lengths the model makes (video is priced by the second).
 5. **Generation** (`generate.ts`): only after the user confirms. Each finished shot is kept immediately, so a
-   cancel or a later failure never loses paid results.
+   cancel or a later failure never loses paid results. Requests go through `generateKeepingPaid()` (src/cloud): a
+   cancel stops a request at once only until fal.ai has finished (and billed) it; a result downloading by then gets
+   30 s more to land and is kept, while the state's `stopping.keeping` counts them (see `generating` below).
+   `onBilled` records each billed request once, even if its result is lost after, but not one fal.ai failed itself
+   (a 5xx result, which it doesn't charge). Each request's own progress moves the bar, `onProgress` counts shots
+   as they finish or fail, and clips (minutes each) report the time left.
 6. **Compile** (`compile.ts`): plan → `EditCommand`s on director tracks. Clips carry `meta.director`, so running
    the director again replaces the previous draft and leaves the user's clips alone.
 7. **Preview** (`diff.ts`): `previewCommands(project, commands)` dry-runs commands on a scratch editor and
@@ -123,8 +129,8 @@ removes clips whose line is gone or no longer has their words.
 
 ## UI states (Assist › Director)
 
-- `idle`: kind picker (Lyric video, Visualizer, Beat cut, AI video), optional prompt, "Use my clips" toggle, and
-  "AI shots" (Off, Stills, Video; draft or quality) when fal.ai is connected.
+- `idle`: optional idea, "Shots" (My clips, Mix, Generate) and, with Mix or Generate, "AI shots" (Images or Video
+  clips; `generate.mode` `'images'` or `'video'`). The kind of video follows the project's kind.
 - `planning`: `message` in place with Cancel. Planning is free. `stage` says whether the draft is waiting for the song
   analysis (`song`) or the bars (`bars`), which are slow only when their progress stops, or planning (`plan`), slow
   after a few seconds. When `slow` turns true, show "Still working…" with the time since `startedAt` ("Still
@@ -138,8 +144,12 @@ removes clips whose line is gone or no longer has their words.
   `actionLabel` ("Make video" or "Generate 12 shots · about $2.40"). When `confirmRequired` is true the button opens
   a cost confirmation listing `cost.items`, then calls `apply({ confirmSpend: true })`. "Apply without AI shots"
   calls `apply({ skipGeneration: true })` and leaves dark placeholders.
-- `generating`: "Generating shot 3 of 12" with a progress bar and Cancel. Cancel returns to `ready`, keeps the
-  shots already made, and lowers the cost.
+- `generating`: "Generating shot 3 of 12" with a progress bar and Cancel; `failed` counts shots that could not be
+  made while the rest go on. Cancel returns to `ready`, keeps the shots already made, and lowers the cost. While
+  results fal.ai already made are still downloading after Cancel, `stopping` is set: the subtitle and the progress
+  line say "Stopping…", "Keeping 2 clips that are downloading" goes under the bar, and Cancel is disabled.
+- Every state with a plan has `unit`: `'clip'` when all its AI shots are videos ("Generate 12 clips", "Retry 1
+  failed clip"), else `'shot'`.
 - `applied`: summary, warnings, Undo (`undo()`; only while the draft is still the latest change) and, when
   `failedShots > 0`, "Retry failed shots" (`apply()` again generates only those).
 - `error`: `title`, `message` and `steps` in place, with the plan kept so the user can retry.

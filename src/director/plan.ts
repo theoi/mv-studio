@@ -259,6 +259,15 @@ export function parseEditPlan(input: unknown): EditPlan {
   throw new Error(`Invalid edit plan: ${issues}`)
 }
 
+/** What the plan's AI shots are called: "clip" when every one of them is a video, else "shot". */
+export function generatedUnit(plan: Pick<EditPlan, 'shots'>): 'shot' | 'clip' {
+  const generated = plan.shots.filter((s) => s.source.type === 'generate')
+  return generated.length > 0 &&
+    generated.every((s) => s.source.type === 'generate' && s.source.task !== 'text-to-image')
+    ? 'clip'
+    : 'shot'
+}
+
 /** Shots that need a paid generation (not reusing another shot's result). */
 export function shotsToGenerate(plan: Pick<EditPlan, 'shots'>): (PlanShot & { source: GenerateSource })[] {
   return plan.shots.filter(

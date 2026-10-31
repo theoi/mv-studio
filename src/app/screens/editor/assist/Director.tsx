@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { isLocalEndpoint } from '../../../../cloud/llm/presets.ts'
 import { formatEstimate } from '../../../../cloud/pricing.ts'
-import type { DirectorState, PlanCost, PlanDescription } from '../../../../director/index.ts'
+import type { DirectorState, GeneratedUnit, PlanCost, PlanDescription } from '../../../../director/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Dialog } from '../../../ds/Dialog.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
@@ -36,6 +36,7 @@ import {
   tryAnotherVersion,
   undoDraft,
   useDirector,
+  type AiShots,
   type ShotSource,
 } from '../../../state/director.ts'
 import { useJobs } from '../../../state/jobs.ts'
@@ -58,6 +59,8 @@ export function DirectorBadge() {
   if (state.status === 'error') return <Badge tone="danger">Failed</Badge>
   return null
 }
+
+const capitalized = (word: string) => word.charAt(0).toUpperCase() + word.slice(1)
 
 /** Ends a sentence that came from elsewhere (an error message) so the next one doesn't run into it. */
 function sentence(text: string): string {
@@ -101,7 +104,7 @@ function PlanList({ description }: { description: PlanDescription | null }) {
  * Starts paid generation: straight away when the spend policy allows it, else after the confirm dialog. The
  * returned dialog must be rendered by the caller.
  */
-function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: string) {
+function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: string, unit: GeneratedUnit) {
   const [confirming, setConfirming] = useState(false)
   const paid = paidCost(cost)
   const start = () => (paid && confirmRequired ? setConfirming(true) : void applyDraft())
@@ -109,7 +112,7 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
     <Dialog
       open={confirming}
       onOpenChange={setConfirming}
-      title={`Generate ${plural(paid.count, 'shot')}?`}
+      title={`Generate ${plural(paid.count, unit)}?`}
       description={`Costs ${formatEstimate(paid)}, charged by fal.ai to your key.`}
       width={440}
       footer={
@@ -133,14 +136,16 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
         <ul className={styles.tips}>
           {paid.byModel.map((m) => (
             <li key={`${m.kind}:${m.name}`}>
-              {plural(m.count, m.kind)} with {m.name}
+              {plural(m.count, m.kind)}
+              {m.seconds ? `, ${Math.round(m.seconds)} s in all,` : ''} with {m.name}
               {/* With one model its price is the total, already in the description and on the button. */}
               {paid.byModel.length > 1 && ` · ${formatEstimate(m)}`}
             </li>
           ))}
         </ul>
         <p className={styles.muted}>
-          Estimates from fal.ai’s prices on {paid.pricesCheckedOn}. Shots already made are kept if you cancel.
+          Estimates from fal.ai’s prices on {paid.pricesCheckedOn}. {capitalized(unit)}s already made are kept
+          if you cancel.
         </p>
       </div>
     </Dialog>
@@ -151,6 +156,7 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
 function IdleView() {
   const idea = useDirector((s) => s.idea)
   const shots = useDirector((s) => s.shots)
+  const aiShots = useDirector((s) => s.aiShots)
   const cloud = useCloud()
   const planner = llmLabel(cloud.llm)
   const needsKey = shots !== 'mine' && !cloud.falKey
@@ -165,7 +171,10 @@ function IdleView() {
   else if (shots !== 'mine')
     costLine = (
       <>
-        <Info /> Free to plan. AI shots show their price before anything is generated
+        <Info />{' '}
+        {aiShots === 'video'
+          ? 'Free to plan. Video clips cost more and show their price before anything is generated'
+          : 'Free to plan. AI shots show their price before anything is generated'}
       </>
     )
   else if (local)
@@ -191,7 +200,7 @@ function IdleView() {
             block
             icon={<Clapperboard />}
             disabled={needsKey}
-            onClick={() => void draftVideo(directorRequest(idea, shots))}
+            onClick={() => void draftVideo(directorRequest(idea, shots, aiShots))}
           >
             Draft video
           </Button>
@@ -221,6 +230,27 @@ function IdleView() {
           ]}
         />
       </Field>
+      {shots !== 'mine' && (
+        <Field
+          label="AI shots"
+          hint={
+            aiShots === 'video'
+              ? 'Clips with real motion. Each takes a few minutes to make.'
+              : 'Stills the director moves with the music. Costs the least.'
+          }
+        >
+          <Segmented<AiShots>
+            block
+            value={aiShots}
+            onChange={(value) => useDirector.setState({ aiShots: value })}
+            ariaLabel="What AI shots are"
+            options={[
+              { value: 'images', label: 'Images' },
+              { value: 'video', label: 'Video clips' },
+            ]}
+          />
+        </Field>
+      )}
       {needsKey && (
         <div className={styles.callout}>
           <KeyRound />
@@ -300,7 +330,7 @@ function PlanningView({ state }: { state: StateOf<'planning'> | StateOf<'ready'>
 function ReadyView({ state }: { state: StateOf<'ready'> }) {
   const description = useDirector((s) => s.description)
   const cost = paidCost(state.cost)
-  const spend = useSpend(state.cost, state.confirmRequired, state.actionLabel)
+  const spend = useSpend(state.cost, state.confirmRequired, state.actionLabel, state.unit)
   return (
     <ToolView
       title="Director"
@@ -318,7 +348,7 @@ function ReadyView({ state }: { state: StateOf<'ready'> }) {
               className={styles.footerAlt}
               onClick={() => void applyDraft({ skipGeneration: true })}
             >
-              Apply without AI shots
+              Apply without AI {state.unit}s
             </Button>
           )}
           {cost && (
@@ -345,14 +375,38 @@ function ReadyView({ state }: { state: StateOf<'ready'> }) {
 function GeneratingView({ state }: { state: StateOf<'generating'> }) {
   const job = useJobs().find((j) => j.id === state.jobId)
   const notice = useDirector((s) => s.cancelNotice)
+  const { unit, failed, stopping } = state
   return (
     <ToolView
       title="Director"
-      subtitle={`Generating shot ${Math.min(state.done + 1, state.total)} of ${state.total}`}
-      footer={<CancelButton job={job} />}
+      subtitle={
+        stopping
+          ? 'Stopping…'
+          : `Generating ${unit} ${Math.min(state.done + 1, state.total)} of ${state.total}`
+      }
+      footer={<CancelButton job={job} disabled={Boolean(stopping)} />}
     >
-      <RunCard job={job} label="Generating shots" />
-      <p className={styles.muted}>{notice} Shots already made are kept.</p>
+      <RunCard
+        job={job}
+        label={`Generating ${unit}s`}
+        note={
+          stopping?.keeping
+            ? `Keeping ${plural(stopping.keeping, unit)} that ${stopping.keeping === 1 ? 'is' : 'are'} downloading`
+            : undefined
+        }
+      />
+      {failed > 0 && (
+        <div className={styles.callout}>
+          <AlertTriangle />
+          <div>
+            {plural(failed, unit)} couldn’t be generated. The others go on, and you can retry{' '}
+            {failed === 1 ? 'it' : 'them'} when they’re done.
+          </div>
+        </div>
+      )}
+      <p className={styles.muted}>
+        {notice} {capitalized(unit)}s already made are kept.
+      </p>
     </ToolView>
   )
 }
@@ -379,8 +433,8 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
   const builtIn = !llmLabel(useCloud().llm)
   const [refine, setRefine] = useState('')
   const retryCost = paidCost(state.cost)
-  const retryLabel = `Retry ${plural(state.failedShots, 'failed shot')}${retryCost ? ` · ${formatEstimate(retryCost)}` : ''}`
-  const spend = useSpend(state.cost, state.confirmRequired, retryLabel)
+  const retryLabel = `Retry ${plural(state.failedShots, `failed ${state.unit}`)}${retryCost ? ` · ${formatEstimate(retryCost)}` : ''}`
+  const spend = useSpend(state.cost, state.confirmRequired, retryLabel, state.unit)
   const submit = () => {
     if (!refine.trim()) return
     const prompt = [state.request.prompt, refine.trim()].filter(Boolean).join('. ')
@@ -421,7 +475,13 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
       <Notes warnings={state.warnings} />
       {state.failedShots > 0 && (
         <div className={styles.rowActions}>
-          <Button size="sm" variant="subtle" icon={<RotateCcw />} onClick={spend.start}>
+          <Button
+            size="sm"
+            variant="subtle"
+            icon={<RotateCcw />}
+            onClick={spend.start}
+            title={state.failedReason}
+          >
             {retryLabel}
           </Button>
         </div>
@@ -465,7 +525,7 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
 function ErrorView({ state }: { state: StateOf<'error'> }) {
   const cost = paidCost(state.cost)
   const retryLabel = cost ? `Retry · ${formatEstimate(cost)}` : 'Retry'
-  const spend = useSpend(state.cost, state.confirmRequired, retryLabel)
+  const spend = useSpend(state.cost, state.confirmRequired, retryLabel, state.unit)
   const retry = () => {
     if (state.plan) spend.start()
     else if (state.request) void draftVideo(state.request)
@@ -496,7 +556,7 @@ function ErrorView({ state }: { state: StateOf<'error'> }) {
           <div className={styles.muted}>
             {sentence(state.message)} Your project is unchanged
             {kept > 0
-              ? `, and the ${plural(kept, 'AI shot')} made so far ${kept === 1 ? 'is' : 'are'} kept`
+              ? `, and the ${plural(kept, `AI ${state.unit}`)} made so far ${kept === 1 ? 'is' : 'are'} kept`
               : ''}
             .
           </div>
