@@ -132,7 +132,7 @@ test('Assist › Song analysis taps the tempo, sets the first beat and analyzes 
   await panel.getByRole('button', { name: 'Analyze again' }).click()
   await expect(panel.getByRole('progressbar', { name: 'Song analysis progress' })).toBeVisible()
   await shot(page, 'analysis-running')
-  await expect(page.getByText(/^Found 1[12]\d BPM and 1 section\. Kept 1 section you named$/)).toBeVisible({
+  await expect(page.getByText(/^Found 1[12]\d BPM and 1 section\. Kept 1 section you named\.$/)).toBeVisible({
     timeout: 180_000,
   })
   const again = await grid(page)

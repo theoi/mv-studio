@@ -195,7 +195,7 @@ export async function analyzeAgain(): Promise<void> {
     const sections = merged.sections?.length ?? 0
     const bpm = merged.tempo ? formatBpm(merged.tempo.bpm) : 'the beat'
     const found = `Found ${bpm} and ${plural(sections, 'section')}`
-    undoable('Analyze again', kept ? `${found}. Kept ${plural(kept, 'section')} you named` : found, [
+    undoable('Analyze again', kept ? `${found}. Kept ${plural(kept, 'section')} you named.` : found, [
       setAnalysisCommand(merged),
       ...(chorus ? [chorus] : []),
     ])

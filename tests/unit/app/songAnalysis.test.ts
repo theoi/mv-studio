@@ -383,7 +383,7 @@ describe('Analyze again', () => {
       ['chorus', 6, 10],
     ])
     expect(toast).toHaveBeenCalledWith(
-      'Found 100 BPM and 3 sections. Kept 1 section you named',
+      'Found 100 BPM and 3 sections. Kept 1 section you named.',
       expect.objectContaining({ label: 'Undo' }),
     )
     editor.undo()
