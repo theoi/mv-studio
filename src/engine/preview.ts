@@ -29,6 +29,7 @@ import { videoRequests, visibleLayers, WebGLCompositor } from './compositor.ts'
 import { VideoElementFrameProvider, type BridgedVideo } from './frames.ts'
 import { planFrame } from './layout.ts'
 import { WebAudioPlaybackClock } from './playback.ts'
+import { analysisPatches, type AnalysisPatch, type PreviewRenderRequest } from './previewWorker.ts'
 import { AdaptiveScale, QUALITY_SCALES, scrubScale, type PreviewQuality } from './quality.ts'
 import { startPreviewWorker, type PreviewWorker } from './renderHost.ts'
 import type { MediaFileSource, PlaybackState, PluginRegistry } from './types.ts'
@@ -225,16 +226,23 @@ class WorkerRenderer implements FrameRenderer {
     return s
   }
 
-  /** Top-level fields that changed since the last request; unchanged ones (analysis, usually) are not copied again. */
-  private projectChanges(project: Project): Partial<Project> | undefined {
+  /**
+   * What changed since the last request: the top-level fields, and the analysis as patches. Unchanged values (most of
+   * the analysis, usually) are not copied to the worker again.
+   */
+  private projectChanges(project: Project): Pick<PreviewRenderRequest, 'project' | 'analysis'> {
     const sent = this.sentProject
-    if (sent === project) return undefined
+    if (sent === project) return {}
     this.sentProject = project
-    if (!sent) return project
+    if (!sent) return { project }
     const changes: Record<string, unknown> = {}
-    for (const key of new Set([...Object.keys(sent), ...Object.keys(project)]) as Set<keyof Project>)
-      if (project[key] !== sent[key]) changes[key] = project[key]
-    return changes as Partial<Project>
+    let analysis: AnalysisPatch[] | undefined
+    for (const key of new Set([...Object.keys(sent), ...Object.keys(project)]) as Set<keyof Project>) {
+      if (project[key] === sent[key]) continue
+      if (key === 'analysis') analysis = analysisPatches(sent.analysis, project.analysis)
+      else changes[key] = project[key]
+    }
+    return { project: changes as Partial<Project>, analysis }
   }
 
   private async request(
@@ -281,7 +289,7 @@ class WorkerRenderer implements FrameRenderer {
     this.frames.endFrame()
     try {
       return await this.worker.render(
-        { time, size, project: this.projectChanges(project), videos, capture, untilDrawn },
+        { time, size, ...this.projectChanges(project), videos, capture, untilDrawn },
         transfer,
       )
     } catch (error) {
