@@ -347,7 +347,7 @@ describe('lyricChorusRanges', () => {
     ])
   })
 
-  it('keeps a detected chorus where repeated words are sung and extends one by at most a quarter', () => {
+  it('keeps a detected chorus where repeated words are sung and extends one by at most a tenth', () => {
     const PRE = ['Here it comes again tonight', 'can you feel it rising']
     const sections = [
       section('a', 0, 20, 'verse', 0),
@@ -367,8 +367,8 @@ describe('lyricChorusRanges', () => {
     ]
     // The lyrics' chorus starts with the pre-chorus at 14 and 54.
     expect(chorusAt(sections, lines)).toEqual([
-      [15, 40, 0.8],
-      [55, 80, 0.8],
+      [18, 40, 0.8],
+      [58, 80, 0.8],
       [100, 120, 0.4],
     ])
     // A detected chorus without a confidence stays an audio chorus.
@@ -376,7 +376,7 @@ describe('lyricChorusRanges', () => {
     expect(chorusAt(unscored, lines).at(-1)).toEqual([100, 120, 0.4])
   })
 
-  it('extends a detected chorus by a quarter of its length in all, shared between its two ends', () => {
+  it('extends a detected chorus by a tenth of its length in all, shared between its two ends', () => {
     const PRE = ['Here it comes again tonight', 'can you feel it rising']
     const POST = ['and we will never let it go', 'until the morning light comes']
     const sections = [
@@ -392,10 +392,10 @@ describe('lyricChorusRanges', () => {
       ...say(VERSE_2, 49, 1),
       ...say([...PRE, ...CHORUS, ...POST], 62, 1),
     ]
-    // The lyrics' chorus runs 8 s past each end of the 20 s choruses: 2.5 s are kept at each end.
+    // The lyrics' chorus runs 8 s past each end of the 20 s choruses: 1 s is kept at each end.
     expect(chorusAt(sections, lines)).toEqual([
-      [17.5, 42.5, 0.8],
-      [67.5, 92.5, 0.8],
+      [19, 41, 0.8],
+      [69, 91, 0.8],
     ])
   })
 
