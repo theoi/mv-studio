@@ -27,7 +27,7 @@ export const MOTION_PRESETS: Record<CameraMotion, CameraPreset> = {
   drift: 'pan-right',
 }
 
-/** The move's intensity when nothing set it (the effect's own default). */
+/** The move's intensity when nothing set it (the effect's own default), and the panels' starting strength. */
 const DEFAULT_CAMERA_INTENSITY = 0.5
 
 export const useCamera = create<{
@@ -39,7 +39,13 @@ export const useCamera = create<{
   requests: Record<string, readonly Id[]>
   /** The preset each job adds, so the inspector shows the chosen motion while depth is estimated. */
   presets: Record<string, CameraPreset>
-}>(() => ({ motion: 'push', strength: 40, results: {}, requests: {}, presets: {} }))
+}>(() => ({
+  motion: 'push',
+  strength: DEFAULT_CAMERA_INTENSITY * 100,
+  results: {},
+  requests: {},
+  presets: {},
+}))
 
 export function hasCameraMove(clip: Clip): boolean {
   return 'effects' in clip && clip.effects.some((e) => e.effectId === CAMERA_EFFECT_ID)

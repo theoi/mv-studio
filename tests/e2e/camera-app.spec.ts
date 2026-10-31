@@ -106,7 +106,7 @@ test('Assist › 3D camera adds a depth camera move to every still in one undo s
   for (const clip of after.clips)
     expect(clip.camera).toEqual({
       preset: 'orbit-right',
-      intensity: 0.5,
+      intensity: 0.6,
       depth: after.depthAssets[0],
       keyframes: [
         { time: 0, value: 0 },
@@ -152,7 +152,7 @@ test('Inspector › Motion adds, changes, strengthens and removes a still’s 3D
 
   await select.click()
   await page.getByRole('option', { name: 'Drift' }).click()
-  await expect.poll(camera).toMatchObject({ preset: 'pan-right', intensity: 0.4 })
+  await expect.poll(camera).toMatchObject({ preset: 'pan-right', intensity: 0.5 })
   await expect(select).toHaveText('Drift')
   const added = (await camera())!
 
@@ -166,7 +166,7 @@ test('Inspector › Motion adds, changes, strengthens and removes a still’s 3D
   const strength = inspector.getByRole('slider', { name: '3D camera strength' })
   await strength.focus()
   for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight')
-  await expect.poll(async () => (await camera())?.intensity).toBe(0.45)
+  await expect.poll(async () => (await camera())?.intensity).toBe(0.55)
 
   await select.click()
   await page.getByRole('option', { name: 'None' }).click()
@@ -206,7 +206,7 @@ test('Inspector › Motion shows the chosen move while depth is estimated, cance
   await expect(inspector.getByRole('combobox', { name: '3D camera move' })).toBeDisabled()
   await expect(inspector.getByText('Wait for the other 3D camera move to finish.')).toBeVisible()
 
-  // Cancel where it started: back to None, a quiet line, and the project is unchanged. Esc does not cancel.
+  // Cancel where it started: the section is back as before, with focus on the select. Esc does not cancel.
   await select(target!.id)()
   await cancel.focus()
   await page.keyboard.press('Escape')
@@ -215,7 +215,8 @@ test('Inspector › Motion shows the chosen move while depth is estimated, cance
   await inspector.getByRole('button', { name: 'Cancel' }).click()
   await expect(move).toHaveText('None')
   await expect(move).toBeEnabled()
-  await expect(inspector.getByText('Cancelled. Your project is unchanged.')).toBeVisible()
+  await expect(move).toBeFocused()
+  await expect(inspector.getByText(/Cancelled/)).toHaveCount(0)
   expect(await camera(target!.id)).toBeUndefined()
 
   // A failure reads as one, and says how to retry.
@@ -239,9 +240,9 @@ test('Inspector › Motion shows the chosen move while depth is estimated, cance
   await page.evaluate(() => (window as Untyped).depthGate.release())
   await expect.poll(async () => (await camera(target!.id))?.preset).toBe('dolly-in')
   await expect(move).toHaveText('Push in')
-  await expect(inspector.getByText('40%', { exact: true })).toBeVisible()
+  await expect(inspector.getByText('50%', { exact: true })).toBeVisible()
   const strength = inspector.getByRole('slider', { name: '3D camera strength' })
   await strength.focus()
   for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight')
-  await expect(inspector.getByText('45%', { exact: true })).toBeVisible()
+  await expect(inspector.getByText('55%', { exact: true })).toBeVisible()
 })

@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { VisualClip } from '../../../../model/index.ts'
@@ -18,7 +19,7 @@ import {
   useDepthDownload,
   type CameraMotion,
 } from '../../../state/camera.ts'
-import { JOB_KINDS, latestJob, useJobs } from '../../../state/jobs.ts'
+import { JOB_KINDS } from '../../../state/jobs.ts'
 import { formatBytes } from '../../../format.ts'
 import { editor } from '../../../state/project.ts'
 import { toast } from '../../../state/ui.ts'
@@ -73,7 +74,7 @@ function presetLabel(preset: CameraPreset): string {
 /** Inspector › Motion for a still: pick, change or remove its 3D camera move and set its strength. */
 export function CameraSection({ clip }: { clip: VisualClip }) {
   const { job, phase } = useJob(JOB_KINDS.camera)
-  const latest = latestJob(useJobs(), JOB_KINDS.camera)
+  const refocus = useRef(false)
   const requests = useCamera((s) => s.requests)
   const presets = useCamera((s) => s.presets)
   const strength = useCamera((s) => s.strength)
@@ -82,7 +83,6 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
   const asked = !!job && !!requests[job.id]?.includes(clip.id)
   const adding = asked && busy ? job : undefined
   const failure = asked && phase === 'failed' ? job?.error?.message : undefined
-  const cancelled = !move && latest?.status === 'cancelled' && !!requests[latest.id]?.includes(clip.id)
   const download = useDepthDownload(!move && !busy)
   // While the move is being added, the select shows the motion that was chosen.
   const shown = move?.preset ?? (adding ? presets[adding.id] : undefined)
@@ -128,7 +128,7 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
       {adding ? (
         <div className={styles.progressRow}>
           <span>Estimating depth… {pct(adding)}%</span>
-          <CancelButton job={adding} inline />
+          <CancelButton job={adding} inline onCancel={() => (refocus.current = true)} />
         </div>
       ) : busy ? (
         <p className={styles.note}>Wait for the other 3D camera move to finish.</p>
@@ -142,13 +142,18 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
         </p>
       ) : (
         !move && (
-          <>
-            <p className={styles.note}>
-              {CAMERA_DESCRIPTION}
-              {download ? ` (${formatBytes(download)} download, once)` : ''}.
-            </p>
-            {cancelled && <p className={styles.note}>Cancelled. Your project is unchanged.</p>}
-          </>
+          <p
+            className={styles.note}
+            ref={(el) => {
+              // After Cancel the section is back as before and its Cancel button is gone: focus the select.
+              if (!el || !refocus.current) return
+              refocus.current = false
+              el.parentElement?.querySelector<HTMLElement>('[role="combobox"]')?.focus()
+            }}
+          >
+            {CAMERA_DESCRIPTION}
+            {download ? ` (${formatBytes(download)} download, once)` : ''}.
+          </p>
         )
       )}
     </Section>
