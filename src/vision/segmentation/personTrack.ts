@@ -26,6 +26,10 @@ export interface PersonTrackOptions extends TaskOptions {
   hqShortSide?: number
   /** Face detection rate for subject tracking, default 5; 0 disables it. */
   faceFps?: number
+  /**
+   * Criteria for the report. The cache key leaves them out, so a cached track keeps the report it was stored with;
+   * only a report from older criteria (`SUITABILITY_VERSION`) is judged again with these.
+   */
   suitability?: SuitabilityOptions
 }
 
