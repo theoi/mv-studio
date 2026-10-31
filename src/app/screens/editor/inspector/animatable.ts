@@ -125,11 +125,15 @@ const lowerFirst = (name: string) =>
   /^[A-Z][a-z]/.test(name) ? name.charAt(0).toLowerCase() + name.slice(1) : name
 
 /**
- * A setting's full name with what it belongs to: "RGB split amount", or just "Color grade" for its Grade, rather
- * than repeating the word.
+ * A setting's full name with what it belongs to: "RGB split amount", without repeating a word where they meet: just
+ * "Color grade" for its Grade, and "Film grain size" for its Grain size.
  */
 export function settingName(label: string, owner: string): string {
-  return owner.toLowerCase().endsWith(label.toLowerCase()) ? owner : `${owner} ${lowerFirst(label)}`
+  if (owner.toLowerCase().endsWith(label.toLowerCase())) return owner
+  const last = owner.split(' ').at(-1)?.toLowerCase()
+  const [first, ...rest] = label.split(' ')
+  if (rest.length && first?.toLowerCase() === last) return `${owner} ${lowerFirst(rest.join(' '))}`
+  return `${owner} ${lowerFirst(label)}`
 }
 
 interface RowOptions {

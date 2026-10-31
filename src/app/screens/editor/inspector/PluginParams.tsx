@@ -130,7 +130,8 @@ export function ParamRow({
       )
     case 'select':
       return (
-        <FieldRow label={spec.label} trailing={spacer}>
+        // A dropdown takes the buttons' space too, so names like "Teal and orange" fit the narrow inspector.
+        <FieldRow label={spec.label} trailing={spec.options.length <= 3 ? spacer : undefined}>
           {spec.options.length <= 3 ? (
             <Segmented
               value={String(a.value)}

@@ -89,8 +89,8 @@ test('a clip’s effects show their own settings named after the effect, turn of
 
 test('the 3D camera move is set in Motion only, and a LUT choice lists LUT files and the built-in one by name', async ({
   page,
-}) => {
-  await openWithEffects(page, ['Color grade'])
+}, testInfo) => {
+  await openWithEffects(page, ['Color grade', 'Film grain'])
   await page.evaluate(() => {
     const { app, plugins } = window.mvStudio
     const editor = app.project.editor
@@ -113,6 +113,21 @@ test('the 3D camera move is set in Motion only, and a LUT choice lists LUT files
   await expect(inspector.getByRole('switch', { name: '3D camera move on' })).toBeVisible()
   await expect(inspector.getByRole('slider', { name: /^3D camera move/ })).toHaveCount(0)
   await expect(inspector.getByRole('combobox', { name: /^3D camera move/ })).toHaveCount(0)
+
+  // A setting's name does not repeat the word it shares with its effect's, and a long grade name fits unclipped in
+  // the narrow inspector of a small window.
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await expect(inspector.getByRole('slider', { name: 'Film grain size' })).toBeVisible()
+  const grade = inspector.getByRole('combobox', { name: 'Color grade', exact: true })
+  await expect(grade).toHaveText('Teal and orange')
+  await grade.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('grade-select.png') })
+  expect(
+    await grade
+      .locator('span')
+      .first()
+      .evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBe(true)
 
   const lut = inspector.getByRole('combobox', { name: 'Color grade LUT' })
   await expect(lut).toHaveText('Neutral')
