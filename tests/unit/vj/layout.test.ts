@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { catalogEntry } from '../../../src/engine/registry.ts'
+import { catalogEntry, pluginRegistry } from '../../../src/engine/registry.ts'
 import type { PluginCatalogEntry } from '../../../src/engine/types.ts'
 import {
   LAYOUT_EXTENSION_KEY,
@@ -200,5 +200,21 @@ describe('effectTarget', () => {
     expect(
       effectTarget({ type: 'effect', effectId: 'glow', amountParam: 'radius', range: [2, 50] }, catalog),
     ).toEqual({ kind: 'param', key: 'radius', off: 2, on: 50 })
+  })
+
+  it('gives every library effect on the default row a parameter that visibly changes the picture', () => {
+    const library = pluginRegistry.catalog()
+    const pads = defaultLayout(makeProject(), library).effects.flatMap((p) =>
+      p?.action.kind === 'effect' && p.action.fx.type === 'effect'
+        ? [{ label: p.label, fx: p.action.fx }]
+        : [],
+    )
+    expect(pads.map((p) => p.label)).toEqual(['RGB split', 'Zoom pulse', 'Glow', 'Shake', 'Invert', 'Blur'])
+    for (const { label, fx } of pads) {
+      const target = effectTarget(fx, library)
+      expect(target.kind, label).toBe('param')
+      if (target.kind === 'param') expect(target.on - target.off, label).toBeGreaterThan(0)
+    }
+    expect(effectTarget({ type: 'effect', effectId: 'zoom-pulse' }, library)).toMatchObject({ key: 'zoom' })
   })
 })
