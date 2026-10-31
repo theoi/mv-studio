@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
-import type { Asset, Clip, EditCommand, Id, Project, Track } from '../../model/index.ts'
+import type { Asset, Clip, EditCommand, Id, JsonObject, Project, Track } from '../../model/index.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
-import type { SuitabilityReason, SuitabilityReport, SuitabilityVerdict } from '../../vision/index.ts'
+import type {
+  SelectionClick,
+  SuitabilityReason,
+  SuitabilityReport,
+  SuitabilityVerdict,
+} from '../../vision/index.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { mediaById } from '../mock/media.ts'
 import { maskStorageKey, sceneOf } from '../mock/demoProject.ts'
@@ -18,7 +23,8 @@ import { dispatch, editor } from './project.ts'
  * "Behind the subject": the footage clip is duplicated onto a Subject track above the lyrics and restricted to the
  * person with a matte, so text plays between the person and the background on exactly that clip. Sample footage has
  * its masks drawn with its scenes. Imported footage is checked for a person (src/vision checkSuitability) and cut
- * out with a person mask track encoded as a mask video, as a job.
+ * out with a person mask track encoded as a mask video, as a job. Any other object can be picked in the preview
+ * instead (./behindObject.ts).
  */
 
 const SUBJECT_TRACK_NAME = 'Subject'
@@ -26,7 +32,7 @@ export const CUTOUT_LABEL = 'Put lyrics behind the subject'
 /** Marks person mask videos among an asset's derived media. */
 const PERSON_MASK = 'vision.person-mask'
 
-type VideoClip = Extract<Clip, { type: 'video' }>
+export type VideoClip = Extract<Clip, { type: 'video' }>
 
 export type Suitability =
   | { status: 'checked'; verdict: SuitabilityVerdict; reasons: SuitabilityReason[] }
@@ -35,19 +41,51 @@ export type Suitability =
   | { status: 'failed'; message: string }
   | { status: 'unsupported' }
 
+/**
+ * The object a cutout follows instead of the person, kept on the cutout clip (`meta.object`): the click that chose
+ * it, later clicks that corrected it, and how well it was followed. Times are media times of the footage.
+ */
+export interface ObjectPick {
+  click: SelectionClick
+  corrections: SelectionClick[]
+  /** Fraction of the clip where the object was found. */
+  tracked: number
+  /** Where it was lost while expected in view: a click there helps. */
+  fix: number[]
+}
+
+export function objectOf(clip: Clip | undefined): ObjectPick | undefined {
+  const o = clip?.meta?.object
+  return o && typeof o === 'object' && !Array.isArray(o) && 'click' in o
+    ? (o as unknown as ObjectPick)
+    : undefined
+}
+
+export const objectMeta = (hostId: string, pick: ObjectPick): JsonObject => ({
+  behindSubjectOf: hostId,
+  object: structuredClone(pick) as unknown as JsonObject,
+})
+
 export interface CutoutResult {
   /** Clips that got a cutout. */
   count: number
   /** Requested clips left as they were: no person to cut out, or already behind. */
   skipped: number
   label: string
+  /** Set when the cutout follows a picked object. */
+  object?: ObjectPick
+}
+
+export interface CutoutRequest {
+  clips: readonly string[]
+  object: boolean
 }
 
 export const useBehind = create<{
   checks: Record<Id, Suitability>
   results: Record<string, CutoutResult>
-  /** The clips each cutout job was asked for, so a failure shows next to them. */
-  requests: Record<string, readonly string[]>
+  /** What each cutout job was asked for, so progress and failures show next to those clips. */
+  requests: Record<string, CutoutRequest>
 }>(() => ({ checks: {}, results: {}, requests: {} }))
 
 function setCheck(assetId: Id, check: Suitability) {
@@ -97,7 +135,10 @@ export function suitabilityText(s: Suitability): { status: string; why?: string;
   }
 }
 
-function footageOf(project: Project, clip: Clip | undefined): { clip: VideoClip; asset: Asset } | undefined {
+export function footageOf(
+  project: Project,
+  clip: Clip | undefined,
+): { clip: VideoClip; asset: Asset } | undefined {
   if (!clip || clip.type !== 'video' || clip.meta?.behindSubjectOf) return undefined
   const asset = project.assets[clip.assetId]
   return asset?.kind === 'video' ? { clip, asset } : undefined
@@ -234,6 +275,22 @@ export function usePersonDownload(needed: boolean): number {
   return needed ? bytes : 0
 }
 
+/** The Subject track above everything, and the command that adds it when the project has none. */
+export function subjectTrack(project: Project): { track: Track; commands: EditCommand[] } {
+  const found = project.tracks.find((t) => t.kind === 'visual' && t.name === SUBJECT_TRACK_NAME && !t.locked)
+  if (found) return { track: found, commands: [] }
+  const track: Track = {
+    id: crypto.randomUUID(),
+    kind: 'visual',
+    name: SUBJECT_TRACK_NAME,
+    muted: false,
+    solo: false,
+    locked: false,
+    hidden: false,
+  }
+  return { track, commands: [{ type: 'track.add', track, index: 0 }] }
+}
+
 /**
  * Commands that cut the subject out of each clip onto the Subject track (added when missing), using the sample
  * scene masks, the person masks in the project, or `newMasks` (stored but not in the project yet).
@@ -244,22 +301,7 @@ export function cutoutCommands(
   newMasks: ReadonlyMap<Id, Asset> = new Map(),
 ): { commands: EditCommand[]; count: number } {
   const commands: EditCommand[] = []
-  let track: Track | undefined = project.tracks.find(
-    (t) => t.kind === 'visual' && t.name === SUBJECT_TRACK_NAME && !t.locked,
-  )
-  const trackCommands: EditCommand[] = []
-  if (!track) {
-    track = {
-      id: crypto.randomUUID(),
-      kind: 'visual',
-      name: SUBJECT_TRACK_NAME,
-      muted: false,
-      solo: false,
-      locked: false,
-      hidden: false,
-    }
-    trackCommands.push({ type: 'track.add', track, index: 0 })
-  }
+  const { track, commands: trackCommands } = subjectTrack(project)
   const added = new Set<Id>()
   let count = 0
   for (const id of new Set(clipIds)) {
@@ -430,7 +472,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
     },
   })
   jobId = handle.id
-  useBehind.setState((s) => ({ requests: { ...s.requests, [jobId]: clipIds } }))
+  useBehind.setState((s) => ({ requests: { ...s.requests, [jobId]: { clips: clipIds, object: false } } }))
   return handle
 }
 
