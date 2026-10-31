@@ -104,6 +104,7 @@ export interface Keyframe<T = number> {
 }
 
 export type StemName = 'vocals' | 'drums' | 'bass' | 'other'
+export const STEM_NAMES: readonly StemName[] = ['vocals', 'drums', 'bass', 'other']
 
 /** A per-frame audio feature from the project's analysis data (see AudioAnalysis). */
 export type AudioFeatureSource =
@@ -287,11 +288,22 @@ export interface SolidClip extends VisualClipBase {
   color: Animatable<string>
 }
 
+/** The audio a generator clip reacts to. */
+export interface ClipAudioSource {
+  /** A separated stem of the song. Until the song's stems are separated (or without this one), the full mix. */
+  stem: StemName
+}
+
 /** Procedural visuals from the generator registry: visualizers, particles, shader visuals. */
 export interface GeneratorClip extends VisualClipBase {
   type: 'generator'
   generatorId: string
   params: Record<string, Animatable<ParamValue>>
+  /**
+   * What the clip reacts to (absent: the song's full mix). It feeds the clip's audio uniforms and draw2d frame, its
+   * effects, and its own modulations whose source names no stem. The beat and bar grid stay the song's.
+   */
+  audio?: ClipAudioSource
 }
 
 /** Applies its adjustments and effects to everything composited beneath it (used by looks). */

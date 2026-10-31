@@ -199,7 +199,10 @@ export interface EffectFrameContext {
   width: number
   height: number
   params: ResolvedParams
-  /** Audio features at `time` (loudness, bands, onset/beat pulses), from project analysis. */
+  /**
+   * Audio features at `time` (loudness, bands, onset/beat pulses), from project analysis: of the stem a generator clip
+   * reacts to (GeneratorClip.audio), else of the song's mix.
+   */
   audio: AudioFrame
 }
 

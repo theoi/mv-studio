@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { createAudioSampler, gridPosition } from '../../../src/engine/audioFeatures.ts'
-import { createAudioClip, createProject, newId } from '../../../src/model/factory.ts'
-import type { Asset, Project } from '../../../src/model/types.ts'
+import { clipSampler, createAudioSampler, gridPosition } from '../../../src/engine/audioFeatures.ts'
+import type { AudioFrame } from '../../../src/engine/types.ts'
+import { createAudioClip, createProject, createSolidClip, newId } from '../../../src/model/factory.ts'
+import type { Asset, Clip, GeneratorClip, Project } from '../../../src/model/types.ts'
 
 function songProject(clipStart: number, sourceStart: number): Project {
   const project = createProject()
@@ -158,5 +159,78 @@ describe('audio frame motion and stems', () => {
     expect(stems.drums?.loudness).toBeCloseTo(0.8)
     expect(stems.drums?.onset).toBeCloseTo(1)
     expect(createAudioSampler(project).frame(2.3).stems.drums?.onset).toBeLessThan(0.1)
+  })
+})
+
+describe('stem audio sources', () => {
+  function withDrums(): Project {
+    const project = songProject(0, 0)
+    const analysis = Object.values(project.analysis.audio)[0]!
+    analysis.stemFeatures = {
+      drums: {
+        rate: 10,
+        loudness: Array(101).fill(0.8),
+        bands: Array.from({ length: 101 }, () => [0.9, 0.1]),
+        bandEdgesHz: [0, 200, 20000],
+        onsets: [2],
+      },
+    }
+    return project
+  }
+
+  it('takes loudness, bands, onsets and flow from the stem, and keeps the song’s beat grid', () => {
+    const mix = createAudioSampler(withDrums())
+    const drums = mix.stem('drums').frame(2)
+    const song = mix.frame(2)
+    expect(drums.loudness).toBeCloseTo(0.8)
+    expect(drums.bands[0]).toBeCloseTo(0.9)
+    expect(drums.bands[1]).toBeCloseTo(0.1)
+    expect(drums.onset).toBeCloseTo(1)
+    expect(drums.flow).toBeCloseTo(1.6)
+    expect(song.loudness).toBeCloseTo(0.2)
+    expect(song.bands[0]).toBeCloseTo(0)
+    expect(song.flow).toBeCloseTo(0.2, 1)
+    const grid = (f: AudioFrame) => [f.beat, f.downbeat, f.beatIndex, f.beatPhase, f.barIndex, f.barPhase]
+    expect(grid(drums)).toEqual(grid(song))
+    expect(drums.stems).toEqual(song.stems)
+  })
+
+  it('feeds sources without a stem from the stem; explicit stems and beats are unchanged', () => {
+    const mix = createAudioSampler(withDrums())
+    const drums = mix.stem('drums')
+    expect(drums.sample({ kind: 'loudness' }, 2)).toBeCloseTo(0.8)
+    expect(drums.sample({ kind: 'band', band: 0 }, 2)).toBeCloseTo(0.9)
+    expect(drums.sample({ kind: 'onset' }, 2)).toBeCloseTo(1)
+    expect(drums.sample({ kind: 'loudness', stem: 'vocals' }, 2)).toBe(0)
+    expect(drums.sample({ kind: 'beat' }, 2)).toBe(mix.sample({ kind: 'beat' }, 2))
+    expect(mix.sample({ kind: 'loudness' }, 2)).toBeCloseTo(0.2)
+  })
+
+  it('uses the full mix for a stem that has not been separated', () => {
+    const mix = createAudioSampler(withDrums())
+    expect(mix.stem('vocals').frame(2)).toEqual(mix.frame(2))
+    expect(mix.stem('vocals').sample({ kind: 'loudness' }, 2)).toBeCloseTo(0.2)
+  })
+
+  it('gives a generator clip with an audio source its stem, and other clips the mix', () => {
+    const project = withDrums()
+    const visual = project.tracks.find((t) => t.kind === 'visual')!
+    const { color: _color, ...base } = createSolidClip({
+      trackId: visual.id,
+      color: '#000',
+      start: 0,
+      duration: 4,
+    })
+    const generator: GeneratorClip = {
+      ...base,
+      type: 'generator',
+      generatorId: 'visualizer.spectrum',
+      params: {},
+    }
+    const mix = createAudioSampler(project)
+    const loudness = (clip: Clip) => clipSampler(mix, clip).sample({ kind: 'loudness' }, 2)
+    expect(loudness({ ...generator, audio: { stem: 'drums' } })).toBeCloseTo(0.8)
+    expect(loudness(generator)).toBeCloseTo(0.2)
+    expect(loudness({ ...base, color: { value: '#000' }, type: 'solid' })).toBeCloseTo(0.2)
   })
 })
