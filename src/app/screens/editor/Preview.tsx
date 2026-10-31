@@ -63,7 +63,11 @@ function SelectionOverlay({ width, height }: { width: number; height: number }) 
   )
 }
 
-type StageStatus = 'loading' | 'ready' | 'failed'
+type StageStatus = 'loading' | 'ready' | 'failed' | 'stopped'
+
+/** More restarts than this within the window and the stage stops trying and asks for a reload. */
+const MAX_RESTARTS = 3
+const RESTART_WINDOW_MS = 120_000
 
 function Stage({ ratio }: { ratio: number }) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -71,6 +75,9 @@ function Stage({ ratio }: { ratio: number }) {
   const previewRef = useRef<PreviewController | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [status, setStatus] = useState<StageStatus>('loading')
+  // Each preview gets a fresh canvas (the canvas key): a canvas handed to a render worker that died can't draw again.
+  const [generation, setGeneration] = useState(0)
+  const restarts = useRef<number[]>([])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -90,12 +97,27 @@ function Stage({ ratio }: { ratio: number }) {
       setStatus('ready')
       offFirstFrame()
     })
+    const offStopped = connection.preview.subscribe(() => {
+      if (!connection.preview.getSnapshot().error) return
+      offStopped()
+      const now = Date.now()
+      restarts.current = [...restarts.current.filter((t) => now - t < RESTART_WINDOW_MS), now]
+      if (restarts.current.length > MAX_RESTARTS) {
+        setStatus('stopped')
+        return
+      }
+      if (restarts.current.length > 1)
+        toast('The preview restarted. If it keeps happening, close other tabs to free memory.')
+      setStatus('loading')
+      setGeneration((g) => g + 1)
+    })
     return () => {
       offFirstFrame()
+      offStopped()
       connection.dispose()
       previewRef.current = null
     }
-  }, [])
+  }, [generation])
 
   useEffect(() => {
     const wrap = wrapRef.current
@@ -114,6 +136,7 @@ function Stage({ ratio }: { ratio: number }) {
     <div ref={wrapRef} className={styles.stage}>
       <div className={styles.frame} style={{ width: size.width, height: size.height }}>
         <canvas
+          key={generation}
           ref={canvasRef}
           className={styles.canvas}
           aria-label="Video preview"
@@ -129,6 +152,17 @@ function Stage({ ratio }: { ratio: number }) {
         {status === 'failed' && (
           <div className={styles.stageNote}>
             The preview needs WebGL 2. Turn on hardware acceleration in your browser settings.
+          </div>
+        )}
+        {status === 'stopped' && (
+          <div className={[styles.stageNote, styles.stageNoteStack].join(' ')} role="alert">
+            <span>
+              The preview keeps stopping, most likely because the browser is short on memory. Close other
+              tabs, then reload. Your project is saved.
+            </span>
+            <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
+              Reload
+            </Button>
           </div>
         )}
       </div>

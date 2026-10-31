@@ -45,13 +45,22 @@ function store(key: string, url: string): void {
   for (const listener of listeners) listener()
 }
 
-async function render(project: Project, time: Seconds, width: number, height: number): Promise<Blob | null> {
+function stillsPreview(): PreviewController {
+  // A preview whose render worker died can't draw again (the canvas went with the worker): start a new one.
+  if (controller?.getSnapshot().error) {
+    controller.dispose()
+    controller = null
+  }
   controller ??= new PreviewController({
     canvas: document.createElement('canvas'),
     media: appMedia,
     preserveDrawingBuffer: true,
   })
-  const preview = controller
+  return controller
+}
+
+async function renderOnce(project: Project, time: Seconds, width: number, height: number): Promise<Blob> {
+  const preview = stillsPreview()
   preview.setViewport(width, height, 1)
   preview.seek(time)
   preview.setProject(project)
@@ -64,15 +73,28 @@ async function render(project: Project, time: Seconds, width: number, height: nu
   return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 })
 }
 
+/** One still as a JPEG. When the render worker died during the render, tries once more on a new preview. */
+export async function renderStill(
+  project: Project,
+  time: Seconds,
+  width: number,
+  height: number,
+): Promise<Blob> {
+  try {
+    return await renderOnce(project, time, width, height)
+  } catch (error) {
+    if (!controller?.getSnapshot().error) throw error
+    return renderOnce(project, time, width, height)
+  }
+}
+
 function requestStill(key: string, project: Project, time: Seconds, width: number, height: number): void {
   if (urls.has(key) || pending.has(key)) return
   pending.add(key)
   queue = queue
-    .then(() => render(project, time, width, height))
+    .then(() => renderStill(project, time, width, height))
     .then(
-      (blob) => {
-        if (blob) store(key, URL.createObjectURL(blob))
-      },
+      (blob) => store(key, URL.createObjectURL(blob)),
       (error: unknown) => console.error('Still render failed', error),
     )
     .finally(() => pending.delete(key))
