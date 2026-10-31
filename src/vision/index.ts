@@ -8,6 +8,11 @@ export { createWorkerBackends, type WorkerBackends } from './workers/backends.ts
 export { createOpfsCache, createMemoryCache, type BlobCache } from './runtime/cache.ts'
 export { createVideoElementSource, type FrameSource } from './runtime/frames.ts'
 export { createAssetFrameSource } from './runtime/assetSource.ts'
+export {
+  createFrameThumbnails,
+  type FrameThumbnailOptions,
+  type FrameThumbnails,
+} from './runtime/thumbnails.ts'
 export { encodeMaskVideo, maskAssetInfo, behindSubjectMatte } from './mask/video.ts'
 export {
   buildVisualAnalysis,

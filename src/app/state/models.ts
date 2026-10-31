@@ -75,6 +75,14 @@ export async function refreshModels(): Promise<void> {
   useModels.setState({ cached: Object.fromEntries(entries), bytes: usage.bytes })
 }
 
+/** Deletes one downloaded model; its feature downloads it again when next used. */
+export async function removeModel(id: string): Promise<void> {
+  const model = LOCAL_MODELS.find((m) => m.id === id)
+  if (!model) return
+  await Promise.all(model.urls.map((url) => modelCache.remove(url)))
+  await refreshModels()
+}
+
 /** Deletes every downloaded model; features download them again when next used. Returns the bytes freed. */
 export async function clearModels(): Promise<number> {
   const { bytes } = await modelCache.usage()

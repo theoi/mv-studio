@@ -35,9 +35,11 @@ import {
   usePersistence,
 } from '../../state/persistence.ts'
 import { editor, redo, undo, useProject } from '../../state/project.ts'
-import { set, toast } from '../../state/ui.ts'
+import { set } from '../../state/ui.ts'
 import { LogoMark } from '../common/Logo.tsx'
 import styles from './TopBar.module.css'
+
+const DOCS_URL = 'https://github.com/theoi/mv-studio#readme'
 
 function Activity() {
   const running = runningJobs(useJobs())
@@ -238,7 +240,10 @@ export function TopBar() {
             <MenuItem icon={<GraduationCap />} onSelect={() => set({ guideStep: 0 })}>
               Replay the guide
             </MenuItem>
-            <MenuItem icon={<BookOpen />} onSelect={() => toast('Documentation opens in a new tab')}>
+            <MenuItem
+              icon={<BookOpen />}
+              onSelect={() => window.open(DOCS_URL, '_blank', 'noopener,noreferrer')}
+            >
               Documentation
             </MenuItem>
           </MenuContent>

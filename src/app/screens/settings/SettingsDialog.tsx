@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -48,7 +48,14 @@ import {
   useCloud,
   type LlmChoice,
 } from '../../state/cloud.ts'
-import { LOCAL_MODELS, clearModels, refreshModels, useModels } from '../../state/models.ts'
+import {
+  LOCAL_MODELS,
+  clearModels,
+  refreshModels,
+  removeModel,
+  useModels,
+  type LocalModel,
+} from '../../state/models.ts'
 import { setPref, usePrefs } from '../../state/prefs.ts'
 import { set, toast, useUi, type SettingsPage } from '../../state/ui.ts'
 import { setVjQuantize, vjMidiDevices, vjSettings } from '../../state/vj.ts'
@@ -710,24 +717,53 @@ function LocalPage() {
       </Row>
       <div className={styles.scLabel}>Models · downloaded once, then used offline</div>
       {LOCAL_MODELS.map((m) => (
-        <div key={m.id} className={styles.modelRow} aria-label={m.title}>
-          <div className={styles.rowText}>
-            <div className={styles.rowTitle}>{m.title}</div>
-            <div className={styles.rowDesc}>{m.desc}</div>
-          </div>
-          <span className={`${styles.size} tnum`}>{formatBytes(m.bytes)}</span>
-          {cached &&
-            (cached[m.id] ? (
-              <Badge tone="success">On this device</Badge>
-            ) : (
-              <Badge>Downloads when used</Badge>
-            ))}
-        </div>
+        <ModelRow key={m.id} model={m} cached={cached && cached[m.id]} />
       ))}
     </>
   )
 }
 
+function ModelRow({ model, cached }: { model: LocalModel; cached: boolean | null }) {
+  const [removing, setRemoving] = useState(false)
+  const row = useRef<HTMLDivElement>(null)
+  const remove = async () => {
+    setRemoving(true)
+    try {
+      await removeModel(model.id)
+      toast(`${model.title} removed (${formatBytes(model.bytes)}). It downloads again when needed.`)
+      // The Remove button unmounts with the download; keep focus inside the dialog.
+      row.current?.focus()
+    } catch {
+      toast(`${model.title} could not be removed. Try again after closing other tabs of MV Studio.`)
+    } finally {
+      setRemoving(false)
+    }
+  }
+  return (
+    <div ref={row} className={styles.modelRow} role="group" aria-label={model.title} tabIndex={-1}>
+      <div className={styles.rowText}>
+        <div className={styles.rowTitle}>{model.title}</div>
+        <div className={styles.rowDesc}>{model.desc}</div>
+      </div>
+      <span className={`${styles.size} tnum`}>{formatBytes(model.bytes)}</span>
+      {cached !== null &&
+        (cached ? <Badge tone="success">On this device</Badge> : <Badge>Downloads when used</Badge>)}
+      <span className={styles.modelAction}>
+        {cached && (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Remove ${model.title}`}
+            disabled={removing}
+            onClick={() => void remove()}
+          >
+            Remove
+          </Button>
+        )}
+      </span>
+    </div>
+  )
+}
 function useStorageUsage() {
   const [usage, setUsage] = useState<{ usedBytes: number; quotaBytes: number } | null>(null)
   const load = () =>

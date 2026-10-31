@@ -194,7 +194,7 @@ function AssistHome() {
         <EmptyState
           compact
           icon={<Wand2 />}
-          title="Add a song to unlock Assist"
+          title="Add a song to unlock smart tools"
           description="Smart tools use the song’s beats, sections and vocals. Drop a song anywhere to begin."
         />
       )}

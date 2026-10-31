@@ -324,6 +324,12 @@ button.songRow:hover {
   gap: var(--space-3) var(--space-2);
 }
 
+/* "Show all N" under a group that shows only its first rows. */
+.groupMore {
+  display: flex;
+  padding-top: var(--space-1);
+}
+
 .tile {
   display: flex;
   flex-direction: column;
@@ -527,27 +533,6 @@ button.songRow:hover {
   inset: 18% 8%;
   width: 84%;
   height: 64%;
-}
-
-.pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.pill {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius);
-  background: var(--bg-hover);
-  color: var(--text-1);
-  font-size: var(--text-sm);
-  cursor: grab;
-  transition: background-color var(--dur-fast);
-}
-
-.pill:hover {
-  background: var(--bg-active);
 }
 
 .emptyWrap {
