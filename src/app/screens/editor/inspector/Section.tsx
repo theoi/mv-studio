@@ -1,5 +1,6 @@
 import { Film } from 'lucide-react'
 import { ToggleGroup } from 'radix-ui'
+import type { SongSection } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
@@ -39,21 +40,23 @@ const colorNames: Record<SectionKind, string> = {
 const kinds = Object.keys(colorNames) as SectionKind[]
 
 /** "N clips match this chorus" once footage analysis finds two or more strong matches for the section. */
-function SectionMatches({ id, label }: { id: string; label: string }) {
+function SectionMatches({ section }: { section: SongSection }) {
   const strong = useFootage((s) => s.strongMatch)
-  const count = (useFootageResults('section', id) ?? []).filter((r) => r.score >= strong).length
+  const count = (useFootageResults('section', section.id) ?? []).filter((r) => r.score >= strong).length
   if (count < 2) return null
+  // A name the user typed reads as typed ("this DJ break"); a found one reads "this verse", not "this Verse 1".
+  const name = section.confidence === 1 ? section.label : section.label.replace(/\s*\d+$/, '').toLowerCase()
   return (
     <InlineSuggestion
-      id={`match-${id}`}
+      // Not now quiets the section wherever it repeats.
+      id={section.repeatGroup === undefined ? `match-${section.id}` : `match-repeat-${section.repeatGroup}`}
       action="Show"
       onAction={() => {
         revealSuggestions()
         set({ libraryTab: 'media', libraryOpen: true })
       }}
     >
-      {/* "this verse", not "this verse 1". */}
-      {count} clips match this {label.replace(/\s*\d+$/, '').toLowerCase()}.
+      {count} clips match this {name}.
     </InlineSuggestion>
   )
 }
@@ -105,7 +108,7 @@ export function SectionInspector({ id }: { id: string }) {
         meta={guess ?? span}
         metaBelow={guess && span}
       />
-      <SectionMatches id={sec.id} label={sec.label} />
+      <SectionMatches section={sec} />
       <Section title="Section">
         <FieldRow label="Name">
           <Input

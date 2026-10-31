@@ -279,14 +279,60 @@ test('a selected section says "N clips match this chorus" in the Inspector once 
   await expect(card).toBeVisible()
   await expect(page.locator('[data-timeline-scroller]').getByRole('note')).toHaveCount(0)
 
+  // A name the user typed reads as typed, number and all.
+  await inspector.getByLabel('Section name').fill('Big chorus 2')
+  await expect(
+    inspector.getByRole('note').filter({ hasText: /^\d+ clips match this Big chorus 2\./ }),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    editor.endGesture()
+    editor.undo()
+  })
+  await expect(card).toBeVisible()
+
   // Show opens Library › Media with the section's suggestions in view.
   const media = page.getByRole('tabpanel', { name: 'Media' })
   await page.getByRole('tab', { name: 'Text' }).click()
   await card.getByRole('button', { name: 'Show' }).click()
   await expect(media.getByText('Suggested for Chorus')).toBeInViewport()
 
-  // Not now quiets the section.
+  // Not now quiets the chorus wherever it repeats: a repeat whose own card showed before shows none after.
+  const repeat = await page.evaluate(async (id) => {
+    const { footage, project } = window.mvStudio.app
+    const p = project.editor.getProject()
+    const sections = p.analysis.audio[p.songAssetId].sections
+    const own = sections.find((s: Untyped) => s.id === id)
+    if (own.repeatGroup === undefined) return null
+    const service = await footage.footageService()
+    const threshold = footage.useFootage.getState().strongMatch
+    for (const s of sections) {
+      if (s.id === id || s.repeatGroup !== own.repeatGroup) continue
+      const strong = (await service.suggestForSection(s.id)).filter(
+        (r: Untyped) => r.score >= threshold,
+      ).length
+      if (strong >= 2)
+        return { id: s.id as string, start: s.start as number, strong, from: own.start as number }
+    }
+    return null
+  }, sectionId)
+  expect(repeat).not.toBeNull()
+  const select = async (id: string, start: number) => {
+    await page.evaluate((i) => window.mvStudio.app.ui.select({ type: 'section', id: i }), id)
+    await expect
+      .poll(async () => parseFloat(await inspector.getByLabel('Section start').inputValue()))
+      .toBeCloseTo(start, 1)
+  }
+  await select(repeat!.id, repeat!.start)
+  await expect(
+    inspector.getByRole('note').filter({ hasText: `${repeat!.strong} clips match this chorus.` }),
+  ).toBeVisible()
+  await select(sectionId, repeat!.from)
   await card.getByRole('button', { name: 'Not now' }).click()
+  await expect(page.getByText(/clips match this chorus/)).toHaveCount(0)
+  await select(repeat!.id, repeat!.start)
+  // The card's matches load a moment after the selection changes, so a card that should be gone would show by now.
+  await page.waitForTimeout(1000)
   await expect(page.getByText(/clips match this chorus/)).toHaveCount(0)
 })
 
