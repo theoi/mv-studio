@@ -27,13 +27,13 @@ export function addMarkerAtPlayhead(): string | null {
   const time = get().playhead
   const there = markers.find((m) => Math.abs(m.time - time) < SAME_PLACE)
   if (there) {
-    toast(`${there.label} is already at ${formatTime(there.time, true)}`)
+    toast(`“${there.label}” is already at ${formatTime(there.time, true)}`)
     return there.id
   }
   const marker: Marker = { id: newId(), time, kind: 'user', label: nextMarkerName(markers) }
   if (!dispatch({ type: 'marker.add', marker }, { label: ADD_LABEL })) return null
   const after = editor.getProject().markers
-  toast(`Added ${marker.label} at ${formatTime(time, true)}`, {
+  toast(`Added “${marker.label}” at ${formatTime(time, true)}`, {
     label: 'Undo',
     run: () => {
       // Every add has this label, so the markers tell whether the last one is still this add.

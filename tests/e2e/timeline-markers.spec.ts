@@ -36,7 +36,7 @@ test('markers are added at the playhead, drawn on the ruler, and go to, move, re
   expect(await markers(page)).toEqual([])
 
   await page.keyboard.press('m')
-  await expect(page.getByText('Added Marker 1 at 1:07.0')).toBeVisible()
+  await expect(page.getByText('Added “Marker 1” at 1:07.0')).toBeVisible()
   await setPlayhead(page, 75)
   await page.getByRole('button', { name: 'Add marker', exact: true }).click()
   expect(await markers(page)).toEqual([
@@ -45,7 +45,7 @@ test('markers are added at the playhead, drawn on the ruler, and go to, move, re
   ])
   // M again at the same place points out the marker that is there.
   await page.keyboard.press('m')
-  await expect(page.getByText('Marker 2 is already at 1:15.0')).toBeVisible()
+  await expect(page.getByText('“Marker 2” is already at 1:15.0')).toBeVisible()
   expect(await markers(page)).toHaveLength(2)
 
   const first = page.getByRole('button', { name: 'Marker 1, marker at 1:07.0' })
@@ -106,6 +106,22 @@ test('markers are added at the playhead, drawn on the ruler, and go to, move, re
     .click()
   await expect(second).toBeHidden()
   expect(await markers(page)).toEqual([['Drop', 67.1]])
-  await expect(page.getByRole('button', { name: /^Drop, marker at/ })).toBeFocused()
+  const last = page.getByRole('button', { name: /^Drop, marker at/ })
+  await expect(last).toBeFocused()
   expect(await playhead(page)).toBe(67)
+
+  // Removing the only marker puts focus on the toolbar's Add marker button, from the menu and with Delete.
+  const addMarker = page.getByRole('button', { name: 'Add marker', exact: true })
+  await last.click({ button: 'right' })
+  await page
+    .getByRole('menu')
+    .getByRole('menuitem', { name: /^Remove marker/ })
+    .click()
+  await expect(last).toBeHidden()
+  await expect(addMarker).toBeFocused()
+  await page.keyboard.press(`${mod}+z`)
+  await last.focus()
+  await page.keyboard.press('Delete')
+  expect(await markers(page)).toEqual([])
+  await expect(addMarker).toBeFocused()
 })

@@ -31,6 +31,9 @@ import styles from './Markers.module.css'
 /** Narrower than this, a marker shows its flag without its name. */
 const MIN_LABEL_PX = 24
 
+/** Where focus goes when the last marker is removed: the toolbar's Add marker button. */
+const focusAddMarker = () => document.querySelector<HTMLElement>('[data-add-marker]')?.focus()
+
 /**
  * Song markers on the ruler. Click one to go to it, drag it to move it, double-click (or F2) to rename it; its menu
  * goes to, renames or removes it. Arrow keys nudge a focused marker, Delete removes it.
@@ -76,9 +79,12 @@ function MarkerFlag({
 }) {
   const goTo = () => set({ playhead: marker.time, playing: false })
   const time = formatTime(marker.time, true)
+  // Set by Remove marker in the menu, so the closing menu hands focus on instead of dropping it on the page.
+  const removedFromMenu = useRef(false)
   const remove = () => {
     focusNextRef.current = neighbor
     removeMarker(marker.id)
+    if (!neighbor && !removedFromMenu.current) focusAddMarker()
   }
 
   const startDrag = (e: PointerEvent<HTMLButtonElement>) => {
@@ -173,7 +179,14 @@ function MarkerFlag({
           </button>
         </ContextMenuTrigger>
       </Tooltip>
-      <ContextMenuContent>
+      <ContextMenuContent
+        onCloseAutoFocus={(e) => {
+          if (!removedFromMenu.current) return
+          removedFromMenu.current = false
+          e.preventDefault()
+          if (!neighbor) focusAddMarker()
+        }}
+      >
         <ContextMenuItem shortcut="Enter" onSelect={goTo}>
           Go to marker
         </ContextMenuItem>
@@ -181,7 +194,14 @@ function MarkerFlag({
           Rename…
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem danger shortcut="Delete" onSelect={remove}>
+        <ContextMenuItem
+          danger
+          shortcut="Delete"
+          onSelect={() => {
+            removedFromMenu.current = true
+            remove()
+          }}
+        >
           Remove marker
         </ContextMenuItem>
       </ContextMenuContent>

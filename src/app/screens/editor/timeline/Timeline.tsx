@@ -445,7 +445,7 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
             </MenuContent>
           </Menu>
         </div>
-        <IconButton label="Add marker" shortcut="M" size="sm" onClick={addMarkerAtPlayhead}>
+        <IconButton label="Add marker" shortcut="M" size="sm" onClick={addMarkerAtPlayhead} data-add-marker>
           <Flag />
         </IconButton>
         {bpm !== undefined && (

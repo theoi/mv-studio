@@ -54,12 +54,12 @@ describe('markers', () => {
       ['Marker 1', 7],
     ])
     expect(editor.undoLabel()).toBe('Add marker')
-    expect(get().toasts.at(-1)?.message).toBe('Added Marker 2 at 0:03.0')
+    expect(get().toasts.at(-1)?.message).toBe('Added “Marker 2” at 0:03.0')
 
     set({ playhead: 7.02 })
     expect(addMarkerAtPlayhead()).toBe(id)
     expect(markers()).toHaveLength(2)
-    expect(get().toasts.at(-1)?.message).toBe('Marker 1 is already at 0:07.0')
+    expect(get().toasts.at(-1)?.message).toBe('“Marker 1” is already at 0:07.0')
 
     editor.undo()
     expect(markers()).toEqual([['Marker 1', 7]])
