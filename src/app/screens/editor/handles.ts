@@ -9,6 +9,7 @@ import {
   type VisualClip,
 } from '../../../model/index.ts'
 import { dispatch, editor } from '../../state/project.ts'
+import { valueAtCommands } from './inspector/animatable.ts'
 
 /*
  * Dragging the selected clip on the preview: inside its outline moves it, a corner scales it, the knob above the top
@@ -211,31 +212,16 @@ export function rotated(start: number, turned: number, snap: boolean): number {
   return snap ? Math.round(r / SNAP_DEGREES) * SNAP_DEGREES : Math.round(r * 10) / 10
 }
 
-/**
- * Commands that give the clip these transform values at clip-local time t: the value itself, or, on a keyframed
- * property, the keyframe at t (added if there is none), since the value under keyframes is not what is drawn.
- */
+/** Commands that give the clip these transform values at clip-local time t, as Inspector › Transform writes them. */
 export function transformCommands(
   clip: VisualClip,
   values: Partial<TransformValues>,
   t: number,
 ): EditCommand[] {
-  const commands: EditCommand[] = []
-  for (const key of KEYS) {
+  return KEYS.flatMap((key) => {
     const value = values[key]
-    if (value === undefined) continue
-    const anim = clip.transform[key]
-    if (anim.keyframes?.length) {
-      const at = anim.keyframes.find((k) => Math.abs(k.time - t) < 1e-6)
-      commands.push({
-        type: 'keyframe.set',
-        clipId: clip.id,
-        path: ['transform', key],
-        keyframe: { time: t, value, easing: at?.easing ?? 'ease-in-out' },
-      })
-    } else commands.push({ type: 'clip.set', clipId: clip.id, path: ['transform', key, 'value'], value })
-  }
-  return commands
+    return value === undefined ? [] : valueAtCommands(clip, ['transform', key], value, t)
+  })
 }
 
 export interface Drag {

@@ -164,6 +164,10 @@ describe('what a drag writes', () => {
       type: 'keyframe.set',
       keyframe: { time: 1, value: 0.5, easing: 'ease-in-out' },
     })
+    // A playhead a few milliseconds off a keyframe sets that keyframe, as the Inspector field does.
+    expect(transformCommands(c, { x: 0.5 }, 2.003)[0]).toMatchObject({
+      keyframe: { time: 2, easing: 'hold' },
+    })
   })
 })
 
