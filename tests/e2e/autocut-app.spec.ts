@@ -287,20 +287,30 @@ test('in a project made from a starter template, Auto-cut cuts on the templateâ€
     window.location.hash = '#/editor?kind=footage&tab=assist&assist=autocut&t=73.6'
   })
   await waitForPreview(page)
-  // A template's tracks are project data: here an empty Video track on top, recorded as the template's video role.
+  // A real footage template project with the sample's song and clips: Titles, Look, Video and Song tracks, nothing
+  // on the Video track yet.
   const videoId = await page.evaluate(() => {
-    const { model, app } = window.mvStudio
-    const track = model.createTrack('visual', 'Video')
-    app.project.editor.dispatch([
-      { type: 'track.add', track, index: 0 },
-      {
-        type: 'project.setExtension',
-        key: 'template',
-        value: { kind: 'footage', tracks: { video: track.id } },
-      },
-    ])
-    return track.id as string
+    const { plugins, app } = window.mvStudio
+    const sample = app.project.editor.getProject()
+    const footage = Object.values(sample.assets as Record<string, Untyped>).filter(
+      (a) =>
+        (a.origin.type === 'import' || a.origin.type === 'generated') &&
+        (a.kind === 'video' || a.kind === 'image'),
+    )
+    const project = plugins.templates.createFromTemplate('footage', {
+      song: sample.assets[sample.songAssetId],
+      analysis: sample.analysis.audio[sample.songAssetId],
+      footage,
+    })
+    app.project.editor.load(project)
+    return plugins.templates.templateState(project).tracks.video as string
   })
+  const tracks = () =>
+    page.evaluate(() =>
+      window.mvStudio.app.project.editor.getProject().tracks.map((t: Untyped) => t.name as string),
+    )
+  const before = await tracks()
+  expect(before).toEqual(['Titles', 'Look', 'Video', 'Song'])
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await assist.getByRole('switch', { name: 'Match clips to the mood' }).click()
   await assist.getByRole('button', { name: 'Cut to the beat' }).click()
@@ -320,6 +330,7 @@ test('in a project made from a starter template, Auto-cut cuts on the templateâ€
   expect(placed.cut).toBeGreaterThan(20)
   expect(placed.onVideo).toBe(placed.cut)
   expect(placed.autoCutTrack).toBe(false)
+  expect(await tracks()).toEqual(before)
 })
 
 test('a cut that analyzes first waits for footage analysis and matches every clip; Cancel while it waits stops both', async ({

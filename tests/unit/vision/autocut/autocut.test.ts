@@ -315,6 +315,17 @@ describe('auto-cut in a project made from a starter template', () => {
     expect(editor.getProject()).toEqual(project)
   })
 
+  it('names a track whose name already ends in “track” once', async () => {
+    const { project, video } = templated({ name: 'Main track' })
+    const editor = new ProjectEditor(project)
+    const first = await autoCut({ editor, matcher })
+    expect(first.track).toEqual({ id: video.id, name: 'Main track' })
+    const edited = autoCutClips(editor.getProject())[2]!
+    editor.dispatch({ type: 'clip.set', clipId: edited.id, path: ['opacity', 'value'], value: 0.5 })
+    const second = await autoCut({ editor, matcher }, { seed: 2 })
+    expect(second.warnings).toContain('Kept 1 clip you made or edited on the Main track.')
+  })
+
   it.each([
     ['holds a clip of the user’s', {}, true],
     ['is locked', { locked: true }, false],

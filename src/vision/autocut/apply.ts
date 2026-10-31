@@ -13,6 +13,8 @@ import type { TimeRange } from '../types.ts'
 import type { PickReason } from './choose.ts'
 
 export const AUTOCUT_META_KEY = 'autocut'
+/** "Video track", or the name alone when it already ends in "track" ("Main track"). */
+const trackPhrase = (name: string) => (/\btrack$/i.test(name.trim()) ? name.trim() : `${name} track`)
 export const AUTOCUT_TRACK_NAME = 'Auto-cut'
 const EPS = 1e-3
 const round3 = (t: number) => Math.round(t * 1000) / 1000
@@ -186,7 +188,7 @@ export function compileAutoCut(
     commands.push({ type: 'track.add', track, index: state.newIndex })
     if (state.lockedTrack)
       warnings.push(
-        `The ${state.lockedTrack.name} track is locked, so the new cut is on a new track above it.`,
+        `The ${trackPhrase(state.lockedTrack.name)} is locked, so the new cut is on a new track above it.`,
       )
   }
   const trackId = track.id
@@ -198,7 +200,9 @@ export function compileAutoCut(
   const keptInRange = state.kept.filter(inRange)
   if (keptInRange.length) {
     const n = keptInRange.length
-    warnings.push(`Kept ${n} ${n === 1 ? 'clip' : 'clips'} you made or edited on the ${track.name} track.`)
+    warnings.push(
+      `Kept ${n} ${n === 1 ? 'clip' : 'clips'} you made or edited on the ${trackPhrase(track.name)}.`,
+    )
   }
 
   let cuts = 0
