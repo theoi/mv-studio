@@ -32,7 +32,7 @@ import type {
   StemName,
   Track,
 } from '../../../../model/index.ts'
-import { clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
+import { BARS_NOTES, clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
 import {
@@ -79,11 +79,10 @@ import {
   hasSong,
   isLookClip,
   lyricLines,
-  sectionColor,
-  sectionKind,
   sectionGuess,
   sectionName,
   sectionsOf,
+  sectionTint,
   sectionUnsure,
   songAnalysis,
   splitAtPlayhead,
@@ -104,12 +103,15 @@ import {
   toast,
   useUi,
 } from '../../../state/ui.ts'
+import { beatGrid, lastIndexAt, snapTo, type BeatGrid } from '../../../state/beats.ts'
+import { useBars, type BarsState } from '../../../state/songAnalysis.ts'
 import {
   droppedLibraryItem,
   dropLibraryItem,
   isLibraryDrag,
   libraryDropHint,
 } from '../../../state/library.ts'
+import { exportSectionTeaser } from '../../../state/exports.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
 import { addMarkerAtPlayhead } from '../../../state/markers.ts'
@@ -122,6 +124,13 @@ import {
   type KeyframeMark,
 } from '../../../state/keyframes.ts'
 import { registerReveal } from '../../../state/reveal.ts'
+import {
+  cutClipsToSection,
+  moveBoundary,
+  sectionBoundaries,
+  sectionClipIds,
+  type SectionBoundary,
+} from '../../../state/sections.ts'
 import {
   separatedStems,
   songStemTrack,
@@ -223,18 +232,32 @@ function ViewportCanvas({ height, draw }: { height: number; draw: DrawFn }) {
   return <canvas ref={ref} className={styles.vcanvas} aria-hidden />
 }
 
-function makeRuler(beat: number | null): DrawFn {
+function makeRuler(grid: BeatGrid | null): DrawFn {
   return (ctx, t0, pps, w, h) => {
     const t1 = t0 + w / pps
     const labelStep = [1, 2, 5, 10, 15, 30, 60].find((s) => s * pps >= 64) ?? 60
     ctx.font = '500 10px "Inter Variable", Inter, sans-serif'
     ctx.textBaseline = 'top'
-    if (beat) {
-      const dense = beat * pps >= 5
-      const step = dense ? beat : beat * 4
-      for (let b = Math.floor(t0 / step); b * step <= t1; b++) {
-        const x = Math.round((b * step - t0) * pps) + 0.5
-        const down = !dense || b % 4 === 0
+    if (grid) {
+      const dense = grid.beat * pps >= 5
+      // Until the bars are found, zoomed-out ticks fall on every few beats, all alike.
+      const bars = grid.detectedBars
+      const events = dense || !bars ? grid.beats : grid.downbeats
+      const every = dense ? 1 : Math.max(1, Math.ceil(5 / (grid.beat * (bars ? grid.beatsPerBar : 1) * pps)))
+      let d = Math.max(0, lastIndexAt(grid.downbeats, t0 - grid.beat))
+      for (
+        let i = Math.floor(Math.max(0, lastIndexAt(events, t0)) / every) * every;
+        i < events.length;
+        i += every
+      ) {
+        const t = events[i] as number
+        if (t > t1) break
+        let down = bars && !dense
+        if (bars && dense) {
+          while ((grid.downbeats[d] ?? Infinity) < t - grid.beat / 4) d++
+          down = Math.abs((grid.downbeats[d] ?? Infinity) - t) < grid.beat / 4
+        }
+        const x = Math.round((t - t0) * pps) + 0.5
         ctx.fillStyle = down ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.14)'
         ctx.fillRect(x, down ? h - 9 : h - 5, 1, down ? 9 : 5)
       }
@@ -257,6 +280,32 @@ function makeFlatWave(color: string, end: number): DrawFn {
     if (right <= left) return
     ctx.fillStyle = color
     ctx.fillRect(left, Math.round(h / 2) - 1, right - left, 2)
+  }
+}
+
+/** Bar lines behind the tracks once the bars are found, and beat lines when zoomed in, from the song's beat grid. */
+function makeBeatLines(grid: BeatGrid | null): DrawFn {
+  return (ctx, t0, pps, w, h) => {
+    if (!grid) return
+    const t1 = t0 + w / pps
+    const line = (events: readonly number[], every: number) => {
+      for (
+        let i = Math.floor(Math.max(0, lastIndexAt(events, t0)) / every) * every;
+        i < events.length;
+        i += every
+      ) {
+        const t = events[i] as number
+        if (t > t1) break
+        ctx.fillRect(Math.round((t - t0) * pps), 0, 1, h)
+      }
+    }
+    if (grid.beat * pps >= 18) {
+      ctx.fillStyle = 'rgba(255,255,255,0.02)'
+      line(grid.beats, 1)
+    }
+    if (!grid.detectedBars) return
+    ctx.fillStyle = 'rgba(255,255,255,0.045)'
+    line(grid.downbeats, Math.max(1, Math.ceil(12 / (grid.beat * grid.beatsPerBar * pps))))
   }
 }
 
@@ -409,12 +458,31 @@ function freeSpot(spans: [number, number][], view: [number, number], width: numb
 /* ---------- toolbar ---------- */
 
 // Memoized, like TrackHeader: a drag re-renders the timeline on every pointer move, and neither depends on the clips.
-const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
+const Toolbar = memo(function Toolbar({
+  onFit,
+  bpm,
+  grid,
+  bars,
+}: {
+  onFit: () => void
+  bpm?: number
+  grid: BeatGrid | null
+  bars: BarsState['status']
+}) {
   const snap = useUi((s) => s.snap)
   const beatSnap = useUi((s) => s.beatSnap)
+  const barSnap = useUi((s) => s.barSnap)
+  const sectionSnap = useUi((s) => s.sectionSnap)
+  const edgeSnap = useUi((s) => s.edgeSnap)
+  const playheadSnap = useUi((s) => s.playheadSnap)
   const showEnergy = useUi((s) => s.showEnergy)
+  const showGrid = useUi((s) => s.showGrid)
   const pps = useUi((s) => s.pxPerSec)
   const tool = useUi((s) => s.tool)
+  // While the bars are not found, "Bar starts" is off (the choice is kept for when they are).
+  const waiting = bars === 'finding' || bars === 'unavailable'
+  const barsShort =
+    bars === 'finding' ? BARS_NOTES.finding : bars === 'unavailable' ? BARS_NOTES.notFound : undefined
   const sliderVal = Math.round((Math.log(pps / MIN_PPS) / Math.log(MAX_PPS / MIN_PPS)) * 100)
   return (
     <div className={styles.toolbar}>
@@ -455,10 +523,23 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
               >
                 Beats
               </MenuCheckItem>
-              <MenuCheckItem checked>Bar starts</MenuCheckItem>
-              <MenuCheckItem checked>Sections</MenuCheckItem>
-              <MenuCheckItem checked>Clip edges</MenuCheckItem>
-              <MenuCheckItem checked>Playhead</MenuCheckItem>
+              <MenuCheckItem
+                checked={barSnap && !waiting}
+                onCheckedChange={(v) => set({ barSnap: v })}
+                disabled={waiting}
+                description={barsShort}
+              >
+                Bar starts
+              </MenuCheckItem>
+              <MenuCheckItem checked={sectionSnap} onCheckedChange={(v) => set({ sectionSnap: v })}>
+                Sections
+              </MenuCheckItem>
+              <MenuCheckItem checked={edgeSnap} onCheckedChange={(v) => set({ edgeSnap: v })}>
+                Clip edges
+              </MenuCheckItem>
+              <MenuCheckItem checked={playheadSnap} onCheckedChange={(v) => set({ playheadSnap: v })}>
+                Playhead
+              </MenuCheckItem>
             </MenuContent>
           </Menu>
         </div>
@@ -466,10 +547,20 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
           <Flag />
         </IconButton>
         {bpm !== undefined && (
-          <Tooltip label="Detected tempo and meter" description="Adjust in Assist › Song analysis">
+          <Tooltip
+            label="Detected tempo and meter"
+            description={
+              grid?.detectedBars || bars === 'none'
+                ? 'Adjust in Assist › Song analysis'
+                : bars === 'finding'
+                  ? `${BARS_NOTES.finding} The meter shows once they are found.`
+                  : `${BARS_NOTES.notFound}. ${BARS_NOTES.analyzeAgain} The meter shows once they are found.`
+            }
+          >
             <button className={`${styles.bpm} tnum`} onClick={() => openAssist('analysis')}>
               <Music4 />
-              {formatBpm(bpm)} · 4/4
+              {formatBpm(bpm)}
+              {grid?.detectedBars && ` · ${grid.beatsPerBar}/4`}
             </button>
           </Tooltip>
         )}
@@ -488,7 +579,7 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
             <MenuCheckItem checked={showEnergy} onCheckedChange={(v) => set({ showEnergy: v })}>
               Energy curve
             </MenuCheckItem>
-            <MenuCheckItem checked={beatSnap} onCheckedChange={(v) => set({ beatSnap: v })}>
+            <MenuCheckItem checked={showGrid} onCheckedChange={(v) => set({ showGrid: v })}>
               Beat grid
             </MenuCheckItem>
             <MenuCheckItem checked>Clip thumbnails</MenuCheckItem>
@@ -524,23 +615,10 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
 
 type DragMode = 'move' | 'start' | 'end'
 
-function snapTime(t: number, pps: number, edges: number[], beat: number | null, sectionStarts: number[]) {
+/** Snaps within 8 px, to what the snap menu has on. */
+function snapTime(t: number, pps: number, grid: BeatGrid | null, edges: number[], sections: number[]) {
   const s = get()
-  if (!s.snap) return { t, snapped: null as number | null }
-  const cands = [...edges, s.playhead, ...sectionStarts]
-  if (s.beatSnap && beat) cands.push(Math.round(t / beat) * beat)
-  let best = t
-  let bestD = 8 / pps
-  let snapped: number | null = null
-  for (const c of cands) {
-    const d = Math.abs(c - t)
-    if (d < bestD) {
-      bestD = d
-      best = c
-      snapped = c
-    }
-  }
-  return { t: best, snapped }
+  return snapTo(t, 8 / pps, grid, s, { edges, sections, playhead: s.playhead })
 }
 
 /**
@@ -1089,7 +1167,7 @@ function SectionSuggestion({ section }: { section: SongSection }) {
           id={cutId}
           variant="chip"
           action="Cut clips to it"
-          onAction={() => openAssist('autocut')}
+          onAction={() => cutClipsToSection(section.id)}
         >
           Re-cut this {label} to the beat
         </InlineSuggestion>
@@ -1135,8 +1213,11 @@ export function Timeline() {
   const selection = useUi((s) => s.selection)
   const selIds = useMemo(() => new Set(selectedClipIds(selection)), [selection])
   const showEnergy = useUi((s) => s.showEnergy)
-  const beatSnap = useUi((s) => s.beatSnap)
+  const showGrid = useUi((s) => s.showGrid)
   const [snapLine, setSnapLine] = useState<number | null>(null)
+  // Where a dragged section edge is, shown beside it.
+  const [edgeTime, setEdgeTime] = useState<number | null>(null)
+  const nudgeEnd = useRef(0)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
@@ -1145,7 +1226,8 @@ export function Timeline() {
   const empty = !hasSong(project)
   const analysis = songAnalysis(project)
   const bpm = bpmOf(project)
-  const beat = bpm ? 60 / bpm : null
+  const grid = beatGrid(project)
+  const bars = useBars().status
   const sections = sectionsOf(project)
   const lines = lyricLines(project)
   const duration = empty ? 90 : timelineDuration(project)
@@ -1187,10 +1269,13 @@ export function Timeline() {
           suggestW,
         )
       : null
-  const lanesH = lanes.reduce((a, l) => a + l.height, 0) + stems.length * stemH
+  const tracksH = lanes.reduce((a, l) => a + l.height, 0)
+  const lanesH = tracksH + stems.length * stemH
   const totalH = RULER_H + (empty ? 0 : SONG_H) + lanesH
 
-  const ruler = useMemo(() => makeRuler(beat), [beat])
+  const ruler = useMemo(() => makeRuler(grid), [grid])
+  const beatLines = useMemo(() => makeBeatLines(grid), [grid])
+  const boundaries = useMemo(() => sectionBoundaries(sections, duration), [sections, duration])
   const energyDraw = useMemo(() => makeEnergy(analysis?.energy), [analysis?.energy])
   const features = analysis?.features
   const songEnd = (project.songAssetId && project.assets[project.songAssetId]?.duration) || duration
@@ -1289,8 +1374,8 @@ export function Timeline() {
       snapTime(
         t,
         pps,
+        grid,
         edges,
-        beat,
         sections.map((x) => x.start),
       ).t,
     )
@@ -1366,8 +1451,8 @@ export function Timeline() {
         const edges = clipsOnTrack(p, clip.trackId)
           .filter((c) => c.id !== clip.id)
           .flatMap((c) => [c.start, c.start + c.duration])
-        const sectionStarts = sectionsOf(p).map((s) => s.start)
-        splitClipAt(clip.id, snapTime(at, scale, edges, beat, sectionStarts).t)
+        const sectionEdges = sectionsOf(p).flatMap((s) => [s.start, s.end])
+        splitClipAt(clip.id, snapTime(at, scale, grid, edges, sectionEdges).t)
         return
       }
       const picked = selectedClipIds(get().selection)
@@ -1412,7 +1497,7 @@ export function Timeline() {
       }
       const same = clipsOnTrack(p, clip.trackId).filter((c) => !movingIds.has(c.id))
       const edges = same.flatMap((c) => [c.start, c.start + c.duration])
-      const sectionStarts = sectionsOf(p).map((s) => s.start)
+      const sectionEdges = sectionsOf(p).flatMap((s) => [s.start, s.end])
       const key = `drag:${e.pointerId}:${clip.id}:${Date.now()}`
       const x0 = e.clientX
       let moved = false
@@ -1425,7 +1510,7 @@ export function Timeline() {
         const scale = get().pxPerSec
         const dt = dx / scale
         if (mode === 'move') {
-          const r = snapTime(clip.start + dt, scale, edges, beat, sectionStarts)
+          const r = snapTime(clip.start + dt, scale, grid, edges, sectionEdges)
           const shift = Math.min(maxShift, Math.max(minShift, r.t - clip.start))
           setSnapLine(
             r.snapped !== null && Math.abs(r.snapped - (clip.start + shift)) < 0.001 ? r.snapped : null,
@@ -1435,7 +1520,7 @@ export function Timeline() {
             { coalesceKey: key },
           )
         } else if (mode === 'start') {
-          const r = snapTime(clip.start + dt, scale, edges, beat, sectionStarts)
+          const r = snapTime(clip.start + dt, scale, grid, edges, sectionEdges)
           const start = Math.min(clip.end - 0.25, Math.max(min, r.t))
           setSnapLine(r.snapped)
           dispatch(
@@ -1443,7 +1528,7 @@ export function Timeline() {
             { coalesceKey: key },
           )
         } else {
-          const r = snapTime(clip.end + dt, scale, edges, beat, sectionStarts)
+          const r = snapTime(clip.end + dt, scale, grid, edges, sectionEdges)
           const end = Math.max(clip.start + 0.25, Math.min(max, r.t))
           setSnapLine(r.snapped)
           dispatch(
@@ -1462,8 +1547,66 @@ export function Timeline() {
       target.addEventListener('pointermove', move)
       target.addEventListener('pointerup', up)
     },
-    [beat, duration],
+    [grid, duration],
   )
+
+  /** Dragging a section boundary: snaps to the beat grid and the playhead, and stops short of the neighbors. */
+  const startEdgeDrag = (e: React.PointerEvent<HTMLElement>, b: SectionBoundary) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const handle = e.currentTarget
+    const owner = b.after ?? b.before
+    if (owner) select({ type: 'section', id: owner.id })
+    const key = `section-edge:${e.pointerId}:${e.timeStamp}`
+    const x0 = e.clientX
+    let moved = false
+    handle.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - x0
+      if (!moved && Math.abs(dx) < 3) return
+      moved = true
+      const scale = get().pxPerSec
+      const r = snapTime(b.t + dx / scale, scale, grid, [], [])
+      const t = Math.min(b.max, Math.max(b.min, r.t))
+      setSnapLine(r.snapped !== null && Math.abs(r.snapped - t) < 0.001 ? r.snapped : null)
+      setEdgeTime(t)
+      moveBoundary(b, t, key)
+    }
+    const up = () => {
+      editor.endGesture()
+      setSnapLine(null)
+      setEdgeTime(null)
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      handle.removeEventListener('pointercancel', up)
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+    handle.addEventListener('pointercancel', up)
+  }
+
+  /** Left and right arrows move a boundary to the previous or next beat (bar with Shift). */
+  const nudgeEdge = (e: React.KeyboardEvent, b: SectionBoundary) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    // The arrows otherwise move the playhead.
+    e.preventDefault()
+    e.stopPropagation()
+    const dir = e.key === 'ArrowLeft' ? -1 : 1
+    let t = b.t + dir * (e.shiftKey ? 1 : 0.1)
+    if (grid) {
+      // Shift moves a bar: to the next bar start, or four beats until the bars are found.
+      const byBar = e.shiftKey && grid.detectedBars
+      const events = byBar ? grid.downbeats : grid.beats
+      const steps = e.shiftKey && !byBar ? grid.beatsPerBar : 1
+      const i = lastIndexAt(events, b.t + (dir * grid.beat) / 4)
+      t = (dir > 0 ? events[i + steps] : events[i - steps + 1]) ?? t
+    }
+    // A run of nudges, until a pause, is one undo step.
+    moveBoundary(b, t, `edge-nudge:${b.before?.id ?? ''}|${b.after?.id ?? ''}`)
+    window.clearTimeout(nudgeEnd.current)
+    nudgeEnd.current = window.setTimeout(() => editor.endGesture(), 800)
+  }
 
   /** Drag on empty track space: selects the clips the rectangle touches (added to the selection with Shift or Mod). */
   const startMarquee = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1659,12 +1802,11 @@ export function Timeline() {
       ? project.clips[selection.id]
       : undefined
   const selectedMarks = useMemo(() => (markedClip ? keyframeMarks(markedClip) : undefined), [markedClip])
-  const gridStyle = beatSnap && beat ? { backgroundSize: `${beat * 4 * pps}px 100%` } : undefined
   const inView = (start: number, end: number) => end >= view.t0 - 4 && start <= view.t1 + 4
 
   return (
     <div className={styles.root}>
-      <Toolbar onFit={fit} bpm={bpm} />
+      <Toolbar onFit={fit} bpm={bpm} grid={grid} bars={bars} />
       <div ref={scrollRef} className={`${styles.scroller} scroll`} data-timeline-scroller data-tool={tool}>
         <div
           ref={contentRef}
@@ -1702,61 +1844,126 @@ export function Timeline() {
                 {sections.map((s) => {
                   const sel = selId === s.id
                   return (
-                    <div
+                    <ContextMenu
                       key={s.id}
-                      className={[styles.section, sel && styles.sectionSel].filter(Boolean).join(' ')}
-                      style={{
-                        left: s.start * pps,
-                        width: (s.end - s.start) * pps,
-                        ['--sec' as string]: sectionColor[sectionKind(s)],
-                      }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                        select({ type: 'section', id: s.id })
-                      }}
-                      onDoubleClick={() => setRenaming(s.id)}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Section ${sectionName(s)}, ${formatTime(s.start)} to ${formatTime(s.end)}`}
-                      title={sectionGuess(s) && `${sectionGuess(s)}. Double-click to rename.`}
+                      onOpenChange={(open) => open && select({ type: 'section', id: s.id })}
                     >
-                      {renaming === s.id ? (
-                        <input
-                          className={styles.renameInput}
-                          autoFocus
-                          defaultValue={s.label}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onBlur={(e) => {
-                            const label = e.target.value.trim()
-                            if (label && label !== s.label && analysis)
-                              dispatch({
-                                type: 'analysis.updateSection',
-                                assetId: analysis.assetId,
-                                sectionId: s.id,
-                                patch: { label },
-                              })
-                            setRenaming(null)
+                      <ContextMenuTrigger asChild>
+                        <div
+                          className={[styles.section, sel && styles.sectionSel].filter(Boolean).join(' ')}
+                          style={{
+                            left: s.start * pps,
+                            width: (s.end - s.start) * pps,
+                            ['--sec' as string]: sectionTint(s),
                           }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') e.currentTarget.value = s.label
-                            if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            if (e.button === 0) select({ type: 'section', id: s.id })
                           }}
-                          aria-label="Rename section"
-                        />
-                      ) : (
-                        <span
-                          className={[styles.sectionLabel, sectionUnsure(s) && styles.sectionLabelGuess]
-                            .filter(Boolean)
-                            .join(' ')}
+                          onDoubleClick={() => setRenaming(s.id)}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Section ${sectionName(s)}, ${formatTime(s.start)} to ${formatTime(s.end)}`}
+                          title={sectionGuess(s) && `${sectionGuess(s)}. Double-click to rename.`}
                         >
-                          {sectionName(s)}
-                        </span>
-                      )}
-                      {sel && <SectionSuggestion section={s} />}
-                    </div>
+                          {renaming === s.id ? (
+                            <input
+                              className={styles.renameInput}
+                              autoFocus
+                              defaultValue={s.label}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onBlur={(e) => {
+                                const label = e.target.value.trim()
+                                if (label && label !== s.label && analysis)
+                                  dispatch({
+                                    type: 'analysis.updateSection',
+                                    assetId: analysis.assetId,
+                                    sectionId: s.id,
+                                    patch: { label },
+                                  })
+                                setRenaming(null)
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') e.currentTarget.value = s.label
+                                if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
+                              }}
+                              aria-label="Rename section"
+                            />
+                          ) : (
+                            <span
+                              className={[styles.sectionLabel, sectionUnsure(s) && styles.sectionLabelGuess]
+                                .filter(Boolean)
+                                .join(' ')}
+                            >
+                              {sectionName(s)}
+                            </span>
+                          )}
+                          {sel && <SectionSuggestion section={s} />}
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem onSelect={() => set({ playhead: s.start, playing: false })}>
+                          Go to its start
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => selectClips(sectionClipIds(editor.getProject(), s))}>
+                          Select its clips
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem onSelect={() => cutClipsToSection(s.id)}>
+                          Cut clips to this section…
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => exportSectionTeaser(s.id)}>
+                          Export as a teaser…
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
                   )
                 })}
+                {boundaries.map((b) => {
+                  const name =
+                    b.before && b.after
+                      ? `Edge between ${sectionName(b.before)} and ${sectionName(b.after)}`
+                      : b.after
+                        ? `Start of ${sectionName(b.after)}`
+                        : `End of ${b.before ? sectionName(b.before) : 'section'}`
+                  return (
+                    <div
+                      key={`${b.before?.id ?? ''}|${b.after?.id ?? ''}`}
+                      className={styles.sectionEdge}
+                      style={{ left: b.t * pps }}
+                      role="slider"
+                      tabIndex={0}
+                      aria-label={name}
+                      aria-orientation="horizontal"
+                      aria-valuemin={b.min}
+                      aria-valuemax={b.max}
+                      aria-valuenow={b.t}
+                      aria-valuetext={formatTime(b.t, true)}
+                      onPointerDown={(e) => startEdgeDrag(e, b)}
+                      onKeyDown={(e) => nudgeEdge(e, b)}
+                    />
+                  )
+                })}
+                {edgeTime !== null && (
+                  <div className={`${styles.edgeTime} tnum`} style={{ left: edgeTime * pps }}>
+                    {formatTime(edgeTime, true)}
+                  </div>
+                )}
               </div>
+            </div>
+          )}
+
+          {showGrid && grid && (
+            <div
+              className={styles.beatLines}
+              style={{
+                top: RULER_H + (empty ? 0 : SONG_H),
+                left: HEADER_W,
+                width: contentW,
+                height: tracksH,
+              }}
+            >
+              <ViewportCanvas height={tracksH} draw={beatLines} />
             </div>
           )}
 
@@ -1783,8 +1990,8 @@ export function Timeline() {
                     />
                   </div>
                   <div
-                    className={[styles.lane, beatSnap && beat && styles.grid].filter(Boolean).join(' ')}
-                    style={{ width: contentW, ...gridStyle }}
+                    className={styles.lane}
+                    style={{ width: contentW }}
                     data-locked={track.locked || undefined}
                     onPointerDown={startMarquee}
                     onContextMenu={(e) =>

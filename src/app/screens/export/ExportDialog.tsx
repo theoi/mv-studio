@@ -43,14 +43,7 @@ import { formatTime, plural } from '../../format.ts'
 import { downloadAgain, useExports, type ExportRow } from '../../state/exports.ts'
 import { startFootageAnalysis } from '../../state/footage.ts'
 import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
-import {
-  sectionColor,
-  sectionKind,
-  sectionName,
-  sectionsOf,
-  timelineDuration,
-  useProject,
-} from '../../state/project.ts'
+import { sectionName, sectionsOf, sectionTint, timelineDuration, useProject } from '../../state/project.ts'
 import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
 import {
@@ -388,7 +381,7 @@ function RangeLane({
     lane.push({
       key: s.id,
       flex: s.end - s.start,
-      background: `color-mix(in srgb, ${sectionColor[sectionKind(s)]} 45%, transparent)`,
+      background: `color-mix(in srgb, ${sectionTint(s)} 45%, transparent)`,
     })
     cursor = Math.max(cursor, s.end)
   }

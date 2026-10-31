@@ -94,7 +94,8 @@ test('Assist › Auto-cut cuts the clips to the beat, cuts again around a clip t
   const edited = await autoCutTrack(page)
 
   // Cut only the chorus again, on every beat: the edited shot stays, the rest of the song is untouched.
-  await chorus.dispatchEvent('pointerdown')
+  // A mouse pointerdown: one without a pointer type counts as touch, whose long press opens the section menu.
+  await chorus.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, isPrimary: true })
   await page.getByRole('tab', { name: /Assist/ }).click()
   await assist.getByRole('radio', { name: 'Beat', exact: true }).click()
   await assist.getByRole('combobox', { name: 'Range' }).click()

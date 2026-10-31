@@ -47,10 +47,9 @@ import { appMedia } from '../../state/media.ts'
 import {
   editor,
   sectionAt,
-  sectionColor,
-  sectionKind,
   sectionName,
   sectionsOf,
+  sectionTint,
   timelineDuration,
   useProject,
 } from '../../state/project.ts'
@@ -566,7 +565,7 @@ export function VjMode() {
           {sec && (
             <span
               className={styles.secName}
-              style={{ color: `color-mix(in srgb, ${sectionColor[sectionKind(sec)]} 60%, white)` }}
+              style={{ color: `color-mix(in srgb, ${sectionTint(sec)} 60%, white)` }}
             >
               {sectionName(sec)}
             </span>
@@ -710,7 +709,7 @@ export function VjMode() {
               className={styles.sec}
               style={{
                 flex: s.end - s.start,
-                background: `color-mix(in srgb, ${sectionColor[sectionKind(s)]} 40%, transparent)`,
+                background: `color-mix(in srgb, ${sectionTint(s)} 40%, transparent)`,
               }}
             >
               <span>{sectionName(s)}</span>

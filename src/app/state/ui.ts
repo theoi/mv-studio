@@ -69,8 +69,15 @@ export interface UiState {
   pxPerSec: number
   tool: TimelineTool
   snap: boolean
+  /** What snapping snaps to (the snap menu). */
   beatSnap: boolean
+  barSnap: boolean
+  sectionSnap: boolean
+  edgeSnap: boolean
+  playheadSnap: boolean
   showEnergy: boolean
+  /** Bar and beat lines behind the tracks. */
+  showGrid: boolean
   review: boolean
   dismissed: string[]
   toasts: Toast[]
@@ -109,7 +116,12 @@ export const initialUi: UiState = {
   tool: 'select',
   snap: true,
   beatSnap: prefs().beatSnap,
+  barSnap: true,
+  sectionSnap: true,
+  edgeSnap: true,
+  playheadSnap: true,
   showEnergy: true,
+  showGrid: true,
   review: false,
   dismissed: [],
   toasts: [],

@@ -248,6 +248,40 @@
   font-size: var(--text-xs);
 }
 
+.sectionEdge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  /* A 24 px hit area centered on the boundary. */
+  width: 24px;
+  margin-left: -12px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.sectionEdge::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: calc(50% - 1.5px);
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent-line);
+  opacity: 0;
+  transition: opacity var(--dur-fast);
+}
+
+.sectionEdge:hover::after,
+.sectionEdge:focus-visible::after {
+  opacity: 1;
+}
+
+.sectionEdge:focus-visible {
+  outline: none;
+}
+
 .sectionSuggest {
   position: absolute;
   left: 4px;
@@ -341,9 +375,9 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.grid {
-  background-image: linear-gradient(to right, rgb(255 255 255 / 0.035) 1px, transparent 1px);
-  background-position: 0 0;
+.beatLines {
+  position: absolute;
+  pointer-events: none;
 }
 
 /* Clips */
@@ -931,4 +965,21 @@
 .scroller[data-tool='split'] .lane:not([data-locked]) .clip,
 .scroller[data-tool='split'] .lane:not([data-locked]) .clip .handle {
   cursor: crosshair;
+}
+
+/* The time of a section edge while it is dragged, beside the edge. */
+.edgeTime {
+  position: absolute;
+  top: 50%;
+  z-index: 5;
+  margin-left: 14px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-1);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transform: translateY(-50%);
+  pointer-events: none;
 }

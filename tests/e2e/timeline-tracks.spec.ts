@@ -125,8 +125,10 @@ test('tracks reorder by dragging the header grip, from the header menu and with 
   // The keyboard: arrow keys on a focused grip move its track, not the playhead.
   const playhead = await page.evaluate(() => window.mvStudio.app.ui.get().playhead)
   await header(page, 'Lyrics').getByRole('button', { name: 'Move the Lyrics track' }).focus()
-  await expect(page.getByRole('tooltip')).toContainText('Drag to reorder')
-  await expect(page.getByRole('tooltip')).toContainText('↑ ↓ when focused')
+  // Scoped by name: the header's Mute tooltip can still be closing when this one opens.
+  const tip = page.getByRole('tooltip', { name: /Drag to reorder/ })
+  await expect(tip).toContainText('Drag to reorder')
+  await expect(tip).toContainText('↑ ↓ when focused')
   await page.keyboard.press('ArrowDown')
   expect(await trackNames(page)).toEqual(['Look', 'Lyrics', 'Overlay', 'Video', 'Song'])
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().playhead)).toBe(playhead)

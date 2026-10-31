@@ -21,6 +21,7 @@ import {
   type Project,
   type ProjectSettings,
   type Seconds,
+  type SectionEdit,
   type SongSection,
   type Track,
   type VisualAnalysis,
@@ -112,6 +113,8 @@ export class EditError extends Error {
 }
 
 const MIN_CLIP_DURATION = 1 / 240
+
+const SECTION_EDITS: readonly SectionEdit[] = ['label', 'start', 'end', 'color']
 
 function clipOf(p: Draft<Project>, id: Id): Draft<Clip> {
   const clip = p.clips[id]
@@ -428,7 +431,18 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
       const section = p.analysis.audio[cmd.assetId]?.sections?.find((s) => s.id === cmd.sectionId)
       if (!section) throw new EditError('not-found', 'Section not found')
       Object.assign(section, cmd.patch)
+      if (!(section.end > section.start)) throw new EditError('invalid', 'A section must end after it starts')
       if (cmd.patch.label !== undefined && cmd.patch.confidence === undefined) section.confidence = 1
+      const edited = new Set([
+        ...(section.edited ?? []),
+        ...SECTION_EDITS.filter((k) => cmd.patch[k] !== undefined),
+      ])
+      if (section.color === '') {
+        delete section.color
+        edited.delete('color')
+      }
+      if (edited.size) section.edited = SECTION_EDITS.filter((k) => edited.has(k))
+      else delete section.edited
       return
     }
     case 'analysis.setVisual':
