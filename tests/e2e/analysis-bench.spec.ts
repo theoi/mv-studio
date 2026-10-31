@@ -5,6 +5,7 @@ import { expect, openHarness, test } from './fixtures.ts'
 
 const SONG_DIR = path.join(FIXTURE_DIR, 'jamendolyrics/mp3')
 const COUNT = Number(process.env.ANALYSIS_BENCH ?? 0)
+const STEMS = Boolean(process.env.ANALYSIS_BENCH_STEMS)
 
 function fmeasure(est: number[], ref: number[], tol = 0.07): number {
   const used = new Uint8Array(ref.length)
@@ -22,9 +23,10 @@ function fmeasure(est: number[], ref: number[], tol = 0.07): number {
 }
 
 // Timing benchmark on real songs: ANALYSIS_BENCH=<song count> after scripts/fetch-analysis-fixtures.sh.
+// ANALYSIS_BENCH_STEMS=1 also times stem separation (minutes per song on CPU).
 test('analysis speed on real songs', async ({ page }) => {
   test.skip(!COUNT || !existsSync(SONG_DIR), 'set ANALYSIS_BENCH and fetch the songs first')
-  test.setTimeout(COUNT * 120_000)
+  test.setTimeout(COUNT * (STEMS ? 900_000 : 120_000))
   const files = readdirSync(SONG_DIR)
     .filter((f) => f.endsWith('.mp3'))
     .sort()
@@ -35,7 +37,7 @@ test('analysis speed on real songs', async ({ page }) => {
     '#e2e-file-input',
     files.map((f) => path.join(SONG_DIR, f)),
   )
-  const rows = await page.evaluate(async () => {
+  const rows = await page.evaluate(async (withStems) => {
     const { analysis, files } = window.mvStudio
     const service = new analysis.SongAnalysisService()
     const out = []
@@ -49,7 +51,15 @@ test('analysis speed on real songs', async ({ page }) => {
       const refined = await service.refine(`s${i}`).promise
       const t3 = performance.now()
       await service.release(`s${i}`)
+      let stems: { seconds: number; device: string } | undefined
+      if (withStems) {
+        const result = await new analysis.StemSeparationService().separate(
+          await analysis.decodeAudioFile(file),
+        ).promise
+        stems = { seconds: result.seconds, device: result.device }
+      }
       out.push({
+        stems,
         name: file.name,
         duration,
         decodeMs: t1 - t0,
@@ -65,7 +75,7 @@ test('analysis speed on real songs', async ({ page }) => {
     }
     service.dispose()
     return out
-  })
+  }, STEMS)
   for (const r of rows) {
     const line = [
       r.name.slice(0, 32).padEnd(32),
@@ -76,6 +86,7 @@ test('analysis speed on real songs', async ({ page }) => {
       `bpm ${r.fastBpm} -> ${r.refinedBpm}`,
       `F(fast, refined) ${fmeasure(r.fastBeats, r.refinedBeats).toFixed(3)}`,
       r.refinedSections,
+      r.stems ? `stems ${r.stems.seconds.toFixed(0)} s (${r.stems.device})` : '',
     ]
     console.log(line.join(' | '))
   }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { BAND_EDGES_HZ, computeAudioFeatures, FEATURE_RATE } from '../../../src/analysis/features/features.ts'
-import { concat, mix, sine, SR } from './synth.ts'
+import {
+  BAND_EDGES_HZ,
+  computeAudioFeatures,
+  FEATURE_RATE,
+  featureReference,
+} from '../../../src/analysis/features/features.ts'
+import { concat, mix, mix as mix2, sine, SR } from './synth.ts'
 
 const noOnsets = new Float32Array(10)
 const features = (mono: Float32Array) => computeAudioFeatures(mono, SR, noOnsets, 100)
@@ -45,6 +50,18 @@ describe('computeAudioFeatures', () => {
     // 20 dB below the loud part on a 36 dB scale.
     expect(quiet).toBeGreaterThan(0.35)
     expect(quiet).toBeLessThan(0.55)
+  })
+
+  it('keeps a stem far below its mix low when normalized against the mix', () => {
+    const mix = mix2(sine(100, 3, 0.5), sine(3000, 3, 0.5))
+    const bleed = sine(3000, 3, 0.005)
+    const own = features(bleed)
+    const against = computeAudioFeatures(bleed, SR, noOnsets, 100, featureReference(mix, SR))
+    expect(median(own.loudness.slice(10, 140))).toBeGreaterThan(0.9)
+    expect(median(against.loudness.slice(10, 140))).toBeLessThan(0.1)
+    expect(median(column(against.bands, 4, 10, 140))).toBeLessThan(0.1)
+    const loudStem = computeAudioFeatures(sine(3000, 3, 0.5), SR, noOnsets, 100, featureReference(mix, SR))
+    expect(median(column(loudStem.bands, 4, 10, 140))).toBeGreaterThan(0.9)
   })
 
   it('returns zeros for silence', () => {

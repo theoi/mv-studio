@@ -107,3 +107,9 @@ export function setAnalysisCommand(analysis: AudioAnalysis): EditCommand {
 }
 
 export { mergeRefinedAnalysis }
+export {
+  STEM_MODEL_BYTES,
+  StemSeparationService,
+  stemEdits,
+  type StemSeparationResult,
+} from './stems/client.ts'
