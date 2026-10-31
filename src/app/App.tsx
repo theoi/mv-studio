@@ -27,7 +27,9 @@ export function App() {
   return (
     <TooltipProvider>
       {screen === 'start' && <StartScreen />}
-      <Suspense fallback={<div className="screen-loading" />}>
+      {/* One boundary per screen: while the next screen's code loads, a shared boundary would only hide the
+          previous screen, keeping its effects (preview, VJ session, key handlers) running. */}
+      <Suspense key={screen} fallback={<div className="screen-loading" />}>
         {screen === 'editor' && <Editor />}
         {screen === 'setup' && <SetupScreen />}
         {screen === 'vj' && <VjMode />}

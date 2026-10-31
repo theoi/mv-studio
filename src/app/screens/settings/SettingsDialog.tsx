@@ -20,6 +20,7 @@ import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select, SearchInput, Switch } from '../../ds/Fields.tsx'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { set, toast, useUi, type SettingsPage } from '../../state/ui.ts'
+import { setVjQuantize, vjMidiDevices, vjSettings } from '../../state/vj.ts'
 import styles from './SettingsDialog.module.css'
 
 const pages: { id: SettingsPage; label: string; icon: ReactNode }[] = [
@@ -454,6 +455,42 @@ function StoragePage() {
   )
 }
 
+type QuantizeChoice = 'off' | 'beat' | 'bar'
+
+/** VJ settings are saved per browser and reach VJ mode at once when it is open. */
+function VjPage() {
+  const [quantize, setQuantize] = useState(() => vjSettings().quantize)
+  const choice: QuantizeChoice = !quantize.enabled ? 'off' : quantize.grid === 'bar' ? 'bar' : 'beat'
+  const choose = (value: QuantizeChoice) => {
+    const next =
+      value === 'off'
+        ? { ...quantize, enabled: false }
+        : { enabled: true, grid: value === 'bar' ? ('bar' as const) : ('1/4' as const), strength: 1 }
+    setVjQuantize(next)
+    setQuantize(next)
+  }
+  return (
+    <>
+      <Row title="MIDI controller" desc="Connect a controller, then map pads in VJ mode.">
+        <Badge>{vjMidiDevices()}</Badge>
+      </Row>
+      <Row title="Quantize triggers" desc="Line up recorded pad hits with the nearest beat or bar.">
+        <Select
+          value={choice}
+          onChange={choose}
+          ariaLabel="Quantize"
+          size="sm"
+          options={[
+            { value: 'off', label: 'Off' },
+            { value: 'beat', label: 'Nearest beat' },
+            { value: 'bar', label: 'Nearest bar' },
+          ]}
+        />
+      </Row>
+    </>
+  )
+}
+
 function SimplePage({ page }: { page: SettingsPage }) {
   if (page === 'editing')
     return (
@@ -484,27 +521,7 @@ function SimplePage({ page }: { page: SettingsPage }) {
         </Row>
       </>
     )
-  if (page === 'vj')
-    return (
-      <>
-        <Row title="MIDI controller" desc="Connect a controller, then map pads in VJ mode.">
-          <Badge>None connected</Badge>
-        </Row>
-        <Row title="Quantize triggers" desc="Line up pad hits with the next beat.">
-          <Select
-            value="beat"
-            onChange={() => undefined}
-            ariaLabel="Quantize"
-            size="sm"
-            options={[
-              { value: 'off', label: 'Off' },
-              { value: 'beat', label: 'Next beat' },
-              { value: 'bar', label: 'Next bar' },
-            ]}
-          />
-        </Row>
-      </>
-    )
+  if (page === 'vj') return <VjPage />
   return (
     <>
       <Row title="MV Studio" desc="Version 0.1 · design preview">

@@ -1,215 +1,497 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
 import { ArrowLeft, Circle, Pause, Play, Square, Usb } from 'lucide-react'
+import { PreviewController } from '../../../engine/preview.ts'
+import { pluginRegistry } from '../../../engine/registry.ts'
+import type { Asset } from '../../../model/index.ts'
+import {
+  VjSession,
+  clipPadForAsset,
+  clipPadForGenerator,
+  defaultBindings,
+  defaultLayout,
+  type ClipSource,
+  type MidiStatus,
+  type Pad,
+  type PadRow,
+  type PadView,
+  type QuantizeGrid,
+  type VjSnapshot,
+} from '../../../vj/index.ts'
 import { Button } from '../../ds/Button.tsx'
 import { Kbd } from '../../ds/Kbd.tsx'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  MenuTrigger,
+} from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
 import { formatTime } from '../../format.ts'
-import { sceneThumb, type SceneId } from '../../mock/art.ts'
+import { appMedia } from '../../state/media.ts'
 import {
-  bpmOf,
   editor,
-  energyAt,
   sectionAt,
   sectionColor,
   sectionKind,
   sectionName,
   sectionsOf,
-  songAnalysis,
   timelineDuration,
+  undo,
   useProject,
 } from '../../state/project.ts'
+import { useThumbnail } from '../../state/thumbs.ts'
+import { setActiveVjSession } from '../../state/vj.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
-import { usePlaybackClock } from '../editor/hooks.ts'
-import { renderFrame, type FrameInput } from '../editor/render.ts'
 import styles from './VjMode.module.css'
 
-const clipPads: { key: string; scene: SceneId; name: string }[] = [
-  { key: 'Q', scene: 'city', name: 'Night city' },
-  { key: 'W', scene: 'portrait', name: 'Singer' },
-  { key: 'E', scene: 'crowd', name: 'Crowd' },
-  { key: 'R', scene: 'neon', name: 'Neon grid' },
-  { key: 'T', scene: 'tunnel', name: 'Tunnel' },
-  { key: 'Y', scene: 'dancer', name: 'Dancer' },
-  { key: 'U', scene: 'ocean', name: 'Ocean' },
-  { key: 'I', scene: 'rain', name: 'Rain' },
-  { key: 'O', scene: 'aurora', name: 'Aurora' },
-  { key: 'P', scene: 'sunset', name: 'Sunset' },
-]
-
-const fxPads: { key: string; name: string; filter: string }[] = [
-  { key: 'A', name: 'Strobe', filter: 'brightness(1.8)' },
-  { key: 'S', name: 'RGB split', filter: 'saturate(2) hue-rotate(20deg)' },
-  { key: 'D', name: 'Zoom pulse', filter: 'contrast(1.2)' },
-  { key: 'F', name: 'Glow', filter: 'brightness(1.25) saturate(1.3)' },
-  { key: 'G', name: 'Shake', filter: 'none' },
-  { key: 'H', name: 'Invert', filter: 'invert(1)' },
-  { key: 'J', name: 'Blur', filter: 'blur(6px)' },
-  { key: 'K', name: 'Mono', filter: 'grayscale(1) contrast(1.3)' },
-  { key: 'L', name: 'Freeze', filter: 'none' },
-]
-
-const looks: { name: string; filter: string }[] = [
-  { name: 'Original', filter: '' },
-  { name: 'Neon noir', filter: 'contrast(1.2) saturate(1.35) hue-rotate(-12deg)' },
-  { name: 'Golden hour', filter: 'sepia(0.4) saturate(1.3) brightness(1.05)' },
-  { name: 'VHS', filter: 'saturate(1.5) contrast(0.9)' },
-  { name: 'Mono', filter: 'grayscale(1) contrast(1.2)' },
-  { name: 'Dream', filter: 'brightness(1.12) saturate(0.85)' },
-  { name: 'Ice', filter: 'hue-rotate(160deg) saturate(0.8)' },
-  { name: 'Ember', filter: 'sepia(0.6) hue-rotate(-25deg) saturate(1.6)' },
-]
-
-/** The live output: the triggered clip with a spectrum overlay, reacting to the song like the editor preview. */
-function liveFrame(t: number, scene: SceneId): FrameInput {
-  const p = editor.getProject()
-  const sec = sectionAt(p, t)
-  return {
-    t,
-    scene,
-    clipProgress: (t % 8) / 8,
-    overlay: { kind: 'spectrum', progress: 0, id: 'vj-spectrum' },
-    energy: energyAt(songAnalysis(p), t),
-    beatInterval: 60 / (bpmOf(p) ?? 120),
-    sectionKind: sec ? sectionKind(sec) : 'verse',
-    behindSubject: false,
-    showSelection: false,
-  }
+interface Engine {
+  preview: PreviewController
+  session: VjSession
 }
 
-function without(set: Set<string>, key: string) {
-  if (!set.has(key)) return set
-  const next = new Set(set)
-  next.delete(key)
-  return next
+const noSubscribe = () => () => undefined
+const noSnapshot = () => null
+
+function useSnapshot(session: VjSession | undefined): VjSnapshot | null {
+  return useSyncExternalStore(session?.subscribe ?? noSubscribe, session?.getSnapshot ?? noSnapshot)
 }
 
-export function VjMode() {
-  usePlaybackClock()
-  const project = useProject()
-  const playing = useUi((s) => s.playing)
-  const playhead = useUi((s) => s.playhead)
-  const [live, setLive] = useState(0)
-  const [held, setHeld] = useState<Set<string>>(new Set())
-  const [look, setLook] = useState(1)
-  const [rec, setRec] = useState(false)
-  const [events, setEvents] = useState(0)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const stageRef = useRef<HTMLDivElement>(null)
-  const liveRef = useRef(live)
-  const drawRef = useRef<() => void>(() => undefined)
+function playingOf(preview: PreviewController | undefined): boolean {
+  return preview?.getSnapshot().state === 'playing'
+}
 
-  const duration = timelineDuration(project)
-  const list = sectionsOf(project)
-  const sec = sectionAt(project, playhead)
+function usePlaying(preview: PreviewController | undefined): boolean {
+  return useSyncExternalStore(preview?.subscribe ?? noSubscribe, () => playingOf(preview))
+}
 
-  const trigger = (i: number) => {
-    setLive(i)
-    if (rec) setEvents((n) => n + 1)
-  }
+function plural(n: number, one: string, many = `${one}s`) {
+  return `${n} ${n === 1 ? one : many}`
+}
 
-  const exit = () => {
-    set({ screen: 'editor', playing: false })
-    if (events > 0)
-      toast(`Performance added to the timeline: ${events} changes, all editable`, {
-        label: 'Undo',
-        run: () => undefined,
-      })
-  }
+function midiChip(midi: VjSnapshot['midi'] | undefined): string {
+  const status: MidiStatus = midi?.status ?? 'off'
+  if (status === 'ready' && midi?.devices.length)
+    return midi.devices.length > 1
+      ? `${midi.devices[0]!.name} +${midi.devices.length - 1}`
+      : midi.devices[0]!.name
+  if (status === 'requesting') return 'Connecting…'
+  if (status === 'denied') return 'MIDI blocked'
+  if (status === 'unsupported') return 'No Web MIDI'
+  if (status === 'error') return 'MIDI error'
+  return 'No MIDI device'
+}
 
-  const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
-    if (e.repeat || e.ctrlKey || e.metaKey) return
-    const k = e.key.toUpperCase()
-    if (e.key === 'Escape') {
-      exit()
-      return
-    }
-    if (e.key === ' ') {
-      e.preventDefault()
-      set({ playing: !get().playing })
-      return
-    }
-    if (k === 'Z' && e.shiftKey) {
-      setRec((r) => !r)
-      return
-    }
-    const ci = clipPads.findIndex((p) => p.key === k)
-    if (ci >= 0) {
-      trigger(ci)
-      return
-    }
-    if (fxPads.some((p) => p.key === k)) {
-      setHeld((h) => new Set(h).add(k))
-      if (rec) setEvents((n) => n + 1)
-      return
-    }
-    const n = Number(e.key)
-    if (n >= 1 && n <= looks.length) setLook(n - 1)
-  })
+function takeSummary(take: VjSnapshot['takes'][number], grid: QuantizeGrid): string {
+  const s = take.summary
+  const parts = s
+    ? [
+        s.clips ? plural(s.clips, 'clip') : '',
+        s.effects ? plural(s.effects, 'effect') : '',
+        s.looks ? plural(s.looks, 'look') : '',
+      ].filter(Boolean)
+    : [plural(take.presses, 'press', 'presses')]
+  const what = parts.join(', ') || 'no changes'
+  return take.quantized ? `${what}, lined up with the ${grid === 'bar' ? 'bars' : 'beats'}` : what
+}
 
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => onKeyDown(e)
-    const up = (e: KeyboardEvent) => setHeld((h) => without(h, e.key.toUpperCase()))
-    window.addEventListener('keydown', down)
-    window.addEventListener('keyup', up)
-    return () => {
-      window.removeEventListener('keydown', down)
-      window.removeEventListener('keyup', up)
-    }
-  }, [])
+/** Runs the engine preview and the VJ session on the stage while VJ mode is open. */
+function useEngine(
+  canvasRef: React.RefObject<HTMLCanvasElement | null>,
+  stageRef: React.RefObject<HTMLDivElement | null>,
+  onExit: (session: VjSession) => void,
+) {
+  const [engine, setEngine] = useState<Engine | null>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+  const [drawn, setDrawn] = useState(false)
+  const exitEvent = useEffectEvent(onExit)
 
   useEffect(() => {
     const canvas = canvasRef.current
     const stage = stageRef.current
-    const ctx = canvas?.getContext('2d')
-    if (!canvas || !stage || !ctx) return
-    let w = 0
-    let h = 0
-    const draw = () => {
-      const pad = clipPads[liveRef.current] ?? clipPads[0]!
-      const dpr = canvas.width / Math.max(1, w)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      renderFrame(ctx, w, h, liveFrame(get().playhead, pad.scene))
-    }
-    drawRef.current = draw
-    const layout = () => {
+    if (!canvas || !stage) return
+    const project = editor.getProject()
+    const ratio = project.settings.width / project.settings.height
+    const fit = () => {
       const r = stage.getBoundingClientRect()
-      w = Math.max(1, Math.floor(Math.min(r.width, (r.height * 16) / 9)))
-      h = Math.max(1, Math.floor((w * 9) / 16))
-      const dpr = Math.min(2, window.devicePixelRatio || 1)
-      canvas.width = w * dpr
-      canvas.height = h * dpr
-      canvas.style.width = `${w}px`
-      canvas.style.height = `${h}px`
-      draw()
+      const width = Math.max(1, Math.floor(Math.min(r.width - 48, (r.height - 16) * ratio)))
+      return { width, height: Math.max(1, Math.floor(width / ratio)) }
     }
-    const ro = new ResizeObserver(layout)
-    ro.observe(stage)
-    const unsub = useUi.subscribe((s, p) => {
-      if (s.playhead !== p.playhead) draw()
+    let preview: PreviewController
+    try {
+      preview = new PreviewController({ canvas, media: appMedia })
+    } catch (error) {
+      console.error('The VJ preview could not start', error)
+      toast('The live preview needs WebGL 2. Turn on hardware acceleration in your browser settings.')
+      return
+    }
+    const first = fit()
+    setSize(first)
+    preview.setViewport(first.width, first.height)
+    preview.seek(get().playhead)
+    preview.setProject(project)
+    const session = new VjSession({ editor, preview, onExit: () => exitEvent(session) })
+    // Each visit starts as a rehearsal: nothing lands on the timeline until Record is on.
+    session.setArmed(false)
+    const detach = session.attachKeyboard(window)
+    const offFirstFrame = preview.onFrame(() => {
+      setDrawn(true)
+      offFirstFrame()
     })
-    void document.fonts?.ready.then(draw)
+    const offFrame = preview.onFrame((time) => {
+      if (preview.clock.state === 'playing') set({ playhead: time })
+    })
+    const offState = preview.subscribe(() => {
+      const { state, time } = preview.getSnapshot()
+      if (state !== 'playing' && get().playhead !== time) set({ playhead: time })
+    })
+    const ro = new ResizeObserver(() => {
+      const next = fit()
+      setSize(next)
+      preview.setViewport(next.width, next.height)
+    })
+    ro.observe(stage)
+    setEngine({ preview, session })
+    setActiveVjSession(session)
     return () => {
+      setActiveVjSession(null)
       ro.disconnect()
-      unsub()
+      offFirstFrame()
+      offFrame()
+      offState()
+      detach()
+      session.close()
+      preview.dispose()
+      setEngine(null)
+      setDrawn(false)
     }
-  }, [])
+  }, [canvasRef, stageRef])
+
+  return { engine, size, drawn }
+}
+
+type PadButtonProps = Omit<ComponentProps<'button'>, 'className'> & {
+  pad: PadView
+  className: string
+  art?: string
+  learning: boolean
+  mapping: boolean
+  session: VjSession
+}
+
+/** Extra button props come from the slot's context-menu trigger and must reach the button. */
+function PadButton({
+  pad,
+  className,
+  art,
+  learning,
+  mapping,
+  session,
+  onPointerDown,
+  onPointerUp,
+  onPointerLeave,
+  ...rest
+}: PadButtonProps) {
+  const down = useRef(false)
+  const release = (timeStamp: number) => {
+    if (!down.current) return
+    down.current = false
+    session.releasePad(pad.row, pad.index, timeStamp)
+  }
+  const lit = pad.kind === 'effect' ? pad.active && styles.padHeld : pad.active && styles.padLive
+  return (
+    <button
+      {...rest}
+      className={[styles.pad, className, lit, learning && styles.padLearn].filter(Boolean).join(' ')}
+      style={art ? { ...rest.style, backgroundImage: `url(${art})` } : rest.style}
+      aria-pressed={pad.active}
+      aria-label={pad.label}
+      title={pad.midi ? `MIDI ${pad.midi}` : undefined}
+      onPointerDown={(e) => {
+        onPointerDown?.(e)
+        if (e.button !== 0) return
+        if (mapping) {
+          session.learn({ kind: 'pad', row: pad.row, index: pad.index })
+          return
+        }
+        down.current = true
+        session.pressPad(pad.row, pad.index, e.timeStamp)
+      }}
+      onPointerUp={(e) => {
+        onPointerUp?.(e)
+        release(e.timeStamp)
+      }}
+      onPointerLeave={(e) => {
+        onPointerLeave?.(e)
+        release(e.timeStamp)
+      }}
+    >
+      <span className={styles.padKey}>{pad.key ?? '·'}</span>
+      <span className={styles.padName}>{pad.label}</span>
+    </button>
+  )
+}
+
+function AssetPad({ asset, ...props }: Omit<PadButtonProps, 'art'> & { asset: Asset }) {
+  const art = useThumbnail(asset)
+  return <PadButton {...props} art={art} />
+}
+
+function clipArt(source: ClipSource | null | undefined): string | undefined {
+  if (source?.type === 'generator')
+    return pluginRegistry.catalog().find((e) => e.id === source.generatorId)?.thumbnail
+  return undefined
+}
+
+/** A clip pad that stays on after release becomes one that shows only while held, and back. */
+function toggledTrigger(pad: Pad): Pad {
+  if (pad.action.kind !== 'clip') return pad
+  return {
+    ...pad,
+    action: { ...pad.action, trigger: pad.action.trigger === 'latch' ? 'momentary' : 'latch' },
+  }
+}
+
+/** Right-click menu of a pad slot: what the pad plays, how, and resetting the layout. */
+function SlotMenu({
+  row,
+  index,
+  session,
+  snapshot,
+  children,
+}: {
+  row: PadRow
+  index: number
+  session: VjSession
+  snapshot: VjSnapshot
+  children: ReactNode
+}) {
+  const project = useProject()
+  const layout = session.getLayout()
+  const rowPads =
+    row === 'clips'
+      ? (layout.clipBanks[snapshot.bank.index] ?? [])
+      : row === 'effects'
+        ? layout.effects
+        : layout.looks
+  const current = rowPads[index] ?? null
+  const put = (pad: Pad | null) => session.setPad(row, index, pad)
+  const media = Object.values(project.assets).filter((a) => a.kind === 'video' || a.kind === 'image')
+  const visuals = pluginRegistry.catalog().filter((e) => e.kind === 'generator')
+  const defaults = defaultLayout(project, pluginRegistry.catalog())
+  const missing =
+    row === 'clips'
+      ? []
+      : (row === 'effects' ? defaults.effects : defaults.looks).filter(
+          (p): p is Pad => !!p && !rowPads.some((q) => q?.id === p.id),
+        )
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        {row === 'clips' &&
+          media.map((a) => (
+            <ContextMenuItem key={a.id} onSelect={() => put(clipPadForAsset(a))}>
+              {a.name}
+            </ContextMenuItem>
+          ))}
+        {row === 'clips' &&
+          visuals.map((v) => (
+            <ContextMenuItem key={v.id} onSelect={() => put(clipPadForGenerator(v))}>
+              {v.name}
+            </ContextMenuItem>
+          ))}
+        {missing.map((p) => (
+          <ContextMenuItem key={p.id} onSelect={() => put(p)}>
+            {p.label}
+          </ContextMenuItem>
+        ))}
+        {current?.action.kind === 'clip' && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => put(toggledTrigger(current))}>
+              {current.action.trigger === 'latch' ? 'Show only while held' : 'Stay on after release'}
+            </ContextMenuItem>
+          </>
+        )}
+        {(current || snapshot.layoutCustomized) && <ContextMenuSeparator />}
+        {current && (
+          <ContextMenuItem danger onSelect={() => put(null)}>
+            Clear pad
+          </ContextMenuItem>
+        )}
+        {snapshot.layoutCustomized && (
+          <ContextMenuItem onSelect={() => session.resetLayout()}>Reset all pads</ContextMenuItem>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+function Deck({
+  session,
+  snapshot,
+  mapping,
+}: {
+  session: VjSession
+  snapshot: VjSnapshot
+  mapping: boolean
+}) {
+  const project = useProject()
+  const learning = (pad: PadView) =>
+    snapshot.learn?.kind === 'pad' && snapshot.learn.row === pad.row && snapshot.learn.index === pad.index
+  const slot = (row: PadRow, pad: PadView | null, index: number, className: string) => {
+    const source = pad?.source
+    const asset = source?.type === 'asset' ? project.assets[source.assetId] : undefined
+    const common = { className, session, mapping }
+    const body = !pad ? (
+      <button className={[styles.pad, styles.padEmpty, className].join(' ')} aria-label="Empty pad">
+        <span className={styles.padKey}>·</span>
+        <span className={styles.padName}>Empty</span>
+      </button>
+    ) : asset ? (
+      <AssetPad pad={pad} asset={asset} learning={learning(pad)} {...common} />
+    ) : (
+      <PadButton pad={pad} art={clipArt(source)} learning={learning(pad)} {...common} />
+    )
+    return (
+      <SlotMenu
+        key={`${row}-${snapshot.bank.index}-${index}`}
+        row={row}
+        index={index}
+        session={session}
+        snapshot={snapshot}
+      >
+        {body}
+      </SlotMenu>
+    )
+  }
+  const { pads, bank } = snapshot
+  return (
+    <div className={styles.deck}>
+      <div className={styles.deckRow}>
+        <div className={styles.deckLabel}>
+          Clips{' '}
+          {bank.count > 1 ? (
+            <Tooltip label="Switch clip banks" shortcut="[ ]">
+              <span>
+                bank {bank.index + 1} of {bank.count}
+              </span>
+            </Tooltip>
+          ) : (
+            <span>tap</span>
+          )}
+        </div>
+        <div className={styles.pads} style={{ gridTemplateColumns: 'repeat(10, minmax(0, 1fr))' }}>
+          {pads.clips.map((p, i) => slot('clips', p, i, styles.clipPad))}
+        </div>
+      </div>
+      <div className={styles.deckRow}>
+        <div className={styles.deckLabel}>
+          Effects <span>hold</span>
+        </div>
+        <div
+          className={styles.pads}
+          style={{ gridTemplateColumns: 'repeat(9, minmax(0, 1fr)) minmax(0, 1fr)' }}
+        >
+          {pads.effects.map((p, i) => slot('effects', p, i, styles.fxPad))}
+        </div>
+      </div>
+      <div className={styles.deckRow}>
+        <div className={styles.deckLabel}>
+          Looks <span>switch</span>
+        </div>
+        <div
+          className={styles.pads}
+          style={{ gridTemplateColumns: 'repeat(8, minmax(0, 1fr)) minmax(0, 2fr)' }}
+        >
+          {pads.looks.map((p, i) => slot('looks', p, i, styles.lookPad))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function VjMode() {
+  const project = useProject()
+  const playhead = useUi((s) => s.playhead)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [mapping, setMapping] = useState(false)
+  const closed = useRef(false)
+
+  const exit = (session: VjSession | undefined) => {
+    if (mapping) {
+      setMapping(false)
+      return
+    }
+    const kept = session && !closed.current ? session.close().kept : 0
+    closed.current = true
+    set({ screen: 'editor', playing: false })
+    if (kept > 0)
+      toast(`Performance added to the timeline: ${plural(kept, 'take')}, all editable`, {
+        label: 'Undo',
+        run: undo,
+      })
+  }
+
+  const { engine, size, drawn } = useEngine(canvasRef, stageRef, exit)
+  const session = engine?.session
+  const snapshot = useSnapshot(session)
+  const playing = usePlaying(engine?.preview)
+
+  // Take review: every take that lands says what it added, and can be discarded right away.
+  const announced = useRef(new Set<string>())
+  const grid = snapshot?.settings.quantize.grid ?? '1/4'
+  useEffect(() => {
+    for (const take of snapshot?.takes ?? []) {
+      if (announced.current.has(take.id)) continue
+      announced.current.add(take.id)
+      if (take.status === 'failed')
+        toast(`Take ${take.number} could not be added: ${take.error ?? 'unknown error'}`)
+      else if (take.status === 'kept')
+        toast(`Take ${take.number} added to the timeline: ${takeSummary(take, grid)}`, {
+          label: 'Discard',
+          run: () => {
+            if (closed.current) return
+            session?.discardTake(take.id)
+            toast(`Take ${take.number} discarded`)
+          },
+        })
+    }
+  }, [snapshot?.takes, session, grid])
 
   useEffect(() => {
-    liveRef.current = live
-    drawRef.current()
-  }, [live])
+    if (snapshot?.error) toast(snapshot.error)
+  }, [snapshot?.error])
 
-  const filter =
-    [looks[look]?.filter ?? '', ...[...held].map((k) => fxPads.find((p) => p.key === k)?.filter ?? '')]
-      .filter(Boolean)
-      .join(' ') || 'none'
-  const shake = held.has('G')
+  const duration = timelineDuration(project)
+  const list = sectionsOf(project)
+  const sec = sectionAt(project, playhead)
+  const armed = snapshot?.transport.armed ?? false
+  const togglePlay = () => session?.togglePlay()
+  const learnPad = snapshot?.learn?.kind === 'pad' ? snapshot.learn : null
+  const learnLabel = learnPad ? snapshot?.pads[learnPad.row][learnPad.index]?.label : undefined
 
   return (
     <div className={styles.root}>
       <header className={styles.top}>
         <div className={styles.topLeft}>
-          <Button variant="ghost" icon={<ArrowLeft />} onClick={exit}>
+          <Button variant="ghost" icon={<ArrowLeft />} onClick={() => exit(session)}>
             Back to editor
           </Button>
           <span className={styles.modeLabel}>VJ mode</span>
@@ -229,26 +511,70 @@ export function VjMode() {
           </span>
         </div>
         <div className={styles.topRight}>
+          <Menu>
+            <Tooltip
+              label="MIDI controller"
+              description="Connect a controller, then press a pad and a key to map it"
+            >
+              <MenuTrigger asChild>
+                <button className={styles.midi}>
+                  <Usb /> {midiChip(snapshot?.midi)}
+                </button>
+              </MenuTrigger>
+            </Tooltip>
+            <MenuContent width={260}>
+              <MenuLabel>MIDI controller</MenuLabel>
+              {snapshot?.midi.status === 'ready' ? (
+                snapshot.midi.devices.length ? (
+                  snapshot.midi.devices.map((d) => (
+                    <MenuItem key={d.id} disabled description={d.manufacturer}>
+                      {d.name}
+                    </MenuItem>
+                  ))
+                ) : (
+                  <MenuItem disabled description="Plug one in; it appears here">
+                    No controller found
+                  </MenuItem>
+                )
+              ) : snapshot?.midi.status === 'unsupported' ? (
+                <MenuItem disabled description="Use desktop Chrome or Edge for MIDI controllers">
+                  This browser has no Web MIDI
+                </MenuItem>
+              ) : snapshot?.midi.status === 'denied' ? (
+                <MenuItem disabled description="Allow MIDI devices in the site settings, then try again">
+                  MIDI access was blocked
+                </MenuItem>
+              ) : (
+                <MenuItem
+                  disabled={snapshot?.midi.status === 'requesting'}
+                  description={snapshot?.midi.error ?? 'The browser asks for permission once'}
+                  onSelect={() => void session?.connectMidi()}
+                >
+                  Connect a MIDI controller
+                </MenuItem>
+              )}
+              <MenuSeparator />
+              <MenuItem
+                description="Click a pad, then press a key or a MIDI pad"
+                onSelect={() => setMapping(true)}
+              >
+                Map keys and MIDI pads
+              </MenuItem>
+              <MenuItem onSelect={() => session?.setBindings(defaultBindings())}>Reset mappings</MenuItem>
+            </MenuContent>
+          </Menu>
           <Tooltip
-            label="MIDI controller"
-            description="Connect a controller, then press a pad and a key to map it"
-          >
-            <button className={styles.midi}>
-              <Usb /> No MIDI device
-            </button>
-          </Tooltip>
-          <Tooltip
-            label={rec ? 'Stop recording' : 'Record performance'}
+            label={armed ? 'Stop recording' : 'Record performance'}
             shortcut="Shift Z"
             description="Everything you trigger lands on the timeline as editable clips and keyframes"
           >
             <button
-              className={[styles.rec, rec && styles.recOn].filter(Boolean).join(' ')}
-              onClick={() => setRec(!rec)}
-              aria-pressed={rec}
+              className={[styles.rec, armed && styles.recOn].filter(Boolean).join(' ')}
+              onClick={() => session?.setArmed(!armed)}
+              aria-pressed={armed}
             >
-              {rec ? <Square /> : <Circle />}
-              {rec ? `Recording · ${events} events` : 'Record'}
+              {armed ? <Square /> : <Circle />}
+              {armed ? `Recording · ${plural(snapshot?.transport.presses ?? 0, 'event')}` : 'Record'}
             </button>
           </Tooltip>
         </div>
@@ -257,24 +583,34 @@ export function VjMode() {
       <div ref={stageRef} className={styles.stage}>
         <canvas
           ref={canvasRef}
-          className={[styles.canvas, shake && styles.shake].filter(Boolean).join(' ')}
-          style={{ filter }}
+          className={styles.canvas}
+          style={{ width: size.width, height: size.height }}
           aria-label="Live output"
+          aria-busy={!drawn}
           role="img"
         />
-        {!playing && (
-          <button className={styles.playHint} onClick={() => set({ playing: true })}>
-            <Play /> Press <Kbd keys="Space" /> to play, then hit the keys below
-          </button>
+        {mapping ? (
+          <div className={styles.playHint} role="status">
+            {learnLabel
+              ? `Press a key or a MIDI pad for “${learnLabel}”`
+              : 'Click a pad, then press a key or a MIDI pad to map it.'}{' '}
+            <Kbd keys="Esc" /> when done
+          </div>
+        ) : snapshot?.problem === 'empty' ? (
+          <div className={styles.playHint} role="status">
+            Add a song or clips to the timeline to perform over them
+          </div>
+        ) : (
+          !playing && (
+            <button className={styles.playHint} onClick={togglePlay}>
+              <Play /> Press <Kbd keys="Space" /> to play, then hit the keys below
+            </button>
+          )
         )}
       </div>
 
       <div className={styles.progress}>
-        <button
-          className={styles.playBtn}
-          onClick={() => set({ playing: !playing })}
-          aria-label={playing ? 'Pause' : 'Play'}
-        >
+        <button className={styles.playBtn} onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
           {playing ? <Pause /> : <Play />}
         </button>
         <div className={styles.sections}>
@@ -294,77 +630,7 @@ export function VjMode() {
         </div>
       </div>
 
-      <div className={styles.deck}>
-        <div className={styles.deckRow}>
-          <div className={styles.deckLabel}>
-            Clips <span>tap</span>
-          </div>
-          <div className={styles.pads} style={{ gridTemplateColumns: 'repeat(10, minmax(0, 1fr))' }}>
-            {clipPads.map((p, i) => (
-              <button
-                key={p.key}
-                className={[styles.pad, styles.clipPad, live === i && styles.padLive]
-                  .filter(Boolean)
-                  .join(' ')}
-                style={{ backgroundImage: `url(${sceneThumb(p.scene)})` }}
-                onClick={() => trigger(i)}
-                aria-pressed={live === i}
-              >
-                <span className={styles.padKey}>{p.key}</span>
-                <span className={styles.padName}>{p.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={styles.deckRow}>
-          <div className={styles.deckLabel}>
-            Effects <span>hold</span>
-          </div>
-          <div
-            className={styles.pads}
-            style={{ gridTemplateColumns: 'repeat(9, minmax(0, 1fr)) minmax(0, 1fr)' }}
-          >
-            {fxPads.map((p) => (
-              <button
-                key={p.key}
-                className={[styles.pad, styles.fxPad, held.has(p.key) && styles.padHeld]
-                  .filter(Boolean)
-                  .join(' ')}
-                onPointerDown={() => setHeld((h) => new Set(h).add(p.key))}
-                onPointerUp={() => setHeld((h) => without(h, p.key))}
-                onPointerLeave={() => setHeld((h) => without(h, p.key))}
-                aria-pressed={held.has(p.key)}
-              >
-                <span className={styles.padKey}>{p.key}</span>
-                <span className={styles.padName}>{p.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={styles.deckRow}>
-          <div className={styles.deckLabel}>
-            Looks <span>switch</span>
-          </div>
-          <div
-            className={styles.pads}
-            style={{ gridTemplateColumns: 'repeat(8, minmax(0, 1fr)) minmax(0, 2fr)' }}
-          >
-            {looks.map((l, i) => (
-              <button
-                key={l.name}
-                className={[styles.pad, styles.lookPad, look === i && styles.padLive]
-                  .filter(Boolean)
-                  .join(' ')}
-                onClick={() => setLook(i)}
-                aria-pressed={look === i}
-              >
-                <span className={styles.padKey}>{i + 1}</span>
-                <span className={styles.padName}>{l.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+      {session && snapshot && <Deck session={session} snapshot={snapshot} mapping={mapping} />}
     </div>
   )
 }

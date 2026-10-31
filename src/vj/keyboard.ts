@@ -31,13 +31,23 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return role === 'textbox' || role === 'combobox'
 }
 
+const OVERLAYS = '[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]'
+
+/** Open menus and dialogs keep their keys: Esc closes them, Space, Enter and letters pick their items. */
+export function isOverlayTarget(target: EventTarget | null): boolean {
+  const el = target as Partial<Element> | null
+  return typeof el?.closest === 'function' && el.closest(OVERLAYS) !== null
+}
+
 /**
- * The VJ input for a key event, or null when it is not VJ mode's: a key-down with Ctrl, Cmd or Alt held, or typed
- * into a text field. Key-ups always pass, so a pad held when a modifier went down still releases.
+ * The VJ input for a key event, or null when it is not VJ mode's: a key-down with Ctrl, Cmd or Alt held, typed into
+ * a text field, or in an open menu or dialog. Key-ups always pass, so a pad held when a modifier went down still
+ * releases.
  */
 export function keyInput(e: KeyEventLike, down: boolean): KeyInput | null {
   if (!e.code) return null
-  if (down && (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target))) return null
+  if (down && (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target) || isOverlayTarget(e.target)))
+    return null
   return { code: e.code, shift: e.shiftKey, down, repeat: down && e.repeat, timeStamp: e.timeStamp }
 }
 
