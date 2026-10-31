@@ -12,6 +12,7 @@ import {
   sectionAt,
   sectionColor,
   sectionKind,
+  sectionName,
   sectionsOf,
   songAnalysis,
   timelineDuration,
@@ -220,7 +221,7 @@ export function VjMode() {
               className={styles.secName}
               style={{ color: `color-mix(in srgb, ${sectionColor[sectionKind(sec)]} 60%, white)` }}
             >
-              {sec.label}
+              {sectionName(sec)}
             </span>
           )}
           <span className={`${styles.time} tnum`}>
@@ -286,7 +287,7 @@ export function VjMode() {
                 background: `color-mix(in srgb, ${sectionColor[sectionKind(s)]} 40%, transparent)`,
               }}
             >
-              <span>{s.label}</span>
+              <span>{sectionName(s)}</span>
             </span>
           ))}
           <span className={styles.head} style={{ left: `${(playhead / duration) * 100}%` }} />

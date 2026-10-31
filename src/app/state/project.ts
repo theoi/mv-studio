@@ -142,6 +142,18 @@ export function sectionKind(s: SongSection): SectionKind {
   return 'verse'
 }
 
+/** Below this a section's label is a guess: labels from the audio alone are about 0.4, user-typed ones 1. */
+const SURE_LABEL = 0.6
+
+export function sectionUnsure(s: SongSection): boolean {
+  return s.confidence !== undefined && s.confidence < SURE_LABEL
+}
+
+/** A section's label as shown, with a question mark when it is a guess ("Chorus?"). */
+export function sectionName(s: SongSection): string {
+  return sectionUnsure(s) ? `${s.label}?` : s.label
+}
+
 export const sectionColor: Record<SectionKind, string> = {
   intro: 'var(--section-intro)',
   verse: 'var(--section-verse)',

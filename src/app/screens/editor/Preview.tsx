@@ -29,6 +29,7 @@ import {
   hasSong,
   loadSample,
   sectionAt,
+  sectionName,
   timelineDuration,
   useProject,
 } from '../../state/project.ts'
@@ -156,7 +157,7 @@ function Position() {
   return (
     <Tooltip label="Where you are in the song" description={`Bar ${bar}, beat ${beatInBar}`}>
       <span className={`${styles.position} tnum`}>
-        <span className={styles.posSection}>{sec?.label}</span>
+        <span className={styles.posSection}>{sec && sectionName(sec)}</span>
         <span>Bar {bar}</span>
       </span>
     </Tooltip>
