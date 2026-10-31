@@ -29,7 +29,7 @@ function run(commands: EditCommand[], options: { label: string } | { coalesceKey
 export function ReactPanel({ target }: { target: ReactionTarget }) {
   const project = useProject()
   const active = describeReaction(project, target)
-  const choices = availableReactions(project)
+  const choices = availableReactions(project, project.clips[target.clipId])
   const value = active?.kind === 'reaction' ? active.reaction.id : active ? CUSTOM : NONE
   const chosen = choices.find((c) => c.reaction.id === value)
   const options = [

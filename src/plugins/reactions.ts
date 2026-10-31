@@ -244,9 +244,22 @@ function bandLabel(hz: number): string {
   return 'High frequencies'
 }
 
-/** Plain-language name of what a reaction listens to, e.g. 'Drums stem' or 'Sub bass'. */
-export function listenLabel(listen: Listen, analysis?: AudioAnalysis): string {
+/**
+ * The separated stem a clip's mappings without a stem of their own listen to: a generator clip's audio source, as
+ * clipSampler() in the engine samples it. Until that stem is separated they hear the full mix, so this is undefined.
+ */
+export function followedStem(project: Project, clip: Clip | undefined): StemName | undefined {
+  const stem = clip?.type === 'generator' ? clip.audio?.stem : undefined
+  return stem && songAnalysis(project)?.stemFeatures?.[stem] ? stem : undefined
+}
+
+/**
+ * Plain-language name of what a reaction listens to, e.g. 'Drums stem' or 'Sub bass'. On a clip that follows a stem
+ * (`followed`), what would come from the mix comes from that stem.
+ */
+export function listenLabel(listen: Listen, analysis?: AudioAnalysis, followed?: StemName): string {
   if ('stem' in listen && listen.stem) return STEM_LABELS[listen.stem]
+  if (followed && listen.feature !== 'beat' && listen.feature !== 'downbeat') return STEM_LABELS[followed]
   switch (listen.feature) {
     case 'beat':
       return 'Beat grid'
@@ -271,12 +284,25 @@ const BAND_PHRASES: [maxHz: number, phrase: string][] = [
   [Infinity, 'the highs'],
 ]
 
+const bandPhrase = (hz: number) => BAND_PHRASES.find(([max]) => hz < max)?.[1] ?? 'the highs'
+
 /**
  * What a reaction listens to as the end of a sentence, saying where its instrument is found until stems are
- * separated: 'the drums stem', or 'the low end (sub bass), where the kick sits'.
+ * separated: 'the drums stem', or 'the low end (sub bass), where the kick sits'. On a clip that follows a stem
+ * (`followed`), names that stem instead of the mix: 'the loudness of the drums stem'.
  */
-export function listenPhrase(r: Reaction, listen: Listen, analysis?: AudioAnalysis): string {
+export function listenPhrase(
+  r: Reaction,
+  listen: Listen,
+  analysis?: AudioAnalysis,
+  followed?: StemName,
+): string {
   if ('stem' in listen && listen.stem) return `the ${STEM_LABELS[listen.stem].toLowerCase()}`
+  if (followed && listen.feature !== 'beat' && listen.feature !== 'downbeat') {
+    const stem = `the ${STEM_LABELS[followed].toLowerCase()}`
+    if (listen.feature === 'band') return `${bandPhrase(listen.hz)} of ${stem}`
+    return listen.feature === 'loudness' ? `the loudness of ${stem}` : `every hit in ${stem}`
+  }
   const where = r.inMix ? `, ${r.inMix}` : ''
   switch (listen.feature) {
     case 'beat':
@@ -284,7 +310,7 @@ export function listenPhrase(r: Reaction, listen: Listen, analysis?: AudioAnalys
     case 'downbeat':
       return barsGuessed(analysis) ? BARS_NOTES.everyFourthBeat : 'the song’s bar grid'
     case 'band':
-      return (BAND_PHRASES.find(([max]) => listen.hz < max)?.[1] ?? 'the highs') + where
+      return bandPhrase(listen.hz) + where
     case 'loudness':
       return 'the loudness of the whole mix' + where
     case 'onset':
@@ -305,16 +331,17 @@ export interface ReactionAvailability {
   ready: boolean
 }
 
-/** Every reaction with what it would listen to in this project, for the picker. */
-export function availableReactions(project: Project): ReactionAvailability[] {
+/** Every reaction with what it would listen to in this project, on `clip` when given, for the picker. */
+export function availableReactions(project: Project, clip?: Clip): ReactionAvailability[] {
   const analysis = songAnalysis(project)
+  const followed = followedStem(project, clip)
   return REACTIONS.map((r) => {
     const listen = chooseListen(project, r)
     return {
       reaction: r,
       listen,
-      listensTo: listenLabel(listen, analysis),
-      listening: listenPhrase(r, listen, analysis),
+      listensTo: listenLabel(listen, analysis, followed),
+      listening: listenPhrase(r, listen, analysis, followed),
       betterWithStems: !!r.bestWithStem && !('stem' in listen && listen.stem),
       ready: hasData(listen, analysis),
     }
@@ -658,12 +685,13 @@ export function describeReaction(
   const amount = clamp01(mod.amount / resolved.span)
   const best = chooseListen(project, match.reaction)
   const analysis = songAnalysis(project)
+  const followed = followedStem(project, resolved.clip)
   return {
     kind: 'reaction',
     reaction: match.reaction,
     amount,
-    listensTo: listenLabel(match.listen, analysis),
-    listening: listenPhrase(match.reaction, match.listen, analysis),
+    listensTo: listenLabel(match.listen, analysis, followed),
+    listening: listenPhrase(match.reaction, match.listen, analysis, followed),
     canUpgrade: match.exact && best !== match.listen && hasData(best, analysis),
     exact: match.exact,
     summary: `${match.reaction.label} · ${Math.round(amount * 100)}%`,
