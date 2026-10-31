@@ -11,6 +11,7 @@ import {
   MousePointer2,
   Music4,
   Palette,
+  Plus,
   Scissors,
   SlidersHorizontal,
   Sparkles,
@@ -68,6 +69,7 @@ import {
   libraryDropHint,
 } from '../../../state/library.ts'
 import { useFootage, useFootageResults } from '../../../state/footage.ts'
+import { templateState } from '../../../../plugins/templates.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import styles from './Timeline.module.css'
 
@@ -81,9 +83,15 @@ type LaneKind = 'video' | 'overlay' | 'lyrics' | 'look' | 'audio'
 
 const laneHeight: Record<LaneKind, number> = { video: 42, overlay: 30, lyrics: 28, look: 22, audio: 46 }
 
+/** The track lyric lines go on: the template's Lyrics track, or a track named Lyrics. */
+function isLyricsTrack(p: Project, t: Track): boolean {
+  return t.kind === 'visual' && (templateState(p)?.tracks.lyrics === t.id || t.name === 'Lyrics')
+}
+
 function laneKind(p: Project, t: Track): LaneKind {
   if (t.kind === 'audio') return 'audio'
   const clips = clipsOnTrack(p, t.id)
+  if (!clips.length && isLyricsTrack(p, t)) return 'lyrics'
   if (clips.some((c) => c.type === 'video' || c.type === 'image')) return 'video'
   if (clips.length && clips.every((c) => c.type === 'text' && c.lyricLineId)) return 'lyrics'
   if (clips.length && clips.every(isLookClip)) return 'look'
@@ -970,6 +978,16 @@ export function Timeline() {
                         }}
                       />
                     ))}
+                  {kind === 'lyrics' &&
+                    !empty &&
+                    !lines.length &&
+                    !clipsOnTrack(project, track.id).length && (
+                      <Tooltip label="Paste lyrics or draft them from the vocals">
+                        <button className={styles.laneEmpty} onClick={() => openAssist('lyrics')}>
+                          <Plus /> Add lyrics
+                        </button>
+                      </Tooltip>
+                    )}
                   {kind === 'audio' &&
                     clips.map((c) => (
                       <div

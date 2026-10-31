@@ -677,3 +677,29 @@
   height: 16px;
   color: var(--text-3);
 }
+
+/* Empty Lyrics track: stays at the left of the lanes in view, like clip labels. */
+.laneEmpty {
+  position: sticky;
+  left: 156px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: calc(100% - 6px);
+  margin: 3px 0;
+  padding: 0 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+.laneEmpty:hover {
+  color: var(--text-1);
+  border-color: var(--text-3);
+}
+
+.laneEmpty svg {
+  width: 12px;
+  height: 12px;
+}
