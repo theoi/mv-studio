@@ -20,7 +20,7 @@ import { bpmOf, hasSong, sectionKind, sectionsOf, songAnalysis, useProject } fro
 import { openAssist, useUi, type AssistView } from '../../../state/ui.ts'
 import { AnalysisView } from './Analysis.tsx'
 import { AskBox } from './Ask.tsx'
-import { AutocutView } from './Autocut.tsx'
+import { AutocutBadge, AutocutView } from './Autocut.tsx'
 import { BehindView } from './Behind.tsx'
 import { CameraView } from './Camera.tsx'
 import { DirectorBadge, DirectorView } from './Director.tsx'
@@ -131,7 +131,13 @@ const groups: { label: string; tools: ToolDef[] }[] = [
   {
     label: 'Music',
     tools: [
-      { id: 'autocut', title: 'Auto-cut', desc: 'Cut your clips to the beat', icon: <Scissors /> },
+      {
+        id: 'autocut',
+        title: 'Auto-cut',
+        desc: 'Cut your clips to the beat',
+        icon: <Scissors />,
+        status: <AutocutBadge />,
+      },
       {
         id: 'lyrics',
         title: 'Lyrics',

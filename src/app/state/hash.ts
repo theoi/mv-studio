@@ -1,5 +1,6 @@
-import { applyMockStems, startAutocut, startDirector, startMockExport, startStems } from '../mock/actions.ts'
+import { applyMockStems, startDirector, startMockExport, startStems } from '../mock/actions.ts'
 import type { Project } from '../../model/index.ts'
+import { startAutoCut } from './autocut.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
 import { editor, loadDemoProject, loadEmptyProject } from './project.ts'
 import {
@@ -104,7 +105,7 @@ function applyHash(hash: string) {
   const director = q.get('director')
   if (director === 'running') startDirector(0.35)
   if (director === 'done') startDirector(0.999)
-  if (q.get('autocut') === 'done') startAutocut(0.999)
+  if (q.get('autocut') === 'done') startAutoCut({})
   const behind = q.get('behind') === '1'
   if (behind !== hasAnyCutout(editor.getProject())) {
     const project = editor.getProject()
