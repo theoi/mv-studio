@@ -97,6 +97,61 @@ test('preview benchmark: typical and heavy projects at each quality', async ({ p
   }
 })
 
+test('with the preview in the render worker, input stays responsive on a visible canvas at every quality', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(300_000)
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', MEDIA)
+  const scenarios = (['full', 'half', 'quarter', 'auto'] as const).map((quality) => ({
+    project: 'heavy',
+    css: [1280, 720],
+    dpr: 1,
+    quality,
+    interact: true,
+  }))
+  const rows = await page.evaluate(async (scenarios) => {
+    const { media, testing } = window.mvStudio
+    const [song, hd, sd] = await Promise.all(
+      window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
+    )
+    return testing.bench.runPreviewBenchmark({ assets: { song, hd, sd }, scenarios, renderer: 'worker' })
+  }, scenarios)
+  type Sample = { fps: number; canvas: number[]; main: { inputDelayP95Ms: number; longTaskMaxMs: number } }
+  type Row = { quality: string; playing: Sample; dragging?: Sample; scrubbing?: Sample }
+  console.log(
+    [
+      'render worker: quality | canvas | fps | input delay p95 (play / drag / scrub) | longest task (play / drag / scrub)',
+      ...(rows as Row[]).map((r) =>
+        [
+          r.quality,
+          r.playing.canvas.join('x'),
+          r.playing.fps,
+          [r.playing, r.dragging, r.scrubbing].map((s) => s?.main.inputDelayP95Ms).join(' / '),
+          [r.playing, r.dragging, r.scrubbing].map((s) => s?.main.longTaskMaxMs).join(' / '),
+        ].join(' | '),
+      ),
+    ].join('\n'),
+  )
+  await testInfo.attach('preview-worker-benchmark.json', {
+    body: JSON.stringify(rows, null, 2),
+    contentType: 'application/json',
+  })
+  expect(rows).toHaveLength(4)
+  for (const r of rows as Row[]) {
+    for (const [what, s] of Object.entries({
+      playing: r.playing,
+      dragging: r.dragging,
+      scrubbing: r.scrubbing,
+    })) {
+      expect(s, `${r.quality} ${what} measured`).toBeDefined()
+      expect(s!.fps, `${r.quality} ${what} draws`).toBeGreaterThan(0.5)
+      // Drawing happens in the worker: the page answers input within 100 ms even on a GPU-less runner.
+      expect(s!.main.inputDelayP95Ms, `${r.quality} ${what} input delay`).toBeLessThan(100)
+    }
+  }
+})
+
 test('cuts between pieces of the same footage play without stalls or wrong frames', async ({ page }) => {
   await openHarness(page)
   await page.setInputFiles(
