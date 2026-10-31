@@ -81,6 +81,14 @@ async function getFaceDetector(): Promise<FaceDetector> {
   return faceDetector
 }
 
+/**
+ * The COCO animal classes, which the detector reports along with people, so a "person" box on an object it more often
+ * calls an animal can be ruled out (`peopleIndex`).
+ */
+const ANIMALS = ['bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe']
+/** Most boxes kept per frame, of people and of animals each. */
+const MAX_BOXES = 10
+
 async function getPersonDetector(): Promise<ObjectDetector> {
   if (personDetector) return personDetector
   const modelAssetBuffer = await mediapipeModel(VISION_MODELS.personDetector)
@@ -89,8 +97,9 @@ async function getPersonDetector(): Promise<ObjectDetector> {
       baseOptions: { modelAssetBuffer, delegate: 'CPU' },
       runningMode: 'IMAGE',
       scoreThreshold: DETECTOR_MIN_SCORE,
-      categoryAllowlist: ['person'],
-      maxResults: 10,
+      categoryAllowlist: ['person', ...ANIMALS],
+      // All of them, so the animals cannot crowd out the people: each kind keeps its own MAX_BOXES.
+      maxResults: -1,
     }),
   )
   return personDetector
@@ -151,46 +160,46 @@ function luma(rgba: RgbaImage): GrayImage {
   return { width: rgba.width, height: rgba.height, data: out }
 }
 
+/** A detection's box in pixels, normalized to the frame and clipped to it. */
+function frameBox(
+  b: { originX: number; originY: number; width: number; height: number },
+  bitmap: ImageBitmap,
+) {
+  const x = Math.max(0, b.originX / bitmap.width)
+  const y = Math.max(0, b.originY / bitmap.height)
+  return {
+    x,
+    y,
+    width: Math.min(1 - x, b.width / bitmap.width),
+    height: Math.min(1 - y, b.height / bitmap.height),
+  }
+}
+
 async function detectFaces(bitmap: ImageBitmap): Promise<FaceObservation[]> {
   const det = await getFaceDetector()
   const { detections } = det.detect(bitmap)
   return detections
     .filter((d) => d.boundingBox)
-    .map((d): FaceObservation => {
-      const b = d.boundingBox!
-      const x = Math.max(0, b.originX / bitmap.width)
-      const y = Math.max(0, b.originY / bitmap.height)
-      return {
-        box: {
-          x,
-          y,
-          width: Math.min(1 - x, b.width / bitmap.width),
-          height: Math.min(1 - y, b.height / bitmap.height),
-        },
-        score: d.categories[0]?.score ?? 0,
-      }
-    })
+    .map((d): FaceObservation => ({
+      box: frameBox(d.boundingBox!, bitmap),
+      score: d.categories[0]?.score ?? 0,
+    }))
 }
 
-async function detectPeople(bitmap: ImageBitmap): Promise<PersonDetection[]> {
+async function detectPeople(
+  bitmap: ImageBitmap,
+): Promise<{ people: PersonDetection[]; animals: PersonDetection[] }> {
   const det = await getPersonDetector()
-  return det
-    .detect(bitmap)
-    .detections.filter((d) => d.boundingBox)
-    .map((d): PersonDetection => {
-      const b = d.boundingBox!
-      const x = Math.max(0, b.originX / bitmap.width)
-      const y = Math.max(0, b.originY / bitmap.height)
-      return {
-        box: {
-          x,
-          y,
-          width: Math.min(1 - x, b.width / bitmap.width),
-          height: Math.min(1 - y, b.height / bitmap.height),
-        },
-        score: d.categories[0]?.score ?? 0,
-      }
-    })
+  const people: PersonDetection[] = []
+  const animals: PersonDetection[] = []
+  for (const d of det.detect(bitmap).detections) {
+    if (!d.boundingBox) continue
+    const category = d.categories[0]
+    const found = { box: frameBox(d.boundingBox, bitmap), score: category?.score ?? 0 }
+    ;(category?.categoryName === 'person' ? people : animals).push(found)
+  }
+  const top = (list: PersonDetection[]) => list.sort((a, b) => b.score - a.score).slice(0, MAX_BOXES)
+  return { people: top(people), animals: top(animals) }
 }
 
 /**
@@ -211,16 +220,17 @@ async function detections(
   bitmap: ImageBitmap,
   req: { faces?: boolean; people?: boolean },
   ctx: WorkerCallContext,
-): Promise<Pick<FrameAnalysis, 'faces' | 'people' | 'facesUnavailable' | 'peopleUnavailable'>> {
-  const out: Pick<FrameAnalysis, 'faces' | 'people' | 'facesUnavailable' | 'peopleUnavailable'> = {}
+): Promise<Pick<FrameAnalysis, 'faces' | 'people' | 'animals' | 'facesUnavailable' | 'peopleUnavailable'>> {
+  const out: Pick<FrameAnalysis, 'faces' | 'people' | 'animals' | 'facesUnavailable' | 'peopleUnavailable'> =
+    {}
   if (req.faces) {
     const faces = await unlessUnavailable(ctx, () => detectFaces(bitmap))
     if (faces) out.faces = faces
     else out.facesUnavailable = true
   }
   if (req.people) {
-    const people = await unlessUnavailable(ctx, () => detectPeople(bitmap))
-    if (people) out.people = people
+    const found = await unlessUnavailable(ctx, () => detectPeople(bitmap))
+    if (found) Object.assign(out, found)
     else out.peopleUnavailable = true
   }
   return out

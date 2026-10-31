@@ -106,6 +106,22 @@ describe('checkSuitability', () => {
     expect(report.sampledFrames).toBe(90)
     expect(report).toMatchObject({ verdict: 'good', usableFraction: 1 })
   })
+
+  it('does not offer a shot whose "person" the detector mostly calls an animal', async () => {
+    const whole = { box: { x: 0, y: 0, width: 1, height: 1 }, score: 0.6 }
+    const asPerson = (t: number) => Math.round(t * 5) % 3 === 0
+    const shot = (animals: boolean) =>
+      checkSuitability(
+        fakeSegmentation(
+          (_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 3),
+          (t) => (asPerson(t) ? [whole] : []),
+          { animalsAt: (t) => (animals && !asPerson(t) ? [whole] : []) },
+        ),
+        fakeSource({ duration: 4 }).source,
+      )
+    expect((await shot(false)).verdict).toBe('good')
+    expect(await shot(true)).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+  })
 })
 
 describe('analyzeSubjects', () => {

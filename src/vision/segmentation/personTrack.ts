@@ -156,7 +156,7 @@ export async function buildPersonTrack(
         { signal, transfer: hq ? [bitmap, hq.data.buffer] : [bitmap] },
       )
       if (res.peopleUnavailable) peopleAvailable = false
-      else if (withPeople) people.push(detectedPeople(t, res.people))
+      else if (withPeople) people.push(detectedPeople(t, res.people, res.animals))
       if (res.facesUnavailable) facesAvailable = false
       if (res.usedHq) hqFrames++
       if (observe)
@@ -231,7 +231,7 @@ export async function findTrackEvidence(
           stopped = true
           break
         }
-      } else if (withPeople) people.push(detectedPeople(t, res.people))
+      } else if (withPeople) people.push(detectedPeople(t, res.people, res.animals))
       if (meter) {
         if (!res.gray) throw new JobError('internal', 'The frame luma is missing.')
         const gray =

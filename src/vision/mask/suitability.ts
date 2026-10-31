@@ -69,7 +69,12 @@ export function assessFrame(t: number, mask: Mask, options: SuitabilityOptions =
  * Bumped whenever the verdict for the same masks changes, or the report gains what the app needs, so stored reports
  * are judged again.
  */
-export const SUITABILITY_VERSION = 5
+export const SUITABILITY_VERSION = 6
+/**
+ * The first `SUITABILITY_VERSION` whose stored people come from the current detection (with the animals found along
+ * with them). People stored by an older version are detected again.
+ */
+export const PEOPLE_VERSION = 6
 
 /**
  * The person segmenter also cuts out animals and some vehicles, so the verdict counts only the mask inside boxes an
@@ -83,6 +88,17 @@ export const PERSON_MIN_SCORE = DEFAULTS.minPersonScore
 export const DETECTOR_MIN_SCORE = 0.2
 /** Shortest `personHold`, in seconds. */
 export const PERSON_HOLD_SECONDS = 0.5
+/**
+ * A "person" box counts only while the detector calls the same object (boxes overlapping by an IoU of 0.5 or more) a
+ * person at least as often as an animal within this many seconds of it. The detector's classes share one non-max
+ * suppression, so it names each object once per frame: a cat it takes for a person now and then is a cat in its other
+ * frames, never a cat box beside the person box. Chosen on the dev set (see src/vision/README.md): over 1 s, a
+ * guitarist's run of "animal" frames outvoted him.
+ */
+export const ANIMAL_VOTE_SECONDS = 3
+const ANIMAL_VOTE_IOU = 0.5
+/** A long shot's quick check samples further apart, so the vote spans at least this many detection intervals. */
+const ANIMAL_VOTE_INTERVALS = 15
 /** Each side of a person box grows by this share of its size, for hair, raised arms and loose clothes. */
 export const PERSON_BOX_MARGIN = 0.15
 
@@ -92,14 +108,27 @@ export interface PeopleAt {
   boxes: Rect[]
   /** Each box's detector score; missing in tracks stored before scores were kept, whose boxes all scored 0.3 or more. */
   scores?: number[]
+  /** Animals the detector found in the frame, when any (see `animalScores`). */
+  animals?: Rect[]
+  animalScores?: number[]
 }
 
 /**
- * The people in a frame's detections, with each box's score rounded down to 3 decimals: rounding to nearest would
- * store a box just under a limit (0.2995 under 0.3) at the limit, so it would count.
+ * The people (and animals) in a frame's detections, with each box's score rounded down to 3 decimals: rounding to
+ * nearest would store a box just under a limit (0.2995 under 0.3) at the limit, so it would count.
  */
-export function detectedPeople(t: number, found: ReadonlyArray<{ box: Rect; score: number }> = []): PeopleAt {
-  return { t, boxes: found.map((p) => p.box), scores: found.map((p) => Math.floor(p.score * 1000) / 1000) }
+export function detectedPeople(
+  t: number,
+  found: ReadonlyArray<{ box: Rect; score: number }> = [],
+  animals: ReadonlyArray<{ box: Rect; score: number }> = [],
+): PeopleAt {
+  const score = (p: { score: number }) => Math.floor(p.score * 1000) / 1000
+  return {
+    t,
+    boxes: found.map((p) => p.box),
+    scores: found.map(score),
+    ...(animals.length ? { animals: animals.map((a) => a.box), animalScores: animals.map(score) } : {}),
+  }
 }
 
 /**
@@ -109,13 +138,54 @@ export function detectedPeople(t: number, found: ReadonlyArray<{ box: Rect; scor
  * quick check samples further apart.
  */
 export function personHold(people: ReadonlyArray<PeopleAt>): number {
+  const interval = detectionInterval(people)
+  return interval === null ? PERSON_HOLD_SECONDS : Math.max(PERSON_HOLD_SECONDS, 2.5 * interval)
+}
+
+/** The median time between detections, or null with fewer than two. */
+function detectionInterval(people: ReadonlyArray<PeopleAt>): number | null {
   const times = people.map((p) => p.t).sort((a, b) => a - b)
   const gaps: number[] = []
   for (let i = 1; i < times.length; i++)
     if (times[i]! - times[i - 1]! > 1e-6) gaps.push(times[i]! - times[i - 1]!)
-  if (!gaps.length) return PERSON_HOLD_SECONDS
+  if (!gaps.length) return null
   gaps.sort((a, b) => a - b)
-  return Math.max(PERSON_HOLD_SECONDS, 2.5 * gaps[gaps.length >> 1]!)
+  return gaps[gaps.length >> 1]!
+}
+
+function boxIou(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+  if (w <= 0 || h <= 0) return 0
+  const both = w * h
+  return both / (a.width * a.height + b.width * b.height - both)
+}
+
+/**
+ * Whether the detector calls the object of a person box at `t` an animal more often than a person within
+ * `ANIMAL_VOTE_SECONDS` (the box itself votes person).
+ */
+function animalVote(people: ReadonlyArray<PeopleAt>): (t: number, box: Rect) => boolean {
+  if (!people.some((p) => p.animals?.length)) return () => false
+  const frames = [...people].sort((a, b) => a.t - b.t)
+  const interval = detectionInterval(people)
+  const window =
+    Math.max(ANIMAL_VOTE_SECONDS, interval === null ? 0 : ANIMAL_VOTE_INTERVALS * interval) + 1e-6
+  return (t, box) => {
+    let lo = 0
+    let hi = frames.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (frames[mid]!.t < t - window) lo = mid + 1
+      else hi = mid
+    }
+    let votes = 0
+    for (let i = lo; i < frames.length && frames[i]!.t <= t + window; i++) {
+      for (const b of frames[i]!.boxes) if (boxIou(b, box) >= ANIMAL_VOTE_IOU) votes--
+      for (const a of frames[i]!.animals ?? []) if (boxIou(a, box) >= ANIMAL_VOTE_IOU) votes++
+    }
+    return votes > 0
+  }
 }
 
 /**
@@ -129,8 +199,9 @@ export function peopleNear(people: ReadonlyArray<PeopleAt>, t: number, hold = pe
 }
 
 /**
- * `peopleNear` for many times, counting boxes from `minScore`: sorts the detections once, so each lookup is a binary
- * search plus the hold window.
+ * `peopleNear` for many times, counting boxes from `minScore` and leaving out those whose object the detector calls
+ * an animal more often (`ANIMAL_VOTE_SECONDS`): sorts the detections once, so each lookup is a binary search plus the
+ * hold window.
  */
 export function peopleIndex(
   people: ReadonlyArray<PeopleAt>,
@@ -138,8 +209,12 @@ export function peopleIndex(
   minScore = PERSON_MIN_SCORE,
 ): (t: number) => Rect[] {
   const eps = 1e-6
+  const animal = animalVote(people)
   const hits = people
-    .map((p) => ({ t: p.t, boxes: p.boxes.filter((_, i) => (p.scores?.[i] ?? 1) >= minScore) }))
+    .map((p) => ({
+      t: p.t,
+      boxes: p.boxes.filter((b, i) => (p.scores?.[i] ?? 1) >= minScore && !animal(p.t, b)),
+    }))
     .filter((p) => p.boxes.length)
     .sort((a, b) => a.t - b.t)
   let first = Infinity

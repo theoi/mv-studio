@@ -92,12 +92,16 @@ const wholeFrame = (): PersonDetection[] => [{ box: { x: 0, y: 0, width: 1, heig
 
 /**
  * In-process stand-in for the segmentation worker: same track builder, masks from `personAt`, detected people from
- * `peopleAt` (null: the person detector cannot be downloaded), faces unless `facesUnavailable`.
+ * `peopleAt` (null: the person detector cannot be downloaded) with the animals from `animalsAt`, faces unless
+ * `facesUnavailable`.
  */
 export function fakeSegmentation(
   personAt: (t: number, size: Size) => Mask = (_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 4),
   peopleAt: (t: number) => PersonDetection[] | null = wholeFrame,
-  { facesUnavailable = false } = {},
+  {
+    facesUnavailable = false,
+    animalsAt = () => [],
+  }: { facesUnavailable?: boolean; animalsAt?: (t: number) => PersonDetection[] } = {},
 ) {
   const detections = (req: { faces?: boolean; people?: boolean }, t: number) => {
     const people = req.people ? peopleAt(t) : undefined
@@ -107,7 +111,7 @@ export function fakeSegmentation(
           ? { facesUnavailable: true }
           : { faces: [{ box: { x: 0.45, y: 0.3, width: 0.1, height: 0.15 }, score: 0.9 }] }
         : {}),
-      ...(req.people ? (people ? { people } : { peopleUnavailable: true }) : {}),
+      ...(req.people ? (people ? { people, animals: animalsAt(t) } : { peopleUnavailable: true }) : {}),
     }
   }
   const calls: string[] = []
