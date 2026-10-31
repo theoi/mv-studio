@@ -626,6 +626,20 @@
   line-height: var(--lh-xs);
 }
 
+.selectGroup + .selectGroup,
+.selectItem + .selectGroup {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.selectLabel {
+  padding: 6px var(--space-2) 2px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
 .selectCheck {
   position: absolute;
   right: 8px;

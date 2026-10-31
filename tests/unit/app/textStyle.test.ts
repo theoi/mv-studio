@@ -1,5 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createProject, createTextClip, createTrack, type TextClip } from '../../../src/model/index.ts'
+import {
+  createProject,
+  createTextClip,
+  createTrack,
+  type Asset,
+  type TextClip,
+} from '../../../src/model/index.ts'
 import { BUNDLED_FONTS } from '../../../src/plugins/typography/fonts.ts'
 import { editor } from '../../../src/app/state/project.ts'
 import {
@@ -54,14 +60,103 @@ const clip = (id: string) => editor.getProject().clips[id] as TextClip
 
 beforeEach(() => set({ toasts: [] }))
 
+/** Imports font files into the editor's project, as the importer does. */
+function addFonts(...names: string[]): string[] {
+  return names.map((name, i) => {
+    const id = `font-${i}`
+    const asset: Asset = {
+      id,
+      kind: 'font',
+      name,
+      mimeType: 'font/woff2',
+      byteSize: 1000,
+      storageKey: `assets/${id}`,
+      origin: { type: 'import' },
+      createdAt: new Date(0).toISOString(),
+    }
+    editor.dispatch({ type: 'asset.add', asset })
+    return id
+  })
+}
+
+const assets = () => editor.getProject().assets
+
 describe('fonts', () => {
   it('lists every bundled font, and the text’s own font first when it is not bundled', () => {
-    const own = fontChoice({ ...scene().a.style })
+    const own = fontChoice({ ...scene().a.style }, assets())
     expect(own.value).toBe('Inter Variable')
     expect(own.options.map((o) => o.value)).toEqual(['Inter Variable', ...BUNDLED_FONTS.map((f) => f.family)])
-    const bundled = fontChoice({ ...scene().a.style, fontFamily: '"Bebas Neue", Impact, sans-serif' })
+    expect(own.options.some((o) => o.group)).toBe(false)
+    const bundled = fontChoice(
+      { ...scene().a.style, fontFamily: '"Bebas Neue", Impact, sans-serif' },
+      assets(),
+    )
     expect(bundled.value).toBe('Bebas Neue')
     expect(bundled.options).toHaveLength(BUNDLED_FONTS.length)
+  })
+
+  it('lists imported fonts by file name in their own group, ahead of the bundled ones', () => {
+    const { title } = scene()
+    const [zine, arcade] = addFonts('Zine Sans.otf', 'Arcade.woff2')
+    const choice = fontChoice(clip(title.id).style, assets())
+    expect(choice.options.slice(0, 2)).toEqual([
+      { value: `font:${arcade}`, label: 'Arcade', group: 'Imported' },
+      { value: `font:${zine}`, label: 'Zine Sans', group: 'Imported' },
+    ])
+    expect(choice.options.slice(2).map((o) => o.group)).toEqual(BUNDLED_FONTS.map(() => 'Bundled'))
+  })
+
+  it('sets an imported font, regular and upright, ahead of the font the text had, and a bundled one in its place', () => {
+    const { a } = scene()
+    const [arcade, zine] = addFonts('Arcade.woff2', 'Zine Sans.otf')
+    editor.dispatch({ type: 'clip.set', clipId: a.id, path: ['style', 'italic'], value: true })
+    editor.dispatch({ type: 'clip.set', clipId: a.id, path: ['style', 'fontWeight'], value: 800 })
+    setFont(clip(a.id), `font:${arcade}`)
+    expect(clip(a.id).style).toMatchObject({
+      fontAssetId: arcade,
+      fontFamily: `"Arcade", 'Inter Variable', Inter`,
+      fontWeight: 400,
+      italic: false,
+    })
+    expect(editor.undoLabel()).toBe('Font: Arcade')
+    expect(fontChoice(clip(a.id).style, assets()).value).toBe(`font:${arcade}`)
+    setFont(clip(a.id), `font:${zine}`)
+    expect(clip(a.id).style.fontFamily).toBe(`"Zine Sans", 'Inter Variable', Inter`)
+    setFont(clip(a.id), 'Bebas Neue')
+    expect(clip(a.id).style.fontAssetId).toBeUndefined()
+    expect(clip(a.id).style.fontFamily).toBe('"Bebas Neue", Impact, sans-serif')
+  })
+
+  it('switches from an imported font to the bundled one it shares a name with', () => {
+    const { a } = scene()
+    const [anton] = addFonts('Anton.ttf')
+    setFont(clip(a.id), `font:${anton}`)
+    expect(fontChoice(clip(a.id).style, assets()).value).toBe(`font:${anton}`)
+    expect(weightChoice(clip(a.id).style).options).toHaveLength(9)
+    setFont(clip(a.id), 'Anton')
+    expect(clip(a.id).style.fontAssetId).toBeUndefined()
+    expect(fontChoice(clip(a.id).style, assets()).value).toBe('Anton')
+  })
+
+  it('keeps a removed imported font listed by name, disabled, while the text draws in the font before it', () => {
+    const { a } = scene()
+    const [arcade] = addFonts('Arcade.woff2')
+    setFont(clip(a.id), `font:${arcade}`)
+    editor.dispatch({ type: 'asset.remove', assetId: arcade! })
+    const choice = fontChoice(clip(a.id).style, assets())
+    expect(choice.value).toBe(`font:${arcade}`)
+    expect(choice.options[0]).toEqual({
+      value: `font:${arcade}`,
+      label: 'Arcade',
+      description: 'Missing: shown in a fallback font',
+      disabled: true,
+      group: 'Imported',
+    })
+    setFont(clip(a.id), `font:${arcade}`)
+    expect(clip(a.id).style.fontAssetId).toBe(arcade)
+    setFont(clip(a.id), 'Montserrat')
+    expect(clip(a.id).style).toMatchObject({ fontFamily: 'Montserrat, system-ui, sans-serif' })
+    expect(clip(a.id).style.fontAssetId).toBeUndefined()
   })
 
   it('sets a font with a fallback, keeping the weight and italics only where the font has them', () => {

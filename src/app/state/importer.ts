@@ -200,6 +200,13 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
       ? `Imported the LUT “${luts[0].name}”. Choose it in a Color grade’s LUT.`
       : `Imported ${luts.length} LUTs. Choose them in a Color grade’s LUT.`
     : undefined
+  // Nor are fonts.
+  const fonts = assets.filter((a) => a.kind === 'font')
+  const fontNote = fonts[0]
+    ? fonts.length === 1
+      ? `Imported the font “${baseName(fonts[0].name)}”. Choose it in a text’s Font.`
+      : `Imported ${fonts.length} fonts. Choose them in a text’s Font.`
+    : undefined
   const first = placed[0]?.clip
   if (first) {
     select({ type: 'clip', id: first.id })
@@ -214,8 +221,12 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
     toast(`Added “${baseName(song.name)}” as the song. Finding its beats and sections…`)
     void analyzeSong(song).finally(() => markSongPending(song.id, false))
   }
-  if (lutNote && (song || first || luts.length === assets.length)) toast(lutNote)
-  else if (!song && !first) toast(assets.length === 1 ? `Imported ${assets[0]?.name}` : importedFiles(assets))
+  const lutShown = !!lutNote && (!!song || !!first || luts.length === assets.length)
+  const fontShown = !!fontNote && (!!song || !!first || fonts.length === assets.length)
+  if (lutShown) toast(lutNote)
+  if (fontShown) toast(fontNote)
+  if (!lutShown && !fontShown && !song && !first)
+    toast(assets.length === 1 ? `Imported ${assets[0]?.name}` : importedFiles(assets))
   if (visual) set({ libraryTab: 'media', libraryOpen: true })
   return assets
 }
