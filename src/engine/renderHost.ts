@@ -40,17 +40,36 @@ export interface PreviewWorker {
   render(request: PreviewRenderRequest, transfer: Transferable[]): Promise<ImageBitmap | null>
   /** The frame drawn last; needs preserveDrawingBuffer. */
   capture(): Promise<ImageBitmap>
-  /** The error the worker died with, or null. A dead worker cannot draw again: the canvas went with it. */
+  /**
+   * Why the worker can no longer draw, or null: it died ('worker-crashed', 'out-of-memory'), failed to start, or did
+   * not answer in time while starting ('timeout'). The canvas went with it.
+   */
   failure(): JobError | null
   dispose(): void
 }
 
-/** A worker that has not loaded and answered within this time counts as unavailable. */
+/**
+ * Until a worker has drawn its first frame, it counts as dead when a call takes longer than this. Calls made before
+ * it holds its watch lock (worker.ts) would otherwise wait forever if it was stopped then.
+ */
 const PREVIEW_START_TIMEOUT_MS = 15_000
+
+/** `promise`, or a rejection with `timedOut` after `ms`. */
+function within<T>(promise: Promise<T>, ms: number, timedOut: JobError): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(timedOut), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
 
 /**
  * Starts a render worker for a preview and moves `canvas` into it. Rejects with the canvas untouched when the worker
- * cannot draw, so the caller can draw on the main thread instead.
+ * cannot draw or does not answer in time, so the caller can draw on the main thread instead. Once the canvas has
+ * moved, the worker failing to start, dying, or not drawing its first frame in time makes render() reject and sets
+ * failure().
  */
 export async function startPreviewWorker(
   canvas: HTMLCanvasElement,
@@ -58,19 +77,40 @@ export async function startPreviewWorker(
   options: { preserveDrawingBuffer?: boolean } = {},
 ): Promise<PreviewWorker> {
   const client = spawnRenderWorker('preview')
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new JobError('internal', 'The preview worker did not start')),
-      PREVIEW_START_TIMEOUT_MS,
-    )
-  })
   const channel = new MessageChannel()
+  const stop = () => {
+    client.terminate()
+    channel.port1.close()
+  }
   try {
-    await Promise.race([client.call('previewProbe', undefined), timeout])
-    const offscreen = canvas.transferControlToOffscreen()
-    serveMedia(channel.port1, media)
-    await client.call(
+    await within(
+      client.call('previewProbe', undefined),
+      PREVIEW_START_TIMEOUT_MS,
+      new JobError('timeout', 'The preview worker did not start'),
+    )
+  } catch (error) {
+    stop()
+    throw error
+  }
+  const offscreen = canvas.transferControlToOffscreen()
+  serveMedia(channel.port1, media)
+
+  let failure: JobError | null = null
+  const fail = (error: JobError): JobError => {
+    failure ??= error
+    stop()
+    return failure
+  }
+  const timedOut = new JobError('timeout', 'The preview worker stopped responding')
+  /** Rejects with the failure once the worker is taken for dead (or failed, with `fatal`); other errors pass. */
+  const starting = <T>(call: Promise<T>, fatal: boolean): Promise<T> =>
+    within(call, PREVIEW_START_TIMEOUT_MS, timedOut).catch((error: unknown) => {
+      const death = client.failure() ?? (error === timedOut || fatal ? JobError.from(error) : null)
+      throw death ? fail(death) : (failure ?? error)
+    })
+  // Render calls sent meanwhile wait in the worker for this start, so its failure is theirs.
+  starting(
+    client.call(
       'previewStart',
       {
         canvas: offscreen,
@@ -78,21 +118,31 @@ export async function startPreviewWorker(
         preserveDrawingBuffer: options.preserveDrawingBuffer ?? false,
       },
       { transfer: [offscreen, channel.port2] },
-    )
-  } catch (error) {
-    client.terminate()
-    channel.port1.close()
-    throw error
-  } finally {
-    clearTimeout(timer)
-  }
+    ),
+    true,
+  ).catch(() => undefined)
+  let drawn = false
+  const dead = () => failure ?? client.failure()
   return {
-    render: (request, transfer) => client.call('previewRender', request, { transfer }).then((r) => r.bitmap),
-    capture: () => client.call('previewCapture', undefined).then((r) => r.bitmap),
-    failure: () => client.failure(),
-    dispose: () => {
-      client.terminate()
-      channel.port1.close()
+    render: (request, transfer) => {
+      const error = dead()
+      if (error) {
+        for (const t of transfer) if (t instanceof VideoFrame) t.close()
+        return Promise.reject(error)
+      }
+      const call = client.call('previewRender', request, { transfer }).then((r) => r.bitmap)
+      if (drawn) return call
+      return starting(call, false).then((bitmap) => {
+        drawn = true
+        return bitmap
+      })
     },
+    capture: () => {
+      const error = dead()
+      if (error) return Promise.reject(error)
+      return client.call('previewCapture', undefined).then((r) => r.bitmap)
+    },
+    failure: dead,
+    dispose: stop,
   }
 }

@@ -194,3 +194,188 @@ test('a preview whose render worker dies reports the error once instead of retry
   expect(errors.filter((e) => e.includes('Preview render failed'))).toEqual([])
   expect(errors.filter((e) => e.includes('The preview stopped drawing'))).toHaveLength(1)
 })
+
+test('a preview whose render worker dies while it starts draws on the main thread or reports the error, instead of waiting forever', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  const errors: string[] = []
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text())
+  })
+  await openHarness(page)
+  await recordWorkers(page, 'preview')
+  const r = await page.evaluate(async () => {
+    const { model, media, engine, testing } = window.mvStudio
+    const started: Worker[] = window.mvStudio.startedWorkers
+    const solid = (color: string) => {
+      const p = model.createProject({ name: color })
+      const clip = model.createSolidClip({ trackId: p.tracks[0].id, color, start: 0, duration: 4 })
+      p.clips[clip.id] = clip
+      return p
+    }
+    const settle = (preview: { rendered(): Promise<void> }) =>
+      Promise.race([
+        preview.rendered().then(
+          () => 'rendered',
+          (e: { code: string }) => e.code,
+        ),
+        new Promise<string>((resolve) => setTimeout(() => resolve('still pending'), 20_000)),
+      ])
+    const results = []
+    for (const delay of [0, 20, 100]) {
+      const preview = new engine.PreviewController({
+        canvas: document.createElement('canvas'),
+        media: media.mediaStore,
+        renderer: 'worker',
+      })
+      const worker = started[started.length - 1]
+      preview.setViewport(64, 36, 1)
+      preview.setProject(solid('#ff0000'))
+      const startedAt = performance.now()
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+      worker?.terminate()
+      // The worker may have drawn this frame before it was killed; the edit after the kill must be drawn or refused.
+      await settle(preview)
+      preview.setProject(solid('#00ff00'))
+      const outcome = await settle(preview)
+      const ms = Math.round(performance.now() - startedAt)
+      let center: number[] | null = null
+      if (outcome === 'rendered') {
+        const frame: ImageBitmap = await preview.captureFrame()
+        const d = testing.readPixels(frame, 8, 8)
+        const i = (4 * 8 + 4) * 4
+        center = [d[i], d[i + 1], d[i + 2]]
+        frame.close()
+      }
+      results.push({
+        delay,
+        outcome,
+        ms,
+        worker: preview.stats().worker,
+        error: preview.getSnapshot().error?.code ?? null,
+        center,
+      })
+      preview.dispose()
+    }
+    return results
+  })
+  console.log('preview worker killed while starting', JSON.stringify(r))
+  expect(r).toHaveLength(3)
+  // Stopped before it ran a line, the worker never answers: after the start timeout, the main thread draws.
+  expect(r[0]).toMatchObject({ outcome: 'rendered', worker: false, error: null, center: [0, 255, 0] })
+  expect(r[0]?.ms).toBeGreaterThan(14_000)
+  for (const x of r) {
+    // Killed before the canvas moved, the main thread draws; after, the preview reports why it cannot.
+    if (x.worker) expect(x).toMatchObject({ outcome: 'worker-crashed', error: 'worker-crashed' })
+    else expect(x).toMatchObject({ outcome: 'rendered', error: null, center: [0, 255, 0] })
+    expect(x.ms).toBeLessThan(17_000)
+  }
+  // The worker holds its watch lock within milliseconds of starting, so a kill 100 ms in is noticed at once.
+  expect(r[2]?.ms).toBeLessThan(5000)
+  expect(errors.filter((e) => e.includes('Preview render failed'))).toEqual([])
+})
+test('a preview whose render worker dies or hangs once it has the canvas reports why, before its first frame', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  const errors: string[] = []
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text())
+  })
+  await openHarness(page)
+  const r = await page.evaluate(async () => {
+    const { model, media, engine } = window.mvStudio
+    type Plan = { method: 'previewStart' | 'previewRender'; action: 'kill' | 'hang' }
+    let plan: Plan | null = null
+    const workers: { terminated: boolean }[] = []
+    // Kills the preview worker right after the client sends it `plan.method`, or drops that message and every later
+    // one, like a worker stuck in a GPU driver call.
+    window.Worker = class extends window.Worker {
+      private readonly record: { terminated: boolean } | null = null
+      private hung = false
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        if (options?.name === 'preview') {
+          this.record = { terminated: false }
+          workers.push(this.record)
+        }
+      }
+      postMessage(message: unknown, transfer?: Transferable[] | StructuredSerializeOptions): void {
+        const call = message as { kind?: string; method?: string }
+        const hit = this.record && plan && call?.kind === 'call' && call.method === plan.method
+        if (this.hung || (hit && plan?.action === 'hang')) {
+          this.hung = true
+          return
+        }
+        super.postMessage(message, transfer as Transferable[])
+        if (hit) super.terminate()
+      }
+      terminate(): void {
+        if (this.record) this.record.terminated = true
+        super.terminate()
+      }
+    }
+    const solid = (color: string) => {
+      const p = model.createProject({ name: color })
+      const clip = model.createSolidClip({ trackId: p.tracks[0].id, color, start: 0, duration: 4 })
+      p.clips[clip.id] = clip
+      return p
+    }
+    const settle = (preview: { rendered(): Promise<void> }, ms: number) =>
+      Promise.race([
+        preview.rendered().then(
+          () => 'rendered',
+          (e: { code: string }) => e.code,
+        ),
+        new Promise<string>((resolve) => setTimeout(() => resolve('still pending'), ms)),
+      ])
+    const plans: Plan[] = [
+      { method: 'previewStart', action: 'kill' },
+      { method: 'previewRender', action: 'kill' },
+      { method: 'previewStart', action: 'hang' },
+      { method: 'previewRender', action: 'hang' },
+    ]
+    const results = []
+    for (const next of plans) {
+      plan = next
+      const preview = new engine.PreviewController({
+        canvas: document.createElement('canvas'),
+        media: media.mediaStore,
+        renderer: 'worker',
+      })
+      preview.setViewport(64, 36, 1)
+      preview.setProject(solid('#ff0000'))
+      const startedAt = performance.now()
+      const outcome = await settle(preview, 25_000)
+      const ms = Math.round(performance.now() - startedAt)
+      // Later edits fail at once instead of waiting for the worker again.
+      preview.setProject(solid('#0000ff'))
+      const again = await settle(preview, 1000)
+      results.push({
+        ...next,
+        outcome,
+        ms,
+        again,
+        error: preview.getSnapshot().error?.code ?? null,
+        worker: preview.stats().worker,
+        terminated: workers.at(-1)?.terminated ?? null,
+      })
+      preview.dispose()
+    }
+    return results
+  })
+  console.log('preview worker failing after the canvas moved', JSON.stringify(r))
+  expect(r).toHaveLength(4)
+  for (const x of r) {
+    const code = x.action === 'kill' ? 'worker-crashed' : 'timeout'
+    expect(x).toMatchObject({ outcome: code, again: code, error: code, worker: true, terminated: true })
+    if (x.action === 'kill') expect(x.ms).toBeLessThan(3000)
+    else {
+      expect(x.ms).toBeGreaterThan(14_000)
+      expect(x.ms).toBeLessThan(18_000)
+    }
+  }
+  expect(errors.filter((e) => e.includes('Preview render failed'))).toEqual([])
+  expect(errors.filter((e) => e.includes('The preview stopped drawing'))).toHaveLength(4)
+})

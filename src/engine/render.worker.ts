@@ -1,19 +1,27 @@
 /** The render worker: compositor, decoders and encoders on their own thread (see renderHost.ts). */
-import { mediaStore } from '../media/mediaStore.ts'
 import { JobError } from '../shared/jobs.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../shared/worker.ts'
-import { encodeExport, type EncodeJob } from './encode.ts'
-import { portMedia, WorkerPreview, type PreviewRenderRequest } from './previewWorker.ts'
+import type { EncodeJob } from './encode.ts'
+import type { PreviewRenderRequest, WorkerPreview } from './previewWorker.ts'
 
-let preview: WorkerPreview | null = null
+// The compositor and encoders load on first use: with only this module and worker.ts to evaluate first, the worker
+// takes the client's watch lock (worker.ts) moments after it starts, and its death can be noticed from then on.
 
-function activePreview(): WorkerPreview {
+let preview: Promise<WorkerPreview> | null = null
+
+function activePreview(): Promise<WorkerPreview> {
   if (!preview) throw new JobError('internal', 'The worker preview has not started')
   return preview
 }
 
 const api = {
-  exportVideo: (job: EncodeJob, ctx: WorkerCallContext) => encodeExport(job, ctx, { media: mediaStore }),
+  exportVideo: async (job: EncodeJob, ctx: WorkerCallContext) => {
+    const [{ encodeExport }, { mediaStore }] = await Promise.all([
+      import('./encode.ts'),
+      import('../media/mediaStore.ts'),
+    ])
+    return encodeExport(job, ctx, { media: mediaStore })
+  },
   /** Checks that this worker can draw before the main thread moves its canvas here (which cannot be undone). */
   previewProbe: () => {
     const gl = new OffscreenCanvas(1, 1).getContext('webgl2')
@@ -21,17 +29,27 @@ const api = {
     gl.getExtension('WEBGL_lose_context')?.loseContext()
     return true
   },
-  previewStart: (args: { canvas: OffscreenCanvas; port: MessagePort; preserveDrawingBuffer: boolean }) => {
-    preview?.dispose()
-    preview = new WorkerPreview(args.canvas, portMedia(args.port), args.preserveDrawingBuffer)
+  /** Render calls sent right after this one wait for the preview it starts. */
+  previewStart: async (args: {
+    canvas: OffscreenCanvas
+    port: MessagePort
+    preserveDrawingBuffer: boolean
+  }) => {
+    const previous = preview
+    preview = import('./previewWorker.ts').then(
+      ({ portMedia, WorkerPreview }) =>
+        new WorkerPreview(args.canvas, portMedia(args.port), args.preserveDrawingBuffer),
+    )
+    previous?.then((p) => p.dispose()).catch(() => undefined)
+    await preview
     return true
   },
   previewRender: async (request: PreviewRenderRequest) => {
-    const bitmap = await activePreview().render(request)
+    const bitmap = await (await activePreview()).render(request)
     return transfer({ bitmap }, bitmap ? [bitmap] : [])
   },
   previewCapture: async () => {
-    const bitmap = await activePreview().capture()
+    const bitmap = await (await activePreview()).capture()
     return transfer({ bitmap }, [bitmap])
   },
 }
