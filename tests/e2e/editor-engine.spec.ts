@@ -54,8 +54,7 @@ async function imageDiff(page: Page, a: Buffer, b: Buffer): Promise<number> {
   )
 }
 
-/** A screenshot of the preview once it shows a picture that stays put. The render worker's first frame can come
- * before the media in it has loaded, so the canvas can still be black right after the preview stops being busy. */
+/** A screenshot of the preview once it shows a drawn picture that stays put. */
 async function settledPicture(page: Page, preview: Locator): Promise<Buffer> {
   let last = await preview.screenshot()
   await expect
