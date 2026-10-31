@@ -224,10 +224,28 @@
   font-size: var(--text-xs);
 }
 
-.frameNote svg {
+.noteText {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.noteText svg {
+  flex: none;
   width: 12px;
   height: 12px;
   color: var(--success);
+}
+
+.shotStepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  color: var(--text-2);
+  white-space: nowrap;
 }
 
 .range {

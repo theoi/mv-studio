@@ -27,6 +27,7 @@ export const JOB_KINDS = {
   director: 'director.draft',
   autocut: 'edit.autocut',
   export: 'export.outputs',
+  footage: 'vision.index',
 } as const
 
 interface MockJobOptions {

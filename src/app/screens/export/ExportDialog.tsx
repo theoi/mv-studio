@@ -1,6 +1,8 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   Check,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   FolderDown,
   HardDrive,
@@ -14,6 +16,7 @@ import {
 } from 'lucide-react'
 import {
   estimateRenderSeconds,
+  framingOverrides,
   planOutput,
   type ExportQuality,
   type OutputSpec,
@@ -23,24 +26,28 @@ import {
 import type { ExportResolution } from '../../../engine/export.ts'
 import type { AspectPreset, Project } from '../../../model/index.ts'
 import { jobs, type JobSnapshot } from '../../../shared/jobs.ts'
-import { Button } from '../../ds/Button.tsx'
+import { Button, IconButton } from '../../ds/Button.tsx'
 import { Dialog } from '../../ds/Dialog.tsx'
 import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select } from '../../ds/Fields.tsx'
 import { formatTime, plural } from '../../format.ts'
 import { downloadAgain, useExports, type ExportRow } from '../../state/exports.ts'
-import { useJobs } from '../../state/jobs.ts'
+import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
 import { sectionColor, sectionKind, sectionsOf, timelineDuration, useProject } from '../../state/project.ts'
 import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
 import {
   RATIO,
   addCandidate,
+  adjustFraming,
   candidateOutputs,
+  cropBox,
   initialItems,
   outputSummary,
   outputTitle,
   remainingCandidates,
+  shotTime,
+  shotsOf,
   sizeLabel,
   specsLine,
   startOutputs,
@@ -64,39 +71,118 @@ function stillKey(project: Project, planned: PlannedOutput, time: number): strin
   )
 }
 
-function framingNote(planned: PlannedOutput): ReactNode {
+function framingNote(
+  planned: PlannedOutput,
+  adjusted: boolean,
+  indexing: JobSnapshot | undefined,
+): ReactNode {
   const { reframe } = planned.spec
-  if (reframe === 'fit') return 'Shows the whole picture with bars. Text stays inside the safe area.'
-  if (reframe === 'fill') return 'Crops the center of each shot. Text stays inside the safe area.'
+  if (reframe === 'fit') return 'Shows the whole picture with bars.'
+  if (adjusted) return 'Adjusted by hand. Double-click the frame to reset this shot.'
   const unanalysed = planned.unanalysed.length
-  if (unanalysed) return `${plural(unanalysed, 'clip')} without subject analysis are cropped in the center.`
+  if (unanalysed && indexing)
+    return `Analyzing footage for framing… ${Math.round((indexing.progress.fraction ?? 0) * 100)}%`
+  if (unanalysed)
+    return `${plural(unanalysed, 'clip')} without subject analysis ${unanalysed === 1 ? 'is' : 'are'} centered. Drag the frame to adjust this shot.`
+  if (reframe === 'fill') return 'Crops the center of each shot. Drag the frame to adjust this shot.'
   return (
     <>
-      <Check /> Follows the subject in each shot. Text stays inside the safe area.
+      <Check /> Follows the subject in each shot. Drag the frame to adjust this shot.
     </>
   )
 }
 
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+interface Drag {
+  pointerId: number
+  x: number
+  y: number
+  dx: number
+  dy: number
+  /** Size of the preview in CSS pixels when the drag started. */
+  width: number
+  height: number
+}
+
+/**
+ * The selected output at one moment. For reframed outputs, the output's frame sits over the dimmed source where its
+ * crop is; dragging it (or arrow keys) moves the framing of the shot shown, and the stepper moves between shots.
+ */
 function Frame({
   project,
   planned,
-  playhead,
+  time,
+  onTime,
 }: {
   project: Project
   planned: PlannedOutput
-  playhead: number
+  time: number
+  onTime: (time: number) => void
 }) {
   const { spec } = planned
   const same = spec.aspect === project.settings.aspect
   const sourceRatio = project.settings.width / project.settings.height
   const r = RATIO[spec.aspect]
-  const time = stillTime(planned, playhead)
   const output = useStill(stillKey(project, planned, time), planned.project, time, r)
   const source = useStill(same ? null : `${versionOf(project)}|source|${time}`, project, time, sourceRatio)
-  const box =
-    r >= sourceRatio
-      ? { left: 0, width: '100%', top: '50%', transform: 'translateY(-50%)' }
-      : { top: 0, height: '100%', left: '50%', transform: 'translateX(-50%)' }
+  const indexing = useJobs().find(
+    (j) => j.kind === JOB_KINDS.footage && (j.status === 'running' || j.status === 'queued'),
+  )
+  const [drag, setDrag] = useState<Drag | null>(null)
+  const shots = useMemo(() => (same ? [] : shotsOf(project, planned)), [same, project, planned])
+  const index = shots.findIndex((s) => time >= s.start && time < s.end)
+  const shot = shots[index]
+  const box = shot && spec.reframe !== 'fit' ? cropBox(project, planned, shot.clipId, time) : null
+  const override = shot ? framingOverrides(project, spec.aspect)[shot.clipId] : undefined
+  const anchor = shot ? shot.start : time
+  const previous = [...shots].reverse().find((s) => s.start < anchor - 1e-3)
+  const next = shots.find((s) => s.start > anchor + 1e-3)
+
+  /** Moves the shot's framing by a share of the crop, kept where the crop can still go. */
+  const move = (fx: number, fy: number) => {
+    if (!shot || !box) return
+    const x = clamp(fx, -box.left / box.width, (1 - box.left - box.width) / box.width)
+    const y = clamp(fy, -box.top / box.height, (1 - box.top - box.height) / box.height)
+    if (Math.abs(x) < 1e-4 && Math.abs(y) < 1e-4) return
+    adjustFraming(spec.aspect, shot.clipId, {
+      offsetX: clamp((override?.offsetX ?? 0) + x, -2, 2),
+      offsetY: clamp((override?.offsetY ?? 0) + y, -2, 2),
+    })
+  }
+
+  let boxStyle: CSSProperties
+  if (box) {
+    const left = box.left + (drag ? drag.dx / drag.width : 0)
+    const top = box.top + (drag ? drag.dy / drag.height : 0)
+    // While dragging, and until the moved output is drawn, the frame is a window onto the source.
+    const windowed = (drag || !output) && source
+    boxStyle = {
+      left: `${left * 100}%`,
+      top: `${top * 100}%`,
+      width: `${box.width * 100}%`,
+      height: `${box.height * 100}%`,
+      cursor: drag ? 'grabbing' : 'grab',
+      touchAction: 'none',
+      ...(windowed
+        ? {
+            backgroundImage: image(source),
+            backgroundSize: `${100 / box.width}% ${100 / box.height}%`,
+            backgroundPosition: `${box.width < 1 ? (100 * left) / (1 - box.width) : 0}% ${box.height < 1 ? (100 * top) / (1 - box.height) : 0}%`,
+          }
+        : { backgroundImage: image(output), backgroundSize: 'cover' }),
+    }
+  } else {
+    boxStyle = {
+      ...(r >= sourceRatio
+        ? { left: 0, width: '100%', top: '50%', transform: 'translateY(-50%)' }
+        : { top: 0, height: '100%', left: '50%', transform: 'translateX(-50%)' }),
+      aspectRatio: `${r}`,
+      backgroundImage: image(output),
+      backgroundSize: 'cover',
+    }
+  }
+
   return (
     <div className={styles.frameWrap}>
       <div
@@ -115,16 +201,97 @@ function Frame({
             <div className={styles.frameDim} />
             <div
               className={[styles.frame, styles.frameCrop].join(' ')}
-              style={{ ...box, aspectRatio: `${r}`, backgroundImage: image(output), backgroundSize: 'cover' }}
+              style={boxStyle}
+              {...(box && {
+                tabIndex: 0,
+                'aria-label': `Framing of shot ${index + 1}. Drag or use the arrow keys to move it; double-click to reset.`,
+                onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+                  const outer = e.currentTarget.parentElement?.getBoundingClientRect()
+                  if (e.button !== 0 || !outer) return
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                  setDrag({
+                    pointerId: e.pointerId,
+                    x: e.clientX,
+                    y: e.clientY,
+                    dx: 0,
+                    dy: 0,
+                    width: outer.width,
+                    height: outer.height,
+                  })
+                },
+                onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+                  if (!drag || e.pointerId !== drag.pointerId) return
+                  setDrag({
+                    ...drag,
+                    dx: clamp(
+                      e.clientX - drag.x,
+                      -box.left * drag.width,
+                      (1 - box.left - box.width) * drag.width,
+                    ),
+                    dy: clamp(
+                      e.clientY - drag.y,
+                      -box.top * drag.height,
+                      (1 - box.top - box.height) * drag.height,
+                    ),
+                  })
+                },
+                onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
+                  if (!drag || e.pointerId !== drag.pointerId) return
+                  setDrag(null)
+                  move(drag.dx / (box.width * drag.width), drag.dy / (box.height * drag.height))
+                },
+                onPointerCancel: () => setDrag(null),
+                onDoubleClick: () => {
+                  if (shot && override) adjustFraming(spec.aspect, shot.clipId, null)
+                },
+                onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                  const step = e.shiftKey ? 0.1 : 0.02
+                  const d = {
+                    ArrowLeft: [-step, 0],
+                    ArrowRight: [step, 0],
+                    ArrowUp: [0, -step],
+                    ArrowDown: [0, step],
+                  }[e.key]
+                  if (!d) return
+                  e.preventDefault()
+                  move(d[0] ?? 0, d[1] ?? 0)
+                },
+              })}
             />
           </>
         )}
       </div>
-      {!same && <div className={styles.frameNote}>{framingNote(planned)}</div>}
+      {!same && (
+        <div className={styles.frameNote}>
+          <span className={styles.noteText}>{framingNote(planned, Boolean(override), indexing)}</span>
+          {shots.length > 0 && (
+            <span className={styles.shotStepper}>
+              <IconButton
+                label="Previous shot"
+                size="sm"
+                disabled={!previous}
+                onClick={() => previous && onTime(shotTime(previous))}
+              >
+                <ChevronLeft />
+              </IconButton>
+              <span className="tnum">
+                {index >= 0 ? `Shot ${index + 1} of ${shots.length}` : plural(shots.length, 'shot')}
+              </span>
+              <IconButton
+                label="Next shot"
+                size="sm"
+                disabled={!next}
+                onClick={() => next && onTime(shotTime(next))}
+              >
+                <ChevronRight />
+              </IconButton>
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
-
 function rangeReason(planned: PlannedOutput): string {
   if (planned.loop) {
     const { bars, barAligned } = planned.loop
@@ -243,7 +410,7 @@ interface RowState {
 }
 
 /** Each file's share of the job is its share of the frames; files render in order. */
-function rowStates(job: JobSnapshot | undefined, rows: ExportRow[]): RowState[] {
+function rowStates(job: JobSnapshot | undefined, rows: ExportRow[], files: Record<string, File>): RowState[] {
   const total = rows.reduce((sum, r) => sum + r.frames, 0) || 1
   const f = job?.status === 'succeeded' ? 1 : (job?.progress.fraction ?? 0)
   let before = 0
@@ -252,6 +419,7 @@ function rowStates(job: JobSnapshot | undefined, rows: ExportRow[]): RowState[] 
     const share = r.frames / total
     before += r.frames
     const own = Math.min(1, Math.max(0, (f - start) / share))
+    if (files[r.id]) return { fraction: 1, status: 'Saved' }
     if (!job) return { fraction: 0, status: 'Waiting' }
     if (job.status === 'succeeded') return { fraction: 1, status: 'Saved' }
     if (job.status === 'cancelled') return { fraction: own, status: 'Cancelled' }
@@ -276,9 +444,10 @@ function rowStates(job: JobSnapshot | undefined, rows: ExportRow[]): RowState[] 
 }
 
 function ExportingView({ onClose }: { onClose: () => void }) {
-  const { jobId, rows } = useExports()
+  const { jobId, rows, files } = useExports()
   const job = useJobs().find((j) => j.id === jobId)
-  const states = rowStates(job, rows)
+  const states = rowStates(job, rows, files)
+  const savedCount = rows.filter((r) => files[r.id]).length
   const running = job?.status === 'running' || job?.status === 'queued'
   const title = running
     ? `Exporting ${plural(rows.length, 'file')}`
@@ -294,7 +463,9 @@ function ExportingView({ onClose }: { onClose: () => void }) {
     : job?.status === 'succeeded'
       ? 'Find them in your Downloads folder.'
       : job
-        ? 'No files were saved.'
+        ? savedCount
+          ? `${plural(savedCount, 'file')} saved to your Downloads folder.`
+          : 'No files were saved.'
         : ''
   return (
     <div className={styles.exporting}>
@@ -305,7 +476,7 @@ function ExportingView({ onClose }: { onClose: () => void }) {
       <div className={styles.jobList}>
         {rows.map((r, i) => {
           const state = states[i] ?? { fraction: 0, status: 'Waiting' }
-          const saved = job?.status === 'succeeded'
+          const saved = Boolean(files[r.id])
           return (
             <div key={r.id} className={styles.jobRow}>
               <span className={styles.jobIcon}>{aspectIcon(r.aspect)}</span>
@@ -338,7 +509,8 @@ function ExportingView({ onClose }: { onClose: () => void }) {
               variant="ghost"
               onClick={() => {
                 if (job) jobs.cancel(job.id)
-                set({ exportPhase: 'setup' })
+                // Files that are done stay listed with Download; with none, go back to the outputs.
+                if (!savedCount) set({ exportPhase: 'setup' })
               }}
             >
               Cancel all
@@ -389,6 +561,8 @@ function ExportDialogBody() {
   const [items, setItems] = useState(() => initialItems(project))
   const [candidates] = useState(() => candidateOutputs(project))
   const [selectedId, setSelectedId] = useState(() => items[0]?.spec.id)
+  /** The moment the preview shows once a shot is picked; otherwise each output's own moment. */
+  const [viewTime, setViewTime] = useState<number | null>(null)
   const planned = useMemo(() => items.map((i) => planOutput(project, i.spec)), [project, items])
   const index = Math.max(
     0,
@@ -501,7 +675,16 @@ function ExportDialogBody() {
           </div>
 
           <div className={`${styles.settings} scroll`}>
-            <Frame project={project} planned={selPlan} playhead={playhead} />
+            <Frame
+              project={project}
+              planned={selPlan}
+              time={
+                viewTime !== null && viewTime >= selPlan.range.start && viewTime < selPlan.range.end
+                  ? viewTime
+                  : stillTime(selPlan, playhead)
+              }
+              onTime={setViewTime}
+            />
             {sel.spec.kind !== 'video' && <RangeLane project={project} planned={selPlan} />}
             <div className={styles.form}>
               <label className={styles.formRow}>
