@@ -21,6 +21,7 @@ import * as looks from '../plugins/looks.ts'
 import { detectCapabilities } from '../shared/capabilities.ts'
 import { jobs } from '../shared/jobs.ts'
 import * as vision from '../vision/index.ts'
+import * as vj from '../vj/index.ts'
 
 /** A compositor whose canvas stays readable after render, fed by the preview or the export frame provider. */
 function createCompositor(mode: 'preview' | 'export', width: number, height: number) {
@@ -69,6 +70,7 @@ export function installHarness(): void {
     plugins: { library, looks },
     testing: { createCompositor, readPixels },
     vision,
+    vj,
     /** Files most recently set on #e2e-file-input (Playwright setInputFiles). */
     files: (): File[] => Array.from(input.files ?? []),
     ready: true,
