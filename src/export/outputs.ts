@@ -301,12 +301,17 @@ function uniqueNames(planned: PlannedOutput[]): string[] {
   })
 }
 
+export interface ExportOutputsOptions extends PlanOptions, Pick<ExportOptions, 'media' | 'registry'> {
+  /** Called as each file finishes, so it can be saved before the rest are done (or cancelled). */
+  onOutput?: (result: OutputResult) => void
+}
+
 /** Renders the outputs one after another as one job's work. Progress covers all of them, weighted by frames. */
 export async function exportOutputs(
   project: Project,
   specs: readonly OutputSpec[],
   ctx: JobContext,
-  options: PlanOptions & Pick<ExportOptions, 'media' | 'registry'> = {},
+  options: ExportOutputsOptions = {},
 ): Promise<OutputResult[]> {
   const planned = specs.map((spec) => planOutput(project, spec, options))
   const names = uniqueNames(planned)
@@ -340,13 +345,15 @@ export async function exportOutputs(
       // Keep the files this job already made; the first output also keeps the previous export.
       keepExports: i === 0 ? 1 : false,
     })
-    results.push({
+    const output: OutputResult = {
       spec: p.spec,
       file: result.file,
       durationSeconds: result.durationSeconds,
       width: p.settings.width,
       height: p.settings.height,
-    })
+    }
+    results.push(output)
+    options.onOutput?.(output)
     done += p.frames
   }
   return results
@@ -356,7 +363,7 @@ export async function exportOutputs(
 export function startExport(
   project: Project,
   specs: readonly OutputSpec[],
-  options: PlanOptions & Pick<ExportOptions, 'media' | 'registry'> = {},
+  options: ExportOutputsOptions = {},
 ): JobHandle<OutputResult[]> {
   return jobs.run({
     kind: 'export.outputs',

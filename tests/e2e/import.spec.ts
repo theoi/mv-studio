@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
-import { expect, openApp, test } from './fixtures.ts'
+import { expect, openApp, test, waitForPreview } from './fixtures.ts'
 
 const FIXTURE_DIR = path.resolve(import.meta.dirname, '../fixtures/.cache')
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
@@ -75,7 +75,7 @@ test('imported clips and images appear in the library and can be added at the pl
   await card.hover()
   await card.getByRole('button', { name: 'Add at playhead' }).click()
   await expect(page.getByRole('button', { name: 'clip, 0:00.0 to 0:04.0' })).toBeVisible()
-  await expect(page.getByText('Preparing the preview')).toBeHidden({ timeout: 30_000 })
+  await waitForPreview(page)
   // The clip's test pattern is on screen, drawn by the engine from the file in browser storage.
   await expect
     .poll(async () => {

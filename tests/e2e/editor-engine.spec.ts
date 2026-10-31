@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import type { Page } from '@playwright/test'
-import { expect, openApp, test } from './fixtures.ts'
+import { expect, openApp, test, waitForPreview } from './fixtures.ts'
 
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
 
@@ -10,11 +10,9 @@ async function openEditorAt(page: Page, hash: string) {
     localStorage.setItem('mv-studio.guide-seen', '1')
     window.location.hash = h
   }, hash)
-  const preview = page.getByRole('img', { name: 'Video preview' })
-  await expect(preview).toBeVisible()
   // The engine draws the first frame once the sample media for it has been generated.
-  await expect(page.getByText('Preparing the preview')).toBeHidden({ timeout: 30_000 })
-  return preview
+  await waitForPreview(page)
+  return page.getByRole('img', { name: 'Video preview' })
 }
 
 /** Mean luminance and its spread (0..255) of a PNG, decoded in the page. */
@@ -116,8 +114,8 @@ test('export renders an MP4 with the engine and downloads it', async ({ page }) 
   await openEditorAt(page, '#/editor?t=73.6')
   await page.keyboard.press(`${mod}+e`)
   const dialog = page.getByRole('dialog', { name: 'Export' })
-  await dialog.getByLabel('Include Full video').uncheck({ force: true })
-  await dialog.getByLabel('Include Vertical').uncheck({ force: true })
+  await dialog.getByLabel('Include Full video').uncheck()
+  await dialog.getByLabel('Include Vertical').uncheck()
   await dialog.getByRole('button', { name: /Loop for Canvas/ }).click()
   await dialog.getByRole('radio', { name: '720p' }).click()
   // The row reports the planned loop: a whole number of bars, 3 to 8 seconds.

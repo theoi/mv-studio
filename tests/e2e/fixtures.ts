@@ -74,3 +74,10 @@ export async function openHarness(page: Page): Promise<void> {
   await openApp(page, './?e2e=1')
   await page.waitForFunction(() => window.mvStudio?.ready === true)
 }
+
+/** Waits until the editor is open and its preview has drawn the first frame. */
+export async function waitForPreview(page: Page): Promise<void> {
+  await expect(page.getByRole('img', { name: 'Video preview' })).toHaveAttribute('aria-busy', 'false', {
+    timeout: 30_000,
+  })
+}

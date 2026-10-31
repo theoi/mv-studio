@@ -1,20 +1,24 @@
+import { fitSize, layerMatrix } from '../../../engine/layout.ts'
 import {
   FORMAT_LABELS,
   exportPreferences,
+  framingOverrides,
   newOutput,
+  setFramingCommand,
   setOutputsCommand,
   startExport,
   suggestedOutputs,
+  type FramingOverride,
   type OutputSpec,
   type PlannedOutput,
 } from '../../../export/index.ts'
-import type { AspectPreset, Project } from '../../../model/index.ts'
+import type { AspectPreset, ImageClip, Project, VideoClip } from '../../../model/index.ts'
 import { JobError, jobs } from '../../../shared/jobs.ts'
 import { formatTime } from '../../format.ts'
 import { downloadFile, showExport, useExports } from '../../state/exports.ts'
 import { JOB_KINDS, runningJobs } from '../../state/jobs.ts'
 import { appMedia } from '../../state/media.ts'
-import { dispatch } from '../../state/project.ts'
+import { dispatch, editor } from '../../state/project.ts'
 import { toast } from '../../state/ui.ts'
 
 export interface OutputItem {
@@ -126,7 +130,13 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
   const saved = exportPreferences(project).outputs ?? null
   if (JSON.stringify(saved) !== JSON.stringify(specs))
     dispatch(setOutputsCommand(project, specs), { label: 'Save export outputs' })
-  const handle = startExport(project, specs, { media: appMedia })
+  const handle = startExport(project, specs, {
+    media: appMedia,
+    onOutput: (result) => {
+      useExports.setState((s) => ({ files: { ...s.files, [result.spec.id]: result.file } }))
+      downloadFile(result.file, result.file.name)
+    },
+  })
   showExport(
     handle.id,
     planned.map((p) => ({
@@ -138,9 +148,6 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
   )
   handle.promise.then(
     (results) => {
-      if (useExports.getState().jobId === handle.id)
-        useExports.setState({ files: Object.fromEntries(results.map((r) => [r.spec.id, r.file])) })
-      for (const r of results) downloadFile(r.file, r.file.name)
       toast(
         results.length === 1
           ? `Saved ${results[0]?.file.name ?? 'the video'} to Downloads`
@@ -153,4 +160,101 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
     },
   )
   return true
+}
+
+export interface Shot {
+  clipId: string
+  start: number
+  end: number
+}
+
+const RESHOT: ReadonlySet<string> = new Set(['reframed', 'centred', 'fit'])
+
+/**
+ * The footage shots an output reframes, within its range and in time order (topmost first where they overlap).
+ * Behind-subject cutouts follow their host, so they are not shots of their own.
+ */
+export function shotsOf(project: Project, planned: PlannedOutput): Shot[] {
+  const order = new Map(project.tracks.map((t, i) => [t.id, i]))
+  const { start, end } = planned.range
+  return Object.values(project.clips)
+    .filter(
+      (c) =>
+        c.enabled &&
+        !c.meta?.behindSubjectOf &&
+        RESHOT.has(planned.framing[c.id] ?? '') &&
+        c.start < end &&
+        c.start + c.duration > start,
+    )
+    .sort((a, b) => a.start - b.start || (order.get(a.trackId) ?? 0) - (order.get(b.trackId) ?? 0))
+    .map((c) => ({ clipId: c.id, start: Math.max(start, c.start), end: Math.min(end, c.start + c.duration) }))
+}
+
+/** A moment inside a shot that shows it (just past its first frame). */
+export function shotTime(shot: Shot): number {
+  return Math.round((shot.start + Math.min(0.5, (shot.end - shot.start) / 2)) * 100) / 100
+}
+
+export interface CropBox {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * Where the output's frame sits in the project's frame for a reframed shot at `time`, as fractions with a
+ * top-left origin: the source window the converted clip shows, measured against the window the original shows.
+ */
+export function cropBox(
+  project: Project,
+  planned: PlannedOutput,
+  clipId: string,
+  time: number,
+): CropBox | null {
+  const clip = project.clips[clipId]
+  const out = planned.project.clips[clipId]
+  if (!clip || !out || (clip.type !== 'video' && clip.type !== 'image')) return null
+  if (out.type !== 'video' && out.type !== 'image') return null
+  const asset = project.assets[clip.assetId]
+  const W = asset?.width ?? 1920
+  const H = asset?.height ?? 1080
+  const local = time - clip.start
+  const sourceWindow = (c: VideoClip | ImageClip, cw: number, ch: number) => {
+    const [bw, bh] = fitSize(c.fit, W, H, cw, ch)
+    const m = layerMatrix(c, local, time, bw, bh, cw, ch)
+    return { u0: -m[4] / m[0], u1: (cw - m[4]) / m[0], v0: -m[5] / m[3], v1: (ch - m[5]) / m[3] }
+  }
+  const src = sourceWindow(clip, project.settings.width, project.settings.height)
+  const dst = sourceWindow(out, planned.project.settings.width, planned.project.settings.height)
+  const sw = src.u1 - src.u0
+  const sh = src.v1 - src.v0
+  if (!(sw > 0 && sh > 0)) return null
+  return {
+    left: (dst.u0 - src.u0) / sw,
+    top: (dst.v0 - src.v0) / sh,
+    width: (dst.u1 - dst.u0) / sw,
+    height: (dst.v1 - dst.v0) / sh,
+  }
+}
+
+/**
+ * Sets (or with null clears) the framing of a shot in one format as one undo step, together with the cutouts that
+ * put text behind its subject, so they stay aligned with it.
+ */
+export function adjustFraming(aspect: AspectPreset, clipId: string, patch: FramingOverride | null): void {
+  const project = editor.getProject()
+  const ids = [
+    clipId,
+    ...Object.values(project.clips)
+      .filter((c) => c.meta?.behindSubjectOf === clipId)
+      .map((c) => c.id),
+  ]
+  const coalesceKey = `framing:${clipId}:${Date.now()}`
+  for (const id of ids) {
+    const current = editor.getProject()
+    const next = patch && { ...framingOverrides(current, aspect)[id], ...patch }
+    dispatch(setFramingCommand(current, aspect, id, next), { label: 'Adjust framing', coalesceKey })
+  }
+  editor.endGesture()
 }
