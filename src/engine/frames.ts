@@ -133,6 +133,8 @@ export class VideoElementFrameProvider implements FrameProvider {
   private upcoming = new Set<string>()
   /** Slot ids kept loaded by prewarm() for clips of a transition near the paused playhead. */
   private prewarmed = new Set<string>()
+  /** This frame's exact frames by footage and source time, so clips showing the same frame share one seek. */
+  private exact = new Map<string, Promise<FrameRef | null>>()
   private readonly urls = new Map<Id, Promise<string>>()
   private readonly images: ImageCache
   private readonly media: MediaFileSource
@@ -170,6 +172,7 @@ export class VideoElementFrameProvider implements FrameProvider {
 
   beginFrame(keys: string[]): void {
     this.active = new Set(keys)
+    this.exact.clear()
   }
 
   /** The slot for a clip: its own, a free one of the same footage (nearest to `t`), or a new element. */
@@ -236,46 +239,68 @@ export class VideoElementFrameProvider implements FrameProvider {
     return slot
   }
 
-  async videoFrame(asset: Asset, sourceTime: Seconds, key: string, rate = 1): Promise<FrameRef | null> {
+  videoFrame(asset: Asset, sourceTime: Seconds, key: string, rate = 1): Promise<FrameRef | null> {
     const t = clampSourceTime(asset, sourceTime)
     const slot = this.slot(asset, key, t)
     slot.lastUsed = this.frame
+    const mediaRate = rate * this.rate
+    if (this.playing && mediaRate >= MIN_MEDIA_RATE && mediaRate <= MAX_MEDIA_RATE)
+      return this.playingFrame(asset, t, slot, mediaRate)
+    // Paused, a clip showing the same frame of the same footage as another clip in this frame (a layer and a copy of
+    // it, say) takes that clip's frame: one decoder seeks instead of two. The rate doesn't change which frame shows at
+    // a source time. The clip keeps its own element, loaded, for when the two part or playback starts.
+    const id = `${asset.id}@${t}`
+    let frame = this.exact.get(id)
+    if (!frame) {
+      frame = this.exactFrame(slot, t)
+      this.exact.set(id, frame)
+    }
+    return frame
+  }
+
+  /** Paused transport, a freeze (rate 0) or a rate the element cannot play: the exact frame, seeked and waited for. */
+  private async exactFrame(slot: VideoSlot, t: Seconds): Promise<FrameRef | null> {
     if (!(await slot.ready)) return null
     const { video } = slot
-    const mediaRate = rate * this.rate
-    let version: number | undefined
-    if (this.playing && mediaRate >= MIN_MEDIA_RATE && mediaRate <= MAX_MEDIA_RATE) {
-      // Upload only frames the video presented since the last upload (a 30 fps clip in a 60 fps preview skips every
-      // other upload). Exact seeks below always upload: a seek does not reliably present a new frame callback.
-      if (slot.presented > 0) version = slot.presented
-      // Drift is measured in source time, which moves at mediaRate; allow at least two source frames.
-      const frame = 1 / (asset.frameRate ?? 30)
-      const tolerance = Math.max(PLAYBACK_DRIFT * mediaRate, 2 * frame)
-      const drift = t - video.currentTime
-      let speed = mediaRate
-      if (video.paused) {
-        // A warmed or taken-over element is usually already there; seeking anyway would stall its first frames.
-        if (Math.abs(drift) > tolerance) video.currentTime = t
-        void video.play().catch(() => undefined)
-      } else if (Math.abs(drift) > tolerance) {
-        video.currentTime = t
-      } else if (Math.abs(drift) > frame / 2) {
-        // Seeking a playing video stalls it, so smaller drift (playback start-up latency, clock skew) is steered
-        // out instead; left alone it would show frames a few frames early or late for the rest of the clip.
-        const nudge = Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / (DRIFT_CATCH_UP * mediaRate)))
-        speed = Math.min(
-          MAX_MEDIA_RATE,
-          Math.max(MIN_MEDIA_RATE, mediaRate * (1 + Math.round(nudge * 20) / 20)),
-        )
-      }
-      if (video.playbackRate !== speed) video.playbackRate = speed
-    } else {
-      // Paused transport, a freeze (rate 0) or a rate the element cannot play: show the exact frame.
-      if (!video.paused) video.pause()
-      slot.target = t
-      slot.seeking = slot.seeking.then(() => this.seek(slot))
-      await slot.seeking
+    if (!video.paused) video.pause()
+    slot.target = t
+    slot.seeking = slot.seeking.then(() => this.seek(slot))
+    await slot.seeking
+    return { source: video, width: video.videoWidth, height: video.videoHeight }
+  }
+
+  private async playingFrame(
+    asset: Asset,
+    t: Seconds,
+    slot: VideoSlot,
+    mediaRate: number,
+  ): Promise<FrameRef | null> {
+    if (!(await slot.ready)) return null
+    const { video } = slot
+    // Upload only frames the video presented since the last upload (a 30 fps clip in a 60 fps preview skips every
+    // other upload). Exact frames always upload: a seek does not reliably present a new frame callback.
+    const version = slot.presented > 0 ? slot.presented : undefined
+    // Drift is measured in source time, which moves at mediaRate; allow at least two source frames.
+    const frame = 1 / (asset.frameRate ?? 30)
+    const tolerance = Math.max(PLAYBACK_DRIFT * mediaRate, 2 * frame)
+    const drift = t - video.currentTime
+    let speed = mediaRate
+    if (video.paused) {
+      // A warmed or taken-over element is usually already there; seeking anyway would stall its first frames.
+      if (Math.abs(drift) > tolerance) video.currentTime = t
+      void video.play().catch(() => undefined)
+    } else if (Math.abs(drift) > tolerance) {
+      video.currentTime = t
+    } else if (Math.abs(drift) > frame / 2) {
+      // Seeking a playing video stalls it, so smaller drift (playback start-up latency, clock skew) is steered
+      // out instead; left alone it would show frames a few frames early or late for the rest of the clip.
+      const nudge = Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / (DRIFT_CATCH_UP * mediaRate)))
+      speed = Math.min(
+        MAX_MEDIA_RATE,
+        Math.max(MIN_MEDIA_RATE, mediaRate * (1 + Math.round(nudge * 20) / 20)),
+      )
     }
+    if (video.playbackRate !== speed) video.playbackRate = speed
     return { source: video, width: video.videoWidth, height: video.videoHeight, version }
   }
 
@@ -384,6 +409,7 @@ export class VideoElementFrameProvider implements FrameProvider {
   }
 
   endFrame(): void {
+    this.exact.clear()
     this.frame++
     for (const [key, slot] of this.slots) {
       const idle = this.frame - slot.lastUsed

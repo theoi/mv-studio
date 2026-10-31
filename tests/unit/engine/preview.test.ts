@@ -17,6 +17,7 @@ const frames = vi.hoisted(() => ({
   setPlaying: vi.fn(),
   warm: vi.fn(),
   prewarm: vi.fn(),
+  videoFrame: vi.fn(),
   dispose: vi.fn(),
   beginFrame: vi.fn(),
   endFrame: vi.fn(),
@@ -30,16 +31,23 @@ const worker = vi.hoisted(() => ({
   gpuFreeAt: 0,
   drawn: Promise.resolve<number | null>(null),
   requests: [] as { at: number; width: number; untilDrawn?: boolean; measure?: boolean }[],
+  /** The video frames each request carried, and what it transferred. */
+  sent: [] as { videos: { key: string; frame: unknown }[]; transfer: unknown[] }[],
 }))
 
 vi.mock('../../../src/engine/renderHost.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof RenderHost>()),
   startPreviewWorker: vi.fn(async () => ({
-    render: (request: {
-      size: { width: number; height: number }
-      untilDrawn?: boolean
-      measure?: boolean
-    }) => {
+    render: (
+      request: {
+        size: { width: number; height: number }
+        untilDrawn?: boolean
+        measure?: boolean
+        videos: { key: string; frame: unknown }[]
+      },
+      transfer: unknown[],
+    ) => {
+      worker.sent.push({ videos: request.videos, transfer })
       const now = performance.now()
       const { untilDrawn, measure } = request
       worker.requests.push({ at: now, width: request.size.width, untilDrawn, measure })
@@ -368,6 +376,57 @@ describe('keeping media ready for a transition near the paused playhead', () => 
     preview.seek(1)
     await preview.rendered()
     expect(frames.prewarm).toHaveBeenLastCalledWith([])
+    preview.dispose()
+  })
+})
+
+describe('sending the render worker a frame two clips share', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it('gives each clip its own VideoFrame, so the worker can close one without the other', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    vi.stubGlobal('Worker', class {})
+    vi.stubGlobal('VideoFrame', class {})
+    vi.stubGlobal('ImageData', class {})
+    worker.sent = []
+    const project = createProject()
+    const asset = {
+      id: 'v',
+      kind: 'video',
+      name: 'v.mp4',
+      storageKey: 'v',
+      duration: 10,
+      origin: { type: 'import' },
+    } as Asset
+    project.assets.v = asset
+    const [visual] = project.tracks
+    const upper = { ...visual!, id: 'upper', name: 'Video 2' }
+    project.tracks = [upper, ...project.tracks]
+    const lower = createVideoClip({ trackId: visual!.id, assetId: 'v', start: 0, duration: 4 })
+    const copy = createVideoClip({ trackId: upper.id, assetId: 'v', start: 0, duration: 4 })
+    copy.opacity = { value: 0.5 }
+    project.clips = { [lower.id]: lower, [copy.id]: copy }
+    // The provider gives both clips the same frame, as for two clips showing one frame of the same footage.
+    const shared = { source: {}, width: 1920, height: 1080 }
+    frames.videoFrame.mockResolvedValue(shared)
+    const preview = new PreviewController({
+      canvas: { transferControlToOffscreen: () => ({}) } as unknown as HTMLCanvasElement,
+      media: { getFile: async () => new Blob() },
+      renderer: 'worker',
+    })
+    preview.setViewport(640, 360, 1)
+    preview.setProject(project)
+    await vi.advanceTimersByTimeAsync(100)
+    const sent = worker.sent.find((s) => s.videos.length === 2)
+    expect(sent).toBeDefined()
+    const sentFrames = sent!.videos.map((v) => v.frame)
+    expect(sentFrames.every(Boolean)).toBe(true)
+    expect(sentFrames[0]).not.toBe(sentFrames[1])
+    expect(new Set(sent!.transfer).size).toBe(2)
     preview.dispose()
   })
 })
