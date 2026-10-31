@@ -88,7 +88,9 @@ describe('compilePlan', () => {
     const after = editor.getProject()
     const texts = clips(after).filter((c): c is TextClip => c.type === 'text')
     expect(texts.map((t) => t.lyricLineId)).toEqual(plan.texts.map((t) => t.lyricLineId))
-    expect(texts.every((t) => t.karaoke?.mode === 'word')).toBe(true)
+    const lyrics = texts.filter((t) => t.lyricLineId)
+    expect(lyrics.length).toBeGreaterThan(0)
+    expect(lyrics.every((t) => t.karaoke?.mode === 'word')).toBe(true)
     const textTrack = after.tracks.findIndex((t) => t.id === texts[0]!.trackId)
     const look = clips(after).find((c) => c.type === 'adjustment')!
     expect(textTrack).toBeLessThan(after.tracks.findIndex((t) => t.id === look.trackId))

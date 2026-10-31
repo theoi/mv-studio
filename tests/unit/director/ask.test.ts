@@ -89,7 +89,7 @@ describe('interpretRequest', () => {
     if (turn.outcome.kind !== 'changes') throw new Error(turn.outcome.kind)
     expect(turn.outcome.summary).toBe('Made the lyrics bigger')
     expect(turn.outcome.changes).toBe(`Changes ${texts(project).length} clips.`)
-    expect(turn.outcome.items[0]?.details).toContain('text size 130 (was 84)')
+    expect(turn.outcome.items.flatMap((i) => i.details)).toContain('text size 130 (was 84)')
     const sent = client.requests[0]!.messages[1]!.content as string
     expect(sent).toContain('Request: make the lyrics bigger')
     for (const id of Object.keys(project.clips)) expect(sent).not.toContain(id)

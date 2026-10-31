@@ -3,6 +3,7 @@
  * an `e2e` query parameter, as a separate chunk.
  */
 import * as analysis from '../analysis/client.ts'
+import * as director from '../director/index.ts'
 import * as animation from '../engine/animation.ts'
 import * as audio from '../engine/audio.ts'
 import { createAudioSampler } from '../engine/audioFeatures.ts'
@@ -73,6 +74,7 @@ export function installHarness(): void {
       PreviewController,
     },
     analysis,
+    director,
     shared: { jobs, detectCapabilities },
     plugins: { library, looks, lut, preview, reactions, thumbnails, typography },
     testing: { createCompositor, readPixels, bench },

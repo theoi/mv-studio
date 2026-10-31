@@ -7,6 +7,7 @@ import { bestByTags, type DirectorCatalog, type LookPreset } from './catalog.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
 import type { FootageMood, PlannerInput, SectionInfo, VideoKind } from './inputs.ts'
 import type { Pace } from './plan.ts'
+import { createRng } from './timing.ts'
 
 const PACE_ORDER: Pace[] = ['very-slow', 'slow', 'medium', 'fast', 'very-fast']
 
@@ -40,16 +41,30 @@ export function normalizedLabel(label: string): string {
   return l
 }
 
-export function moodFor(section: SectionInfo): { mood: string; tags: string[] } {
+/**
+ * Beat-cut pace by a section's role. Energy alone can't tell verses from choruses: once normalized within a song
+ * they often measure the same, and a stripped-back chorus can measure quieter than its verse.
+ */
+const ROLE_PACE: Record<string, Pace> = {
+  intro: 'slow',
+  verse: 'medium',
+  'pre-chorus': 'medium',
+  chorus: 'fast',
+  bridge: 'slow',
+  outro: 'slow',
+}
+
+export function moodFor(section: Pick<SectionInfo, 'label' | 'energy'>): { mood: string; tags: string[] } {
   const label = normalizedLabel(section.label)
   const e = section.energy
-  if (label === 'chorus' || e >= 0.8) return { mood: 'euphoric, peak', tags: ['peak', 'energetic'] }
+  if (label === 'chorus' || (e >= 0.8 && !(label in ROLE_PACE)))
+    return { mood: 'euphoric, peak', tags: ['peak', 'energetic'] }
   if (label === 'pre-chorus') return { mood: 'rising, tense', tags: ['rising', 'energetic'] }
   if (label === 'intro')
     return { mood: e > 0.5 ? 'bold opening' : 'quiet, building', tags: ['calm', 'steady'] }
   if (label === 'outro') return { mood: 'fading, reflective', tags: ['calm', 'falling', 'soft'] }
   if (label === 'bridge') return { mood: 'reflective, open', tags: ['dreamy', 'soft', 'calm'] }
-  if (e >= 0.6) return { mood: 'driving, confident', tags: ['energetic', 'steady'] }
+  if (e >= 0.6) return { mood: 'driving, confident', tags: ['driving', 'steady', 'energetic'] }
   if (e <= 0.3) return { mood: 'intimate, calm', tags: ['calm', 'soft'] }
   return { mood: 'steady, grounded', tags: ['steady'] }
 }
@@ -75,14 +90,38 @@ export function footageMood(mood: string, intensity: number): FootageMood | unde
   return undefined
 }
 
-/** Pace for a section: busier with more energy, adjusted for the video kind and tempo. */
-export function paceFor(kind: VideoKind, energy: number, bpm: number, generated: boolean): Pace {
-  let pace: Pace = energy >= 0.75 ? 'fast' : energy >= 0.45 ? 'medium' : 'slow'
-  if (energy >= 0.9 && bpm < 110) pace = 'very-fast'
+/**
+ * Pace for a section: choruses cut fastest, verses a step slower, intros, bridges and outros slowest, and sections
+ * with other names by their energy. Energy moves a role one step at most (a quiet chorus slows, a loud intro, bridge
+ * or outro picks up). Then slower for lyric and AI videos, generated shots and fast tempos. `preferred` shifts every
+ * section by the same number of steps from 'medium', so the contrast between sections stays.
+ */
+export function paceFor(
+  kind: VideoKind,
+  section: Pick<SectionInfo, 'label' | 'energy'>,
+  bpm: number,
+  generated: boolean,
+  preferred?: Pace,
+): Pace {
+  const label = normalizedLabel(section.label)
+  const e = section.energy
+  let pace: Pace = ROLE_PACE[label] ?? (e >= 0.75 ? 'fast' : e >= 0.4 ? 'medium' : 'slow')
+  if (label === 'chorus' && e < 0.4) pace = 'medium'
+  if ((label === 'intro' || label === 'bridge' || label === 'outro') && e >= 0.75) pace = 'medium'
   if (bpm >= 150) pace = slower(pace)
-  if (kind === 'lyric') pace = slower(pace)
-  if (kind === 'ai' || generated) pace = slower(pace, 2)
+  if (kind === 'lyric' || kind === 'ai') pace = slower(pace)
+  if (generated) pace = slower(pace)
+  if (preferred) {
+    const shift = PACE_ORDER.indexOf(preferred) - PACE_ORDER.indexOf('medium')
+    pace = shift >= 0 ? faster(pace, shift) : slower(pace, -shift)
+  }
   return pace
+}
+
+/** Whether a section is a peak of the song: a chorus, or a loud section with no role. */
+export function isPeak(section: Pick<SectionInfo, 'label' | 'energy'>): boolean {
+  const label = normalizedLabel(section.label)
+  return label === 'chorus' ? section.energy >= 0.4 : !(label in ROLE_PACE) && section.energy >= 0.75
 }
 
 const KIND_LOOK: Record<VideoKind, string> = {
@@ -96,6 +135,52 @@ const KIND_LOOK: Record<VideoKind, string> = {
 export function pickLook(prompt: string, kind: VideoKind, catalog: DirectorCatalog): LookPreset | undefined {
   const matched = bestByTags(catalog.looks, promptWords(prompt))
   return matched ?? catalog.looks.find((l) => l.id === KIND_LOOK[kind]) ?? catalog.looks[0]
+}
+
+const TIER_TAGS = {
+  peak: ['peak', 'energetic', 'punchy'],
+  mid: ['driving', 'steady'],
+  calm: ['calm', 'soft', 'falling'],
+}
+
+/**
+ * One visualizer per kind of section, kept for the whole video: peaks, verses and quiet parts (intro, bridge,
+ * outro) each get their own, so the visuals change with the song and stay consistent. Prompt words (space,
+ * synthwave...) count double; the seed breaks ties, so "Try another version" varies them.
+ */
+export function visualizerPalette(sections: SectionInfo[], input: PlannerInput): Map<string, string> {
+  const generators = input.catalog.generators
+  const words = promptWords(input.prompt)
+  const rng = createRng(input.seed)
+  const used = new Set<string>()
+  const pick = (tags: string[]) => {
+    let best: string | undefined
+    let bestScore = -Infinity
+    for (const g of generators) {
+      const score =
+        tags.filter((t) => g.tags.includes(t)).length +
+        2 * words.filter((w) => g.tags.includes(w)).length -
+        (used.has(g.id) ? 10 : 0) +
+        rng() * 0.9
+      if (score > bestScore) {
+        best = g.id
+        bestScore = score
+      }
+    }
+    if (best) used.add(best)
+    return best
+  }
+  const peak = pick(TIER_TAGS.peak)
+  const mid = pick(TIER_TAGS.mid)
+  const calm = pick(TIER_TAGS.calm)
+  const out = new Map<string, string>()
+  for (const s of sections) {
+    const label = normalizedLabel(s.label)
+    const quiet = label === 'intro' || label === 'bridge' || label === 'outro' || s.energy < 0.4
+    const id = isPeak(s) ? peak : quiet ? calm : mid
+    if (id) out.set(s.id, id)
+  }
+  return out
 }
 
 export function linesIn(lyrics: LyricsDoc | undefined, start: number, end: number): LyricLine[] {
@@ -168,7 +253,7 @@ export function defaultSectionBrief(
   const catalog = input.catalog
   const label = normalizedLabel(section.label)
   const effects: string[] = []
-  if (intensity >= 0.75) {
+  if (isPeak(section)) {
     const glow =
       catalog.effects.find((e) => e.id === 'glow') ?? bestByTags(catalog.effects, ['peak', 'energetic'])
     if (glow) effects.push(glow.id)
@@ -177,7 +262,7 @@ export function defaultSectionBrief(
     sectionId: section.id,
     mood,
     intensity,
-    pace: input.pace ?? paceFor(input.kind, intensity, bpm, generated),
+    pace: paceFor(input.kind, section, bpm, generated, input.pace),
     effects,
     reactive: intensity >= 0.6 ? Math.min(1, 0.3 + intensity * 0.6) : 0,
     mediaQuery: [input.prompt, mood].filter(Boolean).join(', '),

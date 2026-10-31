@@ -60,11 +60,17 @@ describe('local planner', () => {
     const chorus = shots.filter((s) => s.sectionId === 's-chorus1')
     const verse = shots.filter((s) => s.sectionId === 's-verse')
     expect(meanLength(chorus)).toBeLessThan(meanLength(verse))
-    // Sections start on a bar here, so the cut rhythm starts with them: equal shots, only the last may be shorter.
+    // Sections start on a bar here, so the cut rhythm starts with them: equal shots, only the last may be shorter,
+    // except in the last bar (2 s) before a faster section, which speeds up into it.
     for (const section of SECTIONS) {
-      const lengths = shots.filter((s) => s.sectionId === section.id).map((s) => s.end - s.start)
+      const lengths = shots
+        .filter((s) => s.sectionId === section.id && s.start < section.end - 2)
+        .map((s) => s.end - s.start)
       for (const length of lengths.slice(0, -1)) expect(length).toBeCloseTo(lengths[0]!, 3)
     }
+    const verseEnd = verse.filter((s) => s.start >= 22)
+    expect(verseEnd.length).toBeGreaterThan(1)
+    for (const s of verseEnd) expect(s.end - s.start).toBeLessThan(verse[0]!.end - verse[0]!.start)
     expect(p.warnings).toEqual([])
   })
 
@@ -142,7 +148,7 @@ describe('local planner', () => {
 
   it('asks for lyrics when a lyric video has none', async () => {
     const p = await plan('lyric', { lyrics: null })
-    expect(p.texts).toEqual([])
+    expect(p.texts.filter((t) => t.role !== 'title')).toEqual([])
     expect(p.warnings.some((w) => w.includes('Add lyrics'))).toBe(true)
   })
 
