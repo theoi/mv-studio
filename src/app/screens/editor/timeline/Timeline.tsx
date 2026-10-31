@@ -411,7 +411,7 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
           onChange={(v) => set({ tool: v })}
           ariaLabel="Timeline tool"
           options={[
-            { value: 'select', label: <MousePointer2 />, title: 'Select (V)' },
+            { value: 'select', label: <MousePointer2 />, title: 'Select', shortcut: 'V' },
             { value: 'split', label: <Scissors />, title: 'Split: click a clip to cut it' },
           ]}
         />
@@ -1632,6 +1632,7 @@ export function Timeline() {
                   <div
                     className={[styles.lane, beatSnap && beat && styles.grid].filter(Boolean).join(' ')}
                     style={{ width: contentW, ...gridStyle }}
+                    data-locked={track.locked || undefined}
                     onPointerDown={startMarquee}
                     onContextMenu={(e) =>
                       openLaneMenu(

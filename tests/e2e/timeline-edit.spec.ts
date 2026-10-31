@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
 /**
@@ -406,7 +406,7 @@ test('with the split tool, a click cuts a clip where it is clicked, snapping to 
   // 40 px a second, so the snap distance (8 px) is 0.2 s.
   await page.evaluate(() => window.mvStudio.app.ui.set({ pxPerSec: 40 }))
   const split = page.getByRole('radio', { name: 'Split: click a clip to cut it' })
-  const selectTool = page.getByRole('radio', { name: 'Select (V)' })
+  const selectTool = page.getByRole('radio', { name: 'Select', exact: true })
   const singer = page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' })
   // Clips are drawn only where the timeline is scrolled to.
   await page.locator('[data-timeline-scroller]').evaluate((el) => (el.scrollLeft = 66 * 40 - 200))
@@ -418,6 +418,15 @@ test('with the split tool, a click cuts a clip where it is clicked, snapping to 
 
   await split.click()
   await expect(split).toHaveAttribute('aria-checked', 'true')
+  // The crosshair shows only where a click cuts: on clips and their trim handles, not on a lyric line's handles.
+  const cursor = (l: Locator) => l.evaluate((el) => getComputedStyle(el).cursor)
+  expect(await cursor(singer)).toBe('crosshair')
+  expect(await cursor(singer.locator('span[class*="handle"]').first())).toBe('crosshair')
+  const lyric = page
+    .getByRole('button', { name: /^Lyric: / })
+    .filter({ visible: true })
+    .first()
+  expect(await cursor(lyric.locator('span[class*="handle"]').first())).toBe('ew-resize')
   // 4 px after the playhead at 1:07.0: the cut snaps to the playhead.
   await singer.click({ position: { x: 1.1 * 40, y: h / 2 } })
   await expect(page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:07.0' })).toBeVisible()
@@ -447,4 +456,21 @@ test('with the split tool, a click cuts a clip where it is clicked, snapping to 
   await split.click()
   await page.keyboard.press('v')
   await expect(selectTool).toHaveAttribute('aria-checked', 'true')
+
+  // The tools say what they do in the app's tooltip, with the key that picks Select.
+  await selectTool.hover()
+  await expect(page.getByRole('tooltip').filter({ hasText: 'Select' }).first()).toBeVisible()
+  await expect(selectTool).toHaveAttribute('aria-keyshortcuts', 'V')
+  expect(await split.getAttribute('title')).toBeNull()
+
+  // On a locked track a click only says the track is locked, so its clips keep their usual cursor.
+  await split.click()
+  await page.evaluate(() =>
+    window.mvStudio.app.project.editor.dispatch({
+      type: 'track.update',
+      trackId: 't-video',
+      patch: { locked: true },
+    }),
+  )
+  expect(await cursor(singer)).toBe('grab')
 })

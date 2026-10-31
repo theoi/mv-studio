@@ -137,7 +137,10 @@ test('Shift Z fits the whole song, V picks the select tool and Alt K keyframes t
   await split.click()
   await expect(split).toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('v')
-  await expect(page.getByRole('radio', { name: 'Select (V)' })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('radio', { name: 'Select', exact: true })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  )
 
   const diamond = page.getByRole('button', { name: 'Add keyframe: Opacity' })
   await expect(diamond).toHaveAttribute('aria-pressed', 'false')

@@ -888,8 +888,11 @@
   pointer-events: none;
 }
 
-/* The split tool cuts a clip where it is clicked, so clips and their trim handles show where, not drag or resize. */
-.scroller[data-tool='split'] .clip,
-.scroller[data-tool='split'] .handle {
+/*
+ * The split tool cuts a clip where it is clicked, so clips it can cut and their trim handles show where, not drag or
+ * resize. Clips on a locked track and lyric lines keep their usual cursor, as the song does: a click there doesn't cut.
+ */
+.scroller[data-tool='split'] .lane:not([data-locked]) .clip,
+.scroller[data-tool='split'] .lane:not([data-locked]) .clip .handle {
   cursor: crosshair;
 }
