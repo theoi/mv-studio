@@ -1,19 +1,42 @@
+import { readdirSync, readFileSync } from 'node:fs'
 import { defineConfig } from '@playwright/test'
 
 // E2E_BASE_URL runs the suite against a deployed site (e.g. the live GitHub Pages URL) instead of `vite preview`.
 const external = process.env.E2E_BASE_URL
 const baseURL = external ?? 'http://127.0.0.1:4173/mv-studio/'
 
-// CI runs the suite as two halves on separate machines: E2E_HALF=1 runs these slow specs (about half the time),
-// E2E_HALF=2 everything else, so a new spec always runs in one of them.
-const FIRST_HALF =
-  /\/(perf|export-dialog|editor-engine|worker-crash|director-app|vj-screen|analysis-app|stems-app|ask)\.spec\.ts$/
+/**
+ * CI runs the suite as two halves on separate machines: E2E_HALF=1 runs the spec files this matches, E2E_HALF=2
+ * everything else, so every spec runs in one of them. Specs are dealt out longest first, each to the half with less
+ * time so far, by the seconds tests/e2e/timings.json records for them (`node scripts/e2e-timings.mjs <CI run id>`
+ * refreshes it). A spec missing from it counts as a typical one, so new specs spread over both halves.
+ */
+function firstHalf(): RegExp {
+  const dir = new URL('tests/e2e/', import.meta.url)
+  const timings = JSON.parse(readFileSync(new URL('timings.json', dir), 'utf8')) as Record<string, number>
+  const known = Object.values(timings)
+    .filter((s) => s > 0)
+    .sort((a, b) => a - b)
+  const typical = known[Math.floor(known.length / 2)] ?? 1
+  const seconds = (spec: string) => timings[spec] ?? typical
+  const specs = readdirSync(dir)
+    .filter((f) => f.endsWith('.spec.ts'))
+    .sort((a, b) => seconds(b) - seconds(a) || a.localeCompare(b))
+  const load = [0, 0]
+  const first: string[] = []
+  for (const spec of specs) {
+    const i = load[0] <= load[1] ? 0 : 1
+    load[i] += seconds(spec)
+    if (i === 0) first.push(spec)
+  }
+  return new RegExp(`/(${first.map((f) => f.replaceAll('.', '\\.')).join('|')})$`)
+}
 const half = process.env.E2E_HALF
 
 export default defineConfig({
   testDir: 'tests/e2e',
-  ...(half === '1' && { testMatch: FIRST_HALF }),
-  ...(half === '2' && { testIgnore: FIRST_HALF }),
+  ...(half === '1' && { testMatch: firstHalf() }),
+  ...(half === '2' && { testIgnore: firstHalf() }),
   globalSetup: './tests/e2e/global-setup.ts',
   timeout: 90_000,
   expect: { timeout: 15_000 },
