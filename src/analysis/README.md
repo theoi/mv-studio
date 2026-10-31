@@ -32,8 +32,10 @@ import { LyricsService, setLyricsCommand } from './client.ts'
 const lyrics = new LyricsService()
 // One confirmation before starting: models still to download (names, bytes) and the processing time.
 const { downloads, seconds } = await lyrics.estimate(project, songId, { kind: 'time' }) // or { kind: 'draft' }
-const { doc } = await lyrics.run(songId, { kind: 'time', text }, { editor, store: mediaStore }).promise
+const { doc, chorus } = await lyrics.run(songId, { kind: 'time', text }, { editor, store: mediaStore })
+  .promise
 editor.dispatch(setLyricsCommand(doc)) // undoable: the user asked for it
+if (chorus) editor.dispatch(chorus, { history: 'skip' }) // sections relabeled from the repeated lines
 const dragged = lyrics.realignFrom(doc, lineIndex, wordIndex, time) // no model; undefined after a reload
 ```
 
@@ -41,6 +43,7 @@ const dragged = lyrics.realignFrom(doc, lineIndex, wordIndex, time) // no model;
 - **Timing pasted lyrics** (`align.ts`, `ctc.ts`, `wav2vec2.ts`, `text.ts`): wav2vec2-base-960h character CTC emissions over the vocals in overlapping windows, then CTC forced alignment (Viterbi) of the pasted words, with a small cost for pauses inside a word. Section markers such as "[Chorus]" are dropped; other Latin-script languages are folded to A-Z. On 24 JamendoLyrics dev songs (English, French, German, Spanish; vocals from our HTDemucs) 89.1% of word onsets are within 0.3 s (84-93% per language) and the mean error is 0.44 s, mostly from the first word after a long gap. On the mix instead of the vocals only about 46% are within 0.3 s, so the flow always uses the vocals.
 - **Drafting** (`vad.ts`, `whisper.ts`, `whisperModel.ts`): voice activity on the vocals picks the sung regions, packed into chunks of up to 30 s. Whisper small (Transformers.js, WASM) detects the language on the longest chunks and transcribes each chunk with a token budget proportional to its length, which stops the repetition loops Whisper falls into on singing. The words are then timed with the aligner. Word error rate on the dev songs: 0.48 (Whisper base: 1.1, mostly repetition and invented lines).
 - **Corrections**: `realignFrom` pins a dragged word and re-times the words after it on its line; `realignLine` re-times an edited line between its neighbours. Both reuse the aligner output kept for the song during the session (`canRealign`). `doc.ts` (`groupWordsIntoLines`, `toLyricsDoc`) turns timed words into a `LyricsDoc`.
+- **Chorus from lyrics** (`structure/chorus.ts`): choruses repeat their words, verses mostly only their music. `findLyricChorus` takes the repeated run of at least two lines that covers the most of the song (occurrences times words; lines match when their word sets overlap by more than 80%), and `withChorus` cuts the sections at those ranges on downbeats and labels them chorus (labels the user typed are kept). `run()` returns it as `chorus`, an `analysis.setRefined` edit that applies only if the sections are unchanged. On the 19 dev songs with a repeated stanza (the reference chorus), chorus precision and recall go from 0.37 and 0.48 (audio only) to 0.72 and 0.72, with the chorus found in 13 songs instead of 7.
 
 ## Evaluation data
 

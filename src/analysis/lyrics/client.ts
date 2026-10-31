@@ -11,6 +11,7 @@ import { DEMUCS_MODEL, WAV2VEC2_MODEL, WHISPER_MODELS, whisperFileUrls, type Whi
 import { StemSeparationService, stemEdits } from '../stems/client.ts'
 import { DEMUCS_SAMPLE_RATE } from '../stems/demucs.ts'
 import { stemDevice } from '../stems/device.ts'
+import { lyricChorusCommand } from '../structure/chorus.ts'
 import { realignFrom, realignLine, type CtcVocabulary } from './align.ts'
 import type { CtcEmissions } from './ctc.ts'
 import { toLyricsDoc } from './doc.ts'
@@ -32,6 +33,11 @@ export interface LyricsResult {
   /** Drafts: the language sung, and the detection confidence (0..1) when it was detected. */
   language?: string
   languageProbability?: number
+  /**
+   * Relabels the song's sections so the lyrics' repeated lines are the chorus (see `lyricChorusCommand`); null when
+   * nothing repeats. Dispatch it with `{ history: 'skip' }` together with the lyrics.
+   */
+  chorus: EditCommand | null
 }
 
 /** What `run` will download and roughly how long it will take, for the one confirmation before it starts. */
@@ -138,7 +144,8 @@ export class LyricsService {
           const emissions = cached?.vocalsId === vocalsId ? cached.em : undefined
           const result = await this.call((c) => runWorkerCall(c, 'align', { vocals, lines, emissions }, rest))
           this.emissions.set(songId, { em: result.emissions, vocab: result.vocab, vocalsId })
-          return { doc: { audioAssetId: songId, source: 'pasted', lines: result.lines } }
+          const doc: LyricsDoc = { audioAssetId: songId, source: 'pasted', lines: result.lines }
+          return { doc, chorus: chorusFor(deps, songId, doc) }
         }
         const size = request.size ?? DRAFT_SIZE
         const result = await this.call((c) =>
@@ -150,7 +157,12 @@ export class LyricsService {
           source: 'transcribed',
           audioAssetId: songId,
         })
-        return { doc, language: result.language, languageProbability: result.languageProbability }
+        return {
+          doc,
+          language: result.language,
+          languageProbability: result.languageProbability,
+          chorus: chorusFor(deps, songId, doc),
+        }
       },
     })
   }
@@ -222,6 +234,11 @@ export class LyricsService {
       client.terminate()
     }
   }
+}
+
+function chorusFor(deps: LyricsDeps, songId: Id, doc: LyricsDoc): EditCommand | null {
+  const analysis = deps.editor.getProject().analysis.audio[songId]
+  return analysis ? lyricChorusCommand(analysis, doc) : null
 }
 
 function songAsset(project: Project, songId: Id): Asset {
