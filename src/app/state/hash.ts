@@ -6,6 +6,7 @@ import { isRunning, JOB_KINDS } from './jobs.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
 import { isStored, openFromLink, untracked, usePersistence } from './persistence.ts'
 import { editor, loadDemoProject, loadEmptyProject } from './project.ts'
+import { setupFromLink } from './setup.ts'
 import {
   get,
   initialUi,
@@ -45,10 +46,7 @@ function hasAnyCutout(project: Project): boolean {
 export function stateToHash(s: UiState, project: Project): string {
   const emptyProject = !project.songAssetId
   const q = new URLSearchParams()
-  if (s.screen === 'setup') {
-    q.set('kind', s.kind)
-    if (s.setupSong) q.set('song', '1')
-  }
+  if (s.screen === 'setup') q.set('kind', s.kind)
   if (s.screen === 'editor') {
     if (isStored(project.id)) q.set('project', project.id)
     else if (emptyProject) q.set('project', 'empty')
@@ -81,7 +79,6 @@ export function hashToState(hash: string): Partial<UiState> {
     ...(t !== null && Number.isFinite(Number(t)) ? { playhead: Number(t) } : {}),
     screen,
     kind: (q.get('kind') as Kind | null) ?? 'lyric',
-    setupSong: q.get('song') === '1',
     selection: strToSel(q.get('sel')),
     rightTab: q.get('tab') === 'assist' ? 'assist' : 'inspector',
     assistView: (q.get('assist') as AssistView | null) ?? 'home',
@@ -113,6 +110,7 @@ function applyHash(hash: string) {
     libraryOpen: get().libraryOpen,
     playing: false,
   })
+  if (next.screen === 'setup') setupFromLink(q.get('song') === '1')
 }
 
 function applyPreviewProject(q: URLSearchParams, wantEmpty: boolean) {

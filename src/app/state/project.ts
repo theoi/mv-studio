@@ -19,7 +19,7 @@ import { directorMeta } from '../../director/meta.ts'
 import { TRACK_IDS, buildDemoProject, sceneOf } from '../mock/demoProject.ts'
 import type { SceneId } from '../mock/art.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
-import { editorPreset, get, maybeStartGuide, select, set, toast, type Kind } from './ui.ts'
+import { get, select, set, toast } from './ui.ts'
 
 /** The app's single editor. The design preview starts it with the demo project. */
 export const editor = new ProjectEditor(buildDemoProject())
@@ -41,14 +41,6 @@ export function loadSample() {
   loadDemoProject()
   set({ playhead: 0, playing: false, selection: { type: 'none' } })
   toast(`Sample project loaded: “${editor.getProject().name}”`)
-}
-
-/** Opens the editor for a video kind with the demo project (or an empty one) and its workspace preset. */
-export function openEditor(kind: Kind, empty = false) {
-  if (empty) loadEmptyProject()
-  else loadDemoProject()
-  set({ ...editorPreset(kind), ...(empty ? { playhead: 0 } : {}) })
-  maybeStartGuide()
 }
 
 /** Dispatches through the editor and turns rejected edits (locked track, invalid input) into a toast. */

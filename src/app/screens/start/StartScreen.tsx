@@ -31,7 +31,7 @@ import {
   usePersistence,
   type RecentProject,
 } from '../../state/persistence.ts'
-import { openEditor } from '../../state/project.ts'
+import { openBlankProject, startSetup } from '../../state/setup.ts'
 import { set, toast, type Kind } from '../../state/ui.ts'
 import { Logo } from '../common/Logo.tsx'
 import styles from './Start.module.css'
@@ -301,11 +301,7 @@ export function StartScreen() {
 
         <div className={styles.kinds}>
           {kinds.map((k) => (
-            <button
-              key={k.id}
-              className={styles.kind}
-              onClick={() => set({ screen: 'setup', kind: k.id, setupSong: false })}
-            >
+            <button key={k.id} className={styles.kind} onClick={() => startSetup(k.id)}>
               <KindArt kind={k.id} />
               <div className={styles.kindText}>
                 <span className={styles.kindTitle}>{k.title}</span>
@@ -315,7 +311,7 @@ export function StartScreen() {
           ))}
         </div>
 
-        <button className={styles.blank} onClick={() => openEditor('blank', true)}>
+        <button className={styles.blank} onClick={() => void openBlankProject()}>
           <span className={styles.blankIcon}>
             <Plus />
           </span>

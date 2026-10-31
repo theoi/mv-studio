@@ -697,3 +697,65 @@
   gap: var(--space-2);
   margin-top: clamp(20px, 4vh, 32px);
 }
+
+.dropActive,
+.dropActive:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.miniWavePending i {
+  opacity: 0.35;
+}
+
+.songFailed {
+  color: var(--text-3);
+}
+
+.setupError {
+  margin-top: var(--space-2);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.clipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clipChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 2px 0 var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--border-subtle);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.clipChip:last-child[role='status'] {
+  padding-right: var(--space-2);
+}
+
+.clipChip > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+}
+
+.clipName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
