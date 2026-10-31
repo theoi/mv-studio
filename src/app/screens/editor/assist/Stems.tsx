@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, Lock, RotateCcw } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
-import { formatBytes } from '../../../format.ts'
+import { aboutMinutes, formatBytes } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { hasSong, songAnalysis, useProject } from '../../../state/project.ts'
 import {
@@ -36,10 +36,6 @@ export function StemsBadge() {
   if (phase === 'failed') return <Badge tone="danger">Failed</Badge>
   if (songAnalysis(project)?.stems) return <Badge tone="success">Ready</Badge>
   return null
-}
-
-function minutesText(seconds: number): string {
-  return seconds < 60 ? 'Under a minute' : `About ${Math.round(seconds / 60)} min`
 }
 
 /** The step a job stage belongs to: getting the model (after reading the song), separating, saving. */
@@ -194,7 +190,7 @@ export function StemsView() {
       <div className={styles.facts}>
         <div>
           <span>Time</span>
-          <span>{estimate ? `${minutesText(estimate.seconds)} on this device` : 'Working it out…'}</span>
+          <span>{estimate ? `${aboutMinutes(estimate.seconds)} on this device` : 'Working it out…'}</span>
         </div>
         <div>
           <span>Download</span>
@@ -209,7 +205,7 @@ export function StemsView() {
         <div>
           <span>Memory</span>
           <span>
-            {estimate ? `About ${formatBytes(estimate.memoryBytes)} while running` : 'Working it out…'}
+            {estimate ? `Needs about ${Math.ceil(estimate.memoryBytes / 1e9)} GB free` : 'Working it out…'}
           </span>
         </div>
       </div>

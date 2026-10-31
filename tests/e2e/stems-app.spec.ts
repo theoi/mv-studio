@@ -40,7 +40,7 @@ test('Assist › Stems separates the imported song on this device and shows its 
   // The 8 s fixture and a model this fresh profile has not downloaded yet.
   await expect(panel.getByText('Under a minute on this device')).toBeVisible()
   await expect(panel.getByText('181 MB once, then offline')).toBeVisible()
-  await expect(panel.getByText('About 4.0 GB while running')).toBeVisible()
+  await expect(panel.getByText('Needs about 4 GB free')).toBeVisible()
   await shot(page, 'stems-idle')
 
   await panel.getByRole('button', { name: 'Separate stems' }).click()

@@ -45,6 +45,11 @@ export function editedAgo(iso: string, now = Date.now()): string {
   return `Edited ${date}`
 }
 
+/** A wait shown before it starts, in minutes rounded up so it never reads shorter than estimated: "About 6 min". */
+export function aboutMinutes(seconds: number): string {
+  return seconds < 60 ? 'Under a minute' : `About ${Math.ceil(seconds / 60)} min`
+}
+
 /** Storage sizes as people read them: "83 MB", "1.2 GB". */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`

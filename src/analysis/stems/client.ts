@@ -25,9 +25,10 @@ export type { StemSeparationResult }
 export const STEM_MODEL_BYTES = DEMUCS_MODEL.files.model?.bytes ?? 0
 
 /**
- * How much more memory the browser holds at the peak of a separation with WASM threads, rounded up: 3.2 to 3.7 GB
- * above the editor through the UI for 3 to 5 minute songs (4 cores, 3 threads), 3.45 GB for a 5 minute song since
- * the model's outputs are no longer copied. The model dominates, so song length barely matters.
+ * Free memory a separation with WASM threads needs: the browser grew 3.3 to 3.5 GB (10^9 bytes) at the peak through
+ * the UI for 3 to 5 minute songs (4 cores, 3 threads), rounded up. The model dominates, so song length barely
+ * matters. The whole browser uses more than this: 3.9 to 4.1 GB in all, 4.6 to 4.9 GB when the separation starts
+ * while song analysis still holds its models.
  */
 const STEM_PEAK_MEMORY_BYTES = 4e9
 
@@ -67,7 +68,7 @@ export interface StemsEstimate {
   downloadBytes: number
   /** Processing time on this device once the model is downloaded, in seconds. */
   seconds: number
-  /** Extra memory the tab needs at the peak of the separation. */
+  /** Free memory the separation needs at its peak, on top of what the browser already uses. */
   memoryBytes: number
   device: ModelDevice
 }

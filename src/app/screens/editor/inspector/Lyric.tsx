@@ -5,7 +5,7 @@ import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
-import { formatBytes, formatTime, plural } from '../../../format.ts'
+import { aboutMinutes, formatBytes, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import { isUncertain, markLineChecked } from '../../../state/lyricChecks.ts'
 import { nudgeLine, setLineEdge } from '../../../state/lyricEdits.ts'
@@ -25,10 +25,6 @@ import { LyricStyleSections } from './LyricStyle.tsx'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
 import styles from '../Inspector.module.css'
-
-function minutesText(seconds: number): string {
-  return seconds < 60 ? 'under a minute' : `about ${Math.round(seconds / 60)} min`
-}
 
 type RetimeCost = Awaited<ReturnType<typeof retimeCost>>
 
@@ -55,7 +51,7 @@ function costText(cost: NonNullable<RetimeCost>): string {
   const parts = [
     cost.separatesStems ? 'separates the vocals first' : 'listens to the vocals first',
     ...(cost.downloadBytes ? [`${formatBytes(cost.downloadBytes)} download, once`] : []),
-    `${minutesText(cost.seconds)} on this device`,
+    `${aboutMinutes(cost.seconds).toLowerCase()} on this device`,
   ]
   return `Re-timing ${parts.join(' · ')}`
 }

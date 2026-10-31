@@ -9,7 +9,7 @@ import { createTrack, type EditCommand, type LyricsDoc, type Project } from '../
 import { JobError } from '../../shared/jobs.ts'
 import { lyricClipCommands } from '../../plugins/lyricClips.ts'
 import { starterTemplate, templateState } from '../../plugins/templates.ts'
-import { formatBytes, plural } from '../format.ts'
+import { aboutMinutes, formatBytes, plural } from '../format.ts'
 import { asDraft, withTimingChecks } from './lyricChecks.ts'
 import { dispatch, editor } from './project.ts'
 import { stemStore } from './stems.ts'
@@ -55,17 +55,13 @@ export async function estimateLyrics(kind: LyricsRequest['kind']): Promise<Lyric
   return (await lyricsService()).estimate(project, project.songAssetId, { kind })
 }
 
-function minutesText(seconds: number): string {
-  return seconds < 60 ? 'under a minute' : `about ${Math.round(seconds / 60)} min`
-}
-
 /** The one line that says what timing or drafting will do: separation, downloads and time on this device. */
 export function lyricsCost(e: LyricsEstimate | null): { text: string; detail?: string } {
   if (!e) return { text: 'Uses the vocals stem for precise timing' }
   const parts = [
     ...(e.separatesStems ? ['Separates the vocals first'] : []),
     ...(e.downloadBytes ? [`${formatBytes(e.downloadBytes)} download, once`] : []),
-    `${minutesText(e.seconds)} on this device`,
+    `${aboutMinutes(e.seconds).toLowerCase()} on this device`,
   ]
   const detail = e.downloads.map((d) => `${d.name} (${formatBytes(d.bytes)})`).join(', ')
   return { text: parts.join(' · '), ...(detail ? { detail: `Downloads ${detail}` } : {}) }
