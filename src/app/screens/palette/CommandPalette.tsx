@@ -72,6 +72,7 @@ import { toggleFullscreen, toggleLoop } from '../../state/previewControls.ts'
 import { changeAspect } from '../../state/reframe.ts'
 import { saveFrameFromPalette } from '../../state/stills.ts'
 import { fitTimeline, zoomBy } from '../../state/zoom.ts'
+import { enterVj } from '../../state/vj.ts'
 import styles from './CommandPalette.module.css'
 
 /** Actions that open a list of choices inside the palette. */
@@ -331,7 +332,7 @@ const actions: Action[] = [
     icon: <Disc3 />,
     shortcut: keysOf('vj'),
     keywords: 'live perform midi',
-    run: () => set({ screen: 'vj' }),
+    run: enterVj,
   },
   {
     group: 'Project',

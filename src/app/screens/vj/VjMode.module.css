@@ -117,6 +117,36 @@
   border-radius: 4px;
 }
 
+/* Over the live output, which sits in the middle of the stage. */
+.entryFrame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 4px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.stageNote {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  pointer-events: none;
+  /* Only if the editor's frame does not arrive first. */
+  animation: note-in var(--dur) var(--ease-out) 300ms both;
+}
+
+@keyframes note-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .playHint {
   position: absolute;
   bottom: 24px;

@@ -237,7 +237,7 @@ class WorkerRenderer implements FrameRenderer {
       requests.map((r) => this.frames.videoFrame(r.asset, r.time, r.key, r.rate).catch(() => null)),
     )
     const videos: BridgedVideo[] = []
-    const transfer: Transferable[] = []
+    const transfer: VideoFrame[] = []
     const keys = new Set<string>()
     requests.forEach(({ key }, i) => {
       keys.add(key)
@@ -271,6 +271,8 @@ class WorkerRenderer implements FrameRenderer {
         transfer,
       )
     } catch (error) {
+      // A stopped worker rejects without taking the frames; close them (a no-op for frames it took).
+      for (const frame of transfer) frame.close()
       // The worker may not have applied this request: send everything again next time.
       this.sentProject = null
       this.sentVersions.clear()
@@ -316,6 +318,8 @@ export class PreviewController {
   private dropped = 0
   private loop: { start: Seconds; end: Seconds } | null = null
   private warmedAt = 0
+  /** captureFrame() calls not yet resolved: dispose() lets them finish, so a preview can be captured as it closes. */
+  private readonly captures = new Set<Promise<ImageBitmap>>()
   private readonly unsubscribeClock: () => void
 
   constructor(options: PreviewOptions) {
@@ -539,7 +543,15 @@ export class PreviewController {
    * frame); otherwise the current state, drawn again. Use it to read pixels: a canvas moved to the render worker
    * cannot be read on this thread.
    */
-  async captureFrame(): Promise<ImageBitmap> {
+  captureFrame(): Promise<ImageBitmap> {
+    const capture = this.capture()
+    this.captures.add(capture)
+    const done = () => this.captures.delete(capture)
+    capture.then(done, done)
+    return capture
+  }
+
+  private async capture(): Promise<ImageBitmap> {
     const renderer = await this.rendererReady
     if (this.preserveDrawingBuffer) return renderer.capture()
     await this.rendered()
@@ -611,6 +623,10 @@ export class PreviewController {
   }
 
   private requestStill(): void {
+    if (this.disposed) {
+      this.stillPending = false
+      return
+    }
     if (this.failure) {
       this.stillPending = false
       return
@@ -631,7 +647,7 @@ export class PreviewController {
 
   private draw(time: Seconds): Promise<void> {
     const project = this.project
-    if (!project) return Promise.resolve()
+    if (!project || this.disposed) return Promise.resolve()
     const started = performance.now()
     const size = this.frameSize(project)
     const renderer = this.renderer
@@ -650,6 +666,7 @@ export class PreviewController {
           for (const listener of this.frameListeners) listener(time)
         },
         (error: unknown) => {
+          if (this.disposed) return
           const failure = this.renderer?.failure()
           if (!failure) console.error('Preview render failed', error)
           else if (!this.failure) {
@@ -678,9 +695,16 @@ export class PreviewController {
     this.stopLoop()
     this.unsubscribeClock()
     this.clock.dispose()
-    this.renderer?.dispose()
-    this.frames.dispose()
     this.listeners.clear()
     this.frameListeners.clear()
+    // Frames being drawn or captured finish first: stopping the worker mid-render drops the video frames it was sent,
+    // unclosed.
+    const release = () => {
+      this.renderer?.dispose()
+      this.frames.dispose()
+    }
+    const busy = [...this.captures, ...(this.inFlight ? [this.inFlight] : [])]
+    if (busy.length) void Promise.allSettled(busy).then(release)
+    else release()
   }
 }

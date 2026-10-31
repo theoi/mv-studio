@@ -24,6 +24,7 @@ import {
 } from './project.ts'
 import { shuttle, stopShuttle } from './shuttle.ts'
 import { get, openAssist, set, toast } from './ui.ts'
+import { enterVj } from './vj.ts'
 import { fitTimeline, zoomBy } from './zoom.ts'
 
 /*
@@ -129,7 +130,7 @@ export const SHORTCUTS = [
     keys: ['Mod B'],
     run: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
   },
-  { id: 'vj', label: 'VJ mode', group: 'General', keys: ['Shift V'], run: () => set({ screen: 'vj' }) },
+  { id: 'vj', label: 'VJ mode', group: 'General', keys: ['Shift V'], run: enterVj },
   {
     id: 'shortcuts',
     label: 'Keyboard shortcuts',
