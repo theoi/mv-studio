@@ -477,7 +477,9 @@ describe('person evidence for the verdict', () => {
 
   it('keeps a person called a person exactly as often as an animal, and rules them out with one animal call more', () => {
     const at = (t: number, person: boolean) =>
-      person ? { t, boxes: [around], scores: [0.6] } : { t, boxes: [], animals: [around], animalScores: [0.6] }
+      person
+        ? { t, boxes: [around], scores: [0.6] }
+        : { t, boxes: [], animals: [around], animalScores: [0.6] }
     const tie = [at(0, true), at(0.2, false), at(0.4, true), at(0.6, false)]
     expect(peopleNear(tie, 0.2)).toEqual([around, around])
     expect(peopleNear([...tie, at(0.8, false)], 0.2)).toEqual([])
