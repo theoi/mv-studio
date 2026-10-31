@@ -3,6 +3,7 @@ import {
   alignLines,
   alignWords,
   realignFrom,
+  realignLine,
   type CtcVocabulary,
 } from '../../../src/analysis/lyrics/align.ts'
 import { type CtcEmissions, forcedAlign } from '../../../src/analysis/lyrics/ctc.ts'
@@ -103,6 +104,21 @@ describe('alignLines and realignFrom', () => {
     expect(fixed[1]?.words[2]?.start).toBe(3.9)
     expect(fixed[1]?.words[3]?.start).toBeGreaterThanOrEqual(3.9)
     expect(fixed[1]?.end).toBe(fixed[1]?.words.at(-1)?.end)
+  })
+
+  it('re-times a line after the nearest timed line, skipping untimed lines in between', () => {
+    const song = sung(
+      'we were young a lion is out we were young'.split(' '),
+      [10, 30, 50, 150, 170, 190, 210, 300, 320, 340],
+      400,
+    )
+    const [first] = alignLines(song, vocab, [{ text: 'we were young' }], { to: 2.5 })
+    const untimed = (id: string, text: string) => ({ id, text, words: [] })
+    const doc = [first!, untimed('b', 'a lion is out'), untimed('c', 'we were young')]
+    const fixed = realignLine(song, vocab, doc, 2)
+    expect(fixed[2]?.start).toBe(6)
+    expect(fixed[2]?.words.map((w) => w.text)).toEqual(['we', 'were', 'young'])
+    expect(fixed.slice(0, 2)).toEqual(doc.slice(0, 2))
   })
 })
 
