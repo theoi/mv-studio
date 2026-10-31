@@ -141,6 +141,16 @@ export interface ExportOptions {
   fileName?: string
   /** Earlier exports kept in browser storage (default 1); false keeps them all, e.g. for later files of one job. */
   keepExports?: number | false
+  /**
+   * Project times blended into the output frame at time t (seconds from the range start), with weights that sum to
+   * 1. Defaults to the single time range.start + t. Seamless loops blend their start into their end.
+   */
+  frameTimes?: (t: Seconds) => readonly { time: Seconds; weight: number }[]
+  /** 'mix' (default): the project's mix over the range. 'none': no audio track. Or a function that makes the audio. */
+  audio?:
+    | 'mix'
+    | 'none'
+    | ((mix: (range: { start: Seconds; end: Seconds }) => Promise<AudioBuffer>) => Promise<AudioBuffer>)
 }
 
 /** Exports the project to an MP4 file in browser storage. Run it as a job: jobs.run({ kind: 'export.mp4', ... }). */
@@ -169,14 +179,16 @@ export async function exportProject(
       'unsupported',
       `This browser cannot encode H.264 video at ${width}×${height}. Try a lower resolution.`,
     )
-  const hasAudio = audibleClips(project).length > 0
+  const hasAudio = options.audio !== 'none' && audibleClips(project).length > 0
   if (hasAudio) await ensureAacEncoder(audioBitrate)
   ctx.throwIfCancelled()
 
   let mix: AudioBuffer | null = null
   if (hasAudio) {
     ctx.progress({ stage: 'mix', message: 'Mixing audio', fraction: 0.01 })
-    mix = await renderMix(project, new AudioBufferCache(media), range, AUDIO_SAMPLE_RATE)
+    const cache = new AudioBufferCache(media)
+    const render = (r: { start: Seconds; end: Seconds }) => renderMix(project, cache, r, AUDIO_SAMPLE_RATE)
+    mix = typeof options.audio === 'function' ? await options.audio(render) : await render(range)
     ctx.throwIfCancelled()
   }
 
@@ -188,17 +200,33 @@ export async function exportProject(
     format: new Mp4OutputFormat({ fastStart: false }),
     target: new StreamTarget(writable as unknown as WritableStream, { chunked: true }),
   })
-  const canvas = new OffscreenCanvas(width, height)
-  const frames = new DecoderFrameProvider(media)
-  const compositor = new WebGLCompositor({
-    canvas,
-    frames,
-    media,
-    registry: options.registry,
-    preserveDrawingBuffer: true,
-  })
+  const renderers: { compositor: WebGLCompositor; frames: DecoderFrameProvider; canvas: OffscreenCanvas }[] =
+    []
+  const renderer = (k: number) => {
+    let r = renderers[k]
+    if (!r) {
+      // One decoder per blended time stream, so each decodes forward instead of seeking back and forth.
+      const frames = new DecoderFrameProvider(media)
+      const canvas = new OffscreenCanvas(width, height)
+      const compositor = new WebGLCompositor({
+        canvas,
+        frames,
+        media,
+        registry: options.registry,
+        preserveDrawingBuffer: true,
+      })
+      r = { compositor, frames, canvas }
+      renderers[k] = r
+    }
+    return r
+  }
+  const { compositor, canvas } = renderer(0)
+  const blend = options.frameTimes
+  const encoded = blend ? new OffscreenCanvas(width, height) : canvas
+  const blendContext = blend ? encoded.getContext('2d') : null
+  if (blend && !blendContext) throw new JobError('unsupported', 'This browser cannot blend video frames.')
   let videoCodec = 'avc'
-  const video = new CanvasSource(canvas, {
+  const video = new CanvasSource(encoded, {
     codec: 'avc',
     bitrate: videoBitrate,
     keyFrameInterval: 2,
@@ -239,7 +267,18 @@ export async function exportProject(
       const t = i / fps
       // Keep audio about a second ahead of video so the muxer can interleave without buffering much.
       await sendAudioUntil(t + 1)
-      await compositor.render(project, range.start + t)
+      if (blend && blendContext) {
+        let weight = 0
+        for (const [k, layer] of blend(t).entries()) {
+          const r = renderer(k)
+          await r.compositor.render(project, layer.time)
+          weight += layer.weight
+          // Each layer's share of the running average; the first replaces the previous output frame outright.
+          blendContext.globalCompositeOperation = k === 0 ? 'copy' : 'source-over'
+          blendContext.globalAlpha = k === 0 ? 1 : layer.weight / Math.max(weight, 1e-6)
+          blendContext.drawImage(r.canvas, 0, 0)
+        }
+      } else await compositor.render(project, range.start + t)
       await video.add(t, 1 / fps)
       if (i % 5 === 0 || i === frameCount - 1) {
         const elapsed = (performance.now() - started) / 1000
@@ -268,7 +307,9 @@ export async function exportProject(
       : toJobError(error)
   } finally {
     ctx.signal.removeEventListener('abort', abort)
-    compositor.dispose()
-    frames.dispose()
+    for (const r of renderers) {
+      r.compositor.dispose()
+      r.frames.dispose()
+    }
   }
 }
