@@ -32,7 +32,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 
 ### Start and import
 
-- Bring in a song (MP3, WAV, FLAC, M4A/AAC, OGG, Opus), video (MP4, MOV, WebM, MKV), images (PNG, JPEG, GIF, WebP, AVIF, SVG) and fonts (TTF, OTF, WOFF, WOFF2). A song's title and artist tags name the project and the director's title card.
+- Bring in a song (MP3, WAV, FLAC, M4A/AAC, OGG, Opus), video (MP4, MOV, WebM, MKV), images (PNG, JPEG, GIF, WebP, AVIF, SVG), fonts (TTF, OTF, WOFF, WOFF2) and LUT files (.cube). A song's title and artist tags name the project and the director's title card.
 - Drag media from the Library onto the timeline, or drop files from your computer onto a track, and they land where you drop them.
 - Open a recent project, duplicate one, or open a project file. A short guide shows you around the editor on your first visit.
 
@@ -41,6 +41,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 - Multi-track timeline with the song's waveform: move, trim, split, snap, zoom, multi-select, copy and paste, and markers. Reorder tracks, and mute, solo, lock or hide them.
 - Clip speed, and how each clip fills other aspect ratios: following the subject, fitted with bars, or cropped to the center.
 - Text with fonts and styling, transitions, keyframe animation, blend modes, color adjustments and filters.
+- Your own LUTs in the **Color grade** effect: its LUT choice ends with **Load a LUT file…** (a .cube file or a Hald CLUT image), and **Manage LUT files…** shows which color grades use each one and removes it.
 - Keyframes show as marks on the selected clip. Click one to go to it, choose its easing (Linear, Ease in, Ease out, Ease in and out or Hold) or remove it. In the Inspector, a value's diamond adds a keyframe at the playhead or removes the one there, and Alt+K (⌥K on a Mac) does the same for the value that has focus.
 - Real-time preview in sync with the song: loop a section, set the volume, zoom or go full screen, and move, scale and rotate the selected clip with handles on the canvas.
 - Undo and redo with an edit history, autosave, and a portable project file.
