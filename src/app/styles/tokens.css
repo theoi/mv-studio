@@ -1,6 +1,8 @@
 /*
  * MV Studio design tokens. Every color, size and duration in src/app comes from here.
- * Contrast notes: --text-3 on --bg-panel is 4.6:1 and white on --accent is 4.7:1 (WCAG AA).
+ * Contrast notes (WCAG AA): --text-3 on --bg-panel is 4.6:1; --text-on-accent on --accent is 7.3:1; --accent-text is
+ * 9.1:1 on --bg-panel and 6.6:1 on --bg-selected over --bg-raised; the focus ring (--accent-ring) is 3.5:1 on every
+ * surface; --danger is 5.6:1 on --bg-panel.
  */
 :root {
   color-scheme: dark;
@@ -13,7 +15,7 @@
   --bg-input: #0c0d10;
   --bg-hover: rgb(255 255 255 / 0.045);
   --bg-active: rgb(255 255 255 / 0.08);
-  --bg-selected: rgb(124 110 246 / 0.16);
+  --bg-selected: rgb(249 122 94 / 0.14);
   --bg-scrim: rgb(5 5 8 / 0.62);
 
   --border-subtle: rgb(255 255 255 / 0.06);
@@ -24,25 +26,28 @@
   --text-2: #a3a6ae;
   --text-3: #7b7f88;
   --text-disabled: #50535b;
-  --text-on-accent: #ffffff;
+  --text-on-accent: #170b08;
 
-  /* The single accent */
-  --accent: #6c5cf0;
-  --accent-hover: #7b6cf5;
-  --accent-press: #5e4fe2;
-  --accent-text: #a79eff;
-  --accent-line: #8d81fa;
-  --accent-soft: rgb(124 110 246 / 0.14);
-  --accent-softer: rgb(124 110 246 / 0.08);
-  --accent-ring: rgb(141 129 250 / 0.55);
+  /* The single accent: coral. Light enough that labels on it are dark (white on coral is only 2.6:1). */
+  --accent: #f97a5e;
+  --accent-hover: #fb8d74;
+  --accent-press: #ea6a4f;
+  --accent-text: #ff9a83;
+  --accent-line: #fa8a70;
+  --accent-soft: rgb(249 122 94 / 0.14);
+  --accent-softer: rgb(249 122 94 / 0.08);
+  --accent-ring: rgb(250 138 112 / 0.6);
+  --accent-glow: rgb(249 122 94 / 0.35);
 
   /* Status */
   --success: #3fb68b;
   --success-soft: rgb(63 182 139 / 0.14);
   --warning: #e2a54a;
   --warning-soft: rgb(226 165 74 / 0.14);
-  --danger: #ef5f57;
-  --danger-soft: rgb(239 95 87 / 0.14);
+  /* Rose rather than orange-red, so danger never reads as the coral accent. */
+  --danger: #ec5a72;
+  --danger-soft: rgb(236 90 114 / 0.14);
+  --danger-text: #ff8b9d;
   --record: #ff4d4f;
 
   /* Data colors: muted, used only for song sections and clip types */

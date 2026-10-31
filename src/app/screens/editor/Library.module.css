@@ -267,7 +267,7 @@ button.songRow:hover {
   padding: var(--space-2);
   border-radius: var(--radius-md);
   background: var(--accent-softer);
-  box-shadow: 0 0 0 1px rgb(141 129 250 / 0.18) inset;
+  box-shadow: 0 0 0 1px rgb(250 138 112 / 0.18) inset;
   animation: rise var(--dur-slow) var(--ease-out);
 }
 

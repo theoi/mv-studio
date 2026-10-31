@@ -5,7 +5,7 @@
   padding: var(--space-3);
   border-radius: var(--radius-md);
   background: var(--accent-softer);
-  box-shadow: 0 0 0 1px rgb(141 129 250 / 0.2) inset;
+  box-shadow: 0 0 0 1px rgb(250 138 112 / 0.2) inset;
   animation: rise var(--dur-slow) var(--ease-out);
 }
 
@@ -49,9 +49,9 @@
   height: 26px;
   padding: 0 4px 0 8px;
   border-radius: var(--radius-full);
-  background: #1d1b2e;
+  background: #261c1b;
   box-shadow:
-    0 0 0 1px rgb(141 129 250 / 0.35) inset,
+    0 0 0 1px rgb(250 138 112 / 0.35) inset,
     0 6px 16px rgb(0 0 0 / 0.4);
   color: var(--text-1);
   font-size: var(--text-sm);
@@ -81,7 +81,7 @@
 }
 
 .chipAction:hover {
-  background: rgb(124 110 246 / 0.26);
+  background: rgb(249 122 94 / 0.26);
 }
 
 .close {

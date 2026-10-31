@@ -149,9 +149,9 @@
 }
 
 .reviewLink:hover {
-  background: rgb(108 92 240 / 0.14);
+  background: var(--accent-soft);
 }
 
 .reviewLink:focus-visible {
-  outline-color: #6c5cf0;
+  outline-color: var(--accent-line);
 }

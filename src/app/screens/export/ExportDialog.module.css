@@ -78,7 +78,7 @@
 .check input:checked + span {
   background: var(--accent);
   box-shadow: none;
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .check input:focus-visible + span {

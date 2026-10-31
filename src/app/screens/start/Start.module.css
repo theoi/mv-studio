@@ -4,7 +4,7 @@
   flex-direction: column;
   overflow: auto;
   background:
-    radial-gradient(1200px 500px at 50% -10%, rgb(124 110 246 / 0.07), transparent 70%), var(--bg-app);
+    radial-gradient(1200px 500px at 50% -10%, rgb(249 122 94 / 0.07), transparent 70%), var(--bg-app);
 }
 
 .header {
