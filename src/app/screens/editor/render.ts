@@ -1,21 +1,10 @@
 import { sceneLayers, type SceneId } from '../../mock/art.ts'
-import { song } from '../../mock/song.ts'
-import type { LyricLine, Project, Transform } from '../../../model/index.ts'
-import { clipsAt } from '../../../model/index.ts'
-import { sceneOf } from '../../mock/demoProject.ts'
-import {
-  energyAt,
-  lyricAt,
-  sectionAt,
-  sectionKind,
-  songAnalysis,
-  bpmOf,
-  type SectionKind,
-} from '../../state/project.ts'
+import type { LyricLine } from '../../../model/index.ts'
+import type { SectionKind } from '../../state/project.ts'
 
 /*
- * Stand-in for the engine compositor in the design preview: a Canvas 2D sketch of a frame. The real preview calls
- * src/engine's Compositor.render(project, time); this only needs to look right, not match export.
+ * A Canvas 2D sketch of a frame, used by the VJ mode design preview until it runs on the engine compositor. The
+ * editor preview renders with src/engine.
  */
 
 export interface FrameInput {
@@ -44,76 +33,6 @@ const KARAOKE = '#ffd27a'
 
 function easeOut(x: number) {
   return 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3)
-}
-
-function transformOf(t: Transform, opacity: number) {
-  return {
-    x: t.x.value,
-    y: t.y.value,
-    scale: t.scaleX.value,
-    rotation: t.rotation.value,
-    opacity,
-    reactive: !!t.scaleX.modulation?.length,
-  }
-}
-
-export function describeFrame(
-  p: Project,
-  t: number,
-  ui: { behindSubject: boolean; selectedClipId?: string; selectedLyricId?: string; showSelection: boolean },
-): FrameInput {
-  const active = clipsAt(p, t)
-  const hidden = new Set(p.tracks.filter((tr) => tr.hidden).map((tr) => tr.id))
-  const media = active
-    .filter((c) => !hidden.has(c.trackId) && (c.type === 'video' || c.type === 'image'))
-    .sort(
-      (a, b) => p.tracks.findIndex((x) => x.id === b.trackId) - p.tracks.findIndex((x) => x.id === a.trackId),
-    )
-    .pop()
-  const overlayClip = active.find(
-    (c) => !hidden.has(c.trackId) && (c.type === 'generator' || (c.type === 'text' && !c.lyricLineId)),
-  )
-  const sec = sectionAt(p, t)
-  const bpm = bpmOf(p) ?? song.bpm
-  let overlay: FrameInput['overlay']
-  if (overlayClip) {
-    const progress = (t - overlayClip.start) / overlayClip.duration
-    if (overlayClip.type === 'generator')
-      overlay = {
-        kind: overlayClip.generatorId.includes('particles') ? 'particles' : 'spectrum',
-        progress,
-        id: overlayClip.id,
-      }
-    else if (overlayClip.type === 'text')
-      overlay = {
-        kind: 'title',
-        progress,
-        id: overlayClip.id,
-        text:
-          overlayClip.style.textTransform === 'uppercase' ? overlayClip.text.toUpperCase() : overlayClip.text,
-        subtitle: overlayClip.id === 'o-title' ? song.artist : undefined,
-      }
-  }
-  const lyricsHidden = p.tracks.some(
-    (tr) =>
-      tr.hidden &&
-      Object.values(p.clips).some((c) => c.trackId === tr.id && c.type === 'text' && c.lyricLineId),
-  )
-  return {
-    t,
-    scene: media && 'assetId' in media ? sceneOf(p.assets[media.assetId]) : undefined,
-    clipProgress: media ? (t - media.start) / media.duration : 0,
-    transform: media && 'transform' in media ? transformOf(media.transform, media.opacity.value) : undefined,
-    overlay,
-    lyric: lyricsHidden ? undefined : lyricAt(p, t),
-    energy: energyAt(songAnalysis(p), t),
-    beatInterval: 60 / bpm,
-    sectionKind: sec ? sectionKind(sec) : 'verse',
-    behindSubject: ui.behindSubject,
-    selectedClipId: ui.selectedClipId,
-    selectedLyricId: ui.selectedLyricId,
-    showSelection: ui.showSelection,
-  }
 }
 
 function selectionBox(ctx: CanvasRenderingContext2D, x: number, y: number, bw: number, bh: number) {

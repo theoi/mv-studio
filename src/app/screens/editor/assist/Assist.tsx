@@ -39,8 +39,10 @@ import { FEATURED_CLIP_ID } from '../../../mock/demoProject.ts'
 import { media } from '../../../mock/media.ts'
 import { peaks } from '../../../mock/song.ts'
 import { JOB_KINDS, latestJob, runningJobs, useJobs } from '../../../state/jobs.ts'
+import { putBehind, suitableClips } from '../../../state/behind.ts'
 import {
   bpmOf,
+  editor,
   hasSong,
   lyricLines,
   sectionKind,
@@ -947,9 +949,15 @@ function BehindView() {
         <Button
           variant="primary"
           block
-          onClick={() =>
-            set({ behindSubject: true, selection: { type: 'clip', id: FEATURED_CLIP_ID }, playhead: 64.6 })
-          }
+          onClick={() => {
+            const count = putBehind(suitableClips(editor.getProject()))
+            set({ selection: { type: 'clip', id: FEATURED_CLIP_ID }, playhead: 66.6 })
+            toast(
+              count
+                ? `Lyrics now sit behind the person on ${count} clips`
+                : 'Lyrics already sit behind the person on every suitable clip',
+            )
+          }}
         >
           Apply to suitable clips
         </Button>

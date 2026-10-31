@@ -6,6 +6,8 @@ import {
   startExport,
   startStems,
 } from '../mock/actions.ts'
+import type { Project } from '../../model/index.ts'
+import { bringToFront, putBehind, suitableClips } from './behind.ts'
 import { editor, loadDemoProject, loadEmptyProject } from './project.ts'
 import {
   get,
@@ -38,7 +40,12 @@ function strToSel(v: string | null): Selection {
   return { type: 'none' }
 }
 
-export function stateToHash(s: UiState, emptyProject: boolean): string {
+function hasAnyCutout(project: Project): boolean {
+  return Object.values(project.clips).some((c) => c.meta?.behindSubjectOf)
+}
+
+export function stateToHash(s: UiState, project: Project): string {
+  const emptyProject = !project.songAssetId
   const q = new URLSearchParams()
   if (s.screen === 'setup') {
     q.set('kind', s.kind)
@@ -57,7 +64,7 @@ export function stateToHash(s: UiState, emptyProject: boolean): string {
     if (s.dialog === 'export' && s.exportPhase !== 'setup') q.set('export', s.exportPhase)
     if (s.paletteOpen) q.set('palette', '1')
     if (s.guideStep !== null) q.set('guide', String(s.guideStep))
-    if (s.behindSubject) q.set('behind', '1')
+    if (hasAnyCutout(project)) q.set('behind', '1')
   }
   if (s.screen === 'start' && s.dialog === 'settings') q.set('dialog', 'settings')
   if (!s.review) q.set('review', '0')
@@ -85,7 +92,6 @@ export function hashToState(hash: string): Partial<UiState> {
     exportPhase: (q.get('export') as ExportPhase | null) ?? 'setup',
     paletteOpen: q.get('palette') === '1',
     guideStep: guide === null ? null : Number(guide),
-    behindSubject: q.get('behind') === '1',
     review: q.get('review') !== '0',
   }
 }
@@ -106,6 +112,12 @@ function applyHash(hash: string) {
   if (director === 'running') startDirector(0.35)
   if (director === 'done') startDirector(0.999)
   if (q.get('autocut') === 'done') startAutocut(0.999)
+  const behind = q.get('behind') === '1'
+  if (behind !== hasAnyCutout(editor.getProject())) {
+    const project = editor.getProject()
+    if (behind) putBehind(suitableClips(project))
+    else bringToFront(Object.keys(project.clips))
+  }
   if (q.get('export') === 'exporting')
     startExport([
       { name: 'Full video', seconds: exportSeconds('full'), startAt: 0.62 },
@@ -128,9 +140,9 @@ export function initHashSync() {
   started = true
   if (window.location.hash) applyHash(window.location.hash)
   window.addEventListener('hashchange', () => applyHash(window.location.hash))
-  let last = stateToHash(get(), !editor.getProject().songAssetId)
+  let last = stateToHash(get(), editor.getProject())
   const write = () => {
-    const next = stateToHash(get(), !editor.getProject().songAssetId)
+    const next = stateToHash(get(), editor.getProject())
     if (next === last) return
     const screenChanged = next.split('?')[0] !== last.split('?')[0]
     last = next

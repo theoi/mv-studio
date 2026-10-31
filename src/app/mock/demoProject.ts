@@ -13,11 +13,13 @@ import {
   defaultTransform,
   type Asset,
   type AudioAnalysis,
+  type AudioModulation,
   type GeneratorClip,
   type LyricsDoc,
   type Project,
   type Track,
 } from '../../model/index.ts'
+import { songFeatures } from './arrangement.ts'
 import type { SceneId } from './art.ts'
 import { media } from './media.ts'
 import { beatInterval, energy, energyRate, lyrics, sections, song } from './song.ts'
@@ -33,6 +35,13 @@ export const TRACK_IDS = {
 
 export function sceneOf(asset: Asset | undefined): SceneId | undefined {
   return asset?.storageKey.startsWith('mock:') ? (asset.storageKey.slice(5) as SceneId) : undefined
+}
+
+export const MASK_PREFIX = 'mock-mask:'
+
+/** Storage key of the subject mask generated for a sample scene. */
+export function maskStorageKey(scene: SceneId): string {
+  return `${MASK_PREFIX}${scene}`
 }
 
 function asset(
@@ -53,6 +62,7 @@ function asset(
     duration,
     width: kind === 'audio' ? undefined : 1920,
     height: kind === 'audio' ? undefined : 1080,
+    hasAudio: kind === 'video' ? false : undefined,
     origin: generated
       ? { type: 'generated', provider: 'fal-ai', prompt: 'aurora over a neon city' }
       : { type: 'import' },
@@ -70,6 +80,7 @@ function generator(
   duration: number,
   generatorId: string,
   name: string,
+  params: GeneratorClip['params'],
 ): GeneratorClip {
   return {
     id,
@@ -84,13 +95,28 @@ function generator(
     effects: [],
     type: 'generator',
     generatorId,
-    params: {
-      bars: anim(56),
-      color: { value: '#ffffff' },
-      sensitivity: anim(0.72),
-      smoothing: anim(0.3),
-    },
+    params,
   }
+}
+
+const spectrumParams = (): GeneratorClip['params'] => ({
+  bars: anim(48),
+  color: { value: '#ffffffd0' },
+  color2: { value: '#c9c2ffd0' },
+  height: anim(0.14),
+  gap: anim(0.45),
+})
+
+/** A small push on every beat, so choruses pulse with the music. */
+const beatPulse = (): AudioModulation[] => [
+  { source: { kind: 'beat' }, amount: 0.025, mode: 'add', smoothing: 0.3 },
+]
+
+const LYRIC_STYLE = {
+  fontFamily: "'Inter Variable', Inter, system-ui, sans-serif",
+  fontSize: 72,
+  fontWeight: 750,
+  shadow: { color: 'rgba(0,0,0,0.55)', blur: 28, offsetX: 0, offsetY: 2 },
 }
 
 const cutPlan: Record<string, { every: number; scenes: SceneId[] }> = {
@@ -145,7 +171,13 @@ export function buildDemoProject(): Project {
       const duration = Math.min(s.end, t + plan.every) - t
       const id = `c-${s.id}-${i}`
       const common = { trackId: TRACK_IDS.video, assetId: m.id, start: t, duration }
-      add(m.type === 'image' ? { ...createImageClip(common), id } : { ...createVideoClip(common), id })
+      const clip =
+        m.type === 'image' ? { ...createImageClip(common), id } : { ...createVideoClip(common), id }
+      if (s.id.startsWith('s-c')) {
+        clip.transform.scaleX.modulation = beatPulse()
+        clip.transform.scaleY.modulation = beatPulse()
+      }
+      add(clip)
       i++
     }
   }
@@ -156,27 +188,44 @@ export function buildDemoProject(): Project {
       text: 'NEON SKYLINE',
       start: 1,
       duration: 8,
-      style: { fontWeight: 800, letterSpacing: 0.22, textTransform: 'uppercase' },
+      style: {
+        fontFamily: LYRIC_STYLE.fontFamily,
+        fontWeight: 800,
+        letterSpacing: 0.22,
+        textTransform: 'uppercase',
+        shadow: LYRIC_STYLE.shadow,
+      },
     }),
     id: 'o-title',
     name: 'Title',
+    animation: { presetId: 'fade-up', params: {} },
   })
-  add(generator('o-spec1', 64, 32, 'visualizer.spectrum', 'Spectrum bars'))
-  add(generator('o-spec2', 128, 32, 'visualizer.spectrum', 'Spectrum bars'))
-  add(generator('o-part', 160, 24, 'visualizer.particles', 'Particles'))
+  add(generator('o-spec1', 64, 32, 'visualizer.spectrum', 'Spectrum bars', spectrumParams()))
+  add(generator('o-spec2', 128, 32, 'visualizer.spectrum', 'Spectrum bars', spectrumParams()))
+  add(
+    generator('o-part', 160, 24, 'visualizer.particles', 'Particles', {
+      color: { value: '#ffffff' },
+      density: anim(0.4),
+      size: anim(5),
+      speed: anim(0.35),
+      reactivity: anim(1.2),
+    }),
+  )
 
   for (const line of lyrics) {
+    const clip = createTextClip({
+      trackId: TRACK_IDS.lyrics,
+      text: line.text,
+      start: line.start,
+      duration: line.end - line.start,
+      style: LYRIC_STYLE,
+    })
+    clip.transform.y = anim(0.75)
     add({
-      ...createTextClip({
-        trackId: TRACK_IDS.lyrics,
-        text: line.text,
-        start: line.start,
-        duration: line.end - line.start,
-        style: { fontSize: 72 },
-      }),
+      ...clip,
       id: `t-${line.id}`,
       lyricLineId: line.id,
-      animation: { presetId: 'kinetic.rise', params: {} },
+      animation: { presetId: 'fade-up', params: {} },
       karaoke: { highlightColor: '#ffd27a', mode: 'word' },
     })
   }
@@ -212,6 +261,7 @@ export function buildDemoProject(): Project {
       repeatGroup: s.kind === 'chorus' ? chorusGroup : undefined,
     })),
     energy: { rate: energyRate, values: Array.from(energy, (v) => +v.toFixed(3)) },
+    features: songFeatures(),
   }
 
   const lyricsDoc: LyricsDoc = {

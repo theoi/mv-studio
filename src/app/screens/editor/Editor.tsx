@@ -7,7 +7,6 @@ import { RightPanel } from './RightPanel.tsx'
 import { Timeline } from './timeline/Timeline.tsx'
 import { CommandPalette, ExportDialog, FirstRunGuide } from '../../lazy.ts'
 import { Deferred } from '../common/Deferred.tsx'
-import { usePlaybackClock } from './hooks.ts'
 import { Splitter } from './Splitter.tsx'
 import styles from './Editor.module.css'
 
@@ -26,7 +25,6 @@ function storedSizes(): PanelSizes {
 }
 
 export function Editor() {
-  usePlaybackClock()
   const libraryOpen = useUi((s) => s.libraryOpen)
   const exportOpen = useUi((s) => s.dialog === 'export')
   const paletteOpen = useUi((s) => s.paletteOpen)

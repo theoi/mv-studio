@@ -306,10 +306,12 @@ export function Switch({
   checked,
   onCheckedChange,
   ariaLabel,
+  disabled,
 }: {
   checked: boolean
   onCheckedChange: (v: boolean) => void
   ariaLabel: string
+  disabled?: boolean
 }) {
   return (
     <RSwitch.Root
@@ -317,6 +319,7 @@ export function Switch({
       checked={checked}
       onCheckedChange={onCheckedChange}
       aria-label={ariaLabel}
+      disabled={disabled}
     >
       <RSwitch.Thumb className={styles.switchThumb} />
     </RSwitch.Root>
