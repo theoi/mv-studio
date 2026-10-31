@@ -410,6 +410,6 @@ test('VJ mode offers Try again when MIDI access was blocked', async ({ page }) =
   await page.getByRole('menuitem', { name: /Connect a MIDI controller/ }).click()
   await page.getByRole('button', { name: 'MIDI blocked' }).click()
   await expect(page.getByRole('menuitem', { name: /MIDI access was blocked/ })).toBeDisabled()
-  await page.getByRole('menuitem', { name: 'Try again', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^Try again/ }).click()
   await expect(page.getByRole('button', { name: 'E2E Pad Controller' })).toBeVisible()
 })

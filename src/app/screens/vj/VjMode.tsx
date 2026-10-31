@@ -54,13 +54,7 @@ import {
   useProject,
 } from '../../state/project.ts'
 import { useThumbnail } from '../../state/thumbs.ts'
-import {
-  midiControllers,
-  midiDevicesLabel,
-  midiErrorText,
-  setActiveVjSession,
-  vjMidi,
-} from '../../state/vj.ts'
+import { midiControllers, midiDevicesLabel, setActiveVjSession, vjMidi } from '../../state/vj.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
 import styles from './VjMode.module.css'
 
@@ -573,16 +567,19 @@ export function VjMode() {
                 </MenuItem>
               ) : snapshot?.midi.status === 'denied' || snapshot?.midi.status === 'error' ? (
                 <>
-                  {snapshot.midi.status === 'denied' ? (
-                    <MenuItem disabled description="Allow MIDI devices in the site settings, then try again">
-                      MIDI access was blocked
-                    </MenuItem>
-                  ) : (
-                    <MenuItem disabled description={midiErrorText(snapshot.midi.error)}>
-                      MIDI error
-                    </MenuItem>
-                  )}
-                  <MenuItem onSelect={() => void session?.connectMidi()}>Try again</MenuItem>
+                  <MenuItem disabled description={snapshot.midi.error}>
+                    {snapshot.midi.status === 'denied' ? 'MIDI access was blocked' : 'MIDI couldn’t start'}
+                  </MenuItem>
+                  <MenuItem
+                    description={
+                      snapshot.midi.status === 'denied'
+                        ? 'Allow MIDI devices in the site settings first'
+                        : 'Reconnect the controller first'
+                    }
+                    onSelect={() => void session?.connectMidi()}
+                  >
+                    Try again
+                  </MenuItem>
                 </>
               ) : (
                 <MenuItem
