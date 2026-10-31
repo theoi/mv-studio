@@ -267,6 +267,63 @@ test('keyframes close together share one mark until zooming in splits them, and 
   await expect(marks).toHaveCount(1)
 })
 
+test('on a long take zoomed in, only the marks near the view are drawn, and End, Home and scrolling still reach every one', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  // A 200 s clip keyed every 0.25 s, like a long VJ strobe take.
+  await page.evaluate(() => {
+    const { app, model } = window.mvStudio
+    const track = model.createTrack('visual', 'Take')
+    const clip = model.createSolidClip({ trackId: track.id, color: '#101010', start: 0, duration: 200 })
+    clip.opacity = {
+      value: 1,
+      keyframes: Array.from({ length: 800 }, (_, i) => ({ time: i * 0.25, value: i % 2, easing: 'hold' })),
+    }
+    app.project.editor.dispatch([
+      { type: 'track.add', track, index: 0 },
+      { type: 'clip.add', clip },
+    ])
+    app.ui.set({ playhead: 100 })
+    app.ui.selectClips([clip.id])
+  })
+  const marks = page.locator('button[aria-label^="Keyframe at "], button[aria-label*=" keyframes, "]')
+  const groups = page.locator('button[aria-label*=" keyframes, "]')
+  await expect(marks.first()).toBeVisible()
+  for (let i = 0; i < 16 && (await groups.count()) > 0; i++) await page.keyboard.press('ControlOrMeta+=')
+  await expect(groups).toHaveCount(0)
+
+  // Every key has its own mark now, but only those around the view are in the page.
+  const drawn = await marks.count()
+  expect(drawn).toBeGreaterThan(10)
+  expect(drawn).toBeLessThan(200)
+  const scroller = page.locator('[data-timeline-scroller]')
+  const covered = async () => {
+    const view = (await scroller.boundingBox())!
+    const xs = await marks.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().left))
+    // The track headers cover the scroller's first 148 px.
+    return Math.min(...xs) <= view.x + 148 + 24 && Math.max(...xs) >= view.x + view.width - 24
+  }
+  expect(await covered()).toBe(true)
+
+  // End and Home reach the last and first keys, wherever the view is.
+  const tabStop = page.locator('button[aria-label^="Keyframe at "][tabindex="0"]')
+  await tabStop.focus()
+  await page.keyboard.press('End')
+  await expect(page.getByRole('button', { name: 'Keyframe at 3:19.7', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: 'Keyframe at 3:19.7', exact: true })).toBeInViewport()
+  await page.keyboard.press('Home')
+  await expect(page.getByRole('button', { name: 'Keyframe at 0:00.0', exact: true })).toBeFocused()
+
+  // Scrolled to the middle, the marks there are drawn.
+  await scroller.evaluate((el) => (el.scrollLeft = el.scrollWidth / 2))
+  await expect.poll(covered).toBe(true)
+  expect(await marks.count()).toBeLessThan(200)
+})
+
 test('no diamond covers a mark’s count, and the diamonds of separate marks never touch', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
