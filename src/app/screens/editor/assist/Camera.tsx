@@ -1,6 +1,7 @@
 import { AlertTriangle, Box, Check, Lock, Play, RotateCcw, Undo2 } from 'lucide-react'
 import type { Asset, ImageClip } from '../../../../model/index.ts'
-import { Button } from '../../../ds/Button.tsx'
+import { useId, useRef } from 'react'
+import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Badge, EmptyState } from '../../../ds/Feedback.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
@@ -8,7 +9,9 @@ import { formatBytes, formatTime, plural } from '../../../format.ts'
 import {
   MOTION_PRESETS,
   cameraTargets,
+  chosenIntensity,
   hasCameraMove,
+  resetStrength,
   startCameraMoves,
   stillClips,
   undoCameraMoves,
@@ -54,6 +57,9 @@ export function CameraView() {
   const selection = useUi((s) => s.selection)
   const motion = useCamera((s) => s.motion)
   const strength = useCamera((s) => s.strength)
+  const strengthSet = useCamera((s) => s.strengthSet)
+  const slider = useRef<HTMLDivElement>(null)
+  const strengthHint = useId()
   const result = useCamera((s) => (job ? s.results[job.id] : undefined))
   const targets = cameraTargets(project, selection)
   const download = useDepthDownload(phase === 'idle' && targets.length > 0)
@@ -61,7 +67,7 @@ export function CameraView() {
     startCameraMoves(
       targets.map((c) => c.id),
       MOTION_PRESETS[motion],
-      strength / 100,
+      chosenIntensity(),
     )
 
   if (phase === 'running')
@@ -194,8 +200,37 @@ export function CameraView() {
           ]}
         />
       </Field>
-      <Field label="Strength">
-        <Slider value={strength} onChange={(v) => useCamera.setState({ strength: v })} ariaLabel="Strength" />
+      <Field
+        label="Strength"
+        {...(strengthSet
+          ? {
+              action: (
+                <IconButton
+                  label="Back to automatic strength"
+                  size="xs"
+                  tooltipSide="left"
+                  onClick={() => {
+                    resetStrength()
+                    slider.current?.querySelector<HTMLElement>('[role="slider"]')?.focus()
+                  }}
+                >
+                  <RotateCcw />
+                </IconButton>
+              ),
+            }
+          : { hint: 'Each image gets as much as it can take without smearing.', hintId: strengthHint })}
+      >
+        <div className={styles.sliderRow} ref={slider}>
+          <Slider
+            value={strength}
+            onChange={(v) => useCamera.setState({ strength: v, strengthSet: true })}
+            ariaLabel="Strength"
+            {...(strengthSet
+              ? {}
+              : { valueText: 'Automatic, 50% or less for each image', ariaDescribedBy: strengthHint })}
+          />
+          <span className={`${styles.sliderValue} tnum`}>{strengthSet ? `${strength}%` : 'Auto'}</span>
+        </div>
       </Field>
       {targets.length ? (
         targets.map((clip) => {

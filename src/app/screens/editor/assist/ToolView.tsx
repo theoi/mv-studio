@@ -37,12 +37,33 @@ export function ToolView({
   )
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+export function Field({
+  label,
+  children,
+  hint,
+  hintId,
+  action,
+}: {
+  label: string
+  children: ReactNode
+  hint?: string
+  /** Id for the hint, so the control can point to it with aria-describedby. */
+  hintId?: string
+  /** A small button at the label's right end, such as a reset. */
+  action?: ReactNode
+}) {
   return (
     <div className={styles.field}>
-      <div className={styles.fieldLabel}>{label}</div>
+      <div className={action ? styles.fieldLabelRow : styles.fieldLabel}>
+        {action ? <span className={styles.fieldLabel}>{label}</span> : label}
+        {action}
+      </div>
       {children}
-      {hint && <div className={styles.fieldHint}>{hint}</div>}
+      {hint && (
+        <div className={styles.fieldHint} id={hintId}>
+          {hint}
+        </div>
+      )}
     </div>
   )
 }

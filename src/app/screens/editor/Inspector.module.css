@@ -185,6 +185,21 @@
   margin-top: 2px;
 }
 
+/* Advice under a control: quiet text with a warning icon. */
+.noteWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.noteWarning svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  color: var(--warning);
+}
+
 .effectRow {
   display: flex;
   align-items: center;

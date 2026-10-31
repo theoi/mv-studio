@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useId, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { VisualClip } from '../../../../model/index.ts'
@@ -9,6 +9,7 @@ import { FieldRow, Section, Select, Slider } from '../../../ds/Fields.tsx'
 import {
   MOTION_PRESETS,
   cameraMoveOf,
+  chosenIntensity,
   hasCameraMove,
   motionOf,
   removeCameraMove,
@@ -17,6 +18,7 @@ import {
   undoCameraMoves,
   useCamera,
   useDepthDownload,
+  useSafeIntensity,
   type CameraMotion,
 } from '../../../state/camera.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
@@ -41,8 +43,11 @@ export function CameraSuggestion({ clip }: { clip: VisualClip }) {
       id={`camera-${clip.id}`}
       action="Add 3D camera"
       onAction={() => {
-        const { motion, strength } = useCamera.getState()
-        const handle = startCameraMoves([clip.id], MOTION_PRESETS[motion], strength / 100)
+        const handle = startCameraMoves(
+          [clip.id],
+          MOTION_PRESETS[useCamera.getState().motion],
+          chosenIntensity(),
+        )
         handle?.promise.then(
           (result) => toast('3D camera move added', { label: 'Undo', run: () => undoCameraMoves(result) }),
           (err: unknown) => {
@@ -77,8 +82,9 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
   const refocus = useRef(false)
   const requests = useCamera((s) => s.requests)
   const presets = useCamera((s) => s.presets)
-  const strength = useCamera((s) => s.strength)
   const move = cameraMoveOf(clip)
+  const safe = useSafeIntensity(clip)
+  const smearId = useId()
   const busy = phase === 'running'
   const asked = !!job && !!requests[job.id]?.includes(clip.id)
   const adding = asked && busy ? job : undefined
@@ -99,10 +105,13 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
     else if (v in MOTION_PRESETS) {
       const preset = MOTION_PRESETS[v as CameraMotion]
       if (move) setCameraMove(clip.id, { preset })
-      else startCameraMoves([clip.id], preset, strength / 100)
+      else startCameraMoves([clip.id], preset, chosenIntensity())
     }
   }
   const intensity = move ? Math.round(move.intensity * 100) : 0
+  const safePercent = safe === null ? null : Math.round(safe * 100)
+  // Advice only: a strength above the still's safe amount is kept, with a note that it may smear.
+  const smears = !!move && !adding && safePercent !== null && intensity > safePercent
   return (
     <Section title="Motion" defaultOpen={!!move || !!adding}>
       <FieldRow label="3D camera" trailing={<span className={styles.trailSpacer} />}>
@@ -121,9 +130,18 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
             onChange={(v) => setCameraMove(clip.id, { intensity: v / 100 }, true)}
             onCommit={() => editor.endGesture()}
             ariaLabel="3D camera strength"
+            {...(smears ? { ariaDescribedBy: smearId } : {})}
           />
           <span className={`${styles.value} tnum`}>{intensity}%</span>
         </FieldRow>
+      )}
+      {smears && (
+        <p id={smearId} className={styles.note}>
+          <span className={styles.noteWarning}>
+            <AlertTriangle aria-hidden />
+            May smear behind foreground objects above {safePercent}%.
+          </span>
+        </p>
       )}
       {adding ? (
         <div className={styles.progressRow}>
