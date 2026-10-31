@@ -195,19 +195,26 @@ const WEIGHTS: [number, string][] = [
   [900, 'Black'],
 ]
 
-const weightName = (weight: number) => WEIGHTS.find(([w]) => w === weight)?.[1] ?? `${weight} · Custom`
+const weightName = (weight: number) => WEIGHTS.find(([w]) => w === weight)?.[1]
 
 /** The weights the style's font has (all of them for a font that isn't bundled), and the style's own. */
 export function weightChoice(style: TextStyle): {
   value: string
-  options: { value: string; label: string }[]
+  options: { value: string; label: string; description?: string }[]
 } {
   const [lightest, boldest] = bundledFont(style.fontFamily)?.weights ?? [100, 900]
   const weights = WEIGHTS.map(([w]) => w).filter((w) => w >= lightest && w <= boldest)
   if (!weights.includes(style.fontWeight)) weights.push(style.fontWeight)
   return {
     value: String(style.fontWeight),
-    options: weights.sort((a, b) => a - b).map((w) => ({ value: String(w), label: weightName(w) })),
+    options: weights
+      .sort((a, b) => a - b)
+      .map((w) => {
+        const name = weightName(w)
+        return name
+          ? { value: String(w), label: name }
+          : { value: String(w), label: String(w), description: 'Custom' }
+      }),
   }
 }
 
@@ -215,7 +222,7 @@ export function setWeight(clip: TextClip, weight: number): void {
   if (clip.style.fontWeight === weight) return
   dispatch(
     { type: 'clip.set', clipId: clip.id, path: ['style', 'fontWeight'], value: weight },
-    { label: `Weight: ${weightName(weight)}` },
+    { label: `Weight: ${weightName(weight) ?? weight}` },
   )
 }
 

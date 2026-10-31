@@ -165,9 +165,10 @@ describe('weight, values, outline, shadow and background', () => {
       'Regular',
       'Medium',
       'Semibold',
-      '650 · Custom',
+      '650',
       'Bold',
     ])
+    expect(space.options.find((o) => o.value === '650')?.description).toBe('Custom')
     // A font that isn't bundled gets every weight.
     expect(weightChoice({ ...a.style }).options).toHaveLength(9)
     setWeight(clip(a.id), 300)
