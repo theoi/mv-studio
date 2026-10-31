@@ -305,14 +305,14 @@ test('a video from one of your images uploads the image and lands as a video cli
   await expect(timelineClip(page, 'AI video: Clouds drift past the sun', '0:12.0')).toHaveCount(1)
 })
 
-/** Opens the sample project at `hash` with the e2e harness, with a saved fal.ai key. */
-async function openWithKey(page: Page, hash: string) {
+/** Opens the sample project at `hash` with the e2e harness, with a saved fal.ai key unless `key` is false. */
+async function openWithKey(page: Page, hash: string, key = true) {
   await page.addInitScript(
     (saved) => {
       localStorage.setItem('mv-studio.guide-seen', '1')
-      localStorage.setItem('mv-studio.cloud.v1', JSON.stringify(saved))
+      if (saved) localStorage.setItem('mv-studio.cloud.v1', JSON.stringify(saved))
     },
-    { falKey: KEY },
+    key ? { falKey: KEY } : null,
   )
   await openHarness(page)
   await page.evaluate((h) => (window.location.hash = h), hash)
@@ -356,7 +356,7 @@ test('Generate a shot here: right-click an empty stretch of a track, and the sho
   page,
 }) => {
   const fal = await mockFal(page)
-  await openWithKey(page, '#/editor?t=60')
+  await openWithKey(page, '#/editor?t=60', false)
   const spectrum = timelineClip(page, 'Spectrum bars', '1:04.0')
   const box = await spectrum.boundingBox()
   if (!box) throw new Error('The spectrum clip is not on screen')
@@ -370,12 +370,23 @@ test('Generate a shot here: right-click an empty stretch of a track, and the sho
   // The empty stretch of the Overlay track just before it, between the title and the spectrum.
   await page.mouse.click(box.x - 20, box.y + box.height / 2, { button: 'right' })
   const item = page.getByRole('menuitem', { name: /^Generate a shot here/ })
-  await expect(item).toContainText(/AI image or clip at 1:0\d/)
+  // Without fal.ai the item still leads on, to connecting it, and keeps the place.
+  await expect(item).toContainText(/AI image or clip at 1:0\d · needs fal\.ai/)
+  await expect(item).toBeEnabled()
   await item.click()
   await expect(page.getByText('AI images and clips with fal.ai')).toBeVisible()
-  await expect(
-    page.getByText(/^Results land in Media › Generated and at 1:0\d on Overlay, in the gap up to 1:04\.$/),
-  ).toBeVisible()
+  const note = page.getByText(
+    /^Results land in Media › Generated and at 1:0\d on Overlay, in the gap up to 1:04\.$/,
+  )
+  await expect(note).toBeVisible()
+  await page.getByRole('button', { name: 'Connect fal.ai to generate' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings.getByRole('textbox', { name: 'fal.ai key' }).fill(KEY)
+  await page.keyboard.press('Enter')
+  await expect(settings.getByText('Connected', { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(settings).toHaveCount(0)
+  await expect(note).toBeVisible()
   await expect(page.getByRole('button', { name: 'Use the playhead instead' })).toBeVisible()
   await page.getByRole('radio', { name: 'Image' }).click()
   await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Neon rain')

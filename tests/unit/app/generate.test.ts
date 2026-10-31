@@ -24,6 +24,7 @@ import {
 import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
 import { editor } from '../../../src/app/state/project.ts'
 import { buildDemoProject, TRACK_IDS } from '../../../src/app/mock/demoProject.ts'
+import { laneItemsAt } from '../../../src/app/screens/editor/timeline/laneMenu.ts'
 
 const fake = vi.hoisted(() => ({
   provider: undefined as MediaGenerationProvider | undefined,
@@ -271,5 +272,32 @@ describe('Animate with AI', () => {
       startImageId: clip.assetId,
       target: { start: clip.start },
     })
+  })
+})
+
+describe('the lane menu', () => {
+  const spot = (trackId: string, time: number) => laneItemsAt(buildDemoProject(), { trackId, time })
+
+  it('offers Generate a shot here on an empty stretch of a video or overlay track only', () => {
+    expect(spot(TRACK_IDS.overlay, 30).map((i) => i.label)).toEqual(['Generate a shot here'])
+    expect(spot(TRACK_IDS.overlay, 70)).toEqual([])
+    expect(spot(TRACK_IDS.lyrics, 2)).toEqual([])
+    expect(spot(TRACK_IDS.song, 30)).toEqual([])
+  })
+
+  it('says when fal.ai is missing, and why a locked track can’t take a shot', () => {
+    const project = buildDemoProject()
+    const at = { trackId: TRACK_IDS.overlay, time: 30.2 }
+    const [item] = laneItemsAt(project, at)
+    expect(item?.description?.(project, at)).toBe('AI image or clip at 0:30')
+    cloudSettings.update({ falKey: '' })
+    expect(item?.description?.(project, at)).toBe('AI image or clip at 0:30 · needs fal.ai')
+    expect(item?.disabled?.(project, at)).toBe(false)
+    const locked = {
+      ...project,
+      tracks: project.tracks.map((t) => (t.id === TRACK_IDS.overlay ? { ...t, locked: true } : t)),
+    }
+    expect(item?.description?.(locked, at)).toBe('The track is locked')
+    expect(item?.disabled?.(locked, at)).toBe(true)
   })
 })
