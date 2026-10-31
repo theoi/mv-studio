@@ -28,6 +28,8 @@ export interface VisualAnalysisParts {
   suitability?: SuitabilityReport
   /** Stored person mask track for the clip. */
   personMask?: { assetId: Id; quality: string; fps: number }
+  /** Words describing the clip (`readClipTags`), from its matching index. */
+  tags?: readonly string[]
 }
 
 const round = (v: number, digits = 3) => {
@@ -121,6 +123,7 @@ export function buildVisualAnalysis(parts: VisualAnalysisParts, previous?: Visua
   if (parts.subjects) data.subjects = encodeSubjects(parts.subjects)
   if (parts.suitability) data.suitability = json(parts.suitability)
   if (parts.personMask) data.personMask = json(parts.personMask)
+  if (parts.tags) data.tags = [...parts.tags]
   return { assetId: parts.assetId, version: VISION_ANALYSIS_VERSION, data }
 }
 
@@ -172,6 +175,21 @@ function readMotion(m: Record<string, unknown>): MotionAnalysis | null {
   return { fps, energy, camera, cuts, meanEnergy, p90Energy, meanCamera }
 }
 
+/**
+ * Words describing a clip, from footage analysis: what's in it, its mood and motion ("crowd", "lights",
+ * "energetic", "fast"), stored as `VisualAnalysis.data.tags`. Null until the clip is analyzed; an empty list when
+ * nothing stands out.
+ */
+export function readClipTags(analysis: VisualAnalysis | undefined): string[] | null {
+  if (analysis?.version !== VISION_ANALYSIS_VERSION) return null
+  const { tags } = analysis.data
+  return Array.isArray(tags) && tags.every((t) => typeof t === 'string') ? tags : null
+}
+
+/** A clip's analysis with its tags set, keeping everything else. */
+export function withClipTags(analysis: VisualAnalysis, tags: readonly string[]): VisualAnalysis {
+  return { ...analysis, data: { ...analysis.data, tags: [...tags] } }
+}
 const SOURCES = new Set<SubjectSample['source']>(['face', 'person', 'selection', 'none'])
 
 export function readSubjectTrack(analysis: VisualAnalysis | undefined): SubjectTrack | null {

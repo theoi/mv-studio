@@ -5,10 +5,15 @@ import { EmptyState, Spinner } from '../../../ds/Feedback.tsx'
 import { SearchInput } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
-import { mediaById } from '../../../mock/media.ts'
 import type { Asset, Project } from '../../../../model/index.ts'
 import type { FootageResult } from '../../../../vision/index.ts'
-import { useClipAnalyzing, useFootage, useFootageResults } from '../../../state/footage.ts'
+import {
+  clipTags,
+  suggestionRowRef,
+  useClipAnalyzing,
+  useFootage,
+  useFootageResults,
+} from '../../../state/footage.ts'
 import { addAsset, openImport } from '../../../state/importer.ts'
 import {
   bpmOf,
@@ -66,7 +71,7 @@ function libraryItems(project: Project): LibraryItem[] {
             : asset.kind === 'image'
               ? 'image'
               : 'video',
-      tags: mediaById[asset.id]?.tags ?? [],
+      tags: clipTags(project, asset.id),
     }))
 }
 
@@ -75,49 +80,53 @@ function MediaCard({ item }: { item: LibraryItem }) {
   const duration = item.type === 'image' ? undefined : item.asset.duration
   const analyzing = useClipAnalyzing(item.asset.id)
   return (
-    <div
-      className={styles.card}
-      draggable
-      tabIndex={0}
-      aria-label={`${item.name}, ${item.type}${analyzing ? ', analyzing' : ''}`}
-    >
-      <div className={styles.thumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}>
-        {item.type === 'audio' && (
-          <span className={styles.thumbIcon}>
-            <AudioWaveform />
+    <Tooltip label={item.name} description={item.tags.length ? item.tags.join(' · ') : undefined}>
+      <div
+        className={styles.card}
+        draggable
+        tabIndex={0}
+        aria-label={`${item.name}, ${item.type}${analyzing ? ', analyzing' : ''}`}
+      >
+        <div className={styles.thumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}>
+          {item.type === 'audio' && (
+            <span className={styles.thumbIcon}>
+              <AudioWaveform />
+            </span>
+          )}
+          {item.type === 'generated' && (
+            <span className={styles.genBadge}>
+              <Sparkles /> AI
+            </span>
+          )}
+          {item.type === 'image' && (
+            <span className={styles.duration}>
+              <ImageIcon />
+            </span>
+          )}
+          {duration !== undefined && (
+            <span className={`${styles.duration} tnum`}>{formatTime(duration)}</span>
+          )}
+          {analyzing && (
+            <span className={styles.analyzingMark} aria-hidden>
+              <Spinner size={8} />
+              Analyzing…
+            </span>
+          )}
+          <span className={styles.addBtn}>
+            <IconButton
+              label="Add at playhead"
+              size="xs"
+              variant="secondary"
+              tooltipSide="top"
+              onClick={() => addAsset(item.asset.id)}
+            >
+              <Plus />
+            </IconButton>
           </span>
-        )}
-        {item.type === 'generated' && (
-          <span className={styles.genBadge}>
-            <Sparkles /> AI
-          </span>
-        )}
-        {item.type === 'image' && (
-          <span className={styles.duration}>
-            <ImageIcon />
-          </span>
-        )}
-        {duration !== undefined && <span className={`${styles.duration} tnum`}>{formatTime(duration)}</span>}
-        {analyzing && (
-          <span className={styles.analyzingMark} aria-hidden>
-            <Spinner size={8} />
-            Analyzing…
-          </span>
-        )}
-        <span className={styles.addBtn}>
-          <IconButton
-            label="Add at playhead"
-            size="xs"
-            variant="secondary"
-            tooltipSide="top"
-            onClick={() => addAsset(item.asset.id)}
-          >
-            <Plus />
-          </IconButton>
-        </span>
+        </div>
+        <div className={styles.cardName}>{item.name}</div>
       </div>
-      <div className={styles.cardName}>{item.name}</div>
-    </div>
+    </Tooltip>
   )
 }
 
@@ -242,7 +251,7 @@ function Suggestions() {
       })
   }
   return (
-    <div className={styles.suggest}>
+    <div className={styles.suggest} ref={suggestionRowRef}>
       <div className={styles.suggestHead}>
         <Sparkles />
         <span className={styles.suggestTitle}>Suggested for {label}</span>

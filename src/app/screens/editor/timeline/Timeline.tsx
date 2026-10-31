@@ -22,7 +22,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import type { FeatureSeries, LyricWord, Project, Track } from '../../../../model/index.ts'
+import type { FeatureSeries, LyricWord, Project, SongSection, Track } from '../../../../model/index.ts'
 import { clipsOnTrack } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
@@ -80,7 +80,7 @@ import {
   isLibraryDrag,
   libraryDropHint,
 } from '../../../state/library.ts'
-import { useFootage, useFootageResults } from '../../../state/footage.ts'
+import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { templateState } from '../../../../plugins/templates.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { LaneMenu } from './LaneMenu.tsx'
@@ -647,7 +647,10 @@ function LineMatches({ lineId }: { lineId: string }) {
         id={`match-${lineId}`}
         variant="chip"
         action="Show"
-        onAction={() => set({ libraryTab: 'media', libraryOpen: true })}
+        onAction={() => {
+          revealSuggestions()
+          set({ libraryTab: 'media', libraryOpen: true })
+        }}
       >
         {count === 1 ? '1 clip matches this line' : `${count} clips match this line`}
       </InlineSuggestion>
@@ -655,6 +658,46 @@ function LineMatches({ lineId }: { lineId: string }) {
   )
 }
 
+/**
+ * The one suggestion under a selected section: "N clips match this chorus" when footage analysis finds two or more
+ * strong matches, else "Re-cut this chorus to the beat". Dismissing either quiets the section.
+ */
+function SectionSuggestion({ section }: { section: SongSection }) {
+  const strong = useFootage((s) => s.strongMatch)
+  const count = (useFootageResults('section', section.id) ?? []).filter((r) => r.score >= strong).length
+  const matchId = `match-${section.id}`
+  const cutId = `cut-${section.id}`
+  const quiet = useUi((s) => s.dismissed.includes(matchId) || s.dismissed.includes(cutId))
+  if (quiet) return null
+  // "this verse", not "this verse 1".
+  const label = section.label.replace(/\s*\d+$/, '').toLowerCase()
+  return (
+    <div className={styles.sectionSuggest}>
+      {count >= 2 ? (
+        <InlineSuggestion
+          id={matchId}
+          variant="chip"
+          action="Show"
+          onAction={() => {
+            revealSuggestions()
+            set({ libraryTab: 'media', libraryOpen: true })
+          }}
+        >
+          {count} clips match this {label}
+        </InlineSuggestion>
+      ) : (
+        <InlineSuggestion
+          id={cutId}
+          variant="chip"
+          action="Cut clips to it"
+          onAction={() => openAssist('autocut')}
+        >
+          Re-cut this {label} to the beat
+        </InlineSuggestion>
+      )}
+    </div>
+  )
+}
 function Playhead({ height, head }: { height?: number; head?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1041,18 +1084,7 @@ export function Timeline() {
                       ) : (
                         <span className={styles.sectionLabel}>{sectionName(s)}</span>
                       )}
-                      {sel && (
-                        <div className={styles.sectionSuggest}>
-                          <InlineSuggestion
-                            id={`cut-${s.id}`}
-                            variant="chip"
-                            action="Cut clips to it"
-                            onAction={() => openAssist('autocut')}
-                          >
-                            Re-cut this {s.label.toLowerCase()} to the beat
-                          </InlineSuggestion>
-                        </div>
-                      )}
+                      {sel && <SectionSuggestion section={s} />}
                     </div>
                   )
                 })}

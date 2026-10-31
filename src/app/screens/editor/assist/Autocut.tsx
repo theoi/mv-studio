@@ -25,12 +25,12 @@ import {
   selectedAsset,
   setAutoCutChoices,
   startAutoCut,
+  analysisBacklog,
   targetSection,
-  unanalyzedClipCount,
   undoAutoCut,
   useAutoCut,
 } from '../../../state/autocut.ts'
-import { analyzeFootageNow, useFootage } from '../../../state/footage.ts'
+import { analyzeFootageNow, cancelFootageAnalysis, useFootage } from '../../../state/footage.ts'
 import { openImport } from '../../../state/importer.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, sectionName, useProject } from '../../../state/project.ts'
@@ -72,7 +72,8 @@ export function AutocutView() {
   const result = useAutoCut((s) => (job ? s.results[job.id] : undefined))
   const indexing = useFootage((s) => s.indexing)
   const clipCount = autoCutClipCount(project)
-  const unanalyzed = unanalyzedClipCount(project)
+  // Clips analysis could not read are not offered again here; Assist › Match retries them.
+  const unanalyzed = analysisBacklog(project, indexing).waiting
   const section = targetSection(project, selection, playhead)
   const asset = selectedAsset(project, selection)
   const range = choices.range === 'section' && section ? 'section' : 'all'
@@ -89,6 +90,7 @@ export function AutocutView() {
   )
   const moreId = useId()
   const revealMore = useRef(false)
+  const cutButton = useRef<HTMLButtonElement>(null)
   const download = useMatchingDownload(willAnalyze)
   const cut = () => {
     if (willAnalyze) analyzeFootageNow()
@@ -203,12 +205,17 @@ export function AutocutView() {
     )
   }
 
+  const showAnalyzing = clipCount > 0 && matchesMood(choices) && analyzing
+  const which =
+    unanalyzed === clipCount
+      ? `Your ${unanalyzed === 1 ? 'clip isn’t' : 'clips aren’t'}`
+      : `${plural(unanalyzed, 'clip')} ${unanalyzed === 1 ? 'isn’t' : 'aren’t'}`
   const note = !clipCount
     ? 'Import video clips or images first. Auto-cut cuts them to the song.'
-    : matchesMood(choices) && analyzing
+    : showAnalyzing
       ? `Analyzing your footage… ${indexing?.done ?? 0} of ${indexing?.total ?? clipCount} clips. Cut again when it’s done to match the mood.`
       : willAnalyze
-        ? `${unanalyzed === clipCount ? 'Your clips aren’t' : `${plural(unanalyzed, 'clip')} aren’t`} analyzed yet, so this cut picks them for variety and starts the analysis. Cut again when it’s done to match the mood.`
+        ? `${which} analyzed yet, so this cut picks ${unanalyzed === 1 ? 'it' : 'them'} for variety and starts the analysis. Cut again when it’s done to match the mood.`
         : undefined
   return (
     <ToolView
@@ -216,7 +223,14 @@ export function AutocutView() {
       subtitle="Cut your clips to the music"
       footer={
         <>
-          <Button variant="primary" block icon={<Scissors />} onClick={cut} disabled={!clipCount}>
+          <Button
+            ref={cutButton}
+            variant="primary"
+            block
+            icon={<Scissors />}
+            onClick={cut}
+            disabled={!clipCount}
+          >
             Cut to the beat
           </Button>
           <div className={styles.costLine}>
@@ -228,7 +242,20 @@ export function AutocutView() {
       {note && (
         <div className={styles.callout}>
           <Info />
-          <div>{note}</div>
+          <div>
+            <div>{note}</div>
+            {showAnalyzing && (
+              <div className={styles.calloutBtn}>
+                <CancelButton
+                  inline
+                  onCancel={() => {
+                    cancelFootageAnalysis()
+                    cutButton.current?.focus()
+                  }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
       <Field label="Cut every" {...(sectionsOnly ? { hint: 'Not used while each section is one shot' } : {})}>
