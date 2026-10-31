@@ -70,6 +70,8 @@ interface VideoSlot {
   pinned: boolean
   /** Serial of the last frame the video presented (requestVideoFrameCallback), or 0 before the first. */
   presented: number
+  /** Media time of that frame. */
+  presentedTime: Seconds
   /** Latest requested time while paused; queued seeks skip to it. */
   target: Seconds
   seeking: Promise<void>
@@ -89,6 +91,8 @@ const PAUSE_AFTER_FRAMES = 2
 /** warm() starts an upcoming clip's element playing this long before the cut. */
 const PREROLL = 0.3
 const RELEASE_AFTER_FRAMES = 900
+/** Longest time between two frames of a video that a seek's frame check allows for, in seconds. */
+const MAX_FRAME_SPACING = 1
 
 /** Unique across slots, so a texture never mistakes a new slot's frame for one it already holds. */
 let presentedSerial = 0
@@ -194,6 +198,7 @@ export class VideoElementFrameProvider implements FrameProvider {
       clipKey: key,
       pinned: false,
       presented: 0,
+      presentedTime: -1,
       target: 0,
       seeking: Promise.resolve(),
       lastUsed: this.frame,
@@ -202,8 +207,9 @@ export class VideoElementFrameProvider implements FrameProvider {
     if ('requestVideoFrameCallback' in video) {
       const current = slot
       const watch = () =>
-        video.requestVideoFrameCallback(() => {
+        video.requestVideoFrameCallback((_now, metadata) => {
           current.presented = ++presentedSerial
+          current.presentedTime = metadata.mediaTime
           watch()
         })
       watch()
@@ -258,9 +264,17 @@ export class VideoElementFrameProvider implements FrameProvider {
     const { video } = slot
     const t = slot.target
     if (Math.abs(video.currentTime - t) < 1e-6 && !video.seeking) return
+    const before = slot.presented
     video.currentTime = t
     await once(video, ['seeked', 'error'], 5_000)
-    if ('requestVideoFrameCallback' in video) {
+    // Chrome often presents the new frame before 'seeked' fires. A paused video then presents nothing more, so waiting
+    // for a frame would only run into the timeout below. The frame shown for `t` starts at or just before it: up to a
+    // second before in low frame rate footage, whatever frame rate the asset reports.
+    const presented =
+      slot.presented !== before &&
+      slot.presentedTime <= t + 0.01 &&
+      slot.presentedTime > t - MAX_FRAME_SPACING
+    if ('requestVideoFrameCallback' in video && !presented) {
       // 'seeked' can fire before the new frame is presented to WebGL; wait for it (bounded, paused videos may not
       // present again when the frame did not change).
       await new Promise<void>((resolve) => {
