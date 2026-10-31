@@ -71,6 +71,8 @@ test('pick mode: Esc cancels without clearing the selection, and pressing Play c
   const layer = page.getByRole('button', { name: PICK })
   await expect(layer).toBeFocused()
   await expect(page.getByText('to cancel')).toBeVisible()
+  // Started with the mouse, so no crosshair until the arrows are used.
+  await expect(page.getByText('Arrows to aim')).toBeHidden()
 
   await page.keyboard.press('Escape')
   await expect(layer).toBeHidden()
@@ -115,8 +117,22 @@ test('the keyboard aims and picks, and a spot where the object was lost is fixed
 }) => {
   test.setTimeout(200_000)
   const inspector = await openWithInterview(page)
-  await inspector.getByRole('button', { name: 'Pick another object in the preview' }).click()
-  await expect(page.getByRole('button', { name: PICK })).toBeFocused()
+  await inspector.getByRole('button', { name: 'Pick another object in the preview' }).focus()
+  await page.keyboard.press('Enter')
+  const layer = page.getByRole('button', { name: PICK })
+  await expect(layer).toBeFocused()
+  // Started from the keyboard: the crosshair shows where Enter picks, and the pill says how to aim.
+  await expect(page.getByText('Arrows to aim')).toBeVisible()
+
+  // Editor shortcuts wait while picking: S does not split and T does not add text.
+  const clipCount = () =>
+    page.evaluate(() => Object.keys(window.mvStudio.app.project.editor.getProject().clips).length)
+  const before = await clipCount()
+  await page.keyboard.press('s')
+  await page.keyboard.press('t')
+  expect(await clipCount()).toBe(before)
+  await expect(layer).toBeFocused()
+
   await page.keyboard.press('Shift+ArrowRight')
   await page.keyboard.press('Shift+ArrowRight')
   await page.keyboard.press('Enter')
