@@ -1,25 +1,17 @@
-import type * as OrtWeb from 'onnxruntime-web/wasm'
+import type * as OrtWeb from 'onnxruntime-web/webgpu'
 import { DEMUCS_MODEL } from '../models.ts'
+import { loadOrt } from '../ort.ts'
 import { JobError, type JobProgress } from '../../shared/jobs.ts'
-import { configureOnnxEnv, loadModelFiles, type ModelDevice } from '../../shared/models.ts'
+import { loadModelFiles, type ModelDevice } from '../../shared/models.ts'
 import { SEGMENT, type DemucsModel } from './demucs.ts'
 
-type Ort = typeof OrtWeb
-
-/**
- * HTDemucs session on WebGPU (with WASM fallback for unsupported nodes) or multithreaded WASM. The WASM-only ORT
- * build is half the download, so it is used whenever WebGPU is not.
- */
+/** HTDemucs session on WebGPU (with WASM fallback for unsupported nodes) or multithreaded WASM. */
 export async function createDemucsModel(options: {
   device: ModelDevice
   signal?: AbortSignal
   onProgress?: (progress: JobProgress) => void
 }): Promise<{ model: DemucsModel; device: ModelDevice }> {
-  const ort: Ort =
-    options.device === 'webgpu'
-      ? await import('onnxruntime-web/webgpu')
-      : await import('onnxruntime-web/wasm')
-  await configureOnnxEnv(ort.env)
+  const ort = await loadOrt()
   const files = await loadModelFiles(DEMUCS_MODEL, {
     signal: options.signal,
     onProgress: (p) =>

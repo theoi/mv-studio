@@ -1,4 +1,8 @@
-import type * as OrtWeb from 'onnxruntime-web/wasm'
+import type * as OrtWeb from 'onnxruntime-web/webgpu'
+// The ONNX Runtime build and WASM files Transformers.js uses (see src/shared/transformers.ts), so the app ships one
+// ONNX Runtime binary for every model.
+import ortMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url'
+import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url'
 import type { BeatThisModel } from './beats/beatThis.ts'
 import { BEAT_THIS_MODEL } from './models.ts'
 import { configureOnnxEnv, loadModelFiles } from '../shared/models.ts'
@@ -7,16 +11,20 @@ import { JobError, type JobProgress } from '../shared/jobs.ts'
 type Ort = typeof OrtWeb
 let ortPromise: Promise<Ort> | undefined
 
-/**
- * Loads the WASM-only ONNX Runtime build once per worker and applies the shared thread policy before the first
- * session. Beat This! runs in seconds on WASM threads, and the WebGPU build is a 29 MB download instead of 15 MB.
- */
+/** Loads ONNX Runtime (WASM and WebGPU) once per worker and applies the shared thread policy before the first session. */
 export function loadOrt(): Promise<Ort> {
   ortPromise ??= (async () => {
-    const ort = await import('onnxruntime-web/wasm')
+    const ort = await import('onnxruntime-web/webgpu')
     await configureOnnxEnv(ort.env)
+    ort.env.wasm.wasmPaths = {
+      mjs: new URL(ortMjsUrl, self.location.href).href,
+      wasm: new URL(ortWasmUrl, self.location.href).href,
+    }
     return ort
   })()
+  ortPromise.catch(() => {
+    ortPromise = undefined
+  })
   return ortPromise
 }
 
