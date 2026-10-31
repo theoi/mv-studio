@@ -47,17 +47,19 @@ function Activity() {
   const running = runningJobs(useJobs())
   const first = running[0]
   if (!first) return null
-  // Jobs that can't measure their progress (a language model thinking) show a spinner instead of a stuck 0%.
-  const fraction = first.progress.fraction
+  // Jobs that can't measure their progress (a language model thinking) show a spinner instead of a stuck 0%. So does
+  // a job finishing after a Cancel (keeping a result it already paid for, say), whose progress no longer leads to done.
+  const fraction = first.stopping ? undefined : first.progress.fraction
+  const label = first.stopping ? 'Stopping…' : first.title
   return (
     <Tooltip label="Background tasks" description="You can keep editing. Click for details.">
       <button className={styles.activity} onClick={() => openJob(first.kind)}>
         {fraction === undefined ? (
           <Spinner size={14} />
         ) : (
-          <ProgressRing value={fraction} size={16} label={first.title} />
+          <ProgressRing value={fraction} size={16} label={label} />
         )}
-        <span>{first.title}</span>
+        <span>{label}</span>
         {fraction !== undefined && (
           <span className={`${styles.activityPct} tnum`}>{Math.round(fraction * 100)}%</span>
         )}

@@ -65,7 +65,7 @@ test('the search field opens the command palette, which runs the action picked a
   await expect(page.getByRole('button', { pressed: true, name: /^Text, / })).toBeVisible()
 })
 
-test('the activity indicator shows the first task’s progress, counts the others and goes away when they finish', async ({
+test('the activity indicator shows the first task’s progress, counts the others, says Stopping… after a Cancel and goes away when they finish', async ({
   page,
 }) => {
   await openEditor(page)
@@ -114,6 +114,17 @@ test('the activity indicator shows the first task’s progress, counts the other
   await finish('test.unmeasured')
   await expect(thinking).toHaveCount(0)
   await expect(measuring).toHaveCount(0)
+
+  // A task that took a Cancel but has not ended (keeping a result it paid for) says so, without a percentage.
+  const stopping = bar.getByRole('button', { name: /Stopping…/ })
+  await start('test.measured', 'Measuring the song', 0.4)
+  await expect(measuring).toContainText('40%')
+  await page.evaluate(() => window.mvStudio.shared.jobs.cancelAll('test.measured'))
+  await expect(stopping).toBeVisible()
+  await expect(stopping).not.toContainText('%')
+  await expect(measuring).toHaveCount(0)
+  await finish('test.measured')
+  await expect(stopping).toHaveCount(0)
 })
 
 test('Help › Replay the guide and Settings › General › Replay show the guide again from its first step', async ({
