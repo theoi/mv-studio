@@ -191,6 +191,30 @@ describe('narrow analysis commands', () => {
       expect(warn).toHaveBeenCalledTimes(1)
       expect(warn.mock.calls[0]?.[0]).toContain('Edit section')
     })
+
+    it('does not warn for a derived write to an asset whose removal was undone', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { editor, song } = setup()
+      const indexed = (version: string) => ({
+        type: 'analysis.setVisual' as const,
+        analysis: { assetId: song.id, version, data: {} },
+      })
+      editor.dispatch(indexed('v1'), { history: 'skip' })
+      editor.dispatch({ type: 'asset.remove', assetId: song.id })
+      editor.undo()
+      editor.dispatch(indexed('v2'), { history: 'skip' })
+      expect(warn).not.toHaveBeenCalled()
+      editor.redo()
+      expect(editor.getProject().analysis.visual[song.id]).toBeUndefined()
+    })
+
+    it('warns when undoing an analysis removal would restore the old entry over a new one', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { editor, song, detected } = setup()
+      editor.dispatch({ type: 'analysis.removeAudio', assetId: song.id })
+      editor.dispatch({ type: 'analysis.setDetected', analysis: detected }, { history: 'skip' })
+      expect(warn).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('refuses a grid correction for a song without analysis', () => {

@@ -68,8 +68,9 @@ export type EditCommand =
   /** Replaces an asset's whole analysis. Background jobs use the narrow commands below instead. */
   | { type: 'analysis.setAudio'; analysis: AudioAnalysis }
   /**
-   * A fresh analysis of an audio asset (everything but stems), keeping any stems already attached. Background
-   * results: dispatch with `history: 'skip'`.
+   * A fresh analysis of an audio asset (everything but stems), keeping any stems already attached. It replaces the
+   * user's corrections, so `history: 'skip'` is only for the first analysis after import; a re-analysis the user asks
+   * for is a normal, undoable dispatch.
    */
   | { type: 'analysis.setDetected'; analysis: Omit<AudioAnalysis, 'stems' | 'stemFeatures'> }
   /**
@@ -77,7 +78,10 @@ export type EditCommand =
    * refinement started from), so corrections the user made in the meantime are kept. Background results.
    */
   | { type: 'analysis.setRefined'; assetId: Id; refined: RefinedAnalysis; baseline: RefinedAnalysis }
-  /** Separated stems (asset ids) and their features. Background results. */
+  /**
+   * Separated stems (asset ids) and their features. Background results. Without an analysis it creates an entry
+   * with only stems and an empty version (not analyzed), rather than failing and orphaning the stem assets.
+   */
   | {
       type: 'analysis.setStems'
       assetId: Id
