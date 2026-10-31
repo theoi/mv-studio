@@ -1,11 +1,14 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  ArrowDown,
+  ArrowUp,
   AudioWaveform,
   ChevronDown,
   Eye,
   EyeOff,
   Flag,
   GripVertical,
+  Headphones,
   Lock,
   LockOpen,
   Magnet,
@@ -885,6 +888,14 @@ function ClipBlockView({ clip, pps, selected, marks, onPointerDown }: ClipBlockP
 
 /* ---------- headers ---------- */
 
+/** What turning a track setting on and off is called. */
+const TRACK_TOGGLES = {
+  muted: ['Mute', 'Unmute'],
+  solo: ['Solo', 'Unsolo'],
+  locked: ['Lock', 'Unlock'],
+  hidden: ['Hide', 'Show'],
+} as const
+
 const TrackHeader = memo(function TrackHeader({
   track,
   height,
@@ -905,8 +916,12 @@ const TrackHeader = memo(function TrackHeader({
   /** The stem the preview could not decode, so it plays the full song. */
   fallback?: UnplayableStem | null
 }) {
-  const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
-    dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
+  // Undo names the action and the track: "Undid: Hide Video".
+  const toggle = (key: keyof typeof TRACK_TOGGLES) =>
+    dispatch(
+      { type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } },
+      { label: `${TRACK_TOGGLES[key][track[key] ? 1 : 0]} ${track.name}` },
+    )
   const isAudio = track.kind === 'audio'
   const badge = stems && stemBadge(stems, fallback)
   const grip = useRef<HTMLButtonElement>(null)
@@ -1016,11 +1031,30 @@ const TrackHeader = memo(function TrackHeader({
           grip.current?.focus()
         }}
       >
-        <ContextMenuItem disabled={!canMoveUp} onSelect={() => moveFromMenu(-1)}>
+        <ContextMenuItem icon={<ArrowUp />} disabled={!canMoveUp} onSelect={() => moveFromMenu(-1)}>
           Move up
         </ContextMenuItem>
-        <ContextMenuItem disabled={!canMoveDown} onSelect={() => moveFromMenu(1)}>
+        <ContextMenuItem icon={<ArrowDown />} disabled={!canMoveDown} onSelect={() => moveFromMenu(1)}>
           Move down
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        {isAudio ? (
+          <>
+            <ContextMenuItem icon={track.muted ? <Volume2 /> : <VolumeX />} onSelect={() => toggle('muted')}>
+              {track.muted ? 'Unmute' : 'Mute'}
+            </ContextMenuItem>
+            <ContextMenuItem icon={<Headphones />} onSelect={() => toggle('solo')}>
+              {track.solo ? 'Unsolo' : 'Solo'}
+            </ContextMenuItem>
+          </>
+        ) : (
+          <ContextMenuItem icon={track.hidden ? <Eye /> : <EyeOff />} onSelect={() => toggle('hidden')}>
+            {track.hidden ? 'Show track' : 'Hide track'}
+          </ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
+        <ContextMenuItem icon={track.locked ? <LockOpen /> : <Lock />} onSelect={() => toggle('locked')}>
+          {track.locked ? 'Unlock track' : 'Lock track'}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
