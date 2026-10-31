@@ -8,17 +8,22 @@ import { useAnimatable } from './animatable.ts'
 import { blendModes } from './blendModes.ts'
 import styles from '../Inspector.module.css'
 
-/** Top of every inspector: a thumbnail or icon, the selection's name and a one-line summary. */
+/**
+ * Top of every inspector: a thumbnail or icon, the selection's name and a one-line summary. A second line
+ * (`metaBelow`) is for a summary that would not fit the narrow inspector on one line without being cut.
+ */
 export function Header({
   icon,
   thumb,
   title,
   meta,
+  metaBelow,
 }: {
   icon?: ReactNode
   thumb?: string
   title: string
   meta: string
+  metaBelow?: string
 }) {
   return (
     <div className={styles.header}>
@@ -30,6 +35,7 @@ export function Header({
       <div className={styles.headerText}>
         <div className={styles.title}>{title}</div>
         <div className={`${styles.meta} tnum`}>{meta}</div>
+        {metaBelow && <div className={`${styles.meta} tnum`}>{metaBelow}</div>}
       </div>
     </div>
   )
