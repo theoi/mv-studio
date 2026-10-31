@@ -104,6 +104,9 @@ test('Shift and Mod click select several clips, and copy, paste, duplicate, cut 
   await expect(next).toHaveAttribute('aria-pressed', 'false')
   await page.keyboard.press('Shift+Space')
   expect(await selectedIds(page)).toHaveLength(2)
+  // The clip took Space, so it did not also start playback.
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().playing)).toBe(false)
+  await expect(page.getByText(`Shift-click or ${mod === 'Meta' ? '⌘' : 'Ctrl'}-click a clip`)).toBeVisible()
 
   // Blend reads "Mixed" while the selected clips differ.
   const blend = page.getByRole('combobox', { name: 'Blend mode' })
@@ -284,6 +287,18 @@ test('pasted and duplicated clips are scrolled into view, on a numbered track wh
   page,
 }) => {
   await openEditor(page, '#/editor?t=67')
+  // With no clips selected or copied, the palette shows why Copy and Paste can't run yet.
+  const palette = page.getByRole('dialog')
+  await page.keyboard.press(`${mod}+k`)
+  await palette.getByRole('combobox').fill('Copy')
+  const copyItem = palette.getByRole('option', { name: /^Copy/ })
+  await expect(copyItem).toHaveAttribute('aria-disabled', 'true')
+  await expect(copyItem).toContainText('Select clips first')
+  await palette.getByRole('combobox').fill('Paste')
+  await expect(palette.getByRole('option', { name: /^Paste at playhead/ })).toContainText('Copy clips first')
+  await page.keyboard.press('Escape')
+  await expect(palette).toBeHidden()
+
   const singer = page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' })
   await singer.click()
   await page.keyboard.press(`${mod}+c`)
@@ -303,7 +318,6 @@ test('pasted and duplicated clips are scrolled into view, on a numbered track wh
 
   await scroller.evaluate((el) => (el.scrollLeft = 0))
   await page.keyboard.press(`${mod}+k`)
-  const palette = page.getByRole('dialog')
   await palette.getByRole('combobox').fill('Duplicate')
   await page.keyboard.press('Enter')
   await expect(palette).toBeHidden()

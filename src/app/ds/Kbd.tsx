@@ -1,14 +1,8 @@
 import styles from './Feedback.module.css'
-
-const isMac =
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
-
-const glyphs: Record<string, string> = isMac
-  ? { Mod: '⌘', Alt: '⌥', Shift: '⇧', Ctrl: '⌃', Enter: '↩', Delete: '⌫', Esc: 'Esc' }
-  : { Mod: 'Ctrl', Alt: 'Alt', Shift: 'Shift', Ctrl: 'Ctrl', Enter: 'Enter', Delete: 'Del', Esc: 'Esc' }
+import { keyName } from './keys.ts'
 
 function formatKeys(keys: string): string[] {
-  return keys.split(' ').map((k) => glyphs[k] ?? k)
+  return keys.split(' ').map(keyName)
 }
 
 /** Renders a shortcut such as "Mod K" or "Shift ←" with platform-correct key names. */

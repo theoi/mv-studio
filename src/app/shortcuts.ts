@@ -43,6 +43,8 @@ function isTyping(el: EventTarget | null, mod: boolean) {
 export function useGlobalShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Keys a focused control already handled (Space on a timeline clip; Esc in a Radix select, menu or popover).
+      if (e.defaultPrevented) return
       const s = get()
       const mod = e.metaKey || e.ctrlKey
       const key = e.key.toLowerCase()

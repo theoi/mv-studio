@@ -1,6 +1,7 @@
 import { Layers } from 'lucide-react'
 import type { Clip, VisualClip } from '../../../../model/index.ts'
 import { FieldRow, Section, Select, Slider } from '../../../ds/Fields.tsx'
+import { keyName } from '../../../ds/keys.ts'
 import { formatTime } from '../../../format.ts'
 import { dispatch, editor, useProject } from '../../../state/project.ts'
 import { blendModes } from './blendModes.ts'
@@ -30,7 +31,8 @@ export function ClipsInspector({ ids }: { ids: string[] }) {
       />
       {visual.length > 0 && <SharedCompositing clips={visual} />}
       <p className={styles.note}>
-        Shift-click or Mod-click a clip to add or remove it. Drag across empty track space to select an area.
+        Shift-click or {keyName('Mod')}-click a clip to add or remove it. Drag across empty track space to
+        select an area.
       </p>
     </>
   )
