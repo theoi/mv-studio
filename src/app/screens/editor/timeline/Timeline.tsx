@@ -625,8 +625,8 @@ function snapTime(t: number, pps: number, grid: BeatGrid | null, edges: number[]
 /**
  * The selected clip's keyframes, one Tab stop: Left and Right (Home, End) move between them, Enter or a click moves
  * the playhead to one and opens its easing menu, Delete removes it. After a removal, focus goes to the neighboring
- * mark, or to the clip when none is left. Keyframes whose diamonds would overlap share one mark with their count,
- * whose menu sets the easing of all of them or removes them.
+ * mark, or to the clip when none is left. Keyframes whose diamonds would touch share one mark at the first of them,
+ * with their count and a line to the last; its menu sets the easing of all of them or removes them.
  */
 function KeyframeMarks({
   clip,
@@ -666,6 +666,16 @@ function KeyframeMarks({
         .join(' ')}
       style={{ left: clip.start * pps, width }}
     >
+      {groups.map(
+        (group) =>
+          group.end > group.at && (
+            <span
+              key={`run-${group.marks[0]!.time}`}
+              className={styles.keyframeRun}
+              style={{ left: group.at, width: group.end - group.at }}
+            />
+          ),
+      )}
       {groups.map((group, i) => {
         const first = group.marks[0]!
         const last = group.marks.at(-1)!

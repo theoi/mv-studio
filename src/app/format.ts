@@ -11,10 +11,12 @@ export function formatTime(t: number, withTenths = false): string {
 }
 
 export function formatTimecode(t: number): string {
-  const m = Math.floor(t / 60)
-  const s = Math.floor(t % 60)
-  const cs = Math.floor((t % 1) * 100)
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+  // Hundredths with the same slack as formatTime's tenths: 3.8 is 379.999… hundredths.
+  const hundredths = Math.floor(t * 100 + 1e-6)
+  const m = Math.floor(hundredths / 6000)
+  const s = Math.floor((hundredths - m * 6000) / 100)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(m)}:${pad(s)}.${pad(hundredths % 100)}`
 }
 
 /** Analyzed tempos are fractional (119.46); people read whole beats per minute. */

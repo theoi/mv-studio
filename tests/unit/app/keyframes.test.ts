@@ -3,6 +3,7 @@ import type { Clip } from '../../../src/model/index.ts'
 import { animatableRow } from '../../../src/app/screens/editor/inspector/animatable.ts'
 import { formatTime } from '../../../src/app/format.ts'
 import {
+  countEnd,
   groupMarks,
   keyframeMarks,
   markTargets,
@@ -111,21 +112,29 @@ it('a keyframe mark takes clicks up to 12 px either side, halfway to a close nei
   expect(markTargets([8], 10)).toEqual([{ left: -4, width: 22 }])
 })
 
-it('keyframes whose diamonds overlap share one mark, chained from diamond to diamond, between its first and last', () => {
+it('keyframes whose diamonds touch share one mark at the first of them, chained from diamond to diamond', () => {
   const marks = keyframeMarks(keyedClip())
-  // 0, 1 and 2 s drawn 3 px apart: one mark in the middle.
-  expect(groupMarks(marks, [10, 13, 16]).map((g) => [g.marks.map((m) => m.time), g.at])).toEqual([
-    [[0, 1, 2], 13],
+  // 0, 1 and 2 s drawn 3 px apart: one mark at the first, reaching to the last.
+  expect(groupMarks(marks, [10, 13, 16]).map((g) => [g.marks.map((m) => m.time), g.at, g.end])).toEqual([
+    [[0, 1, 2], 10, 16],
   ])
-  // Each 7 px from the last: still one, though the ends are 14 px apart.
-  expect(groupMarks(marks, [10, 17, 24]).map((g) => g.marks.length)).toEqual([3])
-  // Zoomed in, 8 px apart and more, every keyframe has its own mark.
-  expect(groupMarks(marks, [10, 18, 40]).map((g) => [g.marks.map((m) => m.time), g.at])).toEqual([
-    [[0], 10],
-    [[1], 18],
-    [[2], 40],
+  // Each 11 px from the last: still one, though the ends are 22 px apart.
+  expect(groupMarks(marks, [10, 21, 32]).map((g) => g.marks.length)).toEqual([3])
+  // Zoomed in, 12 px apart and more, every keyframe has its own mark.
+  expect(groupMarks(marks, [10, 22, 60]).map((g) => [g.marks.map((m) => m.time), g.at, g.end])).toEqual([
+    [[0], 10, 10],
+    [[1], 22, 22],
+    [[2], 60, 60],
   ])
-  expect(groupMarks(marks, [10, 12, 40]).map((g) => g.marks.map((m) => m.time))).toEqual([[0, 1], [2]])
+})
+
+it('a diamond that would cover a group’s count joins the group', () => {
+  const marks = keyframeMarks(keyedClip())
+  // Two keyframes 3 px apart show "2" from 17 to 32 px; a diamond 13 px wide at 36 px would cover it.
+  expect(countEnd(2)).toBe(22)
+  expect(groupMarks(marks, [10, 13, 36]).map((g) => g.marks.length)).toEqual([3])
+  // At 40 px it is clear of the count.
+  expect(groupMarks(marks, [10, 13, 40]).map((g) => g.marks.map((m) => m.time))).toEqual([[0, 1], [2]])
 })
 
 it('sets the easing of and removes a whole group as one undo step each, with the count in the toast', () => {
