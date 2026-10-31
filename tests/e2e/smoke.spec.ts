@@ -1,9 +1,6 @@
 import { expect, openApp, test } from './fixtures.ts'
 
-test('loads cross-origin isolated from the static sub-path via the service worker', async ({
-  page,
-  baseURL,
-}) => {
+test('loads cross-origin isolated from the static sub-path via the service worker', async ({ page }) => {
   await openApp(page)
   await expect(page.getByRole('heading', { name: 'MV Studio' })).toBeVisible()
   await expect(page.getByTestId('cap-isolated')).toHaveText('true')
@@ -12,11 +9,16 @@ test('loads cross-origin isolated from the static sub-path via the service worke
 
   await page.reload()
   expect(await page.evaluate(() => window.crossOriginIsolated)).toBe(true)
+})
 
-  // COEP credentialless (not require-corp) lets no-cors images load from hosts that send no CORP header. Locally,
-  // localhost and 127.0.0.1 are different origins served by the same header-less preview server.
-  const url = new URL(baseURL ?? page.url())
-  test.skip(url.hostname !== '127.0.0.1', 'cross-origin image check needs the local preview server')
+test('isolation uses COEP credentialless, so no-cors images without CORP still load', async ({
+  page,
+  baseURL,
+}) => {
+  // Locally, localhost and 127.0.0.1 are different origins served by the same header-less preview server.
+  const url = new URL(baseURL ?? 'http://127.0.0.1:4173/mv-studio/')
+  test.skip(url.hostname !== '127.0.0.1', 'needs the local preview server as a second origin')
+  await openApp(page)
   url.hostname = 'localhost'
   const imageUrl = new URL('favicon.svg', url).href
   const loaded = await page.evaluate(
