@@ -258,6 +258,37 @@
   font-size: var(--text-sm);
 }
 
+/* The settings of an effect that is off: still editable, dimmed because they aren't applied. */
+.effectOff {
+  opacity: 0.5;
+}
+
+.effectMore {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  margin-left: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.effectMore:hover {
+  color: var(--text-1);
+}
+
+.effectMoreChevron {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.effectMoreOpen {
+  transform: rotate(90deg);
+}
+
 .footerAction {
   padding: var(--space-3) var(--space-3) 0 var(--space-4);
 }

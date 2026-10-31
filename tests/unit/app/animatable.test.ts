@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createEffectInstance, createGeneratorClip } from '../../../src/plugins/library.ts'
 import { createTextClip } from '../../../src/model/index.ts'
-import { animatableRow, reactionTarget } from '../../../src/app/screens/editor/inspector/animatable.ts'
+import {
+  animatableRow,
+  reactionTarget,
+  settingName,
+} from '../../../src/app/screens/editor/inspector/animatable.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import { set as setUi } from '../../../src/app/state/ui.ts'
 
@@ -187,5 +191,13 @@ describe('a keyframed row', () => {
         [2, 1.5],
       ],
     ])
+  })
+})
+
+describe('a setting name', () => {
+  it('names the setting with its effect without repeating a word where they meet', () => {
+    expect(settingName('Amount', 'RGB split')).toBe('RGB split amount')
+    expect(settingName('Grade', 'Color grade')).toBe('Color grade')
+    expect(settingName('Grain size', 'Film grain')).toBe('Film grain size')
   })
 })

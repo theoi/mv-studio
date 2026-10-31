@@ -215,6 +215,11 @@
   opacity: 0;
 }
 
+.reactSpacer {
+  width: 24px;
+  height: 24px;
+}
+
 .reactBtn:focus-visible {
   opacity: 1;
 }
