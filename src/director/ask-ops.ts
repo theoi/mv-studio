@@ -289,11 +289,25 @@ function resolveClips(ctx: OpCtx, target: Target): Clip[] {
   let to = target.to ?? Infinity
   if (target.section) {
     const sectionId = realId(ctx, target.section)
-    const sections = p.songAssetId ? p.analysis.audio[p.songAssetId]?.sections : undefined
-    const section = sections?.find((s) => s.id === sectionId)
-    if (!section) fail(ctx, `section ${target.section} doesn't exist`)
-    from = Math.max(from, section.start)
-    to = Math.min(to, section.end)
+    const sections = (p.songAssetId ? p.analysis.audio[p.songAssetId]?.sections : undefined) ?? []
+    // Small models often pass a lyric line id as the section; its time span is what they mean.
+    const line = p.lyrics?.lines.find((l) => l.id === sectionId)
+    const span =
+      sections.find((s) => s.id === sectionId) ??
+      (line?.start !== undefined && line.end !== undefined && line.end > line.start
+        ? { start: line.start, end: line.end }
+        : undefined)
+    if (!span) {
+      const known = sections.map((s) => ctx.ids.toShort.get(s.id)).filter(Boolean)
+      fail(
+        ctx,
+        known.length
+          ? `section ${target.section} doesn't exist; the song sections are ${known.join(', ')}`
+          : `section ${target.section} doesn't exist; the song has no sections, so use from and to instead`,
+      )
+    }
+    from = Math.max(from, span.start)
+    to = Math.min(to, span.end)
   }
   const trackId = target.track ? trackOf(ctx, target.track).id : undefined
   const needle = target.textContains?.toLowerCase()

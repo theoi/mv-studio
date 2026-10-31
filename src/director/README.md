@@ -57,7 +57,9 @@ director.undo()
 
 - `idle`: kind picker (Lyric video, Visualizer, Beat cut, AI video), optional prompt, "Use my clips" toggle, and
   "AI shots" (Off, Stills, Video; draft or quality) when fal.ai is connected.
-- `planning`: progress in place with Cancel. Planning is free.
+- `planning`: `message` in place with Cancel. Planning is free. After a few seconds `slow` turns true: show "Still
+  working…" and, when `canUseLocal` is true (the AI model is planning), a "Use the local draft instead" button that
+  calls `useLocalDraft()`. It stops waiting for the model and makes the draft with the built-in planner.
 - `ready`: `preview.summary`, `preview.changes`, `preview.items` behind "Show changes", `preview.warnings` as
   notes, sections with mood and pace, "Try another version" (`tryAnother()`), and the main button labeled
   `actionLabel` ("Make video" or "Generate 12 shots · about $2.40"). When `confirmRequired` is true the button opens
@@ -75,8 +77,8 @@ director.undo()
 `DirectorSession`. With an LLM it asks for the creative brief through `callTools` (native tools, JSON mode or a
 JSON reply, whichever the endpoint supports). The model sees short ids (`s1`, `m1`) and never computes timings;
 `expandBrief()` does. Sloppy answers are repaired field by field (`normalizeBrief`), an unusable answer gets one
-retry, and if the model is unreachable or still unusable the local planner makes the draft with a warning saying
-why. Without an LLM it is the local planner.
+retry, and if the model is unreachable, too slow (the answer time limit in Settings) or still unusable, the local
+planner makes the draft with a warning saying why. Without an LLM it is the local planner.
 
 ## Plain-language edits (Assist › Ask)
 
@@ -91,11 +93,20 @@ repair rounds), so nothing half-applies.
 `AskSession` (`useSyncExternalStore(ask.subscribe, ask.getState)`) states:
 
 - `idle`: the Ask box with placeholder examples ("Make the chorus more intense"). `ask(text, { selection, playhead })`.
-- `thinking`: inline progress with Cancel.
+- `thinking`: `message` ("Thinking", then "Fixing the edit (attempt 2 of 3)" during repair rounds) with Cancel. After
+  a few seconds `slow` turns true: show "Still working…" and keep Cancel visible. Each answer is limited by the
+  answer time limit (`llmTimeoutSeconds()` in `src/cloud`), and there are at most 3 answers per request.
 - `question`: the model's question with `choices` as quick replies; `answer(text)` continues the same conversation.
-- `review`: `summary`, `changes` and `items` with Apply (`accept()`) and Discard (`reject()`). Used when
-  `reviewFirst` is on, and always for large deletions (4 or more clips, or any track or media).
+- `review`: `summary`, `changes` and `items` with Apply (`accept()`) and Discard (`reject()`). Show the items
+  prominently: this is where an imperfect edit gets rejected. `reason` says why it waits: `deletes` (4 or more clips,
+  or any track or media), `large` (8 or more clips or tracks change), `small-model` (`smallModel()` is true), or
+  `setting` (`reviewFirst()` is true).
 - `applied`: `summary` with Undo (`undo()`, only while it is the latest change) and "Show changes" (`items`, each
   with a time `range` to highlight).
 - `reply`: the model's answer, no changes.
-- `error`: `title`, `message`, `steps`; `needsSetup` means no LLM is configured, so link to Settings.
+- `error`: `title`, `message`, `steps`; `needsSetup` means no LLM is configured, so link to Settings. When the
+  model can't produce a valid edit after the repair rounds, the title is "Couldn't make that edit" and the steps
+  suggest rephrasing and, for small models, a bigger one.
+
+Pass `smallModel: () => !!modelHint(cloud.settings.get().llm)` (with `modelHint` from `src/cloud/llm/presets.ts`)
+so small local models always show their edits for review. See "Choosing a model" in `src/cloud/README.md`.

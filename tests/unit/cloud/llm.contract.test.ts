@@ -7,7 +7,13 @@ import {
   type LlmEndpoint,
   type ToolDefinition,
 } from '../../../src/cloud/llm/client.ts'
-import { pickDefaultModel } from '../../../src/cloud/llm/presets.ts'
+import {
+  LLM_TIMEOUT,
+  llmTimeoutSeconds,
+  modelHint,
+  modelSizeBillions,
+  pickDefaultModel,
+} from '../../../src/cloud/llm/presets.ts'
 import { browserFetch, PAGE_ORIGIN, type MockHandler } from './mocks/browser.ts'
 import { MockLlmServer } from './mocks/llm-server.ts'
 
@@ -72,7 +78,7 @@ describe('OpenAI-compatible client: connection test', () => {
     expect(result).toMatchObject({ ok: true, models: ['gpt-4.1-mini', 'gpt-5-mini'] })
     expect(net.requests[0]).toMatchObject({ method: 'GET', url: `${OPENAI}/v1/models` })
     expect(net.requests[0]?.headers.authorization).toBe(`Bearer ${KEY}`)
-    expect(pickDefaultModel(result.ok ? result.models : [], 'openai')).toBe('gpt-5-mini')
+    expect(pickDefaultModel(result.ok ? result.models : [], 'openai')).toBe('gpt-4.1-mini')
   })
 
   it('reports a wrong key from the readable /models 401 without echoing the key', async () => {
@@ -388,9 +394,9 @@ describe('OpenAI-compatible client: structured calls', () => {
       { baseUrl: `${LMSTUDIO}/v1`, model: 'm', preset: 'lmstudio' },
       20,
     )
-    expect(
-      (await failure(slow.llm.callTools({ messages: [{ role: 'user', content: 'x' }], tools }))).kind,
-    ).toBe('timeout')
+    const timedOut = await failure(slow.llm.callTools({ messages: [{ role: 'user', content: 'x' }], tools }))
+    expect(timedOut.kind).toBe('timeout')
+    expect(timedOut.steps.join(' ')).toMatch(/answer time limit in Settings/)
 
     const controller = new AbortController()
     const cancellable = client(
@@ -445,5 +451,103 @@ describe('OpenAI-compatible client: structured calls', () => {
       calls: [{ tool: 'set_opacity', args: { clip: 'zz' } }],
     })
     expect(sent[3]?.content).toContain('Error: no clip zz')
+  })
+})
+
+describe('OpenAI-compatible client: model parameters and limits', () => {
+  const editCall = {
+    id: 'call_e',
+    type: 'function' as const,
+    function: { name: 'set_opacity', arguments: '{"clip":"c1","value":0.5}' },
+  }
+  const request = {
+    messages: [{ role: 'user' as const, content: 'x' }],
+    tools,
+    temperature: 0.2,
+    maxTokens: 300,
+  }
+
+  it('sends OpenAI reasoning models max_completion_tokens, no temperature and low reasoning effort', async () => {
+    const server = new MockLlmServer({
+      flavor: 'openai',
+      apiKey: KEY,
+      models: ['gpt-5-mini', 'gpt-4.1-mini'],
+    }).reply({ tool_calls: [editCall] }, { tool_calls: [editCall] })
+    const make = (model: string) =>
+      client(
+        { [OPENAI]: server.handler() },
+        { baseUrl: `${OPENAI}/v1`, apiKey: KEY, model, preset: 'openai' },
+      ).llm
+    await make('gpt-5-mini').callTools(request)
+    await make('gpt-4.1-mini').callTools(request)
+    const [reasoning, classic] = server.chatBodies
+    expect(reasoning).toMatchObject({ max_completion_tokens: 300, reasoning_effort: 'low' })
+    expect(reasoning).not.toHaveProperty('temperature')
+    expect(reasoning).not.toHaveProperty('max_tokens')
+    expect(classic).toMatchObject({ max_completion_tokens: 300, temperature: 0.2 })
+    expect(classic).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('retries without the parameters a server rejects', async () => {
+    const server = new MockLlmServer({
+      flavor: 'lmstudio',
+      models: ['m'],
+      rejectParams: {
+        temperature: "Unsupported value: 'temperature' does not support 0.2 with this model.",
+        max_tokens:
+          "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+      },
+    }).reply({ tool_calls: [editCall] })
+    const { llm } = client(
+      { [LMSTUDIO]: server.handler() },
+      { baseUrl: `${LMSTUDIO}/v1`, model: 'm', preset: 'lmstudio' },
+    )
+    const result = await llm.callTools(request)
+    expect(result.calls[0]?.name).toBe('set_opacity')
+    expect(server.chatBodies).toHaveLength(3)
+    expect(server.chatBodies[2]).toMatchObject({ max_completion_tokens: 300 })
+    expect(server.chatBodies[2]).not.toHaveProperty('temperature')
+    expect(server.chatBodies[2]).not.toHaveProperty('max_tokens')
+  })
+
+  it('waits longer for local models by default and clamps the user setting', () => {
+    expect(llmTimeoutSeconds({ preset: 'openai', baseUrl: 'https://api.openai.com/v1' })).toBe(
+      LLM_TIMEOUT.cloud,
+    )
+    expect(llmTimeoutSeconds({ preset: 'custom', baseUrl: 'http://127.0.0.1:8080/v1' })).toBe(
+      LLM_TIMEOUT.local,
+    )
+    expect(llmTimeoutSeconds({ preset: 'ollama', baseUrl: '', timeoutSeconds: 45 })).toBe(45)
+    expect(llmTimeoutSeconds({ preset: 'ollama', baseUrl: '', timeoutSeconds: 5 })).toBe(LLM_TIMEOUT.min)
+    expect(llmTimeoutSeconds({ preset: 'ollama', baseUrl: '', timeoutSeconds: 9999 })).toBe(LLM_TIMEOUT.max)
+    expect(LLM_TIMEOUT.cloud).toBeLessThan(LLM_TIMEOUT.local)
+  })
+
+  it.each([
+    ['qwen2.5:3b', 3],
+    ['qwen2.5-7b-instruct', 7],
+    ['Qwen2.5-7B-Instruct-Q4_K_M.gguf', 7],
+    ['llama3.2:1b', 1],
+    ['phi3:3.8b', 3.8],
+    ['qwen3:30b-a3b', 30],
+    ['mixtral:8x7b', 56],
+    ['gpt-4.1-mini', undefined],
+    ['llama3.1', undefined],
+  ])('reads the size of %s', (model, size) => {
+    expect(modelSizeBillions(model)).toBe(size)
+  })
+
+  it('hints only for small local models', () => {
+    const local = { preset: 'ollama' as const, baseUrl: 'http://localhost:11434/v1' }
+    expect(modelHint({ ...local, model: 'qwen2.5:3b' })).toMatch(/small model \(3B\).*7B or larger/)
+    expect(modelHint({ ...local, model: 'qwen2.5:7b' })).toBeUndefined()
+    expect(modelHint({ ...local, model: 'llama3.1' })).toBeUndefined()
+    expect(
+      modelHint({
+        preset: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model: 'meta/llama-3.2-3b',
+      }),
+    ).toBeUndefined()
   })
 })

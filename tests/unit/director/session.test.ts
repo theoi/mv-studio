@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SpendLedger } from '../../../src/cloud/spend.ts'
 import { MemoryStorage } from '../../../src/cloud/keys.ts'
 import {
@@ -6,9 +6,10 @@ import {
   DirectorSession,
   directorMeta,
   type DirectorState,
+  type Planner,
 } from '../../../src/director/index.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
-import { JobRunner } from '../../../src/shared/jobs.ts'
+import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
 import { badKey, fakeProvider, makeProject, memoryStore, type FakeProvider } from './fixtures.ts'
 
 function setup(o: { provider?: FakeProvider; videos?: number; confirmAboveUsd?: number } = {}) {
@@ -29,7 +30,10 @@ function setup(o: { provider?: FakeProvider; videos?: number; confirmAboveUsd?: 
     }),
   })
   const states: DirectorState['status'][] = []
-  session.subscribe(() => states.push(session.getState().status))
+  session.subscribe(() => {
+    const status = session.getState().status
+    if (states[states.length - 1] !== status) states.push(status)
+  })
   return { project, editor, session, ledger, store, states }
 }
 
@@ -150,5 +154,36 @@ describe('DirectorSession', () => {
     const state = await session.plan({ kind: 'lyric' })
     if (state.status !== 'error') throw new Error(`expected error, got ${state.status}`)
     expect(state.message).toMatch(/Add a song first/)
+  })
+})
+
+describe('DirectorSession with an AI planner', () => {
+  it('offers the local draft while the AI model is slow, and uses it on request', async () => {
+    const editor = new ProjectEditor(makeProject())
+    const slowPlanner: Planner = (_input, ctx) => {
+      ctx.progress({ stage: 'llm', message: 'Asking your AI model for ideas' })
+      return new Promise((_resolve, reject) =>
+        ctx.signal.addEventListener('abort', () => reject(new JobError('cancelled', 'Cancelled'))),
+      )
+    }
+    const session = new DirectorSession({
+      editor,
+      jobs: new JobRunner(),
+      planner: slowPlanner,
+      slowAfterMs: 5,
+    })
+    const first = session.plan({ kind: 'beat-cut', seed: 1 })
+    expect(session.getState()).toMatchObject({ status: 'planning', slow: false, canUseLocal: true })
+    await vi.waitFor(() =>
+      expect(session.getState()).toMatchObject({
+        status: 'planning',
+        slow: true,
+        message: 'Asking your AI model for ideas',
+      }),
+    )
+    const local = ready(await session.useLocalDraft())
+    expect(local.plan.planner).toBe('local')
+    await first
+    expect(session.getState()).toBe(local)
   })
 })

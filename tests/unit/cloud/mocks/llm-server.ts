@@ -21,6 +21,8 @@ export interface MockLlmOptions {
   corsEnabled?: boolean
   /** Force an error on chat: status and OpenAI-style body. */
   chatError?: { status: number; body: unknown }
+  /** Reject chat bodies that contain one of these parameters with a 400 and the given message. */
+  rejectParams?: Record<string, string>
 }
 
 export class MockLlmServer {
@@ -91,6 +93,11 @@ export class MockLlmServer {
       this.chatBodies.push(body)
       if (this.options.chatError)
         return this.error(request, this.options.chatError.status, this.options.chatError.body)
+      for (const [param, message] of Object.entries(this.options.rejectParams ?? {})) {
+        if (param in body) {
+          return this.error(request, 400, { error: { message, type: 'invalid_request_error', param } })
+        }
+      }
       if (!(this.options.models ?? []).includes(String(body.model))) {
         return this.error(request, 404, {
           error: { message: `model "${String(body.model)}" not found, try pulling it first` },
