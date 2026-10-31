@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PlaybackState } from '../../../src/engine/types.ts'
-import { ProjectEditor, type Clip, type Project } from '../../../src/model/index.ts'
+import { ProjectEditor, type Asset, type Clip, type Project } from '../../../src/model/index.ts'
 import {
   LAYOUT_EXTENSION_KEY,
   MidiInputManager,
@@ -31,8 +31,13 @@ class FakeClock {
 class FakePreview implements VjPreview {
   clock = new FakeClock()
   project: Project | null = null
+  /** Asset ids of each prefetch call. */
+  prefetched: string[][] = []
   setProject(p: Project) {
     this.project = p
+  }
+  prefetch(assets: Asset[]) {
+    this.prefetched.push(assets.map((a) => a.id))
   }
   play() {
     this.clock.state = 'playing'
@@ -317,6 +322,24 @@ describe('VjSession', () => {
     expect(s.vj.getSnapshot().bank.index).toBe(1)
     s.tap('KeyQ')
     expect(at(s.preview.project!, 0).map((c) => c.type === 'image' && c.assetId)).toEqual(['x7'])
+  })
+
+  it("keeps the current bank's pad footage loaded, follows bank and pad changes, and lets it go on close", () => {
+    const project = makeProject()
+    for (let i = 0; i < 9; i++) project.assets['v' + i] = asset('v' + i, 'video', 'Video ' + i + '.mp4', 4, 5)
+    const s = setup(project)
+    // Images and visualizers need no media element.
+    expect(s.preview.prefetched).toEqual([['city', 'singer', 'v0', 'v1', 'v2', 'v3', 'v4', 'v5', 'v6']])
+    s.tap('BracketRight')
+    expect(s.preview.prefetched.at(-1)).toEqual(['v7', 'v8'])
+    s.vj.setPad('clips', 0, null)
+    expect(s.preview.prefetched.at(-1)).toEqual(['v8'])
+    const calls = s.preview.prefetched.length
+    s.editor.dispatch({ type: 'clip.set', clipId: 'song-clip', path: ['fadeIn'], value: 0.1 })
+    s.vj.setQuantize({ enabled: true })
+    expect(s.preview.prefetched).toHaveLength(calls)
+    s.vj.close()
+    expect(s.preview.prefetched.at(-1)).toEqual([])
   })
 
   it('measures input latency from taps along to the beat', async () => {
