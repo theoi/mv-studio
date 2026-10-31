@@ -48,6 +48,12 @@ export interface AssetOrigin {
   parentAssetId?: Id
 }
 
+/** A song's own title and artist tags (ID3, MP4 or Vorbis comments), trimmed. Empty tags are left out. */
+export interface AssetTags {
+  title?: string
+  artist?: string
+}
+
 export interface Asset {
   id: Id
   kind: AssetKind
@@ -63,6 +69,8 @@ export interface Asset {
   hasAudio?: boolean
   sampleRate?: number
   channels?: number
+  /** Audio files only, when the file has a title or artist tag. Projects saved before tags were read have none. */
+  tags?: AssetTags
   origin: AssetOrigin
   createdAt: string
 }

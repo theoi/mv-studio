@@ -1,6 +1,6 @@
 /** Reads media metadata (duration, size, frame rate, audio format) without decoding the whole file. */
-import { ALL_FORMATS, BlobSource, Input } from 'mediabunny'
-import type { Asset, AssetKind } from '../model/types.ts'
+import { ALL_FORMATS, BlobSource, Input, type MetadataTags } from 'mediabunny'
+import type { Asset, AssetKind, AssetTags } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
 
 const AUDIO_EXT = /\.(mp3|wav|wave|flac|m4a|aac|ogg|oga|opus|weba)$/i
@@ -17,9 +17,33 @@ export function detectKind(file: { name: string; type: string }): AssetKind | nu
   return null
 }
 
+/** Longest title or artist kept, in characters: the title names the project and the director's title card. */
+export const MAX_TAG_LENGTH = 120
+
+function tagText(value: string | undefined): string | undefined {
+  const text = value?.trim()
+  if (!text) return undefined
+  // By code point, so an emoji or other astral character is never cut in half.
+  const chars = Array.from(text)
+  if (chars.length <= MAX_TAG_LENGTH) return text
+  const cut = chars.slice(0, MAX_TAG_LENGTH - 1).join('')
+  return `${cut.trimEnd()}…`
+}
+
+/**
+ * The title and artist from a file's tags, trimmed and at most MAX_TAG_LENGTH characters (longer ones end in “…”),
+ * without empty ones; undefined when neither is left.
+ */
+export function assetTags(tags: Pick<MetadataTags, 'title' | 'artist'>): AssetTags | undefined {
+  const title = tagText(tags.title)
+  const artist = tagText(tags.artist)
+  if (!title && !artist) return undefined
+  return { ...(title ? { title } : {}), ...(artist ? { artist } : {}) }
+}
+
 export type MediaProbe = Pick<
   Asset,
-  'duration' | 'width' | 'height' | 'frameRate' | 'hasAudio' | 'sampleRate' | 'channels'
+  'duration' | 'width' | 'height' | 'frameRate' | 'hasAudio' | 'sampleRate' | 'channels' | 'tags'
 > & {
   /** Set when the tracks show the file is a different kind than its name or type suggested. */
   kind?: AssetKind
@@ -55,6 +79,11 @@ async function probeAv(file: Blob, guess: 'audio' | 'video'): Promise<MediaProbe
       out.channels = audio.numberOfChannels
       out.audioCodec = (await audio.getCodecParameterString()) ?? undefined
     } else out.hasAudio = false
+    if (kind === 'audio') {
+      // Tags are a nicety: a file whose tags can't be read still imports.
+      const tags = assetTags(await input.getMetadataTags().catch(() => ({})))
+      if (tags) out.tags = tags
+    }
     return out
   } catch (error) {
     if (error instanceof JobError) throw error

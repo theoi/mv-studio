@@ -6,7 +6,8 @@ import {
   type EditPlan,
   type PlanShot,
 } from '../../../src/director/index.ts'
-import { musicEnd, songTitleFromName } from '../../../src/director/inputs.ts'
+import { musicEnd, songInfoFromProject, songTitle, songTitleFromName } from '../../../src/director/inputs.ts'
+import { parseProject } from '../../../src/model/migrations.ts'
 import { paceFor } from '../../../src/director/rules.ts'
 import { beatGrid, cutTimes, phrasedCutTimes } from '../../../src/director/timing.ts'
 import type { Asset, LyricLine, Project } from '../../../src/model/types.ts'
@@ -173,5 +174,41 @@ describe('songTitleFromName', () => {
     ['Jay-Z - Empire State of Mind.mp3', { artist: 'Jay-Z', title: 'Empire State of Mind' }],
   ])('%s', (name, expected) => {
     expect(songTitleFromName(name)).toEqual(expected)
+  })
+})
+
+describe('songTitle', () => {
+  const name = 'Rxbyn_-_Bad_Side.mp3'
+  it.each([
+    [
+      'tags',
+      { title: 'Neon Skyline', artist: 'The Night Shift' },
+      { title: 'Neon Skyline', artist: 'The Night Shift' },
+    ],
+    ['a tagged title, not the file name’s artist', { title: 'Neon Skyline' }, { title: 'Neon Skyline' }],
+    [
+      'a tagged artist with the file name’s title',
+      { artist: 'The Night Shift' },
+      { title: 'Bad Side', artist: 'The Night Shift' },
+    ],
+    ['the file name without tags', undefined, { artist: 'Rxbyn', title: 'Bad Side' }],
+  ])('uses %s', (_, tags, expected) => {
+    expect(songTitle({ name, ...(tags ? { tags } : {}) })).toEqual(expected)
+  })
+
+  it('reads tags from a saved project, and the file name from one saved before tags were read', () => {
+    const saved = (tags?: Asset['tags']) => {
+      const project = makeProject()
+      const song = project.assets[SONG_ID]!
+      project.assets[SONG_ID] = { ...song, name: 'neon-skyline.wav', ...(tags ? { tags } : {}) }
+      return parseProject(JSON.parse(JSON.stringify(project)))
+    }
+    const old = songInfoFromProject(saved())
+    expect(old.title).toBe('Neon Skyline')
+    expect(old.artist).toBeUndefined()
+    expect(songInfoFromProject(saved({ title: 'Night Drive', artist: 'The Night Shift' }))).toMatchObject({
+      title: 'Night Drive',
+      artist: 'The Night Shift',
+    })
   })
 })
