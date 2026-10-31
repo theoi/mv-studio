@@ -286,6 +286,23 @@ describe('person evidence for the verdict', () => {
     expect(peopleNear(people, 1.8)).toEqual([other])
   })
 
+  it.each([
+    ['the track at 24 fps', 5 / 24],
+    ['the track at 30 fps', 6 / 30],
+    ['the track at 60 fps', 12 / 60],
+    ['the quick check of a 60 s shot', 60 / 90],
+  ])('bridges two missed detections in a row but not three, for %s', (_, interval) => {
+    const at = (hits: number[]) =>
+      Array.from({ length: 12 }, (_, i) => ({ t: i * interval, boxes: hits.includes(i) ? [around] : [] }))
+    const two = at([0, 3])
+    expect(peopleNear(two, interval)).toEqual([around, around])
+    expect(peopleNear(two, 2 * interval)).toEqual([around, around])
+    const three = at([0, 4])
+    expect(peopleNear(three, interval)).toEqual([])
+    expect(peopleNear(three, 2 * interval)).toEqual([around, around])
+    expect(peopleNear(three, 3 * interval)).toEqual([])
+  })
+
   it('does not let an animal the detector takes for a person now and then cover the shot', () => {
     const samples = Array.from({ length: 30 }, (_, i) => ({ t: i * 0.2, mask: subject }))
     const now = samples.map((s, i) => ({ t: s.t, boxes: i % 5 ? [] : [around] }))
