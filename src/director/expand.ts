@@ -6,13 +6,13 @@
 import { newId } from '../model/factory.ts'
 import type { LyricLine, Seconds } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
+import { chooseClips, type ChooseSpan, type PoolItem } from '../vision/index.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
 import { bestByTags, findItem, type LookPreset } from './catalog.ts'
 import {
   energyScale,
   musicEnd,
   type EnergyAt,
-  type FootageMatch,
   type MediaItem,
   type PlannerInput,
   type SectionInfo,
@@ -81,12 +81,6 @@ const KIND_NAME: Record<VideoKind, string> = {
 
 const IMAGE_MOTIONS: Motion[] = ['push-in', 'pan-right', 'pull-out', 'pan-left']
 
-interface Usage {
-  lastShot: number
-  cursor?: number
-  uses: number
-}
-
 interface Ctx {
   input: PlannerInput
   brief: CreativeBrief
@@ -97,7 +91,7 @@ interface Ctx {
   visual: Visual
   concept: string
   promptStyle: string
-  usage: Map<string, Usage>
+  pending: PendingShot[]
   shotIndex: number
   generated: string[]
   groupShots: Map<number, string[]>
@@ -251,80 +245,6 @@ function mediaPool(ctx: Ctx): MediaItem[] {
   const media = ctx.input.media
   if (ctx.visual === 'stills') return media.filter((m) => m.kind === 'image')
   return media
-}
-
-async function sectionMatches(section: SectionInfo, sb: BriefSection, ctx: Ctx, shotLength: number) {
-  const matches = new Map<string, FootageMatch>()
-  const matcher = ctx.input.matcher
-  if (!matcher || ctx.visual !== 'footage') return matches
-  const lyric = linesIn(ctx.input.lyrics, section.start, section.end)
-    .slice(0, 2)
-    .map((l) => l.text)
-    .join(' ')
-  const text = [sb.mediaQuery, lyric].filter(Boolean).join('. ')
-  try {
-    const mood = footageMood(sb.mood, sb.intensity)
-    const results = await matcher.rank(
-      { text: text || undefined, ...(mood ? { mood } : {}), energy: sb.intensity, duration: shotLength },
-      { limit: 12 },
-    )
-    for (const r of results) matches.set(r.assetId, r)
-  } catch {
-    warn(ctx, "Footage matching wasn't available, so clips were picked by motion and variety.")
-  }
-  return matches
-}
-
-function pickMedia(
-  pool: MediaItem[],
-  sb: BriefSection,
-  matches: Map<string, FootageMatch>,
-  ctx: Ctx,
-): MediaItem | undefined {
-  let best: MediaItem | undefined
-  let bestScore = -Infinity
-  for (const item of pool) {
-    const usage = ctx.usage.get(item.assetId)
-    const match = matches.get(item.assetId)
-    let score = match ? match.score : matches.size > 0 ? 0.1 : 0.5
-    score += item.info?.motion !== undefined ? (1 - Math.abs(item.info.motion - sb.intensity)) * 0.6 : 0.3
-    if (sb.assetIds?.includes(item.assetId)) score += 1
-    if (!usage) score += 0.5
-    else {
-      score += Math.min(0.5, (ctx.shotIndex - usage.lastShot) * 0.08) - usage.uses * 0.05
-      if (usage.lastShot === ctx.shotIndex - 1 && pool.length > 1) score -= 3
-    }
-    if (ctx.visual === 'footage' && item.kind === 'image') score -= 0.35
-    score += ctx.rng() * 0.2
-    if (score > bestScore) {
-      bestScore = score
-      best = item
-    }
-  }
-  return best
-}
-
-function videoWindow(
-  item: MediaItem,
-  length: number,
-  match: FootageMatch | undefined,
-  usage: Usage,
-  ctx: Ctx,
-) {
-  const duration = item.duration ?? length
-  if (duration < length) {
-    const rate = Math.max(0.5, Math.floor((duration / length) * 100) / 100)
-    if (rate === 0.5 && duration < length * 0.5)
-      warn(ctx, `"${item.name}" is shorter than some shots, so it is slowed down.`)
-    return { sourceStart: 0, playbackRate: rate }
-  }
-  const room = duration - length
-  if (match?.time !== undefined && match.time <= room && usage.uses === 0)
-    return { sourceStart: round3(match.time) }
-  let cursor = usage.cursor ?? round3(ctx.rng() * room * 0.4)
-  if (cursor > room) cursor = round3(ctx.rng() * Math.min(room, length))
-  usage.cursor = cursor + length + 0.25
-  return { sourceStart: round3(cursor) }
 }
 
 function nextMotion(sb: BriefSection, ctx: Ctx): Motion {
@@ -529,39 +449,95 @@ async function shotsForSection(
     return shots
   }
 
-  const pool = mediaPool(ctx)
-  const avgLength = (section.end - section.start) / Math.max(1, sectionSpans.length)
-  const matches = await sectionMatches(section, sb, ctx, avgLength)
+  const mood = footageMood(sb.mood, sb.intensity)
   for (const [i, span] of sectionSpans.entries()) {
-    const item = pickMedia(pool, sb, matches, ctx)
-    if (!item) break
-    const usage = ctx.usage.get(item.assetId) ?? { lastShot: -10, uses: 0 }
-    const length = span.end - span.start
-    const shot: PlanShot = {
+    const shot = decorate({
       ...base,
       id: newId(),
       start: span.start,
       end: span.end,
-      source:
-        item.kind === 'video'
-          ? {
-              type: 'media',
-              assetId: item.assetId,
-              ...videoWindow(item, length, matches.get(item.assetId), usage, ctx),
-            }
-          : { type: 'media', assetId: item.assetId },
-      ...(item.kind === 'image' ? { motion: nextMotion(sb, ctx) } : {}),
+      // Filled in by chooseFootage once every section has its shots.
+      source: { type: 'media', assetId: 'pending' },
       ...(i > 0 && crossfade ? { transitionIn: crossfade } : {}),
-    }
-    usage.lastShot = ctx.shotIndex
-    usage.uses += 1
-    ctx.usage.set(item.assetId, usage)
-    shots.push(decorate(shot))
+    })
+    ctx.pending.push({
+      shot,
+      sb,
+      span: {
+        start: span.start,
+        end: span.end,
+        energy: sb.intensity,
+        ...(sb.mediaQuery ? { text: sb.mediaQuery } : {}),
+        ...(mood ? { mood } : {}),
+        ...(sb.assetIds?.length ? { prefer: sb.assetIds } : {}),
+      },
+    })
+    shots.push(shot)
     ctx.shotIndex++
   }
   return shots
 }
 
+/** A footage or still shot waiting for its clip, chosen for all shots at once so variety spans the whole video. */
+interface PendingShot {
+  shot: PlanShot
+  span: ChooseSpan
+  sb: BriefSection
+}
+
+/**
+ * Fills pending shots with src/vision's clip chooser (the same one auto-cut uses): it ranks clips for the line sung
+ * during each shot, the section's media query and mood, and the music's energy when footage is analyzed, prefers
+ * the brief's clips, never plays a clip twice in a row and never shows the same frames twice when it can avoid it.
+ * Shots no clip can fill are dropped.
+ */
+async function chooseFootage(shots: PlanShot[], ctx: Ctx): Promise<PlanShot[]> {
+  if (ctx.pending.length === 0) return shots
+  const media = mediaPool(ctx).filter((m) => m.kind === 'image' || (m.duration ?? 0) > 0)
+  const byId = new Map(media.map((m) => [m.assetId, m]))
+  const pool: PoolItem[] = media.map((m) => ({
+    assetId: m.assetId,
+    kind: m.kind,
+    name: m.name,
+    ...(m.kind === 'video' ? { duration: m.duration } : {}),
+    ...(m.index ? { index: m.index } : {}),
+  }))
+  const { picks, warnings } = await chooseClips({
+    spans: ctx.pending.map((p) => p.span),
+    pool,
+    order: 'matched',
+    ...(ctx.input.lyrics ? { lyrics: ctx.input.lyrics } : {}),
+    ...(ctx.energyAt ? { energyAt: ctx.energyAt } : {}),
+    ...(ctx.input.footage ? { matcher: ctx.input.footage } : {}),
+    seed: ctx.input.seed,
+  })
+  // Without a matcher every pick is for variety, which needs no explaining in each draft.
+  if (ctx.input.footage) for (const w of warnings) warn(ctx, w)
+  const unfilled = new Set<PlanShot>()
+  ctx.pending.forEach(({ shot, sb }, i) => {
+    const pick = picks[i]
+    const item = pick ? byId.get(pick.assetId) : undefined
+    if (!pick || !item) {
+      unfilled.add(shot)
+      return
+    }
+    const length = shot.end - shot.start
+    if (item.kind === 'image') {
+      shot.source = { type: 'media', assetId: item.assetId }
+      shot.motion = sb.motion ?? (IMAGE_MOTIONS[(ctx.motionOffset + i) % IMAGE_MOTIONS.length] as Motion)
+      return
+    }
+    shot.source = {
+      type: 'media',
+      assetId: item.assetId,
+      sourceStart: pick.sourceStart,
+      ...(pick.playbackRate !== 1 ? { playbackRate: pick.playbackRate } : {}),
+    }
+    if ((item.duration ?? length) < length * 0.5)
+      warn(ctx, `"${item.name}" is shorter than some shots, so it is slowed down.`)
+  })
+  return unfilled.size ? shots.filter((s) => !unfilled.has(s)) : shots
+}
 function sungSpans(input: PlannerInput): { start: Seconds; end: Seconds }[] {
   return (input.lyrics?.lines ?? []).flatMap((l) => {
     const start = l.start ?? l.words[0]?.start
@@ -851,7 +827,7 @@ export async function expandBrief(
     visual,
     concept: brief.concept.trim() || input.prompt || DEFAULT_CONCEPT[input.kind],
     promptStyle: brief.promptStyle ?? preset?.promptStyle ?? '',
-    usage: new Map(),
+    pending: [],
     shotIndex: 0,
     generated: [],
     groupShots: new Map(),
@@ -889,7 +865,7 @@ export async function expandBrief(
     }
     shots.push(...sectionShots)
   }
-  shots = openAndClose(shots, ctx)
+  shots = openAndClose(await chooseFootage(shots, ctx), ctx)
   const titleText = input.song.title ?? (meta.planner === 'llm' ? brief.title.trim() : '')
   const texts = buildTexts(sections, briefs, ctx, titleText)
   const draft: Omit<EditPlan, 'summary'> = {
