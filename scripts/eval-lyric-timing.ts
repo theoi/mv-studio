@@ -8,17 +8,25 @@
  * (`mp3/<file>.mp3`, decoded with ffmpeg to `<file>.mix16k.f32` in --cache on the first run).
  *
  *   node scripts/eval-lyric-timing.ts --cache ~/devdata/cache [--baseline | --no-mix] [--songs a,b]
- *     [--gap 40 [--gap-at end] [--gap-leak=-25]] [--lines one|stanza] [--unvoiced-cost n] [--line-pause n]
+ *     [--gap 40 [--gap-at end] [--gap-leak=-25]] [--unlisted 30 [--unlisted-at end]] [--extra-repeat]
+ *     [--lines one|stanza] [--unvoiced-cost n] [--line-pause n] [--unlisted-cost n] [--unlisted-entry n]
  *     [--data dir] [--vocab vocab.json] [--verbose]
  *
- * --baseline   times without voice activity and line pauses, as before they were added
+ * --baseline   times without voice activity, line pauses and unlisted singing, as before they were added
  * --no-mix     finds where someone sings from the vocals alone, as before the song was used
  * --unvoiced-cost, --line-pause   override the aligner's defaults (0 turns either off)
+ * --unlisted-cost, --unlisted-entry   override the aligner's costs of unlisted singing (an unlisted cost of Infinity
+ *              turns it off)
  * --gap s      inserts s seconds of the song's own longest instrumental stretch (looped) at the line boundary nearest
  *              the middle, or after the last line with --gap-at end, and shifts the reference after it
  * --gap-leak dB   fills the inserted stretch of the vocals with the song's own, dB lower, like the band leaking into
  *              the stem during a loud instrumental
  * --lines      pastes the lyrics as one line, or one line per stanza, instead of the published lines
+ * --unlisted s    inserts s seconds of singing that the lyrics do not list (the next song's, from its first word: its
+ *              vocals, song and emissions) at the line boundary nearest the middle, or after the last line with
+ *              --unlisted-at end, and counts the words placed in it
+ * --extra-repeat  sings the last stanza that the lyrics repeat once more right after itself, without pasting it again;
+ *              its words count as right at either copy
  */
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -46,6 +54,11 @@ const { values: args } = parseArgs({
     lines: { type: 'string', default: 'published' },
     'unvoiced-cost': { type: 'string' },
     'line-pause': { type: 'string' },
+    'unlisted-cost': { type: 'string' },
+    'unlisted-entry': { type: 'string' },
+    unlisted: { type: 'string' },
+    'unlisted-at': { type: 'string', default: 'middle' },
+    'extra-repeat': { type: 'boolean', default: false },
     verbose: { type: 'boolean', default: false },
   },
 })
@@ -93,15 +106,13 @@ for (const row of fs.readFileSync(path.join(data, 'JamendoLyrics.csv'), 'utf8').
   language.set((cells[1] ?? '').replace(/\.mp3$/, ''), cells[6] ?? '?')
 }
 const wanted = args.songs?.split(',')
-const names = fs
+const available = fs
   .readdirSync(cache)
   .filter((f) => f.endsWith('.vocals16k.f32'))
   .map((f) => f.slice(0, -'.vocals16k.f32'.length))
-  .filter(
-    (n) =>
-      emFile(n) && fs.existsSync(path.join(data, 'words', `${n}.csv`)) && (!wanted || wanted.includes(n)),
-  )
+  .filter((n) => emFile(n) && fs.existsSync(path.join(data, 'words', `${n}.csv`)))
   .sort()
+const names = available.filter((n) => !wanted || wanted.includes(n))
 
 /** Frames [a, b) of `src` (rows of `width`), repeated to `len` frames. */
 function loop(src: Float32Array, width: number, a: number, b: number, len: number): Float32Array {
@@ -120,11 +131,37 @@ function splice(src: Float32Array, at: number, insert: Float32Array): Float32Arr
   return out
 }
 
+/** The level of the loud frames (95th percentile of 20 ms frames, dB), as voiceActivity measures it. */
+function loudDb(pcm: Float32Array): number {
+  const db: number[] = []
+  for (let f = 0; (f + 1) * HOP <= pcm.length; f++) {
+    let sum = 0
+    for (let i = f * HOP; i < (f + 1) * HOP; i++) sum += (pcm[i] as number) ** 2
+    const v = 10 * Math.log10(sum / HOP + 1e-12)
+    if (v > -80) db.push(v)
+  }
+  db.sort((x, y) => x - y)
+  return db[Math.floor(0.95 * (db.length - 1))] ?? -80
+}
+
+function readReference(name: string): { start: number; end: number }[] {
+  return fs
+    .readFileSync(path.join(data, 'words', `${name}.csv`), 'utf8')
+    .trim()
+    .split('\n')
+    .slice(1)
+    .map((l) => {
+      const [start, end] = l.split(',').map(Number)
+      return { start: start as number, end: end as number }
+    })
+}
+
 interface Errors {
   all: number[]
   afterGap: number[]
 }
 const total: Errors = { all: [], afterGap: [] }
+let placedInUnlisted = 0
 const byLanguage = new Map<string, number[]>()
 const rows: string[] = []
 for (const name of names) {
@@ -140,15 +177,7 @@ for (const name of names) {
             .map((text) => ({ text }))
         : parseLyricsText(raw).map((l) => ({ text: l.text }))
   const lineWords = lines.map((l) => l.text.split(/\s+/).filter(Boolean).length)
-  const reference = fs
-    .readFileSync(path.join(data, 'words', `${name}.csv`), 'utf8')
-    .trim()
-    .split('\n')
-    .slice(1)
-    .map((l) => {
-      const [start, end] = l.split(',').map(Number)
-      return { start: start as number, end: end as number }
-    })
+  const reference = readReference(name)
   if (lineWords.reduce((a, b) => a + b, 0) !== reference.length) {
     console.log(
       `skipped ${name}: ${lineWords.reduce((a, b) => a + b, 0)} words, reference ${reference.length}`,
@@ -197,20 +226,94 @@ for (const name of names) {
         r.end += frames / FPS
       }
   }
+  /** Inserts frames of emissions, vocals and song at `at` seconds and shifts the reference after it. */
+  const insert = (at: number, part: { logProbs: Float32Array; pcm: Float32Array; mix?: Float32Array }) => {
+    const af = Math.round(at * FPS)
+    const frames = part.logProbs.length / TOKENS
+    logProbs = splice(logProbs, af * TOKENS, part.logProbs)
+    pcm = splice(pcm, af * HOP, part.pcm)
+    if (mix) mix = splice(mix, af * HOP, part.mix!)
+    for (const r of reference)
+      if (r.start >= af / FPS) {
+        r.start += frames / FPS
+        r.end += frames / FPS
+      }
+    return { start: af / FPS, end: (af + frames) / FPS }
+  }
+  const unlisted: { start: number; end: number }[] = []
+  if (args.unlisted) {
+    const donor = available[(available.indexOf(name) + 1) % available.length]!
+    const donorLog = f32(emFile(donor)!)
+    const a = Math.max(0, Math.floor((readReference(donor)[0]!.start - 0.5) * FPS))
+    const frames = Math.min(Math.round(Number(args.unlisted) * FPS), donorLog.length / TOKENS - a)
+    let at = reference.at(-1)!.end + 1
+    if (args['unlisted-at'] !== 'end') {
+      const middle = pcm.length / RATE / 2
+      let best = Infinity
+      let w = 0
+      for (const n of lineWords.slice(0, -1)) {
+        w += n
+        const t = (reference[w - 1]!.end + reference[w]!.start) / 2
+        if (Math.abs(t - middle) < best) [best, at] = [Math.abs(t - middle), t]
+      }
+    }
+    // At the song's own singing level, as unlisted singing in the same song would be.
+    const donorPcm = f32(path.join(cache, `${donor}.vocals16k.f32`))
+    const gain = 10 ** ((loudDb(pcm) - loudDb(donorPcm)) / 20)
+    const scaled = (x: Float32Array) => x.subarray(a * HOP, (a + frames) * HOP).map((v) => v * gain)
+    unlisted.push(
+      insert(at, {
+        logProbs: donorLog.subarray(a * TOKENS, (a + frames) * TOKENS),
+        pcm: scaled(donorPcm),
+        mix: mix && scaled(mix16k(donor)),
+      }),
+    )
+  }
+  /** Where words of a stanza sung twice (--extra-repeat) start in the second copy. */
+  const secondCopy = new Map<number, number>()
+  if (args['extra-repeat']) {
+    const stanzas: { key: string; from: number; to: number }[] = []
+    let w = 0
+    for (const block of raw.split(/\n\s*\n/)) {
+      const words = parseLyricsText(block).flatMap((l) => l.text.split(/\s+/).filter(Boolean))
+      if (words.length) stanzas.push({ key: words.join(' ').toLowerCase(), from: w, to: w + words.length })
+      w += words.length
+    }
+    const repeated = stanzas.findLast((s) => stanzas.some((o) => o !== s && o.key === s.key))
+    if (!repeated) {
+      console.log(`skipped ${name}: no repeated stanza`)
+      continue
+    }
+    const fa = Math.max(0, Math.floor((reference[repeated.from]!.start - 0.3) * FPS))
+    const fb = Math.ceil((reference[repeated.to - 1]!.end + 0.3) * FPS)
+    const copy = {
+      logProbs: logProbs.slice(fa * TOKENS, fb * TOKENS),
+      pcm: pcm.slice(fa * HOP, fb * HOP),
+      mix: mix?.slice(fa * HOP, fb * HOP),
+    }
+    insert(fb / FPS, copy)
+    for (let i = repeated.from; i < repeated.to; i++) secondCopy.set(i, reference[i]!.start + (fb - fa) / FPS)
+  }
   const em = { logProbs, vocab: TOKENS, frames: logProbs.length / TOKENS, frameSeconds: 1 / FPS }
   const aligned = alignLines(
     em,
     vocab,
     lines,
     args.baseline
-      ? { linePause: 0 }
+      ? { linePause: 0, unlistedCost: Infinity }
       : {
           voiced: voiceActivity(pcm, RATE, { mix }),
           unvoicedCost: args['unvoiced-cost'] === undefined ? undefined : Number(args['unvoiced-cost']),
           linePause: args['line-pause'] === undefined ? undefined : Number(args['line-pause']),
+          unlistedCost: args['unlisted-cost'] === undefined ? undefined : Number(args['unlisted-cost']),
+          unlistedEntry: args['unlisted-entry'] === undefined ? undefined : Number(args['unlisted-entry']),
         },
   )
-  const errors = aligned.flatMap((l) => l.words).map((w, i) => Math.abs(w.start - reference[i]!.start))
+  const placed = aligned.flatMap((l) => l.words)
+  placedInUnlisted += placed.filter((w) => unlisted.some((u) => w.start >= u.start && w.start < u.end)).length
+  const errors = placed.map((w, i) =>
+    Math.min(Math.abs(w.start - reference[i]!.start), Math.abs(w.start - (secondCopy.get(i) ?? Infinity))),
+  )
   total.all.push(...errors)
   total.afterGap.push(...errors.filter((_, i) => i > 0 && reference[i]!.start - reference[i - 1]!.end >= 8))
   const lang = language.get(name) ?? '?'
@@ -226,6 +329,7 @@ function stat(e: number[]): string {
 if (args.verbose) console.log(rows.join('\n'))
 for (const [lang, e] of [...byLanguage].sort()) console.log(`${lang.padEnd(8)} ${stat(e)}`)
 console.log(`${'after 8 s+ gaps'.padEnd(16)} ${stat(total.afterGap)}`)
+if (args.unlisted) console.log(`words placed in the unlisted singing: ${placedInUnlisted}`)
 console.log(
   `all ${rows.length} songs (${args.baseline ? 'baseline' : `voice activity${args['no-mix'] ? ' without the song' : ''} + line pauses`}): ${stat(total.all)}`,
 )

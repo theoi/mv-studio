@@ -11,6 +11,7 @@ import { alignmentKey, parseLyricsText } from '../../../src/analysis/lyrics/text
 import { ctcEmissions, type CtcModel } from '../../../src/analysis/lyrics/wav2vec2.ts'
 import { createLyricsApi } from '../../../src/analysis/lyrics/worker-api.ts'
 import type { DecodedAudio } from '../../../src/analysis/beats/fast.ts'
+import { timingLooksUncertain } from '../../../src/app/state/lyricChecks.ts'
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ'"
 const vocab: CtcVocabulary = {
@@ -226,6 +227,83 @@ describe('alignLines across instrumental stretches', () => {
       alignLines(em, vocab, lines).flatMap((l) => l.words)[13]?.start
     expect(startOfSecond([{ text: first }, { text: second }])).toBe(40)
     expect(startOfSecond([{ text: `${first} ${second}` }])).toBe(40)
+  })
+})
+
+describe('alignLines with unlisted singing', () => {
+  /** Mostly blank emissions with `words` spelled strongly from the given frames, a letter every 2 frames. */
+  function song(frames: number, words: Record<number, string>): CtcEmissions {
+    const peaks: Record<number, number> = {}
+    for (const [start, word] of Object.entries(words))
+      [...alignmentKey(word)].forEach((c, k) => (peaks[Number(start) + 2 * k] = vocab.ids[c] as number))
+    return emissions(frames, peaks)
+  }
+  /**
+   * Frames [from, to) sung with words the lyrics do not list: the model hears letters (mostly Q), almost never a blank,
+   * and the letter `like` a little more than the others.
+   */
+  function unlisted(em: CtcEmissions, from: number, to: number, like?: string) {
+    for (let f = from; f < to; f++) {
+      const row = f * V
+      em.logProbs.fill(Math.log(0.45 / (V - 3)), row, row + V)
+      em.logProbs[row + vocab.blank] = Math.log(0.001)
+      em.logProbs[row + (vocab.ids.Q as number)] = Math.log(0.5)
+      if (like) em.logProbs[row + (vocab.ids[like] as number)] = Math.log(0.05)
+    }
+  }
+  const off = { unlistedCost: Infinity }
+  const lines = [{ text: 'no' }, { text: 'go' }]
+
+  it('keeps the next line out of unlisted singing between two lines', () => {
+    // "go" is sung at 16 s, after 10 s of other words that sound a little like a held G.
+    const em = song(1000, { 50: 'no', 800: 'go' })
+    unlisted(em, 200, 700, 'G')
+    expect(alignLines(em, vocab, lines)[1]?.start).toBe(16)
+    // Without it, "go" starts with the unlisted singing (after the word delimiter in its first frame).
+    expect(alignLines(em, vocab, lines, off)[1]?.start).toBe(4.02)
+  })
+
+  it('keeps the last line out of an unlisted outro', () => {
+    const em = song(1000, { 50: 'no', 300: 'go' })
+    unlisted(em, 400, 900, 'G')
+    expect(alignLines(em, vocab, lines)[1]?.start).toBe(6)
+    expect(alignLines(em, vocab, lines, off)[1]?.start).toBe(8)
+  })
+
+  it('takes a short burst before a line for part of it, not for unlisted singing', () => {
+    const em = song(400, { 50: 'no', 300: 'go' })
+    unlisted(em, 200, 230, 'G')
+    expect(alignLines(em, vocab, lines)[1]?.start).toBe(4.02)
+    expect(alignLines(em, vocab, lines, { unlistedEntry: 0 })[1]?.start).toBe(6)
+  })
+
+  it('gives words that only unlisted singing can take a low confidence, so the timing check flags their line', () => {
+    const em = song(1000, { 50: 'no', 800: 'go' })
+    unlisted(em, 200, 700)
+    const aligned = alignLines(em, vocab, [{ text: 'no' }, { text: 'never sung' }, { text: 'go' }])
+    expect(aligned.map(timingLooksUncertain)).toEqual([false, true, false])
+    expect(aligned[1]?.words.every((w) => (w.confidence ?? 1) < 0.1)).toBe(true)
+  })
+
+  it('puts no unlisted singing before a dragged word', () => {
+    // "go" is sung faintly at 4 s, where the user drags it, and "go now" clearly at 16 s after unlisted singing that
+    // sounds a little like the N of "now".
+    const em = song(1000, { 50: 'no', 800: 'go', 820: 'now' })
+    unlisted(em, 210, 700, 'N')
+    em.logProbs.fill(Math.log(0.4 / (V - 2)), 200 * V, 204 * V)
+    for (const [f, c] of [
+      [200, 'G'],
+      [202, 'O'],
+    ] as const) {
+      em.logProbs[f * V + (vocab.ids[c] as number)] = Math.log(0.5)
+      em.logProbs[f * V + vocab.blank] = Math.log(0.1)
+    }
+    const aligned = alignLines(em, vocab, [{ text: 'no' }, { text: 'go now' }])
+    expect(aligned[1]?.start).toBe(16)
+    // Unlisted singing before it would let the dragged word's letters wait for the clear ones at 16 s.
+    const dragged = realignFrom(em, vocab, aligned, 1, 0, 4)[1]?.words[0]
+    expect(dragged?.start).toBe(4)
+    expect(dragged?.end).toBeLessThan(5)
   })
 })
 

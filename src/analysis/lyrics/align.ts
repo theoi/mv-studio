@@ -1,7 +1,7 @@
 /** Word timing for lyrics by CTC forced alignment, plus helpers for re-aligning after manual edits. */
 import type { LyricLine, LyricWord } from '../../model/types.ts'
 import { newId } from '../../model/factory.ts'
-import { type CtcEmissions, forcedAlign } from './ctc.ts'
+import { type CtcEmissions, type Filler, forcedAlign } from './ctc.ts'
 import { alignmentKey } from './text.ts'
 import type { TimeRange } from './vad.ts'
 
@@ -46,6 +46,16 @@ export interface AlignOptions {
    * instrumental. Applies to lines of up to 24 words when the caller gives the line lengths.
    */
   linePause?: number
+  /**
+   * Singing the lyrics do not list (an unlisted intro or outro, ad-libs, a verse left out) may come before a line and
+   * after the last one: each such stretch costs `unlistedEntry` and each of its frames `unlistedCost` (log-probability)
+   * below the most likely letter there. Without it, such singing is unlikely to be blank, so the lyrics drift into it.
+   * An infinite `unlistedCost` turns it off.
+   */
+  unlistedCost?: number
+  unlistedEntry?: number
+  /** Whether unlisted singing may come before the first word; not when it starts at `from` (a word dragged there). */
+  unlistedBefore?: boolean
 }
 
 const DEFAULT_MAX_HOLD = 0.6
@@ -59,6 +69,14 @@ const DEFAULT_INTRA_WORD_PAUSE = 0.05
  */
 const DEFAULT_UNVOICED_COST = 2
 const DEFAULT_LINE_PAUSE = 0.1
+/*
+ * With a 30 s stretch of another song's vocals inserted between two lines mid-song or after the last line (24 dev
+ * songs): words off by more than 5 s 920 -> 426 and 888 -> 551, and the songs as they are timed word for word as before.
+ * Every entry cost from 100 to 150 with a frame cost from 0.075 to 0.15 keeps the songs as they are; below about 85,
+ * one song's last stanza moves into the singing before it and its own place goes to the unlisted singing.
+ */
+const DEFAULT_UNLISTED_COST = 0.1
+const DEFAULT_UNLISTED_ENTRY = 120
 /** Longer "lines" are lyrics pasted without line breaks, where a pause between two words says nothing. */
 const MAX_PAUSED_LINE_WORDS = 24
 
@@ -83,15 +101,21 @@ export function alignWords(
   const linePause = options.linePause ?? DEFAULT_LINE_PAUSE
   // Words after the first of their line, in lines short enough for a pause inside them to mean something.
   const continuesLine = new Uint8Array(words.length)
+  const startsLine = new Uint8Array(words.length)
   let lineStart = 0
   for (const n of lineLengths ?? []) {
     if (n <= MAX_PAUSED_LINE_WORDS) continuesLine.fill(1, lineStart + 1, lineStart + n)
+    if (lineStart < words.length) startsLine[lineStart] = 1
     lineStart += n
   }
+  // Blanks (before token k) where unlisted singing may go: before each line's first letter, and after the last.
+  const unlistedAt: number[] = []
+  let lineStarts = false
   for (const [i, word] of words.entries()) {
     const ids = [...alignmentKey(word)]
       .map((c) => vocab.ids[c])
       .filter((id): id is number => id !== undefined)
+    lineStarts ||= startsLine[i] === 1
     if (ids.length === 0) {
       ranges.push(null)
       continue
@@ -100,6 +124,8 @@ export function alignWords(
     if (inLine) pauseCost[tokens.length] = linePause
     if (tokens.length && vocab.wordDelimiter !== undefined) tokens.push(vocab.wordDelimiter)
     if (inLine) pauseCost[tokens.length] = linePause
+    if (lineStarts) unlistedAt[tokens.length] = 1
+    lineStarts = false
     ranges.push([tokens.length, tokens.length + ids.length])
     for (let k = 1; k < ids.length; k++) pauseCost[tokens.length + k] = intraWordPause
     tokens.push(...ids)
@@ -110,7 +136,13 @@ export function alignWords(
     for (const r of options.voiced)
       unvoiced.fill(0, Math.max(0, Math.floor(r.start / fs)), Math.ceil(r.end / fs))
   }
-  const spans = forcedAlign(em, tokens, vocab.blank, from, to, pauseCost, unvoiced)
+  unlistedAt[0] = options.unlistedBefore === false ? 0 : 1
+  unlistedAt[tokens.length] = 1
+  const unlistedCost = options.unlistedCost ?? DEFAULT_UNLISTED_COST
+  const filler: Filler | undefined = Number.isFinite(unlistedCost)
+    ? { at: unlistedAt, cost: unlistedCost, entry: options.unlistedEntry ?? DEFAULT_UNLISTED_ENTRY }
+    : undefined
+  const spans = forcedAlign(em, tokens, vocab.blank, from, to, pauseCost, unvoiced, filler)
   const timed: (LyricWord | null)[] = words.map((text, i) => {
     const r = ranges[i]
     if (!spans || !r) return null
@@ -216,7 +248,7 @@ export function realignFrom(
     em,
     vocab,
     tailWords,
-    { ...options, from: time },
+    { ...options, from: time, unlistedBefore: false },
     tail.map((l) => l.words.length),
   )
   if (aligned[0]) aligned[0] = { ...aligned[0], start: round(time) }
