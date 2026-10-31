@@ -263,8 +263,8 @@
 .sectionEdge::after {
   content: '';
   position: absolute;
-  top: 3px;
-  bottom: 3px;
+  top: 2px;
+  bottom: 2px;
   left: calc(50% - 1.5px);
   width: 3px;
   border-radius: 2px;

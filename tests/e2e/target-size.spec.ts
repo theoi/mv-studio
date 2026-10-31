@@ -59,10 +59,13 @@ test('timeline, inspector and library controls take clicks over at least 24 by 2
       'Zoom slider',
       page.getByRole('slider').first().locator('xpath=ancestor::*[contains(@class, "_slider_")][1]'),
     ],
+    ['Track grip', page.getByRole('button', { name: /^Move the .+ track$/ }).first()],
+    ['Section edge', page.getByRole('slider', { name: /^Edge between / }).first()],
   ]
   const small: string[] = []
   for (const [name, target] of targets) {
     await expect(target, name).toBeVisible()
+    await target.scrollIntoViewIfNeeded()
     const size = await hitSize(target)
     if (size.width < 24 || size.height < 24) small.push(`${name} ${size.width}×${size.height}`)
   }
