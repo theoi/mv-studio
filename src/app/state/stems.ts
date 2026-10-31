@@ -149,17 +149,35 @@ export function stemList(names: readonly StemName[]): string {
 const singular = (names: readonly StemName[]) =>
   names.length === 1 && (names[0] === 'bass' || names[0] === 'other')
 
-/**
- * Header badge of the song track: "Stems: vocals solo · drums muted". While the preview cannot play a stem it should,
- * "full song plays" comes first, so the narrow header shows it before cutting the text off.
- */
-export function stemBadgeText(mix: StemMix, fullSong = false): string {
-  const part = (names: StemName[], what: string) =>
-    names.length ? `${names.map((n) => STEM_LABELS[n].toLowerCase()).join(', ')} ${what}` : ''
-  const parts = [fullSong ? 'full song plays' : '', part(mix.solo, 'solo'), part(mix.muted, 'muted')]
-  return `Stems: ${parts.filter(Boolean).join(' · ')}`
+/** The song track's badge: a short form that fits the narrow header, and the full line for its tooltip. */
+export interface StemBadge {
+  text: string
+  tone: 'warning' | 'accent'
+  full: string
 }
 
+/**
+ * Header badge of the song track. What you hear comes first: "Full song plays" while the preview cannot play a stem
+ * it should, else the solo ("Vocals solo", "2 stems solo"), else the mutes ("Drums muted", "2 stems muted"). The full
+ * line ("Stems: vocals solo · drums muted") says every flag, and why the full song plays.
+ */
+export function stemBadge(mix: StemMix, fallback: UnplayableStem | null = null): StemBadge {
+  const short = (names: StemName[], what: string) =>
+    names.length === 1 ? `${STEM_LABELS[names[0]!]} ${what}` : `${names.length} stems ${what}`
+  const part = (names: StemName[], what: string) =>
+    names.length ? `${names.map((n) => STEM_LABELS[n].toLowerCase()).join(', ')} ${what}` : ''
+  const parts = [fallback ? 'full song plays' : '', part(mix.solo, 'solo'), part(mix.muted, 'muted')]
+  const line = `Stems: ${parts.filter(Boolean).join(' · ')}`
+  return {
+    text: fallback
+      ? 'Full song plays'
+      : mix.solo.length
+        ? short(mix.solo, 'solo')
+        : short(mix.muted, 'muted'),
+    tone: fallback || mix.solo.length ? 'warning' : 'accent',
+    full: fallback ? `${line}. ${stemFallbackText(fallback)}` : line,
+  }
+}
 /** Assist › Stems note: what plays, in the preview and the export. */
 export function stemNoteText(mix: StemMix): string {
   const muted = mix.muted.length
@@ -250,12 +268,16 @@ export function noteStemPlaybackError(project: Project, error: JobError): void {
   useStemFailures.setState({ [assetId]: stemFailure(error) })
 }
 
-/** Forgets the failures the preview's audio cache forgets when it gets this project. */
-export function forgetStemPlaybackErrors(project: Project): void {
+/**
+ * Forgets the failures the preview's audio cache forgets when it gets this project, and those of stems the preview
+ * plays (`scheduled`): an export decodes failed stems again in the same cache, and the preview then plays them.
+ */
+export function forgetStemPlaybackErrors(project: Project, scheduled: readonly { assetId: string }[]): void {
   const failures = Object.entries(useStemFailures.getState())
   if (failures.length === 0) return
   const heard = audibleClips(project).some((c) => c.stem !== undefined)
-  const kept = heard ? failures.filter(([id]) => project.assets[id]) : []
+  const playing = new Set(scheduled.map((c) => c.assetId))
+  const kept = heard ? failures.filter(([id]) => project.assets[id] && !playing.has(id)) : []
   if (kept.length < failures.length) useStemFailures.setState(Object.fromEntries(kept), true)
 }
 
@@ -282,9 +304,14 @@ export function useUnplayableStem(project: Project): UnplayableStem | null {
   return useMemo(() => unplayableStem(project, failures), [project, failures])
 }
 
-/** Assist › Stems note while the preview plays the full song instead of the stems. */
-export function stemFallbackText(stem: UnplayableStem): string {
+/** Why the preview plays the full song instead of the stems. */
+function stemFallbackText(stem: UnplayableStem): string {
   return `${stemFailureText(stem)}, so the preview plays the full song.`
+}
+
+/** Assist › Stems note while the preview plays the full song instead of the stems. */
+export function stemFallbackNote(stem: UnplayableStem): string {
+  return `${stemFallbackText(stem)} The export tries the stem again.`
 }
 
 function stemFailureText({ name, failure }: UnplayableStem): string {

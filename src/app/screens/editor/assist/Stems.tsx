@@ -10,7 +10,7 @@ import {
   songStemTrack,
   startStems,
   stemBars,
-  stemFallbackText,
+  stemFallbackNote,
   stemMix,
   stemNoteText,
   toggleStem,
@@ -160,7 +160,7 @@ export function StemsView() {
         })}
         {mix && (
           <p className={styles.stemMixNote} role="status">
-            {unplayable ? stemFallbackText(unplayable) : stemNoteText(mix)}
+            {unplayable ? stemFallbackNote(unplayable) : stemNoteText(mix)}
           </p>
         )}
         <p className={styles.muted}>

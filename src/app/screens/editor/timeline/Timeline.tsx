@@ -115,11 +115,12 @@ import {
   separatedStems,
   songStemTrack,
   STEM_LABELS,
-  stemBadgeText,
+  stemBadge,
   stemMix,
   toggleStem,
   useUnplayableStem,
   type StemMix,
+  type UnplayableStem,
 } from '../../../state/stems.ts'
 import { moveAnnouncement, moveTrack, moveTrackBy, trackMoveRange } from '../../../state/tracks.ts'
 import { MAX_PPS, MIN_PPS, registerFit, zoomTo } from '../../../state/zoom.ts'
@@ -669,7 +670,7 @@ const TrackHeader = memo(function TrackHeader({
   canMoveDown,
   onGripPointerDown,
   onAnnounce,
-  fullSong,
+  fallback,
 }: {
   track: Track
   height: number
@@ -678,13 +679,13 @@ const TrackHeader = memo(function TrackHeader({
   canMoveDown: boolean
   onGripPointerDown: (e: React.PointerEvent<HTMLElement>, track: Track) => void
   onAnnounce: (message: string) => void
-  /** The preview plays the full song: a stem it should play could not be decoded. */
-  fullSong?: boolean
+  /** The stem the preview could not decode, so it plays the full song. */
+  fallback?: UnplayableStem | null
 }) {
   const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
     dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
   const isAudio = track.kind === 'audio'
-  const badge = stems && stemBadgeText(stems, fullSong)
+  const badge = stems && stemBadge(stems, fallback)
   const grip = useRef<HTMLButtonElement>(null)
   // Set by Move up and Move down, so the closing menu hands focus to this track's grip instead of the page.
   const movedFromMenu = useRef(false)
@@ -771,14 +772,15 @@ const TrackHeader = memo(function TrackHeader({
               {track.locked ? <Lock /> : <LockOpen />}
             </IconButton>
           </span>
-          {stems && badge && (
+          {badge && (
             <span
-              className={[styles.stemBadge, stems.solo.length > 0 && styles.stemBadgeSolo]
+              className={[styles.stemBadge, badge.tone === 'warning' && styles.stemBadgeWarning]
                 .filter(Boolean)
                 .join(' ')}
-              title={badge}
+              title={badge.full}
             >
-              {badge}
+              <span aria-hidden="true">{badge.text}</span>
+              <span className="sr-only">{badge.full}</span>
             </span>
           )}
         </div>
@@ -1594,7 +1596,7 @@ export function Timeline() {
                       canMoveDown={index < trackMoveRange(project, track.id).max}
                       onGripPointerDown={startTrackDrag}
                       onAnnounce={announce}
-                      fullSong={track.id === stemTrack?.id && unplayable !== null}
+                      fallback={track.id === stemTrack?.id ? unplayable : null}
                     />
                   </div>
                   <div

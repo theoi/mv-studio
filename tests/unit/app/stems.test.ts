@@ -6,10 +6,10 @@ import {
   noteStemPlaybackError,
   resetStems,
   songStemTrack,
-  stemBadgeText,
+  stemBadge,
   stemBars,
   stemExportWarning,
-  stemFallbackText,
+  stemFallbackNote,
   stemMix,
   stemNoteText,
   toggledStems,
@@ -89,10 +89,28 @@ describe('stem mix description', () => {
   })
 
   it('words the badge, the panel note, the export warning and its fix', () => {
-    expect(stemBadgeText(mix(['vocals'], []))).toBe('Stems: vocals solo')
-    expect(stemBadgeText(mix([], ['drums']))).toBe('Stems: drums muted')
-    expect(stemBadgeText(mix(['vocals', 'bass'], []))).toBe('Stems: vocals, bass solo')
-    expect(stemBadgeText(mix(['vocals'], ['drums']))).toBe('Stems: vocals solo · drums muted')
+    // A short form that fits the header, solo before muted; the full line for the tooltip.
+    expect(stemBadge(mix(['vocals'], []))).toEqual({
+      text: 'Vocals solo',
+      tone: 'warning',
+      full: 'Stems: vocals solo',
+    })
+    expect(stemBadge(mix([], ['drums']))).toEqual({
+      text: 'Drums muted',
+      tone: 'accent',
+      full: 'Stems: drums muted',
+    })
+    expect(stemBadge(mix(['vocals', 'bass'], []))).toEqual({
+      text: '2 stems solo',
+      tone: 'warning',
+      full: 'Stems: vocals, bass solo',
+    })
+    expect(stemBadge(mix(['vocals'], ['drums']))).toEqual({
+      text: 'Vocals solo',
+      tone: 'warning',
+      full: 'Stems: vocals solo · drums muted',
+    })
+    expect(stemBadge(mix([], ['drums', 'other'])).text).toBe('2 stems muted')
 
     expect(stemNoteText(mix(['vocals'], []))).toBe('Only the vocals play, in the preview and the export.')
     expect(stemNoteText(mix(['vocals', 'bass'], []))).toBe(
@@ -178,7 +196,7 @@ describe('a stem the preview cannot play', () => {
 
   it('says the full song plays while the stem should be heard, until no stem is heard', () => {
     withStems()
-    forgetStemPlaybackErrors(project())
+    forgetStemPlaybackErrors(project(), [])
     toggleStem('vocals', 'solo')
     noteStemPlaybackError(project(), failure('decode', 'a-song'))
     expect(unplayableStem(project())).toBeNull()
@@ -187,31 +205,49 @@ describe('a stem the preview cannot play', () => {
 
     // Still heard with another solo; not heard once the drums play alone, and the preview keeps the failure.
     toggleStem('drums', 'solo')
-    forgetStemPlaybackErrors(project())
+    forgetStemPlaybackErrors(project(), [])
     expect(unplayableStem(project())).toEqual({ name: 'vocals', failure: 'decode' })
     toggleStem('vocals', 'solo')
-    forgetStemPlaybackErrors(project())
+    forgetStemPlaybackErrors(project(), [])
     expect(unplayableStem(project())).toBeNull()
     toggleStem('bass', 'muted')
     toggleStem('drums', 'solo')
-    forgetStemPlaybackErrors(project())
+    forgetStemPlaybackErrors(project(), [])
     expect(stemMix(project())).toEqual({ solo: [], muted: ['bass'] })
     expect(unplayableStem(project())).toEqual({ name: 'vocals', failure: 'decode' })
 
+    // Once the preview plays the stem (an export decoded it again in the same cache), the failure is gone.
+    noteStemPlaybackError(project(), failure('out-of-memory', 'stem-vocals'))
+    expect(unplayableStem(project())).toEqual({ name: 'vocals', failure: 'out-of-memory' })
+    forgetStemPlaybackErrors(project(), [{ assetId: 'stem-drums' }])
+    expect(unplayableStem(project())).toEqual({ name: 'vocals', failure: 'out-of-memory' })
+    forgetStemPlaybackErrors(project(), [{ assetId: 'stem-vocals' }])
+    expect(unplayableStem(project())).toBeNull()
+    noteStemPlaybackError(project(), failure('decode', 'stem-vocals'))
+
     // With every stem playing, the preview forgets the failure and decodes the stem again next time.
     resetStems()
-    forgetStemPlaybackErrors(project())
+    forgetStemPlaybackErrors(project(), [])
     toggleStem('vocals', 'solo')
     expect(unplayableStem(project())).toBeNull()
   })
 
   it('words the badge and the panel note', () => {
-    expect(stemBadgeText({ solo: ['vocals'], muted: [] }, true)).toBe('Stems: full song plays · vocals solo')
-    expect(stemFallbackText({ name: 'vocals', failure: 'decode' })).toBe(
-      'The vocals stem could not be decoded, so the preview plays the full song.',
+    // What you hear comes first, also over mutes alone; the tooltip says why.
+    expect(stemBadge({ solo: ['vocals'], muted: [] }, { name: 'vocals', failure: 'decode' })).toEqual({
+      text: 'Full song plays',
+      tone: 'warning',
+      full: 'Stems: full song plays · vocals solo. The vocals stem could not be decoded, so the preview plays the full song.',
+    })
+    expect(stemBadge({ solo: [], muted: ['drums'] }, { name: 'vocals', failure: 'decode' })).toMatchObject({
+      text: 'Full song plays',
+      tone: 'warning',
+    })
+    expect(stemFallbackNote({ name: 'vocals', failure: 'decode' })).toBe(
+      'The vocals stem could not be decoded, so the preview plays the full song. The export tries the stem again.',
     )
-    expect(stemFallbackText({ name: 'other', failure: 'out-of-memory' })).toBe(
-      'There is not enough memory to play the other stem separately, so the preview plays the full song.',
+    expect(stemFallbackNote({ name: 'other', failure: 'out-of-memory' })).toBe(
+      'There is not enough memory to play the other stem separately, so the preview plays the full song. The export tries the stem again.',
     )
   })
 })

@@ -278,7 +278,7 @@
   text-overflow: ellipsis;
 }
 
-.stemBadgeSolo {
+.stemBadgeWarning {
   color: var(--warning);
 }
 
