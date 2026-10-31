@@ -27,7 +27,7 @@ const NOTE_HALF_WIDTH = 160
 
 /**
  * The selected clip's outline on the preview. Video, image and text clips also get handles: drag inside to move, a
- * corner to scale, the knob above to rotate. `view` is the part of the stage on screen, in frame pixels: handles stay
+ * corner to scale, the knob above to rotate. Clips that can't be dragged get the outline alone, without corner squares. `view` is the part of the stage on screen, in frame pixels: handles stay
  * inside it, since the stage clips what is outside.
  */
 export function SelectionOverlay({
@@ -148,11 +148,11 @@ export function SelectionOverlay({
             y2={placed.stem[1][1]}
           />
         )}
-        {(editable ? placed.corners : corners).map(([x, y], i) => (
-          <rect key={i} className={styles.selHandle} x={x - 3.5} y={y - 3.5} width={7} height={7} />
-        ))}
         {editable && (
           <>
+            {placed.corners.map(([x, y], i) => (
+              <rect key={i} className={styles.selHandle} x={x - 3.5} y={y - 3.5} width={7} height={7} />
+            ))}
             <circle className={styles.selHandle} cx={placed.knob[0]} cy={placed.knob[1]} r={4} />
             {placed.corners.map((c, i) => (
               <rect

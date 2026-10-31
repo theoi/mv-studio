@@ -343,6 +343,8 @@ test('Handles stay on the stage: a clip twice the frame leaves the transport usa
       expect(top, name).toBe(name)
     }
   }
+  // Four corner squares and four corner hit areas.
+  await expect(preview.locator('xpath=../..').locator('svg rect')).toHaveCount(8)
   // At Fit the full-frame clip's knob has no room above the frame, so it sits inside the top edge.
   await expectReachable()
   const frame = (await preview.boundingBox())!
@@ -385,8 +387,11 @@ test('A lyric line and a clip on a locked track show the outline without handles
 }) => {
   const preview = await openEditor(page, '#/editor?sel=lyric:l-c1-2&t=70.4')
   const outline = preview.locator('xpath=..').locator('svg polygon')
+  // Outline only: no handles, and no corner squares that would look like them.
+  const squares = preview.locator('xpath=..').locator('svg rect')
   await expect(outline).toHaveCount(1)
   await expect(page.locator('[data-handle]')).toHaveCount(0)
+  await expect(squares).toHaveCount(0)
   const lineY = () =>
     page.evaluate(() => {
       const clips = Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
@@ -426,6 +431,8 @@ test('A lyric line and a clip on a locked track show the outline without handles
     window.mvStudio.app.ui.set({ playhead: 21, selection: { type: 'clip', id: 'c-s-v1-1' }, toasts: [] })
   })
   await expect(page.locator('[data-handle]')).toHaveCount(0)
+  await expect(outline).toHaveCount(1)
+  await expect(squares).toHaveCount(0)
   const locked = page.getByRole('status').filter({ hasText: 'That track is locked. Unlock it to edit.' })
   const mid = await center(preview)
   await page.mouse.move(mid.x, mid.y)
