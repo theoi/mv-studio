@@ -21,6 +21,7 @@ import {
   findBars,
   findBarsInBackground,
   setSongAnalysisServiceForTests,
+  setTempoLevel,
 } from '../../../src/app/state/songAnalysis.ts'
 import { toast } from '../../../src/app/state/ui.ts'
 
@@ -131,6 +132,49 @@ describe('bars state', () => {
   })
 })
 
+describe('Half and Double', () => {
+  const found = { tempo: { bpm: 120, confidence: 0.95 }, downbeats: bars }
+
+  it('brings back the bars found before when Half follows Double', () => {
+    editor.load(project(found))
+    setTempoLevel(2)
+    expect(stored()?.downbeats).toHaveLength(bars.length * 2)
+    setTempoLevel(0.5)
+    expect(stored()?.beats).toEqual(beats)
+    expect(stored()?.downbeats).toEqual(bars)
+    expect(stored()?.tempo).toEqual(found.tempo)
+    expect(editor.undoLabel()).toBe('Half tempo')
+    expect(toast).toHaveBeenLastCalledWith('Tempo set to 120 BPM', expect.objectContaining({ label: 'Undo' }))
+  })
+
+  it('says so when Half leaves no bars, also after Double once the bars were moved', () => {
+    editor.load(project(found))
+    setTempoLevel(0.5)
+    expect(stored()?.downbeats).toBeUndefined()
+    expect(toast).toHaveBeenLastCalledWith(
+      'Tempo set to 60 BPM. Bars cleared: use Set first beat to start them again.',
+      expect.objectContaining({ label: 'Undo' }),
+    )
+    editor.load(project(found))
+    setTempoLevel(2)
+    const doubled = stored()!
+    editor.dispatch(
+      {
+        type: 'analysis.setGrid',
+        assetId: songId(),
+        grid: { tempo: doubled.tempo, beats: doubled.beats, downbeats: doubled.downbeats?.slice(1) },
+      },
+      { label: 'Set first beat' },
+    )
+    setTempoLevel(0.5)
+    expect(stored()?.downbeats).toBeUndefined()
+    expect(toast).toHaveBeenLastCalledWith(
+      'Tempo set to 120 BPM. Bars cleared: use Set first beat to start them again.',
+      expect.anything(),
+    )
+  })
+})
+
 describe('ensureBars', () => {
   it('resolves at once when bars are found and without beats', async () => {
     editor.load(project({ downbeats: bars }))
@@ -164,23 +208,24 @@ describe('ensureBars', () => {
     expect(stored()?.downbeats).toBeUndefined()
   })
 
-  it('keeps the beats the user set while it ran and puts the bars on them', async () => {
+  it('keeps the beats the user set while it ran and puts bars of four on them', async () => {
     editor.load(project({}))
     const found = findBars(songId())
     await vi.waitFor(() => expect(runs).toHaveLength(1))
-    const halved = beats.filter((_, i) => i % 2 === 0)
+    const doubled = beats.flatMap((t, i) => (i + 1 < beats.length ? [t, t + 0.25] : [t]))
     editor.dispatch(
       {
         type: 'analysis.setGrid',
         assetId: songId(),
-        grid: { tempo: { bpm: 60, confidence: 1 }, beats: halved, downbeats: undefined },
+        grid: { tempo: { bpm: 240, confidence: 1 }, beats: doubled, downbeats: undefined },
       },
       { label: 'Set tempo' },
     )
     runs[0]?.resolve(refined())
     expect(await found).toBe(true)
-    expect(stored()?.beats).toEqual(halved)
-    expect(stored()?.downbeats).toEqual(bars)
+    expect(stored()?.beats).toEqual(doubled)
+    // The bars found span eight of the doubled beats: a bar starts every four.
+    expect(stored()?.downbeats).toEqual(beats.filter((_, i) => i % 2 === 0))
     expect(editor.undoLabel()).toBe('Set tempo')
   })
 })

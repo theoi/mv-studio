@@ -119,6 +119,105 @@ test('Assist › Song analysis taps the tempo, sets the first beat and analyzes 
 })
 
 /**
+ * Half and Double next to the tempo change the beat level in one click, each as one undo step. Found bars stay bars of
+ * four: doubling adds a bar start halfway through each bar, Half right after Double brings back the bars found before,
+ * and halving otherwise leaves none until the user sets the first beat, which the toast says.
+ */
+test('Assist › Song analysis halves and doubles the tempo, keeping bars of four', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?tab=assist&assist=analysis'
+  })
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  const barsRow = panel.getByText('Bar starts', { exact: true }).locator('..')
+  await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
+  const found = await grid(page)
+  expect(found.downbeats.length).toBeGreaterThan(4)
+  const half = panel.getByRole('button', { name: 'Half tempo, 60 BPM' })
+  const double = panel.getByRole('button', { name: 'Double tempo, 240 BPM' })
+  await double.hover()
+  await expect(page.getByRole('tooltip')).toContainText(
+    'For a beat felt twice as fast: adds a beat between every two beats (240 BPM)',
+  )
+  await shot(page, 'analysis-tempo-level')
+
+  await double.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('Tempo set to 240 BPM')).toBeVisible()
+  await expect(panel.getByText('240 BPM · 4/4')).toBeVisible()
+  const doubled = await grid(page)
+  expect(doubled.undoLabel).toBe('Double tempo')
+  expect(doubled.confidence).toBe(1)
+  expect(doubled.beats.length).toBe(found.beats.length * 2 - 1)
+  // Every found bar start is still one, and one more starts halfway through each bar.
+  for (const d of found.downbeats) expect(doubled.downbeats).toContain(d)
+  const index = new Map(doubled.beats.map((t, i) => [t, i]))
+  const gaps = doubled.downbeats.slice(1).map((d, i) => index.get(d)! - index.get(doubled.downbeats[i]!)!)
+  expect(new Set(gaps)).toEqual(new Set([4]))
+  await expect(barsRow).toContainText(`${doubled.downbeats.length} found`)
+  // 480 BPM is no beat a listener could tap. The pressed button keeps keyboard focus, and its tooltip says why it is off.
+  const tooFast = panel.getByRole('button', { name: 'Double tempo, 480 BPM' })
+  await expect(tooFast).toBeDisabled()
+  await expect(tooFast).toBeFocused()
+  await page.mouse.move(0, 0)
+  await tooFast.hover()
+  await expect(
+    page
+      .getByRole('tooltip')
+      .filter({ hasText: '480 BPM is too fast to be the beat. Tempos go up to 300 BPM.' }),
+  ).toBeVisible()
+  await shot(page, 'analysis-double-off-tooltip')
+  await page.getByRole('button', { name: 'Undo' }).last().click()
+  await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
+  expect((await grid(page)).downbeats).toEqual(found.downbeats)
+
+  // Half instead of Undo after Double gives back the same beats, and the bars found before.
+  await double.click()
+  await panel.getByRole('button', { name: 'Half tempo, 120 BPM' }).click()
+  await expect(page.getByText('Tempo set to 120 BPM', { exact: true })).toBeVisible()
+  await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
+  const back = await grid(page)
+  expect(back.undoLabel).toBe('Half tempo')
+  expect(back.beats).toEqual(found.beats)
+  expect(back.downbeats).toEqual(found.downbeats)
+
+  await half.click()
+  await expect(
+    page.getByText('Tempo set to 60 BPM. Bars cleared: use Set first beat to start them again.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  const halved = await grid(page)
+  expect(halved.undoLabel).toBe('Half tempo')
+  expect(halved.beats.length).toBeLessThan(found.beats.length * 0.6)
+  expect(halved.downbeats ?? []).toEqual([])
+  await expect(barsRow).toContainText('Not found yet')
+  await expect(
+    panel.getByText(
+      'Bars not found yet at this tempo. Set first beat to start them on the beat at the playhead.',
+    ),
+  ).toBeVisible()
+  await shot(page, 'analysis-half-tempo')
+  await panel.getByRole('button', { name: 'Set first beat' }).click()
+  await expect(barsRow).toContainText(/\d+ found/)
+  await page.getByRole('button', { name: 'Undo' }).last().click()
+  await page.getByRole('button', { name: 'Undo' }).last().click()
+  await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
+  expect((await grid(page)).downbeats).toEqual(found.downbeats)
+
+  // In the narrowest panel (1280×720) the value stays on one line, and Half and Double move under it if need be.
+  await page.setViewportSize({ width: 1280, height: 720 })
+  const value = await panel.getByText('120 BPM · 4/4', { exact: true }).boundingBox()
+  const label = await panel.getByText('Tempo', { exact: true }).boundingBox()
+  expect(value!.height).toBeLessThan(label!.height * 1.5)
+  const edge = await panel.boundingBox()
+  const right = await double.boundingBox()
+  expect(right!.x + right!.width).toBeLessThanOrEqual(edge!.x + edge!.width)
+  await shot(page, 'analysis-tempo-level-1280')
+})
+
+/**
  * The failed and cancelled states, with a stand-in for analysis on the real job runner: a run that fails on demand
  * and a tempo job that only ends when cancelled.
  */

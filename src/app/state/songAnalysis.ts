@@ -1,7 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { nearestBeatIndex } from '../../analysis/beats/grid.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
-import { fitTappedTempo, moveDownbeat } from '../../analysis/edits.ts'
+import { fitTappedTempo, moveDownbeat, rescaleTempo } from '../../analysis/edits.ts'
 import {
   BARS_NOTES,
   hasFoundBars,
@@ -92,6 +92,53 @@ export async function applyTappedTempo(bpm: number): Promise<void> {
     if (!(error instanceof JobError)) throw error
     if (error.code !== 'cancelled') toast(`Could not follow that tempo. ${error.message}`)
   }
+}
+
+/** Tempo bounds for Half and Double, so the beat level stays one a listener could tap. */
+export const TEMPO_LEVEL_RANGE = { min: 40, max: 300 }
+
+type Grid = Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'>
+
+/**
+ * The song's grid before its latest Double and the grid Double made. Halving that gives back the same beats, but
+ * which of each pair of bar starts was found is lost, so Half right after Double restores the grid from before.
+ */
+let lastDouble: { assetId: Id; before: Grid; after: Grid } | null = null
+
+const sameTimes = (a: readonly number[] = [], b: readonly number[] = []) =>
+  a.length === b.length && a.every((t, i) => t === b[i])
+
+/**
+ * Halves (0.5) or doubles (2) the beat level as one undo step, "Half tempo" or "Double tempo": the one-click fix when
+ * the analysis found the beat at twice or half the speed it is felt. Found bars stay bars of four (`rescaleTempo`);
+ * when Half leaves none, the toast says so.
+ */
+export function setTempoLevel(factor: 2 | 0.5): void {
+  const analysis = songAnalysis(editor.getProject())
+  if (!analysis?.beats?.length || isRunning(JOB_KINDS.tempo)) return
+  let edit = rescaleTempo(analysis, factor)
+  const back = lastDouble
+  if (
+    factor === 0.5 &&
+    back?.assetId === analysis.assetId &&
+    sameTimes(analysis.beats, back.after.beats) &&
+    sameTimes(analysis.downbeats, back.after.downbeats) &&
+    sameTimes(edit.grid.beats, back.before.beats)
+  ) {
+    edit = { ...edit, grid: back.before }
+  }
+  const bpm = edit.grid.tempo?.bpm
+  if (!bpm || bpm < TEMPO_LEVEL_RANGE.min || bpm > TEMPO_LEVEL_RANGE.max) return
+  if (factor === 2) {
+    const { tempo, beats, downbeats } = analysis
+    lastDouble = { assetId: analysis.assetId, before: { tempo, beats, downbeats }, after: edit.grid }
+  }
+  const cleared = hasFoundBars(analysis) && !hasFoundBars(edit.grid)
+  undoable(
+    factor === 2 ? 'Double tempo' : 'Half tempo',
+    `Tempo set to ${formatBpm(bpm)}${cleared ? '. Bars cleared: use Set first beat to start them again.' : ''}`,
+    edit,
+  )
 }
 
 /** Makes the beat nearest `time` the first beat of a bar and renumbers the bars from it. */

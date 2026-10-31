@@ -1,7 +1,7 @@
 /** User corrections to song analysis as undoable `analysis.setGrid` edits (normal dispatches, not skipped). */
 import type { EditCommand } from '../model/commands.ts'
 import type { AudioAnalysis } from '../model/types.ts'
-import { type BeatGrid, makeGrid, rescaleGrid, setDownbeat } from './beats/grid.ts'
+import { barsOfFour, type BeatGrid, makeGrid, rescaleGrid, setDownbeat } from './beats/grid.ts'
 
 export type GridEdit = Extract<EditCommand, { type: 'analysis.setGrid' }>
 
@@ -42,9 +42,16 @@ function gridEdit(assetId: string, grid: BeatGrid): GridEdit {
   }
 }
 
-/** Doubles (2) or halves (0.5) the beat level, keeping downbeats (and keeping none when none were found). */
+/**
+ * Doubles (2) or halves (0.5) the beat level. Found bars stay bars of four: doubling adds a bar start every four new
+ * beats, halving leaves none, since which of each pair of new beats starts a bar is unknown (`barsOfFour`). None are
+ * guessed when none were found.
+ */
 export function rescaleTempo(analysis: AudioAnalysis, factor: 2 | 0.5): GridEdit {
-  return gridEdit(analysis.assetId, rescaleGrid(gridFromAnalysis(analysis), factor))
+  const grid = rescaleGrid(gridFromAnalysis(analysis), factor)
+  const edit = gridEdit(analysis.assetId, grid)
+  const bars = edit.grid.downbeats ? barsOfFour(grid.beats, edit.grid.downbeats) : null
+  return { ...edit, grid: { ...edit.grid, downbeats: bars ?? undefined } }
 }
 
 /**

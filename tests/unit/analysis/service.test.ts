@@ -101,16 +101,24 @@ describe('refined bars', () => {
     expect(after?.sections).toEqual(fast.sections)
   })
 
-  it('puts the bars on beats the user set or changed meanwhile, keeping those beats', () => {
+  it('puts the bars on beats the user set or changed meanwhile, keeping those beats, as bars of four', () => {
+    const doubled: AudioAnalysis = {
+      ...fast,
+      tempo: { bpm: 240, confidence: 1 },
+      beats: beats.flatMap((t, i) => (i + 1 < beats.length ? [t, t + 0.25] : [t])),
+    }
+    const after = apply(doubled, refinedBarsCommand(doubled, fast, refined))
+    expect(after?.beats).toEqual(doubled.beats)
+    expect(after?.tempo).toEqual(doubled.tempo)
+    // The refined bars span eight of the doubled beats, so a bar also starts halfway, and four beats after the last.
+    expect(after?.downbeats).toEqual(beats.filter((_, i) => i % 2 === 1))
+    // On halved beats they span two, and which beat of each pair starts a bar is unknown: no bars.
     const halved: AudioAnalysis = {
       ...fast,
       tempo: { bpm: 60, confidence: 1 },
       beats: beats.filter((_, i) => i % 2 === 1),
     }
-    const after = apply(halved, refinedBarsCommand(halved, fast, refined))
-    expect(after?.beats).toEqual(halved.beats)
-    expect(after?.tempo).toEqual(halved.tempo)
-    expect(after?.downbeats).toEqual(beats.filter((_, i) => i % 4 === 1))
+    expect(refinedBarsCommand(halved, fast, refined)).toBeNull()
     // The user's own tempo, not changed since the refinement started, keeps its beats too.
     const tapped: AudioAnalysis = { ...fast, tempo: { bpm: 120, confidence: 1 } }
     expect(apply(tapped, refinedBarsCommand(tapped, tapped, refined))?.beats).toEqual(beats)
