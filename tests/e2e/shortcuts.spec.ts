@@ -191,10 +191,9 @@ test('Settings › Shortcuts lists the keys that work, from the shortcut table',
     'Redo',
     'Loop playback',
     'Full-screen preview',
+    'Add marker',
   ])
     await expect(dialog.getByText(label, { exact: true })).toBeVisible()
-  // Keys that do nothing yet are not listed.
-  await expect(dialog.getByText('Add marker', { exact: true })).toHaveCount(0)
 
   await dialog.getByRole('textbox', { name: 'Search shortcuts' }).fill('zoom')
   await expect(dialog.getByText(/^Zoom /)).toHaveCount(3)
