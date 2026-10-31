@@ -8,7 +8,14 @@ import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm } from '../../../format.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { hasSong, sectionKind, sectionsOf, songAnalysis, useProject } from '../../../state/project.ts'
-import { analyzeAgain, applyTappedTempo, setFirstBeat, useBars } from '../../../state/songAnalysis.ts'
+import {
+  analyzeAgain,
+  applyTappedTempo,
+  setFirstBeat,
+  setTempoLevel,
+  TEMPO_LEVEL_RANGE,
+  useBars,
+} from '../../../state/songAnalysis.ts'
 import { get } from '../../../state/ui.ts'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, ToolView } from './ToolView.tsx'
@@ -31,6 +38,33 @@ export function AnalysisBadge() {
   if (tempo.phase === 'running') return <Badge tone="accent">{pct(tempo.job)}%</Badge>
   if (phase === 'failed') return <Badge tone="danger">Failed</Badge>
   return null
+}
+
+/** Half or Double next to the tempo: the beat level at half or twice the speed, with what it becomes. */
+function TempoLevelButton({ factor, bpm, disabled }: { factor: 2 | 0.5; bpm: number; disabled: boolean }) {
+  const next = bpm * factor
+  const allowed = next >= TEMPO_LEVEL_RANGE.min && next <= TEMPO_LEVEL_RANGE.max
+  const name = factor === 2 ? 'Double tempo' : 'Half tempo'
+  return (
+    <Tooltip
+      label={name}
+      description={
+        factor === 2
+          ? `For a beat felt twice as fast: adds a beat between each two (${formatBpm(next)})`
+          : `For a beat felt half as fast: keeps every other beat (${formatBpm(next)})`
+      }
+    >
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label={`${factor === 2 ? 'Double' : 'Half'} tempo, ${formatBpm(next)}`}
+        disabled={disabled || !allowed}
+        onClick={() => setTempoLevel(factor)}
+      >
+        {factor === 2 ? 'Double' : 'Half'}
+      </Button>
+    </Tooltip>
+  )
 }
 
 const TAP_KEYS = new Set([' ', 'Enter', 't', 'T'])
@@ -116,7 +150,15 @@ export function AnalysisView() {
       <div className={styles.facts}>
         <div>
           <span>Tempo</span>
-          <span className="tnum">{tempoText}</span>
+          <span className={styles.tempoValue}>
+            <span className="tnum">{tempoText}</span>
+            {analysis?.tempo && analysis.beats?.length && !taps.length && tempo.phase !== 'running' ? (
+              <>
+                <TempoLevelButton factor={0.5} bpm={analysis.tempo.bpm} disabled={busy} />
+                <TempoLevelButton factor={2} bpm={analysis.tempo.bpm} disabled={busy} />
+              </>
+            ) : null}
+          </span>
         </div>
         <div>
           <span>Beats</span>
@@ -149,7 +191,12 @@ export function AnalysisView() {
         </div>
       </div>
       {bars.status === 'unavailable' && (
-        <div className={styles.muted}>{BARS_NOTES.notFound}. Analyze again to look for them.</div>
+        <div className={styles.muted}>
+          {analysis?.tempo?.confidence === 1
+            ? // Analyze again would replace the tempo the user set.
+              `${BARS_NOTES.notFound} at this tempo. Set first beat to start them on the beat at the playhead.`
+            : `${BARS_NOTES.notFound}. Analyze again to look for them.`}
+        </div>
       )}
       <div className={styles.linkRow}>
         <Tooltip

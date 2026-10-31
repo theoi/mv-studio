@@ -13,21 +13,33 @@ const analysis: AudioAnalysis = {
 }
 
 describe('beat grid corrections', () => {
-  it('doubles the beat level, keeping downbeats', () => {
+  it('doubles the beat level, keeping bars of four: a bar also starts halfway through each', () => {
     const edit = rescaleTempo(analysis, 2)
     expect(edit).toMatchObject({ type: 'analysis.setGrid', assetId: 'a' })
     const doubled = edit.grid
     expect(doubled.tempo).toEqual({ bpm: 240, confidence: 1 })
     expect(doubled.beats).toHaveLength(31)
     expect(doubled.beats?.[1]).toBe(1.25)
-    expect(doubled.downbeats).toEqual(analysis.downbeats)
+    // The last bar ran on to the end of the song, so a bar starts four beats after its start too.
+    expect(doubled.downbeats).toEqual(beats.filter((_, i) => i % 2 === 1))
   })
 
-  it('halves the beat level, keeping downbeats', () => {
-    const halved = rescaleTempo(analysis, 0.5).grid
+  it('starts a bar four beats before the first one when doubling leaves a pickup of a bar or more', () => {
+    // Three pickup beats become six: the first bar of four starts on the third of them.
+    const { grid } = rescaleTempo({ ...analysis, downbeats: beats.filter((_, i) => i % 4 === 3) }, 2)
+    expect(grid.downbeats).toEqual(beats.filter((_, i) => i % 2 === 1))
+  })
+
+  it('halves the beat level, leaving no bars, since which half of each bar starts one is unknown', () => {
+    const { grid: halved } = rescaleTempo(analysis, 0.5)
     expect(halved.tempo?.bpm).toBeCloseTo(60, 5)
-    expect(halved.downbeats).toEqual(analysis.downbeats)
+    expect('downbeats' in halved && halved.downbeats === undefined).toBe(true)
     expect(halved.beats).toEqual(beats.filter((_, i) => i % 2 === 1))
+  })
+
+  it('keeps the bars when halving beats whose bars span eight of them', () => {
+    const { grid } = rescaleTempo({ ...analysis, downbeats: beats.filter((_, i) => i % 8 === 1) }, 0.5)
+    expect(grid.downbeats).toEqual(beats.filter((_, i) => i % 8 === 1))
   })
 
   it('keeps no downbeats when doubling or halving beats whose bars are not found yet', () => {

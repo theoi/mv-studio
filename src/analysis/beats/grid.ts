@@ -241,6 +241,35 @@ export function fitDownbeats(beats: readonly number[], downbeats: readonly numbe
   return [...fitted].sort((a, b) => a - b)
 }
 
+/**
+ * Bars put on beats of another level than the one they were found on (the user doubled, halved or tapped the tempo)
+ * span 8 or 2 of those beats. Eight beats are two bars of four, so a bar also starts on the beat halfway, and four
+ * beats before the first bar and after the last when the song has them, as the found bars ran on before and after
+ * their first and last starts. Two beats are half a bar, and which beat of each pair starts a bar is unknown, so
+ * there are no bars (null). Other lengths are kept.
+ */
+export function barsOfFour(beats: readonly number[], downbeats: readonly number[]): number[] | null {
+  const index = new Map(beats.map((t, i) => [t, i] as const))
+  const at = downbeats.map((d) => index.get(d)).filter((i): i is number => i !== undefined)
+  const gaps = at
+    .slice(1)
+    .map((i, k) => i - (at[k] as number))
+    .sort((a, b) => a - b)
+  const median = gaps[gaps.length >> 1]
+  if (median === 2) return null
+  if (median !== 8) return [...downbeats]
+  const first = at[0] as number
+  const last = at[at.length - 1] as number
+  const out: number[] = first >= 4 ? [beats[first - 4] as number] : []
+  at.forEach((i, k) => {
+    out.push(beats[i] as number)
+    const next = at[k + 1]
+    if (next !== undefined && next - i >= 6) out.push(beats[i + Math.round((next - i) / 2)] as number)
+  })
+  if (last + 4 < beats.length) out.push(beats[last + 4] as number)
+  return out
+}
+
 /** User override: make beat `index` the first beat of a bar and renumber the rest. */
 export function setDownbeat(grid: BeatGrid, index: number, beatsPerBar = grid.beatsPerBar): BeatGrid {
   if (index < 0 || index >= grid.beats.length) throw new RangeError('beat index out of range')

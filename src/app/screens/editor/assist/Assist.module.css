@@ -649,6 +649,16 @@
   text-align: right;
 }
 
+.tempoValue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tempoValue > span:first-child {
+  margin-right: var(--space-1);
+}
+
 .stemRow {
   display: flex;
   align-items: center;

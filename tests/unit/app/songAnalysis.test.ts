@@ -164,23 +164,24 @@ describe('ensureBars', () => {
     expect(stored()?.downbeats).toBeUndefined()
   })
 
-  it('keeps the beats the user set while it ran and puts the bars on them', async () => {
+  it('keeps the beats the user set while it ran and puts bars of four on them', async () => {
     editor.load(project({}))
     const found = findBars(songId())
     await vi.waitFor(() => expect(runs).toHaveLength(1))
-    const halved = beats.filter((_, i) => i % 2 === 0)
+    const doubled = beats.flatMap((t, i) => (i + 1 < beats.length ? [t, t + 0.25] : [t]))
     editor.dispatch(
       {
         type: 'analysis.setGrid',
         assetId: songId(),
-        grid: { tempo: { bpm: 60, confidence: 1 }, beats: halved, downbeats: undefined },
+        grid: { tempo: { bpm: 240, confidence: 1 }, beats: doubled, downbeats: undefined },
       },
       { label: 'Set tempo' },
     )
     runs[0]?.resolve(refined())
     expect(await found).toBe(true)
-    expect(stored()?.beats).toEqual(halved)
-    expect(stored()?.downbeats).toEqual(bars)
+    expect(stored()?.beats).toEqual(doubled)
+    // The bars found span eight of the doubled beats: a bar starts every four.
+    expect(stored()?.downbeats).toEqual(beats.filter((_, i) => i % 2 === 0))
     expect(editor.undoLabel()).toBe('Set tempo')
   })
 })

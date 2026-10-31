@@ -1,7 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { nearestBeatIndex } from '../../analysis/beats/grid.ts'
 import type { SongAnalysisService } from '../../analysis/client.ts'
-import { fitTappedTempo, moveDownbeat } from '../../analysis/edits.ts'
+import { fitTappedTempo, moveDownbeat, rescaleTempo } from '../../analysis/edits.ts'
 import {
   BARS_NOTES,
   hasFoundBars,
@@ -92,6 +92,22 @@ export async function applyTappedTempo(bpm: number): Promise<void> {
     if (!(error instanceof JobError)) throw error
     if (error.code !== 'cancelled') toast(`Could not follow that tempo. ${error.message}`)
   }
+}
+
+/** Tempo bounds for Half and Double, so the beat level stays one a listener could tap. */
+export const TEMPO_LEVEL_RANGE = { min: 40, max: 300 }
+
+/**
+ * Halves (0.5) or doubles (2) the beat level as one undo step, "Half tempo" or "Double tempo": the one-click fix when
+ * the analysis found the beat at twice or half the speed it is felt. Found bars stay bars of four (`rescaleTempo`).
+ */
+export function setTempoLevel(factor: 2 | 0.5): void {
+  const analysis = songAnalysis(editor.getProject())
+  if (!analysis?.beats?.length || isRunning(JOB_KINDS.tempo)) return
+  const edit = rescaleTempo(analysis, factor)
+  const bpm = edit.grid.tempo?.bpm
+  if (!bpm || bpm < TEMPO_LEVEL_RANGE.min || bpm > TEMPO_LEVEL_RANGE.max) return
+  undoable(factor === 2 ? 'Double tempo' : 'Half tempo', `Tempo set to ${formatBpm(bpm)}`, edit)
 }
 
 /** Makes the beat nearest `time` the first beat of a bar and renumbers the bars from it. */

@@ -3,7 +3,7 @@ import { hasFoundBars } from '../model/queries.ts'
 import { JobError, jobs, type JobHandle, type JobRunner } from '../shared/jobs.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../shared/worker.ts'
 import type { DecodedAudio } from './beats/fast.ts'
-import { fitDownbeats } from './beats/grid.ts'
+import { barsOfFour, fitDownbeats } from './beats/grid.ts'
 import { decodeAudioFile } from './decode.ts'
 import { part } from './jobContext.ts'
 import type { RefinedFields } from './song.ts'
@@ -226,7 +226,8 @@ export function refinedBarsCommand(
       baseline: grid(current),
     }
   }
-  const downbeats = fitDownbeats(current.beats ?? [], refined.downbeats)
+  const fitted = fitDownbeats(current.beats ?? [], refined.downbeats)
+  const downbeats = fitted && barsOfFour(current.beats ?? [], fitted)
   if (!downbeats) return null
   return {
     type: 'analysis.setRefined',

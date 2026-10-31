@@ -6,7 +6,7 @@ import { resample } from './dsp/resample.ts'
 import { throwIfAborted } from './dsp/stats.ts'
 import { toAnalysisMono, trackBeatsFast, type DecodedAudio } from './beats/fast.ts'
 import type { BeatGrid } from './beats/grid.ts'
-import { fitDownbeats } from './beats/grid.ts'
+import { barsOfFour, fitDownbeats } from './beats/grid.ts'
 import { refineWithBeatThis } from './beats/refine.ts'
 import {
   BEAT_THIS_SAMPLE_RATE,
@@ -124,9 +124,10 @@ export function trackSongAtTempo(
   const tempo = { minBpm: bpm / TAPPED_TEMPO_RANGE, maxBpm: bpm * TAPPED_TEMPO_RANGE, priorBpm: bpm }
   const { grid } = trackBeatsFast(state.spec, tempo, signal)
   state.grid = grid
-  const bars = state.logits
+  const fitted = state.logits
     ? fitDownbeats(grid.beats, refineWithBeatThis(state.logits, { dspBpm: grid.bpm }).downbeats)
     : null
+  const bars = fitted && barsOfFour(grid.beats, fitted)
   return { tempo: { bpm: grid.bpm, confidence: 1 }, beats: grid.beats, downbeats: bars ?? undefined }
 }
 
