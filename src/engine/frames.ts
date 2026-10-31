@@ -400,7 +400,7 @@ class DecodeCursor {
  * tags every untagged frame BT.709. Returns the color space that makes export decode like preview, or null when the
  * frames are already tagged correctly.
  */
-async function previewColorSpace(track: InputVideoTrack): Promise<VideoColorSpaceInit | null> {
+export async function previewColorSpace(track: InputVideoTrack): Promise<VideoColorSpaceInit | null> {
   const declared = await track.getColorSpace()
   if (declared.matrix || (await track.getCodedHeight()) >= 720) return null
   return {
@@ -412,7 +412,7 @@ async function previewColorSpace(track: InputVideoTrack): Promise<VideoColorSpac
 }
 
 /** Copies a frame's pixels into a new frame with a different color space tag (VideoFrameInit cannot re-tag). */
-async function retag(frame: VideoFrame, colorSpace: VideoColorSpaceInit): Promise<VideoFrame> {
+export async function retag(frame: VideoFrame, colorSpace: VideoColorSpaceInit): Promise<VideoFrame> {
   const rect = frame.visibleRect
   if (!frame.format || !rect) return frame
   try {

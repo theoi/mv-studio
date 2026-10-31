@@ -18,6 +18,8 @@ ffmpeg $q -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" -c:a lib
 # 4 s 1920x1080 30 fps H.264 clip without audio (performance benchmarks)
 ffmpeg $q -f lavfi -i "testsrc2=size=1920x1080:rate=30" -t 4 -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -movflags +faststart clip1080.mp4
 ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=1" -frames:v 1 image.png
+# clip.mp4 with container rotation (90° clockwise), like a phone clip filmed upright
+ffmpeg $q -display_rotation 90 -i clip.mp4 -c copy clip-rotated.mp4
 # 10 s of synthesized speech (flite): one phrase at about 1.2 s and one at about 6.2 s, 16 kHz mono
 ffmpeg $q -f lavfi -i "flite=text='we were young and the night was long':voice=slt" \
   -f lavfi -i "flite=text='hold on tight we are almost there':voice=slt" \
