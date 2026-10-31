@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { centroid } from '../../../../src/vision/mask/ops.ts'
-import { createTrackReader } from '../../../../src/vision/mask/track.ts'
-import { buildPersonTrack } from '../../../../src/vision/segmentation/personTrack.ts'
+import { appendFrame, createPackedTrack, createTrackReader } from '../../../../src/vision/mask/track.ts'
+import { buildPersonTrack, trackSuitability } from '../../../../src/vision/segmentation/personTrack.ts'
 import type { JobProgress as Progress } from '../../../../src/shared/jobs.ts'
 import { discMask, fakeBitmap, fakeOnnx, fakeSegmentation, fakeSource, timeOf } from './fakes.ts'
 
@@ -100,5 +100,41 @@ describe('buildPersonTrack', () => {
     await expect(
       buildPersonTrack({ segmentation: fakeSegmentation() }, source, { hqRanges: [{ start: 0, end: 1 }] }),
     ).rejects.toMatchObject({ code: 'unsupported' })
+  })
+})
+
+describe('trackSuitability', () => {
+  const meta = {
+    version: 1 as const,
+    kind: 'person' as const,
+    mediaId: 'm',
+    sourceSize: { width: 640, height: 360 },
+    maskSize: { width: 64, height: 36 },
+    fps: 25,
+    start: 0,
+    model: 'test',
+    quality: 'standard' as const,
+  }
+  const rect = (x0: number, x1: number) => {
+    const data = new Uint8Array(64 * 36)
+    for (let y = 4; y < 36; y++) for (let x = x0; x < x1; x++) data[y * 64 + x] = 255
+    return { width: 64, height: 36, data }
+  }
+  const track = (frame: (k: number) => ReturnType<typeof rect>) => {
+    const t = createPackedTrack(meta)
+    for (let k = 0; k < 50; k++) appendFrame(t, frame(k), 0.3)
+    return t
+  }
+
+  it('reports a cutout that flickers between frames, measured on the frames next to each sample', () => {
+    const r = trackSuitability(track((k) => (k % 2 ? rect(20, 30) : rect(20, 40))))
+    expect(r.stability!).toBeLessThan(0.7)
+    expect(r.reasons).toContain('unstable-mask')
+  })
+
+  it('keeps a subject that moves and changes shape smoothly stable and good', () => {
+    const r = trackSuitability(track((k) => rect(4 + Math.floor(k / 2), 20 + k)))
+    expect(r.stability!).toBeGreaterThan(0.95)
+    expect(r.verdict).toBe('good')
   })
 })

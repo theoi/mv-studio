@@ -4,12 +4,15 @@ import { analyzeSubjects } from '../../../../src/vision/reframe/analyze.ts'
 import { discMask, fakeSegmentation, fakeSource } from './fakes.ts'
 
 describe('checkSuitability', () => {
-  it('samples short shots densely enough to measure stability', async () => {
-    const seg = fakeSegmentation((_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 3))
+  it('samples short shots 5 times a second and leaves flicker to the person track', async () => {
+    // The subject changes size a lot between samples, which an earlier version mistook for flicker.
+    const seg = fakeSegmentation((t, s) =>
+      discMask(s, s.width / 2, s.height / 2, (s.height / 3) * (Math.round(t * 5) % 2 ? 1 : 0.7)),
+    )
     const { source } = fakeSource({ duration: 4 })
     const report = await checkSuitability(seg, source)
     expect(report.sampledFrames).toBe(20)
-    expect(report.stability).toBeCloseTo(1, 5)
+    expect(report.stability).toBeNull()
     expect(report.verdict).toBe('good')
   })
 

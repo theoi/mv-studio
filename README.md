@@ -140,7 +140,8 @@ Developer notes on the providers, error states and model choice are in [src/clou
 - Automatic lyric transcription of sung vocals is a draft and needs correcting. For precise word timing, paste the lyrics and separate the stems.
 - On a 4-core computer without a capable GPU, stem separation (and so precise lyric timing) takes about 3 to 5 minutes per song and up to about 4 GB of memory. A capable GPU makes it faster.
 - Word timing can drift in dense, layered vocals and may need touching up by hand.
-- Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable.
+- Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable (in testing, for 11 of 13 such shots).
+- Subject cutout sometimes cuts out animals or vehicles as if they were people, so a shot with no one in it can be offered for text behind the subject.
 - Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found. You can rename and adjust sections on the timeline.
 - 3D camera moves on stills can bend or stretch edges around the subject, most visibly on large moves.
 - AI images and video clips need your fal.ai key and cost money per use. The richer director and plain-language edits need an LLM endpoint, in the cloud or on your computer.

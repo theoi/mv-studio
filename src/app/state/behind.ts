@@ -99,7 +99,9 @@ const fromReport = (r: SuitabilityReport): Suitability => ({
 })
 
 const REASONS: Record<SuitabilityReason, string> = {
-  'no-subject': 'No one is in this shot',
+  // The person segmenter finds nobody both in empty shots and in wide shots of small people, so this must not claim
+  // the shot is empty.
+  'no-subject': 'No one here is large enough to cut out',
   'subject-too-small': 'People are too small in this wide shot',
   'subject-fills-frame': 'The person fills the frame, so text behind them would barely show',
   'many-small-subjects': 'Too many small people to cut out cleanly',

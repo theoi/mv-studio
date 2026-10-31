@@ -66,7 +66,10 @@ describe('suitability', () => {
       ok: false,
     })
     expect(canTryCutout(crowd)).toBe(false)
-    expect(assetSuitability(project.assets['m-city']!)).toMatchObject({ reasons: ['no-subject'] })
+    const city = assetSuitability(project.assets['m-city']!)
+    expect(city).toMatchObject({ reasons: ['no-subject'] })
+    // Nobody found can also mean people too small to find, so the text does not claim the shot is empty.
+    expect(suitabilityText(city).why).toBe('No one here is large enough to cut out.')
   })
 
   it('leaves imported footage unchecked until a check result is stored for it', () => {

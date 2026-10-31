@@ -23,10 +23,12 @@ import { decodeContainer, encodeContainer } from './runtime/container.ts'
 import type { FrameSource } from './runtime/frames.ts'
 import { createSharedRunner } from './runtime/shared.ts'
 import type { TaskOptions } from './runtime/tasks.ts'
+import { SUITABILITY_VERSION } from './mask/suitability.ts'
 import {
   buildPersonTrack,
   personTrackParams,
   PERSON_TRACK_VERSION,
+  trackSuitability,
   type PersonTrackOptions,
   type PersonTrackResult,
 } from './segmentation/personTrack.ts'
@@ -107,6 +109,8 @@ interface SelectionFileMeta {
 interface PersonTrackFileMeta {
   track: MaskTrackMeta
   suitability: SuitabilityReport
+  /** `SUITABILITY_VERSION` the report was judged with; missing in files written before it existed. */
+  suitabilityVersion?: number
   observations: FrameObservation[]
   hqFrames: number
 }
@@ -166,16 +170,25 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
   const decodePerson = async (bytes: Uint8Array): Promise<PersonTrackResult> => {
     const { meta, chunks } = await decodeContainer<PersonTrackFileMeta>(bytes)
     if (meta.track.frameCount !== chunks.length) throw new Error('inconsistent person track')
+    const track = { meta: meta.track, packed: chunks.map((c) => c.slice()) }
     return {
-      track: { meta: meta.track, packed: chunks.map((c) => c.slice()) },
-      suitability: meta.suitability,
+      track,
+      // A report judged by older criteria is judged again from the stored masks, without segmenting again.
+      suitability:
+        meta.suitabilityVersion === SUITABILITY_VERSION ? meta.suitability : trackSuitability(track),
       observations: meta.observations,
       hqFrames: meta.hqFrames,
     }
   }
   const encodePerson = (r: PersonTrackResult) =>
     encodeContainer<PersonTrackFileMeta>(
-      { track: r.track.meta, suitability: r.suitability, observations: r.observations, hqFrames: r.hqFrames },
+      {
+        track: r.track.meta,
+        suitability: r.suitability,
+        suitabilityVersion: SUITABILITY_VERSION,
+        observations: r.observations,
+        hqFrames: r.hqFrames,
+      },
       r.track.packed,
     )
   const json = {

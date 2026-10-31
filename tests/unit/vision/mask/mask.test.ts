@@ -201,20 +201,41 @@ describe('suitability', () => {
     expect(assessSuitability([], 1).verdict).toBe('unsuitable')
   })
 
-  it('flags unstable masks when samples are dense', () => {
+  it('flags a mask that jumps back and forth for single frames as unstable', () => {
     const narrow = rectMask(W, H, 25, 6, 35, 36)
-    const flip = Array.from({ length: 10 }, (_, i) => ({ t: i * 0.1, mask: i % 2 ? big : narrow }))
-    const r = assessSuitability(flip, 0.1)
-    expect(r.stability).not.toBeNull()
-    expect(r.stability!).toBeLessThan(0.8)
+    const samples = Array.from({ length: 8 }, (_, i) => ({
+      t: i * 0.2,
+      prev: narrow,
+      mask: big,
+      next: narrow,
+    }))
+    const r = assessSuitability(samples, 0.2)
+    expect(r.stability!).toBeCloseTo(0.5, 2)
     expect(r.reasons).toContain('unstable-mask')
     expect(r.verdict).not.toBe('good')
   })
 
-  it('does not count a subject moving across the frame as unstable', () => {
-    const moving = Array.from({ length: 10 }, (_, i) => ({ t: i * 0.1, mask: shiftMask(big, i * 2 - 10, 0) }))
-    const r = assessSuitability(moving, 0.1)
-    expect(r.stability!).toBeGreaterThan(0.95)
+  it('does not count movement or a changing pose as flicker', () => {
+    // Frame k: the subject has moved 2 px and grown 1 px; samples are 5 frames apart, each with its neighbours.
+    const pose = (k: number) => rectMask(160, H, 4 + 2 * k, 6, 4 + 2 * k + 10 + k, H)
+    const samples = Array.from({ length: 8 }, (_, i) => ({
+      t: i * 0.2,
+      prev: pose(5 * i - 1),
+      mask: pose(5 * i),
+      next: pose(5 * i + 1),
+    }))
+    const r = assessSuitability(samples, 0.2)
+    expect(r.stability).toBe(1)
+    expect(r.verdict).toBe('good')
+  })
+
+  it('does not judge stability from samples without their neighbouring frames', () => {
+    const narrow = rectMask(W, H, 25, 6, 35, 36)
+    const r = assessSuitability(
+      Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask: i % 2 ? big : narrow })),
+      0.2,
+    )
+    expect(r.stability).toBeNull()
     expect(r.verdict).toBe('good')
   })
 })

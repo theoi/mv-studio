@@ -2,7 +2,7 @@ import type { Delegate, OnnxBackend, PersonModel, SegmentationBackend } from '..
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
 import { createTrackReader } from '../mask/track.ts'
-import { assessSuitability, type SuitabilityOptions } from '../mask/suitability.ts'
+import { assessSuitability, type SuitabilityOptions, type SuitabilitySample } from '../mask/suitability.ts'
 import { fitSize, iterateFrames, prefetch, sampleTimes, type FrameSource } from '../runtime/frames.ts'
 import { createProgress, type TaskOptions } from '../runtime/tasks.ts'
 import type { FrameObservation } from '../reframe/track.ts'
@@ -138,13 +138,20 @@ export async function buildPersonTrack(
   }
 }
 
-/** Suitability of a stored track, judged on frames ~0.2 s apart (dense enough to measure stability). */
+/**
+ * Suitability of a stored track, judged on frames about 0.2 s apart, each with the frames just before and after it
+ * for the flicker measure.
+ */
 export function trackSuitability(track: PackedMaskTrack, options?: SuitabilityOptions): SuitabilityReport {
   const { meta } = track
   const step = Math.max(1, Math.round(meta.fps * 0.2))
-  const reader = createTrackReader(track, 2)
-  const samples = []
-  for (let i = 0; i < meta.frameCount; i += step)
-    samples.push({ t: meta.start + i / meta.fps, mask: reader.frame(i) })
+  const reader = createTrackReader(track, 3)
+  const samples: SuitabilitySample[] = []
+  for (let i = 0; i < meta.frameCount; i += step) {
+    const prev = i > 0 && i + 1 < meta.frameCount ? reader.frame(i - 1) : undefined
+    const mask = reader.frame(i)
+    const next = prev ? reader.frame(i + 1) : undefined
+    samples.push({ t: meta.start + i / meta.fps, mask, ...(prev && next ? { prev, next } : {}) })
+  }
   return assessSuitability(samples, step / meta.fps, options)
 }

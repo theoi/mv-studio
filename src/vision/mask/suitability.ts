@@ -1,5 +1,5 @@
 import type { Mask, SuitabilityReason, SuitabilityReport, TimeRange } from '../types.ts'
-import { centroid, components, coverage, iou, shiftMask } from './ops.ts'
+import { components, coverage } from './ops.ts'
 
 export interface SuitabilityOptions {
   /** Largest subject must cover at least this fraction of the frame. */
@@ -14,7 +14,7 @@ export interface SuitabilityOptions {
   goodFraction?: number
   /** Minimum usable fraction for 'marginal' (offered on suitable ranges only). */
   marginalFraction?: number
-  /** Mean consecutive IoU below this marks the mask unstable (only for dense samples). */
+  /** Stability below this marks the mask unstable. Measured only on samples that come with their neighbouring frames. */
   minStability?: number
   /** Ranges shorter than this (seconds) are dropped. */
   minRangeSeconds?: number
@@ -53,13 +53,43 @@ export function assessFrame(t: number, mask: Mask, options: SuitabilityOptions =
   return { t, coverage: cov, verdict: 'ok' }
 }
 
+/** Bumped whenever the verdict for the same masks changes, so stored reports are judged again. */
+export const SUITABILITY_VERSION = 2
+
+/** A sampled mask, optionally with the frames just before and after it (needed to measure flicker). */
+export interface SuitabilitySample {
+  t: number
+  mask: Mask
+  prev?: Mask
+  next?: Mask
+}
+
 /**
- * Decides whether "text behind the subject" works for a shot, from masks sampled across
- * it (ascending times). `spacing` is the nominal time between samples, used to turn
- * usable samples into time ranges and to judge whether stability can be measured.
+ * Share of the subject that flickers at the middle of three consecutive frames: pixels on in the middle frame and
+ * off in both neighbours, or the other way round. A subject that moves smoothly changes each edge pixel once, so
+ * movement does not count, only a mask that jumps back and forth.
+ */
+export function flicker(prev: Mask, cur: Mask, next: Mask, threshold = 128): number {
+  let flips = 0
+  let area = 0
+  for (let i = 0; i < cur.data.length; i++) {
+    const a = prev.data[i]! >= threshold
+    const b = cur.data[i]! >= threshold
+    const c = next.data[i]! >= threshold
+    if (a || b || c) area++
+    if (a === c && a !== b) flips++
+  }
+  return area ? flips / area : 0
+}
+
+/**
+ * Decides whether "text behind the subject" works for a shot, from masks sampled across it (ascending times). The
+ * quick check and the stored person track both judge with this, so they agree on the same masks. `spacing` is the
+ * nominal time between samples, used to turn usable samples into time ranges. Stability is measured on the samples
+ * that come with their neighbouring frames (the person track), and is null without them (the quick check).
  */
 export function assessSuitability(
-  samples: ReadonlyArray<{ t: number; mask: Mask }>,
+  samples: ReadonlyArray<SuitabilitySample>,
   spacing: number,
   options: SuitabilityOptions = {},
 ): SuitabilityReport {
@@ -82,11 +112,9 @@ export function assessSuitability(
   const meanCoverage = frames.reduce((a, f) => a + f.coverage, 0) / n
 
   let stability: number | null = null
-  if (n >= 3 && spacing <= 0.2) {
-    let s = 0
-    for (let i = 1; i < n; i++) s += alignedIou(samples[i - 1]!.mask, samples[i]!.mask)
-    stability = s / (n - 1)
-  }
+  const triples = samples.filter((s) => s.prev && s.next)
+  if (triples.length >= 3)
+    stability = 1 - triples.reduce((a, s) => a + flicker(s.prev!, s.mask, s.next!), 0) / triples.length
 
   const counts = new Map<SuitabilityReason, number>()
   for (const f of frames) if (f.verdict !== 'ok') counts.set(f.verdict, (counts.get(f.verdict) ?? 0) + 1)
@@ -108,14 +136,6 @@ export function assessSuitability(
     sampledFrames: n,
     suitableRanges: verdict === 'unsuitable' ? [] : suitableRanges,
   }
-}
-
-/** IoU after aligning centroids, so a subject moving across the frame doesn't read as flicker. */
-function alignedIou(a: Mask, b: Mask): number {
-  const ca = centroid(a)
-  const cb = centroid(b)
-  if (!ca || !cb) return iou(a, b)
-  return iou(shiftMask(a, Math.round((cb.x - ca.x) * a.width), Math.round((cb.y - ca.y) * a.height)), b)
 }
 
 function usableRanges(frames: FrameAssessment[], spacing: number, minSeconds: number): TimeRange[] {

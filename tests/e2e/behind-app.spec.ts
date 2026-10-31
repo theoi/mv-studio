@@ -112,7 +112,9 @@ test('a clip with no one in it says why it cannot be cut out', async ({ page }) 
   const toggle = inspector.getByRole('switch', { name: 'Put text and effects behind the subject' })
   await toggle.click()
   await expect(
-    inspector.getByText(/^(No one is in this shot|People are too small in this wide shot)\.$/),
+    inspector.getByText(
+      /^(No one here is large enough to cut out|People are too small in this wide shot)\.$/,
+    ),
   ).toBeVisible({
     timeout: 90_000,
   })

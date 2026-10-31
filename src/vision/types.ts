@@ -106,7 +106,10 @@ export interface SuitabilityReport {
   /** Fraction of sampled frames where the effect works. */
   usableFraction: number
   meanCoverage: number
-  /** Mean IoU between consecutive samples (1 = perfectly stable), or null if too few samples. */
+  /**
+   * 1 minus the mean share of the subject that flickers for a single frame (1 = no flicker), or null when the samples
+   * came without neighbouring frames (the quick check) or were too few.
+   */
   stability: number | null
   sampledFrames: number
   /** Time ranges where the effect can be offered. */
