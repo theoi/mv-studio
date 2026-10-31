@@ -1,11 +1,16 @@
 import { useEffect, useSyncExternalStore } from 'react'
+import { exportFileName } from '../../engine/export.ts'
 import { PreviewController } from '../../engine/preview.ts'
 import type { Project, Seconds } from '../../model/index.ts'
+import { downloadFile } from './exports.ts'
 import { appMedia } from './media.ts'
+import { editor } from './project.ts'
+import { get, toast } from './ui.ts'
 
 /*
- * Still frames of projects that are not on the main preview, such as export outputs laid out for another format.
- * One offscreen engine preview renders them one at a time; results are kept as object URLs by key.
+ * Still frames of projects that are not on the main preview, such as export outputs laid out for another format, and
+ * full-size frames saved as PNG (Preview › Save frame). One offscreen engine preview renders them one at a time;
+ * dialog stills are kept as object URLs by key.
  */
 
 const MAX_STILLS = 32
@@ -59,7 +64,15 @@ function stillsPreview(): PreviewController {
   return controller
 }
 
-async function renderOnce(project: Project, time: Seconds, width: number, height: number): Promise<Blob> {
+type StillType = 'image/jpeg' | 'image/png'
+
+async function renderOnce(
+  project: Project,
+  time: Seconds,
+  width: number,
+  height: number,
+  type: StillType,
+): Promise<Blob> {
   const preview = stillsPreview()
   preview.setViewport(width, height, 1)
   preview.seek(time)
@@ -70,29 +83,39 @@ async function renderOnce(project: Project, time: Seconds, width: number, height
   const canvas = new OffscreenCanvas(frame.width, frame.height)
   canvas.getContext('2d')?.drawImage(frame, 0, 0)
   frame.close()
-  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 })
+  return canvas.convertToBlob(type === 'image/png' ? { type } : { type, quality: 0.86 })
 }
 
-/** One still as a JPEG. When the render worker died during the render, tries once more on a new preview. */
+/** One still (JPEG unless asked). When the render worker died during the render, tries once more on a new preview. */
 export async function renderStill(
   project: Project,
   time: Seconds,
   width: number,
   height: number,
+  type: StillType = 'image/jpeg',
 ): Promise<Blob> {
   try {
-    return await renderOnce(project, time, width, height)
+    return await renderOnce(project, time, width, height, type)
   } catch (error) {
     if (!controller?.getSnapshot().error) throw error
-    return renderOnce(project, time, width, height)
+    return renderOnce(project, time, width, height, type)
   }
+}
+
+/** Runs after the stills already queued, so renders never share the offscreen preview. */
+function enqueue<T>(work: () => Promise<T>): Promise<T> {
+  const result = queue.then(work)
+  queue = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
 }
 
 function requestStill(key: string, project: Project, time: Seconds, width: number, height: number): void {
   if (urls.has(key) || pending.has(key)) return
   pending.add(key)
-  queue = queue
-    .then(() => renderStill(project, time, width, height))
+  void enqueue(() => renderStill(project, time, width, height))
     .then(
       (blob) => store(key, URL.createObjectURL(blob)),
       (error: unknown) => console.error('Still render failed', error),
@@ -124,4 +147,32 @@ export function releaseStills(): void {
     controller?.dispose()
     controller = null
   })
+}
+
+/** "Neon Skyline - 1m07.2s.png": the project name and the moment of the frame. */
+export function frameFileName(projectName: string, time: Seconds): string {
+  const base = exportFileName(projectName).replace(/\.mp4$/, '')
+  const minutes = Math.floor(time / 60)
+  const seconds = (time - minutes * 60).toFixed(1).padStart(4, '0')
+  return `${base} - ${minutes}m${seconds}s.png`
+}
+
+/**
+ * Downloads the project's frame at `time` (default: the playhead) as a PNG at the project's full size, drawn by the
+ * same compositor as the preview and export.
+ */
+export async function saveFrame(time: Seconds = get().playhead): Promise<void> {
+  const project = editor.getProject()
+  const { width, height } = project.settings
+  const name = frameFileName(project.name, time)
+  try {
+    const blob = await enqueue(() => renderStill(project, time, width, height, 'image/png'))
+    downloadFile(blob, name)
+    toast(`Saved ${name} (${width} × ${height}) to your Downloads folder.`)
+  } catch (error) {
+    console.error('Save frame failed', error)
+    toast('The frame could not be drawn, so nothing was downloaded. Try again in a moment.')
+  } finally {
+    if (get().dialog !== 'export') releaseStills()
+  }
 }

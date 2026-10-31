@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AudioLines,
   ChevronDown,
+  ImageDown,
   Maximize2,
   Pause,
   Play,
@@ -18,10 +19,22 @@ import type { PreviewController } from '../../../engine/preview.ts'
 import type { AspectPreset } from '../../../model/index.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  MenuTrigger,
+} from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
 import { formatTimecode } from '../../format.ts'
 import { jumpSection } from '../../state/playback.ts'
+import { saveFrame } from '../../state/stills.ts'
 import {
   bpmOf,
   editor,
@@ -268,7 +281,21 @@ export function Preview() {
           />
         </div>
       ) : (
-        <Stage ratio={current.ratio} />
+        <ContextMenu>
+          {/* display: contents keeps the stage's layout; the menu opens where the pointer is. */}
+          <ContextMenuTrigger style={{ display: 'contents' }}>
+            <Stage ratio={current.ratio} />
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem
+              icon={<ImageDown />}
+              description="PNG at the project's full size"
+              onSelect={() => void saveFrame()}
+            >
+              Save frame
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       )}
 
       <div className={styles.transport}>
