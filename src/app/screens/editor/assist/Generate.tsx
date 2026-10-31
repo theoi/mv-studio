@@ -265,8 +265,9 @@ const STEP_OF_STAGE: Record<string, number> = {
 
 function Running({ job, onCancel }: { job?: JobSnapshot; onCancel: () => void }) {
   const run = generateRun(job?.id)
+  const stopping = Boolean(job?.stopping)
   // After a Cancel, a result fal.ai already made is still downloading, to be kept in Media.
-  const stopping = job?.progress.stage === 'stopping'
+  const keeping = job?.progress.stage === 'stopping'
   const upload = run?.task === 'image-to-video'
   const steps = [
     ...(upload ? ['Upload the image'] : []),
@@ -295,7 +296,7 @@ function Running({ job, onCancel }: { job?: JobSnapshot; onCancel: () => void })
         job={job}
         label="Generation progress"
         note={
-          stopping
+          keeping
             ? `Keeping 1 ${run?.task === 'text-to-image' ? 'image' : 'video'} that is downloading`
             : undefined
         }
