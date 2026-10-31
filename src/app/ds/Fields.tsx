@@ -417,7 +417,7 @@ export function Select<T extends string>({
 }: {
   value: T
   onChange: (v: T) => void
-  options: { value: T; label: string; description?: string }[]
+  options: { value: T; label: string; description?: string; disabled?: boolean }[]
   ariaLabel: string
   size?: 'sm' | 'md'
   disabled?: boolean
@@ -444,7 +444,7 @@ export function Select<T extends string>({
         >
           <RSelect.Viewport>
             {options.map((o) => (
-              <RSelect.Item key={o.value} value={o.value} className={styles.selectItem}>
+              <RSelect.Item key={o.value} value={o.value} disabled={o.disabled} className={styles.selectItem}>
                 <RSelect.ItemText>{o.label}</RSelect.ItemText>
                 {o.description && <span className={styles.selectDesc}>{o.description}</span>}
                 <RSelect.ItemIndicator className={styles.selectCheck}>

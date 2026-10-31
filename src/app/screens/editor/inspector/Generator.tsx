@@ -1,116 +1,91 @@
-import { useState } from 'react'
 import { AudioWaveform } from 'lucide-react'
-import type { Clip } from '../../../../model/index.ts'
 import { pluginRegistry } from '../../../../engine/registry.ts'
-import {
-  AnimateButtons,
-  ColorField,
-  FieldRow,
-  NumberField,
-  Section,
-  Segmented,
-  Select,
-  Slider,
-} from '../../../ds/Fields.tsx'
+import { STEM_NAMES, type Clip, type StemName } from '../../../../model/index.ts'
+import { Button } from '../../../ds/Button.tsx'
+import { FieldRow, Section, Select } from '../../../ds/Fields.tsx'
 import { formatTime } from '../../../format.ts'
-import { useAnimatable } from './animatable.ts'
+import { dispatch, songAnalysis, useProject } from '../../../state/project.ts'
+import { openAssist } from '../../../state/ui.ts'
 import { CompositingSection, Header } from './parts.tsx'
+import { PluginParams } from './PluginParams.tsx'
 import styles from '../Inspector.module.css'
 
+const MIX = 'mix'
+
+const STEM_LABEL: Record<StemName, string> = {
+  vocals: 'Vocals stem',
+  drums: 'Drums stem',
+  bass: 'Bass stem',
+  other: 'Other instruments stem',
+}
+
+const STEM_DESCRIPTION: Record<StemName, string> = {
+  vocals: 'Only the singing',
+  drums: 'Only the drums',
+  bass: 'Only the bass',
+  other: 'Everything but vocals, drums and bass',
+}
+
+/** Visualizers and shader visuals: what they react to, their own settings, and compositing. */
 export function GeneratorInspector({ clip }: { clip: Extract<Clip, { type: 'generator' }> }) {
-  const [source, setSource] = useState('drums')
-  const sens = useAnimatable(clip, ['params', 'sensitivity'])
-  const smooth = useAnimatable(clip, ['params', 'smoothing'])
-  const bars = useAnimatable(clip, ['params', 'bars'])
-  const pct = (v: unknown) => Math.round(Number(v ?? 0) * 100)
+  const project = useProject()
+  const def = pluginRegistry.get(clip.generatorId)
+  const stems = songAnalysis(project)?.stemFeatures ?? {}
+  const separated = STEM_NAMES.some((s) => stems[s])
+  const options = [
+    { value: MIX, label: 'Whole song', description: 'The full mix' },
+    ...STEM_NAMES.map((s) => ({
+      value: s,
+      label: STEM_LABEL[s],
+      description: stems[s] ? STEM_DESCRIPTION[s] : 'Separate stems first',
+      disabled: !stems[s],
+    })),
+  ]
+  const setSource = (value: string) => {
+    const stem = STEM_NAMES.find((s) => s === value)
+    if ((clip.audio?.stem ?? MIX) === value) return
+    dispatch(
+      { type: 'clip.setAudioSource', clipId: clip.id, source: stem ? { stem } : null },
+      { label: stem ? `React to the ${STEM_LABEL[stem].toLowerCase()}` : 'React to the whole song' },
+    )
+  }
+  const params = def?.params ?? []
+  const advanced = params.filter((p) => p.advanced)
   return (
     <>
       <Header
         icon={<AudioWaveform />}
-        title={clip.name ?? pluginRegistry.get(clip.generatorId)?.name ?? 'Visual'}
-        meta={`Visualizer · ${formatTime(clip.start)} – ${formatTime(clip.start + clip.duration)}`}
+        title={clip.name ?? def?.name ?? 'Visual'}
+        meta={`${def?.category ?? 'Visual'} · ${formatTime(clip.start)} – ${formatTime(clip.start + clip.duration)}`}
       />
       <Section title="Reacts to">
-        <FieldRow label="Source">
+        <FieldRow label="Source" trailing={<span className={styles.trailSpacer} />}>
           <Select
-            value={source}
+            value={clip.audio?.stem ?? MIX}
             onChange={setSource}
             ariaLabel="Audio source"
-            options={[
-              { value: 'song', label: 'Whole song' },
-              { value: 'drums', label: 'Drums stem' },
-              { value: 'bass', label: 'Bass stem' },
-              { value: 'vocals', label: 'Vocals stem' },
-              { value: 'low', label: 'Low frequencies' },
-              { value: 'onsets', label: 'Beats and hits' },
-            ]}
+            options={options}
           />
         </FieldRow>
-        <FieldRow
-          label="Sensitivity"
-          trailing={
-            <AnimateButtons
-              property="Sensitivity"
-              keyed={sens.keyed}
-              onKey={sens.key}
-              reactive={sens.reactive}
-              onReact={sens.react}
-            />
-          }
-        >
-          <Slider
-            value={pct(sens.value)}
-            onChange={(v) => sens.set(v / 100)}
-            onCommit={sens.commit}
-            ariaLabel="Sensitivity"
-          />
-          <span className={`${styles.value} tnum`}>{pct(sens.value)}%</span>
-        </FieldRow>
-        <FieldRow
-          label="Smoothing"
-          trailing={<AnimateButtons property="Smoothing" keyed={smooth.keyed} onKey={smooth.key} />}
-        >
-          <Slider
-            value={pct(smooth.value)}
-            onChange={(v) => smooth.set(v / 100)}
-            onCommit={smooth.commit}
-            ariaLabel="Smoothing"
-          />
-          <span className={`${styles.value} tnum`}>{pct(smooth.value)}%</span>
-        </FieldRow>
+        {!separated && (
+          <div className={styles.padded}>
+            <div className={styles.timedRow}>
+              <span className={styles.meta}>Stems not separated yet</span>
+              <Button size="sm" variant="ghost" onClick={() => openAssist('stems')}>
+                Separate stems
+              </Button>
+            </div>
+          </div>
+        )}
       </Section>
       <Section title="Style">
-        <FieldRow
-          label="Bars"
-          trailing={<AnimateButtons property="Bars" keyed={bars.keyed} onKey={bars.key} />}
-        >
-          <NumberField
-            value={Number(bars.value ?? 56)}
-            onChange={(v) => bars.set(v)}
-            onCommit={bars.commit}
-            ariaLabel="Bar count"
-            min={8}
-            max={128}
-          />
-        </FieldRow>
-        <FieldRow label="Color" trailing={<AnimateButtons property="Color" reactive />}>
-          <ColorField value="#ffffff" ariaLabel="Bar color" />
-        </FieldRow>
-        <FieldRow label="Position" trailing={<span className={styles.trailSpacer} />}>
-          <Segmented
-            value="bottom"
-            onChange={() => undefined}
-            ariaLabel="Position"
-            size="sm"
-            block
-            options={[
-              { value: 'bottom', label: 'Bottom' },
-              { value: 'center', label: 'Center' },
-              { value: 'top', label: 'Top' },
-            ]}
-          />
-        </FieldRow>
+        <PluginParams clip={clip} base={['params']} specs={params.filter((p) => !p.advanced)} />
       </Section>
+      {advanced.length > 0 && (
+        <Section title="More" defaultOpen={false}>
+          <PluginParams clip={clip} base={['params']} specs={advanced} />
+        </Section>
+      )}
       <CompositingSection clip={clip} />
     </>
   )
