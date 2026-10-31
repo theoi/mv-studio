@@ -31,7 +31,9 @@ test('a section label guessed from the audio is muted and says "Probably the cho
     .evaluate((el) => getComputedStyle(el).color)
   // Selected, the Inspector's header says it is a guess too.
   await guessed.dispatchEvent('pointerdown')
-  await expect(page.getByText(/^Probably the chorus · 1:04 – 1:36 · \d+ bars$/)).toBeVisible()
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await expect(inspector.getByText('Probably the chorus', { exact: true })).toBeVisible()
+  await expect(inspector.getByText(/^1:04 – 1:36 · \d+ bars$/)).toBeVisible()
 
   // Escape leaves the name as it was; Enter keeps what the user typed, which is no longer a guess.
   await guessed.dblclick()
@@ -50,4 +52,42 @@ test('a section label guessed from the audio is muted and says "Probably the cho
   await named.dispatchEvent('pointerdown')
   await expect(page.getByText(/^Named by you/)).toBeVisible()
   await expect(page.getByText(/^1:04 – 1:36 · \d+ bars$/)).toBeVisible()
+})
+
+test('a guessed section header reads in full at 1280×720, the guess on its own line', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=50'
+  })
+  await waitForPreview(page)
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    const project = editor.getProject()
+    editor.dispatch(
+      {
+        type: 'analysis.updateSection',
+        assetId: project.songAssetId,
+        sectionId: 's-pre',
+        patch: { confidence: 0.4 },
+      },
+      { history: 'skip' },
+    )
+  })
+  await page.getByRole('button', { name: 'Section Pre-chorus, 0:48 to 1:04' }).dispatchEvent('pointerdown')
+  const title = page
+    .getByRole('tabpanel', { name: 'Inspector' })
+    .getByText('Section: Pre-chorus', { exact: true })
+  await expect(title).toBeVisible()
+  // The lines under the title: none may end in an ellipsis, and the guess and the span each read whole.
+  const lines = await title.evaluate((el) =>
+    [...(el.parentElement?.children ?? [])]
+      .filter((line) => line !== el)
+      .map((line) => ({ text: line.textContent, cut: line.scrollWidth > line.clientWidth })),
+  )
+  expect(lines).toEqual([
+    { text: 'Probably the pre-chorus', cut: false },
+    { text: '0:48 – 1:04 · 8 bars', cut: false },
+  ])
 })

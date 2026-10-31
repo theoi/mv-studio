@@ -29,14 +29,15 @@ export function SectionInspector({ id }: { id: string }) {
     sec.repeatGroup === undefined
       ? 1
       : sectionsOf(project).filter((s) => s.repeatGroup === sec.repeatGroup).length
+  const span = `${formatTime(sec.start)} – ${formatTime(sec.end)} · ${bars} bars`
+  const guess = sectionGuess(sec)
   return (
     <>
       <Header
         icon={<Film />}
         title={`Section: ${sectionName(sec)}`}
-        meta={[sectionGuess(sec), `${formatTime(sec.start)} – ${formatTime(sec.end)}`, `${bars} bars`]
-          .filter(Boolean)
-          .join(' · ')}
+        meta={guess ?? span}
+        metaBelow={guess && span}
       />
       <Section title="Section">
         <FieldRow label="Name">
