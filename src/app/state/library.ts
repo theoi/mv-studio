@@ -1,6 +1,6 @@
 /**
- * Library items and what adding one does: the looks, effects, transitions and visuals the Library tabs list, where a
- * clicked item lands, the one undoable edit it makes, and the toast that says so.
+ * Library items and what adding one does: the looks, effects, transitions, visuals, kinetic presets and text styles the
+ * Library tabs list, where a clicked item lands, the one undoable edit it makes, and the toast that says so.
  */
 import { pluginRegistry } from '../../engine/registry.ts'
 import type { GeneratorDefinition, PluginCatalogEntry } from '../../engine/types.ts'
@@ -11,6 +11,7 @@ import {
   type Id,
   type Project,
   type Seconds,
+  type TextClip,
   type VisualClip,
 } from '../../model/index.ts'
 import { createEffectInstance, createGeneratorClip, createTransition } from '../../plugins/library.ts'
@@ -22,6 +23,12 @@ import {
   ORIGINAL_LOOK,
   removeLookCommands,
 } from '../../plugins/looks.ts'
+import {
+  TEXT_STYLES,
+  textStyle,
+  textStyleCommands,
+  type TextStylePreset,
+} from '../../plugins/typography/styles.ts'
 import { formatTime, plural } from '../format.ts'
 import { dispatch, editor, sectionAt, timelineDuration, viewOf } from './project.ts'
 import { get, select, set, toast, type Selection } from './ui.ts'
@@ -532,4 +539,111 @@ export function removeMedia(assetId: Id): boolean {
     undoAction(label),
   )
   return true
+}
+
+export function textAnimationItems(): PluginCatalogEntry[] {
+  return pluginRegistry.catalog('text-animation')
+}
+
+/** Text styles, or the karaoke styles: the ones that light words up as they are sung. */
+export function textStyleItems(group: 'styles' | 'karaoke'): TextStylePreset[] {
+  return TEXT_STYLES.filter((s) => !!s.karaoke === (group === 'karaoke'))
+}
+
+/** Where a clicked kinetic preset or text style goes, or why it can go nowhere. */
+export type TextTargets =
+  | {
+      clipIds: Id[]
+      /** Names them for the toast and the note: "“Title”", "this lyric line", "2 lyric lines". */
+      what: string
+      /** The selected text clip, the selected lyric line, or every lyric line (nothing is selected). */
+      scope: 'text' | 'line' | 'lyrics'
+    }
+  | { why: string }
+
+const NO_TEXT = 'Select a text or lyric line, or add text first'
+const NOT_TEXT = 'Select a text or lyric line first'
+const LOCKED_TEXT = 'That track is locked. Unlock it to restyle this text.'
+const LOCKED_LYRICS = 'The Lyrics track is locked. Unlock it to restyle the lyrics.'
+
+/**
+ * The text clips a clicked kinetic preset or text style goes on: the selected text clip or lyric line, or every lyric
+ * line when nothing is selected (skipping lines on locked tracks). Anything else selected, or a selected text on a
+ * locked track, changes nothing, and `why` says what to do.
+ */
+export function textTargets(project: Project, selection: Selection): TextTargets {
+  const locked = lockedTracks(project)
+  const texts = Object.values(project.clips).filter((c): c is TextClip => c.type === 'text')
+  if (selection.type === 'clip' || selection.type === 'lyric') {
+    const selected = texts.find((c) =>
+      selection.type === 'clip' ? c.id === selection.id : c.lyricLineId === selection.id,
+    )
+    if (!selected) return { why: NOT_TEXT }
+    if (locked.has(selected.trackId)) return { why: LOCKED_TEXT }
+    return selected.lyricLineId
+      ? { clipIds: [selected.id], what: 'this lyric line', scope: 'line' }
+      : { clipIds: [selected.id], what: `“${selected.name ?? selected.text}”`, scope: 'text' }
+  }
+  if (selection.type !== 'none') return { why: NOT_TEXT }
+  const lines = texts.filter((c) => c.lyricLineId)
+  if (!lines.length) return { why: NO_TEXT }
+  const open = lines.filter((c) => !locked.has(c.trackId))
+  if (!open.length) return { why: LOCKED_LYRICS }
+  return { clipIds: open.map((c) => c.id), what: plural(open.length, 'lyric line'), scope: 'lyrics' }
+}
+
+/** The note under Add text: where a clicked style would go with this selection, before the click. */
+export function textTargetHint(project: Project, selection: Selection): string {
+  const t = textTargets(project, selection)
+  if ('why' in t) return t.why === NOT_TEXT ? 'Select a text or lyric line to restyle it' : t.why
+  if (t.scope === 'lyrics') return 'Click a style to use it on every lyric line'
+  return `Click a style to use it on ${t.what}`
+}
+
+/** Gives the text targets a kinetic preset as one undo step. */
+export function applyTextAnimation(presetId: string): void {
+  const def = pluginRegistry.get(presetId)
+  if (def?.kind !== 'text-animation') return
+  const targets = textTargets(editor.getProject(), get().selection)
+  if ('why' in targets) {
+    toast(targets.why)
+    return
+  }
+  const label = `Text animation: ${def.name}`
+  const commands: EditCommand[] = targets.clipIds.map((clipId) => ({
+    type: 'clip.set',
+    clipId,
+    path: ['animation'],
+    value: { presetId, params: {} },
+  }))
+  if (dispatch(commands, { label })) toast(`“${def.name}” on ${targets.what}`, undoAction(label))
+}
+
+/** Whether every one of the clips is a lyric line without word timings, so word karaoke has nothing to light up. */
+function wordsUntimed(project: Project, clipIds: Id[]): boolean {
+  const lines = new Map((project.lyrics?.lines ?? []).map((l) => [l.id, l]))
+  return clipIds.every((id) => {
+    const clip = project.clips[id]
+    const line = clip?.type === 'text' && clip.lyricLineId ? lines.get(clip.lyricLineId) : undefined
+    return clip?.type === 'text' && !!clip.lyricLineId && (line?.start === undefined || !line.words.length)
+  })
+}
+
+/** Gives the text targets a text style (with its kinetic preset and karaoke, if any) as one undo step. */
+export function applyLibraryTextStyle(styleId: string): void {
+  const preset = textStyle(styleId)
+  if (!preset) return
+  const project = editor.getProject()
+  const targets = textTargets(project, get().selection)
+  if ('why' in targets) {
+    toast(targets.why)
+    return
+  }
+  const label = `Text style: ${preset.name}`
+  const untimed = preset.karaoke?.mode === 'word' && wordsUntimed(project, targets.clipIds)
+  if (dispatch(textStyleCommands(project, targets.clipIds, styleId), { label }))
+    toast(
+      `“${preset.name}” on ${targets.what}${untimed ? ' · Time the words to see it' : ''}`,
+      undoAction(label),
+    )
 }

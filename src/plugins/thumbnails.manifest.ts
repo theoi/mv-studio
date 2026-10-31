@@ -97,6 +97,8 @@ export const THUMBNAILS: Record<string, Record<string, string>> = {
     caption: '6d72ca49b0',
     outline: '83b8003919',
     karaoke: 'ee476cd987',
+    'line-light': '4968bfa55b',
+    'bounce-along': '7a4de1111d',
     neon: '6c3447d9a7',
     poster: '1b8df47e70',
     headline: 'fd226fc1a3',
