@@ -1,6 +1,8 @@
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
-test('a section label guessed from the audio reads "Chorus?" until the user renames it', async ({ page }) => {
+test('a section label guessed from the audio is muted and says "Probably the chorus" until the user renames it', async ({
+  page,
+}) => {
   await openHarness(page)
   await page.evaluate(() => {
     localStorage.setItem('mv-studio.guide-seen', '1')
@@ -21,9 +23,12 @@ test('a section label guessed from the audio reads "Chorus?" until the user rena
       { history: 'skip' },
     )
   })
-  const guessed = page.getByRole('button', { name: 'Section Chorus?, 1:04 to 1:36' })
+  const guessed = page.getByRole('button', { name: 'Section Chorus, 1:04 to 1:36' })
   await expect(guessed).toBeVisible()
-  await expect(guessed).toHaveAttribute('title', /guessed from the audio/)
+  await expect(guessed).toHaveAttribute('title', 'Probably the chorus. Double-click to rename.')
+  const muted = await guessed
+    .getByText('Chorus', { exact: true })
+    .evaluate((el) => getComputedStyle(el).color)
 
   // Escape leaves the name as it was; Enter keeps what the user typed, which is no longer a guess.
   await guessed.dblclick()
@@ -35,6 +40,10 @@ test('a section label guessed from the audio reads "Chorus?" until the user rena
   await page.keyboard.press('Enter')
   const named = page.getByRole('button', { name: 'Section Hook, 1:04 to 1:36' })
   await expect(named).toBeVisible()
+  await expect(named).not.toHaveAttribute('title')
+  expect(
+    await named.getByText('Hook', { exact: true }).evaluate((el) => getComputedStyle(el).color),
+  ).not.toBe(muted)
   await named.dispatchEvent('pointerdown')
   await expect(page.getByText(/^Named by you/)).toBeVisible()
 })

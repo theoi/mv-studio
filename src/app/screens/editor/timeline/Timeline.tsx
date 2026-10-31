@@ -81,6 +81,7 @@ import {
   lyricLines,
   sectionColor,
   sectionKind,
+  sectionGuess,
   sectionName,
   sectionsOf,
   sectionUnsure,
@@ -122,6 +123,7 @@ import {
 import { moveAnnouncement, moveTrack, moveTrackBy, trackMoveRange } from '../../../state/tracks.ts'
 import { MAX_PPS, MIN_PPS, registerFit, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
+import { energySampler } from './energy.ts'
 import { LaneMenu } from './LaneMenu.tsx'
 import { openLaneMenu } from './laneMenu.ts'
 import styles from './Timeline.module.css'
@@ -261,12 +263,12 @@ function makeWave(color: string, scaleY: number, { values, rate }: FeatureSeries
 }
 
 function makeEnergy(series: FeatureSeries | undefined): DrawFn {
+  const at = energySampler(series)
   return (ctx, t0, pps, w, h) => {
     if (!series?.values.length) return
-    const at = (t: number) =>
-      series.values[Math.min(series.values.length - 1, Math.max(0, Math.floor(t * series.rate)))] ?? 0
+    // Each 2 px column averages at least its own time span, so every sample counts once when zoomed out.
     const pts: [number, number][] = []
-    for (let x = 0; x <= w; x += 2) pts.push([x, h - 2 - at(t0 + x / pps) * (h - 8)])
+    for (let x = 0; x <= w; x += 2) pts.push([x, h - 2 - at(t0 + x / pps, 2 / pps) * (h - 8)])
     ctx.beginPath()
     ctx.moveTo(0, h)
     for (const [x, y] of pts) ctx.lineTo(x, y)
@@ -1518,9 +1520,7 @@ export function Timeline() {
                       role="button"
                       tabIndex={0}
                       aria-label={`Section ${sectionName(s)}, ${formatTime(s.start)} to ${formatTime(s.end)}`}
-                      title={
-                        sectionUnsure(s) ? 'Name guessed from the audio. Double-click to rename.' : undefined
-                      }
+                      title={sectionGuess(s) && `${sectionGuess(s)}. Double-click to rename.`}
                     >
                       {renaming === s.id ? (
                         <input
@@ -1546,7 +1546,13 @@ export function Timeline() {
                           aria-label="Rename section"
                         />
                       ) : (
-                        <span className={styles.sectionLabel}>{sectionName(s)}</span>
+                        <span
+                          className={[styles.sectionLabel, sectionUnsure(s) && styles.sectionLabelGuess]
+                            .filter(Boolean)
+                            .join(' ')}
+                        >
+                          {sectionName(s)}
+                        </span>
                       )}
                       {sel && <SectionSuggestion section={s} />}
                     </div>

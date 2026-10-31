@@ -64,7 +64,7 @@ export function createStemsApi(deps: StemsWorkerDeps) {
         DEMUCS_SOURCES.map(() => createStemEncoder(codec, DEMUCS_SAMPLE_RATE)),
       )
       const monos = DEMUCS_SOURCES.map(() => new Float32Array(n))
-      const message = `Separating vocals, drums, bass and other (${device === 'webgpu' ? 'GPU' : 'CPU'})`
+      const message = 'Separating vocals, drums, bass and other'
       ctx.progress({ stage: 'separate', fraction: 0.15, message })
       const t0 = performance.now()
       try {
