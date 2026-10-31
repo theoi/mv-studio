@@ -772,7 +772,7 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 14px;
+  width: 24px;
   height: 100%;
   margin-left: calc(-1 * var(--space-2));
   color: var(--text-3);

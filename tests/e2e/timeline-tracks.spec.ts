@@ -105,6 +105,8 @@ test('tracks reorder by dragging the header grip, from the header menu and with 
   await page.mouse.move(lg.x + lg.width / 2, s.y + s.height - 2, { steps: 10 })
   await page.mouse.up()
   expect(await trackNames(page)).toEqual(['Lyrics', 'Video', 'Overlay', 'Look', 'Song'])
+  // The look is below tracks it colored before, and a toast says so.
+  await expect(page.getByText('The look no longer colors the tracks above it.')).toBeVisible()
   await page.keyboard.press(`${mod}+z`)
   await expect(page.getByText('Undid: Move track')).toBeVisible()
 
@@ -112,6 +114,7 @@ test('tracks reorder by dragging the header grip, from the header menu and with 
   await header(page, 'Overlay').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Move up' }).click()
   expect(await trackNames(page)).toEqual(before)
+  await expect(header(page, 'Overlay').getByRole('button', { name: 'Move the Overlay track' })).toBeFocused()
   await header(page, 'Video').click({ button: 'right' })
   await expect(page.getByRole('menuitem', { name: 'Move down' })).toBeDisabled()
   await page.keyboard.press('Escape')
@@ -122,7 +125,18 @@ test('tracks reorder by dragging the header grip, from the header menu and with 
   // The keyboard: arrow keys on a focused grip move its track, not the playhead.
   const playhead = await page.evaluate(() => window.mvStudio.app.ui.get().playhead)
   await header(page, 'Lyrics').getByRole('button', { name: 'Move the Lyrics track' }).focus()
+  await expect(page.getByRole('tooltip')).toContainText('Drag to reorder')
+  await expect(page.getByRole('tooltip')).toContainText('↑ ↓ when focused')
   await page.keyboard.press('ArrowDown')
   expect(await trackNames(page)).toEqual(['Look', 'Lyrics', 'Overlay', 'Video', 'Song'])
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().playhead)).toBe(playhead)
+
+  // Under the Overlay track, the lyrics are covered: a toast says so, and its Undo puts them back.
+  await page.keyboard.press('ArrowDown')
+  expect(await trackNames(page)).toEqual(['Look', 'Overlay', 'Lyrics', 'Video', 'Song'])
+  const note = page
+    .getByRole('status')
+    .locator('div', { hasText: 'The lyrics are behind Overlay now, so it covers them.' })
+  await note.getByRole('button', { name: 'Undo' }).click()
+  expect(await trackNames(page)).toEqual(['Look', 'Lyrics', 'Overlay', 'Video', 'Song'])
 })

@@ -668,25 +668,34 @@ const TrackHeader = memo(function TrackHeader({
     dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
   const isAudio = track.kind === 'audio'
   const badge = stems && stemBadgeText(stems)
+  const grip = useRef<HTMLButtonElement>(null)
+  // Set by Move up and Move down, so the closing menu hands focus to this track's grip instead of the page.
+  const movedFromMenu = useRef(false)
+  const moveFromMenu = (step: -1 | 1) => {
+    movedFromMenu.current = true
+    moveTrackBy(track.id, step)
+  }
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div className={styles.trackHeader} style={{ height }}>
-          <button
-            className={styles.grip}
-            aria-label={`Move the ${track.name} track`}
-            title="Drag to reorder"
-            onPointerDown={(e) => onGripPointerDown(e, track)}
-            onKeyDown={(e) => {
-              if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
-              // The arrows otherwise move the playhead between sections.
-              e.preventDefault()
-              e.stopPropagation()
-              moveTrackBy(track.id, e.key === 'ArrowUp' ? -1 : 1)
-            }}
-          >
-            <GripVertical />
-          </button>
+          <Tooltip label="Drag to reorder" description="↑ ↓ when focused" side="right">
+            <button
+              ref={grip}
+              className={styles.grip}
+              aria-label={`Move the ${track.name} track`}
+              onPointerDown={(e) => onGripPointerDown(e, track)}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+                // The arrows otherwise move the playhead between sections.
+                e.preventDefault()
+                e.stopPropagation()
+                moveTrackBy(track.id, e.key === 'ArrowUp' ? -1 : 1)
+              }}
+            >
+              <GripVertical />
+            </button>
+          </Tooltip>
           <span
             className={styles.trackName}
             onPointerEnter={(e) => {
@@ -753,11 +762,18 @@ const TrackHeader = memo(function TrackHeader({
           )}
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem disabled={!canMoveUp} onSelect={() => moveTrackBy(track.id, -1)}>
+      <ContextMenuContent
+        onCloseAutoFocus={(e) => {
+          if (!movedFromMenu.current) return
+          movedFromMenu.current = false
+          e.preventDefault()
+          grip.current?.focus()
+        }}
+      >
+        <ContextMenuItem disabled={!canMoveUp} onSelect={() => moveFromMenu(-1)}>
           Move up
         </ContextMenuItem>
-        <ContextMenuItem disabled={!canMoveDown} onSelect={() => moveTrackBy(track.id, 1)}>
+        <ContextMenuItem disabled={!canMoveDown} onSelect={() => moveFromMenu(1)}>
           Move down
         </ContextMenuItem>
       </ContextMenuContent>
