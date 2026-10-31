@@ -3,17 +3,23 @@ import type { ProjectEditor } from '../model/editor.ts'
 import { newId } from '../model/factory.ts'
 import type { Asset, AssetOrigin, EffectInstance, Id, ImageClip, Project } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
-import { prepareDepthForParallax, suggestFocus } from './depth/prepare.ts'
+import {
+  predictCameraMove,
+  type CameraPrediction,
+  type PredictionRequest,
+  type PredictionSource,
+} from './cameraPrediction.ts'
 import type { DepthService } from './depth/service.ts'
 import { throwIfAborted, visionError } from './errors.ts'
 import { CAMERA_PRESETS } from './render/camera.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from './render/cameraEffect.ts'
-import { localContrast, safeIntensity, type SmearScene } from './render/smear.ts'
+import type { SafeAmounts } from './render/smear.ts'
 import { rgbaToGrayFast, toRgba } from './runtime/canvas.ts'
 import { fitSize } from './runtime/frames.ts'
 import { VISION_MODELS } from './runtime/models.ts'
 import { createProgress, type TaskOptions } from './runtime/tasks.ts'
 import type { CameraPreset, DepthMap, GrayImage } from './types.ts'
+import { predictInWorker } from './workers/cameraClient.ts'
 
 const DEPTH_MODEL = VISION_MODELS.depthAnythingSmall.id
 /**
@@ -41,9 +47,15 @@ export interface CameraMoveOptions extends TaskOptions {
   preset?: CameraPreset
   /**
    * 0..1. A value set here is used as given, because the user chose it. Left out, each still gets 0.5, or less where
-   * 0.5 is predicted to smear the background (`safeIntensity` in render/smear.ts), but not below 0.25.
+   * 0.5 is predicted to smear the background or bend straight lines (`safeAmounts` in render/smear.ts), but not
+   * below 0.25.
    */
   intensity?: number
+  /**
+   * The other presets the user can choose. Where the move bends a still's straight lines even at 0.25, these are
+   * checked too, for `alwaysBends`.
+   */
+  alternatives?: readonly CameraPreset[]
 }
 
 export interface CameraMoveResult {
@@ -52,10 +64,19 @@ export interface CameraMoveResult {
   depthAssetId: Id
   /** The amount the move was added with. */
   intensity: number
-  /** Largest amount predicted not to smear this still with this preset (0 to 1 in steps of 0.05). */
+  /** Largest amount predicted neither to smear nor to bend this still with this preset (0 to 1 in steps of 0.05). */
   safeIntensity: number
-  /** `intensity` is above `safeIntensity`: the background next to foreground objects may smear. */
+  /** The largest amounts predicted not to smear and not to bend, each on its own; `safeIntensity` is the smaller. */
+  safe: SafeAmounts
+  /** At `intensity`, the background next to foreground objects may smear. */
   smearRisk: boolean
+  /** At `intensity`, straight lines (a tower's edges, window rows) may bend. */
+  bendRisk: boolean
+  /**
+   * The still's straight lines bend even at 0.25, the lowest automatic amount, with this preset and with every one of
+   * `alternatives`, so no other choice keeps them straight. False without alternatives.
+   */
+  alwaysBends: boolean
 }
 
 export interface CameraMovesResult {
@@ -96,37 +117,30 @@ export async function addCameraMoves(
   try {
     if (!ids.length) throw new JobError('invalid-input', 'Select an image clip for the 3D camera move.')
     const preset = options.preset ?? DEFAULT_CAMERA_PRESET
-    const stills = new Map<
-      Id,
-      { depthAsset: Asset; newAsset: Asset | null; focus: number; safeIntensity: number }
-    >()
+    const alternatives = options.alternatives && {
+      presets: options.alternatives,
+      floor: MIN_AUTO_INTENSITY,
+    }
+    const stills = new Map<Id, { depthAsset: Asset; newAsset: Asset | null } & CameraPrediction>()
     for (const [i, clipId] of ids.entries()) {
       const still = stillOf(deps.editor.getProject(), clipId).asset
       if (stills.has(still.id)) continue
       const step = (f: number, stage?: string) => progress((i + f) / ids.length, stage)
       step(0, 'loading')
       const stored = findDepthAsset(deps.editor.getProject(), still.id)
-      let depthAsset: Asset
-      let newAsset: Asset | null = null
-      let scene: SmearScene
+      const ask = (source: PredictionSource) =>
+        predict({ source, preset, ...(alternatives ? { alternatives } : {}) }, signal)
       if (stored && (depthPreparation(stored) ?? 0) >= DEPTH_PREPARATION_VERSION) {
         // The move renders the stored image, so predict from it.
-        depthAsset = stored
-        scene = await storedScene(deps.media, still, depthAsset)
+        const predicted = await ask(await storedSource(deps.media, still, stored))
+        stills.set(still.id, { depthAsset: stored, newAsset: null, ...predicted })
       } else {
         const { depth, gray } = await estimateDepth(deps, still, signal, step)
-        const prepared = prepareDepthForParallax(depth)
-        scene = { depth: prepared, contrast: localContrast(gray) }
-        newAsset = await storeDepth(deps, still, prepared, step)
-        depthAsset = newAsset
+        const { prepared, ...predicted } = await ask({ estimate: depth, gray })
+        if (!prepared) throw new JobError('internal', 'The prepared depth is missing.')
+        const newAsset = await storeDepth(deps, still, prepared, step)
+        stills.set(still.id, { depthAsset: newAsset, newAsset, ...predicted })
       }
-      const focus = suggestFocus(scene.depth)
-      stills.set(still.id, {
-        depthAsset,
-        newAsset,
-        focus,
-        safeIntensity: safeIntensity(scene, preset, focus),
-      })
       throwIfAborted(signal)
     }
     const project = deps.editor.getProject()
@@ -137,8 +151,9 @@ export async function addCameraMoves(
       const { clip, asset } = stillOf(project, clipId)
       const still = stills.get(asset.id)
       if (!still) continue
+      const safeIntensity = Math.min(still.safe.smear, still.safe.bend)
       const intensity =
-        options.intensity ?? Math.max(MIN_AUTO_INTENSITY, Math.min(DEFAULT_INTENSITY, still.safeIntensity))
+        options.intensity ?? Math.max(MIN_AUTO_INTENSITY, Math.min(DEFAULT_INTENSITY, safeIntensity))
       const effect = cameraMoveEffect(clip, still.depthAsset.id, { focus: still.focus, preset, intensity })
       commands.push(...cameraMoveCommands(clip, effect, added.has(asset.id) ? null : still.newAsset))
       added.add(asset.id)
@@ -147,8 +162,11 @@ export async function addCameraMoves(
         effectInstanceId: effect.id,
         depthAssetId: still.depthAsset.id,
         intensity,
-        safeIntensity: still.safeIntensity,
-        smearRisk: intensity > still.safeIntensity,
+        safeIntensity,
+        safe: still.safe,
+        smearRisk: intensity > still.safe.smear,
+        bendRisk: intensity > still.safe.bend,
+        alwaysBends: still.alwaysBends,
       })
     }
     // Depth images of these stills from older preparations go once no effect uses them.
@@ -243,13 +261,28 @@ function stillOf(project: Project, clipId: Id): { clip: ImageClip; asset: Asset 
   return { clip, asset }
 }
 
-const scenes = new Map<Id, Promise<SmearScene>>()
-const SCENE_CACHE_SIZE = 4
+/**
+ * `predictCameraMove` in the camera worker, or here where there are no workers (unit tests) or the worker's script did
+ * not load (offline before the worker ever started).
+ */
+async function predict(request: PredictionRequest, signal?: AbortSignal): Promise<CameraPrediction> {
+  return (await predictInWorker(request, signal)) ?? predictCameraMove(request)
+}
+
+/** A stored depth image and its still, to predict from. */
+async function storedSource(
+  media: Pick<CameraMoveDeps['media'], 'getFile'>,
+  still: Asset,
+  depthAsset: Asset,
+): Promise<PredictionSource> {
+  const [depthImage, image] = await Promise.all([media.getFile(depthAsset), media.getFile(still)])
+  return { key: depthAsset.id, depthImage, still: image }
+}
 
 /**
- * Largest amount predicted not to smear the background of a clip's still with `preset` (default: the clip's current
- * move), from its stored depth image; null when the clip has no 3D camera move. For a hint when the user sets a
- * stronger move than this. Same scale and steps as `CameraMoveResult.safeIntensity`.
+ * Largest amount predicted neither to smear nor to bend a clip's still with `preset` (default: the clip's current
+ * move), from its stored depth image; null when the clip has no 3D camera move. Same scale and steps as
+ * `CameraMoveResult.safeIntensity`.
  */
 export async function safeCameraIntensity(
   media: Pick<CameraMoveDeps['media'], 'getFile'>,
@@ -257,6 +290,21 @@ export async function safeCameraIntensity(
   clipId: Id,
   preset?: CameraPreset,
 ): Promise<number | null> {
+  const safe = await safeCameraAmounts(media, project, clipId, preset)
+  return safe && Math.min(safe.smear, safe.bend)
+}
+
+/**
+ * The largest amounts at which a clip's still neither smears nor bends with `preset` (default: the clip's current
+ * move), from its stored depth image; null when the clip has no 3D camera move. For a hint when the user sets a
+ * stronger move than these, which can say what the move may do.
+ */
+export async function safeCameraAmounts(
+  media: Pick<CameraMoveDeps['media'], 'getFile'>,
+  project: Pick<Project, 'assets' | 'clips'>,
+  clipId: Id,
+  preset?: CameraPreset,
+): Promise<SafeAmounts | null> {
   const clip = project.clips[clipId]
   if (clip?.type !== 'image') return null
   const effect = clip.effects.find((e) => e.effectId === CAMERA_EFFECT_ID)
@@ -267,48 +315,12 @@ export async function safeCameraIntensity(
   const focus = effect.params.focus?.value
   const current = effect.params.preset?.value
   const move = preset ?? CAMERA_PRESETS.find((p) => p === current) ?? DEFAULT_CAMERA_PRESET
-  return safeIntensity(
-    await storedScene(media, still, depthAsset),
-    move,
-    typeof focus === 'number' ? focus : 0.5,
-  )
-}
-
-/** The smear scene of a stored depth image and its still, cached for the last few depth images. */
-function storedScene(
-  media: Pick<CameraMoveDeps['media'], 'getFile'>,
-  still: Asset,
-  depthAsset: Asset,
-): Promise<SmearScene> {
-  let scene = scenes.get(depthAsset.id)
-  if (!scene) {
-    scene = loadScene(media, still, depthAsset)
-    scenes.set(depthAsset.id, scene)
-    scene.catch(() => scenes.delete(depthAsset.id))
-    if (scenes.size > SCENE_CACHE_SIZE) scenes.delete(scenes.keys().next().value!)
-  }
-  return scene
-}
-
-async function loadScene(
-  media: Pick<CameraMoveDeps['media'], 'getFile'>,
-  still: Asset,
-  depthAsset: Asset,
-): Promise<SmearScene> {
-  const [depthImage, image] = await Promise.all([
-    createImageBitmap(await media.getFile(depthAsset)),
-    createImageBitmap(await media.getFile(still)),
-  ])
-  try {
-    const size = { width: depthImage.width, height: depthImage.height }
-    const rgba = toRgba(depthImage, size)
-    const data = new Uint8Array(size.width * size.height)
-    for (let i = 0; i < data.length; i++) data[i] = rgba.data[i * 4]!
-    return { depth: { ...size, data }, contrast: localContrast(rgbaToGrayFast(toRgba(image, size))) }
-  } finally {
-    depthImage.close()
-    image.close()
-  }
+  const { safe } = await predict({
+    source: await storedSource(media, still, depthAsset),
+    preset: move,
+    focus: typeof focus === 'number' ? focus : 0.5,
+  })
+  return safe
 }
 
 /** Origin of a depth image of `stillId` made by the current preparation. */

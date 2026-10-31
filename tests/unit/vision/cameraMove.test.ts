@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import { createImageClip, createProject, createSolidClip } from '../../../src/model/factory.ts'
 import type { Asset, GeneratorClip, ImageClip, Project } from '../../../src/model/types.ts'
+import type { CameraPreset } from '../../../src/vision/types.ts'
 import {
   addCameraMoves,
   cameraMoveCommands,
@@ -16,9 +17,12 @@ import type * as Canvas from '../../../src/vision/runtime/canvas.ts'
 import { VISION_MODELS } from '../../../src/vision/runtime/models.ts'
 
 // No canvas in unit tests. A stored depth image reads as `pictures.depth` (gray level by column, on a 96-column
-// scale); a still reads as a fine checkerboard, a detailed background everywhere.
+// scale); a still reads as `pictures.still` (by pixel), else as a fine checkerboard, a detailed background everywhere.
 const pictures = vi.hoisted(() => {
-  const p: { depth: (x: number) => number } = { depth: () => 100 }
+  const p: {
+    depth: (x: number) => number
+    still?: ((x: number, y: number, size: { width: number; height: number }) => number) | undefined
+  } = { depth: () => 100 }
   return p
 })
 vi.mock('../../../src/vision/runtime/canvas.ts', async (importOriginal) => ({
@@ -30,9 +34,11 @@ vi.mock('../../../src/vision/runtime/canvas.ts', async (importOriginal) => ({
         data.fill(
           source.kind === 'depth'
             ? pictures.depth(Math.floor((x * 96) / size.width))
-            : ((x >> 1) + (y >> 1)) % 2
-              ? 200
-              : 60,
+            : pictures.still
+              ? pictures.still(x, y, size)
+              : ((x >> 1) + (y >> 1)) % 2
+                ? 200
+                : 60,
           (y * size.width + x) * 4,
           (y * size.width + x) * 4 + 4,
         )
@@ -216,7 +222,11 @@ describe('3D camera moves on several stills', () => {
     expect(result.moves.map((m) => m.depthAssetId)).toEqual(['depth', 'depth', 'otherDepth'])
     const after = editor.getProject()
     expect(result.moves.map((m) => m.intensity)).toEqual([0.3, 0.3, 0.3])
-    expect(result.moves.every((m) => m.smearRisk === m.intensity > m.safeIntensity)).toBe(true)
+    for (const m of result.moves) {
+      expect(m.safeIntensity).toBe(Math.min(m.safe.smear, m.safe.bend))
+      expect(m.smearRisk).toBe(m.intensity > m.safe.smear)
+      expect(m.bendRisk).toBe(m.intensity > m.safe.bend)
+    }
     for (const id of [clipId, again.id, second.id]) {
       const camera = imageClip(after, id).effects[0]!
       expect(camera.effectId).toBe(CAMERA_EFFECT_ID)
@@ -341,9 +351,14 @@ function storingMedia() {
 }
 describe('the amount of an automatic move', () => {
   let runs = 0
-  const run = async (storedDepth: (x: number) => number, intensity?: number) => {
+  const run = async (
+    storedDepth: (x: number) => number,
+    intensity?: number,
+    { preset = 'orbit-left', still }: { preset?: CameraPreset; still?: typeof pictures.still } = {},
+  ) => {
     stubCanvas()
     pictures.depth = storedDepth
+    pictures.still = still
     const { project, clipId } = setup()
     // A new id each time, as for a real depth image: predictions are cached per depth image.
     const id = `depth-${runs++}`
@@ -362,10 +377,11 @@ describe('the amount of an automatic move', () => {
       },
     }
     const result = await addCameraMoves({ editor, media, depth }, [clipId], {
-      preset: 'orbit-left',
+      preset,
       ...(intensity === undefined ? {} : { intensity }),
     })
     vi.unstubAllGlobals()
+    pictures.still = undefined
     const move = result.moves[0]!
     const effect = imageClip(editor.getProject(), clipId).effects[0]!
     return { move, stored: effect.params.intensity!.value }
@@ -373,10 +389,30 @@ describe('the amount of an automatic move', () => {
   // Thin near posts over a far, detailed background (the still reads as a fine checkerboard).
   const fence = (x: number) => (x % 12 < 2 ? 240 : 20)
 
-  it('is 0.5 when nothing is predicted to smear', async () => {
+  it('is 0.5 when nothing is predicted to smear or bend', async () => {
     const { move, stored } = await run(() => 100)
-    expect(move).toMatchObject({ intensity: 0.5, safeIntensity: 1, smearRisk: false })
+    expect(move).toMatchObject({
+      intensity: 0.5,
+      safeIntensity: 1,
+      safe: { smear: 1, bend: 1 },
+      smearRisk: false,
+      bendRisk: false,
+    })
     expect(stored).toBe(0.5)
+  })
+
+  it('drops where the move would bend a straight line of the still whose depth rises and falls along it', async () => {
+    // A horizontal edge a third of the way down, over depth that waves from column to column, like a row of windows.
+    const { move, stored } = await run((x) => 128 + 30 * Math.sin((2 * Math.PI * x) / 8), undefined, {
+      preset: 'dolly-in',
+      still: (_x, y, size) => (y < size.height / 3 ? 40 : 200),
+    })
+    expect(move.safe.bend).toBeLessThan(0.5)
+    expect(move.safe.smear).toBeGreaterThan(move.safe.bend)
+    expect(move.safeIntensity).toBe(move.safe.bend)
+    expect(move.intensity).toBe(Math.max(0.25, move.safe.bend))
+    expect(stored).toBe(move.intensity)
+    expect(move).toMatchObject({ smearRisk: false, bendRisk: move.intensity > move.safe.bend })
   })
 
   it('drops to the safe amount predicted from the stored depth image, but not below 0.25', async () => {
@@ -392,5 +428,39 @@ describe('the amount of an automatic move', () => {
     expect(stored).toBe(0.8)
     expect(move).toMatchObject({ intensity: 0.8, smearRisk: true })
     expect(move.safeIntensity).toBeLessThan(0.8)
+  })
+})
+
+describe('without the camera worker', () => {
+  it('predicts on the page when the camera worker’s script does not load, as offline before it ever started', async () => {
+    stubCanvas()
+    const add = async () => {
+      const { project, clipId } = setup()
+      const { moves } = await addCameraMoves(
+        { editor: new ProjectEditor(project), ...storingMedia(), ...rampDepth() },
+        [clipId],
+        { preset: 'orbit-left' },
+      )
+      const { intensity, safe, alwaysBends } = moves[0]!
+      return { intensity, safe, alwaysBends }
+    }
+    const onPage = await add()
+    let made = 0
+    vi.stubGlobal(
+      'Worker',
+      class extends EventTarget {
+        constructor() {
+          super()
+          made++
+          // What the browser fires when it cannot fetch a worker's script: an error event without a message.
+          setTimeout(() => this.dispatchEvent(new Event('error', { cancelable: true })))
+        }
+        postMessage() {}
+        terminate() {}
+      },
+    )
+    expect(await add()).toEqual(onPage)
+    expect(made).toBeGreaterThan(0)
+    vi.unstubAllGlobals()
   })
 })

@@ -34,6 +34,7 @@ import * as vj from '../vj/index.ts'
 import * as bench from './bench.ts'
 import type { CrashTestApi } from './crash.worker.ts'
 import * as appAutocut from '../app/state/autocut.ts'
+import * as appCamera from '../app/state/camera.ts'
 import * as appClipboard from '../app/state/clipboard.ts'
 import * as appFootage from '../app/state/footage.ts'
 import * as appLyrics from '../app/state/lyrics.ts'
@@ -113,6 +114,7 @@ export function installHarness(): void {
     /** The app's own state, for tests that drive the UI with test doubles (e.g. model-free vision backends). */
     app: {
       autocut: appAutocut,
+      camera: appCamera,
       clipboard: appClipboard,
       footage: appFootage,
       lyrics: appLyrics,

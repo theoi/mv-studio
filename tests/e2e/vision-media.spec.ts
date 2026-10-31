@@ -591,7 +591,9 @@ test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyfr
     const amount = {
       intensity: first.intensity,
       safeIntensity: first.safeIntensity,
+      safe: first.safe,
       smearRisk: first.smearRisk,
+      bendRisk: first.bendRisk,
       stored: effects[0].params.intensity.value,
       fromStoredDepth: await vision.safeCameraIntensity(media.mediaStore, added, clip.id),
     }
@@ -647,7 +649,7 @@ test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyfr
       secondAmount: {
         intensity: second.intensity,
         stored: final.clips[clip.id].effects[0].params.intensity.value,
-        smearRisk: second.smearRisk,
+        flagged: second.smearRisk || second.bendRisk,
         aboveSafe: second.intensity > second.safeIntensity,
       },
       amount,
@@ -665,16 +667,18 @@ test('"Add 3D camera move" on a still is one undo step: depth asset plus a keyfr
   expect(r.moved).toBeGreaterThan(2)
   expect(r.afterUndo).toEqual({ effects: 0, hasDepth: false, canUndo: false })
   expect(r.second).toEqual({ sameDepth: true, cameraEffects: 1, preset: 'orbit-left', assets: 2 })
-  // Left to the app, the amount is 0.5, or less where 0.5 is predicted to smear, but not below 0.25.
+  // Left to the app, the amount is 0.5, or less where 0.5 is predicted to smear or bend, but not below 0.25.
   const { amount } = r
+  expect(amount.safeIntensity).toBe(Math.min(amount.safe.smear, amount.safe.bend))
   expect(amount.intensity).toBe(Math.max(0.25, Math.min(0.5, amount.safeIntensity)))
   expect(amount.stored).toBe(amount.intensity)
-  expect(amount.smearRisk).toBe(amount.intensity > amount.safeIntensity)
+  expect(amount.smearRisk).toBe(amount.intensity > amount.safe.smear)
+  expect(amount.bendRisk).toBe(amount.intensity > amount.safe.bend)
   // The prediction from the stored depth image (for the inspector's hint) agrees with the one made while adding.
   expect(Math.abs(amount.fromStoredDepth! - amount.safeIntensity)).toBeLessThanOrEqual(0.1)
   // An amount the user set is kept, with the risk flagged rather than lowered.
   expect(r.secondAmount).toMatchObject({ intensity: 0.9, stored: 0.9 })
-  expect(r.secondAmount.smearRisk).toBe(r.secondAmount.aboveSafe)
+  expect(r.secondAmount.flagged).toBe(r.secondAmount.aboveSafe)
   expect(r.stages).toContain('saving')
   expect(errors).toEqual([])
 })

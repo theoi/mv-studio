@@ -2,7 +2,8 @@ import type { ComponentType } from 'react'
 
 /*
  * Screens and dialogs that are not on the first screen load as separate chunks. preloadDeferred() fetches them when
- * the browser is idle, so opening one later is instant.
+ * the browser is idle, so opening one later is instant. It also starts the camera worker, so a 3D camera move made
+ * after the network drops still finds it: a worker's script is fetched only when the worker starts.
  */
 export const loaders = {
   editor: () => import('./screens/editor/Editor.tsx'),
@@ -17,6 +18,7 @@ export const loaders = {
 export function preloadDeferred() {
   // A chunk that fails here loads again when its screen or dialog opens.
   for (const load of Object.values(loaders)) load().catch(() => undefined)
+  import('../vision/workers/cameraClient.ts').then((m) => m.startCameraWorker()).catch(() => undefined)
 }
 
 let vjMode: ComponentType | null = null
