@@ -410,6 +410,7 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
       const section = p.analysis.audio[cmd.assetId]?.sections?.find((s) => s.id === cmd.sectionId)
       if (!section) throw new EditError('not-found', 'Section not found')
       Object.assign(section, cmd.patch)
+      if (cmd.patch.label !== undefined && cmd.patch.confidence === undefined) section.confidence = 1
       return
     }
     case 'analysis.setVisual':

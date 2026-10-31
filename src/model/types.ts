@@ -341,6 +341,11 @@ export interface SongSection {
   /** Sections with the same group id repeat (e.g. every chorus). */
   repeatGroup?: number
   energy?: number
+  /**
+   * How sure the label is, 0..1: about 0.4 from the audio alone, 0.8 for a chorus found in repeated lyrics, 1 for a
+   * label the user typed. Absent in older projects.
+   */
+  confidence?: number
 }
 
 /** Per-frame features consumed by audio-reactive modulation. bands[i] holds one value per band at time i / rate. */

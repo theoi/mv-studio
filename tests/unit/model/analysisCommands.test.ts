@@ -51,6 +51,39 @@ function setup() {
   return { editor, song, detected, analysis }
 }
 
+describe('section label confidence', () => {
+  it('marks a label the user typed as certain, and keeps the confidence of other section edits', () => {
+    const { editor, song, analysis } = setup()
+    editor.dispatch(
+      {
+        type: 'analysis.setRefined',
+        assetId: song.id,
+        refined: { sections: [{ id: 's1', start: 0, end: 20, label: 'chorus', confidence: 0.4 }] },
+        baseline: { sections: analysis()?.sections },
+      },
+      { history: 'skip' },
+    )
+    editor.dispatch({ type: 'analysis.updateSection', assetId: song.id, sectionId: 's1', patch: { end: 18 } })
+    expect(analysis()?.sections?.[0]?.confidence).toBe(0.4)
+    editor.dispatch({
+      type: 'analysis.updateSection',
+      assetId: song.id,
+      sectionId: 's1',
+      patch: { label: 'Hook' },
+    })
+    expect(analysis()?.sections?.[0]).toMatchObject({ label: 'Hook', confidence: 1 })
+    editor.undo()
+    expect(analysis()?.sections?.[0]).toMatchObject({ label: 'chorus', confidence: 0.4 })
+    editor.dispatch({
+      type: 'analysis.updateSection',
+      assetId: song.id,
+      sectionId: 's1',
+      patch: { label: 'Chorus', confidence: 0.8 },
+    })
+    expect(analysis()?.sections?.[0]).toMatchObject({ label: 'Chorus', confidence: 0.8 })
+  })
+})
+
 describe('narrow analysis commands', () => {
   it('keeps a section rename made while stems were separating, and the rename still undoes', () => {
     const { editor, song, analysis } = setup()
