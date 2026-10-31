@@ -121,6 +121,7 @@ import {
   type StemMix,
 } from '../../../state/stems.ts'
 import { moveAnnouncement, moveTrack, moveTrackBy, trackMoveRange } from '../../../state/tracks.ts'
+import { dropMedia, isMediaDrag, mediaDropHint, type MediaDropHint } from '../../../state/mediaDrag.ts'
 import { MAX_PPS, MIN_PPS, registerFit, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { energySampler } from './energy.ts'
@@ -988,7 +989,7 @@ export function Timeline() {
   const [snapLine, setSnapLine] = useState<number | null>(null)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
-  const [dropHint, setDropHint] = useState<ReturnType<typeof libraryDropHint>>(null)
+  const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
 
   const empty = !hasSong(project)
   const analysis = songAnalysis(project)
@@ -1127,6 +1128,21 @@ export function Timeline() {
       }),
     [],
   )
+
+  /** A media drop point, snapped like a clip drag. */
+  const dropTime = (trackId: string, t: number) => {
+    const edges = clipsOnTrack(project, trackId).flatMap((c) => [c.start, c.start + c.duration])
+    return Math.max(
+      0,
+      snapTime(
+        t,
+        pps,
+        edges,
+        beat,
+        sections.map((x) => x.start),
+      ).t,
+    )
+  }
 
   const fit = useCallback(() => {
     const el = scrollRef.current
@@ -1603,9 +1619,14 @@ export function Timeline() {
                       )
                     }
                     onDragOver={(e) => {
-                      if (kind === 'audio' || !isLibraryDrag(e)) return
+                      const media = isMediaDrag(e)
+                      if (!media && (kind === 'audio' || !isLibraryDrag(e))) return
                       const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
-                      const next = libraryDropHint(track.id, time)
+                      const next = media
+                        ? mediaDropHint(track.id, dropTime(track.id, time))
+                        : libraryDropHint(track.id, time)
+                      // Media lands where it is dropped here, so the editor's "Drop to import" overlay stays away.
+                      if (media) e.stopPropagation()
                       // A locked track takes no drop: without preventDefault the browser shows "not allowed".
                       if (next && 'locked' in next) e.dataTransfer.dropEffect = 'none'
                       else {
@@ -1618,11 +1639,18 @@ export function Timeline() {
                       if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHint(null)
                     }}
                     onDrop={(e) => {
+                      const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
+                      if (isMediaDrag(e)) {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setDropHint(null)
+                        dropMedia(e, { trackId: track.id, time: dropTime(track.id, time) })
+                        return
+                      }
                       const item = kind === 'audio' ? null : droppedLibraryItem(e)
                       if (!item) return
                       e.preventDefault()
                       setDropHint(null)
-                      const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
                       dropLibraryItem(item, { trackId: track.id, time })
                     }}
                   >
@@ -1641,7 +1669,9 @@ export function Timeline() {
                                 ? (dropHint.end - dropHint.start) * pps
                                 : undefined,
                           }}
-                        />
+                        >
+                          {'newTrack' in dropHint && <span className={styles.dropNewTrack}>New track</span>}
+                        </div>
                       ))}
                     {kind === 'lyrics' &&
                       !empty &&

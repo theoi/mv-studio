@@ -726,6 +726,21 @@
   background: var(--accent-softer);
 }
 
+/* A drop that adds a track: the ghost shows on the hovered track, so it says so */
+.dropNewTrack {
+  position: absolute;
+  top: 50%;
+  left: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-on-accent);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
 .dropLocked {
   position: absolute;
   top: 50%;

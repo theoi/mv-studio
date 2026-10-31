@@ -3,6 +3,7 @@ import type * as AnalysisClient from '../../../src/analysis/client.ts'
 import type { RefinedFields } from '../../../src/analysis/song.ts'
 import {
   createProject,
+  createTextClip,
   createVideoClip,
   type Asset,
   type AudioAnalysis,
@@ -28,17 +29,21 @@ vi.mock('../../../src/media/mediaStore.ts', () => ({
   mediaStore: {
     requestPersistence: async () => true,
     getFile: async () => new Blob(),
-    importFile: async (file: File): Promise<Asset> => ({
-      id: 'a-song',
-      kind: 'audio',
-      name: file.name,
-      mimeType: file.type,
-      byteSize: file.size,
-      storageKey: 'media/a-song',
-      duration: 8,
-      origin: { type: 'import' },
-      createdAt: new Date(0).toISOString(),
-    }),
+    importFile: async (file: File): Promise<Asset> => {
+      const video = file.type.startsWith('video/')
+      const id = video ? `a-${file.name}` : 'a-song'
+      return {
+        id,
+        kind: video ? 'video' : 'audio',
+        name: file.name,
+        mimeType: file.type,
+        byteSize: file.size,
+        storageKey: `media/${id}`,
+        duration: video ? 4 : 8,
+        origin: { type: 'import' },
+        createdAt: new Date(0).toISOString(),
+      }
+    },
   },
 }))
 
@@ -132,4 +137,60 @@ it('puts a clip on a new numbered track when every footage track is taken at the
   expect(placedOn(['Video', 'Video 2'])).toBe('Video 3')
   expect(placedOn(['Footage'])).toBe('Video')
   expect(placedOn(['Video 2024'])).toBe('Video')
+})
+
+const videoFile = (name: string) => new File(['x'], name, { type: 'video/mp4' })
+const clipsOf = (assetId: string) =>
+  Object.values(editor.getProject().clips).filter((c) => 'assetId' in c && c.assetId === assetId)
+
+it('puts files dropped on the timeline one after another from the drop point on that track, in the import step', async () => {
+  const video = editor.getProject().tracks.find((t) => t.kind === 'visual')!
+  await importFiles([videoFile('a.mp4'), videoFile('b.mp4')], { start: 10, trackId: video.id })
+  expect(clipsOf('a-a.mp4').map((c) => [c.trackId, c.start, c.duration])).toEqual([[video.id, 10, 4]])
+  expect(clipsOf('a-b.mp4').map((c) => [c.trackId, c.start, c.duration])).toEqual([[video.id, 14, 4]])
+  expect(editor.undoLabel()).toBe('Import 2 files')
+  editor.undo()
+  expect(Object.keys(editor.getProject().clips)).toEqual([])
+  expect(Object.keys(editor.getProject().assets)).toEqual([])
+})
+
+it('makes a dropped song the song at 0 and places only the clips at the drop point', async () => {
+  const video = editor.getProject().tracks.find((t) => t.kind === 'visual')!
+  await importFiles([new File(['x'], 'song.mp3', { type: 'audio/mpeg' }), videoFile('a.mp4')], {
+    start: 10,
+    trackId: video.id,
+  })
+  expect(editor.getProject().songAssetId).toBe('a-song')
+  expect(clipsOf('a-song').map((c) => c.start)).toEqual([0])
+  expect(clipsOf('a-a.mp4').map((c) => [c.trackId, c.start])).toEqual([[video.id, 10]])
+})
+
+it('places media on the given track only where it fits and never among lyric lines', () => {
+  const project = createProject({ name: 'p' })
+  const video = project.tracks.find((t) => t.kind === 'visual')!
+  const lyrics = { ...video, id: 'lyrics-2', name: 'Lyrics' }
+  project.tracks.unshift(lyrics)
+  const busy = createVideoClip({ trackId: video.id, assetId: 'x', start: 10, duration: 4 })
+  const line = {
+    ...createTextClip({ trackId: lyrics.id, text: 'la', start: 0, duration: 2 }),
+    lyricLineId: 'l1',
+  }
+  project.clips = { [busy.id]: busy, [line.id]: line }
+  const asset: Asset = {
+    id: 'a-v',
+    kind: 'video',
+    name: 'v.mp4',
+    mimeType: 'video/mp4',
+    byteSize: 1,
+    storageKey: 'media/a-v',
+    duration: 4,
+    origin: { type: 'import' },
+    createdAt: new Date(0).toISOString(),
+  }
+  expect(assetPlacement(project, asset, { start: 20, trackId: video.id })?.clip.trackId).toBe(video.id)
+  // Busy there: another free visual track takes it, here the empty part of the Lyrics track is not one.
+  const moved = assetPlacement(project, asset, { start: 12, trackId: video.id })
+  expect(moved?.clip.trackId).not.toBe(video.id)
+  expect(moved?.clip.trackId).not.toBe(lyrics.id)
+  expect(assetPlacement(project, asset, { start: 20, trackId: lyrics.id })?.clip.trackId).toBe(video.id)
 })

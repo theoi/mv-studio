@@ -300,7 +300,7 @@ test('Inspector › Motion adds a smear-safe amount until Strength is set, and n
   const card = page.getByRole('tabpanel', { name: 'Media' }).getByLabel('checker, image')
   await card.hover()
   await card.getByRole('button', { name: 'Add at playhead' }).click()
-  const block = page.getByRole('button', { name: /^checker, / })
+  const block = page.getByRole('button', { name: /^checker, \d/ })
   await expect(block).toHaveCount(1)
   await block.focus()
   await page.keyboard.press('Enter')
