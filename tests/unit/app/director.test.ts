@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftProgress } from '../../../src/app/state/director.ts'
+import { directorRequest, draftProgress } from '../../../src/app/state/director.ts'
 import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
 import type { JobSnapshot } from '../../../src/shared/jobs.ts'
 
@@ -26,5 +26,18 @@ describe('draftProgress', () => {
       waiting,
     )
     expect(draftProgress(undefined, [analysis])).toBeUndefined()
+  })
+})
+
+describe('directorRequest', () => {
+  it('asks for AI video clips or images as chosen, and for none with My clips', () => {
+    expect(directorRequest('neon city', 'gen', 'video')).toMatchObject({
+      prompt: 'neon city',
+      useMedia: false,
+      generate: { mode: 'video', tier: 'draft' },
+    })
+    expect(directorRequest('', 'mix', 'video').generate?.mode).toBe('video')
+    expect(directorRequest('', 'mix').generate?.mode).toBe('images')
+    expect(directorRequest('', 'mine', 'video').generate).toBeUndefined()
   })
 })

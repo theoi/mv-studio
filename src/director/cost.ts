@@ -2,6 +2,7 @@
  * What a plan would cost before anything is spent: one generation request per AI shot (shots with `sameAs` reuse
  * another result for free, and media already generated with the same prompt and model is reused too).
  */
+import { snapDuration } from '../cloud/fal/catalog.ts'
 import { needsSpendConfirmation, roundUsd, sumCosts, type CostSummary } from '../cloud/pricing.ts'
 import type { GenerationRequest, MediaGenerationProvider } from '../cloud/types.ts'
 import type { Asset, Id, Project } from '../model/types.ts'
@@ -21,6 +22,8 @@ export interface ModelCost {
   kind: 'image' | 'clip'
   count: number
   usd: number
+  /** Clips only: their seconds in all, at the lengths the model makes (and bills). */
+  seconds?: number
 }
 
 export interface PlanCost extends CostSummary {
@@ -99,19 +102,32 @@ export function estimatePlanCost(
   const byModel = new Map<string, ModelCost>()
   requests.forEach((r, i) => {
     const { modelId, task } = r.request
-    const name = provider.getModel?.(modelId)?.name ?? modelId
+    const model = provider.getModel?.(modelId)
+    const name = model?.name ?? modelId
     const kind = task === 'text-to-image' ? 'image' : 'clip'
     const key = `${kind}:${name}`
-    const group = byModel.get(key) ?? { name, kind, count: 0, usd: 0 }
+    const group: ModelCost = byModel.get(key) ?? {
+      name,
+      kind,
+      count: 0,
+      usd: 0,
+      ...(kind === 'clip' ? { seconds: 0 } : {}),
+    }
     group.count++
     group.usd = roundUsd(group.usd + (items[i]?.estimate.usd ?? 0))
+    if (group.seconds !== undefined) {
+      const length = model ? snapDuration(model, r.request.duration) : (r.request.duration ?? 0)
+      group.seconds += length
+    }
     byModel.set(key, group)
   })
   return {
     ...sumCosts(items),
     requests,
     reused: all.length - requests.length,
-    byModel: [...byModel.values()].sort((a, b) => b.usd - a.usd),
+    byModel: [...byModel.values()]
+      .map((m) => (m.seconds === undefined ? m : { ...m, seconds: Math.round(m.seconds * 10) / 10 }))
+      .sort((a, b) => b.usd - a.usd),
   }
 }
 

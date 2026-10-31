@@ -29,12 +29,16 @@ import { get as getUi, set as setUi, toast, type Kind } from './ui.ts'
 /** Where shots come from: the user's clips, clips plus AI shots, or AI shots only. */
 export type ShotSource = 'mine' | 'mix' | 'gen'
 
+/** What AI shots are: stills the director animates with camera moves, or video clips (they cost more). */
+export type AiShots = 'images' | 'video'
+
 interface DirectorUi {
   state: DirectorState
   /** What the panel shows for the plan in the current state. */
   description: PlanDescription | null
   idea: string
   shots: ShotSource
+  aiShots: AiShots
   /** fal.ai's note about what Cancel can and can't stop, shown while shots generate. */
   cancelNotice: string
   /** A free draft is planned and about to go on the timeline. */
@@ -48,6 +52,7 @@ export const useDirector = create<DirectorUi>(() => ({
   description: null,
   idea: '',
   shots: 'mine',
+  aiShots: 'images',
   cancelNotice: '',
   applying: false,
 }))
@@ -147,12 +152,16 @@ export function videoKindFor(kind: Kind, project: Project): VideoKind {
   return 'visualizer'
 }
 
-export function directorRequest(idea: string, shots: ShotSource): DirectorRequest {
+export function directorRequest(
+  idea: string,
+  shots: ShotSource,
+  aiShots: AiShots = 'images',
+): DirectorRequest {
   return {
     kind: videoKindFor(getUi().kind, editor.getProject()),
     ...(idea.trim() ? { prompt: idea.trim() } : {}),
     useMedia: shots !== 'gen',
-    ...(shots === 'mine' ? {} : { generate: { mode: 'images' as const, tier: 'draft' as const } }),
+    ...(shots === 'mine' ? {} : { generate: { mode: aiShots, tier: 'draft' as const } }),
   }
 }
 

@@ -17,6 +17,7 @@ import {
   analysis,
   badKey,
   DOWNBEATS,
+  SECTIONS,
   fakeProvider,
   makeProject,
   memoryStore,
@@ -206,6 +207,50 @@ describe('DirectorSession', () => {
     const back = ready(session.backToPlan())
     expect(back.plan.id).toBe(planned.plan.id)
     expect(back.actionLabel).toBe(planned.actionLabel)
+  })
+
+  it('drafts with AI video clips: priced as clips, counted as each one finishes, placed as video clips on the bars', async () => {
+    const provider = fakeProvider({ failOn: (i) => (i === 1 ? providerDown() : undefined) })
+    const { session, editor } = setup({ provider, videos: 0, confirmAboveUsd: 100 })
+    const planned = ready(
+      await session.plan({ kind: 'ai', seed: 2, generate: { mode: 'video', tier: 'draft' } }),
+    )
+    const count = planned.cost!.count
+    expect(planned.unit).toBe('clip')
+    expect(planned.actionLabel.startsWith(`Generate ${count} clips · about $`)).toBe(true)
+    const seen: { done: number; failed: number }[] = []
+    session.subscribe(() => {
+      const s = session.getState()
+      if (s.status === 'generating') seen.push({ done: s.done, failed: s.failed })
+    })
+
+    const applied = await session.apply()
+    if (applied.status !== 'applied') throw new Error(`expected applied, got ${applied.status}`)
+    expect(applied.unit).toBe('clip')
+    expect(applied.failedShots).toBe(1)
+    expect(applied.warnings).toContain(
+      "1 clip couldn't be generated (HTTP 500). Apply again to retry just those.",
+    )
+    const done = [...new Set(seen.map((s) => s.done))]
+    expect(done).toEqual(Array.from({ length: count + 1 }, (_, i) => i))
+    expect(seen.at(-1)).toEqual({ done: count, failed: 1 })
+
+    const project = editor.getProject()
+    const shots = Object.values(project.clips).filter((c) => directorMeta(c)?.role === 'shots')
+    const videos = shots.filter((c) => c.type === 'video')
+    expect(videos.length).toBeGreaterThan(count)
+    const onBar = (t: number) =>
+      [...DOWNBEATS, ...SECTIONS.map((x) => x.start)].some((b) => Math.abs(b - t) < 0.01)
+    for (const clip of videos) {
+      expect(onBar(clip.start), `${clip.name} at ${clip.start}`).toBe(true)
+      if (clip.type !== 'video') continue
+      expect(project.assets[clip.assetId]?.origin.type).toBe('generated')
+      expect(clip.muted).toBe(true)
+    }
+    // The failed clip's shots wait as placeholders for a retry.
+    expect(shots.some((c) => c.type === 'solid' && directorMeta(c)?.pending?.task === 'text-to-video')).toBe(
+      true,
+    )
   })
 
   it('applies with placeholders when asked to skip generation', async () => {

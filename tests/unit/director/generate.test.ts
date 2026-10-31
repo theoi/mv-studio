@@ -10,6 +10,7 @@ import {
 } from '../../../src/director/index.ts'
 import { CloudError } from '../../../src/cloud/errors.ts'
 import type { Asset, Project } from '../../../src/model/types.ts'
+import type { JobProgress } from '../../../src/shared/jobs.ts'
 import { badKey, contentPolicy, fakeProvider, makeProject, memoryStore, testCtx } from './fixtures.ts'
 
 async function aiPlan(mode: 'images' | 'video' = 'images', maxShots?: number) {
@@ -18,6 +19,12 @@ async function aiPlan(mode: 'images' | 'video' = 'images', maxShots?: number) {
   const generation = generationOptionsFor(provider, { mode, tier: 'draft', maxShots })!
   const plan = await planLocally(await buildPlannerInput(project, { kind: 'ai', seed: 2, generation }))
   return { provider, project, plan }
+}
+
+/** Lets queued promise callbacks run until `done()` holds. */
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !done(); i++) await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(done()).toBe(true)
 }
 
 describe('estimatePlanCost by model', () => {
@@ -46,8 +53,37 @@ describe('estimatePlanCost by model', () => {
     const cost = estimatePlanCost(kling, provider, project)
     expect(new Set(cost.requests.map((r) => r.request.modelId)).size).toBe(2)
     expect(cost.byModel).toEqual([
-      { name: 'Kling 3 Pro', kind: 'clip', count: cost.count, usd: expect.closeTo(cost.usd, 2) as number },
+      {
+        name: 'Kling 3 Pro',
+        kind: 'clip',
+        count: cost.count,
+        usd: expect.closeTo(cost.usd, 2) as number,
+        seconds: expect.any(Number) as number,
+      },
     ])
+  })
+
+  it('prices clips by the second at the lengths the model makes, and adds up their seconds', async () => {
+    const { provider, project, plan } = await aiPlan('video', 3)
+    // MiniMax H3 Max Turbo makes any length to a tenth of a second, at $0.04 a second at its default 768p.
+    const sized = {
+      ...plan,
+      shots: plan.shots.map((s) =>
+        s.source.type === 'generate' ? { ...s, source: { ...s.source, duration: 4.21 } } : s,
+      ),
+    }
+    const cost = estimatePlanCost(sized, provider, project)
+    expect(cost.count).toBe(3)
+    expect(cost.byModel).toEqual([
+      {
+        name: 'MiniMax H3 Max Turbo',
+        kind: 'clip',
+        count: 3,
+        usd: expect.closeTo(3 * 4.3 * 0.04, 3) as number,
+        seconds: 12.9,
+      },
+    ])
+    expect(cost.usd).toBeCloseTo(3 * 4.3 * 0.04, 3)
   })
 
   it('counts clips apart from images, the most expensive model first, adding up to the whole cost', async () => {
@@ -171,17 +207,96 @@ describe('generatePlanShots', () => {
     expect(result.assets.size).toBe(paid.length - 1)
   })
 
-  it('asks for a video length that fits each shot', async () => {
+  it('asks for each video as long as the longest shot that shows it', async () => {
     const { provider, project, plan } = await aiPlan('video', 4)
-    await generatePlanShots({ plan, provider, store: memoryStore(), project, ctx: testCtx() })
+    const length = (s: { start: number; end: number }) => s.end - s.start
+    const showing = (id: string) =>
+      plan.shots.filter((s) => s.id === id || (s.source.type === 'generate' && s.source.sameAs === id))
     const shots = shotsToGenerate(plan)
-    for (const [i, call] of provider.calls.entries()) {
-      expect(call.task).toBe('text-to-video')
-      const shot = shots.find(
-        (s) => s.source.prompt === call.prompt && Math.abs((call.duration ?? 0) - (s.end - s.start)) < 0.11,
+    // Some clip is reused in a shot longer than its own, so its own length would run out.
+    expect(shots.some((s) => showing(s.id).some((r) => length(r) > length(s) + 0.2))).toBe(true)
+    await generatePlanShots({ plan, provider, store: memoryStore(), project, ctx: testCtx() })
+    expect(provider.calls).toHaveLength(shots.length)
+    for (const shot of shots) {
+      const call = provider.calls.find(
+        (c) =>
+          c.prompt === shot.source.prompt &&
+          c.task === 'text-to-video' &&
+          Math.abs((c.duration ?? 0) - Math.max(...showing(shot.id).map(length))) < 0.01,
       )
-      expect(shot, `call ${i}`).toBeDefined()
+      expect(call, shot.label).toBeDefined()
     }
+  })
+
+  it('counts images as shots, without a time estimate', async () => {
+    const { project, plan } = await aiPlan('images', 3)
+    const provider = fakeProvider({
+      gate: (_, ctx) => {
+        ctx.progress({ stage: 'generate', fraction: 0.5, etaSeconds: 2, message: 'Generating, usually 3 s' })
+        return Promise.resolve()
+      },
+    })
+    const events: JobProgress[] = []
+    await generatePlanShots({
+      plan,
+      provider,
+      store: memoryStore(),
+      project,
+      ctx: { ...testCtx(), progress: (p) => events.push(p) },
+    })
+    expect(events.length).toBeGreaterThan(3)
+    expect(events[0]?.message).toBe('Generating shot 1 of 3')
+    expect(events.filter((e) => e.etaSeconds !== undefined)).toEqual([])
+  })
+
+  it('moves the bar while each clip is made, counts clips as they finish, and says how long is left', async () => {
+    const { project, plan } = await aiPlan('video', 3)
+    const release: (() => void)[] = []
+    const provider = fakeProvider({
+      gate: (_, ctx) => {
+        ctx.progress({
+          stage: 'generate',
+          fraction: 0.5,
+          etaSeconds: 40,
+          message: 'Generating, usually 1 min 30 s',
+        })
+        return new Promise<void>((resolve) => release.push(resolve))
+      },
+    })
+    const events: JobProgress[] = []
+    const counts: { done: number; failed: number; total: number }[] = []
+    const run = generatePlanShots({
+      plan,
+      provider,
+      store: memoryStore(),
+      project,
+      ctx: { ...testCtx(), progress: (p) => events.push(p) },
+      onProgress: (c) => counts.push(c),
+    })
+    const total = shotsToGenerate(plan).length
+    expect(total).toBe(3)
+    await until(() => release.length === 2)
+    // Two clips half made: a third of the bar. Left: the longer of their 40 s, then the third clip's usual 90 s
+    // shared by the two requests at a time.
+    expect(events.at(-1)).toEqual({
+      stage: 'generate',
+      fraction: expect.closeTo(1 / 3, 5) as number,
+      message: 'Generating clip 1 of 3',
+      etaSeconds: 85,
+    })
+    expect(counts).toEqual([])
+    release[0]!()
+    await until(() => counts.length === 1)
+    expect(counts).toEqual([{ done: 1, failed: 0, total: 3 }])
+    expect(events.at(-1)?.message).toBe('Generating clip 2 of 3')
+    await until(() => release.length === 3)
+    release[1]!()
+    release[2]!()
+    await run
+    expect(counts.at(-1)).toEqual({ done: 3, failed: 0, total: 3 })
+    const fractions = events.map((e) => e.fraction ?? 0)
+    expect(fractions.at(-1)).toBe(1)
+    expect(fractions.every((f, i) => i === 0 || f >= (fractions[i - 1] as number))).toBe(true)
   })
 })
 

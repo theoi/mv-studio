@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import type { Page, Route } from '@playwright/test'
+import type { Page, Route, TestInfo } from '@playwright/test'
 import { expect, openHarness, test } from './fixtures.ts'
 import { FIXTURE_DIR } from './global-setup.ts'
 
@@ -328,6 +329,180 @@ test('a retry after failed AI shots shows its price and asks again; Back returns
   expect(fal).toHaveLength(sent)
 })
 
+/**
+ * fal.ai's queue for video clips, in the shapes fal.ai documents: each request is in progress for one poll, then done
+ * with a video. Submits numbered in `failing` (from 1) answer HTTP 500; the `held` one stays in progress until
+ * `release()`.
+ */
+async function mockFalVideo(page: Page, o: { failing?: number[]; held?: number } = {}) {
+  const clip = readFileSync(path.join(FIXTURE_DIR, 'clip.mp4'))
+  let released = false
+  const fal = {
+    submits: [] as string[],
+    cancels: [] as string[],
+    release: () => {
+      released = true
+    },
+  }
+  const json = (route: Route, status: number, body: unknown) =>
+    route.fulfill({ status, headers: CORS, contentType: 'application/json', body: JSON.stringify(body) })
+  const polls = new Map<string, number>()
+  await page.context().route('https://queue.fal.run/**', (route) => {
+    const request = route.request()
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    const parts = new URL(request.url()).pathname.split('/').filter(Boolean)
+    const at = parts.indexOf('requests')
+    if (request.method() === 'POST' && at < 0) {
+      fal.submits.push(parts.join('/'))
+      const n = fal.submits.length
+      if (o.failing?.includes(n)) return json(route, 500, { detail: 'Internal server error' })
+      const id = `req-${n}`
+      const base = `https://queue.fal.run/${parts.slice(0, 2).join('/')}/requests/${id}`
+      return json(route, 200, {
+        request_id: id,
+        status: 'IN_QUEUE',
+        response_url: base,
+        status_url: `${base}/status`,
+        cancel_url: `${base}/cancel`,
+      })
+    }
+    const id = parts[at + 1] ?? ''
+    if (parts[at + 2] === 'cancel') {
+      fal.cancels.push(id)
+      return json(route, 202, { status: 'CANCELLATION_REQUESTED' })
+    }
+    if (parts[at + 2] === 'status') {
+      const n = polls.get(id) ?? 0
+      polls.set(id, n + 1)
+      const held = id === `req-${o.held}` && !released
+      return json(route, 200, { status: n === 0 || held ? 'IN_PROGRESS' : 'COMPLETED', logs: [] })
+    }
+    return json(route, 200, {
+      video: { url: `https://v3.fal.media/files/mock/${id}.mp4`, content_type: 'video/mp4' },
+    })
+  })
+  await page
+    .context()
+    .route('https://v3.fal.media/**', (route) =>
+      route.request().method() === 'OPTIONS'
+        ? route.fulfill({ status: 204, headers: CORS })
+        : route.fulfill({ status: 200, headers: CORS, contentType: 'video/mp4', body: clip }),
+    )
+  return fal
+}
+
+/** The director's video clips from generated media, and its placeholders for clips not made yet. */
+const directorClips = (page: Page) =>
+  page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    type C = { type: string; assetId?: string; meta?: { director?: { pending?: { task: string } } } }
+    const ours = (Object.values(project.clips) as C[]).filter((c) => c.meta?.director)
+    const assets = project.assets as Record<string, { origin: { type: string } }>
+    return {
+      videos: ours.filter((c) => c.type === 'video' && assets[c.assetId ?? '']?.origin.type === 'generated')
+        .length,
+      pending: ours.filter((c) => c.meta?.director?.pending?.task === 'text-to-video').length,
+    }
+  })
+
+/** Drafts with AI video clips and confirms their price; returns how many clips the plan makes. */
+async function draftVideoClips(page: Page, testInfo?: TestInfo) {
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('radio', { name: 'Video clips' }).click()
+  await expect(
+    page.getByText('Free to plan. Video clips cost more, and show their price before anything is generated'),
+  ).toBeVisible()
+  await expect(page.getByText('Clips with real motion. Each takes a few minutes to make.')).toBeVisible()
+  if (testInfo) await page.screenshot({ path: testInfo.outputPath('director-video-idle.png') })
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  const generate = page.getByRole('button', { name: /^Generate \d+ clips · about \$\d+\.\d\d$/ })
+  await expect(generate).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole('button', { name: 'Apply without AI clips' })).toBeVisible()
+  const count = Number(/\d+/.exec((await generate.textContent()) ?? '')?.[0])
+  await expect(
+    page.getByText(`If you apply without AI clips, dark placeholders mark where the ${count} AI clips go.`),
+  ).toBeVisible()
+  await generate.click()
+  const dialog = page.getByRole('dialog', { name: `Generate ${count} clips?` })
+  // One line for the model, with the clips' seconds: video is priced by the second.
+  await expect(dialog.getByRole('listitem')).toHaveText([
+    new RegExp(`^${count} clips, \\d+ s in all, with MiniMax H3 Max Turbo$`),
+  ])
+  await expect(dialog.getByText('Clips already made are kept if you cancel.', { exact: false })).toBeVisible()
+  if (testInfo) await page.screenshot({ path: testInfo.outputPath('director-video-confirm.png') })
+  await dialog.getByRole('button', { name: /^Generate \d+ clips · about/ }).click()
+  await expect(dialog).toBeHidden()
+  return count
+}
+
+test('drafts with AI video clips: priced per clip, each clip’s progress shows, a failed clip is retried, and they land as video clips', async ({
+  page,
+}, testInfo) => {
+  // The second request fails; the third stays in progress until released.
+  const fal = await mockFalVideo(page, { failing: [2], held: 3 })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  // The switch shows only when the draft uses AI shots.
+  await expect(page.getByRole('radio', { name: 'Video clips' })).toHaveCount(0)
+  const count = await draftVideoClips(page, testInfo)
+
+  // Every clip but the held one is done or failed: the held clip's own progress moves the bar past that count.
+  await expect(page.getByText(`Generating clip ${count} of ${count}`).first()).toBeVisible({
+    timeout: 60_000,
+  })
+  await expect(
+    page.getByText('1 clip couldn’t be generated. The others go on, and you can retry it when they’re done.'),
+  ).toBeVisible()
+  await expect(page.getByText(/^(About \d+ min|Less than a minute) left$/)).toBeVisible()
+  const pct = Number(
+    (
+      await page
+        .getByText(/^\d+%$/)
+        .first()
+        .textContent()
+    )?.replace('%', ''),
+  )
+  expect(pct).toBeGreaterThan(Math.floor(((count - 1) / count) * 100))
+  await page.screenshot({ path: testInfo.outputPath('director-video-generating.png') })
+  fal.release()
+
+  const retry = page.getByRole('button', { name: /^Retry 1 failed clip · about \$\d+\.\d\d$/ })
+  await expect(retry).toBeVisible({ timeout: 30_000 })
+  await expect(
+    page.getByText(/^1 clip couldn't be generated \(.+\)\. Apply again to retry just those\.$/),
+  ).toBeVisible()
+  const first = await directorClips(page)
+  expect(first.videos).toBeGreaterThanOrEqual(count - 1)
+  expect(first.pending).toBeGreaterThan(0)
+  await page.screenshot({ path: testInfo.outputPath('director-video-done.png') })
+
+  await retry.click()
+  const dialog = page.getByRole('dialog', { name: 'Generate 1 clip?' })
+  await dialog.getByRole('button', { name: /^Retry 1 failed clip · about/ }).click()
+  await expect(retry).toBeHidden({ timeout: 30_000 })
+  await expect(placed(page)).toBeVisible()
+  const after = await directorClips(page)
+  expect(after.pending).toBe(0)
+  expect(after.videos).toBeGreaterThan(first.videos)
+  expect(fal.submits).toHaveLength(count + 1)
+})
+
+test('cancelling AI video clips stops the one underway at fal.ai and keeps the clips already made', async ({
+  page,
+}) => {
+  const fal = await mockFalVideo(page, { held: 3 })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  const count = await draftVideoClips(page)
+  await expect(page.getByText(`Generating clip ${count} of ${count}`).first()).toBeVisible({
+    timeout: 60_000,
+  })
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await expect(page.getByText(`Generation stopped. ${count - 1} clips made so far are kept.`)).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Generate 1 clip · about \$\d+\.\d\d$/ })).toBeVisible()
+  expect(fal.cancels).toEqual(['req-3'])
+  expect(fal.submits).toHaveLength(count)
+  expect((await draftState(page)).director).toBe(0)
+})
 test('a tagged song names the project, and the title card shows its title and artist', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {

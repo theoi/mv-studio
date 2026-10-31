@@ -32,7 +32,7 @@ import {
   type VideoKind,
 } from './inputs.ts'
 import { planLocally } from './local-planner.ts'
-import { shotsToGenerate, type EditPlan, type Pace } from './plan.ts'
+import { generatedUnit, shotsToGenerate, type EditPlan, type Pace } from './plan.ts'
 
 export interface DirectorRequest {
   kind: VideoKind
@@ -109,6 +109,9 @@ export interface PlanPreview {
 
 export type PlanStage = 'song' | 'bars' | 'plan'
 
+/** What the plan's AI shots are called in the panel: "clip" when they are all videos. */
+export type GeneratedUnit = 'shot' | 'clip'
+
 export type DirectorState =
   | { status: 'idle' }
   | {
@@ -144,16 +147,20 @@ export type DirectorState =
       actionLabel: string
       /** AI shots already generated for this plan (kept after a cancel). */
       generatedShots: number
+      unit: GeneratedUnit
     }
   | {
       status: 'generating'
       request: DirectorRequest
       plan: EditPlan
       jobId: string
+      /** Shots finished (made or failed) and failed so far, of `total`. */
       done: number
+      failed: number
       total: number
       fraction: number
       message: string
+      unit: GeneratedUnit
     }
   | {
       status: 'applied'
@@ -170,6 +177,7 @@ export type DirectorState =
       confirmRequired: boolean
       /** The user's tracks under the draft that it hid (nothing is deleted; undo shows them again). */
       hiddenTracks: Id[]
+      unit: GeneratedUnit
     }
   | {
       status: 'error'
@@ -184,6 +192,7 @@ export type DirectorState =
       confirmRequired: boolean
       /** AI shots already made for the plan; they are kept. */
       generatedShots: number
+      unit: GeneratedUnit
     }
 
 const DEFAULT_POLICY: SpendPolicy = { alwaysConfirmPaid: false, confirmAboveUsd: 1, monthlyReminderUsd: 0 }
@@ -425,6 +434,7 @@ export class DirectorSession {
     const preview = previewCommands(project, compiled.commands)
     const { cost, confirmRequired, toMake } = this.spendFor(plan)
     const usd = cost?.usd ?? 0
+    const unit = generatedUnit(plan)
     return {
       status: 'ready',
       request,
@@ -438,8 +448,9 @@ export class DirectorSession {
       cost,
       confirmRequired,
       actionLabel:
-        toMake > 0 ? `Generate ${plural(toMake, 'shot')} · ${formatEstimate({ usd })}` : 'Make video',
+        toMake > 0 ? `Generate ${plural(toMake, unit)} · ${formatEstimate({ usd })}` : 'Make video',
       generatedShots: done.size,
+      unit,
     }
   }
 
@@ -469,10 +480,11 @@ export class DirectorSession {
     const usd = cost?.usd ?? 0
     const needsGeneration = !options.skipGeneration && shotsToGenerate(plan).some((s) => !done.has(s.id))
     const provider = this.deps.provider?.()
+    const unit = generatedUnit(plan)
     if (needsGeneration && (!provider || !this.deps.store)) {
       throw new DirectorError(
         'no-provider',
-        'Connect fal.ai in Settings to generate shots, or apply with placeholders.',
+        `Connect fal.ai in Settings to generate ${unit}s, or apply with placeholders.`,
       )
     }
     if (
@@ -493,7 +505,9 @@ export class DirectorSession {
       const total = cost?.count ?? 0
       const handle = this.deps.jobs.run({
         kind: 'director.generate',
-        title: total ? `Generating ${plural(total, 'shot')} · ${formatEstimate({ usd })}` : 'Preparing shots',
+        title: total
+          ? `Generating ${plural(total, unit)} · ${formatEstimate({ usd })}`
+          : `Preparing ${unit}s`,
         run: (ctx) =>
           generatePlanShots({
             plan,
@@ -508,16 +522,18 @@ export class DirectorSession {
               this.deps.ledger?.record(spent, `Director: ${plan.title}`)
               this.keep(asset)
             },
+            onProgress: (counts) => {
+              if (this.job === handle && this.state.status === 'generating')
+                this.set({ ...this.state, done: counts.done, failed: counts.failed })
+            },
           }),
       })
       this.job = handle
       const unsubscribe = handle.subscribe((snap) => {
         if (this.job !== handle || this.state.status !== 'generating') return
-        const fraction = snap.progress.fraction ?? 0
         this.set({
           ...this.state,
-          fraction,
-          done: Math.round(fraction * total),
+          fraction: snap.progress.fraction ?? 0,
           message: snap.progress.message ?? '',
         })
       })
@@ -527,9 +543,11 @@ export class DirectorSession {
         plan,
         jobId: handle.id,
         done: 0,
+        failed: 0,
         total,
         fraction: 0,
         message: 'Starting',
+        unit,
       })
       try {
         const result = await handle.promise
@@ -538,7 +556,7 @@ export class DirectorSession {
         if (failed) {
           const reason = result.failed[0]?.error.message
           warnings.push(
-            `${plural(failed, 'shot')} couldn't be generated${reason ? ` (${reason})` : ''}. Apply again to retry just those.`,
+            `${plural(failed, unit)} couldn't be generated${reason ? ` (${reason})` : ''}. Apply again to retry just those.`,
           )
         }
       } catch (error) {
@@ -546,7 +564,7 @@ export class DirectorSession {
         const err = JobError.from(error)
         if (err.code === 'cancelled') {
           const kept = done.size
-            ? ` ${plural(done.size, 'shot')} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
+            ? ` ${plural(done.size, unit)} made so far ${done.size === 1 ? 'is' : 'are'} kept.`
             : ''
           this.set(this.readyState(request, plan, [`Generation stopped.${kept}`]))
         } else {
@@ -581,6 +599,7 @@ export class DirectorSession {
       cost: retry.cost,
       confirmRequired: retry.confirmRequired,
       hiddenTracks: compiled.stats.hiddenTracks,
+      unit,
     })
     return this.state
   }
@@ -640,6 +659,7 @@ export class DirectorSession {
       cost: spend.cost,
       confirmRequired: spend.confirmRequired,
       generatedShots: plan ? this.generatedFor(plan).size : 0,
+      unit: plan ? generatedUnit(plan) : 'shot',
       error: err.toJSON(),
       title:
         cloud?.title ??

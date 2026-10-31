@@ -34,18 +34,19 @@ import { templateState, type TemplateState } from '../plugins/templates.ts'
 import { behindSubjectMatte } from '../vision/index.ts'
 import { DEFAULT_CATALOG, findItem, type DirectorCatalog } from './catalog.ts'
 import { DIRECTOR_META_KEY, directorMeta, type DirectorClipMeta, type DirectorTrackRole } from './meta.ts'
-import type {
-  AudioBinding,
-  EditPlan,
-  EffectSpec,
-  GenerateSource,
-  Motion,
-  PlanLook,
-  PlanShot,
-  PlanText,
-  ReactionSpec,
-  ShotLayer,
-  TransitionSpec,
+import {
+  generatedUnit,
+  type AudioBinding,
+  type EditPlan,
+  type EffectSpec,
+  type GenerateSource,
+  type Motion,
+  type PlanLook,
+  type PlanShot,
+  type PlanText,
+  type ReactionSpec,
+  type ShotLayer,
+  type TransitionSpec,
 } from './plan.ts'
 
 /**
@@ -407,7 +408,7 @@ function shotClip(
               ...(s.duration ? { duration: s.duration } : {}),
             },
           },
-          shot.label ?? 'AI shot (not generated yet)',
+          shot.label ?? `AI ${s.task === 'text-to-image' ? 'shot' : 'clip'} (not generated yet)`,
         ),
         type: 'solid',
         color: { value: PLACEHOLDER_COLOR },
@@ -888,11 +889,12 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
           : [],
       ),
     ).size
+    const unit = generatedUnit(plan)
     warn(
       ctx,
       options.placeholderNote === 'if-skipped'
-        ? `If you apply without AI shots, dark placeholders mark where the ${pending} AI ${pending === 1 ? 'shot goes' : 'shots go'}.`
-        : `${pending} AI ${pending === 1 ? 'shot is' : 'shots are'} not generated yet; dark placeholders mark where they go.`,
+        ? `If you apply without AI ${unit}s, dark placeholders mark where the ${pending} AI ${pending === 1 ? `${unit} goes` : `${unit}s go`}.`
+        : `${pending} AI ${pending === 1 ? `${unit} is` : `${unit}s are`} not generated yet; dark placeholders mark where they go.`,
     )
   }
   stats.hiddenTracks = coveredTracks(project, plan, placed)

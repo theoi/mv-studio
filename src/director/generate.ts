@@ -11,7 +11,7 @@ import type { Asset, Id, Project } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
 import { planRequests, type ShotRequest } from './cost.ts'
 import type { GenerationOptions } from './inputs.ts'
-import type { EditPlan } from './plan.ts'
+import { generatedUnit, type EditPlan } from './plan.ts'
 
 /** Errors that would fail every remaining shot too, so generation stops at the first one. */
 const STOP_KINDS = new Set([
@@ -85,6 +85,8 @@ export interface GeneratePlanOptions {
   /** Reads the still for image-to-video shots. */
   readAsset?: (assetId: Id) => Promise<Blob>
   onShot?: (shotId: string, asset: Asset, usd: number) => void
+  /** After each shot settles: how many are finished (made or failed) and how many failed, of `total`. */
+  onProgress?: (counts: { done: number; failed: number; total: number }) => void
   /** Requests in flight at once (default 2). */
   concurrency?: number
 }
@@ -111,14 +113,31 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
   let spentUsd = 0
   let finished = 0
   let stop: JobError | undefined
-  const report = () =>
+  const unit = generatedUnit(o.plan)
+  const workers = Math.max(1, Math.min(o.concurrency ?? 2, total))
+  const typical = (r: ShotRequest) => o.provider.getModel(r.request.modelId)?.typicalSeconds
+  /** Shots underway: their own progress, and the seconds they still need. */
+  const underway = new Map<ShotRequest, { fraction: number; eta?: number }>()
+  let shown = 0
+  const report = () => {
+    // Shots underway count by their own progress, so the bar moves during a clip that takes minutes. Each one's
+    // progress only grows, and a shot that settles moves to 1, so the sum never goes back.
+    let partial = 0
+    for (const u of underway.values()) partial += u.fraction
+    shown = Math.max(shown, total ? Math.min(1, (finished + partial) / total) : 1)
+    const waiting = queue.reduce((sum, r) => sum + (typical(r) ?? 0), 0)
+    const etas = [...underway.values()].map((u) => u.eta ?? 0)
+    const etaSeconds = Math.round(Math.max(0, ...etas) + waiting / workers)
     o.ctx.progress({
-      fraction: total ? finished / total : 1,
+      fraction: shown,
       stage: 'generate',
       message: total
-        ? `Generating shot ${Math.min(total, finished + 1)} of ${total}`
-        : 'Using shots made earlier',
+        ? `Generating ${unit} ${Math.min(total, finished + 1)} of ${total}`
+        : `Using ${unit}s made earlier`,
+      // Clips take minutes each, so they say how long is left; images are done in seconds.
+      ...(unit === 'clip' && total && etaSeconds > 0 ? { etaSeconds } : {}),
     })
+  }
   report()
 
   const runOne = async (r: ShotRequest) => {
@@ -130,13 +149,20 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
         throw new JobError('invalid-input', 'This shot needs a still image to animate.')
       request.image = await o.readAsset(still)
     }
-    // Overall progress counts shots; per-request progress would make the bar jump back and forth.
-    const quiet: JobContext = {
+    const own = { fraction: 0, eta: typical(r) }
+    underway.set(r, own)
+    // A request's progress feeds the shot's share of the bar; its message stays its own, under the shot count.
+    const shotCtx: JobContext = {
       signal: o.ctx.signal,
       throwIfCancelled: () => o.ctx.throwIfCancelled(),
-      progress: () => undefined,
+      progress: (p) => {
+        if (p.fraction === undefined && p.etaSeconds === undefined) return
+        if (p.fraction !== undefined) own.fraction = Math.max(own.fraction, Math.min(0.95, p.fraction))
+        if (p.etaSeconds !== undefined) own.eta = p.etaSeconds
+        report()
+      },
     }
-    const result = await o.provider.generate(request, quiet)
+    const result = await o.provider.generate(request, shotCtx)
     o.ctx.throwIfCancelled()
     const [asset] = await storeGeneratedMedia(result, o.store, {
       prompt: request.prompt,
@@ -159,13 +185,15 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
           ? new JobError('cancelled', 'Cancelled', { cause: error })
           : JobError.from(error)
         if (isStopError(err)) stop ??= err
-        else failed.push({ shotId: r.shot.id, label: r.shot.label ?? 'AI shot', error: err })
+        else failed.push({ shotId: r.shot.id, label: r.shot.label ?? `AI ${unit}`, error: err })
       }
+      underway.delete(r)
       finished++
       report()
+      o.onProgress?.({ done: finished, failed: failed.length, total })
     }
   }
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(o.concurrency ?? 2, total)) }, worker))
+  await Promise.all(Array.from({ length: workers }, worker))
   if (stop) throw stop
   if (total > 0 && failed.length === total) throw failed[0]?.error
   return { assets, failed, spentUsd }
