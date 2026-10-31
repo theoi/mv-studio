@@ -10,13 +10,16 @@ import type { Plugin } from 'vite'
  */
 const LICENSES_FILE = 'third-party-licenses.txt'
 
-/** Upstream license texts of bundled packages that ship none in their npm package. */
-const PACKAGE_LICENSES: Record<string, string> = {
-  '@mediapipe/tasks-vision': 'licenses/packages/mediapipe-tasks-vision.txt',
-  'onnxruntime-common': 'licenses/onnxruntime/LICENSE',
-  'onnxruntime-web': 'licenses/onnxruntime/LICENSE',
-  'react-remove-scroll-bar': 'licenses/packages/react-remove-scroll-bar.txt',
-  robot3: 'licenses/packages/robot3.txt',
+/**
+ * For bundled packages whose npm package lacks them: the upstream license text (a file under licenses/), or the SPDX
+ * license id when package.json has none that can be read.
+ */
+const PACKAGE_LICENSES: Record<string, { text?: string; license?: string }> = {
+  '@mediapipe/tasks-vision': { text: 'licenses/packages/mediapipe-tasks-vision.txt' },
+  'onnxruntime-common': { text: 'licenses/onnxruntime/LICENSE' },
+  'onnxruntime-web': { text: 'licenses/onnxruntime/LICENSE' },
+  'react-remove-scroll-bar': { text: 'licenses/packages/react-remove-scroll-bar.txt' },
+  robot3: { text: 'licenses/packages/robot3.txt' },
 }
 
 /** Code adapted into MV Studio's own source, whose notices the minifier also drops. */
@@ -68,7 +71,9 @@ const ONNXRUNTIME_NOTICES_COMMIT = '8d85527a010e294a26b274749f74294b2a32cec5'
 interface PackageJson {
   name: string
   version: string
-  license?: string
+  license?: string | { type?: string }
+  /** The deprecated form some older packages still publish. */
+  licenses?: Array<string | { type?: string }>
   repository?: string | { url?: string }
   homepage?: string
 }
@@ -112,30 +117,61 @@ function read(root: string, path: string): string {
   return readFileSync(join(root, path), 'utf8').replaceAll('\r\n', '\n').trim()
 }
 
+/** Reads a file a dependency is expected to ship, saying what to update when an upgrade dropped it. */
+function need(root: string, path: string, otherwise: string): string {
+  try {
+    return read(root, path)
+  } catch (cause) {
+    throw new Error(`${join(root, path)} is missing. ${otherwise}`, { cause })
+  }
+}
+
+function licenseId(pkg: PackageJson): string | undefined {
+  if (typeof pkg.license === 'string') return pkg.license
+  if (pkg.license?.type) return pkg.license.type
+  const legacy = (pkg.licenses ?? []).map((l) => (typeof l === 'string' ? l : l.type)).filter(Boolean)
+  return legacy.length ? legacy.join(' OR ') : undefined
+}
+
 function describe(dir: string, root: string): BundledPackage {
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as PackageJson
   const files = readdirSync(dir)
     .filter((f) => /^(licen[cs]e|copying|notice)([.-]|$)/i.test(f) && statSync(join(dir, f)).isFile())
     .sort()
-  let text = files.map((f) => read(dir, f)).join('\n\n')
-  const vendored = PACKAGE_LICENSES[pkg.name]
-  if (!text && vendored) text = read(root, vendored)
-  if (!text || !pkg.license)
+  const override = PACKAGE_LICENSES[pkg.name]
+  const text = files.map((f) => read(dir, f)).join('\n\n') || (override?.text && read(root, override.text))
+  const license = licenseId(pkg) ?? override?.license
+  const where = `${pkg.name}@${pkg.version} (${dir})`
+  if (!text)
     throw new Error(
-      `${pkg.name}@${pkg.version} is bundled but ships no license text or license field. Add its upstream ` +
-        'license text under licenses/packages and list it in PACKAGE_LICENSES (scripts/third-party-licenses.ts).',
+      `${where} is bundled but ships no license text. Add its upstream license text under licenses/packages ` +
+        "and set it as the package's `text` in PACKAGE_LICENSES (scripts/third-party-licenses.ts).",
     )
-  return { name: pkg.name, version: pkg.version, license: pkg.license, source: repositoryUrl(pkg), dir, text }
+  if (!license)
+    throw new Error(
+      `${where} is bundled but its package.json names no license. Set the package's SPDX id as \`license\` in ` +
+        'PACKAGE_LICENSES (scripts/third-party-licenses.ts).',
+    )
+  return { name: pkg.name, version: pkg.version, license, source: repositoryUrl(pkg), dir, text }
 }
 
 function onnxRuntimeSection(ort: BundledPackage): string {
-  const commit = readFileSync(join(ort.dir, '__commit.txt'), 'utf8').trim()
-  if (commit !== ONNXRUNTIME_NOTICES_COMMIT)
+  const commit = need(
+    ort.dir,
+    '__commit.txt',
+    `onnxruntime-web ${ort.version} no longer says which microsoft/onnxruntime commit its WASM is built from. ` +
+      'Find it (dev versions end in a commit prefix), then replace licenses/onnxruntime/LICENSE and ' +
+      "ThirdPartyNotices.txt with that commit's files and update ONNXRUNTIME_NOTICES_COMMIT.",
+  )
+  if (commit !== ONNXRUNTIME_NOTICES_COMMIT) {
+    const raw = `https://raw.githubusercontent.com/microsoft/onnxruntime/${commit}`
     throw new Error(
       `onnxruntime-web ${ort.version} is built from microsoft/onnxruntime ${commit}, but licenses/onnxruntime holds ` +
-        `the notices of ${ONNXRUNTIME_NOTICES_COMMIT}. Replace LICENSE and ThirdPartyNotices.txt there with the ` +
-        'files of that commit and update ONNXRUNTIME_NOTICES_COMMIT.',
+        `the notices of ${ONNXRUNTIME_NOTICES_COMMIT}. Replace licenses/onnxruntime/LICENSE with ${raw}/LICENSE ` +
+        `and licenses/onnxruntime/ThirdPartyNotices.txt with ${raw}/ThirdPartyNotices.txt, and set ` +
+        'ONNXRUNTIME_NOTICES_COMMIT to that commit.',
     )
+  }
   return [
     `The WebAssembly build of ONNX Runtime in onnxruntime-web ${ort.version} (ort-wasm-*.wasm) is built from`,
     `https://github.com/microsoft/onnxruntime/tree/${commit}`,
@@ -148,7 +184,12 @@ function onnxRuntimeSection(ort: BundledPackage): string {
 }
 
 function ffmpegSection(aac: BundledPackage): string {
-  const readme = readFileSync(join(aac.dir, 'README.md'), 'utf8')
+  const readme = need(
+    aac.dir,
+    'README.md',
+    `Find the FFmpeg source of @mediabunny/aac-encoder ${aac.version} and update ffmpegSection ` +
+      '(scripts/third-party-licenses.ts).',
+  )
   const found = /FFmpeg \[`([0-9a-f]{40})`\]\([^)]*\) \(`([^`]+)`\), unmodified/.exec(readme)
   if (!found)
     throw new Error(
@@ -245,12 +286,27 @@ export function thirdPartyLicenses(version: string): { plugin: Plugin; workerPlu
       configResolved(config) {
         root = config.root
       },
+      // Workers are bundled after this, during the main build's transforms; a watch rebuild starts afresh.
+      buildStart() {
+        moduleIds.clear()
+      },
       generateBundle(_, bundle) {
         collect(bundle)
-        const dirs = new Set([...moduleIds].map(packageDir).filter((d): d is string => d !== null))
+        // One module per package, to name in errors.
+        const dirs = new Map<string, string>()
+        for (const id of moduleIds) {
+          const dir = packageDir(id)
+          if (dir && !dirs.has(dir)) dirs.set(dir, id)
+        }
         const byKey = new Map<string, BundledPackage>()
-        for (const dir of dirs) {
-          const p = describe(dir, root)
+        for (const [dir, id] of dirs) {
+          let p: BundledPackage
+          try {
+            p = describe(dir, root)
+          } catch (cause) {
+            const message = cause instanceof Error ? cause.message : String(cause)
+            throw new Error(`${message} (bundled through ${id})`, { cause })
+          }
           byKey.set(`${p.name}@${p.version}`, p)
         }
         const packages = [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name))
@@ -265,10 +321,13 @@ export function thirdPartyLicenses(version: string): { plugin: Plugin; workerPlu
         }
         const aac = packages.find((p) => p.name === '@mediabunny/aac-encoder')
         if (aac) {
-          emit('licenses/ffmpeg/LICENSE.txt', read(aac.dir, 'licenses/ffmpeg/LICENSE.md') + '\n')
+          const otherwise =
+            `@mediabunny/aac-encoder ${aac.version} no longer ships FFmpeg's license files there. Find them for ` +
+            'this version and update the files emitted for FFmpeg (scripts/third-party-licenses.ts).'
+          emit('licenses/ffmpeg/LICENSE.txt', need(aac.dir, 'licenses/ffmpeg/LICENSE.md', otherwise) + '\n')
           emit(
             'licenses/ffmpeg/COPYING.LGPLv2.1.txt',
-            read(aac.dir, 'licenses/ffmpeg/COPYING.LGPLv2.1') + '\n',
+            need(aac.dir, 'licenses/ffmpeg/COPYING.LGPLv2.1', otherwise) + '\n',
           )
         }
       },

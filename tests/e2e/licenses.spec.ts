@@ -6,6 +6,8 @@ const DIST = path.resolve(import.meta.dirname, '../../dist')
 const ASSETS = path.join(DIST, 'assets')
 const read = (file: string) => readFileSync(path.join(DIST, file), 'utf8')
 
+test.skip(!!process.env.E2E_BASE_URL, 'checks the local build in dist/, not the site at E2E_BASE_URL')
+
 /**
  * "name version" of every package whose code is in the build, from the bundles' source maps, independently of how
  * the build collects them for the license file.
