@@ -78,6 +78,13 @@ export function createLyricsApi(deps: LyricsWorkerDeps) {
       return transfer({ lines, emissions: em, vocab }, [em.logProbs.buffer])
     },
 
+    /** The aligner's per-frame output for the vocals, so words can be re-aligned later without the model. */
+    async emissions(args: { vocals: DecodedAudio }, ctx: WorkerCallContext) {
+      if (!args.vocals.channels[0]?.length) throw new JobError('invalid-input', 'The song has no audio')
+      const { em, vocab } = await emissionsFor(mono16k(args.vocals), ctx, 0, 1)
+      return transfer({ emissions: em, vocab }, [em.logProbs.buffer])
+    },
+
     async transcribe(args: TranscribeArgs, ctx: WorkerCallContext) {
       if (!args.vocals.channels[0]?.length) throw new JobError('invalid-input', 'The song has no audio')
       const pcm = mono16k(args.vocals)

@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { SEGMENT, type DemucsModel } from '../../../src/analysis/stems/demucs.ts'
-import { stemEdits } from '../../../src/analysis/stems/client.ts'
-import { createStemsApi } from '../../../src/analysis/stems/worker-api.ts'
+import { STEM_MODEL_BYTES, StemSeparationService, stemEdits } from '../../../src/analysis/stems/client.ts'
+import { createStemsApi, type StemSeparationResult } from '../../../src/analysis/stems/worker-api.ts'
+import { ProjectEditor } from '../../../src/model/editor.ts'
+import { createProject } from '../../../src/model/index.ts'
 import type { Asset } from '../../../src/model/types.ts'
-import { JobError } from '../../../src/shared/jobs.ts'
-import { createWorkerClient, exposeWorker, type Endpoint } from '../../../src/shared/worker.ts'
+import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
+import {
+  createWorkerClient,
+  exposeWorker,
+  type Endpoint,
+  type WorkerCallContext,
+} from '../../../src/shared/worker.ts'
 import { drumLoop, SR } from './synth.ts'
 
 /** Splits the mix by fixed gains: drums 0.1, bass 0.2, other 0.3, vocals 0.4 (time branch only). */
@@ -18,6 +25,7 @@ const gainModel: DemucsModel = {
 }
 
 let channel: MessageChannel | undefined
+const channels: MessageChannel[] = []
 
 function connect() {
   channel = new MessageChannel()
@@ -33,8 +41,10 @@ function connect() {
 }
 
 afterEach(() => {
-  channel?.port1.close()
-  channel?.port2.close()
+  for (const c of [channel, ...channels.splice(0)]) {
+    c?.port1.close()
+    c?.port2.close()
+  }
 })
 
 const median = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1] as number
@@ -73,6 +83,110 @@ describe('stem separation worker API', () => {
       .catch((e: unknown) => e)) as JobError
     expect(error).toBeInstanceOf(JobError)
     expect(error.code).toBe('invalid-input')
+  })
+  it('reports a failed allocation in the model as out of memory, so the user can retry', async () => {
+    const channel2 = new MessageChannel()
+    const api = createStemsApi({
+      demucsModel: async () => ({
+        model: {
+          run: async () => {
+            throw new Error('failed to allocate a buffer of size 1409286144')
+          },
+        },
+        device: 'wasm',
+      }),
+      codec: async () => 'pcm-s16',
+    })
+    exposeWorker(api, channel2.port1 as unknown as Endpoint)
+    const client = createWorkerClient<typeof api>(channel2.port2 as unknown as Endpoint)
+    const error = (await client
+      .call('separate', { audio: { sampleRate: 44100, channels: [new Float32Array(44100)] } })
+      .catch((e: unknown) => e)) as JobError
+    channel2.port1.close()
+    channel2.port2.close()
+    expect(error.code).toBe('out-of-memory')
+    expect(error.retryable).toBe(true)
+  })
+})
+
+describe('StemSeparationService', () => {
+  const song: Asset = {
+    id: 'song',
+    kind: 'audio',
+    name: 'My Song.mp3',
+    mimeType: 'audio/mpeg',
+    byteSize: 1,
+    storageKey: 'song',
+    duration: 8,
+    origin: { type: 'import' },
+    createdAt: new Date(0).toISOString(),
+  }
+
+  function setup(whileSeparating?: (editor: ProjectEditor) => void) {
+    const editor = new ProjectEditor(createProject())
+    editor.dispatch({ type: 'asset.add', asset: song })
+    const decoded: { file: string; sampleRate: number }[] = []
+    const decode = async (file: Blob, sampleRate: number) => {
+      decoded.push({ file: await file.text(), sampleRate })
+      return { sampleRate, channels: [new Float32Array(sampleRate)] }
+    }
+    const stemsApi = {
+      async separate(_args: unknown, ctx: WorkerCallContext): Promise<StemSeparationResult> {
+        ctx.progress({ stage: 'separate', fraction: 0.5 })
+        whileSeparating?.(editor)
+        const audio = { data: new ArrayBuffer(8), mimeType: 'audio/wav', extension: '.wav' }
+        return { device: 'wasm', seconds: 1, stems: [{ name: 'vocals', audio }], stemFeatures: {} }
+      },
+    }
+    const ch = new MessageChannel()
+    channels.push(ch)
+    exposeWorker(stemsApi, ch.port1 as unknown as Endpoint)
+    const store = {
+      getFile: async (a: Asset) => new File([a.storageKey], a.name),
+      storeBlob: async (_blob: Blob, info: Pick<Asset, 'kind' | 'name' | 'origin'>) =>
+        ({ ...song, ...info, id: 'vocals-asset', storageKey: 'vocals' }) as Asset,
+    }
+    const service = new StemSeparationService({
+      runner: new JobRunner(),
+      decode,
+      createWorker: () => ch.port2 as unknown as Worker,
+    })
+    return { editor, service, store, decoded }
+  }
+
+  it('separates the song from the store and attaches its stems without an undo step', async () => {
+    const { editor, service, store, decoded } = setup()
+    const undoLabel = editor.undoLabel()
+    const handle = service.separateSong(song.id, { editor, store })
+    const stages: (string | undefined)[] = []
+    handle.subscribe((s) => stages.push(s.progress.stage))
+    await handle.promise
+    expect(handle.snapshot().kind).toBe('analysis.stems')
+    expect(decoded).toEqual([{ file: 'song', sampleRate: 44100 }])
+    expect(editor.getProject().analysis.audio[song.id]?.stems).toEqual({ vocals: 'vocals-asset' })
+    expect(editor.getProject().assets['vocals-asset']?.origin).toEqual({
+      type: 'stem',
+      parentAssetId: song.id,
+    })
+    expect(editor.undoLabel()).toBe(undoLabel)
+    expect(stages.at(-1)).toBe('save')
+  })
+
+  it('attaches nothing when the song was removed while separating', async () => {
+    const { editor, service, store } = setup((e) => e.dispatch({ type: 'asset.remove', assetId: song.id }))
+    const handle = service.separateSong(song.id, { editor, store })
+    await expect(handle.promise).rejects.toMatchObject({ code: 'invalid-input' })
+    expect(editor.getProject().analysis.audio[song.id]?.stems).toBeUndefined()
+    expect(editor.getProject().assets['vocals-asset']).toBeUndefined()
+  })
+
+  it('estimates the model download until it is cached, and the time from the song length', async () => {
+    const { editor, service } = setup()
+    const estimate = await service.estimate(editor.getProject(), song.id)
+    expect(estimate.downloadBytes).toBe(STEM_MODEL_BYTES)
+    expect(estimate.device).toBe('wasm')
+    expect(estimate.seconds).toBeGreaterThanOrEqual(8)
+    expect(estimate.seconds).toBeLessThan(10)
   })
 })
 

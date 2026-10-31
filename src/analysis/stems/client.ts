@@ -1,9 +1,15 @@
-import type { Asset, EditCommand, Id, StemName } from '../../model/index.ts'
-import { jobs, type JobContext, type JobHandle, type JobRunner } from '../../shared/jobs.ts'
+import type { ProjectEditor } from '../../model/editor.ts'
+import type { Asset, EditCommand, Id, Project, StemName } from '../../model/index.ts'
+import { detectCapabilities } from '../../shared/capabilities.ts'
+import { JobError, jobs, type JobContext, type JobHandle, type JobRunner } from '../../shared/jobs.ts'
+import { modelCache, type ModelDevice } from '../../shared/models.ts'
 import { createWorkerClient, runWorkerCall } from '../../shared/worker.ts'
 import type { MediaStore } from '../../media/types.ts'
 import type { DecodedAudio } from '../beats/fast.ts'
+import { decodeAudioFile } from '../decode.ts'
 import { DEMUCS_MODEL } from '../models.ts'
+import { DEMUCS_SAMPLE_RATE } from './demucs.ts'
+import { stemDevice } from './device.ts'
 import type { StemSeparationResult, StemsWorkerApi } from './worker-api.ts'
 
 export type { StemSeparationResult }
@@ -11,18 +17,48 @@ export type { StemSeparationResult }
 /** Download size of the stem model, for the opt-in prompt. */
 export const STEM_MODEL_BYTES = DEMUCS_MODEL.files.model?.bytes ?? 0
 
+/**
+ * Separation seconds per second of song, measured with WASM threads on a 4-core laptop. The hardware-GPU figure is an
+ * estimate until measured on real GPUs.
+ */
+const SEPARATE_SECONDS_PER_SECOND: Record<ModelDevice, number> = { wasm: 1.1, webgpu: 0.5 }
+
+/** Separation seconds per second of song on this device. */
+export async function separateRate(): Promise<number> {
+  return SEPARATE_SECONDS_PER_SECOND[stemDevice(await detectCapabilities())]
+}
+
+/** What separating a song's stems will download and roughly how long it takes, shown before it starts. */
+export interface StemsEstimate {
+  /** The stem model's size when it is not cached yet, else 0. */
+  downloadBytes: number
+  /** Processing time on this device once the model is downloaded, in seconds. */
+  seconds: number
+  device: ModelDevice
+}
+
+export interface StemDeps {
+  editor: Pick<ProjectEditor, 'getProject' | 'dispatch'>
+  store: Pick<MediaStore, 'getFile' | 'storeBlob'>
+}
+
 export interface StemSeparationOptions {
   runner?: JobRunner
   createWorker?: () => Worker
+  /** Decodes audio files; defaults to the browser's decoder (main thread only). */
+  decode?: (file: Blob, sampleRate: number) => Promise<DecodedAudio>
 }
 
 /**
  * Opt-in stem separation (vocals, drums, bass, other) as a job. Each run uses a fresh worker that is terminated
- * afterwards, which frees the model's memory (over 1 GB) and makes cancelling immediate.
+ * afterwards, which frees the model's memory (over 1 GB) and makes cancelling immediate. Typical flow:
+ *   const estimate = await service.estimate(project, songId)   // download size and time, for the confirmation
+ *   await service.separateSong(songId, { editor, store }).promise
  */
 export class StemSeparationService {
   private readonly runner: JobRunner
   private readonly createWorker: () => Worker
+  private readonly decode: (file: Blob, sampleRate: number) => Promise<DecodedAudio>
 
   constructor(options: StemSeparationOptions = {}) {
     this.runner = options.runner ?? jobs
@@ -33,9 +69,49 @@ export class StemSeparationService {
           type: 'module',
           name: 'stem-separation',
         }))
+    this.decode = options.decode ?? decodeAudioFile
   }
 
-  /** Separates 44.1 kHz audio (other rates are resampled). The channel buffers are transferred to the worker. */
+  async estimate(project: Project, songId: Id): Promise<StemsEstimate> {
+    const duration = songAsset(project, songId).duration ?? 0
+    const urls = Object.values(DEMUCS_MODEL.files).map((f) => f.url)
+    const cached = (await Promise.all(urls.map((url) => modelCache.has(url)))).every(Boolean)
+    const device = stemDevice(await detectCapabilities())
+    return {
+      downloadBytes: cached ? 0 : STEM_MODEL_BYTES,
+      seconds: Math.ceil(duration * SEPARATE_SECONDS_PER_SECOND[device]),
+      device,
+    }
+  }
+
+  /**
+   * Separates the song's stems as job \`analysis.stems\` and attaches them to its analysis without an undo step (see
+   * \`stemEdits\`). Stages: download, decode, separate, features, encode, save.
+   */
+  separateSong(songId: Id, deps: StemDeps): JobHandle<StemSeparationResult> {
+    return this.runner.run({
+      kind: 'analysis.stems',
+      title: 'Separating stems',
+      run: (ctx) => this.separateSongIn(songId, deps, ctx),
+    })
+  }
+
+  /** Like \`separateSong\`, as a step of an existing job. */
+  async separateSongIn(songId: Id, deps: StemDeps, ctx: JobContext): Promise<StemSeparationResult> {
+    const song = songAsset(deps.editor.getProject(), songId)
+    ctx.progress({ stage: 'decode', fraction: 0, message: 'Reading the song' })
+    const audio = await this.decode(await deps.store.getFile(song), DEMUCS_SAMPLE_RATE)
+    const result = await this.separateIn(audio, ctx)
+    ctx.progress({ stage: 'save', message: 'Saving stems with the project' })
+    const edits = await stemEdits(result, song, deps.store)
+    ctx.throwIfCancelled()
+    songAsset(deps.editor.getProject(), songId)
+    deps.editor.dispatch(edits, { history: 'skip' })
+    ctx.progress({ stage: 'save', fraction: 1, message: 'Saving stems with the project' })
+    return result
+  }
+
+  /** Separates decoded audio (44.1 kHz; other rates are resampled) as a job. The channel buffers are transferred. */
   separate(audio: DecodedAudio): JobHandle<StemSeparationResult> {
     return this.runner.run({
       kind: 'analysis.stems',
@@ -43,7 +119,6 @@ export class StemSeparationService {
       run: (ctx) => this.separateIn(audio, ctx),
     })
   }
-
   /** Like `separate`, as a step of an existing job. */
   async separateIn(audio: DecodedAudio, ctx: JobContext): Promise<StemSeparationResult> {
     const client = createWorkerClient<StemsWorkerApi>(this.createWorker())
@@ -93,4 +168,10 @@ export async function stemEdits(
   }
   commands.push({ type: 'analysis.setStems', assetId: song.id, stems, stemFeatures: result.stemFeatures })
   return commands
+}
+
+function songAsset(project: Project, songId: Id): Asset {
+  const song = project.assets[songId]
+  if (!song) throw new JobError('invalid-input', 'The song is no longer in the project')
+  return song
 }

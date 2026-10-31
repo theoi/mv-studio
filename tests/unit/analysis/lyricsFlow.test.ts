@@ -69,6 +69,10 @@ function setup(options: { storedVocals?: boolean; alignFails?: boolean } = {}) {
       }))
       return { lines, emissions: emissions(), vocab }
     },
+    async emissions(args: { vocals: { sampleRate: number; channels: Float32Array[] } }) {
+      record('emissions', args)
+      return { emissions: emissions(), vocab }
+    },
     async transcribe(args: TranscribeArgs) {
       record('transcribe', args)
       return {
@@ -139,7 +143,7 @@ function setup(options: { storedVocals?: boolean; alignFails?: boolean } = {}) {
     runner,
     decode,
     createWorker: worker(lyricsApi),
-    stems: new StemSeparationService({ runner, createWorker: worker(stemsApi) }),
+    stems: new StemSeparationService({ runner, decode, createWorker: worker(stemsApi) }),
   })
   return { service, editor, song, deps: { editor, store }, calls, separations: () => separations }
 }
@@ -270,5 +274,17 @@ describe('LyricsService.estimate', () => {
     expect(timeWithStems.downloads.map((d) => d.name)).toEqual(['wav2vec2 lyrics aligner'])
     expect(timeWithStems.seconds).toBeGreaterThan(0)
     expect(timeWithStems.seconds).toBeLessThan(time.seconds)
+  })
+})
+
+describe('LyricsService.prepareRealign', () => {
+  it('listens to the stored vocals once, so words re-align without the model afterwards', async () => {
+    const { service, song, deps, calls, separations } = setup({ storedVocals: true })
+    expect(service.canRealign(song.id)).toBe(false)
+    await service.prepareRealign(song.id, deps).promise
+    await service.prepareRealign(song.id, deps).promise
+    expect(service.canRealign(song.id)).toBe(true)
+    expect(calls.map((c) => [c.method, c.seconds, c.sampleRate])).toEqual([['emissions', 5, 16000]])
+    expect(separations()).toBe(0)
   })
 })

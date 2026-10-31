@@ -2,7 +2,9 @@ import path from 'node:path'
 import { FIXTURE_DIR } from './global-setup.ts'
 import { expect, openHarness, test } from './fixtures.ts'
 
-test('separates stems in a worker, stores them as assets and measures each stem', async ({ page }) => {
+test('separates the song’s stems in a worker, stores them as assets and measures each stem', async ({
+  page,
+}) => {
   test.setTimeout(300_000)
   await openHarness(page)
   await page.setInputFiles('#e2e-file-input', path.join(FIXTURE_DIR, 'song.mp3'))
@@ -11,17 +13,17 @@ test('separates stems in a worker, stores them as assets and measures each stem'
     const { analysis, media, model, files } = window.mvStudio
     const file = files()[0]
     const song = await media.mediaStore.importFile(file)
-    const audio = await analysis.decodeAudioFile(file)
-    const t0 = performance.now()
-    const result = await new analysis.StemSeparationService().separate(audio).promise
-    const ms = performance.now() - t0
     const editor = new model.ProjectEditor(model.createProject())
     editor.dispatch({ type: 'asset.add', asset: song })
     editor.dispatch(
       { type: 'analysis.setDetected', analysis: { assetId: song.id, version: 'e2e', beats: [0.5] } },
       { history: 'skip' },
     )
-    editor.dispatch(await analysis.stemEdits(result, song, media.mediaStore), { history: 'skip' })
+    const service = new analysis.StemSeparationService()
+    const t0 = performance.now()
+    const result = await service.separateSong(song.id, { editor, store: media.mediaStore }).promise
+    const ms = performance.now() - t0
+    const estimateAfter = await service.estimate(editor.getProject(), song.id)
     const project = editor.getProject()
     const stems: Record<string, string> = project.analysis.audio[song.id].stems
     const drumsFile = await media.mediaStore.getFile(project.assets[stems.drums])
@@ -30,6 +32,7 @@ test('separates stems in a worker, stores them as assets and measures each stem'
     const p90 = (v: number[]) => [...v].sort((a, b) => a - b)[Math.floor(v.length * 0.9)]
     return {
       beatsKept: project.analysis.audio[song.id].beats,
+      downloadAfter: estimateAfter.downloadBytes,
       undoLabel: editor.undoLabel(),
       ms,
       device: result.device,
@@ -52,6 +55,8 @@ test('separates stems in a worker, stores them as assets and measures each stem'
   expect(r.stemNames).toEqual(['bass', 'drums', 'other', 'vocals'])
   // Stems attach to the existing analysis without an undo step.
   expect(r.beatsKept).toEqual([0.5])
+  // The model is cached once it ran, so the next estimate downloads nothing.
+  expect(r.downloadAfter).toBe(0)
   expect(r.undoLabel).toBe('Import media')
   expect(r.stemKinds).toEqual(['audio', 'audio', 'audio', 'audio'])
   expect(r.stemDuration).toBeCloseTo(8, 0)

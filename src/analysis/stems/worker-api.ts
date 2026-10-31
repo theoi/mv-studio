@@ -29,6 +29,20 @@ export interface StemSeparationResult {
   stemFeatures: Partial<Record<StemName, AudioFeatures>>
 }
 
+/**
+ * The error for a failure caused by running out of memory, or undefined. ONNX Runtime reports a failed WASM or GPU
+ * allocation as a plain Error, not a RangeError.
+ */
+export function stemsOutOfMemory(error: unknown): JobError | undefined {
+  if (error instanceof JobError) return error.code === 'out-of-memory' ? error : undefined
+  const message = error instanceof Error ? error.message : String(error)
+  if (!/out of memory|\bOOM\b|alloc/i.test(message)) return undefined
+  return new JobError('out-of-memory', 'This computer ran out of memory while separating stems.', {
+    retryable: true,
+    cause: error,
+  })
+}
+
 /** Worker methods for stem separation. Kept free of worker globals so tests can drive them over a MessageChannel. */
 export function createStemsApi(deps: StemsWorkerDeps) {
   return {
@@ -52,23 +66,27 @@ export function createStemsApi(deps: StemsWorkerDeps) {
       const message = `Separating vocals, drums, bass and other (${device === 'webgpu' ? 'GPU' : 'CPU'})`
       ctx.progress({ stage: 'separate', fraction: 0.15, message })
       const t0 = performance.now()
-      await separateStems(
-        model,
-        channels,
-        async (start, stems) => {
-          for (const [s, [left, right]] of stems.entries()) {
-            const mono = monos[s] as Float32Array
-            const l = left as Float32Array
-            const r = right as Float32Array
-            for (let i = 0; i < l.length; i++) mono[start + i] = ((l[i] as number) + (r[i] as number)) / 2
-            await encoders[s]?.add(start, l, r)
-          }
-        },
-        {
-          signal: ctx.signal,
-          onProgress: (f) => ctx.progress({ stage: 'separate', fraction: 0.15 + 0.75 * f, message }),
-        },
-      )
+      try {
+        await separateStems(
+          model,
+          channels,
+          async (start, stems) => {
+            for (const [s, [left, right]] of stems.entries()) {
+              const mono = monos[s] as Float32Array
+              const l = left as Float32Array
+              const r = right as Float32Array
+              for (let i = 0; i < l.length; i++) mono[start + i] = ((l[i] as number) + (r[i] as number)) / 2
+              await encoders[s]?.add(start, l, r)
+            }
+          },
+          {
+            signal: ctx.signal,
+            onProgress: (f) => ctx.progress({ stage: 'separate', fraction: 0.15 + 0.75 * f, message }),
+          },
+        )
+      } catch (error) {
+        throw stemsOutOfMemory(error) ?? error
+      }
       const seconds = (performance.now() - t0) / 1000
 
       ctx.progress({ stage: 'features', fraction: 0.9, message: 'Measuring each stem' })
