@@ -135,13 +135,38 @@ test('Re-time line listens to the vocals once, then re-times the line as one und
   await page.evaluate(() => (window as unknown as { stopStems: () => void }).stopStems())
   await expect(inspector.getByRole('button', { name: 'Re-time line' })).toBeEnabled()
 
-  // Listening can be cancelled; the lyrics stay as they were.
-  await inspector.getByRole('button', { name: 'Re-time line' }).click()
-  await expect(inspector.getByText('Listening to the vocals… 30%')).toBeVisible()
+  // Listening can be cancelled from the end of its progress line. Esc does not cancel it (it only clears the
+  // selection). The cancel is silent: the section is as it was before the start, focus is back on Re-time line, and the
+  // lyrics are unchanged.
+  const edited = await selected(page)
+  const retime = inspector.getByRole('button', { name: 'Re-time line' })
+  await retime.click()
+  const progress = inspector.getByText('Listening to the vocals… 30%')
+  await expect(progress).toBeVisible()
+  await expect(retime).toBeDisabled()
+  const cancel = inspector.getByRole('button', { name: 'Cancel' })
+  const [p, c] = await Promise.all([progress.boundingBox(), cancel.boundingBox()])
+  expect(p && c && c.x > p.x + p.width).toBe(true)
+  expect(p && c && Math.abs(c.y + c.height / 2 - (p.y + p.height / 2)) < c.height / 2).toBe(true)
   await shot(page, 'retime-listening')
-  await inspector.getByRole('button', { name: 'Cancel' }).click()
-  await expect(inspector.getByRole('button', { name: 'Re-time line' })).toBeVisible()
-  expect((await selected(page)).line.start).toBe(before.line.start)
+  await cancel.focus()
+  await page.keyboard.press('Escape')
+  await expect(inspector.getByText('Lyric line', { exact: true })).toHaveCount(0)
+  await expect(
+    page.getByRole('tab', { name: /^Assist/ }).getByRole('progressbar', { name: 'Listening to the vocals' }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: /^Lyric: / })
+    .first()
+    .dispatchEvent('pointerdown')
+  await expect(progress).toBeVisible()
+  await cancel.click()
+  await expect(progress).toHaveCount(0)
+  await expect(retime).toBeFocused()
+  await expect(inspector.getByText(cost)).toBeVisible()
+  await expect(inspector.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByText(/cancel/i)).toHaveCount(0)
+  expect(await selected(page)).toEqual(edited)
 
   // A failed listen says why and changes nothing.
   await inspector.getByRole('button', { name: 'Re-time line' }).click()

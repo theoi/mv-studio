@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, Mic2 } from 'lucide-react'
 import type { Clip, LyricLine } from '../../../../model/index.ts'
-import { jobs } from '../../../../shared/jobs.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
@@ -20,6 +19,7 @@ import {
   useProject,
 } from '../../../state/project.ts'
 import { pct, useJob } from '../assist/jobState.ts'
+import { CancelButton } from '../assist/ToolView.tsx'
 import { LyricStyleSections } from './LyricStyle.tsx'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
@@ -63,13 +63,26 @@ function costText(cost: NonNullable<RetimeCost>): string {
  * The line under Re-time line: what it is doing, why it stopped or cannot start, or, when the line needs
  * re-timing, what that costs.
  */
-function RetimeNote({ line, cost, busy }: { line: LyricLine; cost: RetimeCost; busy?: string }) {
+function RetimeNote({
+  line,
+  cost,
+  busy,
+  onCancel,
+}: {
+  line: LyricLine
+  cost: RetimeCost
+  busy?: string
+  onCancel: () => void
+}) {
   const { job, phase } = useJob(JOB_KINDS.realign)
   if (phase === 'running')
     return (
-      <p className={styles.note}>
-        {job?.title ?? 'Listening to the vocals'}… {pct(job)}%
-      </p>
+      <div className={styles.progressRow}>
+        <span>
+          {job?.title ?? 'Listening to the vocals'}… {pct(job)}%
+        </span>
+        <CancelButton job={job} inline onCancel={onCancel} />
+      </div>
     )
   if (phase === 'failed' && job?.error?.code !== 'cancelled')
     return (
@@ -100,7 +113,7 @@ function TimingBadge({ line }: { line: LyricLine }) {
 /** A lyric line's words and timing. */
 function WordsSection({ line }: { line: LyricLine }) {
   const project = useProject()
-  const { job, phase } = useJob(JOB_KINDS.realign)
+  const { phase } = useJob(JOB_KINDS.realign)
   const running = runningJobs(useJobs())
   const lyricsRunning = running.some((j) => j.kind === JOB_KINDS.lyrics)
   // Listening to the vocals separates stems when the song has none; a second separation would double the memory.
@@ -111,11 +124,20 @@ function WordsSection({ line }: { line: LyricLine }) {
       ? 'Stems are being separated now.'
       : undefined
   const cost = useRetimeCost()
+  const retimeRef = useRef<HTMLButtonElement>(null)
+  // A cancel is silent: the section returns to how it was, with focus back on the button that started the job.
+  const cancelled = useRef(false)
+  useEffect(() => {
+    if (phase === 'running' || !cancelled.current) return
+    cancelled.current = false
+    retimeRef.current?.focus()
+  }, [phase])
   const retime = (
     <Button
+      ref={retimeRef}
       size="sm"
       variant="ghost"
-      disabled={!project.songAssetId || !line.text.trim() || !!busy}
+      disabled={!project.songAssetId || !line.text.trim() || !!busy || phase === 'running'}
       onClick={() => void retimeLine(line.id)}
     >
       Re-time line
@@ -140,11 +162,7 @@ function WordsSection({ line }: { line: LyricLine }) {
         />
         <div className={styles.timedRow}>
           <TimingBadge line={line} />
-          {phase === 'running' ? (
-            <Button size="sm" variant="ghost" onClick={() => job && jobs.cancel(job.id)}>
-              Cancel
-            </Button>
-          ) : cost && !busy && lineTiming(line) === 'timed' ? (
+          {cost && !busy && phase !== 'running' && lineTiming(line) === 'timed' ? (
             <Tooltip label="Re-time line" description={costText(cost)}>
               {retime}
             </Tooltip>
@@ -153,7 +171,7 @@ function WordsSection({ line }: { line: LyricLine }) {
           )}
         </div>
       </div>
-      <RetimeNote line={line} cost={cost} busy={busy} />
+      <RetimeNote line={line} cost={cost} busy={busy} onCancel={() => (cancelled.current = true)} />
       <FieldRow label="Start">
         <NumberField
           value={line.start ?? 0}
