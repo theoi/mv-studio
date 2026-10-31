@@ -14,7 +14,8 @@
  * The audio clock is the master: frames that cannot be drawn in time are skipped, never slowing the clock. While
  * playing, the preview never queues a frame on a busy GPU (that would block the main thread and the UI), and with
  * quality 'auto' it lowers the render resolution when frames come too slowly. Scrubbing that cannot keep up uses the
- * playback resolution too. Once paused and settled, frames always render at full resolution.
+ * playback resolution too, and lowers it the same way. Once paused and settled, frames always render at full
+ * resolution.
  *
  * Frames are drawn on this thread or, with renderer 'worker' (see PREVIEW_IN_WORKER), in the render worker: the canvas
  * moves there and is drawn by the same compositor as export, while this thread keeps the audio clock and the <video>
@@ -683,25 +684,34 @@ export class PreviewController {
     if (this.raf || !this.project) return
     if (this.inFlight) {
       this.stillPending = true
-      if (!this.scrubbing) {
-        this.scrubbing = true
-        this.updateScale()
-      }
+      this.startScrub()
       return
     }
     // On the main-thread renderer a still right after the last one is a drag step too, and the drag settles only after
     // a pause: a full-size frame between two steps would hold up the next one.
     if (this.renderer?.inWorker === false && performance.now() - this.lastStillEnd < SCRUB_GAP_MS) {
-      if (!this.scrubbing) {
-        this.scrubbing = true
-        this.updateScale()
-      }
+      this.startScrub()
       this.cancelSettle()
       this.settleTimer = setTimeout(() => this.settle(), SCRUB_SETTLE_MS)
+    }
+    // A scrub's stills step the resolution down like playback frames, but only a still that waited for the one before
+    // it measures how fast stills are drawn: the others waited for the pointer.
+    if (this.scrubbing && this.quality === 'auto') {
+      const now = performance.now()
+      if (!this.stillPending) this.auto.skip(now)
+      else if (this.auto.frame(now)) this.updateScale()
     }
     this.stillPending = false
     void this.draw(this.clock.currentTime(), true)
     this.updateSnapshot()
+  }
+
+  /** Stills arrive faster than they are drawn: a scrub, judged from its own stills (the level carries over). */
+  private startScrub(): void {
+    if (this.scrubbing) return
+    this.scrubbing = true
+    this.auto.start(performance.now())
+    this.updateScale()
   }
 
   private cancelSettle(): void {

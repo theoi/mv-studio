@@ -48,17 +48,58 @@ describe('AdaptiveScale', () => {
     expect(auto.scale).toBe(1)
   })
 
-  it('undoes a step down that does not speed frames up', () => {
+  it('undoes a step down that does not speed frames up, and tries again later, less and less often', () => {
     const auto = new AdaptiveScale()
     auto.start(0)
-    let changes = 0
+    const stepsDown: number[] = []
+    let full = 0
+    let frames = 0
     let now = 0
-    while (now < 10_000) {
+    while (now < 30_000) {
       now += 40
-      if (auto.frame(now)) changes++
+      const level = auto.level
+      if (auto.frame(now) && auto.level > level) stepsDown.push(now)
+      frames++
+      if (auto.scale === 1) full++
     }
     expect(auto.scale).toBe(1)
-    expect(changes).toBe(2)
+    // Tried at about 0.5 s, then 4 s and 8 s after each failed try.
+    expect(stepsDown).toHaveLength(3)
+    const [a, b, c] = stepsDown as [number, number, number]
+    expect(b - a).toBeGreaterThan(4000)
+    expect(c - b).toBeGreaterThan(8000)
+    expect(full / frames).toBeGreaterThan(0.9)
+  })
+
+  it('judges a step down on frames drawn at the new scale, so slow frames keep stepping down', () => {
+    // As measured at 2560 × 1440 on a software GPU: a fast first frame, then 140 ms at full size and 117 ms at 0.75.
+    const intervals: Record<number, number> = { 1: 140, 0.75: 117, 0.5: 70, 0.33: 40 }
+    const auto = new AdaptiveScale()
+    auto.start(1000)
+    let now = 1033
+    auto.frame(1000)
+    auto.frame(now)
+    let left = false
+    let back = false
+    while (now < 7000) {
+      now += intervals[auto.scale] as number
+      auto.frame(now)
+      if (auto.scale < 1) left = true
+      else if (left) back = true
+    }
+    expect(left).toBe(true)
+    expect(back).toBe(false)
+    expect(auto.scale).toBeLessThanOrEqual(0.5)
+  })
+
+  it('tries a failed step down again, so one bad check does not keep full resolution for the whole playback', () => {
+    const auto = new AdaptiveScale()
+    auto.start(0)
+    // For the first 2 s frames are slow whatever the scale (decoders warming up), then they depend on the pixels.
+    const now = run(auto, 0, 2000, () => 120)
+    expect(auto.scale).toBe(1)
+    run(auto, now, 13_000, (s) => 120 * s * s)
+    expect(auto.scale).toBeLessThan(1)
   })
 
   it('stops stepping up when full resolution is too slow again right away', () => {
