@@ -29,6 +29,9 @@ test('a section label guessed from the audio is muted and says "Probably the cho
   const muted = await guessed
     .getByText('Chorus', { exact: true })
     .evaluate((el) => getComputedStyle(el).color)
+  // Selected, the Inspector's header says it is a guess too.
+  await guessed.dispatchEvent('pointerdown')
+  await expect(page.getByText(/^Probably the chorus · 1:04 – 1:36 · \d+ bars$/)).toBeVisible()
 
   // Escape leaves the name as it was; Enter keeps what the user typed, which is no longer a guess.
   await guessed.dblclick()
@@ -46,4 +49,5 @@ test('a section label guessed from the audio is muted and says "Probably the cho
   ).not.toBe(muted)
   await named.dispatchEvent('pointerdown')
   await expect(page.getByText(/^Named by you/)).toBeVisible()
+  await expect(page.getByText(/^1:04 – 1:36 · \d+ bars$/)).toBeVisible()
 })

@@ -6,6 +6,7 @@ import {
   bpmOf,
   dispatch,
   editor,
+  sectionGuess,
   sectionName,
   sectionsOf,
   sectionUnsure,
@@ -33,7 +34,9 @@ export function SectionInspector({ id }: { id: string }) {
       <Header
         icon={<Film />}
         title={`Section: ${sectionName(sec)}`}
-        meta={`${formatTime(sec.start)} – ${formatTime(sec.end)} · ${bars} bars`}
+        meta={[sectionGuess(sec), `${formatTime(sec.start)} – ${formatTime(sec.end)}`, `${bars} bars`]
+          .filter(Boolean)
+          .join(' · ')}
       />
       <Section title="Section">
         <FieldRow label="Name">
