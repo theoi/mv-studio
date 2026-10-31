@@ -1,16 +1,13 @@
 import type { ProjectEditor } from '../../model/editor.ts'
 import type { Asset, EditCommand, Id, LyricsDoc, Project } from '../../model/index.ts'
 import type { MediaStore } from '../../media/types.ts'
-import { detectCapabilities } from '../../shared/capabilities.ts'
 import { JobError, jobs, type JobContext, type JobHandle, type JobRunner } from '../../shared/jobs.ts'
 import { modelCache, type ModelDescriptor } from '../../shared/models.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../../shared/worker.ts'
 import type { DecodedAudio } from '../beats/fast.ts'
 import { decodeAudioFile } from '../decode.ts'
 import { DEMUCS_MODEL, WAV2VEC2_MODEL, WHISPER_MODELS, whisperFileUrls, type WhisperSize } from '../models.ts'
-import { StemSeparationService, stemEdits } from '../stems/client.ts'
-import { DEMUCS_SAMPLE_RATE } from '../stems/demucs.ts'
-import { stemDevice } from '../stems/device.ts'
+import { separateRate, StemSeparationService } from '../stems/client.ts'
 import { lyricChorusCommand } from '../structure/chorus.ts'
 import { realignFrom, realignLine, type CtcVocabulary } from './align.ts'
 import type { CtcEmissions } from './ctc.ts'
@@ -65,11 +62,8 @@ export interface LyricsServiceOptions {
   decode?: (file: Blob, sampleRate: number) => Promise<DecodedAudio>
 }
 
-/**
- * Processing seconds per second of song, measured with WASM threads on a 4-core laptop. Stem separation on a
- * hardware GPU is an estimate until measured on real GPUs.
- */
-const SECONDS_PER_SECOND = { separate: { wasm: 1.1, webgpu: 0.5 }, align: 0.25, transcribe: 0.8 }
+/** Processing seconds per second of song, measured with WASM threads on a 4-core laptop. */
+const SECONDS_PER_SECOND = { align: 0.25, transcribe: 0.8 }
 const DRAFT_SIZE: WhisperSize = 'small'
 
 interface Emissions {
@@ -97,8 +91,8 @@ export class LyricsService {
     this.createWorker =
       options.createWorker ??
       (() => new Worker(new URL('./lyrics.worker.ts', import.meta.url), { type: 'module', name: 'lyrics' }))
-    this.stems = options.stems ?? new StemSeparationService({ runner: this.runner })
     this.decode = options.decode ?? decodeAudioFile
+    this.stems = options.stems ?? new StemSeparationService({ runner: this.runner, decode: this.decode })
   }
 
   async estimate(
@@ -168,6 +162,24 @@ export class LyricsService {
     })
   }
 
+  /**
+   * Listens to the song's vocals so `realignFrom` and `realignLine` work, e.g. after the project was reloaded: job
+   * `analysis.lyrics`, separating stems first when the song has none. Does nothing when they already work.
+   */
+  prepareRealign(songId: Id, deps: LyricsDeps): JobHandle<void> {
+    return this.runner.run({
+      kind: 'analysis.lyrics',
+      title: 'Listening to the vocals',
+      run: async (ctx) => {
+        const current = vocalsAsset(deps.editor.getProject(), songId)
+        if (current && this.emissions.get(songId)?.vocalsId === current.id) return
+        const { vocals, vocalsId, rest } = await this.vocals(songId, deps, ctx, SECONDS_PER_SECOND.align)
+        const result = await this.call((c) => runWorkerCall(c, 'emissions', { vocals }, rest))
+        this.emissions.set(songId, { em: result.emissions, vocab: result.vocab, vocalsId })
+      },
+    })
+  }
+
   /** Whether words of this song can be re-aligned without running the aligner again. */
   canRealign(audioAssetId?: Id): boolean {
     return this.emissions.has(audioAssetId ?? '')
@@ -202,7 +214,7 @@ export class LyricsService {
     lyricsRate: number,
   ): Promise<{ vocals: DecodedAudio; vocalsId: Id; rest: JobContext }> {
     const project = deps.editor.getProject()
-    const song = songAsset(project, songId)
+    songAsset(project, songId)
     const stored = vocalsAsset(project, songId)
     if (stored) {
       ctx.progress({ stage: 'decode', message: 'Reading the vocals' })
@@ -211,11 +223,8 @@ export class LyricsService {
     }
     const separate = await separateRate()
     const split = separate / (separate + lyricsRate)
-    ctx.progress({ stage: 'decode', fraction: 0, message: 'Reading the song' })
-    const audio = await this.decode(await deps.store.getFile(song), DEMUCS_SAMPLE_RATE)
-    const result = await this.stems.separateIn(audio, part(ctx, 0, split))
     // Stored before the lyrics step, so the stems are kept even if it fails or is cancelled.
-    deps.editor.dispatch(await stemEdits(result, song, deps.store), { history: 'skip' })
+    const result = await this.stems.separateSongIn(songId, deps, part(ctx, 0, split))
     const stem = result.stems.find((s) => s.name === 'vocals')
     const vocalsId = deps.editor.getProject().analysis.audio[songId]?.stems?.vocals
     if (!stem || !vocalsId) throw new JobError('internal', 'Stem separation returned no vocals')
@@ -255,10 +264,6 @@ function vocalsAsset(project: Project, songId: Id): Asset | undefined {
 
 const lyricsRate = (kind: LyricsRequest['kind']) =>
   kind === 'time' ? SECONDS_PER_SECOND.align : SECONDS_PER_SECOND.transcribe + SECONDS_PER_SECOND.align
-
-async function separateRate(): Promise<number> {
-  return SECONDS_PER_SECOND.separate[stemDevice(await detectCapabilities())]
-}
 
 function modelFiles(model: ModelDescriptor) {
   const files = Object.values(model.files)

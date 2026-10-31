@@ -4,6 +4,7 @@ import { loadOrt } from '../ort.ts'
 import { JobError, type JobProgress } from '../../shared/jobs.ts'
 import { loadModelFiles, type ModelDevice } from '../../shared/models.ts'
 import { SEGMENT, type DemucsModel } from './demucs.ts'
+import { stemsOutOfMemory } from './worker-api.ts'
 
 /** HTDemucs session on WebGPU (with WASM fallback for unsupported nodes) or multithreaded WASM. */
 export async function createDemucsModel(options: {
@@ -24,7 +25,10 @@ export async function createDemucsModel(options: {
       graphOptimizationLevel: 'all',
     })
   } catch (error) {
-    throw new JobError('model-load', 'Could not start the stem separation model', { cause: error })
+    throw (
+      stemsOutOfMemory(error) ??
+      new JobError('model-load', 'Could not start the stem separation model', { cause: error })
+    )
   }
   const [mixName, specName] = session.inputNames as [string, string]
   const model: DemucsModel = {
