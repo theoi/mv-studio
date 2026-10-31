@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { nudgeLine } from './state/lyricEdits.ts'
 import { jumpSection, stepPlayhead } from './state/playback.ts'
 import { openImport } from './state/importer.ts'
 import { saveNow } from './state/persistence.ts'
@@ -94,6 +95,13 @@ export function useGlobalShortcuts() {
       } else if (e.key === 'ArrowDown') {
         e.preventDefault()
         jumpSection(1)
+      } else if (
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        e.altKey &&
+        s.selection.type === 'lyric'
+      ) {
+        e.preventDefault()
+        nudgeLine(s.selection.id, e.key === 'ArrowLeft' ? -1 : 1)
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault()
         stepPlayhead(e.key === 'ArrowLeft' ? -1 : 1, e.shiftKey)

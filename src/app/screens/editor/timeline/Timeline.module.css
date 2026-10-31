@@ -474,7 +474,7 @@
 .lyricText {
   display: block;
   padding: 0 6px;
-  color: #cfe9e4;
+  color: var(--clip-lyric-text);
   font-size: var(--text-xs);
   line-height: 22px;
   white-space: nowrap;
@@ -504,12 +504,39 @@
   padding: 0 3px;
   border-radius: 2px;
   background: rgb(95 212 200 / 0.12);
-  color: #cfe9e4;
+  color: var(--clip-lyric-text);
   font-size: var(--text-xs);
   line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
+}
+
+/* A word's start and end: drag to re-time the word. */
+.wordEdge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
   cursor: ew-resize;
+}
+
+.wordEdgeL {
+  left: 0;
+}
+
+.wordEdgeR {
+  right: 0;
+}
+
+.wordEdge:hover {
+  background: color-mix(in srgb, var(--clip-lyric-text) 45%, transparent);
+}
+
+.untimedSuggest {
+  position: absolute;
+  top: 50%;
+  z-index: 8;
+  transform: translateY(-50%);
 }
 
 .lyricSuggest {

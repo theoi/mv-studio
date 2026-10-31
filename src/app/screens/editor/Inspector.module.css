@@ -91,6 +91,11 @@
   margin-top: var(--space-2);
 }
 
+.nudgeRow {
+  display: flex;
+  gap: var(--space-1);
+}
+
 .lookCard {
   display: flex;
   align-items: center;
