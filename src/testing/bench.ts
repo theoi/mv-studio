@@ -350,9 +350,10 @@ export async function measurePreview(
   clearInterval(statsTimer)
   off()
   const intervals = frameTimes.slice(1).map((t, i) => t - (frameTimes[i] as number))
+  const stats = preview.stats()
   return {
-    canvas: [preview.canvas.width, preview.canvas.height],
-    scale: preview.stats().scale,
+    canvas: [stats.width, stats.height],
+    scale: stats.scale,
     fps: round(frameTimes.length / elapsed),
     frameP50Ms: round(percentile(intervals, 0.5)),
     frameP95Ms: round(percentile(intervals, 0.95)),
@@ -402,6 +403,8 @@ export async function runPreviewBenchmark(options: {
   container?: HTMLElement
   warmupSeconds?: number
   seconds?: number
+  /** Where the previews draw (PreviewOptions.renderer); default: the app's setting. */
+  renderer?: 'main' | 'worker'
   onRow?: (row: BenchRow) => void
 }): Promise<BenchRow[]> {
   const container = options.container ?? onScreenHost()
@@ -418,7 +421,7 @@ export async function runPreviewBenchmark(options: {
         const editor = new ProjectEditor(project)
         const canvas = document.createElement('canvas')
         container.appendChild(canvas)
-        const preview = new PreviewController({ canvas, media: mediaStore })
+        const preview = new PreviewController({ canvas, media: mediaStore, renderer: options.renderer })
         preview.setProject(project)
         preview.setLoop({ start: 0, end: projectDuration(project) })
         const dragId = Object.values(project.clips).find((c) => c.meta?.bench === 'drag')?.id
@@ -556,7 +559,11 @@ export interface CutsResult {
  * the frame (left half (N % 16) * 16 + 8, right half floor(N / 16) * 16 + 8), like the e2e fixture frames.mp4 and
  * syntheticVideo(..., { frameCode: true }).
  */
-export async function measureCuts(project: Project, host?: HTMLElement): Promise<CutsResult> {
+export async function measureCuts(
+  project: Project,
+  host?: HTMLElement,
+  options: { renderer?: 'main' | 'worker' } = {},
+): Promise<CutsResult> {
   const container = host ?? onScreenHost()
   const W = 480
   const H = 270
@@ -564,11 +571,17 @@ export async function measureCuts(project: Project, host?: HTMLElement): Promise
   canvas.style.width = `${W}px`
   canvas.style.height = `${H}px`
   container.appendChild(canvas)
-  const preview = new PreviewController({ canvas, media: mediaStore, preserveDrawingBuffer: true })
+  const preview = new PreviewController({
+    canvas,
+    media: mediaStore,
+    preserveDrawingBuffer: true,
+    renderer: options.renderer,
+  })
   const reader = new OffscreenCanvas(W, H).getContext('2d', { willReadFrequently: true })
   if (!reader) throw new Error('2D canvas is not available')
-  const frameNumber = () => {
-    reader.drawImage(canvas, 0, 0, W, H)
+  const frameNumber = (frame: ImageBitmap) => {
+    reader.drawImage(frame, 0, 0, W, H)
+    frame.close()
     const y = Math.round(H * 0.03)
     const left = reader.getImageData(Math.round(W / 4), y, 1, 1).data
     const right = reader.getImageData(Math.round((3 * W) / 4), y, 1, 1).data
@@ -582,15 +595,21 @@ export async function measureCuts(project: Project, host?: HTMLElement): Promise
     return c ? Math.floor((c.sourceStart + (t - c.start) * c.playbackRate + 1e-4) * fps) : -1
   }
   const frames: { at: number; t: number; n: number }[] = []
+  const reads: Promise<void>[] = []
   try {
     preview.setProject(project)
     preview.setViewport(W, H, 1)
     preview.setQuality('full')
     await preview.rendered()
-    preview.onFrame((t) => frames.push({ at: performance.now(), t, n: frameNumber() }))
+    preview.onFrame((t) => {
+      const at = performance.now()
+      reads.push(preview.captureFrame().then((frame) => void frames.push({ at, t, n: frameNumber(frame) })))
+    })
     await preview.play()
     const end = projectDuration(project)
     while (preview.getSnapshot().state === 'playing' && preview.currentTime() < end - 0.05) await sleep(50)
+    await Promise.all(reads)
+    frames.sort((a, b) => a.at - b.at)
   } finally {
     preview.dispose()
     canvas.remove()

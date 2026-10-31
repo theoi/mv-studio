@@ -56,7 +56,12 @@ async function render(project: Project, time: Seconds, width: number, height: nu
   preview.seek(time)
   preview.setProject(project)
   await preview.rendered()
-  return new Promise((resolve) => preview.canvas.toBlob(resolve, 'image/jpeg', 0.86))
+  // Read through the preview: its canvas may have moved to the render worker.
+  const frame = await preview.captureFrame()
+  const canvas = new OffscreenCanvas(frame.width, frame.height)
+  canvas.getContext('2d')?.drawImage(frame, 0, 0)
+  frame.close()
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 })
 }
 
 function requestStill(key: string, project: Project, time: Seconds, width: number, height: number): void {

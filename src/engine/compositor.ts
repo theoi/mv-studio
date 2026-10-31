@@ -283,6 +283,47 @@ export function visibleLayers(
     .filter((layer) => layer.kind !== 'clip' || !offCanvas(layer.clip, project, time, canvas, audio))
 }
 
+/** A video frame one rendered frame needs: a video clip's footage, or the mask video of a clip's matte. */
+export interface VideoRequest {
+  /** The clip id, or `matte:<clip id>` for a mask. */
+  key: string
+  asset: Asset
+  /** Seconds into the asset. */
+  time: Seconds
+  rate: number
+}
+
+/**
+ * The video frames that drawing `plan` at `time` reads, in request order. The worker preview uses it on the main
+ * thread to take exactly these frames from its <video> elements.
+ */
+export function videoRequests(project: Project, plan: LayerPlan[], time: Seconds): VideoRequest[] {
+  const out: VideoRequest[] = []
+  const visit = (clip: VisualClip | null) => {
+    if (!clip) return
+    if (clip.type === 'video') {
+      const asset = project.assets[clip.assetId]
+      if (asset)
+        out.push({
+          key: clip.id,
+          asset,
+          time: clip.sourceStart + (time - clip.start) * clip.playbackRate,
+          rate: clip.playbackRate,
+        })
+    }
+    const matte = matteSource(project, clip, time)
+    if (matte && matte.maskAsset.kind !== 'image')
+      out.push({ key: `matte:${clip.id}`, asset: matte.maskAsset, time: matte.sourceTime, rate: matte.rate })
+  }
+  for (const layer of plan) {
+    if (layer.kind === 'transition') {
+      visit(layer.from)
+      visit(layer.to)
+    } else visit(layer.clip)
+  }
+  return out
+}
+
 /** Averages analysis bands into the fixed-size u_bands uniform. */
 function bandUniform(bands: readonly number[]): Float32Array {
   const out = new Float32Array(BAND_UNIFORMS)
@@ -489,8 +530,6 @@ export class WebGLCompositor implements Compositor {
       const anim = values[key]
       return anim ? evaluate(anim, local) : undefined
     }
-    // Video requests start after beginFrame() has seen all of them, so the provider knows which clips stay on screen.
-    const videos: { key: string; asset: Asset; time: Seconds; rate: number }[] = []
     const visit = (clip: VisualClip | null) => {
       if (!clip) return
       const local = time - clip.start
@@ -502,25 +541,14 @@ export class WebGLCompositor implements Compositor {
         const def = this.registry.get(clip.generatorId)
         if (def?.kind === 'generator') wantImages(def.params, animated(clip.params, local))
       }
-      if (clip.type === 'video' || clip.type === 'image') {
+      if (clip.type === 'image') {
         const asset = project.assets[clip.assetId]
-        if (asset && clip.type === 'video')
-          videos.push({
-            key: clip.id,
-            asset,
-            time: clip.sourceStart + local * clip.playbackRate,
-            rate: clip.playbackRate,
-          })
-        else if (asset) want(clip.id, this.frames.image(asset))
+        if (asset) want(clip.id, this.frames.image(asset))
       } else if (clip.type === 'text') {
         tasks.push(this.text.prepare(clip, project))
       }
       const matte = matteSource(project, clip, time)
-      if (matte) {
-        const key = `matte:${clip.id}`
-        if (matte.maskAsset.kind === 'image') want(key, this.frames.image(matte.maskAsset))
-        else videos.push({ key, asset: matte.maskAsset, time: matte.sourceTime, rate: matte.rate })
-      }
+      if (matte?.maskAsset.kind === 'image') want(`matte:${clip.id}`, this.frames.image(matte.maskAsset))
     }
     for (const layer of plan) {
       if (layer.kind === 'transition') {
@@ -530,6 +558,8 @@ export class WebGLCompositor implements Compositor {
         if (def?.kind === 'transition') wantImages(def.params, (key) => layer.transition.params?.[key])
       } else visit(layer.clip)
     }
+    // Video requests start after beginFrame() has seen all of them, so the provider knows which clips stay on screen.
+    const videos = videoRequests(project, plan, time)
     this.frames.beginFrame?.(videos.map((v) => v.key))
     for (const v of videos) want(v.key, this.frames.videoFrame(v.asset, v.time, v.key, v.rate))
     await Promise.all(tasks)

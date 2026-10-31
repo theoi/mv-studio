@@ -530,3 +530,77 @@ export class DecoderFrameProvider implements FrameProvider {
     this.images.dispose()
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Worker preview: frames bridged from the main thread's <video> elements
+
+/** One video frame of a worker preview frame, taken on the main thread from the clip's <video> element. */
+export interface BridgedVideo {
+  /** VideoRequest key: the clip id, or `matte:<clip id>`. */
+  key: string
+  /** The frame, or null when it is unavailable or unchanged (`same`). */
+  frame: VideoFrame | null
+  width: number
+  height: number
+  /** FrameRef.version of the frame. */
+  version?: number
+  /** The frame is the one last sent for this key (same version), so it is not sent again. */
+  same?: boolean
+}
+
+/**
+ * Frame provider of the preview in the render worker: video frames arrive from the main thread with each render
+ * request (set()), images are decoded here. The latest frame per key stays open, so an unchanged frame is never sent
+ * twice and can still be uploaded again (after a lost context).
+ */
+export class BridgedFrameProvider implements FrameProvider {
+  private readonly latest = new Map<string, { frame: VideoFrame; ref: FrameRef }>()
+  private current = new Map<string, FrameRef | null>()
+  private readonly images: ImageCache
+
+  constructor(media: MediaFileSource) {
+    this.images = new ImageCache(media)
+  }
+
+  /** The video frames of the next render. Frames of keys missing from `videos` are closed. */
+  set(videos: BridgedVideo[]): void {
+    const current = new Map<string, FrameRef | null>()
+    for (const v of videos) {
+      let entry = this.latest.get(v.key)
+      if (v.frame) {
+        entry?.frame.close()
+        entry = {
+          frame: v.frame,
+          ref: { source: v.frame, width: v.width, height: v.height, version: v.version },
+        }
+        this.latest.set(v.key, entry)
+      } else if (!v.same && entry) {
+        entry.frame.close()
+        this.latest.delete(v.key)
+        entry = undefined
+      }
+      current.set(v.key, entry?.ref ?? null)
+    }
+    for (const [key, entry] of this.latest)
+      if (!current.has(key)) {
+        entry.frame.close()
+        this.latest.delete(key)
+      }
+    this.current = current
+  }
+
+  videoFrame(_asset: Asset, _sourceTime: Seconds, key: string): Promise<FrameRef | null> {
+    return Promise.resolve(this.current.get(key) ?? null)
+  }
+
+  image(asset: Asset): Promise<FrameRef | null> {
+    return this.images.get(asset)
+  }
+
+  dispose(): void {
+    for (const entry of this.latest.values()) entry.frame.close()
+    this.latest.clear()
+    this.current.clear()
+    this.images.dispose()
+  }
+}

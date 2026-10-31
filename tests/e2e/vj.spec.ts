@@ -529,14 +529,16 @@ test('holding Freeze stills the playing footage in the live preview and records 
  * Key-to-footage latency of video pads. Over a red base, the blue image pad alternates with two video pads (a 360p
  * and a 1080p clip), each pressed for the first time and then again. A frame counts as footage once its pixels
  * vary, which the solid images never do. `warm` gives the session the preview's prefetch, as VJ mode does.
+ * `renderer` picks where the preview draws (PreviewOptions.renderer).
  */
-async function videoPadLatency(page: Page, warm: boolean) {
+async function videoPadLatency(page: Page, warm: boolean, renderer: 'main' | 'worker' = 'main') {
+  const options = { warm, renderer }
   await openHarness(page)
   await page.setInputFiles(
     '#e2e-file-input',
     ['song.mp3', 'clip.mp4', 'clip1080.mp4'].map((f) => path.join(FIXTURE_DIR, f)),
   )
-  const keys = await page.evaluate(async (warm) => {
+  const keys = await page.evaluate(async ({ warm, renderer }) => {
     const { model, media, engine, vj, testing } = window.mvStudio
     const [songFile, smallFile, largeFile] = window.mvStudio.files()
     const solid = async (name: string, color: string) => {
@@ -575,6 +577,7 @@ async function videoPadLatency(page: Page, warm: boolean) {
       canvas,
       media: media.mediaStore,
       preserveDrawingBuffer: true,
+      renderer,
     })
     preview.setProject(p)
     preview.setViewport(320, 180, 1)
@@ -595,10 +598,15 @@ async function videoPadLatency(page: Page, warm: boolean) {
     })
     const frames: { at: number; spread: number }[] = []
     preview.onFrame(() => {
-      const px = testing.readPixels(canvas, 8, 8)
-      const luma: number[] = []
-      for (let i = 0; i < px.length; i += 4) luma.push(px[i] * 0.3 + px[i + 1] * 0.59 + px[i + 2] * 0.11)
-      frames.push({ at: performance.now(), spread: Math.max(...luma) - Math.min(...luma) })
+      const at = performance.now()
+      // Through captureFrame(): a canvas drawn in the render worker cannot be read here.
+      void preview.captureFrame().then((frame: ImageBitmap) => {
+        const px = testing.readPixels(frame, 8, 8)
+        frame.close()
+        const luma: number[] = []
+        for (let i = 0; i < px.length; i += 4) luma.push(px[i] * 0.3 + px[i + 1] * 0.59 + px[i + 2] * 0.11)
+        frames.push({ at, spread: Math.max(...luma) - Math.min(...luma) })
+      })
     })
     window.mvStudio.vjTest = { preview, session, keys, frames }
     const bindings = session.getBindings()
@@ -613,7 +621,7 @@ async function videoPadLatency(page: Page, warm: boolean) {
         ),
       })
     return { blue: keyOf(blue.id), small: keyOf(small.id), large: keyOf(large.id) }
-  }, warm)
+  }, options)
   expect(Object.values(keys).every(Boolean), JSON.stringify(keys)).toBe(true)
 
   // Opening VJ mode and starting to play takes the user a moment; pre-warming happens in it.
@@ -651,6 +659,22 @@ test('video pads show their footage at once, even on the first press, when VJ mo
   page.on('pageerror', (e) => errors.push(e.message))
   const [small, large, again] = await videoPadLatency(page, true)
   console.log('vj video pad key-to-footage (ms), pre-warmed', JSON.stringify({ small, large, again }))
+  for (const press of [small, large, again]) {
+    expect(press!.solidBefore).toBe(true)
+    expect(press!.latency).not.toBeNull()
+    expect(press!.latency!).toBeLessThan(100)
+  }
+  expect(errors).toEqual([])
+})
+
+test('with the preview in the render worker, pre-warmed video pads show their footage at once', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  const [small, large, again] = await videoPadLatency(page, true, 'worker')
+  console.log('vj video pad key-to-footage (ms), render worker', JSON.stringify({ small, large, again }))
+  expect(await page.evaluate(() => window.mvStudio.vjTest.preview.stats().worker)).toBe(true)
   for (const press of [small, large, again]) {
     expect(press!.solidBefore).toBe(true)
     expect(press!.latency).not.toBeNull()

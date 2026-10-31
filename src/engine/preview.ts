@@ -15,14 +15,21 @@
  * playing, the preview never queues a frame on a busy GPU (that would block the main thread and the UI), and with
  * quality 'auto' it lowers the render resolution when frames come too slowly. Scrubbing that cannot keep up uses the
  * playback resolution too. Once paused and settled, frames always render at full resolution.
+ *
+ * Frames are drawn on this thread or, with renderer 'worker' (see PREVIEW_IN_WORKER), in the render worker: the canvas
+ * moves there and is drawn by the same compositor as export, while this thread keeps the audio clock and the <video>
+ * elements and hands the worker each frame's video frames. Drawing then never blocks input, however slow the GPU.
+ * Read pixels with captureFrame(), which works in both cases.
  */
 import { projectDuration } from '../model/queries.ts'
 import type { Asset, Project, Seconds, VideoClip } from '../model/types.ts'
-import { WebGLCompositor } from './compositor.ts'
-import { VideoElementFrameProvider } from './frames.ts'
+import { createAudioSampler, type AudioSampler } from './audioFeatures.ts'
+import { videoRequests, visibleLayers, WebGLCompositor } from './compositor.ts'
+import { VideoElementFrameProvider, type BridgedVideo } from './frames.ts'
 import { planFrame } from './layout.ts'
 import { WebAudioPlaybackClock } from './playback.ts'
 import { AdaptiveScale, QUALITY_SCALES, type PreviewQuality } from './quality.ts'
+import { startPreviewWorker, type PreviewWorker } from './renderHost.ts'
 import type { MediaFileSource, PlaybackState, PluginRegistry } from './types.ts'
 
 export type { PreviewQuality } from './quality.ts'
@@ -31,8 +38,14 @@ export interface PreviewOptions {
   canvas: HTMLCanvasElement
   media: MediaFileSource
   registry?: PluginRegistry
-  /** Keep the last frame readable (frame capture, tests). */
+  /** Keep the last frame readable: captureFrame() then returns the frame drawn last instead of drawing again. */
   preserveDrawingBuffer?: boolean
+  /**
+   * Where frames are drawn: 'worker' moves the canvas to the render worker, 'main' draws on this thread. Defaults to
+   * the PREVIEW_IN_WORKER switch. The worker is used only when the browser supports it and no custom registry is
+   * given, and the preview falls back to the main thread when the worker cannot start.
+   */
+  renderer?: 'worker' | 'main'
 }
 
 /** Changes on play, pause, seek, loop, quality and project length changes (not on every frame). */
@@ -54,6 +67,203 @@ export interface PreviewStats {
   dropped: number
   /** Render resolution relative to full. */
   scale: number
+  /** Size of the frame drawn last, in pixels. */
+  width: number
+  height: number
+  /** Whether frames are drawn in the render worker. */
+  worker: boolean
+}
+
+/**
+ * Draws previews in the render worker unless a preview asks otherwise (PreviewOptions.renderer). Off until it is
+ * proven in the app; the URL parameter `preview-worker=1` (or `0`) overrides it for a page load.
+ */
+const PREVIEW_IN_WORKER = false
+
+function defaultRenderer(): 'worker' | 'main' {
+  const param =
+    typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('preview-worker')
+  if (param === '1') return 'worker'
+  if (param === '0') return 'main'
+  return PREVIEW_IN_WORKER ? 'worker' : 'main'
+}
+
+interface Size {
+  width: number
+  height: number
+}
+
+/** Draws preview frames, on this thread or in the render worker. */
+interface FrameRenderer {
+  readonly inWorker: boolean
+  draw(project: Project, time: Seconds, size: Size): Promise<void>
+  /** The GPU is still drawing the last frame, so drawing another now would block the main thread. */
+  busy(): boolean
+  /** Draws a frame and returns it. */
+  snapshot(project: Project, time: Seconds, size: Size): Promise<ImageBitmap>
+  /** The frame drawn last; needs preserveDrawingBuffer. */
+  capture(): Promise<ImageBitmap>
+  dispose(): void
+}
+
+class MainRenderer implements FrameRenderer {
+  readonly inWorker = false
+  private readonly compositor: WebGLCompositor
+
+  constructor(compositor: WebGLCompositor) {
+    this.compositor = compositor
+  }
+
+  draw(project: Project, time: Seconds, size: Size): Promise<void> {
+    return this.compositor.render(project, time, { size })
+  }
+
+  busy(): boolean {
+    return this.compositor.gpuBusy()
+  }
+
+  snapshot(project: Project, time: Seconds, size: Size): Promise<ImageBitmap> {
+    // Chained directly on the render, in the drawing's task: the drawing buffer is cleared once the task ends.
+    return this.compositor
+      .render(project, time, { size })
+      .then(() => createImageBitmap(this.compositor.canvas))
+  }
+
+  capture(): Promise<ImageBitmap> {
+    return createImageBitmap(this.compositor.canvas)
+  }
+
+  dispose(): void {
+    this.compositor.dispose()
+  }
+}
+
+function toVideoFrame(source: TexImageSource): VideoFrame | null {
+  try {
+    if (source instanceof VideoFrame) return source.clone()
+    if (source instanceof ImageData) return null
+    return new VideoFrame(source, { timestamp: 0 })
+  } catch {
+    // A <video> without a decoded frame yet.
+    return null
+  }
+}
+
+/**
+ * Feeds the render worker: per frame, takes the frames the worker's compositor will request from the <video>
+ * elements (the same plan and requests as the compositor computes) and sends them with the project changes.
+ */
+class WorkerRenderer implements FrameRenderer {
+  readonly inWorker = true
+  private readonly worker: PreviewWorker
+  private readonly frames: VideoElementFrameProvider
+  private readonly samplers = new WeakMap<Project, AudioSampler>()
+  private sentProject: Project | null = null
+  /** Version of the frame last sent per key, so unchanged frames are not sent again. */
+  private readonly sentVersions = new Map<string, number | undefined>()
+
+  constructor(worker: PreviewWorker, frames: VideoElementFrameProvider) {
+    this.worker = worker
+    this.frames = frames
+  }
+
+  async draw(project: Project, time: Seconds, size: Size): Promise<void> {
+    await this.request(project, time, size, false)
+  }
+
+  async snapshot(project: Project, time: Seconds, size: Size): Promise<ImageBitmap> {
+    const bitmap = await this.request(project, time, size, true)
+    if (!bitmap) throw new Error('The preview worker returned no frame')
+    return bitmap
+  }
+
+  capture(): Promise<ImageBitmap> {
+    return this.worker.capture()
+  }
+
+  busy(): boolean {
+    // The worker waits for its GPU itself; the controller keeps one frame in flight.
+    return false
+  }
+
+  private sampler(project: Project): AudioSampler {
+    let s = this.samplers.get(project)
+    if (!s) {
+      s = createAudioSampler(project)
+      this.samplers.set(project, s)
+    }
+    return s
+  }
+
+  /** Top-level fields that changed since the last request; unchanged ones (analysis, usually) are not copied again. */
+  private projectChanges(project: Project): Partial<Project> | undefined {
+    const sent = this.sentProject
+    if (sent === project) return undefined
+    this.sentProject = project
+    if (!sent) return project
+    const changes: Record<string, unknown> = {}
+    for (const key of new Set([...Object.keys(sent), ...Object.keys(project)]) as Set<keyof Project>)
+      if (project[key] !== sent[key]) changes[key] = project[key]
+    return changes as Partial<Project>
+  }
+
+  private async request(
+    project: Project,
+    time: Seconds,
+    size: Size,
+    capture: boolean,
+  ): Promise<ImageBitmap | null> {
+    const plan = visibleLayers(planFrame(project, time), project, time, size, this.sampler(project))
+    const requests = videoRequests(project, plan, time)
+    this.frames.beginFrame(requests.map((r) => r.key))
+    const refs = await Promise.all(
+      requests.map((r) => this.frames.videoFrame(r.asset, r.time, r.key, r.rate).catch(() => null)),
+    )
+    const videos: BridgedVideo[] = []
+    const transfer: Transferable[] = []
+    const keys = new Set<string>()
+    requests.forEach(({ key }, i) => {
+      keys.add(key)
+      const ref = refs[i]
+      if (ref && ref.version !== undefined && this.sentVersions.get(key) === ref.version) {
+        videos.push({
+          key,
+          frame: null,
+          width: ref.width,
+          height: ref.height,
+          version: ref.version,
+          same: true,
+        })
+        return
+      }
+      const frame = ref && toVideoFrame(ref.source)
+      if (!ref || !frame) {
+        this.sentVersions.delete(key)
+        videos.push({ key, frame: null, width: 0, height: 0 })
+        return
+      }
+      transfer.push(frame)
+      this.sentVersions.set(key, ref.version)
+      videos.push({ key, frame, width: ref.width, height: ref.height, version: ref.version })
+    })
+    for (const key of this.sentVersions.keys()) if (!keys.has(key)) this.sentVersions.delete(key)
+    this.frames.endFrame()
+    try {
+      return await this.worker.render(
+        { time, size, project: this.projectChanges(project), videos, capture },
+        transfer,
+      )
+    } catch (error) {
+      // The worker may not have applied this request: send everything again next time.
+      this.sentProject = null
+      this.sentVersions.clear()
+      throw error
+    }
+  }
+
+  dispose(): void {
+    this.worker.dispose()
+  }
 }
 
 /** Video clips starting within this many seconds get their media element loaded and seeked ahead of time. */
@@ -63,8 +273,13 @@ const WARM_EVERY_MS = 200
 export class PreviewController {
   readonly canvas: HTMLCanvasElement
   readonly clock: WebAudioPlaybackClock
-  private readonly compositor: WebGLCompositor
   private readonly frames: VideoElementFrameProvider
+  /** Null until the render worker has started (or failed to, and the main thread draws instead). */
+  private renderer: FrameRenderer | null = null
+  private readonly rendererReady: Promise<FrameRenderer>
+  private readonly preserveDrawingBuffer: boolean
+  private disposed = false
+  private lastSize: Size = { width: 0, height: 0 }
   private project: Project | null = null
   private raf = 0
   private inFlight: Promise<void> | null = null
@@ -87,13 +302,8 @@ export class PreviewController {
   constructor(options: PreviewOptions) {
     this.canvas = options.canvas
     this.frames = new VideoElementFrameProvider(options.media)
-    this.compositor = new WebGLCompositor({
-      canvas: options.canvas,
-      frames: this.frames,
-      media: options.media,
-      registry: options.registry,
-      preserveDrawingBuffer: options.preserveDrawingBuffer,
-    })
+    this.preserveDrawingBuffer = options.preserveDrawingBuffer ?? false
+    this.rendererReady = this.createRenderer(options)
     this.clock = new WebAudioPlaybackClock(options.media)
     this.unsubscribeClock = this.clock.subscribe((state) => {
       this.frames.setPlaying(state === 'playing')
@@ -110,6 +320,43 @@ export class PreviewController {
       }
       this.updateSnapshot()
     })
+  }
+
+  private createRenderer(options: PreviewOptions): Promise<FrameRenderer> {
+    const onMainThread = () =>
+      new MainRenderer(
+        new WebGLCompositor({
+          canvas: options.canvas,
+          frames: this.frames,
+          media: options.media,
+          registry: options.registry,
+          preserveDrawingBuffer: this.preserveDrawingBuffer,
+        }),
+      )
+    const canUseWorker =
+      !options.registry &&
+      typeof Worker !== 'undefined' &&
+      typeof VideoFrame !== 'undefined' &&
+      typeof options.canvas.transferControlToOffscreen === 'function'
+    if ((options.renderer ?? defaultRenderer()) !== 'worker' || !canUseWorker) {
+      this.renderer = onMainThread()
+      return Promise.resolve(this.renderer)
+    }
+    return startPreviewWorker(options.canvas, options.media, {
+      preserveDrawingBuffer: this.preserveDrawingBuffer,
+    })
+      .then(
+        (worker): FrameRenderer => new WorkerRenderer(worker, this.frames),
+        (error: unknown) => {
+          console.warn('The preview worker could not start; drawing on the main thread', error)
+          return onMainThread()
+        },
+      )
+      .then((renderer) => {
+        if (this.disposed) renderer.dispose()
+        else this.renderer = renderer
+        return renderer
+      })
   }
 
   setProject(project: Project): void {
@@ -257,7 +504,29 @@ export class PreviewController {
     const now = performance.now()
     const recent = this.frameLog.filter((f) => now - f.at <= 1000)
     const renderMs = recent.length ? recent.reduce((a, f) => a + f.ms, 0) / recent.length : 0
-    return { fps: recent.length, renderMs, dropped: this.dropped, scale: this.scale }
+    return {
+      fps: recent.length,
+      renderMs,
+      dropped: this.dropped,
+      scale: this.scale,
+      width: this.lastSize.width,
+      height: this.lastSize.height,
+      worker: this.renderer?.inWorker ?? false,
+    }
+  }
+
+  /**
+   * The preview as an image. With preserveDrawingBuffer, the frame drawn last (await rendered() first for the settled
+   * frame); otherwise the current state, drawn again. Use it to read pixels: a canvas moved to the render worker
+   * cannot be read on this thread.
+   */
+  async captureFrame(): Promise<ImageBitmap> {
+    const renderer = await this.rendererReady
+    if (this.preserveDrawingBuffer) return renderer.capture()
+    await this.rendered()
+    const project = this.project
+    if (!project) throw new Error('The preview has no project')
+    return renderer.snapshot(project, this.clock.currentTime(), this.frameSize(project))
   }
 
   /** Resolves once the current state (project, time, size) is on screen at its settled quality. */
@@ -295,7 +564,7 @@ export class PreviewController {
     this.stillPending = false
     const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop)
-      if (this.inFlight || this.compositor.gpuBusy()) {
+      if (this.inFlight || this.renderer?.busy()) {
         this.dropped++
         return
       }
@@ -334,10 +603,16 @@ export class PreviewController {
     const project = this.project
     if (!project) return Promise.resolve()
     const started = performance.now()
-    const run = this.compositor
-      .render(project, time, { size: this.frameSize(project) })
+    const size = this.frameSize(project)
+    const renderer = this.renderer
+    const run = (
+      renderer
+        ? renderer.draw(project, time, size)
+        : this.rendererReady.then((r) => r.draw(project, time, size))
+    )
       .then(
         () => {
+          this.lastSize = size
           const now = performance.now()
           this.frameLog.push({ at: now, ms: now - started })
           while (this.frameLog.length > 0 && now - (this.frameLog[0] as { at: number }).at > 1000)
@@ -361,10 +636,11 @@ export class PreviewController {
   }
 
   dispose(): void {
+    this.disposed = true
     this.stopLoop()
     this.unsubscribeClock()
     this.clock.dispose()
-    this.compositor.dispose()
+    this.renderer?.dispose()
     this.frames.dispose()
     this.listeners.clear()
     this.frameListeners.clear()
