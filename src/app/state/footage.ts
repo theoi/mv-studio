@@ -5,6 +5,7 @@ import type {
   FootageResult,
   FootageService,
   IndexingState,
+  VisionService,
   VisionServiceOptions,
 } from '../../vision/index.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
@@ -29,6 +30,7 @@ interface FootageState {
 export const useFootage = create<FootageState>(() => ({ service: null, indexing: null, strongMatch: 1 }))
 
 let loading: Promise<FootageService> | null = null
+let visionLoading: Promise<VisionService> | null = null
 let testBackends: VisionServiceOptions['backends'] | undefined
 
 /** For end-to-end tests: analyze with model-free backends instead of downloading models. */
@@ -36,12 +38,19 @@ export function setVisionBackendsForTests(backends: VisionServiceOptions['backen
   testBackends = backends
 }
 
-export function footageService(): Promise<FootageService> {
-  loading ??= import('../../vision/index.ts').then((v) => {
-    const vision = v.createVisionService({
+/** The app's vision service, shared by footage analysis and the vision tools (auto-cut, 3D camera, cutouts). */
+export function visionService(): Promise<VisionService> {
+  visionLoading ??= import('../../vision/index.ts').then((v) =>
+    v.createVisionService({
       backends: testBackends ?? v.createWorkerBackends(),
       cache: testBackends ? v.createMemoryCache() : v.createOpfsCache(),
-    })
+    }),
+  )
+  return visionLoading
+}
+
+export function footageService(): Promise<FootageService> {
+  loading ??= Promise.all([import('../../vision/index.ts'), visionService()]).then(([v, vision]) => {
     const service = v.createFootageService({ editor, vision, media: appMedia })
     service.indexing.subscribe((indexing) => useFootage.setState({ indexing }))
     useFootage.setState({ service, indexing: service.indexing.getState(), strongMatch: v.STRONG_MATCH })

@@ -1,0 +1,139 @@
+import { create } from 'zustand'
+import type { Id, Project } from '../../model/index.ts'
+import { jobs, type JobHandle } from '../../shared/jobs.ts'
+import { modelCache } from '../../shared/models.ts'
+import type { AutoCutOptions, AutoCutPace, AutoCutResult } from '../../vision/index.ts'
+import { VISION_MODELS } from '../../vision/runtime/models.ts'
+import { visionService } from './footage.ts'
+import { JOB_KINDS, isRunning } from './jobs.ts'
+import { editor, sectionAt, sectionsOf } from './project.ts'
+import type { Selection } from './ui.ts'
+
+/*
+ * Assist › Auto-cut on src/vision's autoCut. The panel's choices live here so they survive leaving the panel, and
+ * each finished job's result (cuts, warnings, undo label) is kept by job id for the done state.
+ */
+
+export type AutoCutRange = 'all' | 'section'
+export type AutoCutClips = 'all' | 'selected'
+
+export interface AutoCutChoices {
+  pace: AutoCutPace
+  followEnergy: boolean
+  matchMood: boolean
+  range: AutoCutRange
+  clips: AutoCutClips
+}
+
+export const useAutoCut = create<{ choices: AutoCutChoices; results: Record<string, AutoCutResult> }>(() => ({
+  choices: { pace: 'bar', followEnergy: true, matchMood: true, range: 'all', clips: 'all' },
+  results: {},
+}))
+
+export function setAutoCutChoices(patch: Partial<AutoCutChoices>): void {
+  useAutoCut.setState((s) => ({ choices: { ...s.choices, ...patch } }))
+}
+
+/** The clips and stills auto-cut can use: the imported and generated ones, as src/vision's autoCutPool. */
+function poolAssets(project: Project) {
+  return Object.values(project.assets).filter(
+    (a) =>
+      (a.origin.type === 'import' || a.origin.type === 'generated') &&
+      (a.kind === 'image' || (a.kind === 'video' && (a.duration ?? 0) > 0)),
+  )
+}
+
+export function autoCutClipCount(project: Project): number {
+  return poolAssets(project).length
+}
+
+/** Clips footage analysis has not indexed for matching yet; auto-cut picks them for variety only. */
+export function unanalyzedClipCount(project: Project): number {
+  return poolAssets(project).filter((a) => {
+    const data = project.analysis.visual[a.id]?.data
+    return !(data && typeof data === 'object' && !Array.isArray(data) && data.embedding)
+  }).length
+}
+
+/** Bytes footage analysis still has to download to match clips (the matching model, once), 0 when cached. */
+export async function matchingDownloadBytes(): Promise<number> {
+  const files = Object.values(VISION_MODELS.clipB32.files)
+  const cached = await Promise.all(files.map((f) => modelCache.has(f.url).catch(() => false)))
+  return files.reduce((sum, f, i) => sum + (cached[i] ? 0 : (f.bytes ?? 0)), 0)
+}
+
+/** The section "Selected section" cuts: the selected one, else the one under the playhead. */
+export function targetSection(project: Project, selection: Selection, playhead: number) {
+  if (selection.type === 'section') return sectionsOf(project).find((s) => s.id === selection.id)
+  return sectionAt(project, playhead)
+}
+
+/** The asset of the selected video or image clip, for "Selected clips". */
+export function selectedAsset(project: Project, selection: Selection): { id: Id; name: string } | undefined {
+  if (selection.type !== 'clip') return undefined
+  const clip = project.clips[selection.id]
+  if (!clip || (clip.type !== 'video' && clip.type !== 'image')) return undefined
+  const asset = project.assets[clip.assetId]
+  return asset ? { id: asset.id, name: clip.name ?? asset.name } : undefined
+}
+
+/** autoCut options for the panel's choices, against the project and selection as they are now. */
+export function autoCutOptions(
+  choices: AutoCutChoices,
+  project: Project,
+  selection: Selection,
+  playhead: number,
+): Omit<AutoCutOptions, 'seed'> {
+  const section = choices.range === 'section' ? targetSection(project, selection, playhead) : undefined
+  const asset = choices.clips === 'selected' ? selectedAsset(project, selection) : undefined
+  return {
+    pace: choices.pace,
+    followEnergy: choices.followEnergy,
+    order: choices.matchMood ? 'matched' : 'shuffled',
+    ...(section ? { range: { start: section.start, end: section.end } } : {}),
+    ...(asset ? { assetIds: [asset.id] } : {}),
+  }
+}
+
+const STAGE_MESSAGES: Record<string, string> = {
+  planning: 'Finding the cuts in the song',
+  matching: 'Choosing a clip for each shot',
+}
+
+let runs = 0
+
+/**
+ * Runs auto-cut as a job. Every run takes the next seed, so cutting again with the same choices gives a different
+ * cut; either way only auto-cut clips nobody touched are replaced.
+ */
+export function startAutoCut(options: Omit<AutoCutOptions, 'seed'>): JobHandle<AutoCutResult> | undefined {
+  if (isRunning(JOB_KINDS.autocut)) return undefined
+  const seed = ++runs
+  let id = ''
+  const handle = jobs.run({
+    kind: JOB_KINDS.autocut,
+    title: 'Cutting to the beat',
+    run: async (ctx) => {
+      ctx.progress({ fraction: 0, stage: 'planning', message: STAGE_MESSAGES.planning })
+      const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
+      const result = await v.autoCut(
+        { editor, matcher: vision.matcher },
+        { ...options, seed },
+        {
+          signal: ctx.signal,
+          onProgress: (p) => ctx.progress({ ...p, message: STAGE_MESSAGES[p.stage ?? ''] ?? p.message }),
+        },
+      )
+      useAutoCut.setState((s) => ({ results: { ...s.results, [id]: result } }))
+      return result
+    },
+  })
+  id = handle.id
+  return handle
+}
+
+/** Undoes an auto-cut while it is still the latest edit. Returns whether it did. */
+export function undoAutoCut(result: AutoCutResult | undefined): boolean {
+  if (!result || editor.undoLabel() !== result.label) return false
+  return editor.undo()
+}

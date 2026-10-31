@@ -85,11 +85,6 @@ export function startDirector(startAt = 0) {
   })
 }
 
-export function startAutocut(startAt = 0) {
-  if (isRunning(JOB_KINDS.autocut)) return
-  runMockJob({ kind: JOB_KINDS.autocut, title: 'Cutting to the beat', seconds: 2, startAt })
-}
-
 /** The design preview's export in progress: the full video and a vertical version, rendered in one job. */
 export function startMockExport(startAt = 0) {
   if (isRunning(JOB_KINDS.export)) return
