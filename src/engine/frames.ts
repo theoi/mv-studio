@@ -74,6 +74,11 @@ interface VideoSlot {
   presentedTime: Seconds
   /** Seconds between frames at the asset's frame rate, or 0 when it reports none. */
   frameSpacing: Seconds
+  /**
+   * Where the last seek saw its own frame presented (0 for a new element), or NaN when it gave up waiting. Anywhere
+   * else, the video played or moved since without waiting for its frame.
+   */
+  settled: Seconds
   /** Latest requested time while paused; queued seeks skip to it. */
   target: Seconds
   seeking: Promise<void>
@@ -202,6 +207,9 @@ export class VideoElementFrameProvider implements FrameProvider {
       presented: 0,
       presentedTime: -1,
       frameSpacing: asset.frameRate ? 1 / asset.frameRate : 0,
+      // As if a seek to 0 had seen its frame: a new element presents the frame at 0 on load. With a reported frame
+      // rate below the footage's, a first seek just past that frame can still take it before its own arrives.
+      settled: 0,
       target: 0,
       seeking: Promise.resolve(),
       lastUsed: this.frame,
@@ -269,30 +277,35 @@ export class VideoElementFrameProvider implements FrameProvider {
     if (Math.abs(video.currentTime - t) < 1e-6 && !video.seeking) return
     const before = slot.presented
     const from = video.currentTime
+    // An earlier frame may still be presented: the previous seek's, late, or one from playing.
+    const pending = !(Math.abs(from - slot.settled) < 1e-6)
     video.currentTime = t
     await once(video, ['seeked', 'error'], 5_000)
     // Chrome often presents the new frame before 'seeked' fires. A paused video then presents nothing more, so waiting
     // for a frame would only run into the timeout below. The frame shown for `t` starts at or just before it: up to a
     // second before in low frame rate footage, whatever frame rate the asset reports. Going forward it must also be
-    // past where the video was, or it may be the previous seek's frame, presented late, unless it starts within one
-    // frame (at the asset's frame rate) of `t`: then it is the frame for `t` either way (a new element seeking within
-    // its first frame, a fine scrub).
+    // past where the video was, or it may be that earlier frame.
+    const near = () => slot.presentedTime <= t + 0.01 && slot.presentedTime > t - MAX_FRAME_SPACING
+    const own = () => near() && (t < from || slot.presentedTime > from)
+    // A frame starting less than one frame (at the asset's frame rate) before `t` is the frame for `t` too (a new
+    // element seeking within its first frame, a fine scrub), unless an earlier frame may still be presented: the
+    // asset's frame rate can be below the footage's (an average over variable frame rate footage), so that frame can
+    // be the earlier one.
     const presented =
       slot.presented !== before &&
-      slot.presentedTime <= t + 0.01 &&
-      slot.presentedTime > t - MAX_FRAME_SPACING &&
-      (t < from || slot.presentedTime > from || t - slot.presentedTime < slot.frameSpacing)
+      (own() || (!pending && near() && t - slot.presentedTime < slot.frameSpacing))
     if ('requestVideoFrameCallback' in video && !presented) {
       // 'seeked' can fire before the new frame is presented to WebGL; wait for it (bounded, paused videos may not
       // present again when the frame did not change).
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 120)
+      const seen = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 120)
         video.requestVideoFrameCallback(() => {
           clearTimeout(timer)
-          resolve()
+          resolve(!pending || own())
         })
       })
-    }
+      slot.settled = seen ? t : NaN
+    } else slot.settled = t
   }
 
   /**
