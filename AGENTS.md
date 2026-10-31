@@ -25,6 +25,7 @@ Each area owns its folder. Touch another area's code only for minimal integratio
 | `src/engine`                          | WebGL2 compositor `render(project, time)`, playback clock, export, plugin registry | engine               |
 | `src/media`                           | Import, decode, OPFS + IndexedDB storage, portable project files                   | engine               |
 | `src/shared`                          | Job runtime, worker RPC, model loader, capability detection                        | engine               |
+| `src/plugins`                         | Effects, transitions, visualizers, text presets and looks beyond the built-ins     | effects and looks    |
 | `src/analysis`                        | Audio intelligence in workers                                                      | audio                |
 | `src/vision`                          | Vision AI in workers                                                               | vision               |
 | `src/cloud`, `src/director`, `src/vj` | Cloud providers, AI director, live VJ mode                                         | assigned later       |
@@ -38,6 +39,21 @@ Each area owns its folder. Touch another area's code only for minimal integratio
 - **Model loader (`src/shared/models.ts`).** All ML models download through `loadModelFiles()` / `fetchModelFile()` (Cache Storage cache, streaming progress, optional sha256, credential-less CORS fetches). Configure ONNX Runtime with `configureOnnxEnv()` (explicit thread count from `wasmThreadCount()`), and pick the device with `preferredDevice(await detectCapabilities())`. Self-hosted models go under `public/models/` and are addressed with `modelUrl()`.
 - **Analysis results** (`AudioAnalysis`, `VisualAnalysis`, `LyricsDoc`) are plain data stored in the project, written with edit commands, so preview and export read identical values.
 - **Engine and media interfaces** (`src/engine/types.ts`, `src/media/types.ts`) define the compositor, playback clock, export, plugin registry (effects, transitions, generators) and storage.
+
+## Plugins (effects, transitions, generators, text presets)
+
+Projects reference plugins by id; `pluginRegistry` (`src/engine/registry.ts`) resolves them, and `catalog(kind)` describes them to the inspector and the director. The engine's built-ins live in `src/engine/plugins/`. Everything else lives in `src/plugins/` (owner: effects and looks) and is listed in `PLUGINS` in `src/plugins/index.ts`, which the registry loads after the built-ins.
+
+- **Ids** are stable once released (they are stored in projects): kebab-case, generators prefixed `visualizer.` or `generator.`, never reusing a built-in id.
+- **Shaders** are GLSL ES 3.00 bodies, not full programs. Effects and generators define `vec4 mainImage(vec2 uv)`; transitions define `vec4 transition(vec2 uv)`. Effects read the layer with `texture(u_input, uv)`, transitions read `u_from`, `u_to` and `u_progress` (already eased). Colors in and out are premultiplied alpha; `uv` has a bottom-left origin.
+- **Uniforms provided:** `u_resolution`, `u_time` (clip-local seconds), `u_loudness`, `u_beat`, `u_onset`, `u_downbeat`, `u_bands[16]`, `u_bandCount`, plus `u_<key>` for each param (`float`; colors are straight-alpha `vec4`; selects pass the option index; booleans 0 or 1). Do not declare these yourself.
+- **Determinism:** output must depend only on `uv` and uniforms, so preview equals export. Use hash functions of `uv`/`u_time` instead of random state, and express pixel sizes relative to a 1080p canvas (`px * u_resolution.y / 1080.0`) so reduced-size previews look the same.
+- **Params** use `ParamSpec`: give every number a default and a range (values are clamped to it). Mark secondary params `advanced: true`, and structural ones (counts, modes) `animatable: false, modulatable: false`. Keys match `[A-Za-z_][A-Za-z0-9_]*`.
+- **Text presets** implement `draw()` with `helpers.drawWord()` (which applies style and karaoke), animate words at `word.start` when lyric timings exist, and declare `padding` for motion beyond the text box.
+- **Looks** are presets of adjustments and effects. Apply them as an adjustment clip or clip settings through edit commands, not hidden renderer state.
+- **Performance:** a pass should cost under about 2 ms at 1080p on an integrated GPU. Keep loops constant-bounded and texture taps to about 64 or fewer. Avoid GLSL reserved words such as `half`.
+- **Licensing:** write shaders yourself, or adapt MIT, BSD or CC0 code and credit it in `THIRD_PARTY_NOTICES.md`. Shadertoy code is CC BY-NC-SA unless its author says otherwise, so do not copy it.
+- **Tests:** `tests/e2e/render.spec.ts` compiles and renders every registered plugin and fails on shader errors. Add assertions for what your plugin should draw.
 
 ## Rules
 

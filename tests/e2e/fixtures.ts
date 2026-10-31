@@ -11,6 +11,8 @@ export const test = base.extend<{ context: BrowserContext; page: Page }>({
       baseURL,
       acceptDownloads: true,
       viewport: { width: 1440, height: 900 },
+      // page.evaluate is not a user gesture, so playback tests could not start an AudioContext otherwise.
+      args: ['--autoplay-policy=no-user-gesture-required'],
     })
     // Desktop Chrome and Edge define window.chrome; headless Chromium does not. Code that sniffs it (upstream
     // coi-serviceworker picks require-corp when it exists) must see what real users' browsers expose.
