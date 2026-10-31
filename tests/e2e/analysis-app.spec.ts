@@ -120,7 +120,8 @@ test('Assist › Song analysis taps the tempo, sets the first beat and analyzes 
 
 /**
  * Half and Double next to the tempo change the beat level in one click, each as one undo step. Found bars stay bars of
- * four: doubling adds a bar start halfway through each bar, halving leaves none until the user sets the first beat.
+ * four: doubling adds a bar start halfway through each bar, Half right after Double brings back the bars found before,
+ * and halving otherwise leaves none until the user sets the first beat, which the toast says.
  */
 test('Assist › Song analysis halves and doubles the tempo, keeping bars of four', async ({ page }) => {
   await openHarness(page)
@@ -160,8 +161,22 @@ test('Assist › Song analysis halves and doubles the tempo, keeping bars of fou
   await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
   expect((await grid(page)).downbeats).toEqual(found.downbeats)
 
+  // Half instead of Undo after Double gives back the same beats, and the bars found before.
+  await double.click()
+  await panel.getByRole('button', { name: 'Half tempo, 120 BPM' }).click()
+  await expect(page.getByText('Tempo set to 120 BPM', { exact: true })).toBeVisible()
+  await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
+  const back = await grid(page)
+  expect(back.undoLabel).toBe('Half tempo')
+  expect(back.beats).toEqual(found.beats)
+  expect(back.downbeats).toEqual(found.downbeats)
+
   await half.click()
-  await expect(page.getByText('Tempo set to 60 BPM')).toBeVisible()
+  await expect(
+    page.getByText('Tempo set to 60 BPM. Bars cleared: use Set first beat to start them again.', {
+      exact: true,
+    }),
+  ).toBeVisible()
   const halved = await grid(page)
   expect(halved.undoLabel).toBe('Half tempo')
   expect(halved.beats.length).toBeLessThan(found.beats.length * 0.6)

@@ -21,6 +21,7 @@ import {
   findBars,
   findBarsInBackground,
   setSongAnalysisServiceForTests,
+  setTempoLevel,
 } from '../../../src/app/state/songAnalysis.ts'
 import { toast } from '../../../src/app/state/ui.ts'
 
@@ -128,6 +129,49 @@ describe('bars state', () => {
     await Promise.resolve()
     expect(runs).toHaveLength(1)
     stop()
+  })
+})
+
+describe('Half and Double', () => {
+  const found = { tempo: { bpm: 120, confidence: 0.95 }, downbeats: bars }
+
+  it('brings back the bars found before when Half follows Double', () => {
+    editor.load(project(found))
+    setTempoLevel(2)
+    expect(stored()?.downbeats).toHaveLength(bars.length * 2)
+    setTempoLevel(0.5)
+    expect(stored()?.beats).toEqual(beats)
+    expect(stored()?.downbeats).toEqual(bars)
+    expect(stored()?.tempo).toEqual(found.tempo)
+    expect(editor.undoLabel()).toBe('Half tempo')
+    expect(toast).toHaveBeenLastCalledWith('Tempo set to 120 BPM', expect.objectContaining({ label: 'Undo' }))
+  })
+
+  it('says so when Half leaves no bars, also after Double once the bars were moved', () => {
+    editor.load(project(found))
+    setTempoLevel(0.5)
+    expect(stored()?.downbeats).toBeUndefined()
+    expect(toast).toHaveBeenLastCalledWith(
+      'Tempo set to 60 BPM. Bars cleared: use Set first beat to start them again.',
+      expect.objectContaining({ label: 'Undo' }),
+    )
+    editor.load(project(found))
+    setTempoLevel(2)
+    const doubled = stored()!
+    editor.dispatch(
+      {
+        type: 'analysis.setGrid',
+        assetId: songId(),
+        grid: { tempo: doubled.tempo, beats: doubled.beats, downbeats: doubled.downbeats?.slice(1) },
+      },
+      { label: 'Set first beat' },
+    )
+    setTempoLevel(0.5)
+    expect(stored()?.downbeats).toBeUndefined()
+    expect(toast).toHaveBeenLastCalledWith(
+      'Tempo set to 120 BPM. Bars cleared: use Set first beat to start them again.',
+      expect.anything(),
+    )
   })
 })
 

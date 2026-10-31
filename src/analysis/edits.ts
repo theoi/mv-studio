@@ -43,9 +43,9 @@ function gridEdit(assetId: string, grid: BeatGrid): GridEdit {
 }
 
 /**
- * Doubles (2) or halves (0.5) the beat level. Found bars stay bars of four: doubling adds a bar start halfway
- * through each, halving leaves none, since which of each pair of new beats starts a bar is unknown (`barsOfFour`).
- * None are guessed when none were found.
+ * Doubles (2) or halves (0.5) the beat level. Found bars stay bars of four: doubling adds a bar start every four new
+ * beats, halving leaves none, since which of each pair of new beats starts a bar is unknown (`barsOfFour`). None are
+ * guessed when none were found.
  */
 export function rescaleTempo(analysis: AudioAnalysis, factor: 2 | 0.5): GridEdit {
   const grid = rescaleGrid(gridFromAnalysis(analysis), factor)

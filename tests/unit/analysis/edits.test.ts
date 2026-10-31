@@ -30,6 +30,13 @@ describe('beat grid corrections', () => {
     expect(grid.downbeats).toEqual(beats.filter((_, i) => i % 2 === 1))
   })
 
+  it('starts a bar every four beats when doubling across a bar start that was missed', () => {
+    const long = Array.from({ length: 32 }, (_, i) => 1 + i * 0.5)
+    const missed = long.filter((_, i) => i % 4 === 1 && i !== 9)
+    const { grid } = rescaleTempo({ ...analysis, beats: long, downbeats: missed }, 2)
+    expect(grid.downbeats).toEqual(long.filter((_, i) => i % 2 === 1))
+  })
+
   it('halves the beat level, leaving no bars, since which half of each bar starts one is unknown', () => {
     const { grid: halved } = rescaleTempo(analysis, 0.5)
     expect(halved.tempo?.bpm).toBeCloseTo(60, 5)

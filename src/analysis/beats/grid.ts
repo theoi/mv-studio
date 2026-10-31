@@ -243,10 +243,10 @@ export function fitDownbeats(beats: readonly number[], downbeats: readonly numbe
 
 /**
  * Bars put on beats of another level than the one they were found on (the user doubled, halved or tapped the tempo)
- * span 8 or 2 of those beats. Eight beats are two bars of four, so a bar also starts on the beat halfway, and four
- * beats before the first bar and after the last when the song has them, as the found bars ran on before and after
- * their first and last starts. Two beats are half a bar, and which beat of each pair starts a bar is unknown, so
- * there are no bars (null). Other lengths are kept.
+ * span 8 or 2 of those beats. Eight beats are two bars of four, so a bar also starts every four beats between found
+ * bar starts (also across one that was missed), and four beats before the first bar and after the last when the song
+ * has them, as the found bars ran on before and after their first and last starts. Two beats are half a bar, and
+ * which beat of each pair starts a bar is unknown, so there are no bars (null). Other lengths are kept.
  */
 export function barsOfFour(beats: readonly number[], downbeats: readonly number[]): number[] | null {
   const index = new Map(beats.map((t, i) => [t, i] as const))
@@ -264,7 +264,7 @@ export function barsOfFour(beats: readonly number[], downbeats: readonly number[
   at.forEach((i, k) => {
     out.push(beats[i] as number)
     const next = at[k + 1]
-    if (next !== undefined && next - i >= 6) out.push(beats[i + Math.round((next - i) / 2)] as number)
+    for (let j = i + 4; next !== undefined && next - j >= 3; j += 4) out.push(beats[j] as number)
   })
   if (last + 4 < beats.length) out.push(beats[last + 4] as number)
   return out
