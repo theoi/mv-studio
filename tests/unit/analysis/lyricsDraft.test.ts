@@ -92,6 +92,16 @@ describe('voiceActivity', () => {
     const byFrame = voiceActivity(vocals, SR, { pad: 0, mix: song, mixWindow: 0 })
     expect(byFrame.filter((r) => r.start >= 4 && r.end <= 8).length).toBeGreaterThan(0)
   })
+
+  it('given the song, keeps short phrases and brief dips under it as singing', () => {
+    const song = noise(() => 0, 7)
+    // From 2 to 8 s, 0.2 s sung 15 dB under the song in every 0.5 s, one frame in five dipping to 35 dB under it.
+    const vocals = noise((t) => {
+      if (t < 2 || t >= 8 || (t - 2) % 0.5 >= 0.2) return -70
+      return Math.floor(t / 0.02) % 5 === 0 ? -35 : -15
+    }, 1)
+    expect(edges(voiceActivity(vocals, SR, { pad: 0, mix: song }))).toEqual([[2, 7.7]])
+  })
 })
 
 describe('planChunks', () => {
