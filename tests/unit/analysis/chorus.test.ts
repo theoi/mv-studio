@@ -173,7 +173,7 @@ describe('withChorus', () => {
     ])
   })
 
-  it('never cuts or moves a section the user named, and gives new pieces ids no section has', () => {
+  it('never cuts or moves a section the user named, keeps ids on the pieces that remain, and gives new pieces new ids', () => {
     const sections = [
       section('a', 0, 10, 'verse', 0),
       section('a.1', 10, 30, 'Big chorus', 1, 1),
@@ -192,9 +192,19 @@ describe('withChorus', () => {
     expect(next.map((s) => [s.id, s.start, s.end, s.label])).toEqual([
       ['a', 0, 10, 'verse'],
       ['a.1', 10, 30, 'Big chorus'],
-      ['b.1', 30, 40, 'verse'],
+      // b's first piece (30-30.3) is too short and joins the next one, which keeps b's id.
+      ['b', 30, 40, 'verse'],
       ['b.2', 40, 45, 'chorus'],
       ['b.3', 45, 50, 'verse'],
+    ])
+  })
+
+  it("keeps a section's id on its piece that remains when its first piece merges into the section before", () => {
+    const sections = [section('a', 0, 10, 'verse', 0), section('b', 10, 30, 'verse', 1)]
+    const next = withChorus(sections, [{ start: 12, end: 30 }], [], 0.8)
+    expect(next.map((s) => [s.id, s.start, s.end, s.label])).toEqual([
+      ['a', 0, 12, 'verse'],
+      ['b', 12, 30, 'chorus'],
     ])
   })
 

@@ -10,7 +10,7 @@
  *
  * Each song is analyzed as the app does it, with the refined (Beat This!) beats, bars and sections. Beat This! runs on
  * onnxruntime-web's WASM build in Node, a minute or two per song; its output is cached in `--cache` as
- * `<file>.beatthis.json` (and the model as beat-this-final0.onnx), so later runs take seconds. Conditions:
+ * `<file>.beatthis-logits.json` (and the model as beat-this-final0.onnx), so later runs take seconds. Conditions:
  *
  * audio      the detected chorus, without lyrics
  * published  lyrics with the dataset's own line breaks, timed with its reference word times
@@ -237,7 +237,7 @@ async function refinedAnalysis(name: string): Promise<SongModule.RefinedFields> 
     channels[1]![i] = pcm[2 * i + 1]!
   }
   const { state } = song.analyzeSongFast(name, { sampleRate: 44100, channels })
-  const logitsFile = path.join(cache, `${name}.beatthis.json`)
+  const logitsFile = path.join(cache, `${name}.beatthis-logits.json`)
   if (fs.existsSync(logitsFile)) {
     const l = JSON.parse(fs.readFileSync(logitsFile, 'utf8')) as {
       fps: number

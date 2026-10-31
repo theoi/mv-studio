@@ -290,8 +290,8 @@ export function lyricChorusRanges(sections: readonly SongSection[], chorus: Lyri
  * range's confidence (default `confidence`), and detected choruses outside become verses. Sections the user named
  * (any label with confidence 1, or one the analysis never assigns) stay as they are: never cut, merged or relabeled.
  * Neighbours with the same label merge, as in the section analysis, and a piece shorter than a second joins a
- * detected neighbour. New pieces get ids no other section has. The chorus keeps the repeat group it mostly came from
- * when no section outside it shares that group.
+ * detected neighbour. A section keeps its id on its first piece that remains, and new pieces get ids no other
+ * section has. The chorus keeps the repeat group it mostly came from when no section outside it shares that group.
  */
 export function withChorus(
   sections: readonly SongSection[],
@@ -321,6 +321,7 @@ export function withChorus(
     return `${id}.${k}`
   }
   const cut: { piece: SongSection; range: ChorusRange | undefined }[] = []
+  const sourceOf = new Map<SongSection, string>()
   for (const s of sections) {
     const edges = isDetected(s) ? ranges.flatMap((r) => [r.start, r.end]) : []
     const cuts = [s.start, ...edges.filter((t) => t > s.start && t < s.end), s.end]
@@ -334,6 +335,7 @@ export function withChorus(
         end: cuts[k + 1]!,
       }
       cut.push({ piece, range: isDetected(s) ? rangeAt((piece.start + piece.end) / 2) : undefined })
+      sourceOf.set(piece, s.id)
     }
   }
   const weight = new Map<number, number>()
@@ -368,6 +370,13 @@ export function withChorus(
     if (last && isDetected(last) && isDetected(piece) && (short || sameKind)) last.end = piece.end
     else if (short && next && isDetected(next) && isDetected(piece)) next.start = piece.start
     else pieces.push(piece)
+  }
+  const kept = new Set(pieces.map((p) => p.id))
+  for (const p of pieces) {
+    const source = sourceOf.get(p)
+    if (source === undefined || kept.has(source)) continue
+    kept.add(source)
+    p.id = source
   }
   return pieces
 }
