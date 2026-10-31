@@ -1,12 +1,17 @@
-import type { Project, VisualClip } from '../../../../model/index.ts'
-import { currentLook, lookRegistry, ORIGINAL_LOOK } from '../../../../plugins/looks.ts'
+import { Palette } from 'lucide-react'
+import type { AdjustmentClip, Project, VisualClip } from '../../../../model/index.ts'
+import { currentLook, lookIdOf, lookRegistry, ORIGINAL_LOOK } from '../../../../plugins/looks.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { AnimateButtons, FieldRow, Section, Slider } from '../../../ds/Fields.tsx'
 import { formatTime } from '../../../format.ts'
-import { useProject } from '../../../state/project.ts'
+import { isLookClip, useProject } from '../../../state/project.ts'
 import { set } from '../../../state/ui.ts'
 import { useAnimatable } from './animatable.ts'
+import { ColorSection, EffectsSection } from './Effects.tsx'
+import { Header } from './parts.tsx'
 import styles from '../Inspector.module.css'
+
+const openLooks = () => set({ libraryTab: 'effects', libraryOpen: true })
 
 /** Where the look layer applies: everywhere, or the part of the video it was trimmed to. */
 function lookSpan(project: Project, clip: VisualClip): string {
@@ -20,19 +25,16 @@ function lookSpan(project: Project, clip: VisualClip): string {
 }
 
 /** The look's intensity is the opacity of its layer, so it can be keyframed and react to the music. */
-function LookIntensity({ clip }: { clip: VisualClip }) {
-  const intensity = useAnimatable(clip, ['opacity'], undefined, { label: 'Look intensity' })
+function LookIntensity({ clip, name = 'Look intensity' }: { clip: VisualClip; name?: string }) {
+  const intensity = useAnimatable(clip, ['opacity'], undefined, { label: name })
   const pct = Math.round(Number(intensity.value ?? 1) * 100)
   return (
-    <FieldRow
-      label="Intensity"
-      trailing={<AnimateButtons property="Look intensity" {...intensity.buttons} />}
-    >
+    <FieldRow label="Intensity" trailing={<AnimateButtons property={name} {...intensity.buttons} />}>
       <Slider
         value={pct}
         onChange={(v) => intensity.set(v / 100)}
         onCommit={intensity.commit}
-        ariaLabel="Look intensity"
+        ariaLabel={name}
       />
       <span className={`${styles.value} tnum`}>{pct}%</span>
     </FieldRow>
@@ -60,15 +62,45 @@ export function LookSection() {
           </div>
           <div className={styles.meta}>{layer ? lookSpan(project, layer) : 'No look'}</div>
         </div>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => set({ libraryTab: 'effects', libraryOpen: true })}
-        >
+        <Button size="sm" variant="secondary" onClick={openLooks}>
           Change
         </Button>
       </div>
       {layer && <LookIntensity clip={layer} />}
     </Section>
+  )
+}
+
+/**
+ * A selected look layer: which look, how strongly it applies, and the color adjustments and effects it is made of.
+ * Other adjustment layers (a VJ recording's effect hits) get the same, without the look.
+ */
+export function LookInspector({ clip }: { clip: AdjustmentClip }) {
+  const project = useProject()
+  const isLook = isLookClip(clip)
+  const lookId = lookIdOf(clip)
+  const look = lookId ? lookRegistry.get(lookId) : undefined
+  const kind = isLook ? 'Look' : 'Adjustment layer'
+  return (
+    <>
+      <Header
+        thumb={look?.thumbnail}
+        icon={<Palette />}
+        title={look?.name ?? clip.name ?? (isLook ? 'Custom look' : kind)}
+        meta={`${kind} · ${lookSpan(project, clip)}`}
+      />
+      <Section title={kind}>
+        <LookIntensity clip={clip} name={isLook ? 'Look intensity' : 'Intensity'} />
+        {isLook && (
+          <div className={styles.stackActions}>
+            <Button size="sm" variant="secondary" block onClick={openLooks}>
+              Change look
+            </Button>
+          </div>
+        )}
+      </Section>
+      <ColorSection clip={clip} defaultOpen />
+      <EffectsSection clip={clip} defaultOpen />
+    </>
   )
 }

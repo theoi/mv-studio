@@ -16,6 +16,7 @@ import { createSolidClip, createTrack } from '../model/factory.ts'
 import { projectDuration } from '../model/queries.ts'
 import type {
   AdjustmentClip,
+  Clip,
   ColorAdjustmentKey,
   Id,
   ParamValue,
@@ -104,15 +105,18 @@ export const ORIGINAL_LOOK = {
   thumbnail: thumbnailUrl('look', 'original'),
 } as const
 
+/** The look a look layer came from, or undefined for any other clip and for a director's custom grade. */
+export function lookIdOf(clip: Clip): string | undefined {
+  const lookId = clip.type === 'adjustment' && clip.meta?.role === LOOK_ROLE ? clip.meta.lookId : undefined
+  return typeof lookId === 'string' ? lookId : undefined
+}
+
 /** The look layer (adjustment clip) of a project and the look it came from, or null. */
 export function currentLook(project: Project): { clipId: Id; lookId: string | undefined } | null {
   let director: Id | undefined
   for (const clip of Object.values(project.clips)) {
     if (clip.type !== 'adjustment') continue
-    if (clip.meta?.role === LOOK_ROLE) {
-      const lookId = clip.meta.lookId
-      return { clipId: clip.id, lookId: typeof lookId === 'string' ? lookId : undefined }
-    }
+    if (clip.meta?.role === LOOK_ROLE) return { clipId: clip.id, lookId: lookIdOf(clip) }
     if (directorMeta(clip)?.role === 'look') director ??= clip.id
   }
   return director ? { clipId: director, lookId: undefined } : null

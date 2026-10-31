@@ -3,6 +3,7 @@ import { useProject } from '../../state/project.ts'
 import { selectedClipIds, useUi } from '../../state/ui.ts'
 import { ClipsInspector } from './inspector/Clips.tsx'
 import { GeneratorInspector } from './inspector/Generator.tsx'
+import { LookInspector } from './inspector/Look.tsx'
 import { LyricInspector } from './inspector/Lyric.tsx'
 import { MediaInspector } from './inspector/Media.tsx'
 import { ProjectInspector } from './inspector/Project.tsx'
@@ -25,6 +26,7 @@ export function Inspector() {
     if (!clip) content = <ProjectInspector />
     else if (clip.type === 'video' || clip.type === 'image') content = <MediaInspector clip={clip} />
     else if (clip.type === 'generator') content = <GeneratorInspector clip={clip} />
+    else if (clip.type === 'adjustment') content = <LookInspector clip={clip} />
     else if (clip.type === 'text')
       content = clip.lyricLineId ? <LyricInspector id={clip.lyricLineId} /> : <TextInspector clip={clip} />
     else content = <ProjectInspector />

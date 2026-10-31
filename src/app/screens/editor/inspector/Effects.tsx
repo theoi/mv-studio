@@ -8,11 +8,17 @@ import { set } from '../../../state/ui.ts'
 import { useAnimatable } from './animatable.ts'
 import styles from '../Inspector.module.css'
 
-const ADJUSTMENTS = [
+const ADJUSTMENTS: readonly { key: ColorAdjustmentKey; label: string }[] = [
   { key: 'exposure', label: 'Exposure' },
+  { key: 'brightness', label: 'Brightness' },
   { key: 'contrast', label: 'Contrast' },
   { key: 'saturation', label: 'Saturation' },
-] as const
+  { key: 'temperature', label: 'Temperature' },
+  { key: 'tint', label: 'Tint' },
+  { key: 'hue', label: 'Hue' },
+]
+/** Shown on every clip; the others only once the clip has them, as a look's temperature. */
+const ALWAYS: ReadonlySet<ColorAdjustmentKey> = new Set(['exposure', 'contrast', 'saturation'])
 
 /** One color adjustment (-1..1, neutral 0) on a 0..100 slider. */
 function AdjustmentRow({
@@ -39,21 +45,21 @@ function AdjustmentRow({
   )
 }
 
-export function ColorSection({ clip }: { clip: VisualClip }) {
+export function ColorSection({ clip, defaultOpen = false }: { clip: VisualClip; defaultOpen?: boolean }) {
   return (
-    <Section title="Color" defaultOpen={false}>
-      {ADJUSTMENTS.map((x) => (
+    <Section title="Color" defaultOpen={defaultOpen}>
+      {ADJUSTMENTS.filter((x) => ALWAYS.has(x.key) || clip.adjustments?.[x.key]).map((x) => (
         <AdjustmentRow key={x.key} clip={clip} adjustment={x.key} label={x.label} />
       ))}
     </Section>
   )
 }
 
-export function EffectsSection({ clip }: { clip: VisualClip }) {
+export function EffectsSection({ clip, defaultOpen = false }: { clip: VisualClip; defaultOpen?: boolean }) {
   return (
     <Section
       title="Effects"
-      defaultOpen={false}
+      defaultOpen={defaultOpen}
       badge={clip.effects.length ? <Badge>{clip.effects.length}</Badge> : undefined}
       actions={
         <IconButton
