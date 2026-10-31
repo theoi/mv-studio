@@ -11,6 +11,7 @@ import { StemSeparationService, type StemStore } from '../stems/client.ts'
 import { lyricChorusCommand } from '../structure/chorus.ts'
 import { realignFrom, realignLine, type CtcVocabulary } from './align.ts'
 import type { CtcEmissions } from './ctc.ts'
+import type { TimeRange } from './vad.ts'
 import { toLyricsDoc } from './doc.ts'
 import { parseLyricsText } from './text.ts'
 import { CTC_SAMPLE_RATE } from './wav2vec2.ts'
@@ -75,6 +76,8 @@ const DRAFT_SIZE: WhisperSize = 'small'
 interface Emissions {
   em: CtcEmissions
   vocab: CtcVocabulary
+  /** Where someone sings, so re-aligned words stay out of instrumental stretches as the first alignment did. */
+  voiced: readonly TimeRange[]
   /** The vocals asset the emissions were computed from. */
   vocalsId: Id
 }
@@ -153,7 +156,12 @@ export class LyricsService {
           const cached = this.emissions.get(songId)
           const emissions = cached?.vocalsId === vocalsId ? cached.em : undefined
           const result = await this.call((c) => runWorkerCall(c, 'align', { vocals, lines, emissions }, rest))
-          this.emissions.set(songId, { em: result.emissions, vocab: result.vocab, vocalsId })
+          this.emissions.set(songId, {
+            em: result.emissions,
+            vocab: result.vocab,
+            voiced: result.voiced,
+            vocalsId,
+          })
           const doc: LyricsDoc = { audioAssetId: songId, source: 'pasted', lines: result.lines }
           return { doc, chorus: chorusFor(deps, songId, doc) }
         }
@@ -161,7 +169,12 @@ export class LyricsService {
         const result = await this.call((c) =>
           runWorkerCall(c, 'transcribe', { vocals, language: request.language, size }, rest),
         )
-        this.emissions.set(songId, { em: result.emissions, vocab: result.vocab, vocalsId })
+        this.emissions.set(songId, {
+          em: result.emissions,
+          vocab: result.vocab,
+          voiced: result.voiced,
+          vocalsId,
+        })
         const doc = toLyricsDoc(result.words, {
           boundaries: result.segmentStarts,
           source: 'transcribed',
@@ -198,7 +211,12 @@ export class LyricsService {
           lyricsSeconds(duration, 'time', await this.stems.slowdown()),
         )
         const result = await this.call((c) => runWorkerCall(c, 'emissions', { vocals }, rest))
-        this.emissions.set(songId, { em: result.emissions, vocab: result.vocab, vocalsId })
+        this.emissions.set(songId, {
+          em: result.emissions,
+          vocab: result.vocab,
+          voiced: result.voiced,
+          vocalsId,
+        })
       },
     })
   }
@@ -218,7 +236,7 @@ export class LyricsService {
     return {
       ...doc,
       source: mixed(doc),
-      lines: realignFrom(e.em, e.vocab, doc.lines, lineIndex, wordIndex, time),
+      lines: realignFrom(e.em, e.vocab, doc.lines, lineIndex, wordIndex, time, { voiced: e.voiced }),
     }
   }
 
@@ -226,7 +244,11 @@ export class LyricsService {
   realignLine(doc: LyricsDoc, lineIndex: number): LyricsDoc | undefined {
     const e = this.emissions.get(doc.audioAssetId ?? '')
     if (!e) return undefined
-    return { ...doc, source: mixed(doc), lines: realignLine(e.em, e.vocab, doc.lines, lineIndex) }
+    return {
+      ...doc,
+      source: mixed(doc),
+      lines: realignLine(e.em, e.vocab, doc.lines, lineIndex, { voiced: e.voiced }),
+    }
   }
 
   /** The song's vocals at 16 kHz, from its stems or separated first; `rest` reports progress for what follows. */

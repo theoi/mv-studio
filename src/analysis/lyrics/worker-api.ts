@@ -7,7 +7,7 @@ import { mixToMono, resample } from '../dsp/resample.ts'
 import type { WhisperSize } from '../models.ts'
 import { alignLines, type CtcVocabulary } from './align.ts'
 import type { CtcEmissions } from './ctc.ts'
-import { planChunks, voiceActivity } from './vad.ts'
+import { planChunks, voiceActivity, type TimeRange } from './vad.ts'
 import { CTC_SAMPLE_RATE, ctcEmissions, type CtcModel } from './wav2vec2.ts'
 import { alignTranscript, detectLanguage, transcribeChunks, type Transcriber } from './whisper.ts'
 
@@ -43,6 +43,8 @@ export interface TranscribeResult {
   device: ModelDevice
   emissions: CtcEmissions
   vocab: CtcVocabulary
+  /** Where someone sings in the vocals (`voiceActivity`), kept with the emissions for re-aligning. */
+  voiced: TimeRange[]
 }
 
 function mono16k(audio: DecodedAudio): Float32Array {
@@ -74,17 +76,21 @@ export function createLyricsApi(deps: LyricsWorkerDeps) {
       const { em, vocab } = args.emissions
         ? { em: args.emissions, vocab: (await deps.ctcModel(ctx)).vocab }
         : await emissionsFor(pcm, ctx, 0, 0.95)
-      const lines: LyricLine[] = alignLines(em, vocab, args.lines, {
-        voiced: voiceActivity(pcm, CTC_SAMPLE_RATE),
-      })
-      return transfer({ lines, emissions: em, vocab }, [em.logProbs.buffer])
+      const voiced = voiceActivity(pcm, CTC_SAMPLE_RATE)
+      const lines: LyricLine[] = alignLines(em, vocab, args.lines, { voiced })
+      return transfer({ lines, emissions: em, vocab, voiced }, [em.logProbs.buffer])
     },
 
-    /** The aligner's per-frame output for the vocals, so words can be re-aligned later without the model. */
+    /**
+     * The aligner's per-frame output for the vocals and where someone sings in them, so words can be re-aligned later
+     * without the model.
+     */
     async emissions(args: { vocals: DecodedAudio }, ctx: WorkerCallContext) {
       if (!args.vocals.channels[0]?.length) throw new JobError('invalid-input', 'The song has no audio')
-      const { em, vocab } = await emissionsFor(mono16k(args.vocals), ctx, 0, 1)
-      return transfer({ emissions: em, vocab }, [em.logProbs.buffer])
+      const pcm = mono16k(args.vocals)
+      const { em, vocab } = await emissionsFor(pcm, ctx, 0, 1)
+      const voiced = voiceActivity(pcm, CTC_SAMPLE_RATE)
+      return transfer({ emissions: em, vocab, voiced }, [em.logProbs.buffer])
     },
 
     async transcribe(args: TranscribeArgs, ctx: WorkerCallContext) {
@@ -121,6 +127,7 @@ export function createLyricsApi(deps: LyricsWorkerDeps) {
         device,
         emissions: em,
         vocab,
+        voiced: regions,
       }
       return transfer(result, [em.logProbs.buffer])
     },
