@@ -1,3 +1,4 @@
+import { AlertTriangle } from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { VisualClip } from '../../../../model/index.ts'
 import { JobError } from '../../../../shared/jobs.ts'
@@ -17,13 +18,16 @@ import {
   useDepthDownload,
   type CameraMotion,
 } from '../../../state/camera.ts'
-import { JOB_KINDS } from '../../../state/jobs.ts'
+import { JOB_KINDS, latestJob, useJobs } from '../../../state/jobs.ts'
 import { formatBytes } from '../../../format.ts'
 import { editor } from '../../../state/project.ts'
 import { toast } from '../../../state/ui.ts'
 import { pct, useJob } from '../assist/jobState.ts'
+import { CancelButton } from '../assist/ToolView.tsx'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import styles from '../Inspector.module.css'
+
+const CAMERA_DESCRIPTION = 'Give this still image depth with a slow 3D camera move'
 
 /** Offers a 3D camera move on a still image that has none. */
 export function CameraSuggestion({ clip }: { clip: VisualClip }) {
@@ -47,7 +51,7 @@ export function CameraSuggestion({ clip }: { clip: VisualClip }) {
         )
       }}
     >
-      Give this still image depth with a slow 3D camera move
+      {CAMERA_DESCRIPTION}
       {download ? ` (${formatBytes(download)} download, once)` : ''}.
     </InlineSuggestion>
   )
@@ -69,19 +73,25 @@ function presetLabel(preset: CameraPreset): string {
 /** Inspector › Motion for a still: pick, change or remove its 3D camera move and set its strength. */
 export function CameraSection({ clip }: { clip: VisualClip }) {
   const { job, phase } = useJob(JOB_KINDS.camera)
+  const latest = latestJob(useJobs(), JOB_KINDS.camera)
   const requests = useCamera((s) => s.requests)
+  const presets = useCamera((s) => s.presets)
   const strength = useCamera((s) => s.strength)
   const move = cameraMoveOf(clip)
+  const busy = phase === 'running'
   const asked = !!job && !!requests[job.id]?.includes(clip.id)
-  const adding = asked && phase === 'running' ? job : undefined
+  const adding = asked && busy ? job : undefined
   const failure = asked && phase === 'failed' ? job?.error?.message : undefined
-  const download = useDepthDownload(!move && !adding)
-  const motion = move && motionOf(move.preset)
-  const value: string = move ? (motion ?? move.preset) : 'none'
+  const cancelled = !move && latest?.status === 'cancelled' && !!requests[latest.id]?.includes(clip.id)
+  const download = useDepthDownload(!move && !busy)
+  // While the move is being added, the select shows the motion that was chosen.
+  const shown = move?.preset ?? (adding ? presets[adding.id] : undefined)
+  const motion = shown && motionOf(shown)
+  const value: string = shown ? (motion ?? shown) : 'none'
   const options = [
     { value: 'none', label: 'None' },
     ...MOTIONS,
-    ...(move && !motion ? [{ value: move.preset, label: presetLabel(move.preset) }] : []),
+    ...(shown && !motion ? [{ value: shown, label: presetLabel(shown) }] : []),
   ]
   const choose = (v: string) => {
     if (v === value) return
@@ -92,33 +102,53 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
       else startCameraMoves([clip.id], preset, strength / 100)
     }
   }
+  const intensity = move ? Math.round(move.intensity * 100) : 0
   return (
-    <Section title="Motion" defaultOpen={!!move}>
+    <Section title="Motion" defaultOpen={!!move || !!adding}>
       <FieldRow label="3D camera" trailing={<span className={styles.trailSpacer} />}>
-        <Select value={value} onChange={choose} options={options} ariaLabel="3D camera move" />
+        <Select
+          value={value}
+          onChange={choose}
+          options={options}
+          ariaLabel="3D camera move"
+          disabled={busy}
+        />
       </FieldRow>
       {move && !adding && (
         <FieldRow label="Strength" trailing={<span className={styles.trailSpacer} />}>
           <Slider
-            value={Math.round(move.intensity * 100)}
+            value={intensity}
             onChange={(v) => setCameraMove(clip.id, { intensity: v / 100 }, true)}
             onCommit={() => editor.endGesture()}
             ariaLabel="3D camera strength"
           />
+          <span className={`${styles.value} tnum`}>{intensity}%</span>
         </FieldRow>
       )}
       {adding ? (
-        <p className={styles.note}>Estimating depth… {pct(adding)}%</p>
+        <div className={styles.progressRow}>
+          <span>Estimating depth… {pct(adding)}%</span>
+          <CancelButton job={adding} inline />
+        </div>
+      ) : busy ? (
+        <p className={styles.note}>Wait for the other 3D camera move to finish.</p>
       ) : failure ? (
         <p className={styles.note} role="alert">
-          {failure} Your project is unchanged. Choose a move again to retry.
+          <span className={styles.noteDanger}>
+            <AlertTriangle aria-hidden />
+            {failure}
+          </span>
+          Your project is unchanged. Choose a move again to retry.
         </p>
       ) : (
         !move && (
-          <p className={styles.note}>
-            Moves a camera through the still, with near and far parts shifting at their own speed
-            {download ? ` (${formatBytes(download)} download, once)` : ''}.
-          </p>
+          <>
+            <p className={styles.note}>
+              {CAMERA_DESCRIPTION}
+              {download ? ` (${formatBytes(download)} download, once)` : ''}.
+            </p>
+            {cancelled && <p className={styles.note}>Cancelled. Your project is unchanged.</p>}
+          </>
         )
       )}
     </Section>

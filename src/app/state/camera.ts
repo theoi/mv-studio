@@ -37,7 +37,9 @@ export const useCamera = create<{
   results: Record<string, CameraMovesResult>
   /** The clips each job was asked for, so the inspector shows progress and failures next to them. */
   requests: Record<string, readonly Id[]>
-}>(() => ({ motion: 'push', strength: 40, results: {}, requests: {} }))
+  /** The preset each job adds, so the inspector shows the chosen motion while depth is estimated. */
+  presets: Record<string, CameraPreset>
+}>(() => ({ motion: 'push', strength: 40, results: {}, requests: {}, presets: {} }))
 
 export function hasCameraMove(clip: Clip): boolean {
   return 'effects' in clip && clip.effects.some((e) => e.effectId === CAMERA_EFFECT_ID)
@@ -120,7 +122,10 @@ export function startCameraMoves(
     },
   })
   id = handle.id
-  useCamera.setState((s) => ({ requests: { ...s.requests, [id]: clipIds } }))
+  useCamera.setState((s) => ({
+    requests: { ...s.requests, [id]: clipIds },
+    presets: { ...s.presets, [id]: preset },
+  }))
   return handle
 }
 

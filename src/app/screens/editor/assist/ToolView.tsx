@@ -75,9 +75,16 @@ export function RunCard({ job, label }: { job?: JobSnapshot; label: string }) {
   )
 }
 
-export function CancelButton({ job }: { job?: JobSnapshot }) {
+/** Cancels a running job: full width in a panel footer, or `inline` at the end of a progress row. */
+export function CancelButton({ job, inline = false }: { job?: JobSnapshot; inline?: boolean }) {
   return (
-    <Button variant="secondary" block icon={<X />} onClick={() => job && jobs.cancel(job.id)}>
+    <Button
+      variant={inline ? 'ghost' : 'secondary'}
+      size={inline ? 'sm' : 'md'}
+      block={!inline}
+      icon={<X />}
+      onClick={() => job && jobs.cancel(job.id)}
+    >
       Cancel
     </Button>
   )
