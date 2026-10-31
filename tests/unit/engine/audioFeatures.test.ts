@@ -114,6 +114,22 @@ describe('audio frame motion and stems', () => {
     expect(createAudioSampler(project).frame(3)).toMatchObject({ barIndex: 1, barPhase: 0.5 })
   })
 
+  it('pulses the downbeat on every fourth beat until bars are found, on the bars barIndex counts', () => {
+    const project = songProject(0, 0)
+    const analysis = Object.values(project.analysis.audio)[0]!
+    analysis.beats = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4]
+    delete analysis.downbeats
+    const fromFirstBeat = createAudioSampler(project)
+    expect(fromFirstBeat.frame(2)).toMatchObject({ downbeat: 1, barIndex: 1, barPhase: 0 })
+    expect(fromFirstBeat.frame(2.2).downbeat).toBeCloseTo(Math.exp(-1))
+    expect(fromFirstBeat.frame(1.9).downbeat).toBeLessThan(0.01)
+    expect(fromFirstBeat.sample({ kind: 'downbeat' }, 4)).toBeCloseTo(1)
+    analysis.downbeats = [0.5]
+    const fromDownbeat = createAudioSampler(project)
+    expect(fromDownbeat.frame(2.5)).toMatchObject({ downbeat: 1, barIndex: 1, barPhase: 0 })
+    expect(fromDownbeat.frame(2.1).downbeat).toBeLessThan(0.01)
+  })
+
   it('follows the tempo, or 120 BPM, without beats', () => {
     const project = songProject(0, 0)
     const analysis = Object.values(project.analysis.audio)[0]!

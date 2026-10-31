@@ -174,6 +174,7 @@ export interface AudioFrame {
   bands: number[]
   onset: number
   beat: number
+  /** Pulse on each bar start: the downbeats, or every fourth beat before bars are found. */
   downbeat: number
   /**
    * Position on the beat grid: beats since the first beat (whole number, negative before it) and the 0..1 phase within

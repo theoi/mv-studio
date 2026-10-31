@@ -88,6 +88,27 @@ export function gridPosition(events: readonly number[] | undefined, t: number): 
   return i + (t - at(i)) / Math.max(at(i + 1) - at(i), 1e-3)
 }
 
+const barStartCache = new WeakMap<readonly number[], { first: number | undefined; starts: number[] }>()
+
+/**
+ * Bar starts for the downbeat pulse: the downbeats; before bars are found (fewer than two downbeats), every fourth beat
+ * from the first downbeat or else the first beat, the same bars barIndex counts.
+ */
+function barStarts(analysis: AudioAnalysis): readonly number[] | undefined {
+  const { beats, downbeats } = analysis
+  if (downbeats && downbeats.length >= 2) return downbeats
+  if (!beats || beats.length === 0) return downbeats
+  const first = downbeats?.[0]
+  const cached = barStartCache.get(beats)
+  if (cached && cached.first === first) return cached.starts
+  const offset = first === undefined ? 0 : Math.round(gridPosition(beats, first) ?? 0)
+  const starts = beats.filter(
+    (_, i) => (((i - offset) % BEATS_PER_BAR) + BEATS_PER_BAR) % BEATS_PER_BAR === 0,
+  )
+  barStartCache.set(beats, { first, starts })
+  return starts
+}
+
 /** Running integral of a uniformly sampled series: out[k] = sum of values[0..k-1] / rate. */
 function prefixSums(values: readonly number[], rate: number): Float64Array {
   const out = new Float64Array(values.length + 1)
@@ -161,7 +182,7 @@ export function createAudioSampler(project: Project): AudioSampler {
       case 'beat':
         return pulse(analysis.beats, assetTime, 0.12 + smoothing * 0.4)
       case 'downbeat':
-        return pulse(analysis.downbeats, assetTime, 0.2 + smoothing * 0.6)
+        return pulse(barStarts(analysis), assetTime, 0.2 + smoothing * 0.6)
     }
   }
 
@@ -278,7 +299,7 @@ export function createAudioSampler(project: Project): AudioSampler {
         : [],
       onset: pulse(f?.onsets, assetTime, 0.08),
       beat: pulse(analysis.beats, assetTime, 0.12),
-      downbeat: pulse(analysis.downbeats, assetTime, 0.2),
+      downbeat: pulse(barStarts(analysis), assetTime, 0.2),
       ...motion(analysis, f, assetTime),
       stems: {},
     }
