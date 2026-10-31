@@ -19,6 +19,8 @@ import { Button } from '../../ds/Button.tsx'
 import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select, SearchInput, Switch } from '../../ds/Fields.tsx'
 import { Kbd } from '../../ds/Kbd.tsx'
+import { formatBytes } from '../../format.ts'
+import { LOCAL_MODELS, clearModels, refreshModels, useModels } from '../../state/models.ts'
 import { set, toast, useUi, type SettingsPage } from '../../state/ui.ts'
 import styles from './SettingsDialog.module.css'
 
@@ -355,15 +357,10 @@ function Capability({
 
 function LocalPage() {
   const caps = useCapabilities()
-  const models: [string, string, string, boolean][] = [
-    ['Beat and bar tracker', 'Tempo, beats and bar starts', '83 MB', true],
-    ['Stem separator', 'Vocals, drums, bass and other', '180 MB', false],
-    ['Lyrics transcriber', 'Drafts lyrics from the vocals', '240 MB', false],
-    ['Word aligner', 'Times each word to the vocals', '95 MB', true],
-    ['Person cutout', 'Text behind the subject', '12 MB', true],
-    ['Depth', '3D camera on stills', '25 MB', false],
-    ['Footage tagger', 'Search and match clips', '150 MB', true],
-  ]
+  const cached = useModels((s) => s.cached)
+  useEffect(() => {
+    void refreshModels()
+  }, [])
   return (
     <>
       <div className={styles.scLabel}>This browser</div>
@@ -411,42 +408,89 @@ function LocalPage() {
         </span>
       </Row>
       <div className={styles.scLabel}>Models · downloaded once, then used offline</div>
-      {models.map(([n, d, s, cached]) => (
-        <div key={n} className={styles.modelRow}>
+      {LOCAL_MODELS.map((m) => (
+        <div key={m.id} className={styles.modelRow} aria-label={m.title}>
           <div className={styles.rowText}>
-            <div className={styles.rowTitle}>{n}</div>
-            <div className={styles.rowDesc}>{d}</div>
+            <div className={styles.rowTitle}>{m.title}</div>
+            <div className={styles.rowDesc}>{m.desc}</div>
           </div>
-          <span className={`${styles.size} tnum`}>{s}</span>
-          {cached ? <Badge tone="success">On this device</Badge> : <Badge>Downloads when used</Badge>}
+          <span className={`${styles.size} tnum`}>{formatBytes(m.bytes)}</span>
+          {cached &&
+            (cached[m.id] ? (
+              <Badge tone="success">On this device</Badge>
+            ) : (
+              <Badge>Downloads when used</Badge>
+            ))}
         </div>
       ))}
     </>
   )
 }
 
+function useStorageUsage() {
+  const [usage, setUsage] = useState<{ usedBytes: number; quotaBytes: number } | null>(null)
+  const load = () =>
+    void import('../../../media/mediaStore.ts')
+      .then(({ mediaStore }) => mediaStore.usage())
+      .then(setUsage, () => undefined)
+  useEffect(load, [])
+  return { usage, reload: load }
+}
+
 function StoragePage() {
+  const { usage, reload } = useStorageUsage()
+  const models = useModels((s) => s.bytes)
+  const [clearing, setClearing] = useState(false)
+  useEffect(() => {
+    void refreshModels()
+  }, [])
+  const clear = async () => {
+    setClearing(true)
+    try {
+      const freed = await clearModels()
+      toast(`Removed ${formatBytes(freed)} of models. They download again when needed.`)
+    } catch {
+      toast('The model cache could not be cleared. Try again after closing other tabs of MV Studio.')
+    } finally {
+      setClearing(false)
+      reload()
+    }
+  }
   return (
     <>
       <div className={styles.storage}>
         <div className={styles.storageTop}>
-          <span className={styles.rowTitle}>5.2 GB used</span>
-          <span className={styles.rowDesc}>of about 40 GB this browser allows</span>
+          <span className={styles.rowTitle}>
+            {usage ? `${formatBytes(usage.usedBytes)} used` : 'Checking…'}
+          </span>
+          {usage && (
+            <span className={styles.rowDesc}>
+              of about {formatBytes(usage.quotaBytes)} this browser allows
+            </span>
+          )}
         </div>
-        <ProgressBar value={0.13} />
-        <div className={styles.legend}>
-          <span>Media 3.4 GB</span>
-          <span>Projects 1.2 GB</span>
-          <span>Models 0.6 GB</span>
-        </div>
+        <ProgressBar value={usage && usage.quotaBytes ? usage.usedBytes / usage.quotaBytes : 0} />
+        {usage && models !== null && (
+          <div className={styles.legend}>
+            <span>Media and projects {formatBytes(Math.max(0, usage.usedBytes - models))}</span>
+            <span>Models {formatBytes(models)}</span>
+          </div>
+        )}
       </div>
       <Row title="Unused media" desc="Files no project uses anymore.">
         <Button size="sm" variant="danger" icon={<Trash2 />}>
           Delete 640 MB
         </Button>
       </Row>
-      <Row title="Model cache" desc="Models download again when needed.">
-        <Button size="sm" variant="secondary">
+      <Row
+        title="Model cache"
+        desc={
+          models
+            ? `${formatBytes(models)} on this device. Models download again when needed.`
+            : 'No models downloaded yet.'
+        }
+      >
+        <Button size="sm" variant="secondary" disabled={!models || clearing} onClick={() => void clear()}>
           Clear
         </Button>
       </Row>

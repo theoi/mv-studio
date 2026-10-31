@@ -21,3 +21,10 @@ export function formatBpm(bpm: number): string {
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
+
+/** Storage sizes as people read them: "83 MB", "1.2 GB". */
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
+  if (bytes > 0 && bytes < 1e6) return 'under 1 MB'
+  return `${Math.round(bytes / 1e6)} MB`
+}
