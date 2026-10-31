@@ -1,27 +1,143 @@
-import type { Asset, Clip, EditCommand, Project, Track } from '../../model/index.ts'
+import { useEffect, useState } from 'react'
+import { create } from 'zustand'
+import type { Asset, Clip, EditCommand, Id, Project, Track } from '../../model/index.ts'
+import { mediaStore } from '../../media/mediaStore.ts'
+import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
+import { modelCache } from '../../shared/models.ts'
+import type { SuitabilityReason, SuitabilityReport, SuitabilityVerdict } from '../../vision/index.ts'
+import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { mediaById } from '../mock/media.ts'
 import { maskStorageKey, sceneOf } from '../mock/demoProject.ts'
+import { isSampleAsset } from '../mock/sampleMedia.ts'
+import { visionService } from './footage.ts'
+import { JOB_KINDS, isRunning } from './jobs.ts'
+import { appMedia } from './media.ts'
 import { dispatch, editor } from './project.ts'
 
 /*
  * "Behind the subject": the footage clip is duplicated onto a Subject track above the lyrics and restricted to the
- * person with a matte, so text plays between the person and the background on exactly that clip. Masks for sample
- * footage come from the procedural scenes; imported footage gets them from src/vision.
+ * person with a matte, so text plays between the person and the background on exactly that clip. Sample footage has
+ * its masks drawn with its scenes. Imported footage is checked for a person (src/vision checkSuitability) and cut
+ * out with a person mask track encoded as a mask video, as a job.
  */
 
 const SUBJECT_TRACK_NAME = 'Subject'
-type MediaClip = Extract<Clip, { type: 'video' | 'image' }>
+export const CUTOUT_LABEL = 'Put lyrics behind the subject'
+/** Marks person mask videos among an asset's derived media. */
+const PERSON_MASK = 'vision.person-mask'
 
-/** The sample scene with a person large enough to cut out, if the clip's footage has one. */
-function subjectScene(project: Project, clip: Clip | undefined) {
-  if (!clip || (clip.type !== 'video' && clip.type !== 'image')) return undefined
-  const asset = project.assets[clip.assetId]
-  const scene = sceneOf(asset)
-  return scene && mediaById[clip.assetId]?.subject === 'large' ? scene : undefined
+type VideoClip = Extract<Clip, { type: 'video' }>
+
+export type Suitability =
+  | { status: 'checked'; verdict: SuitabilityVerdict; reasons: SuitabilityReason[] }
+  | { status: 'unchecked' }
+  | { status: 'checking' }
+  | { status: 'failed'; message: string }
+  | { status: 'unsupported' }
+
+export interface CutoutResult {
+  /** Clips that got a cutout. */
+  count: number
+  /** Requested clips left as they were: no person to cut out, or already behind. */
+  skipped: number
+  label: string
 }
 
-export function canCutOut(project: Project, clip: Clip | undefined): boolean {
-  return !!subjectScene(project, clip)
+export const useBehind = create<{
+  checks: Record<Id, Suitability>
+  results: Record<string, CutoutResult>
+  /** The clips each cutout job was asked for, so a failure shows next to them. */
+  requests: Record<string, readonly string[]>
+}>(() => ({ checks: {}, results: {}, requests: {} }))
+
+function setCheck(assetId: Id, check: Suitability) {
+  useBehind.setState((s) => ({ checks: { ...s.checks, [assetId]: check } }))
+}
+
+const fromReport = (r: SuitabilityReport): Suitability => ({
+  status: 'checked',
+  verdict: r.verdict,
+  reasons: r.reasons,
+})
+
+const REASONS: Record<SuitabilityReason, string> = {
+  'no-subject': 'No one is in this shot',
+  'subject-too-small': 'People are too small in this wide shot',
+  'subject-fills-frame': 'The person fills the frame, so text behind them would barely show',
+  'many-small-subjects': 'Too many small people to cut out cleanly',
+  'unstable-mask': 'The cutout flickers in this shot',
+}
+
+/** What the inspector and Assist say about a shot: a short status and, when it matters, why. */
+export function suitabilityText(s: Suitability): { status: string; why?: string; ok: boolean } {
+  switch (s.status) {
+    case 'checked': {
+      const reason = s.reasons[0] ? REASONS[s.reasons[0]] : undefined
+      if (s.verdict === 'good') return { status: 'Person found', ok: true }
+      if (s.verdict === 'marginal')
+        return {
+          status: 'Person found',
+          why: reason ? `Works in parts of this shot. ${reason}.` : undefined,
+          ok: true,
+        }
+      return {
+        status: 'Not suitable',
+        why: `${reason ?? 'This shot has no clear person to cut out'}.`,
+        ok: false,
+      }
+    }
+    case 'checking':
+      return { status: 'Looking for people…', ok: false }
+    case 'failed':
+      return { status: 'Not checked', why: s.message, ok: false }
+    case 'unchecked':
+      return { status: 'Not checked yet', ok: true }
+    default:
+      return { status: 'Video clips only', ok: false }
+  }
+}
+
+function footageOf(project: Project, clip: Clip | undefined): { clip: VideoClip; asset: Asset } | undefined {
+  if (!clip || clip.type !== 'video' || clip.meta?.behindSubjectOf) return undefined
+  const asset = project.assets[clip.assetId]
+  return asset?.kind === 'video' ? { clip, asset } : undefined
+}
+
+/** Whether the person in a clip's footage can be cut out, as far as is known. */
+export function suitabilityOf(
+  project: Project,
+  clip: Clip | undefined,
+  checks: Record<Id, Suitability> = useBehind.getState().checks,
+): Suitability {
+  const footage = footageOf(project, clip)
+  return footage ? assetSuitability(footage.asset, checks) : { status: 'unsupported' }
+}
+
+/** Whether the person in a video asset can be cut out, as far as is known. */
+export function assetSuitability(
+  asset: Asset,
+  checks: Record<Id, Suitability> = useBehind.getState().checks,
+): Suitability {
+  if (asset.kind !== 'video') return { status: 'unsupported' }
+  if (isSampleAsset(asset)) {
+    const subject = mediaById[asset.id]?.subject
+    if (subject === 'large' && sceneOf(asset)) return { status: 'checked', verdict: 'good', reasons: [] }
+    return {
+      status: 'checked',
+      verdict: 'unsuitable',
+      reasons: [subject === 'small' ? 'subject-too-small' : 'no-subject'],
+    }
+  }
+  return checks[asset.id] ?? { status: 'unchecked' }
+}
+
+/** True when the clip has a person to cut out, or might have one (not checked yet). */
+export function canTryCutout(s: Suitability): boolean {
+  return (
+    s.status === 'unchecked' ||
+    s.status === 'failed' ||
+    (s.status === 'checked' && s.verdict !== 'unsuitable')
+  )
 }
 
 export function cutoutsOf(project: Project, clipId: string): Clip[] {
@@ -32,20 +148,106 @@ export function hasCutout(project: Project, clipId: string): boolean {
   return cutoutsOf(project, clipId).length > 0
 }
 
-/** Footage clips on the timeline with a person who fills the frame. */
-export function suitableClips(project: Project): string[] {
+/** The person mask video already made for an imported asset, if the project still has it. */
+export function findPersonMask(project: Pick<Project, 'assets'>, assetId: Id): Asset | undefined {
+  return Object.values(project.assets).find(
+    (a) =>
+      a.kind === 'video' &&
+      a.origin.type === 'derived' &&
+      a.origin.parentAssetId === assetId &&
+      a.origin.provider === PERSON_MASK,
+  )
+}
+
+/** Footage clips on the timeline whose shot is known to have a person to cut out. */
+export function suitableClips(project: Project, checks?: Record<Id, Suitability>): string[] {
   return Object.values(project.clips)
-    .filter((c) => !c.meta?.behindSubjectOf && canCutOut(project, c))
+    .filter((c) => {
+      const s = suitabilityOf(project, c, checks)
+      return s.status === 'checked' && s.verdict !== 'unsuitable'
+    })
     .map((c) => c.id)
 }
 
-/** Cuts the subject out of each clip onto the Subject track, as one undo step. Returns how many clips changed. */
-export function putBehind(clipIds: string[]): number {
-  const project = editor.getProject()
+export interface FootageRow {
+  asset: Asset
+  suitability: Suitability
+  /** Footage clips on the timeline showing this asset. */
+  clips: number
+}
+
+const rowRank = (s: Suitability) =>
+  s.status === 'checked' ? (s.verdict === 'unsuitable' ? 2 : 0) : s.status === 'unsupported' ? 3 : 1
+
+/**
+ * One row per video on the timeline for Assist › Behind the subject: shots with a person first, then shots still
+ * being checked, then the ones that are not suitable; in order of first use within each group.
+ */
+export function footageRows(
+  project: Project,
+  checks: Record<Id, Suitability> = useBehind.getState().checks,
+): FootageRow[] {
+  const seen = new Map<Id, { asset: Asset; start: number; clips: number }>()
+  for (const c of Object.values(project.clips)) {
+    const f = footageOf(project, c)
+    if (!f) continue
+    const prev = seen.get(f.asset.id)
+    if (prev) {
+      prev.clips++
+      prev.start = Math.min(prev.start, c.start)
+    } else seen.set(f.asset.id, { asset: f.asset, start: c.start, clips: 1 })
+  }
+  return [...seen.values()]
+    .sort((a, b) => a.start - b.start)
+    .map(({ asset, clips }) => ({ asset, clips, suitability: assetSuitability(asset, checks) }))
+    .sort((a, b) => rowRank(a.suitability) - rowRank(b.suitability))
+}
+
+/** Uncompressed size of the MediaPipe vision runtime (JS and WebAssembly), loaded once with the first model. */
+const MEDIAPIPE_RUNTIME_BYTES = 14_800_000
+
+/** Bytes finding and cutting out people still has to download (models and runtime, once), 0 when cached. */
+export async function personDownloadBytes(): Promise<number> {
+  const needed = [VISION_MODELS.selfieLandscape, VISION_MODELS.selfie, VISION_MODELS.faceShortRange]
+  const mediapipe = [...needed, VISION_MODELS.magicTouch, VISION_MODELS.selfieMulticlass]
+  const fileOf = (m: (typeof mediapipe)[number]) => Object.values(m.files)[0]
+  const cached = await Promise.all(
+    mediapipe.map((m) => modelCache.has(fileOf(m)?.url ?? '').catch(() => false)),
+  )
+  const models = needed.reduce((sum, m, i) => sum + (cached[i] ? 0 : (fileOf(m)?.bytes ?? 0)), 0)
+  return models + (cached.some(Boolean) ? 0 : MEDIAPIPE_RUNTIME_BYTES)
+}
+
+/** Bytes finding people still has to download, once; 0 when cached or not `needed`. */
+export function usePersonDownload(needed: boolean): number {
+  const [bytes, setBytes] = useState(0)
+  useEffect(() => {
+    if (!needed) return
+    let live = true
+    void personDownloadBytes().then((b) => {
+      if (live) setBytes(b)
+    })
+    return () => {
+      live = false
+    }
+  }, [needed])
+  return needed ? bytes : 0
+}
+
+/**
+ * Commands that cut the subject out of each clip onto the Subject track (added when missing), using the sample
+ * scene masks, the person masks in the project, or `newMasks` (stored but not in the project yet).
+ */
+export function cutoutCommands(
+  project: Project,
+  clipIds: readonly string[],
+  newMasks: ReadonlyMap<Id, Asset> = new Map(),
+): { commands: EditCommand[]; count: number } {
   const commands: EditCommand[] = []
   let track: Track | undefined = project.tracks.find(
     (t) => t.kind === 'visual' && t.name === SUBJECT_TRACK_NAME && !t.locked,
   )
+  const trackCommands: EditCommand[] = []
   if (!track) {
     track = {
       id: crypto.randomUUID(),
@@ -56,33 +258,45 @@ export function putBehind(clipIds: string[]): number {
       locked: false,
       hidden: false,
     }
-    commands.push({ type: 'track.add', track, index: 0 })
+    trackCommands.push({ type: 'track.add', track, index: 0 })
   }
-  const masks = new Set<string>()
+  const added = new Set<Id>()
   let count = 0
-  for (const id of clipIds) {
-    const clip = project.clips[id] as MediaClip | undefined
-    const scene = subjectScene(project, clip)
-    if (!clip || !scene || hasCutout(project, id)) continue
-    const source = project.assets[clip.assetId] as Asset
-    const maskId = `mask-${source.id}`
-    if (!project.assets[maskId] && !masks.has(maskId)) {
-      masks.add(maskId)
-      commands.push({
-        type: 'asset.add',
-        asset: {
-          id: maskId,
-          kind: 'image',
-          name: `${source.name} (subject mask)`,
-          mimeType: 'image/png',
-          byteSize: 0,
-          storageKey: maskStorageKey(scene),
-          width: source.width,
-          height: source.height,
-          origin: { type: 'derived', parentAssetId: source.id },
-          createdAt: new Date().toISOString(),
-        },
-      })
+  for (const id of new Set(clipIds)) {
+    const footage = footageOf(project, project.clips[id])
+    if (!footage || hasCutout(project, id)) continue
+    const { clip, asset } = footage
+    let maskId: Id | undefined
+    if (isSampleAsset(asset)) {
+      const scene = sceneOf(asset)
+      if (!scene || mediaById[asset.id]?.subject !== 'large') continue
+      maskId = `mask-${asset.id}`
+      if (!project.assets[maskId] && !added.has(maskId)) {
+        added.add(maskId)
+        commands.push({
+          type: 'asset.add',
+          asset: {
+            id: maskId,
+            kind: 'image',
+            name: `${asset.name} (subject mask)`,
+            mimeType: 'image/png',
+            byteSize: 0,
+            storageKey: maskStorageKey(scene),
+            width: asset.width,
+            height: asset.height,
+            origin: { type: 'derived', parentAssetId: asset.id },
+            createdAt: new Date().toISOString(),
+          },
+        })
+      }
+    } else {
+      const mask = findPersonMask(project, asset.id) ?? newMasks.get(asset.id)
+      if (!mask) continue
+      maskId = mask.id
+      if (!project.assets[mask.id] && !added.has(mask.id)) {
+        added.add(mask.id)
+        commands.push({ type: 'asset.add', asset: mask })
+      }
     }
     commands.push({
       type: 'clip.add',
@@ -90,15 +304,134 @@ export function putBehind(clipIds: string[]): number {
         ...structuredClone(clip),
         id: crypto.randomUUID(),
         trackId: track.id,
-        name: `${clip.name ?? source.name} · subject`,
-        matte: { maskAssetId: maskId, sourceAssetId: source.id, mode: 'inside', feather: 0.15 },
+        name: `${clip.name ?? asset.name} · subject`,
+        matte: { maskAssetId: maskId, sourceAssetId: asset.id, mode: 'inside', feather: 0.15 },
         meta: { behindSubjectOf: id },
       },
     })
     count++
   }
-  if (!count) return 0
-  return dispatch(commands, { label: 'Put lyrics behind the subject' }) ? count : 0
+  return { commands: count ? [...trackCommands, ...commands] : [], count }
+}
+
+/**
+ * Looks for a person in each imported clip's footage, in the background of the panel or inspector that asked. A
+ * clip checked before is not checked again.
+ */
+export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefined {
+  const { checks } = useBehind.getState()
+  const project = editor.getProject()
+  const pending = [...new Set(assetIds)].filter((id) => {
+    const asset = project.assets[id]
+    const check = checks[id]
+    return asset?.kind === 'video' && !isSampleAsset(asset) && (!check || check.status === 'unchecked')
+  })
+  if (!pending.length || isRunning(JOB_KINDS.suitability)) return undefined
+  for (const id of pending) setCheck(id, { status: 'checking' })
+  const n = pending.length
+  const handle = jobs.run({
+    kind: JOB_KINDS.suitability,
+    title: n === 1 ? 'Looking for a person in the clip' : `Looking for people in ${n} clips`,
+    run: async (ctx) => {
+      const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
+      for (const [i, id] of pending.entries()) {
+        const asset = editor.getProject().assets[id]
+        if (!asset) continue
+        const message = `Looking for people · ${asset.name}`
+        ctx.progress({ fraction: i / n, message })
+        const source = v.createAssetFrameSource(asset, appMedia)
+        try {
+          const report = await vision.checkSuitability(source, {
+            signal: ctx.signal,
+            onProgress: (p) => ctx.progress({ fraction: (i + (p.fraction ?? 0)) / n, message }),
+          })
+          setCheck(id, fromReport(report))
+        } catch (err) {
+          if (ctx.signal.aborted) throw err
+          setCheck(id, { status: 'failed', message: JobError.from(err).message })
+        } finally {
+          source.dispose()
+        }
+      }
+    },
+  })
+  handle.promise.catch(() => {
+    for (const id of pending)
+      if (useBehind.getState().checks[id]?.status === 'checking') setCheck(id, { status: 'unchecked' })
+  })
+  return handle
+}
+
+/**
+ * Cuts the subject out of each clip as one job and one undo step. Imported footage gets a person mask first
+ * (cached per clip media); footage where the check finds no one to cut out is left as it is.
+ */
+export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> | undefined {
+  if (isRunning(JOB_KINDS.cutout)) return undefined
+  let jobId = ''
+  const handle = jobs.run({
+    kind: JOB_KINDS.cutout,
+    title: 'Cutting out the subject',
+    run: async (ctx) => {
+      const start = editor.getProject()
+      const wanted = [...new Set(clipIds)].filter(
+        (id) => footageOf(start, start.clips[id]) && !hasCutout(start, id),
+      )
+      const needMask = new Map<Id, Asset>()
+      for (const id of wanted) {
+        const { asset } = footageOf(start, start.clips[id])!
+        if (isSampleAsset(asset) || findPersonMask(start, asset.id)) continue
+        const check = useBehind.getState().checks[asset.id]
+        if (check?.status === 'checked' && check.verdict === 'unsuitable') continue
+        needMask.set(asset.id, asset)
+      }
+      const newMasks = new Map<Id, Asset>()
+      if (needMask.size) {
+        const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
+        const assets = [...needMask.values()]
+        for (const [i, asset] of assets.entries()) {
+          const message = `Cutting out the person · ${asset.name}`
+          const step = (f: number) => ctx.progress({ fraction: (i + f) / assets.length, message })
+          step(0)
+          const source = v.createAssetFrameSource(asset, appMedia)
+          try {
+            const person = await vision.personTrack(source, {
+              signal: ctx.signal,
+              onProgress: (p) => step(0.9 * (p.fraction ?? 0)),
+            })
+            setCheck(asset.id, fromReport(person.suitability))
+            if (person.suitability.verdict === 'unsuitable') continue
+            const blob = await v.encodeMaskVideo(person.track, {
+              duration: asset.duration ?? source.duration,
+              signal: ctx.signal,
+            })
+            step(0.95)
+            const info = v.maskAssetInfo(asset, blob)
+            const mask = await mediaStore.storeBlob(blob, {
+              ...info,
+              origin: { type: 'derived', parentAssetId: asset.id, provider: PERSON_MASK },
+            })
+            newMasks.set(asset.id, mask)
+          } finally {
+            source.dispose()
+          }
+        }
+      }
+      ctx.throwIfCancelled()
+      const { commands, count } = cutoutCommands(editor.getProject(), wanted, newMasks)
+      const result: CutoutResult = { count, skipped: clipIds.length - count, label: CUTOUT_LABEL }
+      if (count && !dispatch(commands, { label: CUTOUT_LABEL }))
+        throw new JobError(
+          'invalid-input',
+          'The cutout could not be added. Unlock the Subject track and try again.',
+        )
+      useBehind.setState((s) => ({ results: { ...s.results, [jobId]: result } }))
+      return result
+    },
+  })
+  jobId = handle.id
+  useBehind.setState((s) => ({ requests: { ...s.requests, [jobId]: clipIds } }))
+  return handle
 }
 
 export function bringToFront(clipIds: string[]): boolean {

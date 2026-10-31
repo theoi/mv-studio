@@ -21,7 +21,7 @@ import { openAssist, useUi, type AssistView } from '../../../state/ui.ts'
 import { AnalysisView } from './Analysis.tsx'
 import { AskBox } from './Ask.tsx'
 import { AutocutBadge, AutocutView } from './Autocut.tsx'
-import { BehindView } from './Behind.tsx'
+import { BehindBadge, BehindView } from './Behind.tsx'
 import { CameraBadge, CameraView } from './Camera.tsx'
 import { DirectorBadge, DirectorView } from './Director.tsx'
 import { GenerateBadge, GenerateView } from './Generate.tsx'
@@ -52,6 +52,8 @@ const viewForKind: Record<string, AssistView> = {
   [JOB_KINDS.camera]: 'camera',
   [JOB_KINDS.lyrics]: 'lyrics',
   [JOB_KINDS.generate]: 'generate',
+  [JOB_KINDS.cutout]: 'behind',
+  [JOB_KINDS.suitability]: 'behind',
 }
 
 function Running() {
@@ -165,6 +167,7 @@ const groups: { label: string; tools: ToolDef[] }[] = [
         title: 'Behind the subject',
         desc: 'Put text between people and background',
         icon: <Users />,
+        status: <BehindBadge />,
       },
       {
         id: 'camera',
