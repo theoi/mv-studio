@@ -29,7 +29,7 @@ export interface FrameAnalysisRequest {
   /** Mask size (default: bitmap size), so people can be detected on a larger frame than the mask needs. */
   maskSize?: Size
   faces?: boolean
-  /** People found by the object detector (score at least `PERSON_MIN_SCORE`). */
+  /** People found by the object detector (score at least `DETECTOR_MIN_SCORE`; the verdicts count those from 0.3). */
   people?: boolean
   /** Return the frame as luma at bitmap size (guide for smoothing and motion). */
   gray?: boolean
@@ -41,6 +41,10 @@ export interface FrameAnalysis {
   mask?: Mask
   faces?: FaceObservation[]
   people?: PersonDetection[]
+  /** Set instead of `faces` when the face detector cannot be downloaded or loaded (offline, a blocked host). */
+  facesUnavailable?: boolean
+  /** Set instead of `people` when the person detector cannot be downloaded or loaded. */
+  peopleUnavailable?: boolean
   gray?: GrayImage
   rgba?: RgbaImage
 }
@@ -69,6 +73,9 @@ export interface TrackFrameRequest {
 export interface TrackFrameResult extends TrackFrameStats {
   faces?: FaceObservation[]
   people?: PersonDetection[]
+  /** As in `FrameAnalysis`. */
+  facesUnavailable?: boolean
+  peopleUnavailable?: boolean
   usedHq: boolean
 }
 

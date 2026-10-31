@@ -6,6 +6,7 @@ import { createPopMeter } from '../mask/pops.ts'
 import { createTrackReader } from '../mask/track.ts'
 import {
   assessSuitability,
+  detectedPeople,
   type PeopleAt,
   type SuitabilityOptions,
   type SuitabilitySample,
@@ -49,8 +50,13 @@ export interface PersonTrackResult {
   observations: FrameObservation[]
   /** Frames where the high-quality matte replaced the standard mask. */
   hqFrames: number
-  /** People the object detector found, at `peopleFps`; the report counts only the mask near them. */
+  /**
+   * People the object detector found, at `peopleFps`; the report counts only the mask near them. Empty when the
+   * detector could not be downloaded (`suitability.peopleSkipped`).
+   */
   people: PeopleAt[]
+  /** Set when the face detector could not be downloaded, so the observations have no faces. */
+  facesSkipped?: boolean
 }
 
 /** Bumped whenever the processing changes in a way that invalidates cached tracks. */
@@ -117,6 +123,8 @@ export async function buildPersonTrack(
 
   const observations: FrameObservation[] = []
   const people: PeopleAt[] = []
+  let peopleAvailable = true
+  let facesAvailable = true
   let hqFrames = 0
   try {
     let i = 0
@@ -134,22 +142,24 @@ export async function buildPersonTrack(
           { signal, transfer: [copy] },
         )
       }
-      const withFaces = faceEvery > 0 && i % faceEvery === 0
-      const withPeople = i % peopleEvery === 0
+      const observe = faceEvery > 0 && i % faceEvery === 0
+      const withPeople = peopleAvailable && i % peopleEvery === 0
       const res = await seg.pushTrackFrame(
         {
           id,
           bitmap,
           timestampMs: Math.round(t * 1000),
           ...(hq ? { hq } : {}),
-          faces: withFaces,
+          faces: observe && facesAvailable,
           people: withPeople,
         },
         { signal, transfer: hq ? [bitmap, hq.data.buffer] : [bitmap] },
       )
-      if (withPeople) people.push({ t, boxes: (res.people ?? []).map((p) => p.box) })
+      if (res.peopleUnavailable) peopleAvailable = false
+      else if (withPeople) people.push(detectedPeople(t, res.people))
+      if (res.facesUnavailable) facesAvailable = false
       if (res.usedHq) hqFrames++
-      if (withFaces)
+      if (observe)
         observations.push({ t, faces: res.faces ?? [], personBox: res.box, personCoverage: res.coverage })
       i++
       progress(i / times.length, 'segmenting')
@@ -161,10 +171,13 @@ export async function buildPersonTrack(
     progress(1, 'done')
     return {
       track,
-      suitability: trackSuitability(track, people, options.suitability),
+      suitability: peopleAvailable
+        ? trackSuitability(track, people, options.suitability)
+        : { ...trackSuitability(track, undefined, options.suitability), peopleSkipped: true },
       observations,
       hqFrames,
-      people,
+      people: peopleAvailable ? people : [],
+      ...(facesAvailable ? {} : { facesSkipped: true }),
     }
   } catch (err) {
     await seg.cancelTrack({ id }).catch(() => undefined)
@@ -175,7 +188,7 @@ export async function buildPersonTrack(
 /**
  * What the report needs that a track stored by an older version may lack: the people in its frames (at `peopleFps`)
  * and each frame's pop share, which needs every frame's luma. Needs only the person detector and the decoder, not the
- * segmenter.
+ * segmenter. When the detector cannot be downloaded, `peopleSkipped` is set instead of `people`.
  */
 export async function findTrackEvidence(
   segmentation: SegmentationBackend,
@@ -183,7 +196,7 @@ export async function findTrackEvidence(
   track: PackedMaskTrack,
   need: { people: boolean; pops: boolean },
   options: TaskOptions & { peopleFps?: number } = {},
-): Promise<{ people?: PeopleAt[]; pops?: number[] }> {
+): Promise<{ people?: PeopleAt[]; pops?: number[]; peopleSkipped?: boolean }> {
   const { signal } = options
   const { meta } = track
   const every = Math.max(1, Math.round(meta.fps / (options.peopleFps ?? PEOPLE_FPS)))
@@ -191,6 +204,7 @@ export async function findTrackEvidence(
   for (let i = 0; i < meta.frameCount; i += need.pops ? 1 : every) indices.push(i)
   const progress = createProgress(options.onProgress)
   const people: PeopleAt[] = []
+  let peopleAvailable = need.people
   const pops: number[] = []
   const meter = need.pops ? createPopMeter(meta.fps) : null
   const reader = createTrackReader(track, 2)
@@ -203,14 +217,21 @@ export async function findTrackEvidence(
       (f) => f.bitmap.close(),
     )
     let n = 0
+    let stopped = false
     for await (const { t, bitmap } of frames) {
       const i = indices[n++]!
-      const withPeople = need.people && i % every === 0
+      const withPeople = peopleAvailable && i % every === 0
       const res = await segmentation.analyze(
         { bitmap, timestampMs: Math.round(t * 1000), people: withPeople, gray: !!meter },
         { signal, transfer: [bitmap] },
       )
-      if (withPeople) people.push({ t, boxes: (res.people ?? []).map((p) => p.box) })
+      if (res.peopleUnavailable) {
+        peopleAvailable = false
+        if (!meter) {
+          stopped = true
+          break
+        }
+      } else if (withPeople) people.push(detectedPeople(t, res.people))
       if (meter) {
         if (!res.gray) throw new JobError('internal', 'The frame luma is missing.')
         const gray =
@@ -223,11 +244,11 @@ export async function findTrackEvidence(
       progress(n / indices.length, 'analyzing')
     }
     if (signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
-    if (n < indices.length)
+    if (n < indices.length && !stopped)
       throw new JobError('decode', `Only ${n} of ${indices.length} frames could be decoded.`)
     if (meter) pops.push(...meter.flush())
     return {
-      ...(need.people ? { people } : {}),
+      ...(need.people ? (peopleAvailable ? { people } : { peopleSkipped: true }) : {}),
       ...(meter ? { pops: pops.map((p) => Math.round(p * 1000) / 1000) } : {}),
     }
   } catch (err) {
@@ -236,12 +257,13 @@ export async function findTrackEvidence(
 }
 
 /**
- * Suitability of a stored track, judged on frames about 0.2 s apart, counting only the mask near the `people` found,
- * with its stability from every frame's pop share (`meta.pops`, or `pops` for a track stored without them).
+ * Suitability of a stored track, judged on frames about 0.2 s apart, counting only the mask near the `people` found
+ * (the whole mask without them), with its stability from every frame's pop share (`meta.pops`, or `pops` for a
+ * track stored without them).
  */
 export function trackSuitability(
   track: PackedMaskTrack,
-  people: ReadonlyArray<PeopleAt>,
+  people: ReadonlyArray<PeopleAt> | undefined,
   options?: SuitabilityOptions,
   pops = track.meta.pops,
 ): SuitabilityReport {
@@ -251,5 +273,11 @@ export function trackSuitability(
   const samples: SuitabilitySample[] = []
   for (let i = 0; i < meta.frameCount; i += step)
     samples.push({ t: meta.start + i / meta.fps, mask: reader.frame(i) })
-  return assessSuitability(samples, step / meta.fps, options, people, pops)
+  return assessSuitability(
+    samples,
+    step / meta.fps,
+    options,
+    people,
+    pops && { start: meta.start, fps: meta.fps, shares: pops },
+  )
 }

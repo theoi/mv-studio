@@ -1,7 +1,12 @@
 import type { SegmentationBackend } from '../backends.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
-import { assessSuitability, type PeopleAt, type SuitabilityOptions } from '../mask/suitability.ts'
+import {
+  assessSuitability,
+  detectedPeople,
+  type PeopleAt,
+  type SuitabilityOptions,
+} from '../mask/suitability.ts'
 import { fitSize, iterateFrames, prefetch, sampleTimes, type FrameSource } from '../runtime/frames.ts'
 import { createProgress, type TaskOptions } from '../runtime/tasks.ts'
 import type { Mask, SuitabilityReport, TimeRange } from '../types.ts'
@@ -47,20 +52,24 @@ export async function checkSuitability(
     await segmentation.resetStream(null, { signal })
     const samples: Array<{ t: number; mask: Mask }> = []
     const people: PeopleAt[] = []
+    let peopleAvailable = true
     const maskSize = fitSize(source, ANALYSIS_SIDE)
     const frames = prefetch(iterateFrames(source, times, { maxSide: PEOPLE_SIDE, signal }), 2, (f) =>
       f.bitmap.close(),
     )
     for await (const { t, bitmap } of frames) {
       const res = await segmentation.analyze(
-        { bitmap, timestampMs: Math.round(t * 1000), mask: true, maskSize, people: true },
+        { bitmap, timestampMs: Math.round(t * 1000), mask: true, maskSize, people: peopleAvailable },
         { signal, transfer: [bitmap] },
       )
-      people.push({ t, boxes: (res.people ?? []).map((p) => p.box) })
+      if (res.peopleUnavailable) peopleAvailable = false
+      else if (peopleAvailable) people.push(detectedPeople(t, res.people))
       if (res.mask) samples.push({ t, mask: res.mask })
       progress(samples.length / times.length, 'analyzing')
     }
     if (signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
+    if (!peopleAvailable)
+      return { ...assessSuitability(samples, 1 / fps, options.criteria), peopleSkipped: true }
     return assessSuitability(samples, 1 / fps, options.criteria, people)
   } catch (err) {
     throw visionError(err, 'internal')

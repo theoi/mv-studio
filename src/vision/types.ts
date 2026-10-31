@@ -119,6 +119,27 @@ export interface SuitabilityReport {
   sampledFrames: number
   /** Time ranges where the effect can be offered. */
   suitableRanges: TimeRange[]
+  /**
+   * Set when the person detector could not be downloaded or loaded, so no one was looked for and the verdict counts
+   * the whole mask, including animals and vehicles the segmenter cuts out.
+   */
+  peopleSkipped?: boolean
+  /** What the verdict was judged from, so a part of the shot (a clip's used range) can be judged on its own. */
+  evidence?: SuitabilityEvidence
+}
+
+export type SuitabilityFrameVerdict = 'ok' | SuitabilityReason
+
+export interface SuitabilityEvidence {
+  /** Each judged frame, ascending: media time, verdict and mask coverage. */
+  frames: Array<{ t: number; verdict: SuitabilityFrameVerdict; coverage: number }>
+  /** Nominal time between judged frames. */
+  spacing: number
+  /**
+   * The frames that pop visibly, as indices of the `count` frames from `start` at `fps` (media time); null when
+   * pops were not measured (the quick check).
+   */
+  pops: { start: number; fps: number; count: number; popping: number[] } | null
 }
 
 // ---------------------------------------------------------------------------

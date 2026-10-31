@@ -34,7 +34,7 @@ export function BehindBadge() {
   return null
 }
 
-function SuitRow({ asset, suitability, clips }: FootageRow) {
+function SuitRow({ asset, suitability, clips }: Omit<FootageRow, 'key'>) {
   const thumb = useThumbnail(asset)
   const text = suitabilityText(suitability)
   const detail = `${(text.why ?? text.status).replace(/\.$/, '')} · ${plural(clips, 'clip')}`
@@ -187,8 +187,8 @@ export function BehindView() {
                 The clips have no person large enough to cut out, or already have a cutout.
               </div>
             )}
-            {[...(result.flickers ?? []), ...(result.refused ?? [])].map((r) => (
-              <div key={r.assetId} className={styles.muted}>
+            {[...(result.warnings ?? []), ...(result.refused ?? [])].map((r) => (
+              <div key={`${r.assetId}:${r.why}`} className={styles.muted}>
                 {`${r.name}: ${r.why}`}
               </div>
             ))}
@@ -241,7 +241,7 @@ export function BehindView() {
       </div>
       <div className={styles.groupLabelInset}>Clips on the timeline</div>
       {rows.length ? (
-        rows.map((row) => <SuitRow key={row.asset.id} {...row} />)
+        rows.map(({ key, ...row }) => <SuitRow key={key} {...row} />)
       ) : (
         <p className={styles.muted}>Add video clips to the timeline to cut out the people in them.</p>
       )}

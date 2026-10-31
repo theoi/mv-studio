@@ -105,6 +105,12 @@ describe('buildPersonTrack', () => {
     expect(withPeople.people.map((p) => p.t)).toEqual(
       [0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8].map((t) => expect.closeTo(t, 6)),
     )
+    // Each box keeps its score, so another limit can be tried on the stored track.
+    expect(withPeople.people[0]).toEqual({
+      t: 0,
+      boxes: [{ x: 0, y: 0, width: 1, height: 1 }],
+      scores: [0.9],
+    })
     expect(withPeople.suitability.verdict).toBe('good')
     // The same masks with no one the detector calls a person.
     const noOne = await buildPersonTrack({ segmentation: fakeSegmentation(undefined, () => []) }, source, {
@@ -112,6 +118,21 @@ describe('buildPersonTrack', () => {
     })
     expect(noOne.track.packed).toEqual(withPeople.track.packed)
     expect(noOne.suitability).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+  })
+
+  it('cuts out without the detectors when they cannot be downloaded, judging the whole mask', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const seg = fakeSegmentation(undefined, () => null, { facesUnavailable: true })
+    const res = await buildPersonTrack({ segmentation: seg }, source, { faceFps: 5 })
+    expect(res.suitability).toMatchObject({ verdict: 'good', peopleSkipped: true })
+    expect(res.people).toEqual([])
+    expect(res.facesSkipped).toBe(true)
+    // Observations keep the person box at the face rate, without faces.
+    expect(res.observations).toHaveLength(10)
+    expect(res.observations.every((o) => o.faces.length === 0 && o.personBox)).toBe(true)
+    expect(seg.pushed).toHaveLength(50)
+    expect(seg.pushed.filter((p) => p.people)).toHaveLength(1)
+    expect(seg.pushed.filter((p) => p.faces)).toHaveLength(1)
   })
 
   /** A person whose mask drops out for 3 frames in every 12, as the segmenter sometimes does. */
@@ -161,6 +182,28 @@ describe('buildPersonTrack', () => {
     expect(found.people).toHaveLength(10)
     expect(seg.analyzed).toHaveLength(50)
     expect(seg.analyzed.every((a) => a.gray && !a.mask)).toBe(true)
+  })
+
+  it('stops looking for people in a stored track when the detector cannot be downloaded', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 25 })
+    const built = await buildPersonTrack({ segmentation: fakeSegmentation() }, source, { faceFps: 0 })
+    const seg = fakeSegmentation(undefined, () => null)
+    expect(await findTrackEvidence(seg, source, built.track, { people: true, pops: false })).toEqual({
+      peopleSkipped: true,
+    })
+    expect(seg.analyzed).toHaveLength(1)
+    // With pops to measure, it still reads every frame, without asking for people again.
+    const { pops: stored, ...meta } = built.track.meta
+    const both = fakeSegmentation(undefined, () => null)
+    const found = await findTrackEvidence(
+      both,
+      source,
+      { ...built.track, meta },
+      { people: true, pops: true },
+    )
+    expect(found).toEqual({ peopleSkipped: true, pops: stored })
+    expect(both.analyzed).toHaveLength(50)
+    expect(both.analyzed.filter((a) => a.people)).toHaveLength(1)
   })
 
   it('requires an ONNX backend for high-quality ranges', async () => {

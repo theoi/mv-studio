@@ -17,9 +17,9 @@ import type {
   TrackFrameResult,
 } from '../backends.ts'
 import { JobError } from '../../shared/jobs.ts'
-import { visionError } from '../errors.ts'
+import { isModelUnavailable, visionError } from '../errors.ts'
 import { floatToMask, resizeMask } from '../mask/ops.ts'
-import { PERSON_MIN_SCORE } from '../mask/suitability.ts'
+import { DETECTOR_MIN_SCORE } from '../mask/suitability.ts'
 import { createMediaPipeTask, mediapipeModel } from '../runtime/loaders.ts'
 import { withModelProgress } from '../../shared/transformers.ts'
 import { VISION_MODELS } from '../runtime/models.ts'
@@ -88,7 +88,7 @@ async function getPersonDetector(): Promise<ObjectDetector> {
     ObjectDetector.createFromOptions(fileset, {
       baseOptions: { modelAssetBuffer, delegate: 'CPU' },
       runningMode: 'IMAGE',
-      scoreThreshold: PERSON_MIN_SCORE,
+      scoreThreshold: DETECTOR_MIN_SCORE,
       categoryAllowlist: ['person'],
       maxResults: 10,
     }),
@@ -193,6 +193,39 @@ async function detectPeople(bitmap: ImageBitmap): Promise<PersonDetection[]> {
     })
 }
 
+/**
+ * What `detect` finds in the frame, or null when its model cannot be downloaded or loaded, so a cutout still works
+ * offline without the detectors.
+ */
+async function unlessUnavailable<T>(ctx: WorkerCallContext, detect: () => Promise<T>): Promise<T | null> {
+  try {
+    return await withModelProgress(ctx.progress, detect)
+  } catch (err) {
+    if (isModelUnavailable(err)) return null
+    throw err
+  }
+}
+
+/** Faces and people for a frame, as the request asks, each marked unavailable when its detector cannot load. */
+async function detections(
+  bitmap: ImageBitmap,
+  req: { faces?: boolean; people?: boolean },
+  ctx: WorkerCallContext,
+): Promise<Pick<FrameAnalysis, 'faces' | 'people' | 'facesUnavailable' | 'peopleUnavailable'>> {
+  const out: Pick<FrameAnalysis, 'faces' | 'people' | 'facesUnavailable' | 'peopleUnavailable'> = {}
+  if (req.faces) {
+    const faces = await unlessUnavailable(ctx, () => detectFaces(bitmap))
+    if (faces) out.faces = faces
+    else out.facesUnavailable = true
+  }
+  if (req.people) {
+    const people = await unlessUnavailable(ctx, () => detectPeople(bitmap))
+    if (people) out.people = people
+    else out.peopleUnavailable = true
+  }
+  return out
+}
+
 async function segmentPerson(bitmap: ImageBitmap, timestampMs: number): Promise<Mask> {
   const seg = await getSegmenter()
   const result = seg.segmentForVideo(bitmap, nextTimestamp(timestampMs))
@@ -244,8 +277,7 @@ const api = {
         out.mask = req.maskSize ? resizeMask(mask, req.maskSize.width, req.maskSize.height) : mask
         list.push(out.mask.data.buffer)
       }
-      if (req.faces) out.faces = await withModelProgress(ctx.progress, () => detectFaces(bitmap))
-      if (req.people) out.people = await withModelProgress(ctx.progress, () => detectPeople(bitmap))
+      Object.assign(out, await detections(bitmap, req, ctx))
       if (req.gray || req.rgba) {
         const rgba = pixels(bitmap)
         if (req.gray) {
@@ -307,13 +339,10 @@ const api = {
       if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
       const standard = await segmentPerson(bitmap, req.timestampMs)
       const { mask, usedHq } = req.hq ? preferHq(standard, req.hq) : { mask: standard, usedHq: false }
-      const faces = req.faces ? await withModelProgress(ctx.progress, () => detectFaces(bitmap)) : undefined
-      const people = req.people
-        ? await withModelProgress(ctx.progress, () => detectPeople(bitmap))
-        : undefined
+      const found = await detections(bitmap, req, ctx)
       const rgba = pixels(bitmap)
       const stats = builder.push({ mask, gray: luma(rgba), rgba })
-      return { ...stats, usedHq, ...(faces ? { faces } : {}), ...(people ? { people } : {}) }
+      return { ...stats, usedHq, ...found }
     } catch (err) {
       throw visionError(err, 'internal')
     } finally {

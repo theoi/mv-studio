@@ -92,12 +92,24 @@ const wholeFrame = (): PersonDetection[] => [{ box: { x: 0, y: 0, width: 1, heig
 
 /**
  * In-process stand-in for the segmentation worker: same track builder, masks from `personAt`, detected people from
- * `peopleAt`.
+ * `peopleAt` (null: the person detector cannot be downloaded), faces unless `facesUnavailable`.
  */
 export function fakeSegmentation(
   personAt: (t: number, size: Size) => Mask = (_t, s) => discMask(s, s.width / 2, s.height / 2, s.height / 4),
-  peopleAt: (t: number) => PersonDetection[] = wholeFrame,
+  peopleAt: (t: number) => PersonDetection[] | null = wholeFrame,
+  { facesUnavailable = false } = {},
 ) {
+  const detections = (req: { faces?: boolean; people?: boolean }, t: number) => {
+    const people = req.people ? peopleAt(t) : undefined
+    return {
+      ...(req.faces
+        ? facesUnavailable
+          ? { facesUnavailable: true }
+          : { faces: [{ box: { x: 0.45, y: 0.3, width: 0.1, height: 0.15 }, score: 0.9 }] }
+        : {}),
+      ...(req.people ? (people ? { people } : { peopleUnavailable: true }) : {}),
+    }
+  }
   const calls: string[] = []
   const tracks = new Map<number, MaskTrackBuilder>()
   let nextId = 1
@@ -124,8 +136,7 @@ export function fakeSegmentation(
       bitmap.close()
       return {
         ...(req.mask ? { mask: personAt(t, req.maskSize ?? size) } : {}),
-        ...(req.faces ? { faces: [{ box: { x: 0.45, y: 0.3, width: 0.1, height: 0.15 }, score: 0.9 }] } : {}),
-        ...(req.people ? { people: peopleAt(t) } : {}),
+        ...detections(req, t),
         ...(req.gray ? { gray: flatGray(size) } : {}),
       }
     },
@@ -158,8 +169,7 @@ export function fakeSegmentation(
       return {
         ...stats,
         usedHq,
-        ...(req.faces ? { faces: [{ box: { x: 0.45, y: 0.3, width: 0.1, height: 0.15 }, score: 0.9 }] } : {}),
-        ...(req.people ? { people: peopleAt(t) } : {}),
+        ...detections(req, t),
       }
     },
     async endTrack({ id }) {
