@@ -33,6 +33,8 @@ const viewForKind: Record<string, AssistView> = {
   [JOB_KINDS.director]: 'director',
   [JOB_KINDS.autocut]: 'autocut',
   [JOB_KINDS.camera]: 'camera',
+  [JOB_KINDS.lyrics]: 'lyrics',
+  [JOB_KINDS.realign]: 'lyrics',
 }
 
 function Activity() {

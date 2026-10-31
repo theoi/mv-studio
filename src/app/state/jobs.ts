@@ -31,6 +31,7 @@ export const JOB_KINDS = {
   footage: 'vision.index',
   lyrics: 'analysis.lyrics',
   generate: 'cloud.generate',
+  realign: 'analysis.realign',
 } as const
 
 interface MockJobOptions {

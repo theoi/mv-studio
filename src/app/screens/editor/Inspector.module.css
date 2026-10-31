@@ -153,6 +153,20 @@
   line-height: var(--lh-xs);
 }
 
+.noteDanger {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  color: var(--danger);
+}
+
+.noteDanger svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+}
+
 .effectRow {
   display: flex;
   align-items: center;

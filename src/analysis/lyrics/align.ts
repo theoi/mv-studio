@@ -179,7 +179,10 @@ export function realignFrom(
   })
 }
 
-/** Re-aligns one line between its neighbours, e.g. after its text was edited. */
+/**
+ * Re-aligns one line between the nearest timed lines around it, e.g. after its text was edited. Untimed lines in
+ * between (pasted and never timed) do not bound it.
+ */
 export function realignLine(
   em: CtcEmissions,
   vocab: CtcVocabulary,
@@ -189,8 +192,11 @@ export function realignLine(
 ): LyricLine[] {
   const line = lines[lineIndex]
   if (!line) throw new RangeError('No such line')
-  const from = lines[lineIndex - 1]?.end ?? options.from ?? 0
-  const to = lines[lineIndex + 1]?.start ?? options.to ?? em.frames * em.frameSeconds
+  const from = lines.slice(0, lineIndex).findLast((l) => l.end !== undefined)?.end ?? options.from ?? 0
+  const to =
+    lines.slice(lineIndex + 1).find((l) => l.start !== undefined)?.start ??
+    options.to ??
+    em.frames * em.frameSeconds
   const [aligned] = alignLines(em, vocab, [line], { ...options, from, to })
   return lines.map((l, i) => (i === lineIndex && aligned ? aligned : l))
 }
