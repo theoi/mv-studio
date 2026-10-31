@@ -140,9 +140,93 @@ test('a clip drags to another track of its kind, butts up against a near neighbo
   await page.mouse.move(from.x, from.y)
   await page.mouse.down()
   await page.mouse.move(from.x, lyricsY, { steps: 12 })
-  await expect(page.getByText("Can't go here", { exact: true })).toBeVisible()
+  await expect(page.getByText('Lyric lines only', { exact: true })).toBeVisible()
   await page.mouse.up()
   await expect(page.getByText("Video clips can't go on the Lyrics track.")).toBeVisible()
   expect(await placed(page, id)).toEqual(before)
   expect(await undoLabel(page)).toBe(locked)
+})
+
+test('looks stay on the look lane, a group drag labels the clip that cannot drop, and Esc cancels a drag', async ({
+  page,
+}) => {
+  await openEditor(page)
+  await page.keyboard.press('n')
+  await page.evaluate(() =>
+    window.mvStudio.app.project.dispatch({ type: 'clip.move', moves: [{ clipId: 'o-spec1', start: 69 }] }),
+  )
+  const id: string = await page.evaluate(
+    () =>
+      (
+        Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+          id: string
+          trackId: string
+          start: number
+        }[]
+      ).find((c) => c.trackId === 't-video' && Math.abs(c.start - 66) < 0.01)!.id,
+  )
+  const singer = page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' })
+  const spectrum = page.getByRole('button', { name: 'Spectrum bars, 1:09.0 to 1:41.0' })
+  const look = page.getByRole('button', { name: /^Neon night\b.*, 0:00\.0 to / })
+  const content = page.locator('[data-timeline-scroller] > div')
+  const from = await center(singer)
+  const lookY = (await center(look)).y
+  const overlayY = (await center(spectrum)).y
+  const before = await placed(page, id)
+  const lookBefore = await placed(page, 'c-look')
+  const startLabel = await undoLabel(page)
+
+  // A video clip onto the Look track, which takes only looks, even where nothing else is in the way.
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x, lookY, { steps: 12 })
+  await expect(page.getByText('Looks only', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await expect(page.getByText("Video clips can't go on the Look track.")).toHaveCount(1)
+  expect(await placed(page, id)).toEqual(before)
+
+  // The look onto the Overlay track, which holds other clips.
+  await page.mouse.move(from.x, lookY)
+  await page.mouse.down()
+  await page.mouse.move(from.x, overlayY, { steps: 8 })
+  await expect(page.getByText('Visual clips only', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await expect(page.getByText("Look clips can't go on the Overlay track.")).toHaveCount(1)
+  expect(await placed(page, 'c-look')).toEqual(lookBefore)
+  expect(await undoLabel(page)).toBe(startLabel)
+
+  // Singer close-up and Spectrum bars up one track together: Singer close-up has room on the Overlay track, Spectrum
+  // bars can't go on the Look track, so its outline carries the label. Esc then puts both back with no toast.
+  await singer.click()
+  await spectrum.click({ modifiers: ['ControlOrMeta'] })
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x, overlayY, { steps: 8 })
+  const label = page.getByText('Looks only', { exact: true })
+  await expect(label).toBeVisible()
+  const outline = (await label.locator('..').boundingBox())!
+  const bars = (await spectrum.boundingBox())!
+  expect(Math.abs(outline.x - bars.x)).toBeLessThan(2)
+  await page.keyboard.press('Escape')
+  await expect(label).toBeHidden()
+  await expect(content).not.toHaveAttribute('data-refused')
+  await page.mouse.up()
+  await expect(page.getByText("Visual clips can't go on the Look track.")).toHaveCount(0)
+  expect(await placed(page, id)).toEqual(before)
+  expect(await placed(page, 'o-spec1')).toEqual({ trackId: 't-overlay', start: 69, end: 101 })
+
+  // Esc during a drag that would drop: the clip goes back, the drag ends, and the selection and history stay.
+  await singer.click()
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x, overlayY, { steps: 8 })
+  await expect.poll(() => placed(page, id)).toEqual({ ...before, trackId: 't-overlay' })
+  await page.keyboard.press('Escape')
+  expect(await placed(page, id)).toEqual(before)
+  await page.mouse.move(from.x, lookY, { steps: 4 })
+  await expect(page.getByText('Looks only', { exact: true })).toBeHidden()
+  await page.mouse.up()
+  expect(await placed(page, id)).toEqual(before)
+  expect(await undoLabel(page)).toBe(startLabel)
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().selection)).toEqual({ type: 'clip', id })
 })

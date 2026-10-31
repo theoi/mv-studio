@@ -1,12 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createAudioClip,
   createProject,
+  createSolidClip,
   createTextClip,
   createTrack,
   createVideoClip,
+  type Clip,
   type Project,
+  type Track,
 } from '../../../src/model/index.ts'
-import { dropShift, refusalToast, refuseTrack, type MovingSpan } from '../../../src/app/state/clipDrag.ts'
+import {
+  blockedAt,
+  dropShift,
+  refusalLabel,
+  refusalToast,
+  refuseTrack,
+  type MovingSpan,
+} from '../../../src/app/state/clipDrag.ts'
 
 const at = (start: number, end: number, others: [number, number][] = []): MovingSpan => ({
   start,
@@ -49,6 +60,16 @@ describe('dropShift', () => {
   })
 })
 
+describe('blockedAt', () => {
+  it('names the clip of a group that has no room', () => {
+    const free = at(0, 2, [[10, 12]])
+    const blocked = at(5, 6, [[6.5, 8]])
+    expect(blockedAt([free, blocked], 1)).toBe(1)
+    expect(blockedAt([blocked, free], 1)).toBe(0)
+    expect(blockedAt([free, blocked], 3)).toBe(-1)
+  })
+})
+
 describe('refuseTrack', () => {
   function scene(): Project {
     const p = createProject({ name: 'drag' })
@@ -82,5 +103,58 @@ describe('refuseTrack', () => {
     expect(refusalToast(p, { reason: 'room' })).toBe(
       'No room there. Drop it on an empty stretch or another track.',
     )
+  })
+
+  it('labels a kind refusal with what the track takes', () => {
+    const p = scene()
+    const [lyrics, , video, audio] = p.tracks as Track[]
+    const clip = createVideoClip({ trackId: video!.id, assetId: 'a', start: 0, duration: 2 })
+    const song = createAudioClip({ trackId: audio!.id, assetId: 's', start: 0, duration: 2 })
+    expect(refusalLabel(refuseTrack(p, clip, lyrics!)!)).toBe('Lyric lines only')
+    expect(refusalLabel(refuseTrack(p, clip, audio!)!)).toBe('Audio only')
+    expect(refusalLabel(refuseTrack(p, song, video!)!)).toBe('Visual clips only')
+    expect(refusalLabel({ reason: 'room' })).toBe('No room')
+  })
+
+  describe('look lanes', () => {
+    function lanes() {
+      const p = createProject({ name: 'looks' })
+      const [look, overlay, empty] = ['Look', 'Overlay', 'Empty'].map((n) =>
+        createTrack('visual', n),
+      ) as Track[]
+      const video = p.tracks.find((t) => t.kind === 'visual')!
+      p.tracks = [look!, overlay!, empty!, ...p.tracks]
+      const { color: _color, ...rest } = createSolidClip({
+        trackId: look!.id,
+        color: '#000',
+        start: 0,
+        duration: 30,
+      })
+      const neon: Clip = { ...rest, type: 'adjustment', meta: { role: 'look' } }
+      const bars = createSolidClip({ trackId: overlay!.id, color: '#fff', start: 40, duration: 5 })
+      const shot = createVideoClip({ trackId: video.id, assetId: 'a', start: 0, duration: 4 })
+      for (const c of [neon, bars, shot]) p.clips[c.id] = c
+      return { p, look: look!, overlay: overlay!, empty: empty!, neon, shot }
+    }
+
+    it('keeps other clips off a look lane, even on an empty stretch of it', () => {
+      const { p, look, shot } = lanes()
+      const refusal = refuseTrack(p, shot, look)!
+      expect(refusalLabel(refusal)).toBe('Looks only')
+      expect(refusalToast(p, refusal)).toBe("Video clips can't go on the Look track.")
+    })
+
+    it('keeps looks off a track of other clips', () => {
+      const { p, overlay, neon } = lanes()
+      const refusal = refuseTrack(p, neon, overlay)!
+      expect(refusalLabel(refusal)).toBe('Visual clips only')
+      expect(refusalToast(p, refusal)).toBe("Look clips can't go on the Overlay track.")
+    })
+
+    it('takes a look on an empty track, and any clip on a look lane whose looks move away with it', () => {
+      const { p, look, empty, neon, shot } = lanes()
+      expect(refuseTrack(p, neon, empty)).toBeNull()
+      expect(refuseTrack(p, shot, look, new Set([neon.id, shot.id]))).toBeNull()
+    })
   })
 })

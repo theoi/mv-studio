@@ -5,7 +5,7 @@
  */
 import { clipsOnTrack, type Clip, type Project, type Track } from '../../model/index.ts'
 import { templateState } from '../../plugins/templates.ts'
-import { viewOf, type ClipKindView } from './project.ts'
+import { isLookClip, viewOf, type ClipKindView } from './project.ts'
 
 /** Overlaps shorter than this (rounding) do not count. */
 const EPS = 1e-3
@@ -20,25 +20,37 @@ export function isLyricsTrack(p: Project, t: Track): boolean {
 
 const isLyricClip = (c: Clip) => c.type === 'text' && !!c.lyricLineId
 
-function holdsLyrics(p: Project, t: Track): boolean {
-  if (isLyricsTrack(p, t)) return true
-  const clips = clipsOnTrack(p, t.id)
-  return clips.length > 0 && clips.every(isLyricClip)
-}
+/** What a track takes, when it refuses a clip for its kind. */
+export type TrackTakes = 'audio' | 'visual' | 'lyrics' | 'looks'
 
 export type DropRefusal =
-  { reason: 'room' } | { reason: 'locked'; track: Track } | { reason: 'kind'; clip: Clip; track: Track }
+  | { reason: 'room' }
+  | { reason: 'locked'; track: Track }
+  | { reason: 'kind'; clip: Clip; track: Track; takes: TrackTakes }
 
 /**
- * Why a clip can't move to a track, or null when it can: a locked track takes nothing, audio and visual tracks take
- * only their own kind (as paste does), and the Lyrics track takes only lyric lines.
+ * Why a clip can't move to a track, or null when it can. As paste does: a locked track takes nothing, audio and visual
+ * tracks take only their own kind, the Lyrics track takes only lyric lines, and a look lane takes only looks while
+ * looks go only on look lanes (or an empty track). `moving` are the clips dragged with it, which don't count as
+ * staying on the track.
  */
-export function refuseTrack(p: Project, clip: Clip, track: Track): DropRefusal | null {
+export function refuseTrack(
+  p: Project,
+  clip: Clip,
+  track: Track,
+  moving: ReadonlySet<string> = new Set(),
+): DropRefusal | null {
   if (track.locked) return { reason: 'locked', track }
   if (clip.trackId === track.id) return null
-  const audio = clip.type === 'audio'
-  if (audio !== (track.kind === 'audio')) return { reason: 'kind', clip, track }
-  if (!audio && !isLyricClip(clip) && holdsLyrics(p, track)) return { reason: 'kind', clip, track }
+  const refuse = (takes: TrackTakes): DropRefusal => ({ reason: 'kind', clip, track, takes })
+  if (track.kind === 'audio') return clip.type === 'audio' ? null : refuse('audio')
+  if (clip.type === 'audio') return refuse('visual')
+  const staying = clipsOnTrack(p, track.id).filter((c) => !moving.has(c.id))
+  if (isLyricsTrack(p, track) || (staying.length > 0 && staying.every(isLyricClip)))
+    return isLyricClip(clip) ? null : refuse('lyrics')
+  if (!staying.length) return null
+  const lookLane = staying.every(isLookClip)
+  if (lookLane !== isLookClip(clip)) return refuse(lookLane ? 'looks' : 'visual')
   return null
 }
 
@@ -57,9 +69,16 @@ function kindName(p: Project, clip: Clip): string {
   return clip.type === 'solid' ? 'Color' : kindNames[viewOf(p, clip).kind]
 }
 
-/** The label in the drop preview. */
+const takesLabels: Record<TrackTakes, string> = {
+  audio: 'Audio only',
+  visual: 'Visual clips only',
+  lyrics: 'Lyric lines only',
+  looks: 'Looks only',
+}
+
+/** The label in the drop preview: for a kind, what the track takes. */
 export function refusalLabel(r: DropRefusal): string {
-  return r.reason === 'room' ? 'No room' : r.reason === 'locked' ? 'Track is locked' : "Can't go here"
+  return r.reason === 'room' ? 'No room' : r.reason === 'locked' ? 'Track is locked' : takesLabels[r.takes]
 }
 
 /** The toast after a refused drop. */
@@ -77,6 +96,13 @@ export interface Span {
 /** A dragged clip: where it was, and the clips that stay on the track it would drop on. */
 export interface MovingSpan extends Span {
   others: readonly Span[]
+}
+
+/** The first of the moving clips that overlaps a clip staying on its track when they all shift by `shift`. */
+export function blockedAt(moving: readonly MovingSpan[], shift: number): number {
+  return moving.findIndex((c) =>
+    c.others.some((o) => o.start < c.end + shift - EPS && o.end > c.start + shift + EPS),
+  )
 }
 
 /**

@@ -141,6 +141,7 @@ import {
 } from '../../../state/keyframes.ts'
 import {
   BUTT_PX,
+  blockedAt,
   dropShift,
   isLyricsTrack,
   refusalLabel,
@@ -1393,6 +1394,8 @@ export function Timeline() {
   const [frozenKinds, setFrozenKinds] = useState<ReadonlyMap<string, LaneKind> | null>(null)
   const [refusedDrop, setRefusedDrop] = useState<{
     label: string
+    /** The box of the clip that can't drop, which carries the label. */
+    labelAt: number
     boxes: { top: number; height: number; start: number; duration: number }[]
   } | null>(null)
   const [view, setView] = useState({ t0: 0, t1: 120 })
@@ -1715,30 +1718,30 @@ export function Timeline() {
           const near = othersOn(trackFor(self).id).flatMap((o) => [o.start, o.end])
           const r = snapTime(clip.start + dt, scale, grid, near, sectionEdges)
           let refusal: DropRefusal | null = null
-          for (const c of grabbedFirst) refusal ??= refuseTrack(p, c, trackFor(c))
-          const place = refusal
-            ? null
-            : dropShift(
-                moving.map((c) => ({
-                  start: c.start,
-                  end: c.start + c.duration,
-                  others: othersOn(trackFor(c).id),
-                })),
-                r.t - clip.start,
-                dt,
-                BUTT_PX / scale,
-                lo,
-                hi,
-              )
+          let refusedAt = -1
+          for (const [i, c] of grabbedFirst.entries()) {
+            refusal = refuseTrack(p, c, trackFor(c), movingIds)
+            if (refusal) {
+              refusedAt = i
+              break
+            }
+          }
+          const spans = grabbedFirst.map((c) => ({
+            start: c.start,
+            end: c.start + c.duration,
+            others: othersOn(trackFor(c).id),
+          }))
+          const place = refusal ? null : dropShift(spans, r.t - clip.start, dt, BUTT_PX / scale, lo, hi)
           if (!place) {
             // The clips go back to where they started until the pointer finds a place they can drop.
             if (!refused) editor.cancelGesture(key)
             refused = refusal ?? { reason: 'room' }
             setSnapLine(null)
             const shift = Math.min(hi, Math.max(lo, dt))
-            const label = refusalLabel(refused)
+            if (!refusal) refusedAt = blockedAt(spans, shift)
             setRefusedDrop({
-              label,
+              label: refusalLabel(refused),
+              labelAt: Math.max(0, refusedAt),
               boxes: grabbedFirst.map((c) => {
                 const row = rows[rowOf(c) + offset] as TrackRow
                 return { top: row.top, height: row.height, start: c.start + shift, duration: c.duration }
@@ -1785,23 +1788,36 @@ export function Timeline() {
           )
         }
       }
-      const up = () => {
-        if (refused) {
-          setRefusedDrop(null)
-          toast(refusalToast(p, refused))
-        } else editor.endGesture()
+      const finish = () => {
+        if (refused) setRefusedDrop(null)
         if (rows.length) setFrozenKinds(null)
         setSnapLine(null)
+        if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId)
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('keydown', onKey, true)
+      }
+      const up = () => {
+        if (refused) toast(refusalToast(p, refused))
+        else editor.endGesture()
+        finish()
         if (!moved && group) select({ type: 'clip', id: clip.id })
         // The chips didn't follow the drag, so say why they stayed.
         if (moved && staying && !refused)
           toast(`Moved ${plural(moving.length, 'clip')}. Lyric lines stay with the vocals.`)
-        window.removeEventListener('pointermove', move)
-        window.removeEventListener('pointerup', up)
+      }
+      // Esc puts the clips back and ends the drag; captured before the global Esc deselects.
+      const onKey = (ev: KeyboardEvent) => {
+        if (ev.key !== 'Escape') return
+        ev.preventDefault()
+        ev.stopPropagation()
+        if (!refused) editor.cancelGesture(key)
+        finish()
       }
       // On the window: a clip that changes tracks is drawn by a new element, and the old one loses the pointer.
       window.addEventListener('pointermove', move)
       window.addEventListener('pointerup', up)
+      window.addEventListener('keydown', onKey, true)
     },
     [grid, duration],
   )
@@ -2488,7 +2504,7 @@ export function Timeline() {
                 height: b.height - 6,
               }}
             >
-              {i === 0 && <span className={styles.refusedLabel}>{refusedDrop.label}</span>}
+              {i === refusedDrop.labelAt && <span className={styles.refusedLabel}>{refusedDrop.label}</span>}
             </div>
           ))}
           <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />

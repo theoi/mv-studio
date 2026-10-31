@@ -1090,11 +1090,13 @@
   pointer-events: none;
 }
 
-/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. */
+/* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Across
+   the lane's top edge, between the clip rows, so it covers no clip names. */
 .refusedLabel {
   position: absolute;
-  top: 50%;
+  top: -3px;
   left: 3px;
+  z-index: 1;
   padding: 1px var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--bg-overlay);
