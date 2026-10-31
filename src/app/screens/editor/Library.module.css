@@ -229,6 +229,7 @@
 }
 
 .songRow {
+  container: songrow / inline-size;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -285,16 +286,21 @@ button.songRow:hover {
   text-overflow: ellipsis;
 }
 
-/* Gives way to the song's name and summary first: in the narrow library, at full width it pushed "9 sections" under
-   it. */
 .songWave {
   display: flex;
   align-items: center;
   gap: 1px;
-  flex: 0 1000 64px;
-  min-width: 0;
+  flex: none;
+  width: 64px;
   height: 22px;
-  overflow: hidden;
+}
+
+/* The waveform is decoration: a row too narrow for it beside a long summary (about 168 px) drops it instead of
+   cutting the summary or squeezing the bars. */
+@container songrow (width < 290px) {
+  .songWave {
+    display: none;
+  }
 }
 
 .songWave i {

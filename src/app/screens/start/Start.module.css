@@ -369,14 +369,15 @@
   height: 16px;
 }
 
+/* aria-expanded, not data-state: a Tooltip around a menu trigger replaces Radix's data-state with its own. */
 .recentItem:hover .recentMore,
 .recentItem:focus-within .recentMore,
-.recentMore[data-state='open'] {
+.recentMore[aria-expanded='true'] {
   opacity: 1;
 }
 
 .recentMore:hover,
-.recentMore[data-state='open'] {
+.recentMore[aria-expanded='true'] {
   background: var(--bg-hover);
   color: var(--text-1);
 }

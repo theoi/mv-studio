@@ -57,8 +57,8 @@
 
 .snapMenu:hover,
 .viewBtn:hover,
-.snapMenu[data-state='open'],
-.viewBtn[data-state='open'] {
+.snapMenu[aria-expanded='true'],
+.viewBtn[aria-expanded='true'] {
   background: var(--bg-hover);
   color: var(--text-1);
 }
@@ -562,7 +562,7 @@
 
 .keyframe:hover::before,
 .keyframe:focus-visible::before,
-.keyframe[data-state='open']::before {
+.keyframe[aria-expanded='true']::before {
   background: var(--accent-line);
 }
 

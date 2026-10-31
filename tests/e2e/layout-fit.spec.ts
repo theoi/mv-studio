@@ -22,24 +22,58 @@ async function openEditor(page: Page, hash = '#/editor?t=73.6', size?: { width: 
   }, hash)
 }
 
-test('the library’s song card keeps its summary clear of the waveform at 1280', async ({ page }) => {
+test('the library’s song card shows its whole summary, and its waveform only where it fits whole', async ({
+  page,
+}) => {
   await openEditor(page)
   await waitForPreview(page)
   const row = page.locator('[class*="songRow"]')
   await expect(row.getByText(/BPM · \d+ sections/)).toBeVisible()
-  const fit = await row.evaluate((el) => {
-    const meta = el.querySelector('[class*="songMeta"]')!
-    const wave = el.querySelector('[class*="songWave"]')!
-    const text = document.createRange()
-    text.selectNodeContents(meta)
-    return {
-      textRight: text.getBoundingClientRect().right,
-      waveLeft: wave.getBoundingClientRect().left,
-      cut: meta.scrollWidth > meta.clientWidth,
+  for (const width of [1280, 1440, 1600, 1920]) {
+    await small(page, { width, height: 720 })
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
+    // Unrounded widths: scrollWidth and clientWidth round, and missed a summary cut by a tenth of a pixel.
+    const fit = await row.evaluate((el) => {
+      const meta = el.querySelector('[class*="songMeta"]')!
+      const wave = el.querySelector('[class*="songWave"]')!.getBoundingClientRect()
+      const text = document.createRange()
+      text.selectNodeContents(meta)
+      return {
+        text: text.getBoundingClientRect().width,
+        box: meta.getBoundingClientRect().width,
+        textRight: text.getBoundingClientRect().right,
+        wave: { left: wave.left, width: wave.width },
+      }
+    })
+    expect(fit.text, `summary at ${width}`).toBeLessThanOrEqual(fit.box)
+    if (fit.wave.width > 0) {
+      expect(fit.wave.width, `waveform at ${width}`).toBe(64)
+      expect(fit.textRight, `summary beside the waveform at ${width}`).toBeLessThanOrEqual(fit.wave.left)
     }
-  })
-  expect(fit.textRight).toBeLessThanOrEqual(fit.waveLeft)
-  expect(fit.cut).toBe(false)
+  }
+  // The widest library has room for both, so the waveform is not simply gone.
+  expect(await row.locator('[class*="songWave"]').evaluate((el) => el.getBoundingClientRect().width)).toBe(64)
+})
+
+test('a menu button keeps its open highlight while its menu is open, though it has a tooltip', async ({
+  page,
+}) => {
+  await openEditor(page)
+  await waitForPreview(page)
+  const background = (l: Locator) => l.evaluate((el) => getComputedStyle(el).backgroundColor)
+  for (const name of ['View options', 'Help']) {
+    // includeHidden: an open menu hides the rest of the page from assistive technology, its trigger included.
+    const trigger = page.getByRole('button', { name, exact: true, includeHidden: true })
+    const closed = await background(trigger)
+    // From the keyboard, so the pointer's hover can't supply the highlight.
+    await trigger.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('menu')).toBeVisible()
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(trigger, name).not.toHaveCSS('background-color', closed)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menu')).toBeHidden()
+  }
 })
 
 test('the timeline tool control shows which tool is on, though each choice has a tooltip', async ({
