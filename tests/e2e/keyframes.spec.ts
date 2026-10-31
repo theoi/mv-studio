@@ -361,3 +361,44 @@ test('no diamond covers a mark’s count, and the diamonds of separate marks nev
     }
   }
 })
+
+test('a keyframe mark’s menu is named for its mark, opens from Arrow Down on its first easing and gives focus back on Esc, and a right-click on a mark only moves the playhead', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  for (const t of [3, 6]) {
+    await at(page, t)
+    await page.getByRole('button', { name: 'Add keyframe: Rotation' }).click()
+  }
+  // Not by role: an open menu hides the rest of the page from role queries.
+  const first = page.locator('button[aria-label="Keyframe at 0:03.0"]')
+  const second = page.locator('button[aria-label="Keyframe at 0:06.0"]')
+  await expect(first).toBeVisible()
+  await expect(second).toBeVisible()
+
+  await first.click({ button: 'right' })
+  await expect(page.getByText(/^00:03\.00/)).toBeVisible()
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(first).toHaveAttribute('aria-expanded', 'false')
+
+  await first.focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByRole('menu', { name: 'Keyframe at 0:03.0' })).toBeVisible()
+  await expect(first).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Linear' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(first).toBeFocused()
+  await expect(first).toHaveAttribute('aria-expanded', 'false')
+
+  await second.click()
+  await expect(page.getByRole('menu', { name: 'Keyframe at 0:06.0' })).toBeVisible()
+  await expect(second).toHaveAttribute('aria-expanded', 'true')
+  await expect(first).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByText(/^00:06\.00/)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(second).toBeFocused()
+})

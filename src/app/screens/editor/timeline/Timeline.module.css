@@ -584,6 +584,13 @@
   cursor: pointer;
 }
 
+/* The easing menu's anchor, over the mark whose menu is open: the same box as the mark, so the menu sits the same. */
+.keyframeAnchor {
+  position: absolute;
+  bottom: -8px;
+  height: 16px;
+}
+
 .keyframe::before {
   content: '';
   position: absolute;
