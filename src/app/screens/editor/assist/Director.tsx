@@ -273,7 +273,7 @@ function PlanningView({ state }: { state: StateOf<'planning'> | StateOf<'ready'>
               Still working… <Elapsed since={planning.startedAt} />
             </div>
             <div className={styles.muted}>
-              {llm && isLocalEndpoint(llm)
+              {planning.stage === 'plan' && llm && isLocalEndpoint(llm)
                 ? 'Models on this computer can take a few minutes, the first time especially.'
                 : 'This is taking longer than usual.'}
             </div>

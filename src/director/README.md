@@ -125,9 +125,12 @@ removes clips whose line is gone or no longer has their words.
 
 - `idle`: kind picker (Lyric video, Visualizer, Beat cut, AI video), optional prompt, "Use my clips" toggle, and
   "AI shots" (Off, Stills, Video; draft or quality) when fal.ai is connected.
-- `planning`: `message` in place with Cancel. Planning is free. After a few seconds `slow` turns true: show "Still
-  working…" with the time since `startedAt` ("Still working… 1:12") and, when `canUseLocal` is true (the AI model is planning), a "Use the local draft instead" button that
-  calls `useLocalDraft()`. It stops waiting for the model and makes the draft with the built-in planner.
+- `planning`: `message` in place with Cancel. Planning is free. `stage` says whether the draft is waiting for the song
+  analysis (`song`) or the bars (`bars`), which are slow only when their progress stops, or planning (`plan`), slow
+  after a few seconds. When `slow` turns true, show "Still working…" with the time since `startedAt` ("Still
+  working… 1:12") and, when `canUseLocal` is true (the AI model is planning, never while the song analysis or the bars
+  run), a "Use the local draft instead" button that calls `useLocalDraft()`. It stops waiting for the model and makes
+  the draft with the built-in planner. The job's progress never moves back, even when a stage starts a second pass.
 - `ready`: `preview.summary`, `preview.changes`, `preview.items` behind "Show changes", `preview.warnings` as
   notes, sections with mood and pace, "Try another version" (`tryAnother()`), and the main button labeled
   `actionLabel` ("Make video" or "Generate 12 shots · about $2.40"). When `confirmRequired` is true the button opens

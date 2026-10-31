@@ -1464,7 +1464,7 @@ export async function expandBrief(
   const warnings: string[] = []
   if (!input.song.analyzed) {
     warnings.push(
-      "Song analysis isn't finished, so cuts follow an even tempo grid. Run the director again when beats and sections are ready.",
+      'Song analysis isn’t finished, so cuts follow an even tempo grid. Run the director again when beats and sections are ready.',
     )
   }
   const grid = beatGrid(input.song)

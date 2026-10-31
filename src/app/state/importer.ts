@@ -64,11 +64,26 @@ function songCommands(project: Project, song: Asset): EditCommand[] {
   return commands
 }
 
+const analyzing = new Map<string, Promise<boolean>>()
+
+/** The analysis of this song still running, if any (an import or the setup screen started it). */
+export function songAnalysisRunning(songId: string): Promise<boolean> | undefined {
+  return analyzing.get(songId)
+}
+
 /**
  * Finds the song's beats, sections and energy, then bars in the background. The result goes into the open project
  * if it has the song by then (the setup screen opens the editor while this runs). False when it failed.
  */
-export async function analyzeSong(song: Asset): Promise<boolean> {
+export function analyzeSong(song: Asset): Promise<boolean> {
+  const running = analyzing.get(song.id)
+  if (running) return running
+  const run = analyze(song).finally(() => analyzing.delete(song.id))
+  analyzing.set(song.id, run)
+  return run
+}
+
+async function analyze(song: Asset): Promise<boolean> {
   // The setup screen shows the progress and the result itself.
   const say = (message: string) => get().screen === 'editor' && toast(message)
   try {
