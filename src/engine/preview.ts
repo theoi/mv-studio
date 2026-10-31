@@ -31,7 +31,7 @@ import { VideoElementFrameProvider, type BridgedVideo } from './frames.ts'
 import { planFrame } from './layout.ts'
 import { WebAudioPlaybackClock } from './playback.ts'
 import { analysisPatches, type AnalysisPatch, type PreviewRenderRequest } from './previewWorker.ts'
-import { AdaptiveScale, QUALITY_SCALES, scrubScale, type PreviewQuality } from './quality.ts'
+import { AdaptiveScale, QUALITY_SCALES, scrubScale, stillLevel, type PreviewQuality } from './quality.ts'
 import { startPreviewWorker, type PreviewWorker } from './renderHost.ts'
 import type { MediaFileSource, PlaybackState, PluginRegistry } from './types.ts'
 
@@ -102,14 +102,26 @@ interface Size {
   height: number
 }
 
+/** A playback frame, a still, or a still during a scrub. */
+type FrameKind = 'playback' | 'still' | 'scrub'
+
 /** Draws preview frames, on this thread or in the render worker. */
 interface FrameRenderer {
   readonly inWorker: boolean
   /**
-   * With `untilDrawn` (a still), finishes only once the GPU has drawn the frame, not when it is queued. The worker
-   * honors it for its first frame only.
+   * A still on the main thread finishes only once the GPU has drawn it, not when it is queued; the worker waits for its
+   * first frame only. `onDrawn` gets how long a still took to draw, once known: on the main thread as it finishes,
+   * media waits included (its compositor makes them itself); on the worker some time after, timed there from the start
+   * of its rendering to the GPU finishing, for stills outside a scrub other than the first frame (which also starts the
+   * worker).
    */
-  draw(project: Project, time: Seconds, size: Size, untilDrawn?: boolean): Promise<void>
+  draw(
+    project: Project,
+    time: Seconds,
+    size: Size,
+    kind?: FrameKind,
+    onDrawn?: (ms: number) => void,
+  ): Promise<void>
   /** The GPU is still drawing the last frame, so drawing another now would block the main thread. */
   busy(): boolean
   /** Draws a frame and returns it. */
@@ -129,12 +141,21 @@ class MainRenderer implements FrameRenderer {
     this.compositor = compositor
   }
 
-  async draw(project: Project, time: Seconds, size: Size, untilDrawn = false): Promise<void> {
+  async draw(
+    project: Project,
+    time: Seconds,
+    size: Size,
+    kind: FrameKind = 'playback',
+    onDrawn?: (ms: number) => void,
+  ): Promise<void> {
+    const started = performance.now()
     await this.compositor.render(project, time, { size })
     // More GL calls while the GPU is busy would block this thread until it caught up. A still finishes only when it
     // is drawn, so stills that arrive meanwhile wait and coalesce, and its draw time is the frame's real cost.
     // Playback frames don't wait: polling the fence is coarser than a display frame, and the loop checks busy().
-    if (untilDrawn) await this.compositor.gpuIdle()
+    if (kind === 'playback') return
+    await this.compositor.gpuIdle()
+    onDrawn?.(performance.now() - started)
   }
 
   busy(): boolean {
@@ -191,12 +212,24 @@ class WorkerRenderer implements FrameRenderer {
     this.frames = frames
   }
 
-  async draw(project: Project, time: Seconds, size: Size, untilDrawn = false): Promise<void> {
+  async draw(
+    project: Project,
+    time: Seconds,
+    size: Size,
+    kind: FrameKind = 'playback',
+    onDrawn?: (ms: number) => void,
+  ): Promise<void> {
     // Only the first still waits for the GPU: until it is drawn the page canvas is blank, while later stills replace
     // a frame already on screen, and waiting for each would slow drags (the next request would no longer overlap the
-    // GPU work).
-    await this.request(project, time, size, false, untilDrawn && !this.drawn)
+    // GPU work). A still outside a scrub is timed in the worker instead, and its time fetched once known.
+    const first = !this.drawn
+    const measure = onDrawn !== undefined && kind === 'still' && !first
+    await this.request(project, time, size, false, kind !== 'playback' && first, measure)
     this.drawn = true
+    if (measure)
+      void this.worker.drawnMs().then((ms) => {
+        if (ms !== null) onDrawn(ms)
+      })
   }
 
   async snapshot(project: Project, time: Seconds, size: Size): Promise<ImageBitmap> {
@@ -252,6 +285,7 @@ class WorkerRenderer implements FrameRenderer {
     size: Size,
     capture: boolean,
     untilDrawn = false,
+    measure = false,
   ): Promise<ImageBitmap | null> {
     const plan = visibleLayers(planFrame(project, time), project, time, size, this.sampler(project))
     const requests = videoRequests(project, plan, time)
@@ -290,7 +324,7 @@ class WorkerRenderer implements FrameRenderer {
     this.frames.endFrame()
     try {
       return await this.worker.render(
-        { time, size, ...this.projectChanges(project), videos, capture, untilDrawn },
+        { time, size, ...this.projectChanges(project), videos, capture, untilDrawn, measure },
         transfer,
       )
     } catch (error) {
@@ -338,12 +372,13 @@ export class PreviewController {
   /** Paused edits or seeks arrived faster than frames rendered; settles at full resolution afterwards. */
   private scrubbing = false
   /**
-   * When the last still finished drawing, and how long the last full-size one took. That time includes media waits
-   * (a seek, an image load), so a drag right after one can draw smaller than needed; the drag's settle frame measures
-   * again.
+   * When the last still finished drawing, and how long the last two full-size ones took to draw (FrameRenderer.draw),
+   * for the current project and frame size. The faster counts: the other may have paid a one-off cost, a shader
+   * compiled on first use or an image loaded. On the main thread that time includes media waits (a seek), so a drag
+   * right after one can draw smaller than needed; the drag's settle frame measures again.
    */
   private lastStillEnd = -Infinity
-  private fullStillMs = 0
+  private fullStills: number[] = []
   /** Set while a scrub on the main-thread renderer waits to settle at full resolution. */
   private settleTimer: ReturnType<typeof setTimeout> | undefined
   private viewport: { width: number; height: number; dpr: number } | null = null
@@ -450,6 +485,7 @@ export class PreviewController {
     const basis = `${project.id} ${width}x${height}`
     if (basis === this.autoBasis) return
     this.autoBasis = basis
+    this.fullStills = []
     if (this.clock.state === 'playing' || this.scrubbing) this.auto.start(performance.now())
   }
 
@@ -475,8 +511,14 @@ export class PreviewController {
   private scrubbingScale(): number {
     const scale = this.playbackScale()
     // The main-thread renderer blocks while it draws, so a slow still slows the drag itself: draw smaller to keep up.
-    if (this.quality !== 'auto' || this.renderer?.inWorker !== false || !this.fullStillMs) return scale
-    return Math.min(scale, scrubScale(this.fullStillMs))
+    const full = this.fullStillMs()
+    if (this.quality !== 'auto' || this.renderer?.inWorker !== false || !full) return scale
+    return Math.min(scale, scrubScale(full))
+  }
+
+  /** How long a full-size still takes to draw (see fullStills), or 0 before one has been measured. */
+  private fullStillMs(): number {
+    return this.fullStills.length ? Math.min(...this.fullStills) : 0
   }
 
   /** Canvas size for the next frame: the viewport (times DPR, capped at project size) times the current scale. */
@@ -728,7 +770,11 @@ export class PreviewController {
   private startScrub(): void {
     if (this.scrubbing) return
     this.scrubbing = true
-    this.auto.start(performance.now())
+    // On the worker, a scrub starts no sharper than full-size stills draw in time for: with slow stills, judging its
+    // own would take seconds. On the main thread, scrubbingScale() caps the scale instead.
+    const full = this.fullStillMs()
+    const atLeast = this.quality === 'auto' && this.renderer?.inWorker && full ? stillLevel(full) : 0
+    this.auto.start(performance.now(), atLeast)
     this.updateScale()
   }
 
@@ -756,20 +802,26 @@ export class PreviewController {
     const size = this.frameSize(project)
     const scale = this.scale
     const renderer = this.renderer
+    const kind: FrameKind = !still ? 'playback' : this.scrubbing ? 'scrub' : 'still'
+    const basis = this.autoBasis
+    // The worker's time arrives after the frame: one for another project or frame size no longer counts.
+    const onDrawn =
+      still && scale === 1
+        ? (ms: number) => {
+            if (this.autoBasis === basis) this.fullStills = [...this.fullStills.slice(-1), ms]
+          }
+        : undefined
     const run = (
       renderer
-        ? renderer.draw(project, time, size, still)
-        : this.rendererReady.then((r) => r.draw(project, time, size, still))
+        ? renderer.draw(project, time, size, kind, onDrawn)
+        : this.rendererReady.then((r) => r.draw(project, time, size, kind, onDrawn))
     )
       .then(
         () => {
           this.lastSize = size
           const now = performance.now()
           this.frameLog.push({ at: now, ms: now - started })
-          if (still) {
-            this.lastStillEnd = now
-            if (scale === 1) this.fullStillMs = now - started
-          }
+          if (still) this.lastStillEnd = now
           while (this.frameLog.length > 0 && now - (this.frameLog[0] as { at: number }).at > 1000)
             this.frameLog.shift()
           for (const listener of this.frameListeners) listener(time)

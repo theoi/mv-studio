@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AdaptiveScale, AUTO_SCALES, scrubScale } from '../../../src/engine/quality.ts'
+import { AdaptiveScale, AUTO_SCALES, scrubScale, stillLevel } from '../../../src/engine/quality.ts'
 
 /** Feeds frames for `ms` whose interval depends on the current scale (GPU-bound when it scales with pixel count). */
 function run(auto: AdaptiveScale, from: number, ms: number, interval: (scale: number) => number): number {
@@ -181,6 +181,26 @@ describe('AdaptiveScale', () => {
     auto.frame(102_100)
     run(auto, 102_100, 600, () => 16)
     expect(auto.level).toBe(level)
+  })
+
+  it('starts no sharper than it is asked to, keeps a lower resolution it already has, and steps up from there', () => {
+    const auto = new AdaptiveScale()
+    auto.start(0, 3)
+    expect(auto.scale).toBe(0.33)
+    auto.start(1000, 1)
+    expect(auto.scale).toBe(0.33)
+    run(auto, 1000, 15_000, () => 16)
+    expect(auto.scale).toBe(1)
+  })
+})
+
+describe('stillLevel', () => {
+  it('starts at the best level whose frames auto quality would not find too slow', () => {
+    expect(AUTO_SCALES[stillLevel(20)]).toBe(1)
+    // 30 ms at 0.75 (56 % of the pixels) takes 17 ms: slower than a display frame, but fast enough to keep.
+    expect(AUTO_SCALES[stillLevel(30)]).toBe(0.75)
+    expect(AUTO_SCALES[stillLevel(80)]).toBe(0.5)
+    expect(stillLevel(450)).toBe(AUTO_SCALES.length - 1)
   })
 })
 
