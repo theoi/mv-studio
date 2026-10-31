@@ -86,6 +86,7 @@ describe('withChorus', () => {
         { start: 65.2, end: 75 },
       ],
       downbeats,
+      0.4,
     )
     expect(next.map((s) => [s.id, s.start, s.end, s.label, s.repeatGroup])).toEqual([
       ['a', 0, 10, 'intro', undefined],
@@ -93,6 +94,23 @@ describe('withChorus', () => {
       ['b.1', 24.6, 40, 'chorus', 2],
       ['c', 40, 60, 'verse', 1],
       ['d', 60, 80, 'Hook', 1],
+    ])
+  })
+
+  it('gives the chorus its confidence and keeps labels the user confirmed', () => {
+    const sections = [
+      { ...section('a', 0, 20, 'verse', 0), confidence: 1 },
+      section('b', 20, 40, 'verse', 0),
+      { ...section('c', 40, 60, 'chorus', 1), confidence: 1 },
+      { ...section('d', 60, 80, 'chorus', 1), confidence: 0.4 },
+    ]
+    const next = withChorus(sections, [{ start: 10, end: 30 }], [], 0.8)
+    expect(next.map((s) => [s.start, s.end, s.label, s.confidence])).toEqual([
+      [0, 20, 'verse', 1],
+      [20, 30, 'chorus', 0.8],
+      [30, 40, 'verse', undefined],
+      [40, 60, 'chorus', 1],
+      [60, 80, 'verse', undefined],
     ])
   })
 })
@@ -134,6 +152,8 @@ describe('lyricChorusCommand', () => {
       [80, 'chorus'],
       [89, 'verse'],
     ])
+    const choruses = editor.getProject().analysis.audio.song?.sections?.filter((s) => s.label === 'chorus')
+    expect(choruses?.map((s) => s.confidence)).toEqual([0.8, 0.8, 0.8])
     expect(editor.canUndo()).toBe(false)
 
     editor.load(createProject())
@@ -151,5 +171,24 @@ describe('lyricChorusCommand', () => {
     expect(
       lyricChorusCommand(analysis, { source: 'pasted', lines: sing(['One', 'Two', 'Three'], 0) }),
     ).toBeNull()
+  })
+
+  it('lets drafted lyrics confirm the detected chorus without moving it, and only where they repeat inside it', () => {
+    const detected: AudioAnalysis = {
+      ...analysis,
+      sections: [
+        section('a', 0, 25, 'verse', 0),
+        { ...section('b', 25, 34, 'chorus', 1), confidence: 0.4 },
+        section('c', 34, 55, 'verse', 0),
+        { ...section('d', 55, 64, 'chorus', 1), confidence: 0.4 },
+        section('e', 64, 80, 'bridge', 2),
+        { ...section('f', 80, 95, 'Hook', 1), confidence: 1 },
+      ],
+    }
+    const command = lyricChorusCommand(detected, { ...lyrics, source: 'transcribed' })
+    expect(command?.type === 'analysis.setRefined' && command.refined.sections).toEqual(
+      detected.sections?.map((s) => (s.label === 'chorus' ? { ...s, confidence: 0.6 } : s)),
+    )
+    expect(lyricChorusCommand(analysis, { ...lyrics, source: 'mixed' })).toBeNull()
   })
 })

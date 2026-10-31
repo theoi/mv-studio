@@ -34,8 +34,9 @@ export interface LyricsResult {
   language?: string
   languageProbability?: number
   /**
-   * Relabels the song's sections so the lyrics' repeated lines are the chorus (see `lyricChorusCommand`); null when
-   * nothing repeats. Dispatch it with `{ history: 'skip' }` together with the lyrics.
+   * Pasted lyrics: relabels the song's sections so the lyrics' repeated lines are the chorus. Drafts: raises the
+   * confidence of the detected chorus when the draft repeats there too (see `lyricChorusCommand`). Null when there is
+   * nothing to change. Dispatch it with `{ history: 'skip' }` together with the lyrics.
    */
   chorus: EditCommand | null
 }
