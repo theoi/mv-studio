@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { JOB_KINDS, jobFraction, jobLabel, openJob } from '../../../src/app/state/jobs.ts'
+import { JOB_KINDS, jobChipLabel, jobFraction, jobLabel, openJob } from '../../../src/app/state/jobs.ts'
 import { JobRunner } from '../../../src/shared/jobs.ts'
 import { get, set } from '../../../src/app/state/ui.ts'
 
@@ -103,4 +103,26 @@ describe('a running job where jobs are listed', () => {
     finish()
     await job.promise.catch(() => undefined)
   })
+
+  it.each([
+    ['Generating 12 clips · about $3.04', 'Generating 12 clips'],
+    ['Timing lyrics', 'Timing lyrics'],
+  ])(
+    'is called “%s” in the top bar chip as “%s”, and Stopping… there after a Cancel',
+    async (title, chip) => {
+      const runner = new JobRunner()
+      let finish!: () => void
+      const job = runner.run({
+        kind: 'test',
+        title,
+        run: () => new Promise<void>((resolve) => (finish = resolve)),
+      })
+      await Promise.resolve()
+      expect(jobChipLabel(job.snapshot())).toBe(chip)
+      job.cancel()
+      expect(jobChipLabel(job.snapshot())).toBe('Stopping…')
+      finish()
+      await job.promise.catch(() => undefined)
+    },
+  )
 })

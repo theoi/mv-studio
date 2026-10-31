@@ -116,7 +116,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  width: clamp(280px, 28vw, 420px);
+  width: clamp(280px, 26vw, 420px);
   height: 30px;
   padding: 0 6px 0 10px;
   border-radius: var(--radius);
@@ -153,7 +153,7 @@
 .activity {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   height: 28px;
   padding: 0 10px 0 8px;
   border-radius: var(--radius-full);

@@ -25,7 +25,7 @@ import { ProgressRing, Spinner } from '../../ds/Feedback.tsx'
 import { Input } from '../../ds/Fields.tsx'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
-import { jobFraction, jobLabel, openJob, runningJobs, useJobs } from '../../state/jobs.ts'
+import { jobChipLabel, jobFraction, jobLabel, openJob, runningJobs, useJobs } from '../../state/jobs.ts'
 import {
   downloadProjectFile,
   duplicateCurrent,
@@ -50,7 +50,8 @@ function Activity() {
   // Jobs that can't measure their progress (a language model thinking) show a spinner instead of a stuck 0%.
   const fraction = jobFraction(first)
   const label = jobLabel(first)
-  // A narrow window cuts the title off, and "Stopping…" leaves it out: the tooltip and the name keep all of it.
+  // The chip leaves out a title's details (a price), a narrow window cuts the rest off, and "Stopping…" replaces it:
+  // the tooltip and the name keep all of it.
   const name = first.stopping ? `Stopping: ${first.title}` : first.title
   const more = running.length - 1
   return (
@@ -67,7 +68,7 @@ function Activity() {
         ) : (
           <ProgressRing value={fraction} size={16} label={label} />
         )}
-        <span className={styles.activityTitle}>{label}</span>
+        <span className={styles.activityTitle}>{jobChipLabel(first)}</span>
         {fraction !== undefined && (
           <span className={`${styles.activityPct} tnum`}>{Math.round(fraction * 100)}%</span>
         )}

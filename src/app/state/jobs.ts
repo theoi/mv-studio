@@ -24,6 +24,13 @@ export function jobLabel(job: JobSnapshot): string {
   return job.stopping ? 'Stopping…' : job.title
 }
 
+/** jobLabel() up to the details a title gives after " · " (a price estimate), for the top bar's narrow chip. */
+export function jobChipLabel(job: JobSnapshot): string {
+  const label = jobLabel(job)
+  const details = label.indexOf(' · ')
+  return details < 0 ? label : label.slice(0, details)
+}
+
 /**
  * The share done to show as a percentage, or undefined for a spinner: for a job that can't measure its progress, and
  * for one finishing after a Cancel (keeping a result it already paid for, say), whose progress no longer leads to done.
