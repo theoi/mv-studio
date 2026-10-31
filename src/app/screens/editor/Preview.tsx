@@ -33,6 +33,7 @@ import {
   useProject,
 } from '../../state/project.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
+import { openImport } from '../../state/importer.ts'
 import { connectPreview, fitStage, selectionOutline } from './stage.ts'
 import styles from './Preview.module.css'
 
@@ -220,7 +221,7 @@ export function Preview() {
             description="Drop a song file here. Its beats, sections and energy are found in a few seconds."
             action={
               <>
-                <Button variant="primary" icon={<Upload />}>
+                <Button variant="primary" icon={<Upload />} onClick={() => openImport('song')}>
                   Import a song
                 </Button>
                 <Button variant="ghost" onClick={loadSample}>

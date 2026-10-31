@@ -32,7 +32,7 @@ import { Badge, EmptyState, ProgressBar, Spinner } from '../../../ds/Feedback.ts
 import { Segmented, Select, Slider, Switch, TextArea } from '../../../ds/Fields.tsx'
 import { Kbd } from '../../../ds/Kbd.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
-import { formatTime } from '../../../format.ts'
+import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { startAutocut, startDirector, startStems } from '../../../mock/actions.ts'
 import { sceneThumb } from '../../../mock/art.ts'
 import { FEATURED_CLIP_ID } from '../../../mock/demoProject.ts'
@@ -213,7 +213,7 @@ function SongStatus() {
       <span className={styles.songText}>
         <span className={styles.songTitle}>Song analyzed</span>
         <span className={`${styles.songMeta} tnum`}>
-          {bpmOf(project)} BPM · {list.length} sections
+          {formatBpm(bpmOf(project) ?? 120)} · {plural(list.length, 'section')}
           {chorus ? ` · chorus at ${formatTime(chorus.start)}` : ''}
           {stems ? ' · stems ready' : ''}
         </span>
@@ -1066,7 +1066,9 @@ function AnalysisView() {
       <div className={styles.facts}>
         <div>
           <span>Tempo</span>
-          <span className="tnum">{analysis?.tempo ? `${analysis.tempo.bpm} BPM · 4/4` : 'Not found'}</span>
+          <span className="tnum">
+            {analysis?.tempo ? `${formatBpm(analysis.tempo.bpm)} · 4/4` : 'Not found'}
+          </span>
         </div>
         <div>
           <span>Beats</span>

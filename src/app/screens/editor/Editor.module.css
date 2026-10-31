@@ -124,3 +124,46 @@
   padding: 0 var(--space-2) 0 var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
 }
+
+.dropOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: rgb(8 8 11 / 0.6);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.dropCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(520px, 100%);
+  padding: 40px 24px;
+  border: 1.5px dashed var(--accent-line);
+  border-radius: var(--radius-lg);
+  background: var(--accent-softer);
+  color: var(--text-2);
+  text-align: center;
+}
+
+.dropCard svg {
+  width: 26px;
+  height: 26px;
+  color: var(--accent-text);
+}
+
+.dropTitle {
+  color: var(--text-1);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+}
+
+.dropHint {
+  font-size: var(--text-sm);
+}

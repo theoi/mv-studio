@@ -38,7 +38,7 @@ import {
   MenuTrigger,
 } from '../../../ds/Menu.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
-import { formatTime } from '../../../format.ts'
+import { formatBpm, formatTime } from '../../../format.ts'
 import { sceneThumb } from '../../../mock/art.ts'
 import { peakRate, peaks } from '../../../mock/song.ts'
 import {
@@ -148,17 +148,20 @@ function makeRuler(beat: number | null): DrawFn {
   }
 }
 
-function makeWave(color: string, seed = 0, scaleY = 1): DrawFn {
+/** Waveform envelope: the song's analyzed loudness when there is one, else the design preview's mock peaks. */
+function makeWave(color: string, seed = 0, scaleY = 1, envelope?: FeatureSeries): DrawFn {
+  const values = envelope?.values.length ? envelope.values : peaks
+  const rate = envelope?.values.length ? envelope.rate : peakRate
   return (ctx, t0, pps, w, h) => {
     const mid = h / 2
     ctx.fillStyle = color
-    const perPx = Math.max(1, peakRate / pps)
+    const perPx = Math.max(1, rate / pps)
     for (let x = 0; x < w; x++) {
-      const i0 = Math.floor((t0 + x / pps) * peakRate)
-      if (i0 >= peaks.length) break
+      const i0 = Math.floor((t0 + x / pps) * rate)
+      if (i0 >= values.length) break
       let m = 0
       for (let i = i0; i < i0 + perPx; i++) {
-        const v = peaks[(i + seed) % peaks.length] ?? 0
+        const v = values[(i + seed) % values.length] ?? 0
         if (v > m) m = v
       }
       const a = Math.max(1, m * (h - 6) * 0.5 * scaleY)
@@ -192,7 +195,6 @@ function makeEnergy(series: FeatureSeries | undefined): DrawFn {
   }
 }
 
-const songWave = makeWave('#7f91b3')
 const stemWaves = [0, 1, 2, 3].map((i) => makeWave('#56658a', i * 997 + 31, 0.9))
 
 /* ---------- lyric chips ---------- */
@@ -322,7 +324,7 @@ function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?: number }) {
           <Tooltip label="Detected tempo and meter" description="Adjust in Assist › Song analysis">
             <button className={`${styles.bpm} tnum`} onClick={() => openAssist('analysis')}>
               <Music4 />
-              {bpm} BPM · 4/4
+              {formatBpm(bpm)} · 4/4
             </button>
           </Tooltip>
         )}
@@ -602,6 +604,11 @@ export function Timeline() {
 
   const ruler = useMemo(() => makeRuler(beat), [beat])
   const energyDraw = useMemo(() => makeEnergy(analysis?.energy), [analysis?.energy])
+  const features = analysis?.features
+  const songWave = useMemo(
+    () => makeWave('#7f91b3', 0, 1, features && { rate: features.rate, values: features.loudness }),
+    [features],
+  )
 
   const updateView = useCallback(() => {
     const el = scrollRef.current
