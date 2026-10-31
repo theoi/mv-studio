@@ -10,6 +10,7 @@ import type {
   Clip,
   EffectInstance,
   Id,
+  JsonValue,
   Keyframe,
   LyricLine,
   LyricsDoc,
@@ -31,6 +32,8 @@ export type EditCommand =
   | { type: 'project.updateSettings'; settings: Partial<ProjectSettings> }
   | { type: 'project.setSong'; assetId: Id | null }
   | { type: 'project.setDuration'; duration: Seconds | null }
+  /** Sets (or with null, removes) the feature-owned entry project.extensions[key]. */
+  | { type: 'project.setExtension'; key: string; value: JsonValue | null }
   | { type: 'asset.add'; asset: Asset }
   | { type: 'asset.rename'; assetId: Id; name: string }
   /** Removes the asset and every clip that uses it. */
@@ -141,6 +144,16 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
     case 'project.setDuration':
       if (cmd.duration === null) delete p.duration
       else p.duration = Math.max(0, cmd.duration)
+      return
+    case 'project.setExtension':
+      if (!cmd.key) throw new EditError('invalid', 'Extension key is required')
+      if (cmd.value !== null) {
+        p.extensions ??= {}
+        p.extensions[cmd.key] = cmd.value
+      } else if (p.extensions) {
+        delete p.extensions[cmd.key]
+        if (Object.keys(p.extensions).length === 0) delete p.extensions
+      }
       return
 
     case 'asset.add':
@@ -377,6 +390,7 @@ export function describeCommand(cmd: EditCommand): string {
   const labels: Partial<Record<EditCommand['type'], string>> = {
     'project.rename': 'Rename project',
     'project.updateSettings': 'Change project settings',
+    'project.setExtension': 'Change project settings',
     'asset.add': 'Import media',
     'asset.remove': 'Remove media',
     'track.add': 'Add track',

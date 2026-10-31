@@ -422,4 +422,9 @@ export interface Project {
   lyrics?: LyricsDoc
   /** Explicit project length; otherwise the end of the last clip. */
   duration?: Seconds
+  /**
+   * Feature-owned data saved with the project (autosave and the portable file), keyed by feature, e.g. 'vj' for the
+   * VJ pad layout. Change it with 'project.setExtension'. The renderer ignores it.
+   */
+  extensions?: Record<string, JsonValue>
 }

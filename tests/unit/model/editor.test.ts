@@ -218,6 +218,32 @@ describe('edit commands', () => {
   })
 })
 
+describe('project extensions', () => {
+  it('sets, replaces and removes a feature entry as undoable edits that survive save and load', () => {
+    const { editor } = setup()
+    editor.dispatch({ type: 'project.setExtension', key: 'vj', value: { pads: ['a'] } })
+    editor.dispatch({ type: 'project.setExtension', key: 'other', value: 1 })
+    editor.dispatch({ type: 'project.setExtension', key: 'vj', value: { pads: ['b'] } })
+    expect(editor.getProject().extensions).toEqual({ vj: { pads: ['b'] }, other: 1 })
+    const saved = parseProject(JSON.parse(JSON.stringify(editor.getProject())))
+    expect(saved.extensions).toEqual({ vj: { pads: ['b'] }, other: 1 })
+
+    editor.dispatch({ type: 'project.setExtension', key: 'vj', value: null })
+    editor.dispatch({ type: 'project.setExtension', key: 'other', value: null })
+    expect(editor.getProject().extensions).toBeUndefined()
+    editor.undo()
+    expect(editor.getProject().extensions).toEqual({ other: 1 })
+    editor.undo()
+    editor.undo()
+    expect(editor.getProject().extensions).toEqual({ vj: { pads: ['a'] }, other: 1 })
+  })
+
+  it('rejects an empty key', () => {
+    const { editor } = setup()
+    expect(() => editor.dispatch({ type: 'project.setExtension', key: '', value: 1 })).toThrow(EditError)
+  })
+})
+
 describe('parseProject', () => {
   it('accepts a current project and rejects newer or malformed data', () => {
     const project: Project = createProject()
