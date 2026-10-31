@@ -47,7 +47,7 @@ const groups: { label: string; links: [string, string][] }[] = [
   },
 ]
 
-/** Review aid for the D9 design preview; not part of the shipped app. */
+/** Review aid for the design preview in dev builds (`review=1` in the hash); production builds leave it out. */
 export function ReviewNav() {
   const [open, setOpen] = useState(false)
   return (
@@ -61,7 +61,12 @@ export function ReviewNav() {
             <div key={g.label} className={styles.reviewGroup}>
               <div className={styles.reviewLabel}>{g.label}</div>
               {g.links.map(([label, href]) => (
-                <a key={href} href={href} className={styles.reviewLink} onClick={() => setOpen(false)}>
+                <a
+                  key={href}
+                  href={`${href}${href.includes('?') ? '&' : '?'}review=1`}
+                  className={styles.reviewLink}
+                  onClick={() => setOpen(false)}
+                >
                   {label}
                 </a>
               ))}

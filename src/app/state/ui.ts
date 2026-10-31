@@ -94,7 +94,7 @@ export const initialUi: UiState = {
   snap: true,
   beatSnap: prefs().beatSnap,
   showEnergy: true,
-  review: true,
+  review: false,
   dismissed: [],
   toasts: [],
 }

@@ -877,8 +877,8 @@ function SimplePage({ page }: { page: SettingsPage }) {
   if (page === 'vj') return <VjPage />
   return (
     <>
-      <Row title="MV Studio" desc="Version 0.1 · design preview">
-        <Badge tone="accent">Preview</Badge>
+      <Row title="MV Studio" desc={`Version ${__APP_VERSION__}`}>
+        <span />
       </Row>
       <Row title="License" desc="MIT. Your videos are yours to use for anything.">
         <span />
