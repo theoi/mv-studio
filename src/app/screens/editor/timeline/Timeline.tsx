@@ -1,4 +1,14 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  memo,
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -923,6 +933,8 @@ function edgeScroll(el: HTMLElement, onScroll: () => void) {
 interface ClipBlockProps {
   clip: ClipView
   pps: number
+  /** Seconds the clip layer spans: the block's place and width are percentages of it. */
+  unit: number
   selected: boolean
   /** Keyframes of the clip, shown while it is the only selected clip. */
   marks?: KeyframeMark[]
@@ -932,8 +944,9 @@ interface ClipBlockProps {
 }
 
 const sameView = (a: ClipView, b: ClipView) =>
-  (Object.keys(a) as (keyof ClipView)[]).every((k) => a[k] === b[k]) &&
-  Object.keys(a).length === Object.keys(b).length
+  a === b ||
+  ((Object.keys(a) as (keyof ClipView)[]).every((k) => a[k] === b[k]) &&
+    Object.keys(a).length === Object.keys(b).length)
 
 /**
  * Shift or Mod click (or Enter or Space): adds the clip, or a lyric line's chip, to the selection or takes it out. A
@@ -945,16 +958,36 @@ function toggleInSelection(clipId: string) {
   selectTimelineClips(p, picked.includes(clipId) ? picked.filter((id) => id !== clipId) : [...picked, clipId])
 }
 
-/** Re-renders only when its clip, zoom or selection changes: an edit to one clip leaves the others alone. */
+/** What a clip block shows that depends on the zoom, besides its position and width. */
+function zoomedLook(clip: ClipView, pps: number) {
+  const width = Math.max(2, (clip.end - clip.start) * pps)
+  const isMedia = clip.kind === 'video' || clip.kind === 'image'
+  // A media clip's name sits beside its transition marks, which straddle its top edge where the name would be.
+  const inW = clip.transitionIn ? transitionMarkWidth(clip.transitionIn, pps) : 0
+  const outW = clip.transitionOut ? transitionMarkWidth(clip.transitionOut, pps) : 0
+  const showLabel = isMedia ? width - inW - outW > 36 : width > 54
+  return { width, isMedia, inW, outW, showLabel }
+}
+
+/**
+ * Re-renders only when its clip or selection changes, so an edit to one clip leaves the others alone. Its position
+ * and width are percentages of the clip layer, so a zoom step re-renders only the clips whose label appears or goes,
+ * those with transition marks and the one showing keyframes: hundreds of clips each with a menu would take too long.
+ */
 const ClipBlock = memo(
   ClipBlockView,
   (a, b) =>
     a.selected === b.selected &&
     a.marks === b.marks &&
     a.overChip === b.overChip &&
-    a.pps === b.pps &&
     a.onPointerDown === b.onPointerDown &&
-    sameView(a.clip, b.clip),
+    a.unit === b.unit &&
+    sameView(a.clip, b.clip) &&
+    (a.pps === b.pps ||
+      (!b.marks &&
+        !b.clip.transitionIn &&
+        !b.clip.transitionOut &&
+        zoomedLook(a.clip, a.pps).showLabel === zoomedLook(b.clip, b.pps).showLabel)),
 )
 
 /** The cut without a transition at either end of a clip, the one nearer `time`; `clipId` is the clip after it. */
@@ -966,18 +999,13 @@ function cutNear(clip: ClipView, time: number): { clipId: string; time: number }
   return cuts[0] ?? null
 }
 
-function ClipBlockView({ clip, pps, selected, marks, overChip, onPointerDown }: ClipBlockProps) {
+function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDown }: ClipBlockProps) {
   const [canPaste, setCanPaste] = useState(false)
   const [cut, setCut] = useState<{ clipId: string; time: number } | null>(null)
   const [transitions, setTransitions] = useState<TransitionSpot[]>([])
   const menuTime = useRef(clip.start)
-  const width = Math.max(2, (clip.end - clip.start) * pps)
-  const isMedia = clip.kind === 'video' || clip.kind === 'image'
+  const { width, isMedia, inW, outW, showLabel } = zoomedLook(clip, pps)
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
-  // A media clip's name sits beside its transition marks, which straddle its top edge where the name would be.
-  const inW = clip.transitionIn ? transitionMarkWidth(clip.transitionIn, pps) : 0
-  const outW = clip.transitionOut ? transitionMarkWidth(clip.transitionOut, pps) : 0
-  const showLabel = isMedia ? width - inW - outW > 36 : width > 54
   const label =
     clip.kind === 'look' && clip.amount !== undefined
       ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
@@ -1005,8 +1033,8 @@ function ClipBlockView({ clip, pps, selected, marks, overChip, onPointerDown }: 
               .filter(Boolean)
               .join(' ')}
             style={{
-              left: clip.start * pps,
-              width,
+              left: `${(clip.start / unit) * 100}%`,
+              width: `max(2px, ${((clip.end - clip.start) / unit) * 100}%)`,
               backgroundImage: thumb ? `url(${thumb})` : undefined,
             }}
             role="button"
@@ -1024,7 +1052,7 @@ function ClipBlockView({ clip, pps, selected, marks, overChip, onPointerDown }: 
               // From the keyboard (Shift F10) the menu opens with no pointer over the clip: use its start.
               menuTime.current =
                 e.clientX >= box.left && e.clientX <= box.right
-                  ? clip.start + (e.clientX - box.left) / pps
+                  ? clip.start + (e.clientX - box.left) / get().pxPerSec
                   : clip.start
             }}
             onKeyDown={(e) => {
@@ -1498,16 +1526,23 @@ export function Timeline() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+  // A power of two seconds, not the duration itself, so dragging the last clip past the end re-renders no other clip;
+  // at least half the duration, so the browser's rounding of the layer's width stays well under a pixel at the end.
+  const clipUnit = 2 ** Math.floor(Math.log2(duration))
   const stems = separatedStems(project)
   const stemTrack = songStemTrack(project)
   const mix = stemMix(project)
   const unplayable = useUnplayableStem(project)
   const timingLyrics = runningJobs(useJobs()).some((j) => j.kind === JOB_KINDS.lyrics)
 
-  const lanes = project.tracks.map((t) => {
-    const kind = frozenKinds?.get(t.id) ?? laneKind(project, t)
-    return { track: t, kind, height: laneHeight[kind] }
-  })
+  const lanes = useMemo(
+    () =>
+      project.tracks.map((t) => {
+        const kind = frozenKinds?.get(t.id) ?? laneKind(project, t)
+        return { track: t, kind, height: laneHeight[kind] }
+      }),
+    [project, frozenKinds],
+  )
   const stemH = 24
   // Untimed lines have no clip yet, so the suggestion to time them sits in the Lyrics track itself.
   const untimed = lines.filter((l) => l.text.trim() && lineTiming(l) === 'untimed').length
@@ -1570,7 +1605,12 @@ export function Timeline() {
     if (!el) return
     const t0 = el.scrollLeft / get().pxPerSec
     const t1 = t0 + el.clientWidth / get().pxPerSec
-    setView((v) => (Math.abs(v.t0 - t0) > 1 || Math.abs(v.t1 - t1) > 1 ? { t0, t1 } : v))
+    const step = Math.max(1, (t1 - t0) / 8)
+    // Clips coming into view mount in the background, so a zoom or scroll step never waits for hundreds of them; the
+    // margin around the view (see inView) has them drawn before they reach its edge.
+    startTransition(() =>
+      setView((v) => (Math.abs(v.t0 - t0) > step || Math.abs(v.t1 - t1) > step ? { t0, t1 } : v)),
+    )
   }, [])
 
   useEffect(() => {
@@ -1598,25 +1638,41 @@ export function Timeline() {
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
+    // A wheel or trackpad sends zoom events faster than the timeline can re-render, so they add up to one zoom step
+    // per animation frame, around the pointer's last position.
+    let zoomDelta = 0
+    let zoomPx = 0
+    let zoomFrame = 0
+    let scrollFrame = 0
+    const zoom = () => {
+      zoomFrame = 0
+      const { pxPerSec } = get()
+      const tAt = (el.scrollLeft + zoomPx) / pxPerSec
+      const next = Math.min(MAX_PPS, Math.max(MIN_PPS, pxPerSec * Math.exp(-zoomDelta * 0.0025)))
+      const px = zoomPx
+      zoomDelta = 0
+      set({ pxPerSec: next })
+      scrollFrame = requestAnimationFrame(() => {
+        el.scrollLeft = tAt * next - px
+      })
+    }
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
-        const rect = el.getBoundingClientRect()
-        const px = e.clientX - rect.left - HEADER_W
-        const { pxPerSec } = get()
-        const tAt = (el.scrollLeft + px) / pxPerSec
-        const next = Math.min(MAX_PPS, Math.max(MIN_PPS, pxPerSec * Math.exp(-e.deltaY * 0.0025)))
-        set({ pxPerSec: next })
-        requestAnimationFrame(() => {
-          el.scrollLeft = tAt * next - px
-        })
+        zoomPx = e.clientX - el.getBoundingClientRect().left - HEADER_W
+        zoomDelta += e.deltaY
+        zoomFrame ||= requestAnimationFrame(zoom)
       } else if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && !e.shiftKey) {
         e.preventDefault()
         el.scrollLeft += e.deltaY
       }
     }
     el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      cancelAnimationFrame(zoomFrame)
+      cancelAnimationFrame(scrollFrame)
+    }
   }, [])
 
   useEffect(
@@ -2231,7 +2287,14 @@ export function Timeline() {
       ? project.clips[selection.id]
       : undefined
   const selectedMarks = useMemo(() => (markedClip ? keyframeMarks(markedClip) : undefined), [markedClip])
-  const inView = (start: number, end: number) => end >= view.t0 - 4 && start <= view.t1 + 4
+  const margin = Math.max(4, (view.t1 - view.t0) / 4)
+  const inView = (start: number, end: number) => end >= view.t0 - margin && start <= view.t1 + margin
+  // Per project, not per render: a zoom step re-renders the timeline, and its clip blocks compare views.
+  const trackViews = useMemo(
+    () =>
+      new Map(project.tracks.map((t) => [t.id, clipsOnTrack(project, t.id).map((c) => viewOf(project, c))])),
+    [project],
+  )
 
   return (
     <div className={styles.root}>
@@ -2397,9 +2460,7 @@ export function Timeline() {
           )}
 
           {lanes.map(({ track, kind, height }, index) => {
-            const clips = clipsOnTrack(project, track.id)
-              .map((c) => viewOf(project, c))
-              .filter((c) => inView(c.start, c.end))
+            const clips = (trackViews.get(track.id) ?? []).filter((c) => inView(c.start, c.end))
             const transitionMarks =
               kind === 'video' || kind === 'overlay'
                 ? placeTransitionMarks(project, track.id, pps, selection)
@@ -2515,94 +2576,100 @@ export function Timeline() {
                           </span>
                         </div>
                       ))}
-                    {kind !== 'audio' &&
-                      clips.map((c) => {
-                        if (c.kind === 'lyric') {
-                          const lineId = c.lyricLineId
-                          const line = lines.find((l) => l.id === lineId)
-                          const w = (c.end - c.start) * pps
-                          // The line alone, or its chip among several selected clips.
-                          const only = selId === lineId
-                          const sel = only || selIds.has(c.id)
-                          const drag = (e: React.PointerEvent, d: LyricDrag) => {
-                            const body = d.type === 'line' && d.edge === 'move'
-                            if (body && e.button === 0 && (e.shiftKey || e.metaKey || e.ctrlKey)) {
-                              e.stopPropagation()
-                              e.preventDefault()
-                              toggleInSelection(c.id)
-                            } else if (lineId) onLyricPointerDown(e, lineId, track.id, d)
-                            else e.stopPropagation()
+                    {kind !== 'audio' && (
+                      // Clip blocks are placed in percent of this layer (past 100% too): a zoom resizes it and the
+                      // browser moves them while laying out, with no new style for any of them.
+                      <div className={styles.clipLayer} style={{ width: clipUnit * pps }}>
+                        {clips.map((c) => {
+                          if (c.kind === 'lyric') {
+                            const lineId = c.lyricLineId
+                            const line = lines.find((l) => l.id === lineId)
+                            const w = (c.end - c.start) * pps
+                            // The line alone, or its chip among several selected clips.
+                            const only = selId === lineId
+                            const sel = only || selIds.has(c.id)
+                            const drag = (e: React.PointerEvent, d: LyricDrag) => {
+                              const body = d.type === 'line' && d.edge === 'move'
+                              if (body && e.button === 0 && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+                                e.stopPropagation()
+                                e.preventDefault()
+                                toggleInSelection(c.id)
+                              } else if (lineId) onLyricPointerDown(e, lineId, track.id, d)
+                              else e.stopPropagation()
+                            }
+                            return (
+                              <div
+                                key={c.id}
+                                className={[styles.lyric, sel && styles.selected].filter(Boolean).join(' ')}
+                                style={{ transform: `translateX(${c.start * pps}px)`, width: w }}
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`Lyric: ${c.name}${line?.check ? CHECK_NAMES[line.check] : ''}`}
+                                aria-pressed={sel}
+                                aria-keyshortcuts="Enter Shift+Enter"
+                                data-space-plays
+                                data-lyric-line={lineId}
+                                onPointerDown={(e) => drag(e, { type: 'line', edge: 'move' })}
+                                onKeyDown={(e) => {
+                                  if (e.key !== 'Enter' || !lineId) return
+                                  e.preventDefault()
+                                  if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(c.id)
+                                  else select({ type: 'lyric', id: lineId })
+                                }}
+                              >
+                                {line?.check && <span className={styles.draftDot} aria-hidden />}
+                                <LyricChipContent
+                                  text={line?.text ?? c.name}
+                                  words={line?.words ?? []}
+                                  start={c.start}
+                                  width={w}
+                                  pps={pps}
+                                  selected={only}
+                                  onWordEdge={(e, index, edge) => drag(e, { type: 'word', index, edge })}
+                                />
+                                {w >= 16 && (
+                                  <>
+                                    <span
+                                      className={[styles.handle, styles.handleL].join(' ')}
+                                      onPointerDown={(e) => drag(e, { type: 'line', edge: 'start' })}
+                                    />
+                                    <span
+                                      className={[styles.handle, styles.handleR].join(' ')}
+                                      onPointerDown={(e) => drag(e, { type: 'line', edge: 'end' })}
+                                    />
+                                  </>
+                                )}
+                                {only && lineId && <LineMatches lineId={lineId} />}
+                              </div>
+                            )
                           }
                           return (
-                            <div
-                              key={c.id}
-                              className={[styles.lyric, sel && styles.selected].filter(Boolean).join(' ')}
-                              style={{ transform: `translateX(${c.start * pps}px)`, width: w }}
-                              role="button"
-                              tabIndex={0}
-                              aria-label={`Lyric: ${c.name}${line?.check ? CHECK_NAMES[line.check] : ''}`}
-                              aria-pressed={sel}
-                              aria-keyshortcuts="Enter Shift+Enter"
-                              data-space-plays
-                              data-lyric-line={lineId}
-                              onPointerDown={(e) => drag(e, { type: 'line', edge: 'move' })}
-                              onKeyDown={(e) => {
-                                if (e.key !== 'Enter' || !lineId) return
-                                e.preventDefault()
-                                if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(c.id)
-                                else select({ type: 'lyric', id: lineId })
-                              }}
-                            >
-                              {line?.check && <span className={styles.draftDot} aria-hidden />}
-                              <LyricChipContent
-                                text={line?.text ?? c.name}
-                                words={line?.words ?? []}
-                                start={c.start}
-                                width={w}
+                            <Fragment key={c.id}>
+                              <ClipBlock
+                                clip={c}
                                 pps={pps}
-                                selected={only}
-                                onWordEdge={(e, index, edge) => drag(e, { type: 'word', index, edge })}
+                                unit={clipUnit}
+                                selected={selIds.has(c.id)}
+                                marks={markedClip?.id === c.id ? selectedMarks : undefined}
+                                overChip={chips.length > 0 && overChip(c)}
+                                onPointerDown={onClipPointerDown}
                               />
-                              {w >= 16 && (
-                                <>
-                                  <span
-                                    className={[styles.handle, styles.handleL].join(' ')}
-                                    onPointerDown={(e) => drag(e, { type: 'line', edge: 'start' })}
-                                  />
-                                  <span
-                                    className={[styles.handle, styles.handleR].join(' ')}
-                                    onPointerDown={(e) => drag(e, { type: 'line', edge: 'end' })}
-                                  />
-                                </>
-                              )}
-                              {only && lineId && <LineMatches lineId={lineId} />}
-                            </div>
+                              {transitionMarks?.get(c.id)?.map((m) => (
+                                <TransitionMark
+                                  key={m.edge}
+                                  mark={m}
+                                  selected={
+                                    selection.type === 'transition' &&
+                                    selection.id === m.clipId &&
+                                    selection.edge === m.edge
+                                  }
+                                />
+                              ))}
+                            </Fragment>
                           )
-                        }
-                        return (
-                          <Fragment key={c.id}>
-                            <ClipBlock
-                              clip={c}
-                              pps={pps}
-                              selected={selIds.has(c.id)}
-                              marks={markedClip?.id === c.id ? selectedMarks : undefined}
-                              overChip={chips.length > 0 && overChip(c)}
-                              onPointerDown={onClipPointerDown}
-                            />
-                            {transitionMarks?.get(c.id)?.map((m) => (
-                              <TransitionMark
-                                key={m.edge}
-                                mark={m}
-                                selected={
-                                  selection.type === 'transition' &&
-                                  selection.id === m.clipId &&
-                                  selection.edge === m.edge
-                                }
-                              />
-                            ))}
-                          </Fragment>
-                        )
-                      })}
+                        })}
+                      </div>
+                    )}
                     {suggestTiming && track.id === lyricsTrackId && (
                       <div
                         className={[styles.untimedLayer, suggestLeft === null && styles.untimedPinned]

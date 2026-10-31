@@ -375,6 +375,19 @@
   pointer-events: none;
 }
 
+/* A lane's clips. Clicks between them reach the lane, which starts a marquee or opens the lane's menu. */
+.clipLayer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.clipLayer > * {
+  pointer-events: auto;
+}
+
 /* Clips */
 .clip {
   position: absolute;
