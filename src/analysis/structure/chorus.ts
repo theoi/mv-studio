@@ -36,7 +36,8 @@ const SEPARATION_SECONDS = 4
 const ADJACENT_WEIGHT = 0.25
 /**
  * An occurrence with a line left out or rewritten still counts when, in order, it matches more than this share of the
- * passage's words, in pieces of at least PARTIAL_PIECE words in a row.
+ * passage's words, in pieces of at least PARTIAL_PIECE words in a row. A single piece must also reach into the first
+ * and last quarter of the passage: one run of a chorus's words alone (a verse singing its hook) is not the chorus.
  */
 const PARTIAL_SHARE = 0.5
 const PARTIAL_PIECE = 3
@@ -213,10 +214,10 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
   if (!best.starts.length) best = single
   if (!best.starts.length) return null
   const k = best.length
-  const spans: [number, number][] = best.starts.map((s) => [s, Math.min(n - 1, s + k - 1)])
+  const spans = best.starts.map((s) => ({ first: s, last: Math.min(n - 1, s + k - 1), full: true }))
   // Occurrences elsewhere with a line left out or rewritten: chains of pieces of the passage, in order, with up to half
   // the passage missing or changed between two pieces. The longest chains that match most of the passage count too.
-  const free = (a: number, b: number) => spans.every(([s, e]) => b < s || a > e)
+  const free = (a: number, b: number) => spans.every((s) => b < s.first || a > s.last)
   const pieceAt = new Map<number, { p: number; r: number }>()
   for (let p = best.from; p < best.from + k; p++) {
     if (keys[p]! < 0) continue
@@ -228,7 +229,14 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
   }
   const pieces = [...pieceAt].map(([q, { p, r }]) => ({ p, q, r })).sort((a, b) => a.q - b.q)
   const gap = Math.ceil(k / 2)
-  const chains = pieces.map((piece) => ({ first: piece.q, last: piece.q + piece.r - 1, matched: piece.r }))
+  const chains = pieces.map((piece) => ({
+    first: piece.q,
+    last: piece.q + piece.r - 1,
+    matched: piece.r,
+    pieces: 1,
+    from: piece.p,
+    to: piece.p + piece.r,
+  }))
   for (let b = 0; b < pieces.length; b++) {
     const to = pieces[b]!
     for (let a = b - 1; a >= 0 && to.q - pieces[a]!.q <= gap + k; a--) {
@@ -236,18 +244,27 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
       const skipped = to.p - (from.p + from.r)
       const inserted = to.q - (from.q + from.r)
       if (skipped < 0 || skipped > gap || inserted < 0 || inserted > gap) continue
-      if (chains[a]!.matched + to.r > chains[b]!.matched)
-        chains[b] = { first: chains[a]!.first, last: to.q + to.r - 1, matched: chains[a]!.matched + to.r }
+      const before = chains[a]!
+      if (before.matched + to.r > chains[b]!.matched)
+        chains[b] = {
+          ...before,
+          last: to.q + to.r - 1,
+          matched: before.matched + to.r,
+          pieces: before.pieces + 1,
+          to: to.p + to.r,
+        }
     }
   }
+  const quarter = k / 4
   for (const c of chains.sort((x, y) => y.matched - x.matched)) {
     if (c.matched <= PARTIAL_SHARE * k || c.matched < MIN_PASSAGE_WORDS || !free(c.first, c.last)) continue
-    spans.push([c.first, Math.min(n - 1, c.last)])
+    if (c.pieces === 1 && (c.from - best.from > quarter || best.from + k - c.to > quarter)) continue
+    spans.push({ first: c.first, last: Math.min(n - 1, c.last), full: false })
   }
-  spans.sort((a, b) => a[0] - b[0])
-  const ranges = spans.map(([s, e]) => {
-    let first = s
-    let last = e
+  spans.sort((a, b) => a.first - b.first)
+  const ranges = spans.map((span) => {
+    let first = span.first
+    let last = span.last
     // A few words cut off by a pause only match because the lines before (or after) both occurrences end (or start)
     // alike; they are not part of the chorus.
     const pause = (k: number) => words[k + 1]!.start - words[k]!.end > EDGE_PAUSE
@@ -262,9 +279,13 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
         last = k
         break
       }
-    return { start: words[first]!.start, end: words[last]!.end }
+    return { start: words[first]!.start, end: words[last]!.end, full: span.full }
   })
-  const durations = ranges.map((r) => r.end - r.start).sort((a, b) => a - b)
+  // The cap follows the whole occurrences; shorter ones with lines left out would cut them.
+  const durations = ranges
+    .filter((r) => r.full)
+    .map((r) => r.end - r.start)
+    .sort((a, b) => a - b)
   const longest = MAX_STRETCH * durations[(durations.length - 1) >> 1]!
   return {
     ranges: ranges.map((r) => ({ start: r.start, end: Math.min(r.end, r.start + longest) })),
