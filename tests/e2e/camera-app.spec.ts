@@ -105,12 +105,16 @@ test('Assist › 3D camera adds a depth camera move to every still in one undo s
   await expect(strength).toHaveAttribute('aria-valuetext', 'Automatic, 50% or less for each image')
   await expect(strength).toHaveAttribute('aria-valuenow', '50')
   await expect(autoHint).toBeVisible()
+  await expect(strength).toHaveAccessibleDescription(
+    'Each image gets as much as it can take without smearing.',
+  )
   await expect(reset).toHaveCount(0)
   // A strength the user sets shows as a percent and goes on every image as it is.
   await strength.focus()
   for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowRight')
   await expect(assist.getByText('60%', { exact: true })).toBeVisible()
   await expect(strength).not.toHaveAttribute('aria-valuetext')
+  await expect(strength).not.toHaveAttribute('aria-describedby')
   await expect(autoHint).toHaveCount(0)
   await expect(reset).toBeVisible()
   await apply.click()

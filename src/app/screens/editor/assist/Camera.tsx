@@ -1,6 +1,6 @@
 import { AlertTriangle, Box, Check, Lock, Play, RotateCcw, Undo2 } from 'lucide-react'
 import type { Asset, ImageClip } from '../../../../model/index.ts'
-import { useRef } from 'react'
+import { useId, useRef } from 'react'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Badge, EmptyState } from '../../../ds/Feedback.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
@@ -59,6 +59,7 @@ export function CameraView() {
   const strength = useCamera((s) => s.strength)
   const strengthSet = useCamera((s) => s.strengthSet)
   const slider = useRef<HTMLDivElement>(null)
+  const strengthHint = useId()
   const result = useCamera((s) => (job ? s.results[job.id] : undefined))
   const targets = cameraTargets(project, selection)
   const download = useDepthDownload(phase === 'idle' && targets.length > 0)
@@ -217,14 +218,16 @@ export function CameraView() {
                 </IconButton>
               ),
             }
-          : { hint: 'Each image gets as much as it can take without smearing.' })}
+          : { hint: 'Each image gets as much as it can take without smearing.', hintId: strengthHint })}
       >
         <div className={styles.sliderRow} ref={slider}>
           <Slider
             value={strength}
             onChange={(v) => useCamera.setState({ strength: v, strengthSet: true })}
             ariaLabel="Strength"
-            {...(strengthSet ? {} : { valueText: 'Automatic, 50% or less for each image' })}
+            {...(strengthSet
+              ? {}
+              : { valueText: 'Automatic, 50% or less for each image', ariaDescribedBy: strengthHint })}
           />
           <span className={`${styles.sliderValue} tnum`}>{strengthSet ? `${strength}%` : 'Auto'}</span>
         </div>

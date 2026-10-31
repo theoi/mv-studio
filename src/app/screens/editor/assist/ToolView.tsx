@@ -41,11 +41,14 @@ export function Field({
   label,
   children,
   hint,
+  hintId,
   action,
 }: {
   label: string
   children: ReactNode
   hint?: string
+  /** Id for the hint, so the control can point to it with aria-describedby. */
+  hintId?: string
   /** A small button at the label's right end, such as a reset. */
   action?: ReactNode
 }) {
@@ -56,7 +59,11 @@ export function Field({
         {action}
       </div>
       {children}
-      {hint && <div className={styles.fieldHint}>{hint}</div>}
+      {hint && (
+        <div className={styles.fieldHint} id={hintId}>
+          {hint}
+        </div>
+      )}
     </div>
   )
 }

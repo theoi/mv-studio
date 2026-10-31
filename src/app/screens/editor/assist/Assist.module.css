@@ -378,6 +378,7 @@
   color: var(--text-3);
   font-size: var(--text-xs);
   line-height: var(--lh-xs);
+  text-wrap: pretty;
 }
 
 .fieldLabelRow {
