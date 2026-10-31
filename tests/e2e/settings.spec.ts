@@ -100,7 +100,22 @@ test('About opens the third-party notices', async ({ page, context }) => {
   const dialog = await openSettings(page, 'about')
   const [notices] = await Promise.all([
     context.waitForEvent('page'),
-    dialog.getByRole('button', { name: 'View' }).click(),
+    dialog.getByRole('button', { name: 'View third-party notices' }).click(),
   ])
   await notices.waitForURL(/THIRD_PARTY_NOTICES\.md$/)
+})
+
+test('About opens the licenses of the code in this build, served with the site', async ({
+  page,
+  context,
+}) => {
+  await openHarness(page)
+  const dialog = await openSettings(page, 'about')
+  const [licenses] = await Promise.all([
+    context.waitForEvent('page'),
+    dialog.getByRole('button', { name: 'View open-source licenses' }).click(),
+  ])
+  await licenses.waitForURL(/\/mv-studio\/third-party-licenses\.txt$/)
+  await expect(licenses.locator('body')).toContainText('Third-party software in MV Studio')
+  await expect(licenses.locator('body')).toContainText(/^react \d+\.\d+\.\d+ \(MIT\)/m)
 })
