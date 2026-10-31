@@ -45,7 +45,7 @@ test('a lyric line takes a kinetic preset, font, colors and position from the in
 
   await page.getByRole('combobox', { name: 'Kinetic preset' }).click()
   await page.getByRole('option', { name: /^Stamp/ }).click()
-  await page.getByRole('combobox', { name: 'Font' }).click()
+  await page.getByRole('combobox', { name: 'Font', exact: true }).click()
   await page.getByRole('option', { name: /^Anton/ }).click()
   await page.getByLabel('Text color').fill('#ff3366')
   await page.getByRole('radio', { name: 'Top' }).click()

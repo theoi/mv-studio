@@ -1,6 +1,7 @@
 /**
- * Text and lyric style edits from the inspector: font, kinetic preset and its settings, line position, and copying a
- * lyric line's look to every line. Each is one undo step.
+ * Text and lyric style edits from the inspector: font and weight, style values, outline, shadow and background,
+ * kinetic preset and its settings, line position, and copying a lyric line's look to every line. Each is one undo
+ * step.
  */
 import { pluginRegistry } from '../../engine/registry.ts'
 import type { ParamSpec } from '../../engine/types.ts'
@@ -180,4 +181,81 @@ export function applyStyleToAllLines(clip: TextClip): void {
         if (editor.undoLabel() === label) editor.undo()
       },
     })
+}
+
+const WEIGHTS: [number, string][] = [
+  [100, 'Thin'],
+  [200, 'Extra light'],
+  [300, 'Light'],
+  [400, 'Regular'],
+  [500, 'Medium'],
+  [600, 'Semibold'],
+  [700, 'Bold'],
+  [800, 'Extra bold'],
+  [900, 'Black'],
+]
+
+const weightName = (weight: number) => WEIGHTS.find(([w]) => w === weight)?.[1]
+
+/** The weights the style's font has (all of them for a font that isn't bundled), and the style's own. */
+export function weightChoice(style: TextStyle): {
+  value: string
+  options: { value: string; label: string; description?: string }[]
+} {
+  const [lightest, boldest] = bundledFont(style.fontFamily)?.weights ?? [100, 900]
+  const weights = WEIGHTS.map(([w]) => w).filter((w) => w >= lightest && w <= boldest)
+  if (!weights.includes(style.fontWeight)) weights.push(style.fontWeight)
+  return {
+    value: String(style.fontWeight),
+    options: weights
+      .sort((a, b) => a - b)
+      .map((w) => {
+        const name = weightName(w)
+        return name
+          ? { value: String(w), label: name }
+          : { value: String(w), label: String(w), description: 'Custom' }
+      }),
+  }
+}
+
+export function setWeight(clip: TextClip, weight: number): void {
+  if (clip.style.fontWeight === weight) return
+  dispatch(
+    { type: 'clip.set', clipId: clip.id, path: ['style', 'fontWeight'], value: weight },
+    { label: `Weight: ${weightName(weight) ?? weight}` },
+  )
+}
+
+/** Outline, shadow and background: optional parts of a text style, with the values they start from. */
+export const TEXT_DECORATIONS = {
+  stroke: { name: 'Outline', initial: { color: '#000000', width: 4 } },
+  shadow: { name: 'Shadow', initial: { color: '#00000099', blur: 16, offsetX: 0, offsetY: 4 } },
+  background: { name: 'Background', initial: { color: '#000000a6', padding: 16, radius: 12 } },
+} as const
+
+export type TextDecoration = keyof typeof TEXT_DECORATIONS
+
+/** Turns an outline, shadow or background on (from its starting values) or off, as one undo step. */
+export function setDecoration(clip: TextClip, part: TextDecoration, on: boolean): void {
+  if (!!clip.style[part] === on) return
+  const { name, initial } = TEXT_DECORATIONS[part]
+  dispatch(
+    { type: 'clip.set', clipId: clip.id, path: ['style', part], value: on ? { ...initial } : undefined },
+    { label: `${name} ${on ? 'on' : 'off'}` },
+  )
+}
+
+/** Changes one value of a text style; `gesture` coalesces a slider drag into one undo step. */
+export function setStyleValue(
+  clip: TextClip,
+  path: string[],
+  value: string | number,
+  options: { gesture: true } | { label: string },
+): void {
+  dispatch(
+    { type: 'clip.set', clipId: clip.id, path: ['style', ...path], value },
+    'label' in options
+      ? { label: options.label }
+      : { coalesceKey: `inspector:${clip.id}:style.${path.join('.')}` },
+  )
 }

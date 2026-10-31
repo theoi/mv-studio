@@ -445,13 +445,33 @@ export function Select<T extends string>({
   )
 }
 
-/** #rgb and #rrggbbaa as #rrggbb, which is all a color input takes; anything else as black. */
-function inputHex(value: string): string {
+const hexByte = (n: number) =>
+  Math.round(Math.min(255, Math.max(0, n)))
+    .toString(16)
+    .padStart(2, '0')
+
+/**
+ * A hex or rgb()/rgba() color as #rrggbb, which is all a color input takes, and its alpha as two hex digits ('' when
+ * opaque); null for anything else.
+ */
+function splitColor(value: string): { hex: string; alpha: string } | null {
   const v = value.trim().toLowerCase()
-  if (/^#[0-9a-f]{6}$/.test(v)) return v
-  if (/^#[0-9a-f]{8}$/.test(v)) return v.slice(0, 7)
-  if (/^#[0-9a-f]{3}$/.test(v)) return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`
-  return '#000000'
+  if (/^#[0-9a-f]{6}$/.test(v)) return { hex: v, alpha: '' }
+  if (/^#[0-9a-f]{8}$/.test(v)) return { hex: v.slice(0, 7), alpha: v.slice(7) }
+  if (/^#[0-9a-f]{3}$/.test(v)) return { hex: `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`, alpha: '' }
+  const rgb = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(v)
+  if (!rgb) return null
+  const a = rgb[4] === undefined ? 1 : Number(rgb[4])
+  return {
+    hex: `#${hexByte(Number(rgb[1]))}${hexByte(Number(rgb[2]))}${hexByte(Number(rgb[3]))}`,
+    alpha: a < 1 ? hexByte(a * 255) : '',
+  }
+}
+
+/** The color as shown: #RRGGBB, or #RRGGBBAA when it is see-through. */
+function shownColor(value: string): string {
+  const c = splitColor(value)
+  return (c ? c.hex + c.alpha : value).toUpperCase()
 }
 
 /**
@@ -471,15 +491,15 @@ export function ColorField({
 }) {
   if (!onChange)
     return (
-      <span className={styles.color} role="img" aria-label={`${ariaLabel}: ${value.toUpperCase()}`}>
+      <span className={styles.color} role="img" aria-label={`${ariaLabel}: ${shownColor(value)}`}>
         <span className={styles.colorSwatch} style={{ background: value }} />
         <span className="tnum" aria-hidden>
-          {value.toUpperCase()}
+          {shownColor(value)}
         </span>
       </span>
     )
-  // The color input has no alpha, so a picked color keeps the value's own (#rrggbbaa).
-  const alpha = /^#[0-9a-f]{8}$/i.test(value.trim()) ? value.trim().slice(7) : ''
+  // The color input has no alpha, so a picked color keeps the value's own, as #rrggbbaa.
+  const color = splitColor(value)
   return (
     <label className={styles.color}>
       <input
@@ -491,12 +511,12 @@ export function ColorField({
         }}
         type="color"
         className={styles.colorInput}
-        value={inputHex(value)}
-        onChange={(e) => onChange(e.target.value + alpha)}
+        value={color?.hex ?? '#000000'}
+        onChange={(e) => onChange(e.target.value + (color?.alpha ?? ''))}
         aria-label={ariaLabel}
       />
       <span className={styles.colorSwatch} style={{ background: value }} />
-      <span className="tnum">{value.toUpperCase()}</span>
+      <span className="tnum">{shownColor(value)}</span>
     </label>
   )
 }

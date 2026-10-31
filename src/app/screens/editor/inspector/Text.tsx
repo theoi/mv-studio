@@ -1,11 +1,13 @@
-import { Type } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { AlignCenter, AlignLeft, AlignRight, Type } from 'lucide-react'
 import type { ParamSpec } from '../../../../engine/types.ts'
-import type { Clip, ParamValue, TextClip } from '../../../../model/index.ts'
+import type { Clip, ParamValue, TextClip, TextStyle } from '../../../../model/index.ts'
 import {
   ColorField,
   FieldRow,
   NumberField,
   Section,
+  Segmented,
   Select,
   Slider,
   Switch,
@@ -13,7 +15,21 @@ import {
 } from '../../../ds/Fields.tsx'
 import { formatTime } from '../../../format.ts'
 import { dispatch, editor } from '../../../state/project.ts'
-import { fontChoice, presetParams, setFont, setPresetParam } from '../../../state/textStyle.ts'
+import {
+  fontChoice,
+  NO_PRESET,
+  presetOptions,
+  presetParams,
+  setDecoration,
+  setFont,
+  setPreset,
+  setPresetParam,
+  setStyleValue,
+  setWeight,
+  TEXT_DECORATIONS,
+  weightChoice,
+  type TextDecoration,
+} from '../../../state/textStyle.ts'
 import { Header, TransformSection } from './parts.tsx'
 import styles from '../Inspector.module.css'
 
@@ -75,6 +91,190 @@ export function TextColor({
   )
 }
 
+export function WeightRow({ clip }: { clip: TextClip }) {
+  const { value, options } = weightChoice(clip.style)
+  return (
+    <FieldRow label="Weight" trailing={spacer}>
+      <Select
+        value={value}
+        onChange={(w) => setWeight(clip, Number(w))}
+        ariaLabel="Font weight"
+        options={options}
+      />
+    </FieldRow>
+  )
+}
+
+export function ColorRow({ clip }: { clip: TextClip }) {
+  return (
+    <FieldRow label="Color" trailing={spacer}>
+      <TextColor clip={clip} path={['style', 'color']} value={clip.style.color} ariaLabel="Text color" />
+    </FieldRow>
+  )
+}
+
+function AlignRow({ clip }: { clip: TextClip }) {
+  return (
+    <FieldRow label="Align" trailing={spacer}>
+      <Segmented<TextStyle['align']>
+        value={clip.style.align}
+        onChange={(align) => setStyleValue(clip, ['align'], align, { label: `Align ${align}` })}
+        ariaLabel="Text alignment"
+        size="sm"
+        block
+        options={[
+          { value: 'left', label: <AlignLeft />, title: 'Left' },
+          { value: 'center', label: <AlignCenter />, title: 'Center' },
+          { value: 'right', label: <AlignRight />, title: 'Right' },
+        ]}
+      />
+    </FieldRow>
+  )
+}
+
+/** A number in a text style (at `path` under `style`) on a slider, one undo step per drag. */
+function StyleSlider({
+  clip,
+  path,
+  label,
+  value,
+  min,
+  max,
+  step,
+  format,
+}: {
+  clip: TextClip
+  path: string[]
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  format: (v: number) => string
+}) {
+  return (
+    <FieldRow label={label} trailing={spacer}>
+      <Slider
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(v) => setStyleValue(clip, path, v, { gesture: true })}
+        onCommit={() => editor.endGesture()}
+        ariaLabel={label}
+      />
+      <span className={`${styles.value} tnum`}>{format(value)}</span>
+    </FieldRow>
+  )
+}
+
+const px = (v: number) => `${Math.round(v)} px`
+
+function SpacingRows({ clip }: { clip: TextClip }) {
+  return (
+    <>
+      <StyleSlider
+        clip={clip}
+        path={['letterSpacing']}
+        label="Spacing"
+        value={clip.style.letterSpacing}
+        min={-0.1}
+        max={0.5}
+        step={0.01}
+        format={(v) => `${Math.round(v * 100)}%`}
+      />
+      <StyleSlider
+        clip={clip}
+        path={['lineHeight']}
+        label="Line height"
+        value={clip.style.lineHeight}
+        min={0.8}
+        max={2}
+        step={0.05}
+        format={(v) => `${v.toFixed(2)}×`}
+      />
+    </>
+  )
+}
+
+/** One collapsed section for an outline, shadow or background: on or off, then its values. */
+function DecorationSection({ clip, part }: { clip: TextClip; part: TextDecoration }) {
+  const { name } = TEXT_DECORATIONS[part]
+  const on = !!clip.style[part]
+  const slider = (key: string, label: string, value: number, min: number, max: number) => (
+    <StyleSlider
+      clip={clip}
+      path={[part, key]}
+      label={label}
+      value={value}
+      min={min}
+      max={max}
+      step={1}
+      format={px}
+    />
+  )
+  const { stroke, shadow, background } = clip.style
+  return (
+    <Section
+      title={name}
+      defaultOpen={false}
+      actions={
+        <Switch checked={on} onCheckedChange={(v) => setDecoration(clip, part, v)} ariaLabel={`${name} on`} />
+      }
+    >
+      {on ? (
+        <FieldRow label="Color" trailing={spacer}>
+          <TextColor
+            clip={clip}
+            path={['style', part, 'color']}
+            value={clip.style[part]?.color ?? '#000000'}
+            ariaLabel={`${name} color`}
+          />
+        </FieldRow>
+      ) : (
+        <p className={styles.note}>Off. Use the switch to turn it on.</p>
+      )}
+      {part === 'stroke' && stroke && slider('width', 'Width', stroke.width, 0, 20)}
+      {part === 'shadow' && shadow && (
+        <>
+          {slider('blur', 'Blur', shadow.blur, 0, 60)}
+          {slider('offsetX', 'Offset X', shadow.offsetX, -40, 40)}
+          {slider('offsetY', 'Offset Y', shadow.offsetY, -40, 40)}
+        </>
+      )}
+      {part === 'background' && background && (
+        <>
+          {slider('padding', 'Padding', background.padding, 0, 60)}
+          {slider('radius', 'Corners', background.radius, 0, 40)}
+        </>
+      )}
+    </Section>
+  )
+}
+
+/** Outline, shadow and background, each in a collapsed section. */
+export function DecorationSections({ clip }: { clip: TextClip }) {
+  return (
+    <>
+      <DecorationSection clip={clip} part="stroke" />
+      <DecorationSection clip={clip} part="shadow" />
+      <DecorationSection clip={clip} part="background" />
+    </>
+  )
+}
+
+export function PresetRow({ clip }: { clip: TextClip }) {
+  return (
+    <FieldRow label="Preset" trailing={spacer}>
+      <Select
+        value={clip.animation?.presetId ?? NO_PRESET}
+        onChange={(id) => setPreset(clip, id)}
+        ariaLabel="Kinetic preset"
+        options={presetOptions()}
+      />
+    </FieldRow>
+  )
+}
 function decimals(spec: Extract<ParamSpec, { type: 'number' }>): number {
   const step = spec.step ?? (spec.max - spec.min) / 100
   return step >= 1 ? 0 : step >= 0.1 ? 1 : 2
@@ -139,10 +339,16 @@ function PresetParam({ clip, spec, value }: { clip: TextClip; spec: ParamSpec; v
   }
 }
 
-/** The settings of the clip's kinetic preset, from the preset itself. */
-export function PresetSettings({ clip }: { clip: TextClip }) {
+/** The settings of the clip's kinetic preset, from the preset itself, or `empty` without a preset. */
+export function PresetSettings({
+  clip,
+  empty = <p className={styles.note}>No kinetic preset. Pick one under Style.</p>,
+}: {
+  clip: TextClip
+  empty?: ReactNode
+}) {
   const params = presetParams(clip)
-  if (!params.length) return <p className={styles.note}>No kinetic preset. Pick one under Style.</p>
+  if (!params.length) return empty
   return (
     <>
       {params.map(({ spec, value }) => (
@@ -176,7 +382,16 @@ export function TextInspector({ clip }: { clip: Extract<Clip, { type: 'text' }> 
           />
         </div>
         <FontRow clip={clip} />
+        <WeightRow clip={clip} />
         <SizeRow clip={clip} />
+        <ColorRow clip={clip} />
+        <AlignRow clip={clip} />
+        <SpacingRows clip={clip} />
+      </Section>
+      <DecorationSections clip={clip} />
+      <Section title="Animation" defaultOpen={false}>
+        <PresetRow clip={clip} />
+        <PresetSettings clip={clip} empty={null} />
       </Section>
       <TransformSection clip={clip} />
     </>

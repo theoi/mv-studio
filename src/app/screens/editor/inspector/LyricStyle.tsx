@@ -1,20 +1,28 @@
 import type { TextClip } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
-import { FieldRow, Section, Segmented, Select, Switch } from '../../../ds/Fields.tsx'
+import { FieldRow, Section, Segmented, Switch } from '../../../ds/Fields.tsx'
 import { dispatch } from '../../../state/project.ts'
 import {
   applyStyleToAllLines,
   linePosition,
-  NO_PRESET,
-  presetOptions,
   setLinePosition,
-  setPreset,
   type LinePosition,
 } from '../../../state/textStyle.ts'
-import { FontRow, PresetSettings, SizeRow, TextColor } from './Text.tsx'
+import {
+  ColorRow,
+  DecorationSections,
+  FontRow,
+  PresetRow,
+  PresetSettings,
+  SizeRow,
+  TextColor,
+  WeightRow,
+} from './Text.tsx'
 import styles from '../Inspector.module.css'
 
 const KARAOKE = { highlightColor: '#ffd27a', mode: 'word' } as const
+
+type KaraokeMode = NonNullable<TextClip['karaoke']>['mode']
 
 /** How a lyric line looks and animates, and applying that to every line. `clip` is the line's text clip, if placed. */
 export function LyricStyleSections({ clip }: { clip?: TextClip }) {
@@ -28,19 +36,11 @@ export function LyricStyleSections({ clip }: { clip?: TextClip }) {
   return (
     <>
       <Section title="Style">
-        <FieldRow label="Preset" trailing={spacer}>
-          <Select
-            value={clip.animation?.presetId ?? NO_PRESET}
-            onChange={(id) => setPreset(clip, id)}
-            ariaLabel="Kinetic preset"
-            options={presetOptions()}
-          />
-        </FieldRow>
+        <PresetRow clip={clip} />
         <FontRow clip={clip} />
+        <WeightRow clip={clip} />
         <SizeRow clip={clip} />
-        <FieldRow label="Color" trailing={spacer}>
-          <TextColor clip={clip} path={['style', 'color']} value={clip.style.color} ariaLabel="Text color" />
-        </FieldRow>
+        <ColorRow clip={clip} />
         <FieldRow label="Karaoke" trailing={spacer}>
           <Switch
             checked={!!clip.karaoke}
@@ -66,6 +66,26 @@ export function LyricStyleSections({ clip }: { clip?: TextClip }) {
             />
           )}
         </FieldRow>
+        {clip.karaoke && (
+          <FieldRow label="Fill" trailing={spacer}>
+            <Segmented<KaraokeMode>
+              value={clip.karaoke.mode}
+              onChange={(mode) =>
+                dispatch(
+                  { type: 'clip.set', clipId: clip.id, path: ['karaoke', 'mode'], value: mode },
+                  { label: mode === 'word' ? 'Karaoke fills word by word' : 'Karaoke lights the whole line' },
+                )
+              }
+              ariaLabel="Karaoke fill"
+              size="sm"
+              block
+              options={[
+                { value: 'word', label: 'By word' },
+                { value: 'line', label: 'By line' },
+              ]}
+            />
+          </FieldRow>
+        )}
         <FieldRow label="Position" trailing={spacer}>
           <Segmented<LinePosition>
             value={linePosition(clip)}
@@ -81,6 +101,7 @@ export function LyricStyleSections({ clip }: { clip?: TextClip }) {
           />
         </FieldRow>
       </Section>
+      <DecorationSections clip={clip} />
       <Section title="Animation" defaultOpen={false}>
         <PresetSettings clip={clip} />
       </Section>
