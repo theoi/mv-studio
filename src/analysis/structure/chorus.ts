@@ -34,6 +34,12 @@ const SEPARATION_WORDS = 3
 const SEPARATION_SECONDS = 4
 /** What a back-to-back repeat adds to a passage's score, against 1 for each place in the song it recurs in. */
 const ADJACENT_WEIGHT = 0.25
+/**
+ * An occurrence with a line left out or rewritten still counts when, in order, it matches more than this share of the
+ * passage's words, in pieces of at least PARTIAL_PIECE words in a row.
+ */
+const PARTIAL_SHARE = 0.5
+const PARTIAL_PIECE = 3
 /** A pause (seconds) that cuts a few first or last matching words off an occurrence. */
 const EDGE_PAUSE = 2.5
 /** An occurrence lasts at most this times the median occurrence, so a late last line does not stretch it. */
@@ -166,7 +172,7 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
     work += partners.length * Math.min(lengths.length, LENGTHS_TRIED)
   }
   const share = Math.min(1, MAX_WORK / work)
-  let best = { score: 0, starts: [] as number[], length: 0 }
+  let best = { score: 0, starts: [] as number[], length: 0, from: 0 }
   let single = best
   for (const { i, lengths } of candidates) {
     const partners = partnersOf[i]!
@@ -200,15 +206,48 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
       let places = 1
       for (let q = 1; q < matches.length; q++) if (apart(matches[q - 1]!, matches[q]!, k)) places++
       const score = k * (places + ADJACENT_WEIGHT * (starts.length - places))
-      if (places >= 2 && score > best.score) best = { score, starts, length: k }
-      else if (places === 1 && score > single.score) single = { score, starts, length: k }
+      if (places >= 2 && score > best.score) best = { score, starts, length: k, from: i }
+      else if (places === 1 && score > single.score) single = { score, starts, length: k, from: i }
     }
   }
   if (!best.starts.length) best = single
   if (!best.starts.length) return null
-  const ranges = best.starts.map((s) => {
+  const k = best.length
+  const spans: [number, number][] = best.starts.map((s) => [s, Math.min(n - 1, s + k - 1)])
+  // Occurrences elsewhere with a line left out or rewritten: chains of pieces of the passage, in order, with up to half
+  // the passage missing or changed between two pieces. The longest chains that match most of the passage count too.
+  const free = (a: number, b: number) => spans.every(([s, e]) => b < s || a > e)
+  const pieceAt = new Map<number, { p: number; r: number }>()
+  for (let p = best.from; p < best.from + k; p++) {
+    if (keys[p]! < 0) continue
+    for (const q of groups[keys[p]!]!) {
+      const r = Math.min(run[p * n + q]!, best.from + k - p)
+      if (r < PARTIAL_PIECE || !free(q, q + r - 1) || (pieceAt.get(q)?.r ?? 0) >= r) continue
+      pieceAt.set(q, { p, r })
+    }
+  }
+  const pieces = [...pieceAt].map(([q, { p, r }]) => ({ p, q, r })).sort((a, b) => a.q - b.q)
+  const gap = Math.ceil(k / 2)
+  const chains = pieces.map((piece) => ({ first: piece.q, last: piece.q + piece.r - 1, matched: piece.r }))
+  for (let b = 0; b < pieces.length; b++) {
+    const to = pieces[b]!
+    for (let a = b - 1; a >= 0 && to.q - pieces[a]!.q <= gap + k; a--) {
+      const from = pieces[a]!
+      const skipped = to.p - (from.p + from.r)
+      const inserted = to.q - (from.q + from.r)
+      if (skipped < 0 || skipped > gap || inserted < 0 || inserted > gap) continue
+      if (chains[a]!.matched + to.r > chains[b]!.matched)
+        chains[b] = { first: chains[a]!.first, last: to.q + to.r - 1, matched: chains[a]!.matched + to.r }
+    }
+  }
+  for (const c of chains.sort((x, y) => y.matched - x.matched)) {
+    if (c.matched <= PARTIAL_SHARE * k || c.matched < MIN_PASSAGE_WORDS || !free(c.first, c.last)) continue
+    spans.push([c.first, Math.min(n - 1, c.last)])
+  }
+  spans.sort((a, b) => a[0] - b[0])
+  const ranges = spans.map(([s, e]) => {
     let first = s
-    let last = Math.min(n - 1, s + best.length - 1)
+    let last = e
     // A few words cut off by a pause only match because the lines before (or after) both occurrences end (or start)
     // alike; they are not part of the chorus.
     const pause = (k: number) => words[k + 1]!.start - words[k]!.end > EDGE_PAUSE

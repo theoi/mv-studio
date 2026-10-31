@@ -135,6 +135,36 @@ describe('findLyricChorus', () => {
       [19, 27.5],
     ])
   })
+
+  it('still counts a chorus sung with a line left out or rewritten, but not a verse that shares one line', () => {
+    const chorus = [...CHORUS, 'Hold on to the night']
+    const verses = [
+      ['Woke up late on a Sunday', 'coffee cold and the radio on'],
+      ['Streets are empty after rain', 'shoes in my hand and a taxi'],
+      ['Morning waits around the bend', 'but this road will never end'],
+      ['Every picture on the wall', 'tells a story nobody knows'],
+    ]
+    const verse = (n: number) => verses[n - 1]!
+    const song = (second: string[]) => [
+      ...sing(verse(1), 0),
+      ...sing(chorus, 10),
+      ...sing(verse(2), 30),
+      ...sing(second, 40),
+      ...sing(verse(3), 60),
+      ...sing(chorus, 70),
+    ]
+    expect(ranges(song(chorus))?.map((r) => r.start)).toEqual([10, 40, 70])
+    // Second chorus without its second line: before, only the first and last were found.
+    const missing = ranges(song([chorus[0]!, chorus[2]!, chorus[3]!]))
+    expect(missing?.map((r) => r.start)).toEqual([10, 40, 70])
+    expect(missing?.[1]?.end).toBeCloseTo(48.5)
+    // Without its first line, the lines all three share are the chorus; with its third line rewritten, all of it.
+    expect(ranges(song(chorus.slice(1)))?.map((r) => r.start)).toEqual([13, 40, 73])
+    const rewritten = [chorus[0]!, chorus[1]!, 'Something different we say instead', chorus[3]!]
+    expect(ranges(song(rewritten))?.map((r) => r.start)).toEqual([10, 40, 70])
+    // Half of the chorus is not most of it.
+    expect(ranges(song([chorus[0]!, ...verse(4)]))?.map((r) => r.start)).toEqual([10, 70])
+  })
 })
 
 const section = (
