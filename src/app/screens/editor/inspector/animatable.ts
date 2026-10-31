@@ -208,6 +208,7 @@ export function animatableRow(
     react,
     buttons: {
       keyed: !!anim?.keyframes?.length,
+      keyAtPlayhead: !!keyframeAt(anim, keyTime(clip, playhead)),
       reactive,
       reaction,
       onKey: key,
@@ -231,5 +232,6 @@ export function useAnimatable(
   const anim = animatableAt(clip, path)
   // Only a keyframed value changes with the playhead; shallow equality keeps colors and vectors from re-rendering.
   const value = useUi(useShallow((s) => shownValue(anim, fallback, keyTime(clip, s.playhead))))
-  return { ...row, value }
+  const keyAtPlayhead = useUi((s) => !!keyframeAt(anim, keyTime(clip, s.playhead)))
+  return { ...row, value, buttons: { ...row.buttons, keyAtPlayhead } }
 }

@@ -230,7 +230,8 @@
   color: var(--accent-text);
 }
 
-.keyOn svg {
+/* A keyed property shows an outlined diamond between keyframes and a filled one on a keyframe. */
+.keyAt svg {
   fill: currentColor;
 }
 

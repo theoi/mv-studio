@@ -120,6 +120,14 @@ describe('a keyframed row', () => {
     expect(animatableRow(clip, ['opacity'], undefined, { playhead: clip.start + 3 }).value).toBe(1)
   })
 
+  it('the keyframe button is pressed only with a keyframe at the playhead', () => {
+    const clip = fading()
+    const at = (t: number) =>
+      animatableRow(clip, ['opacity'], undefined, { playhead: clip.start + t }).buttons
+    expect(at(2)).toMatchObject({ keyed: true, keyAtPlayhead: true })
+    expect(at(1)).toMatchObject({ keyed: true, keyAtPlayhead: false })
+  })
+
   it('an edit between keyframes adds one at the playhead, as one undo step per gesture', () => {
     const clip = fading()
     const before = opacityOf(clip.id)

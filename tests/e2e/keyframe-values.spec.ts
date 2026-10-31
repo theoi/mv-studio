@@ -47,9 +47,13 @@ test('a keyframed value shows its value at the playhead, and an edit sets the ke
   ])
   await expect(page.getByRole('status').getByText(/^Keyframe added at 0:06/)).toBeVisible()
 
-  // Halfway between them the field shows the eased value, which is half way for ease-in-out.
+  // Halfway between them the field shows the eased value, which is half way for ease-in-out, and the keyframe
+  // button is not pressed, as an edit there would add a keyframe.
+  const diamond = page.getByRole('button', { name: 'Add keyframe: Rotation' })
+  await expect(diamond).toHaveAttribute('aria-pressed', 'true')
   await at(page, 4.5)
   await expect(rotation).toHaveValue(String(start + 45))
+  await expect(diamond).toHaveAttribute('aria-pressed', 'false')
 
   // On a keyframe, an edit changes it, as one undo step.
   await at(page, 3)
