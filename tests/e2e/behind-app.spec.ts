@@ -295,7 +295,7 @@ test('a shot the check offers but the cutout turns down says why in the inspecto
   const toggle = inspector.getByRole('switch', { name: 'Put text and effects behind the subject' })
   await toggle.click()
   await expect(
-    page.getByRole('status').getByText('No one in this shot is large enough to cut out.'),
+    page.getByRole('status').getByText('On a closer look, no one is large enough to cut out.'),
   ).toBeVisible()
   await expect(toggle).not.toBeChecked()
   expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
@@ -311,7 +311,7 @@ test('Assist › Behind the subject lists a shot the cutout turned down, with wh
   await expect(row.getByText('Suitable', { exact: true })).toBeVisible()
   await assist.getByRole('button', { name: /^Apply to \d+ suitable clips?$/ }).click()
   await expect(
-    assist.getByText('people-interview: No one in this shot is large enough to cut out.'),
+    assist.getByText('people-interview: On a closer look, no one is large enough to cut out.'),
   ).toBeVisible()
   expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
 })
@@ -346,7 +346,7 @@ test('a shot the check finds a person in only in parts says the cutout may still
   await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
   await assist.getByRole('button', { name: /^Apply to \d+ suitable clips?$/ }).click()
   await expect(
-    assist.getByText('people-interview: No one in this shot is large enough to cut out.'),
+    assist.getByText('people-interview: On a closer look, no one is large enough to cut out.'),
   ).toBeVisible()
   expect(await uncut(page, 'people-interview')).toEqual([expect.objectContaining({ cut: false })])
 })

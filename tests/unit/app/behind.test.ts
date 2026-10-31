@@ -6,6 +6,7 @@ import {
   cutoutCommands,
   findPersonMask,
   footageRows,
+  refusalText,
   retryPeopleSkipped,
   suitabilityOf,
   suitabilityText,
@@ -165,6 +166,18 @@ describe('suitability', () => {
       status: 'Person found',
       ok: true,
     })
+  })
+
+  it('says a turn-down after an offer comes from the cutout’s closer look', () => {
+    const refused = (first: 'no-subject' | 'subject-too-small'): Suitability => ({
+      status: 'checked',
+      verdict: 'unsuitable',
+      reasons: [first, 'many-small-subjects'],
+    })
+    expect(refusalText(refused('no-subject'))).toBe('On a closer look, no one is large enough to cut out.')
+    expect(refusalText(refused('subject-too-small'))).toBe(
+      'On a closer look, people are too small in this wide shot.',
+    )
   })
 
   it('says why a failed check failed and that only video clips have people', () => {

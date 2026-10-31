@@ -235,6 +235,17 @@ function checkedText(s: Extract<Suitability, { status: 'checked' }>): {
   }
 }
 
+/**
+ * Why the cutout turned down a clip: each refusal follows an offer (the quick check found a person), so it says the
+ * cutout's closer look disagrees instead of repeating a plain verdict that contradicts the offer.
+ */
+export function refusalText(s: Suitability): string {
+  const first = s.status === 'checked' ? s.reasons[0] : undefined
+  if (!first || first === 'no-subject') return 'On a closer look, no one is large enough to cut out.'
+  const reason = REASONS[first]
+  return `On a closer look, ${reason.charAt(0).toLowerCase()}${reason.slice(1)}.`
+}
+
 export function footageOf(
   project: Project,
   clip: Clip | undefined,
@@ -588,7 +599,8 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
               const note = { assetId: asset.id, name, why: why ?? status }
               if (unsuitable(s)) {
                 turnedDown.add(id)
-                if (!refused.some((r) => r.assetId === asset.id)) refused.push(note)
+                if (!refused.some((r) => r.assetId === asset.id))
+                  refused.push({ ...note, why: refusalText(s) })
                 continue
               }
               kept++
