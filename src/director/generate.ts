@@ -151,19 +151,32 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
     }
     const own = { fraction: 0, eta: typical(r) }
     underway.set(r, own)
+    // Once the provider downloads a result, the shot is finished and billed, so a cancel from then on keeps it:
+    // the job's abort reaches the request only until its download starts.
+    const abort = new AbortController()
+    const forward = () => abort.abort(o.ctx.signal.reason)
+    if (o.ctx.signal.aborted) forward()
+    else o.ctx.signal.addEventListener('abort', forward, { once: true })
     // A request's progress feeds the shot's share of the bar; its message stays its own, under the shot count.
     const shotCtx: JobContext = {
-      signal: o.ctx.signal,
-      throwIfCancelled: () => o.ctx.throwIfCancelled(),
+      signal: abort.signal,
+      throwIfCancelled: () => {
+        if (abort.signal.aborted) throw new JobError('cancelled', 'Cancelled')
+      },
       progress: (p) => {
+        if (p.stage === 'download') o.ctx.signal.removeEventListener('abort', forward)
         if (p.fraction === undefined && p.etaSeconds === undefined) return
         if (p.fraction !== undefined) own.fraction = Math.max(own.fraction, Math.min(0.95, p.fraction))
         if (p.etaSeconds !== undefined) own.eta = p.etaSeconds
         report()
       },
     }
-    const result = await o.provider.generate(request, shotCtx)
-    o.ctx.throwIfCancelled()
+    let result
+    try {
+      result = await o.provider.generate(request, shotCtx)
+    } finally {
+      o.ctx.signal.removeEventListener('abort', forward)
+    }
     const [asset] = await storeGeneratedMedia(result, o.store, {
       prompt: request.prompt,
       name: r.shot.label ? `AI: ${r.shot.label}` : undefined,
@@ -176,7 +189,11 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
 
   const worker = async () => {
     while (queue.length > 0 && !stop) {
-      o.ctx.throwIfCancelled()
+      // Stop without throwing, so the run waits for a shot another worker is still downloading and keeps it.
+      if (o.ctx.signal.aborted) {
+        stop ??= new JobError('cancelled', 'Cancelled')
+        break
+      }
       const r = queue.shift() as ShotRequest
       try {
         await runOne(r)

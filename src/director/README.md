@@ -19,7 +19,8 @@ draft. Everything it makes is ordinary project content created through `EditComm
    earlier from the same request is reused for free. A video clip is requested as long as the longest shot that shows
    it, and `byModel` adds up the clips' seconds at the lengths the model makes (video is priced by the second).
 5. **Generation** (`generate.ts`): only after the user confirms. Each finished shot is kept immediately, so a
-   cancel or a later failure never loses paid results. Each request's own progress moves the bar, `onProgress`
+   cancel or a later failure never loses paid results. A cancel stops a request at the provider only until its result
+   downloads: from then on the shot is billed, so it is kept. Each request's own progress moves the bar, `onProgress`
    counts shots as they finish or fail, and clips (minutes each) report the time left.
 6. **Compile** (`compile.ts`): plan → `EditCommand`s on director tracks. Clips carry `meta.director`, so running
    the director again replaces the previous draft and leaves the user's clips alone.

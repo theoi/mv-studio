@@ -149,6 +149,29 @@ describe('DirectorSession', () => {
     expect(provider.calls.length - callsBefore).toBe(total - kept)
   })
 
+  it('keeps and records a clip fal.ai finished when Cancel lands during its download', async () => {
+    const downloading: (() => void)[] = []
+    const provider = fakeProvider({
+      gate: (i, ctx) => {
+        if (i > 0) return new Promise<void>(() => undefined)
+        ctx.progress({ stage: 'download', fraction: 0.92, message: 'Downloading the video' })
+        return new Promise<void>((resolve) => downloading.push(resolve))
+      },
+    })
+    const { session, ledger, store } = setup({ provider, videos: 0, confirmAboveUsd: 100 })
+    ready(await session.plan({ kind: 'ai', seed: 2, generate: { mode: 'video', tier: 'draft' } }))
+    const applying = session.apply()
+    for (let i = 0; i < 50 && provider.calls.length < 2; i++) await new Promise((r) => setTimeout(r, 0))
+    expect(downloading).toHaveLength(1)
+    session.cancel()
+    downloading[0]!()
+    const after = ready(await applying)
+    expect(after.preview.warnings).toContain('Generation stopped. 1 clip made so far is kept.')
+    expect(after.generatedShots).toBe(1)
+    expect(store.stored).toHaveLength(1)
+    expect(ledger.monthTotal()).toBeCloseTo(provider.estimate(provider.calls[0]!).usd, 6)
+  })
+
   it('keeps paid shots in the project after undo, and reuses them instead of paying again', async () => {
     const provider = fakeProvider()
     const { session, editor } = setup({ provider, videos: 0, confirmAboveUsd: 5 })

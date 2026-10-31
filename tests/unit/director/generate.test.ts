@@ -10,7 +10,7 @@ import {
 } from '../../../src/director/index.ts'
 import { CloudError } from '../../../src/cloud/errors.ts'
 import type { Asset, Project } from '../../../src/model/types.ts'
-import type { JobProgress } from '../../../src/shared/jobs.ts'
+import { JobError, type JobProgress } from '../../../src/shared/jobs.ts'
 import { badKey, contentPolicy, fakeProvider, makeProject, memoryStore, testCtx } from './fixtures.ts'
 
 async function aiPlan(mode: 'images' | 'video' = 'images', maxShots?: number) {
@@ -297,6 +297,45 @@ describe('generatePlanShots', () => {
     const fractions = events.map((e) => e.fraction ?? 0)
     expect(fractions.at(-1)).toBe(1)
     expect(fractions.every((f, i) => i === 0 || f >= (fractions[i - 1] as number))).toBe(true)
+  })
+
+  it('keeps clips fal.ai finished when Cancel lands during their download, and asks for no more', async () => {
+    const { project, plan } = await aiPlan('video', 3)
+    const release: (() => void)[] = []
+    const provider = fakeProvider({
+      gate: (_, ctx) => {
+        ctx.progress({ stage: 'download', fraction: 0.92, message: 'Downloading the video' })
+        return new Promise<void>((resolve) => release.push(resolve))
+      },
+    })
+    const controller = new AbortController()
+    const store = memoryStore()
+    const kept: string[] = []
+    let settled = false
+    const outcome = generatePlanShots({
+      plan,
+      provider,
+      store,
+      project,
+      ctx: testCtx(controller.signal),
+      onShot: (shotId) => kept.push(shotId),
+    })
+      .catch((e: unknown) => e)
+      .finally(() => (settled = true))
+    await until(() => release.length === 2)
+    controller.abort()
+    release[0]!()
+    await until(() => kept.length === 1)
+    // The other clip is still downloading, so the run waits for it instead of ending at the cancel.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(settled).toBe(false)
+    release[1]!()
+    const error = await outcome
+    expect(error).toBeInstanceOf(JobError)
+    expect((error as JobError).code).toBe('cancelled')
+    expect(kept).toHaveLength(2)
+    expect(store.stored).toHaveLength(2)
+    expect(provider.calls).toHaveLength(2)
   })
 })
 
