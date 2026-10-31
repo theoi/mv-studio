@@ -58,8 +58,9 @@ export interface PreviewSnapshot {
   /** Current render resolution relative to full (1 when paused; below 1 while playback runs at reduced quality). */
   scale: number
   /**
-   * Set once the preview can no longer draw: its render worker died ('worker-crashed', 'out-of-memory'), taking the
-   * canvas with it. A new preview on a new canvas draws again.
+   * Set once the preview can no longer draw: its render worker died ('worker-crashed', 'out-of-memory') or, while
+   * starting, failed or stopped answering ('timeout'), taking the canvas with it. A new preview on a new canvas draws
+   * again.
    */
   error?: SerializedJobError
 }
@@ -653,7 +654,7 @@ export class PreviewController {
           if (!failure) console.error('Preview render failed', error)
           else if (!this.failure) {
             this.failure = failure
-            console.error('The preview stopped drawing: its render worker died', failure)
+            console.error('The preview stopped drawing: its render worker failed', failure)
             this.updateSnapshot()
           }
         },
