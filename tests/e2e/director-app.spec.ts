@@ -210,6 +210,18 @@ test('shows the price of AI shots and asks before spending anything', async ({ p
   const dialog = page.getByRole('dialog', { name: /^Generate \d+ shots?\?$/ })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText(/^Costs about \$\d+\.\d\d, charged by fal\.ai to your key\.$/)).toBeVisible()
+  // One line per model, by its name, not one per shot. A single model's line has no price: it would repeat the total.
+  const shots = Number(/\d+/.exec((await generate.textContent()) ?? '')?.[0])
+  const lines = await dialog.getByRole('listitem').allTextContents()
+  expect(lines.length).toBeGreaterThan(0)
+  expect(lines.length).toBeLessThan(shots)
+  for (const line of lines)
+    expect(line).toMatch(
+      lines.length === 1
+        ? /^\d+ (images?|clips?) with [A-Z][^·]*$/
+        : /^\d+ (images?|clips?) with [A-Z][^·]* · (about \$\d+\.\d\d|under \$0\.01)$/,
+    )
+  expect(lines.reduce((n, line) => n + Number(/^\d+/.exec(line)?.[0]), 0)).toBe(shots)
   await page.screenshot({ path: testInfo.outputPath('director-confirm.png') })
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toBeHidden()

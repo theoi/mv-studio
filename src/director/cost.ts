@@ -2,7 +2,7 @@
  * What a plan would cost before anything is spent: one generation request per AI shot (shots with `sameAs` reuse
  * another result for free, and media already generated with the same prompt and model is reused too).
  */
-import { needsSpendConfirmation, sumCosts, type CostSummary } from '../cloud/pricing.ts'
+import { needsSpendConfirmation, roundUsd, sumCosts, type CostSummary } from '../cloud/pricing.ts'
 import type { GenerationRequest, MediaGenerationProvider } from '../cloud/types.ts'
 import type { Asset, Id, Project } from '../model/types.ts'
 import { shotsToGenerate, type EditPlan, type GenerateSource, type PlanShot } from './plan.ts'
@@ -14,11 +14,22 @@ export interface ShotRequest {
   reuse?: Asset
 }
 
+/** The paid images or clips made with one model. */
+export interface ModelCost {
+  /** The provider's name for it ("FLUX.1 schnell"), or its id when the provider doesn't know it. */
+  name: string
+  kind: 'image' | 'clip'
+  count: number
+  usd: number
+}
+
 export interface PlanCost extends CostSummary {
   /** Shots that will be generated (and paid for). */
   requests: ShotRequest[]
   /** Shots covered by media generated earlier. */
   reused: number
+  /** The paid shots by model name and kind, the most expensive first. */
+  byModel: ModelCost[]
 }
 
 /** Stable request seeds so a re-run of the same plan asks for the same pictures. */
@@ -75,18 +86,33 @@ export function planRequests(plan: EditPlan, project?: Project): ShotRequest[] {
 
 export function estimatePlanCost(
   plan: EditPlan,
-  provider: Pick<MediaGenerationProvider, 'estimate'>,
+  provider: Pick<MediaGenerationProvider, 'estimate'> & Partial<Pick<MediaGenerationProvider, 'getModel'>>,
   project?: Project,
 ): PlanCost {
   const all = planRequests(plan, project)
   const requests = all.filter((r) => !r.reuse)
-  const summary = sumCosts(
-    requests.map((r) => ({
-      label: r.shot.label ?? r.request.prompt.slice(0, 40),
-      estimate: provider.estimate(r.request),
-    })),
-  )
-  return { ...summary, requests, reused: all.length - requests.length }
+  const items = requests.map((r) => ({
+    label: r.shot.label ?? r.request.prompt.slice(0, 40),
+    estimate: provider.estimate(r.request),
+  }))
+  // By name, not id: a model's text-to-video and image-to-video endpoints have different ids and the same name.
+  const byModel = new Map<string, ModelCost>()
+  requests.forEach((r, i) => {
+    const { modelId, task } = r.request
+    const name = provider.getModel?.(modelId)?.name ?? modelId
+    const kind = task === 'text-to-image' ? 'image' : 'clip'
+    const key = `${kind}:${name}`
+    const group = byModel.get(key) ?? { name, kind, count: 0, usd: 0 }
+    group.count++
+    group.usd = roundUsd(group.usd + (items[i]?.estimate.usd ?? 0))
+    byModel.set(key, group)
+  })
+  return {
+    ...sumCosts(items),
+    requests,
+    reused: all.length - requests.length,
+    byModel: [...byModel.values()].sort((a, b) => b.usd - a.usd),
+  }
 }
 
 export interface SpendPolicy {
