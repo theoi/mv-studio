@@ -109,8 +109,11 @@ export function AnimateButtons({
   property,
   reaction,
   reactPanel,
+  keyAtPlayhead,
 }: {
   keyed?: boolean
+  /** A keyframe sits at the playhead, so an edit changes it rather than adding one. */
+  keyAtPlayhead?: boolean
   reactive?: boolean
   onKey?: () => void
   onReact?: () => void
@@ -155,11 +158,17 @@ export function AnimateButtons({
       ) : (
         tooltip(reactButton)
       )}
-      <Tooltip label={keyed ? 'Keyframe at playhead' : 'Animate this'} shortcut="Alt K" side="left">
+      <Tooltip
+        label={keyAtPlayhead ? 'Keyframe at playhead' : keyed ? 'Add keyframe at playhead' : 'Animate this'}
+        shortcut="Alt K"
+        side="left"
+      >
         <button
-          className={[styles.animateBtn, keyed && styles.keyOn].filter(Boolean).join(' ')}
+          className={[styles.animateBtn, keyed && styles.keyOn, keyAtPlayhead && styles.keyAt]
+            .filter(Boolean)
+            .join(' ')}
           aria-label={`Add keyframe: ${property}`}
-          aria-pressed={!!keyed}
+          aria-pressed={!!keyAtPlayhead}
           onClick={onKey}
         >
           <Diamond />
