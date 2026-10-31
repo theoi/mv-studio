@@ -61,14 +61,14 @@ function songCommands(project: Project, song: Asset): EditCommand[] {
 
 let analysisService: SongAnalysisService | null = null
 
-async function analyzeSong(song: Asset, file: Blob, coalesceKey: string): Promise<void> {
+async function analyzeSong(song: Asset, file: Blob): Promise<void> {
   try {
     const client = await import('../../analysis/client.ts')
     analysisService ??= new client.SongAnalysisService()
     const audio = await client.decodeAudioFile(file)
     const analysis = await analysisService.analyze(song.id, audio).promise
     if (!editor.getProject().assets[song.id]) return
-    dispatch(client.setAnalysisCommand(analysis), { label: 'Analyze the song', coalesceKey })
+    dispatch(client.setAnalysisCommand(analysis), { history: 'skip' })
     const bpm = analysis.tempo ? `${Math.round(analysis.tempo.bpm)} BPM` : 'the beat'
     const sections = analysis.sections?.length ?? 0
     toast(`Found ${bpm} and ${sections} ${sections === 1 ? 'section' : 'sections'}`)
@@ -112,14 +112,13 @@ export async function importFiles(files: File[]): Promise<Asset[]> {
   const commands: EditCommand[] = assets.map((asset) => ({ type: 'asset.add', asset }))
   const song = project.songAssetId ? undefined : assets.find((a) => a.kind === 'audio')
   if (song) commands.push(...songCommands(project, song))
-  const coalesceKey = `import:${assets[0]?.id}`
   const label = assets.length === 1 ? `Import ${assets[0]?.name}` : `Import ${assets.length} files`
-  if (!dispatch(commands, { label, coalesceKey })) return []
+  if (!dispatch(commands, { label })) return []
   const visual = assets.filter((a) => a.kind === 'video' || a.kind === 'image').length
   if (song) {
     set({ playhead: 0, selection: { type: 'none' } })
     toast(`Added “${baseName(song.name)}” as the song. Finding its beats and sections…`)
-    void mediaStore.getFile(song).then((file) => analyzeSong(song, file, coalesceKey))
+    void mediaStore.getFile(song).then((file) => analyzeSong(song, file))
   } else {
     toast(
       assets.length === 1

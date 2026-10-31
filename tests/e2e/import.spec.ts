@@ -47,7 +47,7 @@ test('importing a song into an empty project makes it the song and analyzes it',
   await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole('button', { name: 'Project: song' })).toBeVisible()
 
-  // The import and its analysis are one undo step.
+  // Undo removes the import; the analysis has no undo step of its own.
   await page.keyboard.press(`${mod}+z`)
   await expect(page.getByText('Start with a song')).toBeVisible()
 })
