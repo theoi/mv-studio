@@ -32,8 +32,19 @@ test('the Media and Assist empty states say what to do next, before and after a 
   await expect(media.getByText('No clips or images yet')).toBeVisible()
   await expect(media.getByText('Drop clips and images, or Import.')).toBeVisible()
   await expect(media.getByText('No matches')).toHaveCount(0)
+  // No "0" next to an empty group.
+  await expect(media.getByText('Clips and images', { exact: true })).toBeVisible()
   await media.getByRole('tab', { name: 'Generated' }).click()
   await expect(media.getByText('Nothing generated yet')).toBeVisible()
+  await expect(media.getByRole('button', { name: 'Import', exact: true })).toHaveCount(0)
+
+  await media.getByRole('tab', { name: 'Images' }).click()
+  await expect(media.getByText('No images yet')).toBeVisible()
+  const clipChooser = page.waitForEvent('filechooser')
+  await media.getByRole('button', { name: 'Import', exact: true }).click()
+  await (await clipChooser).setFiles(path.join(FIXTURE_DIR, 'image.png'))
+  await expect(media.getByText('No images yet')).toBeHidden()
+  await expect(media.getByText('Clips and images 1')).toBeVisible()
 })
 
 test('an empty Lyrics track offers Add lyrics, which opens Assist › Lyrics', async ({ page }) => {

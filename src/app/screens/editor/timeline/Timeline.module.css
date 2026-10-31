@@ -681,7 +681,7 @@
 /* Empty Lyrics track: stays at the left of the lanes in view, like clip labels. */
 .laneEmpty {
   position: sticky;
-  left: 156px;
+  left: 154px;
   display: inline-flex;
   align-items: center;
   gap: 6px;

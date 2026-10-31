@@ -320,7 +320,7 @@ export function MediaTab() {
         <div className={styles.groupLabel}>Song</div>
         {hasSong(project) ? <SongRow /> : <AddSongRow />}
         <div className={styles.groupLabel}>
-          Clips and images <span className={styles.count}>{items.length}</span>
+          Clips and images {items.length > 0 && <span className={styles.count}>{items.length}</span>}
         </div>
         {items.length ? (
           <div className={styles.grid}>
@@ -331,7 +331,17 @@ export function MediaTab() {
         ) : analyzing ? (
           <EmptyState compact title="Analyzing your footage…" description="Results appear as clips finish." />
         ) : !q ? (
-          <EmptyState compact {...noneYet[filter]} />
+          <EmptyState
+            compact
+            {...noneYet[filter]}
+            action={
+              filter !== 'Generated' && (
+                <Button variant="secondary" icon={<Plus />} onClick={() => openImport()}>
+                  Import
+                </Button>
+              )
+            }
+          />
         ) : (
           <EmptyState
             compact
