@@ -150,7 +150,9 @@ export function AnalysisView() {
             variant="secondary"
             icon={<Activity />}
             disabled={!analysis || busy}
-            onPointerDown={(e) => tap(e.timeStamp)}
+            onPointerDown={(e) => {
+              if (e.button === 0) tap(e.timeStamp)
+            }}
             onKeyDown={(e) => {
               if (!TAP_KEYS.has(e.key)) return
               // Space and T are also editor shortcuts (play, add text); here they only tap.
