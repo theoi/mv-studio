@@ -75,10 +75,10 @@ export interface PreviewStats {
 }
 
 /**
- * Draws previews in the render worker unless a preview asks otherwise (PreviewOptions.renderer). Off until it is
- * proven in the app; the URL parameter `preview-worker=1` (or `0`) overrides it for a page load.
+ * Draws previews in the render worker unless a preview asks otherwise (PreviewOptions.renderer). The URL parameter
+ * `preview-worker=0` (or `1`) overrides it for a page load, e.g. to compare with the main-thread path.
  */
-const PREVIEW_IN_WORKER = false
+const PREVIEW_IN_WORKER = true
 
 function defaultRenderer(): 'worker' | 'main' {
   const param =

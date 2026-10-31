@@ -27,8 +27,14 @@ jobs:
       - run: npm test
 
   e2e:
-    name: E2E (Chromium)
+    # Previews draw in the render worker by default; the second leg runs the preview specs with the main-thread
+    # fallback, which browsers without OffscreenCanvas workers (or pages opened with ?preview-worker=0) use.
+    name: E2E (Chromium${{ matrix.preview == 'main' && ', main-thread preview' || '' }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preview: [worker, main]
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/node-deps
@@ -37,11 +43,16 @@ jobs:
       - name: Install ffmpeg (test fixtures and export verification)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm run build
-      - run: npx playwright test
+      - if: matrix.preview == 'worker'
+        run: npx playwright test
+      - if: matrix.preview == 'main'
+        run: npx playwright test playback vj editor-engine export-dialog design-preview preview-worker
+        env:
+          E2E_PREVIEW_WORKER: '0'
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.preview }}
           path: |
             playwright-report
             test-results

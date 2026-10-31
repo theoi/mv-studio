@@ -29,12 +29,21 @@ export const test = base.extend<{ context: BrowserContext; page: Page }>({
 
 export const expect = test.expect
 
+/** E2E_PREVIEW_WORKER=0 (or 1) runs the suite with previews drawn on the main thread (or in the render worker). */
+function withPreviewSetting(path: string): string {
+  const value = process.env.E2E_PREVIEW_WORKER
+  if (value !== '0' && value !== '1') return path
+  const [base = '', hash] = path.split('#')
+  const query = `${base}${base.includes('?') ? '&' : '?'}preview-worker=${value}`
+  return hash === undefined ? query : `${query}#${hash}`
+}
+
 /**
  * Opens the app and waits for cross-origin isolation. On a fresh profile the service worker registers and reloads
  * the page once, so poll across that navigation instead of using a single evaluate.
  */
 export async function openApp(page: Page, path = './', timeoutMs = 20_000): Promise<void> {
-  await page.goto(path)
+  await page.goto(withPreviewSetting(path))
   const deadline = Date.now() + timeoutMs
   for (;;) {
     try {
