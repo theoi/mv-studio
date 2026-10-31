@@ -7,7 +7,16 @@
  *   the registry's catalog() describes them for the UI and the director.
  */
 import type { JobContext } from '../shared/jobs.ts'
-import type { AspectPreset, Asset, ParamValue, Project, Seconds, TextStyle } from '../model/types.ts'
+import type {
+  AspectPreset,
+  Asset,
+  AudioModulation,
+  ParamValue,
+  Project,
+  Seconds,
+  StemName,
+  TextStyle,
+} from '../model/types.ts'
 
 export interface RenderOptions {
   /** Preview may render at reduced resolution while scrubbing; export always uses full quality. */
@@ -109,8 +118,16 @@ export type ParamSpec =
   | (ParamSpecBase & { type: 'boolean'; default: boolean })
   | (ParamSpecBase & { type: 'color'; default: string; animatable?: boolean })
   | (ParamSpecBase & { type: 'select'; default: string; options: { value: string; label: string }[] })
+  /**
+   * An image asset id ('' = none). Shaders get it as `sampler2D u_<key>` (premultiplied, top row at v = 0) plus
+   * `vec2 u_<key>Size` in pixels, which is (0, 0) when no image is set. Used for LUTs and texture maps.
+   */
+  | (ParamSpecBase & { type: 'image'; default: ''; role?: 'lut' | 'texture' })
 
 export type PluginKind = 'effect' | 'transition' | 'generator' | 'text-animation'
+
+/** Relative GPU cost per frame: 'low' is a few texture reads per pixel, 'high' is dozens or heavy procedural noise. */
+export type PluginCost = 'low' | 'medium' | 'high'
 
 export interface PluginBase {
   /** Stable id stored in projects, e.g. 'blur' or 'visualizer.spectrum'. Never rename once released. */
@@ -119,10 +136,27 @@ export interface PluginBase {
   category: string
   description?: string
   params: ParamSpec[]
+  /** Search keywords and badges for the library, e.g. 'reactive', 'beat', 'stems', 'retro'. */
+  tags?: string[]
+  cost?: PluginCost
+  /**
+   * Audio mappings put on params when the plugin is added from the library, so it reacts to the music out of the box
+   * and the mapping shows (and can be changed) in the inspector like any user-made one.
+   */
+  defaultModulation?: Record<string, AudioModulation[]>
+  /** Library thumbnail URL (16:9 image). */
+  thumbnail?: string
 }
 
 /** Values resolved for one frame: keyframes and audio modulation already applied. */
 export type ResolvedParams = Record<string, ParamValue>
+
+export interface AudioStemFrame {
+  loudness: number
+  bands: number[]
+  /** Onset pulse of this stem (1 at an onset, decaying). */
+  onset: number
+}
 
 export interface AudioFrame {
   loudness: number
@@ -130,7 +164,21 @@ export interface AudioFrame {
   onset: number
   beat: number
   downbeat: number
-  stems: Partial<Record<'vocals' | 'drums' | 'bass' | 'other', { loudness: number; bands: number[] }>>
+  /**
+   * Position on the beat grid: beats since the first beat (whole number, negative before it) and the 0..1 phase within
+   * the current beat. Without beat analysis it follows the detected tempo, or 120 BPM from the song start.
+   */
+  beatIndex: number
+  beatPhase: number
+  /** The same for bars (downbeats); without downbeats a bar is four beats. */
+  barIndex: number
+  barPhase: number
+  /**
+   * Integral of loudness over song time, in seconds at full loudness: a steadily increasing phase that runs faster in
+   * loud passages, for motion that follows the music without jitter. Without analysis it advances at half speed.
+   */
+  flow: number
+  stems: Partial<Record<StemName, AudioStemFrame>>
 }
 
 export interface EffectFrameContext {
@@ -147,8 +195,9 @@ export interface EffectFrameContext {
 /**
  * A full-screen GLSL ES 3.00 pass. The source defines `vec4 mainImage(vec2 uv)` and samples the layer with
  * `texture(u_input, uv)`. Colors are premultiplied. Uniforms provided: u_resolution, u_time (clip-local), u_loudness,
- * u_beat, u_onset, u_downbeat, u_bands[16], u_bandCount, and u_<key> per param (float; vec4 for colors; select =
- * option index; boolean = 0/1).
+ * u_beat, u_onset, u_downbeat, u_bands[16], u_bandCount, u_beatIndex, u_beatPhase, u_barIndex, u_barPhase, u_flow,
+ * u_stems and u_stemOnsets (vec4: vocals, drums, bass, other), u_hasStems (0/1), and u_<key> per param (float; vec4
+ * for colors; select = option index; boolean = 0/1; image = sampler2D plus vec2 u_<key>Size).
  */
 export interface EffectDefinition extends PluginBase {
   kind: 'effect'
@@ -159,6 +208,8 @@ export interface EffectDefinition extends PluginBase {
 export interface TransitionDefinition extends PluginBase {
   kind: 'transition'
   fragmentShader: string
+  /** Suggested length when the transition is added. */
+  defaultDuration?: Seconds
 }
 
 /** Procedural visuals: a shader defining `vec4 mainImage(vec2 uv)` (premultiplied) or a 2D canvas painter. */
@@ -243,6 +294,12 @@ export interface PluginCatalogEntry {
   animatable: string[]
   /** Keys of numeric params that can be driven by audio features. */
   modulatable: string[]
+  tags?: string[]
+  cost?: PluginCost
+  defaultModulation?: Record<string, AudioModulation[]>
+  thumbnail?: string
+  /** Transitions only. */
+  defaultDuration?: Seconds
 }
 
 export interface PluginRegistry {

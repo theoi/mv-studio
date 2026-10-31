@@ -19,7 +19,7 @@ import type {
 
 export function catalogEntry(plugin: PluginDefinition): PluginCatalogEntry {
   const numeric = plugin.params.filter((p) => p.type === 'number')
-  return {
+  const entry: PluginCatalogEntry = {
     id: plugin.id,
     kind: plugin.kind,
     name: plugin.name,
@@ -29,6 +29,13 @@ export function catalogEntry(plugin: PluginDefinition): PluginCatalogEntry {
     animatable: numeric.filter((p) => p.animatable !== false).map((p) => p.key),
     modulatable: numeric.filter((p) => p.modulatable !== false).map((p) => p.key),
   }
+  if (plugin.tags) entry.tags = plugin.tags
+  if (plugin.cost) entry.cost = plugin.cost
+  if (plugin.defaultModulation) entry.defaultModulation = plugin.defaultModulation
+  if (plugin.thumbnail) entry.thumbnail = plugin.thumbnail
+  if (plugin.kind === 'transition' && plugin.defaultDuration !== undefined)
+    entry.defaultDuration = plugin.defaultDuration
+  return entry
 }
 
 class Registry implements PluginRegistry {
@@ -93,6 +100,8 @@ export function coerceParam(spec: ParamSpec, value: ParamValue | undefined): Par
       return isHexColor(value) ? value : spec.default
     case 'select':
       return typeof value === 'string' && spec.options.some((o) => o.value === value) ? value : spec.default
+    case 'image':
+      return typeof value === 'string' ? value : spec.default
   }
 }
 

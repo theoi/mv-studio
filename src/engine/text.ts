@@ -261,13 +261,16 @@ export class TextRenderer {
       await face
     }
     const font = cssFont(style, 16)
-    let load = this.fontLoads.get(font)
+    // Web fonts split into unicode-range subsets load only the subsets the text needs, so pass its characters.
+    const chars = [...new Set(applyTextTransform(clip.text, style.textTransform))].sort().join('') || ' '
+    const key = `${font}\n${chars}`
+    let load = this.fontLoads.get(key)
     if (!load) {
-      load = (fontSet()?.load(font) ?? Promise.resolve([])).then(
+      load = (fontSet()?.load(font, chars) ?? Promise.resolve([])).then(
         () => undefined,
         () => undefined,
       )
-      this.fontLoads.set(font, load)
+      this.fontLoads.set(key, load)
     }
     await load
   }

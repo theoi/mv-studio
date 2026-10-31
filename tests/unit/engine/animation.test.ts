@@ -68,7 +68,19 @@ describe('keyframes', () => {
 describe('audio modulation', () => {
   const sampler: AudioSampler = {
     sample: (source) => (source.kind === 'beat' ? 0.5 : 0.25),
-    frame: () => ({ loudness: 0, bands: [], onset: 0, beat: 0, downbeat: 0, stems: {} }),
+    frame: () => ({
+      loudness: 0,
+      bands: [],
+      onset: 0,
+      beat: 0,
+      downbeat: 0,
+      beatIndex: 0,
+      beatPhase: 0,
+      barIndex: 0,
+      barPhase: 0,
+      flow: 0,
+      stems: {},
+    }),
   }
 
   it('adds and multiplies feature values in order', () => {

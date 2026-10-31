@@ -182,11 +182,25 @@ uniform float u_beat;
 uniform float u_onset;
 uniform float u_downbeat;
 uniform float u_bands[16];
-uniform float u_bandCount;`
+uniform float u_bandCount;
+uniform float u_beatIndex;
+uniform float u_beatPhase;
+uniform float u_barIndex;
+uniform float u_barPhase;
+uniform float u_flow;
+uniform vec4 u_stems;
+uniform vec4 u_stemOnsets;
+uniform float u_hasStems;`
 
 function paramUniforms(params: ParamSpec[]): string {
   return params
-    .map((p) => (p.type === 'color' ? `uniform vec4 u_${p.key};` : `uniform float u_${p.key};`))
+    .map((p) =>
+      p.type === 'color'
+        ? `uniform vec4 u_${p.key};`
+        : p.type === 'image'
+          ? `uniform sampler2D u_${p.key};\nuniform vec2 u_${p.key}Size;`
+          : `uniform float u_${p.key};`,
+    )
     .join('\n')
 }
 
