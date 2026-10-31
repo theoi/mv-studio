@@ -169,7 +169,9 @@ describe('takeToCommands: clips', () => {
     expect(first.type === 'adjustment' && first.adjustments?.contrast?.value).toBe(
       lookRegistry.get('neon')?.adjustments.contrast,
     )
-    expect(first.type === 'adjustment' && first.effects.map((e) => e.effectId)).toEqual(['glow'])
+    expect(first.type === 'adjustment' && first.effects.map((e) => e.effectId)).toEqual(
+      lookRegistry.get('neon')?.effects.map((e) => e.effectId),
+    )
     expect(trackName(p, first)).toBe('VJ looks')
   })
 })

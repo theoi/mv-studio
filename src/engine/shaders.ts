@@ -204,8 +204,12 @@ function paramUniforms(params: ParamSpec[]): string {
     .join('\n')
 }
 
-/** Effects define `vec4 mainImage(vec2 uv)` and sample the layer with `texture(u_input, uv)` (premultiplied). */
-export function effectShader(params: ParamSpec[], body: string): string {
+/**
+ * Effects define `vec4 mainImage(vec2 uv)` and sample the layer with `texture(u_input, uv)` (premultiplied). `inputs`
+ * are earlier passes of a multi-pass effect, declared as u_<id> and u_<id>Size.
+ */
+export function effectShader(params: ParamSpec[], body: string, inputs: readonly string[] = []): string {
+  const passUniforms = inputs.map((id) => `uniform sampler2D u_${id};\nuniform vec2 u_${id}Size;`).join('\n')
   return `#version 300 es
 precision highp float;
 in vec2 v_uv;
@@ -213,6 +217,7 @@ out vec4 outColor;
 uniform sampler2D u_input;
 ${PLUGIN_COMMON}
 ${paramUniforms(params)}
+${passUniforms}
 ${body}
 void main() { outColor = mainImage(v_uv); }`
 }

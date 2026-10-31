@@ -127,7 +127,17 @@ describe('applying looks', () => {
       saturation: { value: 0.25 },
       temperature: { value: -0.15 },
     })
-    expect(clip.effects.map((e) => [e.effectId, e.params.intensity?.value])).toEqual([['glow', 0.8]])
+    expect(
+      clip.effects.map((e) => [
+        e.effectId,
+        e.params.look?.value,
+        e.params.amount?.value,
+        e.params.intensity?.value,
+      ]),
+    ).toEqual([
+      ['color-grade', 'neon', 0.55, undefined],
+      ['glow', undefined, undefined, 0.8],
+    ])
     expect([clip.start, clip.duration]).toEqual([0, 12])
     // The new Look track sits right under the lyrics track, above the footage.
     expect(p.tracks.map((t) => t.name)).toEqual(['Lyrics', 'Look', 'Video 1', 'Locked', 'Song'])

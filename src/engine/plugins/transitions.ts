@@ -7,6 +7,9 @@ export const fade: TransitionDefinition = {
   name: 'Fade',
   category: 'Basic',
   description: 'Cross-dissolve, or fade from or to the layers below.',
+  tags: ['dissolve', 'crossfade', 'classic'],
+  cost: 'low',
+  defaultDuration: 0.6,
   params: [],
   fragmentShader: `
 vec4 transition(vec2 uv) {
@@ -20,6 +23,9 @@ export const flash: TransitionDefinition = {
   name: 'Flash',
   category: 'Light',
   description: 'Cuts through a bright flash.',
+  tags: ['beat', 'white', 'light', 'impact'],
+  cost: 'low',
+  defaultDuration: 0.3,
   params: [
     { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
     { key: 'intensity', label: 'Intensity', type: 'number', default: 1, min: 0, max: 1, step: 0.01 },
@@ -38,6 +44,9 @@ export const zoom: TransitionDefinition = {
   name: 'Zoom',
   category: 'Motion',
   description: 'Punches in on the outgoing shot and settles on the next.',
+  tags: ['beat', 'punch', 'motion'],
+  cost: 'low',
+  defaultDuration: 0.4,
   params: [{ key: 'strength', label: 'Strength', type: 'number', default: 0.6, min: 0, max: 2, step: 0.01 }],
   fragmentShader: `
 vec4 transition(vec2 uv) {
@@ -54,6 +63,9 @@ export const wipeLeft: TransitionDefinition = {
   name: 'Wipe left',
   category: 'Basic',
   description: 'The next shot wipes in from the right.',
+  tags: ['wipe', 'line', 'classic'],
+  cost: 'low',
+  defaultDuration: 0.5,
   params: [
     { key: 'softness', label: 'Edge softness', type: 'number', default: 0.04, min: 0, max: 0.5, step: 0.01 },
   ],

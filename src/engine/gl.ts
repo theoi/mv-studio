@@ -85,7 +85,7 @@ export function deleteTarget(gl: GL, t: RenderTarget): void {
   gl.deleteTexture(t.texture)
 }
 
-/** Reusable render targets of one size; acquire() per pass, releaseAll() at frame end. */
+/** Reusable render targets, canvas-sized unless a size is given; acquire() per pass, releaseAll() at frame end. */
 export class TargetPool {
   private free: RenderTarget[] = []
   private used: RenderTarget[] = []
@@ -106,8 +106,9 @@ export class TargetPool {
     this.height = height
   }
 
-  acquire(): RenderTarget {
-    const t = this.free.pop() ?? createTarget(this.gl, this.width, this.height)
+  acquire(width = this.width, height = this.height): RenderTarget {
+    const i = this.free.findIndex((t) => t.width === width && t.height === height)
+    const t = i >= 0 ? this.free.splice(i, 1)[0]! : createTarget(this.gl, width, height)
     this.used.push(t)
     return t
   }
