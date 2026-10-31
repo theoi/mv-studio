@@ -43,7 +43,6 @@ import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { sceneThumb } from '../../../mock/art.ts'
 import { peakRate, peaks } from '../../../mock/song.ts'
-import { templateState } from '../../../../plugins/templates.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import {
   lineDeltaRange,
@@ -713,8 +712,7 @@ export function Timeline() {
   const untimed = lines.filter((l) => l.text.trim() && lineTiming(l) === 'untimed').length
   const lyricsTrackId =
     lanes.find((l) => l.kind === 'lyrics')?.track.id ??
-    templateState(project)?.tracks.lyrics ??
-    project.tracks.find((t) => t.kind === 'visual' && t.name === 'Lyrics')?.id
+    project.tracks.find((t) => isLyricsTrack(project, t))?.id
   // Assist › Lyrics already offers the same action while it is open.
   const lyricsOpen = useUi((s) => s.rightTab === 'assist' && s.assistView === 'lyrics')
   const suggestTiming = untimed > 0 && !empty && !timingLyrics && !lyricsOpen
