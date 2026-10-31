@@ -75,7 +75,7 @@ export interface CutoutResult {
    * Clips the check offered but the person track then judged unsuitable, with why (the "Not suitable" text), so the
    * offer is not followed by a silent skip.
    */
-  refused?: Array<{ name: string; why: string }>
+  refused?: Array<{ assetId: Id; name: string; why: string }>
   label: string
   /** Set when the cutout follows a picked object. */
   object?: ObjectPick
@@ -466,7 +466,11 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
             setCheck(asset.id, check)
             if (person.suitability.verdict === 'unsuitable') {
               const { status, why } = suitabilityText(check)
-              refused.push({ name: asset.name.replace(/\.[^.]+$/, ''), why: why ?? status })
+              refused.push({
+                assetId: asset.id,
+                name: asset.name.replace(/\.[^.]+$/, ''),
+                why: why ?? status,
+              })
               continue
             }
             const blob = await v.encodeMaskVideo(person.track, {

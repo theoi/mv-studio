@@ -188,7 +188,7 @@ export function BehindView() {
               </div>
             )}
             {result.refused?.map((r) => (
-              <div key={r.name} className={styles.muted}>
+              <div key={r.assetId} className={styles.muted}>
                 {`${r.name}: ${r.why}`}
               </div>
             ))}
