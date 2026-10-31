@@ -27,6 +27,7 @@ import { PEOPLE_VERSION, SUITABILITY_VERSION, type PeopleAt } from './mask/suita
 import {
   buildPersonTrack,
   findTrackEvidence,
+  observationsOn,
   personTrackParams,
   PERSON_TRACK_VERSION,
   trackSuitability,
@@ -220,7 +221,9 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
    * a pass over the frames for what the track predates (people detection, pop shares), and written back, so this
    * runs once per entry (judging a long track takes about a second on the main thread). It runs outside the cache
    * read, so a failed model download does not discard the stored masks. When the person detector cannot be
-   * downloaded, the report counts the whole mask (`peopleSkipped`) and the people are looked for again next time.
+   * downloaded, the report counts the whole mask (`peopleSkipped`) and the people are looked for again next time. A
+   * track stored without its people was built without the detector, so its masks are whole: once the people are found,
+   * they are cut down to the parts near them, as a build does, with the person boxes of its observations.
    */
   const currentPerson = (
     key: string,
@@ -242,16 +245,19 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
                 backends.segmentation('background'),
                 source,
                 stored.track,
-                { people: !people, pops: stalePops },
+                { people: !people, pops: stalePops, gate: !people },
                 { ...task, ...(o.peopleFps ? { peopleFps: o.peopleFps } : {}) },
               )
-        const track = found.pops
-          ? { ...stored.track, meta: { ...stored.track.meta, pops: found.pops } }
-          : stored.track
+        const track =
+          found.gated?.track ??
+          (found.pops ? { ...stored.track, meta: { ...stored.track.meta, pops: found.pops } } : stored.track)
         const withPeople = people ?? found.people
         const result = {
           ...stored,
           track,
+          ...(found.gated
+            ? { observations: observationsOn(track, found.gated.boxes, stored.observations) }
+            : {}),
           people: withPeople ?? [],
           suitability: withPeople
             ? trackSuitability(track, withPeople, o.suitability)

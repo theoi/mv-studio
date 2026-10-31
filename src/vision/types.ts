@@ -76,6 +76,12 @@ export interface MaskTrackMeta {
    * before it was measured.
    */
   pops?: number[]
+  /**
+   * Person tracks: frames whose mask the cutout cut down to the parts near the people found, from one that held a
+   * shape large enough for the effect (`holdsLargeShape`), so the verdict can tell a shot of an animal or of a person
+   * the detector missed (`no-person-found`) from an empty one.
+   */
+  largeBeforeGate?: number[]
 }
 
 export interface MaskTrack {

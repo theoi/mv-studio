@@ -5,7 +5,8 @@ import { createMemoryCache, type BlobCache } from '../../../../src/vision/runtim
 import { decodeContainer, encodeContainer } from '../../../../src/vision/runtime/container.ts'
 import { createVisionService } from '../../../../src/vision/service.ts'
 import type { PersonDetection, VisionBackends } from '../../../../src/vision/backends.ts'
-import type { SuitabilityReport } from '../../../../src/vision/types.ts'
+import { createTrackReader } from '../../../../src/vision/mask/track.ts'
+import type { Mask, PackedMaskTrack, Size, SuitabilityReport } from '../../../../src/vision/types.ts'
 import { discMask, fakeOnnx, fakeSegmentation, fakeSource, flatGray } from '../segmentation/fakes.ts'
 
 /** `detectors: 'unavailable'` stands for a person and face detector that cannot be downloaded. */
@@ -152,9 +153,11 @@ describe('vision service', () => {
       const old = setup(cache)
       const judged = await old.service.personTrack(source)
       expect(count(old.seg.calls, 'beginTrack')).toBe(0)
-      // An older detection did not look for animals, so the people are looked for again, without segmenting.
-      expect(old.seg.analyzed).toHaveLength(10)
-      expect(old.seg.analyzed.every((a) => a.people && !a.mask)).toBe(true)
+      // An older detection did not look for animals, so the people are looked for again, without segmenting, and the
+      // masks are cut down to the parts near them, which needs every frame's luma.
+      expect(old.seg.analyzed).toHaveLength(20)
+      expect(old.seg.analyzed.filter((a) => a.people)).toHaveLength(10)
+      expect(old.seg.analyzed.every((a) => a.gray && !a.mask)).toBe(true)
       expect(judged.suitability.verdict).toBe('good')
       expect(await storedVersion()).toBe(SUITABILITY_VERSION)
       expect((await storedMeta()).people).toEqual(judged.people)
@@ -182,8 +185,9 @@ describe('vision service', () => {
       const old = setup(cache)
       const judged = await old.service.personTrack(source)
       expect(count(old.seg.calls, 'beginTrack')).toBe(0)
-      expect(old.seg.analyzed.length).toBe(10)
-      expect(old.seg.analyzed.every((a) => a.people && !a.mask)).toBe(true)
+      expect(old.seg.analyzed.length).toBe(20)
+      expect(old.seg.analyzed.filter((a) => a.people)).toHaveLength(10)
+      expect(old.seg.analyzed.every((a) => a.gray && !a.mask)).toBe(true)
       expect(judged.suitability.verdict).toBe('good')
       const meta = await storedMeta()
       expect(meta.suitabilityVersion).toBe(SUITABILITY_VERSION)
@@ -270,6 +274,44 @@ describe('vision service', () => {
     // The observations have no faces, so subject tracking looks again instead of reusing them.
     const subjects = await online.service.subjects(source)
     expect(subjects.samples[0]!.source).toBe('face')
+  })
+
+  it('cuts the whole masks of a track built without the detectors down to the parts near the people once found', async () => {
+    const { source } = fakeSource({ duration: 2, frameRate: 10 })
+    // A person on the left and, apart from them, an animal on the right; the detector finds only the person.
+    const scene = (_t: number, s: Size): Mask => {
+      const m = discMask(s, s.width * 0.3, s.height / 2, s.height / 4)
+      const animal = discMask(s, s.width * 0.75, s.height / 2, s.height / 6)
+      for (let i = 0; i < m.data.length; i++) m.data[i] = Math.max(m.data[i]!, animal.data[i]!)
+      return m
+    }
+    const person = (): PersonDetection[] => [
+      { box: { x: 0.15, y: 0.2, width: 0.3, height: 0.6 }, score: 0.9 },
+    ]
+    const make = (cache: BlobCache, online: boolean) => {
+      const seg = fakeSegmentation(scene, online ? person : () => null, { facesUnavailable: !online })
+      const onnx = fakeOnnx({ dim: 8 })
+      const backends: VisionBackends = { segmentation: () => seg, onnx: () => onnx }
+      return { seg, service: createVisionService({ backends, cache, toGray: (_b, size) => flatGray(size) }) }
+    }
+    const cache = createMemoryCache()
+    const built = await make(cache, false).service.personTrack(source)
+    const online = make(cache, true)
+    const later = await online.service.personTrack(source)
+    expect(count(online.seg.calls, 'beginTrack')).toBe(0)
+    const { width, height } = built.track.meta.maskSize
+    const at = (track: PackedMaskTrack, x: number) =>
+      createTrackReader(track).frame(10).data[Math.round(height / 2) * width + Math.round(width * x)]
+    expect([at(built.track, 0.3), at(built.track, 0.75)]).toEqual([255, 255])
+    expect([at(later.track, 0.3), at(later.track, 0.75)]).toEqual([255, 0])
+    expect(later.track.meta.pops).toHaveLength(20)
+    // Subject tracking's person boxes follow the kept masks.
+    const right = (o: (typeof later.observations)[number]) => o.personBox!.x + o.personBox!.width
+    expect(right(built.observations[0]!)).toBeGreaterThan(0.75)
+    expect(right(later.observations[0]!)).toBeLessThan(0.5)
+    const again = make(cache, true)
+    expect((await again.service.personTrack(source)).track.packed).toEqual(later.track.packed)
+    expect(again.seg.calls).toEqual([])
   })
 
   it('reuses the cached person track observations for subject tracking', async () => {

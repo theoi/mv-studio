@@ -147,16 +147,23 @@ export function components(mask: Mask, threshold = 128): { components: Component
       if (x > maxX) maxX = x
       if (y < minY) minY = y
       if (y > maxY) maxY = y
-      const push = (q: number) => {
-        if (labels[q] === -1 && data[q]! >= threshold) {
-          labels[q] = id
-          stack[top++] = q
-        }
+      // Inlined: a closure per pixel made this several times slower on 512 px track masks.
+      if (x > 0 && labels[p - 1] === -1 && data[p - 1]! >= threshold) {
+        labels[p - 1] = id
+        stack[top++] = p - 1
       }
-      if (x > 0) push(p - 1)
-      if (x < width - 1) push(p + 1)
-      if (y > 0) push(p - width)
-      if (y < height - 1) push(p + width)
+      if (x < width - 1 && labels[p + 1] === -1 && data[p + 1]! >= threshold) {
+        labels[p + 1] = id
+        stack[top++] = p + 1
+      }
+      if (y > 0 && labels[p - width] === -1 && data[p - width]! >= threshold) {
+        labels[p - width] = id
+        stack[top++] = p - width
+      }
+      if (y < height - 1 && labels[p + width] === -1 && data[p + width]! >= threshold) {
+        labels[p + width] = id
+        stack[top++] = p + width
+      }
     }
     found.push({
       area,

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { resizeMask } from '../../../../src/vision/mask/ops.ts'
+import { boundingBox, resizeMask } from '../../../../src/vision/mask/ops.ts'
+import { POP_MIN_SHARE } from '../../../../src/vision/mask/suitability.ts'
 import { createTrackReader } from '../../../../src/vision/mask/track.ts'
 import {
   createMaskTrackBuilder,
   preferHq,
   type MaskTrackBuildConfig,
+  type TrackFrameInput,
 } from '../../../../src/vision/segmentation/trackBuilder.ts'
 import type { GrayImage, Mask, RgbaImage, Size } from '../../../../src/vision/types.ts'
 import { discMask, flatGray } from './fakes.ts'
@@ -106,6 +108,92 @@ describe('mask track builder', () => {
   })
 })
 
+describe('mask track builder gated to the people found', () => {
+  // A person on the left and, apart from it, a patch the segmenter also takes for a person.
+  const person = discMask(SIZE, 16, 32, 8)
+  const patch = discMask(SIZE, 50, 32, 6)
+  const both: Mask = { ...person, data: person.data.map((v, i) => Math.max(v, patch.data[i]!)) }
+  const personBox = { x: 8 / 64, y: 24 / 64, width: 16 / 64, height: 16 / 64 }
+  const area = (m: Mask) => m.data.filter((v) => v >= 128).length / m.data.length
+  const gate = { hold: 1, carry: 2, reach: 3.95, judgeEvery: 1 }
+  /** 10 s at 10 frames a second, the person found 5 times a second except from 3 to 7 s. */
+  const build = (
+    found: (t: number) => TrackFrameInput['found'],
+    overrides: Partial<MaskTrackBuildConfig> = {},
+  ) => {
+    const b = createMaskTrackBuilder(config({ temporal: false, gate, ...overrides }))
+    const stored: number[] = []
+    for (let i = 0; i < 100; i++) {
+      const t = i / 10
+      b.push({ mask: both, gray: flatGray(SIZE), ...(i % 2 ? {} : { found: found(t) }) })
+      stored.push(b.boxes().length)
+    }
+    return { track: b.finish(), boxes: b.boxes(), stored }
+  }
+  const seen = (t: number) => ({ people: t > 3 && t < 7 ? [] : [{ box: personBox, score: 0.9 }] })
+
+  it('keeps only the person, carries them 2 s past the hold, and stores each mask once the detections after it are in', () => {
+    const { track, boxes, stored } = build(seen)
+    // Found until 3 s and from 7 s; carried from the previous kept mask until 5 s; nothing between.
+    expect(track.meta.coverage).toEqual(
+      Array.from({ length: 100 }, (_, i) => (i <= 50 || i >= 70 ? area(person) : 0)),
+    )
+    expect(boxes[0]).toEqual(boundingBox(person))
+    expect(boxes[60]).toBeNull()
+    // A mask waits for the detections 3.95 s after it: 6.4 s pushed, masks to 2.4 s stored.
+    expect(stored[64]).toBe(25)
+  })
+
+  it('drops a part once it leaves the person boxes, though it overlapped the kept mask the frame before', () => {
+    // A patch that starts inside the person's box and slides away 1 px a frame, as when the camera pans past a pillar.
+    const b = createMaskTrackBuilder(config({ temporal: false, gate }))
+    for (let i = 0; i < 40; i++) {
+      const slide = discMask(SIZE, 22 + i, 20, 4)
+      b.push({
+        mask: { ...person, data: person.data.map((v, p) => Math.max(v, slide.data[p]!)) },
+        gray: flatGray(SIZE),
+        found: { people: [{ box: personBox, score: 0.9 }] },
+      })
+    }
+    const coverage = b.finish().meta.coverage
+    expect(coverage[0]).toBeGreaterThan(area(person))
+    expect(coverage[39]).toBe(area(person))
+  })
+
+  it('keeps every mask whole when the person detector cannot be loaded', () => {
+    const { track } = build(() => null)
+    expect(track.meta.coverage).toEqual(Array.from({ length: 100 }, () => area(both)))
+  })
+
+  it('measures the pops of the gated masks, so a patch that blinks outside the person does not count', () => {
+    const blinking = (gated: boolean) => {
+      const b = createMaskTrackBuilder(config({ temporal: false, pops: true, ...(gated ? { gate } : {}) }))
+      for (let i = 0; i < 40; i++)
+        b.push({
+          mask: i % 10 === 5 ? both : person,
+          gray: flatGray(SIZE),
+          found: { people: [{ box: personBox, score: 0.9 }] },
+        })
+      return b.finish().meta.pops!
+    }
+    expect(blinking(false).filter((p) => p >= POP_MIN_SHARE).length).toBeGreaterThan(0)
+    expect(blinking(true).filter((p) => p >= POP_MIN_SHARE)).toEqual([])
+  })
+
+  it('notes the frames it cut down from a shape large enough for the effect, so the verdict can say no person was found', () => {
+    const large = discMask(SIZE, 32, 32, 16)
+    const noted = (mask: Mask, people: Array<{ box: typeof personBox; score: number }>) => {
+      const b = createMaskTrackBuilder(config({ temporal: false, gate: { ...gate, judgeEvery: 2 } }))
+      for (let i = 0; i < 20; i++) b.push({ mask, gray: flatGray(SIZE), found: { people } })
+      return b.finish().meta.largeBeforeGate
+    }
+    // Only the frames the verdict judges.
+    expect(noted(large, [])).toEqual(Array.from({ length: 10 }, (_, i) => i * 2))
+    // Not where the cutout keeps the whole shape, nor where what it cuts is small, as in a wide shot of small people.
+    expect(noted(large, [{ box: { x: 0.2, y: 0.2, width: 0.6, height: 0.6 }, score: 0.9 }])).toBeUndefined()
+    expect(noted(both, [])).toBeUndefined()
+  })
+})
 describe('preferHq', () => {
   it('uses a matte that agrees with the standard mask, resized to its size', () => {
     const standard = discMask(SIZE, 32, 32, 16)

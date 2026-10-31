@@ -19,6 +19,7 @@ import {
   assessSuitability,
   detectedPeople,
   keepPeople,
+  keepPersonParts,
   peopleNear,
   PERSON_MIN_SCORE,
   POP_MIN_SHARE,
@@ -571,5 +572,38 @@ describe('packed mask tracks', () => {
   it('rejects frames of the wrong size', () => {
     const track = createPackedTrack(meta)
     expect(() => appendFrame(track, rectMask(10, 10, 0, 0, 1, 1), 0)).toThrow()
+  })
+})
+
+describe('keeping only the parts of the mask near the people found', () => {
+  // A person (a body with an arm reaching past the box) and, apart from it, an animal.
+  const W = 40
+  const H = 20
+  const person = { x: 4 / W, y: 2 / H, width: 8 / W, height: 16 / H }
+  const scene = (): Mask => {
+    const m = rectMask(W, H, 5, 3, 11, 17)
+    for (let x = 11; x < 18; x++) m.data[8 * W + x] = 255
+    for (let y = 6; y < 14; y++) for (let x = 26; x < 34; x++) m.data[y * W + x] = 255
+    // Soft edge pixels: one beside the arm's tip, one beside the animal.
+    m.data[9 * W + 17] = 90
+    m.data[9 * W + 34] = 90
+    return m
+  }
+
+  it('keeps every pixel of a part that reaches into a person box, and drops a part apart from it', () => {
+    const kept = keepPersonParts(scene(), [person])
+    expect(kept.data[8 * W + 17]).toBe(255)
+    expect(kept.data[10 * W + 30]).toBe(0)
+    expect(kept.data[9 * W + 17]).toBe(90)
+    expect(kept.data[9 * W + 34]).toBe(0)
+    expect(coverage(kept)).toBeCloseTo((6 * 14 + 7) / (W * H), 6)
+  })
+
+  it('keeps a part that overlaps the previous kept mask when no one is found, and nothing without either', () => {
+    const before = rectMask(W, H, 28, 8, 30, 10)
+    const kept = keepPersonParts(scene(), [], before)
+    expect(kept.data[10 * W + 30]).toBe(255)
+    expect(kept.data[10 * W + 8]).toBe(0)
+    expect(coverage(keepPersonParts(scene(), []))).toBe(0)
   })
 })

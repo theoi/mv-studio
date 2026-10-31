@@ -97,7 +97,11 @@ export interface SegmentationBackend {
   beginTrack(input: MaskTrackBuildConfig, options?: CallOptions): Promise<{ id: number }>
   /** Segments one frame (ascending times) into the track. The bitmap is consumed. */
   pushTrackFrame(input: TrackFrameRequest, options?: CallOptions): Promise<TrackFrameResult>
-  endTrack(input: { id: number }, options?: CallOptions): Promise<PackedMaskTrack>
+  /** The stored track, with each stored mask's bounding box (null when empty) for the subject observations. */
+  endTrack(
+    input: { id: number },
+    options?: CallOptions,
+  ): Promise<{ track: PackedMaskTrack; boxes: ReadonlyArray<Rect | null> }>
   cancelTrack(input: { id: number }, options?: CallOptions): Promise<void>
 }
 

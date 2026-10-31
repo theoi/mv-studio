@@ -262,7 +262,8 @@ async function modelFreeVision(
         track.meta.pops = Array.from({ length: track.meta.frameCount }, (_, i) =>
           every && i % every === 0 ? 0.2 : 0,
         )
-        return track
+        const box = { x: 0.35, y: 0.15, width: 0.3, height: 0.85 }
+        return { track, boxes: Array.from({ length: track.meta.frameCount }, () => box) }
       },
       cancelTrack: async () => undefined,
     }
