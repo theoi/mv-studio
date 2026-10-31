@@ -53,6 +53,7 @@ const viewForKind: Record<string, AssistView> = {
   [JOB_KINDS.lyrics]: 'lyrics',
   [JOB_KINDS.generate]: 'generate',
   [JOB_KINDS.cutout]: 'behind',
+  [JOB_KINDS.suitability]: 'behind',
 }
 
 function Running() {

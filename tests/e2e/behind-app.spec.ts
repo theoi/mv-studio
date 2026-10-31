@@ -55,7 +55,7 @@ test('Assist › Behind the subject explains each shot and cuts the people out o
   await open(page, '#/editor?tab=assist&assist=behind&t=66.9')
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   const crowd = assist.getByText('Concert crowd', { exact: true }).locator('..').locator('..')
-  await expect(crowd.getByText('People are too small in this wide shot.')).toBeVisible()
+  await expect(crowd.getByText(/^People are too small in this wide shot · \d+ clips?$/)).toBeVisible()
   await expect(crowd.getByText('Not suitable')).toBeVisible()
   const singer = assist.getByText('Singer close-up', { exact: true }).locator('..').locator('..')
   await expect(singer.getByText('Suitable', { exact: true })).toBeVisible()
@@ -119,4 +119,29 @@ test('a clip with no one in it says why it cannot be cut out', async ({ page }) 
   await expect(toggle).not.toBeChecked()
   await expect(toggle).toBeDisabled()
   expect(await cutouts(page)).toEqual([])
+})
+
+test('while clips are being checked, the top bar opens Behind the subject, not Export', async ({ page }) => {
+  await open(page, '#/editor?t=10')
+  await page.evaluate(() => {
+    const hang = () => new Promise(() => undefined)
+    window.mvStudio.app.footage.setVisionBackendsForTests({
+      segmentation: () =>
+        new Proxy({}, { get: (_target, key) => (key === 'then' ? undefined : hang) }) as Untyped,
+      onnx: () => new Proxy({}, { get: (_target, key) => (key === 'then' ? undefined : hang) }) as Untyped,
+    })
+  })
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const row = assist.getByText('people-interview', { exact: true }).locator('..').locator('..')
+  await expect(row.getByText('Checking…')).toBeVisible()
+
+  await page.getByRole('tab', { name: 'Inspector' }).click()
+  await page
+    .getByRole('banner')
+    .getByRole('button', { name: /Looking for a person in the clip/ })
+    .click()
+  await expect(assist.getByText('Text sits between the person and the background')).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Export' })).toBeHidden()
 })

@@ -36,6 +36,7 @@ const viewForKind: Record<string, AssistView> = {
   [JOB_KINDS.lyrics]: 'lyrics',
   [JOB_KINDS.realign]: 'lyrics',
   [JOB_KINDS.cutout]: 'behind',
+  [JOB_KINDS.suitability]: 'behind',
 }
 
 function Activity() {

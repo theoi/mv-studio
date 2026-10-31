@@ -1,8 +1,11 @@
+import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import type { Asset, Clip, EditCommand, Id, Project, Track } from '../../model/index.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
+import { modelCache } from '../../shared/models.ts'
 import type { SuitabilityReason, SuitabilityReport, SuitabilityVerdict } from '../../vision/index.ts'
+import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { mediaById } from '../mock/media.ts'
 import { maskStorageKey, sceneOf } from '../mock/demoProject.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
@@ -166,16 +169,69 @@ export function suitableClips(project: Project, checks?: Record<Id, Suitability>
     .map((c) => c.id)
 }
 
-/** The video assets used by footage clips on the timeline, in order of first use. */
-export function footageOnTimeline(project: Project): Asset[] {
-  const seen = new Map<Id, { asset: Asset; start: number }>()
+export interface FootageRow {
+  asset: Asset
+  suitability: Suitability
+  /** Footage clips on the timeline showing this asset. */
+  clips: number
+}
+
+const rowRank = (s: Suitability) =>
+  s.status === 'checked' ? (s.verdict === 'unsuitable' ? 2 : 0) : s.status === 'unsupported' ? 3 : 1
+
+/**
+ * One row per video on the timeline for Assist › Behind the subject: shots with a person first, then shots still
+ * being checked, then the ones that are not suitable; in order of first use within each group.
+ */
+export function footageRows(
+  project: Project,
+  checks: Record<Id, Suitability> = useBehind.getState().checks,
+): FootageRow[] {
+  const seen = new Map<Id, { asset: Asset; start: number; clips: number }>()
   for (const c of Object.values(project.clips)) {
     const f = footageOf(project, c)
     if (!f) continue
     const prev = seen.get(f.asset.id)
-    if (!prev || c.start < prev.start) seen.set(f.asset.id, { asset: f.asset, start: c.start })
+    if (prev) {
+      prev.clips++
+      prev.start = Math.min(prev.start, c.start)
+    } else seen.set(f.asset.id, { asset: f.asset, start: c.start, clips: 1 })
   }
-  return [...seen.values()].sort((a, b) => a.start - b.start).map((v) => v.asset)
+  return [...seen.values()]
+    .sort((a, b) => a.start - b.start)
+    .map(({ asset, clips }) => ({ asset, clips, suitability: assetSuitability(asset, checks) }))
+    .sort((a, b) => rowRank(a.suitability) - rowRank(b.suitability))
+}
+
+/** Uncompressed size of the MediaPipe vision runtime (JS and WebAssembly), loaded once with the first model. */
+const MEDIAPIPE_RUNTIME_BYTES = 14_800_000
+
+/** Bytes finding and cutting out people still has to download (models and runtime, once), 0 when cached. */
+export async function personDownloadBytes(): Promise<number> {
+  const needed = [VISION_MODELS.selfieLandscape, VISION_MODELS.selfie, VISION_MODELS.faceShortRange]
+  const mediapipe = [...needed, VISION_MODELS.magicTouch, VISION_MODELS.selfieMulticlass]
+  const fileOf = (m: (typeof mediapipe)[number]) => Object.values(m.files)[0]
+  const cached = await Promise.all(
+    mediapipe.map((m) => modelCache.has(fileOf(m)?.url ?? '').catch(() => false)),
+  )
+  const models = needed.reduce((sum, m, i) => sum + (cached[i] ? 0 : (fileOf(m)?.bytes ?? 0)), 0)
+  return models + (cached.some(Boolean) ? 0 : MEDIAPIPE_RUNTIME_BYTES)
+}
+
+/** Bytes finding people still has to download, once; 0 when cached or not `needed`. */
+export function usePersonDownload(needed: boolean): number {
+  const [bytes, setBytes] = useState(0)
+  useEffect(() => {
+    if (!needed) return
+    let live = true
+    void personDownloadBytes().then((b) => {
+      if (live) setBytes(b)
+    })
+    return () => {
+      live = false
+    }
+  }, [needed])
+  return needed ? bytes : 0
 }
 
 /**

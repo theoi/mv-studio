@@ -1,21 +1,21 @@
 import { useEffect } from 'react'
 import { AlertTriangle, Check, Eye, Lock, RotateCcw, Undo2 } from 'lucide-react'
-import type { Asset } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
-import { plural } from '../../../format.ts'
+import { formatBytes, plural } from '../../../format.ts'
+import { isSampleAsset } from '../../../mock/sampleMedia.ts'
 import {
-  assetSuitability,
   checkFootage,
   cutoutsOf,
-  footageOnTimeline,
+  footageRows,
   hasCutout,
   putBehind,
   suitabilityText,
   suitableClips,
   useBehind,
-  type Suitability,
+  usePersonDownload,
+  type FootageRow,
 } from '../../../state/behind.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
@@ -33,18 +33,17 @@ export function BehindBadge() {
   return null
 }
 
-function SuitRow({ asset, suitability }: { asset: Asset; suitability: Suitability }) {
+function SuitRow({ asset, suitability, clips }: FootageRow) {
   const thumb = useThumbnail(asset)
   const text = suitabilityText(suitability)
+  const detail = `${(text.why ?? text.status).replace(/\.$/, '')} · ${plural(clips, 'clip')}`
   const checked = suitability.status === 'checked'
   return (
     <div className={styles.suitRow}>
       <span className={styles.suitThumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined} />
       <span className={styles.suitText}>
         <span className={styles.toolTitle}>{asset.name.replace(/\.[^.]+$/, '')}</span>
-        <span className={checked ? (text.ok ? styles.okText : styles.warnText) : styles.muted}>
-          {text.why ?? text.status}
-        </span>
+        <span className={checked ? (text.ok ? styles.okText : styles.warnText) : styles.muted}>{detail}</span>
       </span>
       {checked ? (
         text.ok ? (
@@ -64,11 +63,15 @@ export function BehindView() {
   const project = useProject()
   const checks = useBehind((s) => s.checks)
   const result = useBehind((s) => (job ? s.results[job.id] : undefined))
-  const footage = footageOnTimeline(project)
-  const unchecked = footage
-    .filter((a) => assetSuitability(a, checks).status === 'unchecked')
-    .map((a) => a.id)
+  const rows = footageRows(project, checks)
+  const unchecked = rows
+    .filter((r) => r.suitability.status === 'unchecked')
+    .map((r) => r.asset.id)
     .join(',')
+  const checking = rows.some(
+    (r) => r.suitability.status === 'checking' || r.suitability.status === 'unchecked',
+  )
+  const download = usePersonDownload(rows.some((r) => !isSampleAsset(r.asset)))
   useEffect(() => {
     if (unchecked) checkFootage(unchecked.split(','))
   }, [unchecked])
@@ -181,6 +184,14 @@ export function BehindView() {
   }
 
   const behindCount = Object.keys(project.clips).filter((id) => cutoutsOf(project, id).length).length
+  const label = targets.length
+    ? `Apply to ${plural(targets.length, 'suitable clip')}`
+    : checking
+      ? 'Checking your clips…'
+      : behindCount
+        ? 'No more suitable clips'
+        : 'No suitable clips'
+  const noneSuitable = !targets.length && !checking && !behindCount && rows.length > 0
   return (
     <ToolView
       title="Behind the subject"
@@ -188,23 +199,21 @@ export function BehindView() {
       footer={
         <>
           <Button variant="primary" block onClick={apply} disabled={!targets.length}>
-            {targets.length
-              ? `Apply to ${plural(targets.length, 'suitable clip')}`
-              : 'Apply to suitable clips'}
+            {label}
           </Button>
           <div className={styles.costLine}>
             <Lock /> Runs on this device · free
+            {download ? ` · ${formatBytes(download)} download, once` : ''}
             {behindCount ? ` · ${plural(behindCount, 'clip')} already behind` : ''}
+            {noneSuitable ? ' · no clip has a person to cut out' : ''}
           </div>
         </>
       }
     >
       <p className={styles.lede}>People are cut out automatically on this device.</p>
       <div className={styles.groupLabelInset}>Clips on the timeline</div>
-      {footage.length ? (
-        footage.map((asset) => (
-          <SuitRow key={asset.id} asset={asset} suitability={assetSuitability(asset, checks)} />
-        ))
+      {rows.length ? (
+        rows.map((row) => <SuitRow key={row.asset.id} {...row} />)
       ) : (
         <p className={styles.muted}>Add video clips to the timeline to cut out the people in them.</p>
       )}

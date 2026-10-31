@@ -52,6 +52,7 @@ function cutOut(hostId: string) {
           label: 'Undo',
           run: () => {
             if (editor.undoLabel() === result.label) editor.undo()
+            else toast('The project has changed since. Use Undo in the top bar to step back.')
           },
         })
     },
@@ -70,7 +71,7 @@ export function BehindSuggestion({ clip }: { clip: MediaClip }) {
       action="Put lyrics behind"
       onAction={() => cutOut(hostId)}
     >
-      A person fills this shot. Put the lyrics behind them?
+      There’s a person in this shot. Put the lyrics behind them?
     </InlineSuggestion>
   )
 }

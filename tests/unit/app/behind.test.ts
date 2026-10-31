@@ -5,7 +5,7 @@ import {
   canTryCutout,
   cutoutCommands,
   findPersonMask,
-  footageOnTimeline,
+  footageRows,
   suitabilityOf,
   suitabilityText,
   suitableClips,
@@ -105,23 +105,49 @@ describe('suitability', () => {
   })
 })
 
-describe('footage on the timeline', () => {
-  it('lists each video once, in order of first use, without cutouts or stills', () => {
+describe('footage rows', () => {
+  it('put shots with a person first, then unchecked ones, then the unsuitable ones, with their clip counts', () => {
+    const { asset } = importFootage()
     const project = editor.getProject()
-    const footage = footageOnTimeline(project)
+    const rows = footageRows(project, {})
+    const ranks = rows.map((r) =>
+      r.suitability.status === 'checked' ? (r.suitability.verdict === 'unsuitable' ? 2 : 0) : 1,
+    )
+    expect(ranks).toEqual([...ranks].sort())
+    expect(
+      rows
+        .slice(0, 2)
+        .map((r) => r.asset.id)
+        .sort(),
+    ).toEqual(['m-dancer', 'm-singer'])
+    expect(rows[2]).toMatchObject({ asset: { id: asset.id }, suitability: { status: 'unchecked' }, clips: 1 })
+    for (const r of rows) expect(r.clips).toBe(clipsOf(project, r.asset.id).length)
+    expect(rows.reduce((n, r) => n + r.clips, 0)).toBeGreaterThan(rows.length)
+
+    const good: Suitability = { status: 'checked', verdict: 'good', reasons: [] }
+    expect(footageRows(project, { [asset.id]: good })[0]?.asset.id).toBe(asset.id)
+  })
+
+  it('keep the order of first use within a group and leave out cutouts and stills', () => {
+    const project = editor.getProject()
+    const rows = footageRows(project, {})
     const firstUse = new Map<string, number>()
     for (const c of Object.values(project.clips))
       if (c.type === 'video' && project.assets[c.assetId]?.kind === 'video')
         firstUse.set(c.assetId, Math.min(firstUse.get(c.assetId) ?? Infinity, c.start))
-    expect(footage.map((a) => a.id)).toEqual(
-      [...firstUse.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id),
+    const unsuitable = rows.filter(
+      (r) => r.suitability.status === 'checked' && r.suitability.verdict === 'unsuitable',
     )
+    expect(unsuitable.length).toBeGreaterThan(2)
+    const starts = unsuitable.map((r) => firstUse.get(r.asset.id)!)
+    expect(starts).toEqual([...starts].sort((x, y) => x - y))
+    expect(rows).toHaveLength(firstUse.size)
+
     const singer = clipsOf(project, 'm-singer')[0]!
     editor.dispatch(cutoutCommands(project, [singer.id]).commands)
-    expect(footageOnTimeline(editor.getProject())).toEqual(footage)
+    expect(footageRows(editor.getProject(), {})).toEqual(rows)
   })
 })
-
 describe('cutout commands', () => {
   it('copy the clip onto a new top Subject track with the scene mask, as one undo step', () => {
     const project = editor.getProject()
