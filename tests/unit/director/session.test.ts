@@ -172,8 +172,10 @@ describe('DirectorSession with an AI planner', () => {
       planner: slowPlanner,
       slowAfterMs: 5,
     })
+    const before = Date.now()
     const first = session.plan({ kind: 'beat-cut', seed: 1 })
     expect(session.getState()).toMatchObject({ status: 'planning', slow: false, canUseLocal: true })
+    expect((session.getState() as { startedAt: number }).startedAt).toBeGreaterThanOrEqual(before)
     await vi.waitFor(() =>
       expect(session.getState()).toMatchObject({
         status: 'planning',

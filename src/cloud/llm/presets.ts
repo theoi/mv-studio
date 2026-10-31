@@ -141,8 +141,11 @@ export function localSetupSteps(runner: 'ollama' | 'lmstudio' | 'other', origin 
   ]
 }
 
-/** Answer time limits in seconds. Local models get longer by default because the first request also loads the model. */
-export const LLM_TIMEOUT = { cloud: 90, local: 120, min: 20, max: 600 } as const
+/**
+ * Answer time limits in seconds. Local models get much longer by default: the first request also loads the model, and
+ * a 7B model on a CPU without a GPU needs minutes for a correct answer. Cancel stays visible while waiting.
+ */
+export const LLM_TIMEOUT = { cloud: 90, local: 300, min: 20, max: 600 } as const
 
 /** True for local runners and other endpoints on this computer. */
 export function isLocalEndpoint(endpoint: { preset?: LlmPresetId; baseUrl: string }): boolean {
