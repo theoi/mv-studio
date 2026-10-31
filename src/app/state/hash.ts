@@ -150,17 +150,25 @@ export function initHashSync() {
   if (started) return
   started = true
   if (window.location.hash) applyHash(window.location.hash)
-  window.addEventListener('hashchange', () => applyHash(window.location.hash))
   let last = stateToHash(get(), editor.getProject())
+  // The URL as this sync last left it. When the hash differs, a link, the address bar or Back changed it and its
+  // hashchange is still queued: writing now (an autosave keeping the project, say) would put back the old state.
+  let synced = window.location.hash
   const write = () => {
-    if (usePersistence.getState().restoring) return
+    if (usePersistence.getState().restoring || window.location.hash !== synced) return
     const next = stateToHash(get(), editor.getProject())
     if (next === last) return
     const screenChanged = next.split('?')[0] !== last.split('?')[0]
     last = next
     if (screenChanged) window.history.pushState(null, '', next)
     else window.history.replaceState(null, '', next)
+    synced = window.location.hash
   }
+  window.addEventListener('hashchange', () => {
+    applyHash(window.location.hash)
+    synced = window.location.hash
+    write()
+  })
   useUi.subscribe(write)
   editor.subscribe(write)
   usePersistence.subscribe(write)
