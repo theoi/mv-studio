@@ -5,6 +5,11 @@
  * fail to load. The pilot measured both behaviours (see THIRD_PARTY_NOTICES.md).
  * Also reloads on "controllerchange": upstream's "updatefound" listener is attached after register() resolves and can
  * miss the event, which left about 1 in 10 first visits without isolation.
+ * Does not reload on "updatefound": it fires while the worker is still installing, so the reloaded document loads
+ * without it. If the worker then claims that document before this script has run (it waits for this file), the
+ * "controllerchange" is missed and upstream's "active but not controlling" check sees a controller, leaving the page
+ * controlled but not isolated. Instead the page reloads whenever an active worker exists and the page is not
+ * isolated, once per document and at most three times in a row, so a browser that cannot isolate never loops.
  */
 /*! coi-serviceworker v0.1.7 - Guido Zuidhof and contributors, licensed under MIT */
 // Hard-coded: the page cannot tell the SW its policy before the navigation request is served.
@@ -90,9 +95,35 @@ if (typeof window === 'undefined') {
             }
         }
 
+        const RELOADS_KEY = "coiReloads";
+        const storage = (fn) => {
+            try {
+                return fn(window.sessionStorage);
+            } catch (e) {
+                return null;
+            }
+        };
+
         // If we're already coi: do nothing. Perhaps it's due to this script doing its job, or COOP/COEP are
         // already set from the origin server. Also if the browser has no notion of crossOriginIsolated, just give up here.
-        if (window.crossOriginIsolated !== false || !coi.shouldRegister()) return;
+        if (window.crossOriginIsolated !== false || !coi.shouldRegister()) {
+            storage((s) => s.removeItem(RELOADS_KEY));
+            return;
+        }
+
+        let reloading = false;
+        const reload = (reason) => {
+            if (reloading) return;
+            const count = Number(storage((s) => s.getItem(RELOADS_KEY))) || 0;
+            if (count >= 3) {
+                !coi.quiet && console.warn("COOP/COEP Service Worker active but the page is still not cross-origin isolated; not reloading again.");
+                return;
+            }
+            storage((s) => s.setItem(RELOADS_KEY, String(count + 1)));
+            reloading = true;
+            !coi.quiet && console.log(`Reloading page to make use of COOP/COEP Service Worker (${reason}).`);
+            coi.doReload();
+        };
 
         if (!window.isSecureContext) {
             !coi.quiet && console.log("COOP/COEP Service Worker not registered, a secure context is required.");
@@ -101,20 +132,16 @@ if (typeof window === 'undefined') {
 
         // In some environments (e.g. Chrome incognito mode) this won't be available
         if (n.serviceWorker) {
-            n.serviceWorker.addEventListener("controllerchange", () => coi.doReload());
+            n.serviceWorker.addEventListener("controllerchange", () => reload("controllerchange"));
             n.serviceWorker.register(window.document.currentScript.src).then(
                 (registration) => {
                     !coi.quiet && console.log("COOP/COEP Service Worker registered", registration.scope);
 
-                    registration.addEventListener("updatefound", () => {
-                        !coi.quiet && console.log("Reloading page to make use of updated COOP/COEP Service Worker.");
-                        coi.doReload();
-                    });
-
-                    // If the registration is active, but it's not controlling the page
-                    if (registration.active && !n.serviceWorker.controller) {
-                        !coi.quiet && console.log("Reloading page to make use of COOP/COEP Service Worker.");
-                        coi.doReload();
+                    // An active worker serves the next load with the headers, whether or not it already controls this
+                    // document (it may have claimed it after its response arrived). A worker still installing claims
+                    // the page when it activates, which reloads it through "controllerchange".
+                    if (registration.active) {
+                        reload(n.serviceWorker.controller ? "controlled without isolation" : "not controlling");
                     }
                 },
                 (err) => {

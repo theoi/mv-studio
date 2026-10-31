@@ -42,7 +42,20 @@ export async function openApp(page: Page, path = './', timeoutMs = 20_000): Prom
     } catch {
       // Execution context destroyed by the service worker's reload; try again.
     }
-    if (Date.now() > deadline) throw new Error('Page did not become cross-origin isolated')
+    if (Date.now() > deadline) {
+      const worker = await page
+        .evaluate(async () => {
+          const registration = await navigator.serviceWorker?.getRegistration()
+          return {
+            url: location.href,
+            controller: navigator.serviceWorker?.controller?.state ?? null,
+            active: registration?.active?.state ?? null,
+            installing: registration?.installing?.state ?? null,
+          }
+        })
+        .catch((error: unknown) => String(error))
+      throw new Error(`Page did not become cross-origin isolated: ${JSON.stringify(worker)}`)
+    }
     await page.waitForTimeout(200)
   }
   await page.waitForLoadState('domcontentloaded')

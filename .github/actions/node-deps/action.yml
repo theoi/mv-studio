@@ -1,0 +1,27 @@
+name: Node and dependencies
+description: >-
+  Node from .nvmrc with the npm download cache, then npm ci. The install prefers cached packages and retries on network
+  errors; npm ci starts from an empty node_modules, so a retry after a partial install is safe.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+    - name: npm ci
+      shell: bash
+      env:
+        npm_config_fetch_retries: '5'
+        npm_config_fetch_retry_mintimeout: '10000'
+        npm_config_fetch_retry_maxtimeout: '60000'
+        npm_config_fetch_timeout: '120000'
+      run: |
+        for attempt in 1 2 3; do
+          if npm ci --prefer-offline --no-audit --no-fund; then exit 0; fi
+          if [ "$attempt" -lt 3 ]; then
+            echo "::warning::npm ci failed (attempt $attempt of 3); retrying in $((attempt * 20)) s"
+            sleep $((attempt * 20))
+          fi
+        done
+        exit 1
