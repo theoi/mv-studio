@@ -119,7 +119,7 @@ import {
   toggleStem,
   type StemMix,
 } from '../../../state/stems.ts'
-import { moveTrack, moveTrackBy, trackMoveRange } from '../../../state/tracks.ts'
+import { moveAnnouncement, moveTrack, moveTrackBy, trackMoveRange } from '../../../state/tracks.ts'
 import { MAX_PPS, MIN_PPS, registerFit, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { LaneMenu } from './LaneMenu.tsx'
@@ -656,6 +656,7 @@ const TrackHeader = memo(function TrackHeader({
   canMoveUp,
   canMoveDown,
   onGripPointerDown,
+  onAnnounce,
 }: {
   track: Track
   height: number
@@ -663,6 +664,7 @@ const TrackHeader = memo(function TrackHeader({
   canMoveUp: boolean
   canMoveDown: boolean
   onGripPointerDown: (e: React.PointerEvent<HTMLElement>, track: Track) => void
+  onAnnounce: (message: string) => void
 }) {
   const toggle = (key: 'muted' | 'solo' | 'locked' | 'hidden') =>
     dispatch({ type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } })
@@ -671,9 +673,13 @@ const TrackHeader = memo(function TrackHeader({
   const grip = useRef<HTMLButtonElement>(null)
   // Set by Move up and Move down, so the closing menu hands focus to this track's grip instead of the page.
   const movedFromMenu = useRef(false)
+  const moveBy = (step: -1 | 1) => {
+    const moved = moveTrackBy(track.id, step)
+    onAnnounce(moveAnnouncement(editor.getProject(), track.id, step, moved))
+  }
   const moveFromMenu = (step: -1 | 1) => {
     movedFromMenu.current = true
-    moveTrackBy(track.id, step)
+    moveBy(step)
   }
   return (
     <ContextMenu>
@@ -690,7 +696,7 @@ const TrackHeader = memo(function TrackHeader({
                 // The arrows otherwise move the playhead between sections.
                 e.preventDefault()
                 e.stopPropagation()
-                moveTrackBy(track.id, e.key === 'ArrowUp' ? -1 : 1)
+                moveBy(e.key === 'ArrowUp' ? -1 : 1)
               }}
             >
               <GripVertical />
@@ -961,6 +967,7 @@ export function Timeline() {
   const contentRef = useRef<HTMLDivElement>(null)
   const marqueeRef = useRef<HTMLDivElement>(null)
   const dropRef = useRef<HTMLDivElement>(null)
+  const announceRef = useRef<HTMLDivElement>(null)
   const project = useProject()
   const pps = useUi((s) => s.pxPerSec)
   const selection = useUi((s) => s.selection)
@@ -1440,6 +1447,16 @@ export function Timeline() {
     [empty],
   )
 
+  const announce = useCallback((message: string) => {
+    const region = announceRef.current
+    if (!region) return
+    // Emptied first, so the same message twice in a row is read again.
+    region.textContent = ''
+    requestAnimationFrame(() => {
+      region.textContent = message
+    })
+  }, [])
+
   const selId = selection.type === 'none' ? null : selection.id
   const gridStyle = beatSnap && beat ? { backgroundSize: `${beat * 4 * pps}px 100%` } : undefined
   const inView = (start: number, end: number) => end >= view.t0 - 4 && start <= view.t1 + 4
@@ -1555,6 +1572,7 @@ export function Timeline() {
                       canMoveUp={index > trackMoveRange(project, track.id).min}
                       canMoveDown={index < trackMoveRange(project, track.id).max}
                       onGripPointerDown={startTrackDrag}
+                      onAnnounce={announce}
                     />
                   </div>
                   <div
@@ -1738,6 +1756,7 @@ export function Timeline() {
           )}
           <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />
           <div ref={dropRef} className={styles.trackDrop} hidden aria-hidden />
+          <div ref={announceRef} className="sr-only" aria-live="polite" />
           <Playhead height={totalH} />
         </div>
       </div>

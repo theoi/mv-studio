@@ -130,13 +130,16 @@ test('tracks reorder by dragging the header grip, from the header menu and with 
   await page.keyboard.press('ArrowDown')
   expect(await trackNames(page)).toEqual(['Look', 'Lyrics', 'Overlay', 'Video', 'Song'])
   expect(await page.evaluate(() => window.mvStudio.app.ui.get().playhead)).toBe(playhead)
+  await expect(
+    page.locator('.sr-only[aria-live="polite"]', { hasText: 'Moved the Lyrics track down, to 2 of 4.' }),
+  ).toBeAttached()
 
   // Under the Overlay track, the lyrics are covered: a toast says so, and its Undo puts them back.
   await page.keyboard.press('ArrowDown')
   expect(await trackNames(page)).toEqual(['Look', 'Overlay', 'Lyrics', 'Video', 'Song'])
   const note = page
     .getByRole('status')
-    .locator('div', { hasText: 'The lyrics are behind Overlay now, so it covers them.' })
+    .locator('div', { hasText: 'The lyrics are behind the Overlay track now, which covers them.' })
   await note.getByRole('button', { name: 'Undo' }).click()
   expect(await trackNames(page)).toEqual(['Look', 'Lyrics', 'Overlay', 'Video', 'Song'])
 })

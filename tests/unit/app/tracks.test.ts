@@ -7,8 +7,14 @@ import {
   type Project,
   type Track,
 } from '../../../src/model/index.ts'
-import { editor } from '../../../src/app/state/project.ts'
-import { coveringNote, moveTrack, moveTrackBy, trackMoveRange } from '../../../src/app/state/tracks.ts'
+import { dispatch, editor } from '../../../src/app/state/project.ts'
+import {
+  coveringNote,
+  moveAnnouncement,
+  moveTrack,
+  moveTrackBy,
+  trackMoveRange,
+} from '../../../src/app/state/tracks.ts'
 import { get } from '../../../src/app/state/ui.ts'
 
 beforeAll(() => {
@@ -58,6 +64,15 @@ describe('track order', () => {
     expect(moveTrackBy(a!.id, 1)).toBe(false)
     expect(names()).toEqual(['B', 'C', 'A', 'X', 'Y'])
   })
+
+  it('tells a screen reader where the track is now among its kind, or that it is at the end', () => {
+    const [a, b, , x] = editor.getProject().tracks
+    moveTrackBy(b!.id, 1)
+    expect(moveAnnouncement(editor.getProject(), b!.id, 1, true)).toBe('Moved the B track down, to 3 of 3.')
+    expect(moveAnnouncement(editor.getProject(), a!.id, -1, false)).toBe("The A track can't move further up.")
+    moveTrackBy(x!.id, 1)
+    expect(moveAnnouncement(editor.getProject(), x!.id, 1, true)).toBe('Moved the X track down, to 2 of 2.')
+  })
 })
 
 /** Lyrics over a look over Overlay (a visualizer-like solid) over Video, plus an empty track and a text track. */
@@ -105,13 +120,13 @@ describe('the note when a move changes what covers what', () => {
   it('says the lyrics are behind the track that now covers them, whichever of the two moved', () => {
     const p = layered()
     expect(coveringNote(p, moved(p, 'Lyrics', 2), ids(p).Lyrics!)).toBe(
-      'The lyrics are behind Overlay now, so it covers them.',
+      'The lyrics are behind the Overlay track now, which covers them.',
     )
     expect(coveringNote(p, moved(p, 'Lyrics', 3), ids(p).Lyrics!)).toBe(
-      'The lyrics are behind the video now, so it covers them.',
+      'The lyrics are behind the video now, which covers them.',
     )
     expect(coveringNote(p, moved(p, 'Video', 0), ids(p).Video!)).toBe(
-      'The lyrics are behind the video now, so it covers them.',
+      'The lyrics are behind the video now, which covers them.',
     )
   })
 
@@ -119,7 +134,12 @@ describe('the note when a move changes what covers what', () => {
     const p = layered()
     const wordsOnTop = moved(p, 'Words', 0)
     expect(coveringNote(wordsOnTop, moved(wordsOnTop, 'Words', 5), ids(p).Words!)).toBe(
-      'This text is behind the video now, so it covers it.',
+      'This text is behind the video now, which covers it.',
+    )
+    const credit = createTextClip({ trackId: ids(p).Words!, text: 'Credit', start: 5, duration: 2 })
+    const twoTexts = { ...wordsOnTop, clips: { ...wordsOnTop.clips, [credit.id]: credit } }
+    expect(coveringNote(twoTexts, moved(twoTexts, 'Words', 3), ids(p).Words!)).toBe(
+      'These text clips are behind the Overlay track now, which covers them.',
     )
     expect(coveringNote(p, moved(p, 'Look', 2), ids(p).Look!)).toBe(
       'The look no longer colors the tracks above it.',
@@ -140,10 +160,34 @@ describe('the note when a move changes what covers what', () => {
     const lyrics = editor.getProject().tracks[0]!
     moveTrack(lyrics.id, 2)
     expect(get().toasts.at(-1)).toMatchObject({
-      message: 'The lyrics are behind Overlay now, so it covers them.',
+      message: 'The lyrics are behind the Overlay track now, which covers them.',
       action: { label: 'Undo' },
     })
     get().toasts.at(-1)?.action?.run()
+    expect(names()).toEqual(['Lyrics', 'Look', 'Overlay', 'Video', 'Empty', 'Words'])
+  })
+
+  it("leaves a later edit alone: the note's Undo only undoes the move while it is still the last edit", () => {
+    editor.load(layered())
+    const [lyrics, , , , empty, words] = editor.getProject().tracks
+    moveTrack(lyrics!.id, 2)
+    const undoMove = get().toasts.at(-1)!.action!.run
+    const moved = ['Look', 'Overlay', 'Lyrics', 'Video', 'Empty', 'Words']
+
+    dispatch({ type: 'track.update', trackId: words!.id, patch: { hidden: true } }, { label: 'Hide track' })
+    undoMove()
+    expect(names()).toEqual(moved)
+    expect(editor.getProject().tracks.find((t) => t.id === words!.id)?.hidden).toBe(true)
+
+    // Another move has the same label.
+    editor.undo()
+    moveTrack(empty!.id, 0)
+    undoMove()
+    expect(names()).toEqual(['Empty', ...moved.filter((n) => n !== 'Empty')])
+
+    // Once the later move is undone, the note's move is the last edit again.
+    editor.undo()
+    undoMove()
     expect(names()).toEqual(['Lyrics', 'Look', 'Overlay', 'Video', 'Empty', 'Words'])
   })
 })

@@ -23,16 +23,39 @@ export function moveTrack(trackId: string, toIndex: number): boolean {
   const { min, max } = trackMoveRange(p, trackId)
   const to = Math.min(max, Math.max(min, toIndex))
   if (from < 0 || to === from) return false
-  if (!dispatch({ type: 'track.move', trackId, toIndex: to }, { label: 'Move track' })) return false
-  const note = coveringNote(p, editor.getProject(), trackId)
-  if (note) toast(note, { label: 'Undo', run: undo })
+  if (!dispatch({ type: 'track.move', trackId, toIndex: to }, { label: MOVE_LABEL })) return false
+  const after = editor.getProject()
+  const note = coveringNote(p, after, trackId)
+  if (note)
+    toast(note, {
+      label: 'Undo',
+      run: () => {
+        // Every move has this label, so the track order tells whether the last one is still this move.
+        if (editor.undoLabel() === MOVE_LABEL && sameOrder(editor.getProject().tracks, after.tracks)) undo()
+      },
+    })
   return true
 }
+
+const MOVE_LABEL = 'Move track'
+
+const sameOrder = (a: Track[], b: Track[]) => a.length === b.length && a.every((t, i) => t.id === b[i]?.id)
 
 /** Moves a track one place up (-1) or down (1). */
 export function moveTrackBy(trackId: string, step: -1 | 1): boolean {
   const from = editor.getProject().tracks.findIndex((t) => t.id === trackId)
   return from >= 0 && moveTrack(trackId, from + step)
+}
+
+/** What a screen reader hears after Move up or Move down: the track's place among the tracks of its kind. */
+export function moveAnnouncement(p: Project, trackId: string, step: -1 | 1, moved: boolean): string {
+  const track = p.tracks.find((t) => t.id === trackId)
+  const way = step < 0 ? 'up' : 'down'
+  if (!track) return ''
+  if (!moved) return `The ${track.name} track can't move further ${way}.`
+  const { min, max } = trackMoveRange(p, trackId)
+  const place = p.tracks.indexOf(track) - min + 1
+  return `Moved the ${track.name} track ${way}, to ${place} of ${max - min + 1}.`
 }
 
 type Role = 'lyrics' | 'text' | 'look' | 'covers'
@@ -73,10 +96,11 @@ export function coveringNote(before: Project, after: Project, trackId: string): 
   const text = covered(['lyrics', 'text'])
   if (text) {
     const [under, over] = text
-    const by = over.name === 'Video' ? 'the video' : over.name
-    return role(before, under) === 'lyrics'
-      ? `The lyrics are behind ${by} now, so it covers them.`
-      : `This text is behind ${by} now, so it covers it.`
+    const by = over.name === 'Video' ? 'the video' : `the ${over.name} track`
+    if (role(before, under) === 'lyrics') return `The lyrics are behind ${by} now, which covers them.`
+    return clipsOnTrack(before, under.id).length > 1
+      ? `These text clips are behind ${by} now, which covers them.`
+      : `This text is behind ${by} now, which covers it.`
   }
   return covered(['look']) ? 'The look no longer colors the tracks above it.' : null
 }
