@@ -21,8 +21,9 @@ import {
   useFootage,
   useFootageResults,
 } from '../../../state/footage.ts'
-import { addAsset, openImport } from '../../../state/importer.ts'
+import { addAsset, addAssetAtPlayhead, openImport } from '../../../state/importer.ts'
 import { mediaRemoval, removeMedia } from '../../../state/library.ts'
+import { endMediaDrag, startMediaDrag } from '../../../state/mediaDrag.ts'
 import {
   bpmOf,
   hasSong,
@@ -34,6 +35,7 @@ import {
   useProject,
 } from '../../../state/project.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
+import { focusedWithRing } from '../../../state/focusRing.ts'
 import { useUi } from '../../../state/ui.ts'
 import styles from '../Library.module.css'
 
@@ -139,8 +141,24 @@ function MediaCard({ item }: { item: LibraryItem }) {
             ref={card}
             className={styles.card}
             draggable
+            role="button"
             tabIndex={0}
             aria-label={`${item.name}, ${item.type}${analyzing ? ANALYZING_NAMES[analyzing] : ''}`}
+            aria-description="Adds it at the playhead"
+            onDragStart={(e) => startMediaDrag(e, item.asset.id)}
+            onDragEnd={endMediaDrag}
+            // The second click of a double-click would add it again.
+            onClick={(e) => {
+              if (e.detail < 2) addAssetAtPlayhead(item.asset.id)
+            }}
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget) return
+              // Space adds only when the card was reached with the keyboard; after a click on it, Space plays or pauses.
+              if (e.key !== 'Enter' && !(e.key === ' ' && focusedWithRing(e.currentTarget))) return
+              e.preventDefault()
+              e.stopPropagation()
+              addAssetAtPlayhead(item.asset.id)
+            }}
           >
             <div className={styles.thumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}>
               {item.type === 'audio' && (
@@ -175,7 +193,11 @@ function MediaCard({ item }: { item: LibraryItem }) {
                   size="xs"
                   variant="secondary"
                   tooltipSide="top"
-                  onClick={() => addAsset(item.asset.id)}
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (e.detail < 2) addAssetAtPlayhead(item.asset.id)
+                  }}
                 >
                   <Plus />
                 </IconButton>

@@ -1,4 +1,5 @@
 import {
+  ProjectEditor,
   createAudioClip,
   createImageClip,
   createTrack,
@@ -10,10 +11,12 @@ import {
   type Track,
 } from '../../model/index.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
+import { templateState } from '../../plugins/templates.ts'
 import { TRACK_IDS } from '../mock/demoProject.ts'
 import { numberedName } from './clipboard.ts'
 import { backgroundAnalysisOn } from './footage.ts'
 import { JOB_KINDS } from './jobs.ts'
+import { formatTime } from '../format.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
 import { analysisService, findBars, markSongPending } from './songAnalysis.ts'
@@ -138,8 +141,12 @@ export async function storeFiles(files: File[]): Promise<StoredFiles> {
   }
 }
 
-/** Imports files as one undo step. Unsupported or unreadable files are reported and skipped. */
-export async function importFiles(files: File[]): Promise<Asset[]> {
+/**
+ * Imports files as one undo step. Unsupported or unreadable files are reported and skipped. With `at` (files dropped
+ * on the timeline), the clips and images go there one after another in the same step; a song for a project without
+ * one still becomes its song.
+ */
+export async function importFiles(files: File[], at?: Placement): Promise<Asset[]> {
   if (!files.length) return []
   const { assets, failed } = await storeFiles(files)
   if (failed[0]) {
@@ -156,19 +163,36 @@ export async function importFiles(files: File[]): Promise<Asset[]> {
   const commands: EditCommand[] = assets.map((asset) => ({ type: 'asset.add', asset }))
   const song = project.songAssetId ? undefined : assets.find((a) => a.kind === 'audio')
   if (song) commands.push(...songCommands(project, song))
+  const placed = at
+    ? placeAll(
+        project,
+        commands,
+        assets.filter((a) => a !== song),
+        at,
+      )
+    : []
   const label = assets.length === 1 ? `Import ${assets[0]?.name}` : `Import ${assets.length} files`
   // Before the song is in the project, so Inspector › Song never says "Not analyzed yet" while its file loads.
   if (song) markSongPending(song.id, true)
-  if (!dispatch(commands, { label })) {
+  if (!dispatch([...commands, ...placed.flatMap((p) => p.commands)], { label })) {
     if (song) markSongPending(song.id, false)
     return []
   }
   const visual = assets.filter((a) => a.kind === 'video' || a.kind === 'image').length
+  const first = placed[0]?.clip
+  if (first) {
+    select({ type: 'clip', id: first.id })
+    toast(
+      placed.length === 1
+        ? `Added “${first.name}” at ${formatTime(first.start, true)}`
+        : `Added ${placed.length} files from ${formatTime(first.start, true)}`,
+    )
+  }
   if (song) {
     set({ playhead: 0, selection: { type: 'none' } })
     toast(`Added “${baseName(song.name)}” as the song. Finding its beats and sections…`)
     void analyzeSong(song).finally(() => markSongPending(song.id, false))
-  } else {
+  } else if (!first) {
     toast(
       assets.length === 1
         ? `Imported ${assets[0]?.name}`
@@ -177,6 +201,27 @@ export async function importFiles(files: File[]): Promise<Asset[]> {
   }
   if (visual) set({ libraryTab: 'media', libraryOpen: true })
   return assets
+}
+
+/** Places assets one after another from `at`, against the project as `before` (the import) leaves it. */
+function placeAll(
+  project: Project,
+  before: EditCommand[],
+  assets: Asset[],
+  at: Placement,
+): { commands: EditCommand[]; clip: Clip }[] {
+  const scratch = new ProjectEditor(project)
+  scratch.dispatch(before)
+  const placed: { commands: EditCommand[]; clip: Clip }[] = []
+  let start = at.start
+  for (const asset of assets) {
+    const next = assetPlacement(scratch.getProject(), asset, { ...at, start })
+    if (!next) continue
+    scratch.dispatch(next.commands)
+    placed.push(next)
+    start = next.clip.start + next.clip.duration
+  }
+  return placed
 }
 
 function busyAt(project: Project, trackId: string, start: number, end: number): boolean {
@@ -206,9 +251,19 @@ export interface Placement {
   maxDuration?: number
 }
 
+/** Tracks kept for lyric lines: the sample's, a template's Lyrics track, and any track that holds lyric lines. */
+function isLyricTrack(project: Project, trackId: string): boolean {
+  return (
+    trackId === TRACK_IDS.lyrics ||
+    templateState(project)?.tracks.lyrics === trackId ||
+    Object.values(project.clips).some((c) => c.trackId === trackId && c.type === 'text' && !!c.lyricLineId)
+  )
+}
+
 /**
- * Adds an asset on the first free track of its kind (footage tracks first), adding one if needed, and selects the new
- * clip. `inspect: false` leaves the right panel as it is, for panels that place several clips in a row.
+ * Adds an asset on the given track or the first free track of its kind (footage tracks first), adding one if needed,
+ * and selects the new clip. `inspect: false` leaves the right panel as it is, for panels that place several clips in a
+ * row.
  */
 export function addAsset(assetId: string, at: Placement = {}, { inspect = true } = {}): boolean {
   const project = editor.getProject()
@@ -219,6 +274,21 @@ export function addAsset(assetId: string, at: Placement = {}, { inspect = true }
   if (inspect) select(selection)
   else set({ selection })
   return true
+}
+
+/** A Library card's add: at the playhead, saying where it landed, with Undo. */
+export function addAssetAtPlayhead(assetId: string): void {
+  if (!addAsset(assetId)) return
+  const { selection } = get()
+  const clip = selection.type === 'clip' ? editor.getProject().clips[selection.id] : undefined
+  if (!clip) return
+  const label = editor.undoLabel()
+  toast(`Added “${clip.name}” at ${formatTime(clip.start, true)}`, {
+    label: 'Undo',
+    run: () => {
+      if (editor.undoLabel() === label) editor.undo()
+    },
+  })
 }
 
 /**
@@ -242,7 +312,7 @@ export function assetPlacement(
     at.maxDuration ?? Infinity,
   )
   const candidates = project.tracks
-    .filter((t) => t.kind === kind && !t.locked && t.id !== TRACK_IDS.lyrics)
+    .filter((t) => t.kind === kind && !t.locked && !isLyricTrack(project, t.id))
     .sort((a, b) => Number(isFootageTrack(project, b)) - Number(isFootageTrack(project, a)))
   const commands: EditCommand[] = []
   const free = (t: Track) => !busyAt(project, t.id, start, start + duration)

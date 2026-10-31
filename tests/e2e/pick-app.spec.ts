@@ -46,7 +46,7 @@ async function openWithInterview(page: Page) {
   const card = page.getByRole('tabpanel', { name: 'Media' }).getByLabel('people-interview, video')
   await card.hover()
   await card.getByRole('button', { name: 'Add at playhead' }).click()
-  const block = page.getByRole('button', { name: /^people-interview, / })
+  const block = page.getByRole('button', { name: /^people-interview, \d/ })
   await expect(block).toHaveCount(1)
   await block.focus()
   await page.keyboard.press('Enter')

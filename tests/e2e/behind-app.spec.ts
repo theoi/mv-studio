@@ -43,7 +43,7 @@ async function importAndSelect(page: Page, file: string, name: string) {
   const card = page.getByRole('tabpanel', { name: 'Media' }).getByLabel(`${name}, video`)
   await card.hover()
   await card.getByRole('button', { name: 'Add at playhead' }).click()
-  const block = page.getByRole('button', { name: new RegExp(`^${name}, `) })
+  const block = page.getByRole('button', { name: new RegExp(`^${name}, \\d`) })
   await expect(block).toHaveCount(1)
   await block.focus()
   await page.keyboard.press('Enter')
