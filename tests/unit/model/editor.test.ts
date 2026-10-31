@@ -156,6 +156,28 @@ describe('ProjectEditor', () => {
     expect(editor.getProject().clips[clip.id]?.start).toBe(0)
     expect(editor.getProject().analysis.visual[asset.id]?.data).toEqual({ v: 2 })
   })
+
+  it('cancels a gesture being coalesced: its edits are reverted and it leaves no undo step', () => {
+    const { editor, visual, asset } = setup()
+    const clip = createVideoClip({ trackId: visual.id, assetId: asset.id, start: 0, duration: 4 })
+    editor.dispatch({ type: 'clip.add', clip })
+    const sources: string[] = []
+    editor.subscribe((_p, change) => sources.push(change.source))
+    for (const start of [1, 2]) {
+      editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start }] }, { coalesceKey: 'drag' })
+    }
+    expect(editor.cancelGesture('other')).toBe(false)
+    expect(editor.cancelGesture('drag')).toBe(true)
+    expect(editor.getProject().clips[clip.id]?.start).toBe(0)
+    expect(editor.undoLabel()).toBe('Add clip')
+    expect(sources).toEqual(['edit', 'edit', 'undo'])
+
+    // A gesture that has ended is an undo step like any other.
+    editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start: 3 }] }, { coalesceKey: 'drag-2' })
+    editor.endGesture()
+    expect(editor.cancelGesture('drag-2')).toBe(false)
+    expect(editor.getProject().clips[clip.id]?.start).toBe(3)
+  })
 })
 
 describe('edit commands', () => {

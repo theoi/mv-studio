@@ -149,6 +149,19 @@ export class ProjectEditor {
     if (last) delete last.coalesceKey
   }
 
+  /**
+   * Takes back the gesture still being coalesced under `key`, such as a drag that ends where it cannot drop: its edits
+   * are reverted and it leaves no undo step. Returns false when the last undo step is not that gesture.
+   */
+  cancelGesture(key: string): boolean {
+    const last = this.undoStack[this.undoStack.length - 1]
+    if (!last || last.coalesceKey !== key) return false
+    this.undoStack.pop()
+    this.project = applyPatches(this.project, last.inversePatches)
+    this.emit({ source: 'undo', commands: [], patches: last.inversePatches })
+    return true
+  }
+
   canUndo(): boolean {
     return this.undoStack.length > 0
   }
