@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { ProjectEditor } from '../../../../src/model/editor.ts'
 import type { Asset, Project } from '../../../../src/model/types.ts'
 import { JobError, JobRunner } from '../../../../src/shared/jobs.ts'
-import { readClipIndex } from '../../../../src/vision/analysisData.ts'
+import { readClipIndex, readSubjectTrack } from '../../../../src/vision/analysisData.ts'
 import {
   createFootageService,
   FOOTAGE_INDEX_JOB,
   STRONG_MATCH,
 } from '../../../../src/vision/footage/service.ts'
 import type { FrameSource } from '../../../../src/vision/runtime/frames.ts'
+import type { SubjectTrack } from '../../../../src/vision/types.ts'
 import { CLIPS, clipIndex, fakeMatcher, makeProject, TOPICS } from '../autocut/fixtures.ts'
 
 function videoAsset(id: string, duration = 10): Asset {
@@ -27,35 +28,64 @@ function videoAsset(id: string, duration = 10): Asset {
   }
 }
 
-/** A vision stand-in whose indexing waits until the test releases each clip. */
-function setup(project: Project = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) })) {
+type TaskArg = { signal?: AbortSignal; onProgress?: (p: { fraction?: number }) => void; fps?: number }
+
+/** Subjects found in a clip: a face, or nobody when the clip id says so. */
+function subjectTrack(source: FrameSource): SubjectTrack {
+  const nobody = source.mediaId.includes('nobody')
+  return {
+    version: 1,
+    mediaId: source.mediaId,
+    sourceSize: { width: source.width, height: source.height },
+    samples: [
+      {
+        t: 0,
+        focus: { x: 0.5, y: 0.4 },
+        box: nobody ? null : { x: 0.3, y: 0.2, width: 0.4, height: 0.7 },
+        confidence: nobody ? 0 : 0.9,
+        source: nobody ? 'none' : 'face',
+      },
+    ],
+  }
+}
+
+/**
+ * A vision stand-in whose indexing waits until the test releases each clip (`release(id)`). Subject tracking
+ * finishes at once unless `gateSubjects` is set; then it waits for `release(\`${id}:subjects\`)`.
+ */
+function setup(
+  project: Project = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) }),
+  options: { gateSubjects?: boolean } = {},
+) {
   const editor = new ProjectEditor(project)
   const jobs = new JobRunner()
   const matcher = fakeMatcher()
   const gates = new Map<string, { resolve: () => void; reject: (e: unknown) => void }>()
   const started: string[] = []
   const disposed: string[] = []
-  const indexClip = vi.fn(
-    async (
-      source: FrameSource,
-      o: { signal?: AbortSignal; onProgress?: (p: { fraction?: number }) => void } = {},
-    ) => {
-      started.push(source.mediaId)
-      o.onProgress?.({ fraction: 0.5 })
-      await new Promise<void>((resolve, reject) => {
-        gates.set(source.mediaId, { resolve, reject })
-        o.signal?.addEventListener('abort', () => {
-          gates.delete(source.mediaId)
-          reject(new JobError('cancelled', 'Cancelled'))
-        })
+  const gate = (key: string, o: TaskArg) =>
+    new Promise<void>((resolve, reject) => {
+      gates.set(key, { resolve, reject })
+      o.signal?.addEventListener('abort', () => {
+        gates.delete(key)
+        reject(new JobError('cancelled', 'Cancelled'))
       })
-      const topic = Object.keys(TOPICS).find((t) => source.mediaId.includes(t))
-      return clipIndex(source.mediaId, source.duration, topic ? (TOPICS[topic] as number) : null, 2)
-    },
-  )
+    })
+  const indexClip = vi.fn(async (source: FrameSource, o: TaskArg = {}) => {
+    started.push(source.mediaId)
+    o.onProgress?.({ fraction: 0.5 })
+    await gate(source.mediaId, o)
+    const topic = Object.keys(TOPICS).find((t) => source.mediaId.includes(t))
+    return clipIndex(source.mediaId, source.duration, topic ? (TOPICS[topic] as number) : null, 2)
+  })
+  const subjects = vi.fn(async (source: FrameSource, o: TaskArg = {}) => {
+    o.onProgress?.({ fraction: 0.5 })
+    if (options.gateSubjects) await gate(`${source.mediaId}:subjects`, o)
+    return subjectTrack(source)
+  })
   const service = createFootageService({
     editor,
-    vision: { matcher, indexClip } as never,
+    vision: { matcher, indexClip, subjects } as never,
     media: { getFile: async () => new Blob() },
     jobs,
     frameSource: async (asset) => ({
@@ -83,7 +113,7 @@ function setup(project: Project = makeProject({ clips: CLIPS.map((c) => ({ ...c,
     Object.keys(editor.getProject().analysis.visual).filter((id) =>
       readClipIndex(editor.getProject().analysis.visual[id]),
     )
-  return { editor, jobs, service, started, disposed, release, tick, indexed, indexClip }
+  return { editor, jobs, service, started, disposed, release, tick, indexed, indexClip, subjects }
 }
 
 describe('background footage analysis', () => {
@@ -160,6 +190,68 @@ describe('background footage analysis', () => {
     service.indexing.resume({ retryFailed: true })
     await release('city')
     expect(service.indexing.statusOf('city')).toBe('indexed')
+  })
+
+  it('tracks the people in each clip right after matching it, in the same job and without undo steps', async () => {
+    const project = makeProject({
+      clips: [
+        { id: 'city', duration: 10, indexed: false },
+        { id: 'nobody', duration: 10, indexed: false },
+        { id: 'still', image: true, indexed: false },
+      ],
+    })
+    const { editor, jobs, service, release, subjects } = setup(project, { gateSubjects: true })
+    service.indexing.start()
+    await release('city')
+    expect(service.indexing.getState().current).toMatchObject({ assetId: 'city', step: 'subjects' })
+    expect(service.indexing.getState().current!.fraction).toBeGreaterThanOrEqual(0.5)
+    expect(jobs.list()[0]!.progress).toMatchObject({ stage: 'subjects', message: 'Clip 1 of 3 · city.mp4' })
+    expect(service.indexing.statusOf('city')).toBe('indexed')
+    expect(service.indexing.subjectStatusOf('city')).toBe('analyzing')
+    expect(service.indexing.subjectStatusOf('nobody')).toBe('queued')
+    await release('city:subjects')
+    expect(service.indexing.subjectStatusOf('city')).toBe('analyzed')
+    expect(readSubjectTrack(editor.getProject().analysis.visual.city)?.samples[0]?.source).toBe('face')
+    expect(readClipIndex(editor.getProject().analysis.visual.city)).not.toBeNull()
+    for (const id of ['nobody', 'nobody:subjects', 'still', 'still:subjects']) await release(id)
+    expect(service.indexing.subjectStatusOf('nobody')).toBe('no-subject')
+    expect(service.indexing.subjectStatusOf('still')).toBe('analyzed')
+    expect(service.indexing.subjectStatusOf('song')).toBe('unsupported')
+    expect(subjects.mock.calls.map(([s, o]) => [s.mediaId, o?.fps])).toEqual([
+      ['city', undefined],
+      ['nobody', undefined],
+      ['still', 1],
+    ])
+    expect(jobs.list().map((j) => j.status)).toEqual(['succeeded'])
+    expect(editor.canUndo()).toBe(false)
+  })
+
+  it('adds subject tracking to clips indexed before, without indexing them again', async () => {
+    const { service, indexClip, subjects, tick } = setup(makeProject())
+    service.indexing.start()
+    for (let i = 0; i < 10; i++) await tick()
+    expect(indexClip).not.toHaveBeenCalled()
+    expect(subjects).toHaveBeenCalledTimes(CLIPS.length)
+    expect(CLIPS.map((c) => service.indexing.subjectStatusOf(c.id))).toEqual(CLIPS.map(() => 'analyzed'))
+    expect(service.indexing.getState().status).toBe('idle')
+  })
+
+  it('keeps the matching of a clip whose subject tracking fails, and stops when the model cannot load', async () => {
+    const { service, release } = setup(undefined, { gateSubjects: true })
+    service.indexing.start()
+    await release('city')
+    await release('city:subjects', new JobError('decode', 'Broken frame'))
+    expect(service.indexing.statusOf('city')).toBe('indexed')
+    expect(service.indexing.subjectStatusOf('city')).toBe('failed')
+    expect(service.indexing.getState().status).toBe('indexing')
+    await release('ocean')
+    await release('ocean:subjects', new JobError('model-load', 'Segmenter download failed'))
+    expect(service.indexing.getState()).toMatchObject({
+      status: 'error',
+      error: { code: 'model-load' },
+      failed: [{ assetId: 'city', message: 'Broken frame' }],
+    })
+    expect(service.indexing.subjectStatusOf('ocean')).toBe('paused')
   })
 
   it('drops the run of a project that was closed', async () => {

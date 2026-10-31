@@ -16,7 +16,7 @@ export interface SubjectAnalysisOptions extends TaskOptions {
   maxSide?: number
 }
 
-export const SUBJECT_TRACK_VERSION = 1
+export const SUBJECT_TRACK_VERSION = 2
 
 /** Where the people (faces first, else person masks) are over a clip, for auto-reframe. */
 export async function analyzeSubjects(

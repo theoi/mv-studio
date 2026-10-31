@@ -20,6 +20,11 @@ const MIN_PERSON_COVERAGE = 0.005
 /** Where the head / upper body sits inside a person box, as a fraction of its height. */
 const PERSON_FOCUS_Y = 0.22
 const MEDIAN_WINDOW = 5
+/**
+ * Detections lasting less than this (or a quarter of the clip) are noise: a face found in one frame of a street
+ * scene would otherwise steer the framing of the whole clip, because gaps hold the nearest detection.
+ */
+const MIN_SUBJECT_SECONDS = 0.6
 
 const CENTRE: Point = { x: 0.5, y: 0.5 }
 
@@ -159,6 +164,27 @@ function fillGaps(samples: SubjectSample[], holdSeconds: number): Frame[] {
   return frames
 }
 
+/** Marks runs of detections shorter than `MIN_SUBJECT_SECONDS` as `none`. */
+function dropBlips(samples: SubjectSample[]): SubjectSample[] {
+  if (samples.length < 2) return samples
+  const step = median(samples.slice(1).map((s, i) => s.t - (samples[i] as SubjectSample).t))
+  const minRun = Math.min(MIN_SUBJECT_SECONDS, 0.25 * samples.length * step)
+  const out = [...samples]
+  for (let i = 0; i < out.length;) {
+    if ((out[i] as SubjectSample).source === 'none') {
+      i++
+      continue
+    }
+    let j = i
+    while (j < out.length && (out[j] as SubjectSample).source !== 'none') j++
+    if ((j - i) * step < minRun - 1e-9)
+      for (let k = i; k < j; k++)
+        out[k] = { ...(out[k] as SubjectSample), source: 'none', box: null, confidence: 0 }
+    i = j
+  }
+  return out
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
@@ -207,7 +233,7 @@ export function smoothSubjectTrack(
 ): SubjectTrack {
   const sigma = opts.sigmaSeconds ?? 0.25
   const hold = opts.holdSeconds ?? 1.0
-  const samples = [...track.samples].sort((a, b) => a.t - b.t)
+  const samples = dropBlips([...track.samples].sort((a, b) => a.t - b.t))
   const frames = fillGaps(samples, hold)
   const times = samples.map((s) => s.t)
 
