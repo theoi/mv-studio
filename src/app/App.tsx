@@ -5,7 +5,7 @@ import { Editor, SettingsDialog, SetupScreen, VjMode } from './lazy.ts'
 import { preloadDeferred } from './preload.ts'
 import { initHashSync } from './state/hash.ts'
 import { initPersistence, usePersistence } from './state/persistence.ts'
-import { set, useUi } from './state/ui.ts'
+import { closeWithToast, set, useUi } from './state/ui.ts'
 import { StartScreen } from './screens/start/StartScreen.tsx'
 import { Deferred } from './screens/common/Deferred.tsx'
 import { LoadBoundary, ScreenLoadFailed } from './screens/common/LoadBoundary.tsx'
@@ -41,7 +41,7 @@ export function App() {
           {screen === 'vj' && <VjMode />}
         </Suspense>
       </LoadBoundary>
-      <Deferred when={settingsOpen} name="Settings" close={() => set({ dialog: null })}>
+      <Deferred when={settingsOpen} onFail={closeWithToast('Settings', () => set({ dialog: null }))}>
         <SettingsDialog />
       </Deferred>
       <Toaster />

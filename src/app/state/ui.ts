@@ -40,6 +40,8 @@ export interface Toast {
   action?: { label: string; run: () => void }
   /** Selects what an automatic or AI tool just made. The toast stays, so Undo is still at hand. */
   show?: () => void
+  /** A new toast with the same key takes this one's place instead of stacking under it. */
+  key?: string
 }
 
 export interface UiState {
@@ -131,10 +133,34 @@ const TOAST_MS = 5200
 let toastId = 1
 const toastTimers = new Map<number, number>()
 
-export function toast(message: string, action?: Toast['action'], options: { show?: () => void } = {}) {
+export function toast(
+  message: string,
+  action?: Toast['action'],
+  options: { show?: () => void; key?: string } = {},
+) {
+  const { show, key } = options
+  const same = key === undefined ? undefined : get().toasts.find((t) => t.key === key)
+  if (same) {
+    set((s) => ({ toasts: s.toasts.map((t) => (t === same ? { ...t, message, action, show } : t)) }))
+    releaseToast(same.id)
+    return
+  }
   const id = toastId++
-  set((s) => ({ toasts: [...s.toasts.slice(-2), { id, message, action, show: options.show }] }))
+  set((s) => ({ toasts: [...s.toasts.slice(-2), { id, message, action, show, key }] }))
   releaseToast(id)
+}
+
+/** Says that the code for `name` couldn't load; trying again while it still can't shows the same toast again. */
+export function toastLoadFailed(name: string) {
+  toast(`${name} couldn’t load. Check your connection and try again.`, undefined, { key: `load:${name}` })
+}
+
+/** For a dialog whose code failed to load (Deferred's onFail): the toast, and `close` closes it. */
+export function closeWithToast(name: string, close: () => void) {
+  return () => {
+    toastLoadFailed(name)
+    close()
+  }
 }
 
 export function dismissToast(id: number) {
@@ -205,6 +231,9 @@ export function editorPreset(kind: Kind): Partial<UiState> {
   return preset
 }
 
+/** The guide on screen now started by itself, on a first visit (see guideLoadFailed). */
+let guideStartedItself = false
+
 export function maybeStartGuide() {
   try {
     if (localStorage.getItem(GUIDE_SEEN_KEY)) return
@@ -212,5 +241,25 @@ export function maybeStartGuide() {
   } catch {
     return
   }
+  guideStartedItself = true
   set({ guideStep: 0 })
 }
+
+/**
+ * The guide's code failed to load. One the user asked for says so; one that started by itself fails quietly and
+ * starts by itself again next time, since it was never seen.
+ */
+export function guideLoadFailed() {
+  if (guideStartedItself) {
+    try {
+      localStorage.removeItem(GUIDE_SEEN_KEY)
+    } catch {
+      // Storage unavailable: the guide then can't start by itself anyway.
+    }
+  } else toastLoadFailed('The guide')
+  set({ guideStep: null })
+}
+
+useUi.subscribe((s, prev) => {
+  if (s.guideStep === null && prev.guideStep !== null) guideStartedItself = false
+})

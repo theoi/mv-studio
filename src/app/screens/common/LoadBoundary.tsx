@@ -1,4 +1,4 @@
-import { Component, type ReactNode } from 'react'
+import { Component, useEffect, useRef, type ReactNode } from 'react'
 import { WifiOff } from 'lucide-react'
 import { Button } from '../../ds/Button.tsx'
 import { EmptyState } from '../../ds/Feedback.tsx'
@@ -41,6 +41,18 @@ export class LoadBoundary extends Component<Props, { error: unknown }> {
 /** In place of a screen whose code failed to load: try again, or go somewhere that has loaded. */
 export function ScreenLoadFailed({ screen, retry }: { screen: Screen; retry: () => void }) {
   const vj = screen === 'vj'
+  const tryAgain = useRef<HTMLButtonElement>(null)
+  // Also after a failed Try again, which unmounts the card while the code loads: focus would be left on the page.
+  useEffect(() => tryAgain.current?.focus(), [])
+  useEffect(() => {
+    if (!vj) return
+    // As everywhere else in VJ mode, Esc goes back to the editor.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) leaveVj()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [vj])
   return (
     <div className="screen-error" role="alert">
       <EmptyState
@@ -49,11 +61,12 @@ export function ScreenLoadFailed({ screen, retry }: { screen: Screen; retry: () 
         description={
           screen === 'setup'
             ? 'Check your connection and try again.'
-            : 'Check your connection and try again. Your project is saved.'
+            : // Non-breaking spaces keep the second sentence on one line.
+              'Check your connection and try again. Your\u00a0project\u00a0is\u00a0saved.'
         }
         action={
           <>
-            <Button variant="primary" size="sm" onClick={retry}>
+            <Button ref={tryAgain} variant="primary" size="sm" onClick={retry}>
               Try again
             </Button>
             {vj ? (

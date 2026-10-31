@@ -13,7 +13,7 @@ import {
 } from '../../vj/index.ts'
 import { loadVjMode } from '../preload.ts'
 import { stagePreview } from '../screens/editor/stage.ts'
-import { get, set, toast } from './ui.ts'
+import { get, set, toastLoadFailed } from './ui.ts'
 
 /** The VJ session while VJ mode is open, so Settings › VJ and MIDI changes reach it as well as the saved settings. */
 let active: VjSession | null = null
@@ -79,7 +79,7 @@ export function enterVj() {
     () => {
       setEntering(false)
       clearVjEntryFrame()
-      if (get().screen === 'editor') toast('VJ mode couldn’t load. Check your connection and try again.')
+      if (get().screen === 'editor') toastLoadFailed('VJ mode')
     },
   )
 }
