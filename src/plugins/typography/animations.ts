@@ -58,7 +58,7 @@ const stagger = (value: number): ParamSpec => ({
   step: 0.01,
   unit: 's',
 })
-const duration = (value: number, label = 'Entrance length'): ParamSpec => ({
+const duration = (value: number, label = 'Entrance'): ParamSpec => ({
   key: 'duration',
   label,
   type: 'number',
@@ -349,7 +349,7 @@ export const wave: TextAnimationDefinition = {
   padding: 0.6,
   params: [
     stagger(0.06),
-    duration(0.4, 'Fade-in length'),
+    duration(0.4, 'Fade in'),
     { key: 'amplitude', label: 'Height', type: 'number', default: 0.18, min: 0, max: 1, step: 0.01 },
     { key: 'speed', label: 'Speed', type: 'number', default: 0.8, min: 0, max: 4, step: 0.01, unit: 'Hz' },
     reactivity,
@@ -426,7 +426,7 @@ export const sweep: TextAnimationDefinition = {
   cost: 'low',
   padding: 0.5,
   params: [
-    { key: 'dim', label: 'Upcoming opacity', type: 'number', default: 0.45, min: 0, max: 1, step: 0.01 },
+    { key: 'dim', label: 'Dimmed', type: 'number', default: 0.45, min: 0, max: 1, step: 0.01 },
     { key: 'lift', label: 'Lift', type: 'number', default: 0.35, min: 0, max: 1.5, step: 0.01 },
     ...EXIT_PARAMS,
   ],
