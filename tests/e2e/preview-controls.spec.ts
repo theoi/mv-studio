@@ -50,6 +50,7 @@ test('Loop repeats the section under the playhead, moves with a seek to another 
   await page.keyboard.press(`${mod}+l`)
   await expect(loop).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByText('Looping Chorus')).toBeVisible()
+  await expect(loop).toHaveAccessibleName('Loop playback · Chorus')
 
   // Plays from `from` to the section end, then starts the section again instead of going on.
   const wrapsBackTo = async (from: number, start: number, end: number) => {
@@ -74,11 +75,14 @@ test('Loop repeats the section under the playhead, moves with a seek to another 
 
   // Verse 2 runs from 1:36 to 2:08.
   await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 126.5 }))
+  // The button names the section the loop moved to.
+  await expect(loop).toHaveAccessibleName('Loop playback · Verse 2')
   await wrapsBackTo(126.5, 96, 128)
 
   await loop.click()
   await expect(loop).toHaveAttribute('aria-pressed', 'false')
   await expect(page.getByText('Loop off')).toBeVisible()
+  await expect(loop).toHaveAccessibleName('Loop playback')
 })
 
 test('Volume sets the preview level, which is remembered after a reload', async ({ page }) => {
@@ -93,6 +97,7 @@ test('Volume sets the preview level, which is remembered after a reload', async 
   await expect.poll(level).toBe(0)
   for (let i = 0; i < 35; i++) await page.keyboard.press('ArrowRight')
   await expect(page.getByRole('dialog', { name: 'Volume' }).getByText('35%', { exact: true })).toBeVisible()
+  await expect(slider).toHaveAttribute('aria-valuetext', '35%')
   await expect.poll(level).toBeCloseTo(0.35, 5)
   await page.keyboard.press('Escape')
   await expect(slider).toBeHidden()
@@ -310,4 +315,124 @@ test('Inspector › Compositing: opacity and blend mode change the clip in the p
   await page.keyboard.press(`${mod}+z`)
   await expect(blend).toHaveText(/Normal/)
   await expect.poll(async () => Math.abs((await brightness()) - shown)).toBeLessThan(1)
+})
+
+test('Handles stay on the stage: a clip twice the frame leaves the transport usable and every handle in reach', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  const preview = await openEditor(page, '#/editor?t=21&sel=clip:c-s-v1-1')
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  const stage = preview.locator('xpath=../..')
+  const names = ['top-left', 'top-right', 'bottom-right', 'bottom-left', 'rotate']
+  // Each handle's whole hit area is on the stage, at least 24 px across, and on top where it is drawn.
+  const expectReachable = async () => {
+    const s = (await stage.boundingBox())!
+    for (const name of names) {
+      const b = (await page.locator(`[data-handle="${name}"]`).boundingBox())!
+      expect(b.width, name).toBeGreaterThanOrEqual(24)
+      expect(b.height, name).toBeGreaterThanOrEqual(24)
+      expect(b.x, name).toBeGreaterThanOrEqual(s.x - 0.5)
+      expect(b.y, name).toBeGreaterThanOrEqual(s.y - 0.5)
+      expect(b.x + b.width, name).toBeLessThanOrEqual(s.x + s.width + 0.5)
+      expect(b.y + b.height, name).toBeLessThanOrEqual(s.y + s.height + 0.5)
+      const top = await page.evaluate(
+        ([x, y]) => document.elementFromPoint(x!, y!)?.getAttribute('data-handle'),
+        [b.x + b.width / 2, b.y + b.height / 2],
+      )
+      expect(top, name).toBe(name)
+    }
+  }
+  // At Fit the full-frame clip's knob has no room above the frame, so it sits inside the top edge.
+  await expectReachable()
+  const frame = (await preview.boundingBox())!
+  expect((await center(page.locator('[data-handle="rotate"]'))).y).toBeGreaterThan(frame.y)
+
+  const scale = inspector.getByRole('textbox', { name: 'Scale', exact: true })
+  await scale.fill('200')
+  await scale.press('Enter')
+  await scale.blur()
+  await expectReachable()
+
+  // The clip covers far more than the stage, but the transport still takes clicks.
+  const playing = () => page.evaluate(() => window.mvStudio.app.ui.get().playing as boolean)
+  await page.getByRole('button', { name: 'Play', exact: true }).click()
+  await expect.poll(playing).toBe(true)
+  await page.getByRole('button', { name: 'Pause', exact: true }).click()
+  await expect.poll(playing).toBe(false)
+
+  // A corner drawn at the stage edge still scales from there: halfway to the anchor halves the clip.
+  const anchor = await center(page.locator('[data-handle="move"]'))
+  const corner = await center(page.locator('[data-handle="top-left"]'))
+  await drag(page, [corner, { x: (corner.x + anchor.x) / 2, y: (corner.y + anchor.y) / 2 }])
+  await expect.poll(async () => Math.abs(Number(await scale.inputValue()) - 100)).toBeLessThanOrEqual(2)
+})
+
+test('Corner cursors follow the corner, not the box: a wide title shows diagonal arrows', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=5&sel=clip:o-title')
+  const cursor = (name: string) =>
+    page.locator(`[data-handle="${name}"]`).evaluate((el) => getComputedStyle(el).cursor)
+  expect(await cursor('top-left')).toBe('nwse-resize')
+  expect(await cursor('top-right')).toBe('nesw-resize')
+  expect(await cursor('bottom-right')).toBe('nwse-resize')
+  expect(await cursor('bottom-left')).toBe('nesw-resize')
+})
+
+test('A lyric line and a clip on a locked track show the outline without handles, and a drag says why', async ({
+  page,
+}) => {
+  const preview = await openEditor(page, '#/editor?sel=lyric:l-c1-2&t=70.4')
+  const outline = preview.locator('xpath=..').locator('svg polygon')
+  await expect(outline).toHaveCount(1)
+  await expect(page.locator('[data-handle]')).toHaveCount(0)
+  const lineY = () =>
+    page.evaluate(() => {
+      const clips = Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+        lyricLineId?: string
+        transform: { y: { value: number } }
+      }[]
+      return clips.find((c) => c.lyricLineId === 'l-c1-2')?.transform.y.value
+    })
+  const before = await lineY()
+  const note = page
+    .getByRole('status')
+    .filter({ hasText: 'Lyrics move together. Use Position in the Inspector.' })
+  const box = (await outline.boundingBox())!
+  const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  await page.mouse.move(at.x, at.y)
+  await page.mouse.down()
+  await page.mouse.move(at.x + 30, at.y - 20, { steps: 4 })
+  await expect(note).toBeVisible()
+  // It goes away on its own while the button is still down, and does not follow the pointer.
+  await expect(note).toBeHidden({ timeout: 5_000 })
+  await page.mouse.up()
+  expect(await lineY()).toBe(before)
+
+  // Released sooner, it goes at once.
+  await page.mouse.move(at.x, at.y)
+  await page.mouse.down()
+  await page.mouse.move(at.x + 30, at.y, { steps: 4 })
+  await expect(note).toBeVisible()
+  await page.mouse.up()
+  await expect(note).toBeHidden()
+
+  // A locked track: the same note with the locked message, and no toast as well.
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    const clip = editor.getProject().clips['c-s-v1-1']
+    editor.dispatch({ type: 'track.update', trackId: clip.trackId, patch: { locked: true } })
+    window.mvStudio.app.ui.set({ playhead: 21, selection: { type: 'clip', id: 'c-s-v1-1' }, toasts: [] })
+  })
+  await expect(page.locator('[data-handle]')).toHaveCount(0)
+  const locked = page.getByRole('status').filter({ hasText: 'That track is locked. Unlock it to edit.' })
+  const mid = await center(preview)
+  await page.mouse.move(mid.x, mid.y)
+  await page.mouse.down()
+  await page.mouse.move(mid.x + 30, mid.y, { steps: 4 })
+  await expect(locked).toBeVisible()
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().toasts.length)).toBe(0)
+  await page.mouse.up()
+  await expect(locked).toBeHidden()
 })

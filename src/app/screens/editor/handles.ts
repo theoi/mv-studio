@@ -26,17 +26,33 @@ export type DraggableClip = Extract<Clip, { type: 'video' | 'image' | 'text' }>
 const KEYS: readonly TransformKey[] = ['x', 'y', 'scaleX', 'scaleY', 'rotation']
 /** Distance of the rotate knob beyond the top edge, in CSS pixels. */
 const KNOB_OFFSET = 22
+/** Width and height of each handle's hit area, in CSS pixels. */
+export const HANDLE_HIT = 24
 /** A press that moves less than this many CSS pixels is a click, and changes nothing. */
-const CLICK_SLOP = 2
+export const CLICK_SLOP = 2
 /** Inspector › Transform › Scale stops at 1%. */
 const MIN_SCALE = 0.01
 const SNAP_DEGREES = 15
 const LABELS: Record<HandleMode, string> = { move: 'Move clip', scale: 'Scale clip', rotate: 'Rotate clip' }
 
-/** Clips with Inspector › Transform get handles, unless their track is locked. */
+const isTransformable = (clip: Clip | undefined): clip is DraggableClip =>
+  !!clip && (clip.type === 'video' || clip.type === 'image' || clip.type === 'text')
+
+/**
+ * Why a clip with Inspector › Transform has no handles, said by the outline when a drag starts on it: its track is
+ * locked, or it is a lyric line (lyric lines move together, from the lyric Inspector's Position).
+ */
+export function blockedNote(project: Project, clip: Clip | undefined): string | null {
+  if (!isTransformable(clip)) return null
+  if (project.tracks.find((t) => t.id === clip.trackId)?.locked)
+    return 'That track is locked. Unlock it to edit.'
+  if (clip.type === 'text' && clip.lyricLineId) return 'Lyrics move together. Use Position in the Inspector.'
+  return null
+}
+
+/** Video, image and text clips get handles, except lyric lines and clips on locked tracks. */
 export function canDrag(project: Project, clip: Clip | undefined): clip is DraggableClip {
-  if (!clip || (clip.type !== 'video' && clip.type !== 'image' && clip.type !== 'text')) return false
-  return !project.tracks.find((t) => t.id === clip.trackId)?.locked
+  return isTransformable(clip) && !blockedNote(project, clip)
 }
 
 /** The clip's transform as drawn at clip-local time t (keyframes applied, music reactions not). */
@@ -51,8 +67,8 @@ export function transformAt(clip: VisualClip, t: number): TransformValues {
   }
 }
 
-/** The middle of the top edge and the rotate knob beyond it, for an outline from selectionOutline. */
-export function knobOf(corners: Point[]): { topMid: Point; knob: Point } {
+/** For an outline from selectionOutline: the middle of its top edge, the clip's up direction and the rotate knob. */
+export function knobOf(corners: Point[]): { topMid: Point; up: Point; knob: Point } {
   const [tl = [0, 0], tr = [0, 0], br = [0, 0], bl = [0, 0]] = corners
   const topMid: Point = [(tl[0] + tr[0]) / 2, (tl[1] + tr[1]) / 2]
   let ux = topMid[0] - (bl[0] + br[0]) / 2
@@ -60,12 +76,80 @@ export function knobOf(corners: Point[]): { topMid: Point; knob: Point } {
   const len = Math.hypot(ux, uy)
   if (len < 1e-6) [ux, uy] = [0, -1]
   else [ux, uy] = [ux / len, uy / len]
-  return { topMid, knob: [topMid[0] + ux * KNOB_OFFSET, topMid[1] + uy * KNOB_OFFSET] }
+  return { topMid, up: [ux, uy], knob: [topMid[0] + ux * KNOB_OFFSET, topMid[1] + uy * KNOB_OFFSET] }
 }
 
-/** The resize cursor pointing from the clip's anchor towards a corner. */
-export function resizeCursor(corner: Point, pivot: Point): string {
-  const deg = ((Math.atan2(corner[1] - pivot[1], corner[0] - pivot[0]) * 180) / Math.PI + 360) % 180
+export interface Rect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const within = (p: Point, r: Rect) =>
+  p[0] >= r.x && p[0] <= r.x + r.width && p[1] >= r.y && p[1] <= r.y + r.height
+const clampTo = (p: Point, r: Rect): Point => [
+  Math.min(Math.max(p[0], r.x), r.x + r.width),
+  Math.min(Math.max(p[1], r.y), r.y + r.height),
+]
+
+/** Where the segment from `a`, inside r, towards `b` leaves r (b itself when it is inside). */
+function exitPoint(a: Point, b: Point, r: Rect): Point {
+  const dx = b[0] - a[0]
+  const dy = b[1] - a[1]
+  let t = 1
+  if (dx > 0) t = Math.min(t, (r.x + r.width - a[0]) / dx)
+  if (dx < 0) t = Math.min(t, (r.x - a[0]) / dx)
+  if (dy > 0) t = Math.min(t, (r.y + r.height - a[1]) / dy)
+  if (dy < 0) t = Math.min(t, (r.y - a[1]) / dy)
+  return [a[0] + dx * t, a[1] + dy * t]
+}
+
+/**
+ * Where to draw the corner handles and the rotate knob so each one's whole hit area is on the visible stage (`view`,
+ * in frame pixels; null when unknown). A corner off the stage sits where the line from the anchor to it leaves the
+ * stage, still scaling from there. The knob goes beyond the top edge, or inside it when there is no room (a
+ * full-frame clip at Fit), or where the clip's up direction from the anchor leaves the stage when the top edge is off
+ * it; `stem` is null in that last case.
+ */
+export function placeHandles(
+  corners: Point[],
+  pivot: Point,
+  view: Rect | null,
+): { corners: Point[]; knob: Point; stem: [Point, Point] | null } {
+  const { topMid, up, knob } = knobOf(corners)
+  if (!view) return { corners, knob, stem: [topMid, knob] }
+  const half = HANDLE_HIT / 2
+  const r: Rect = {
+    x: view.x + half,
+    y: view.y + half,
+    width: Math.max(0, view.width - HANDLE_HIT),
+    height: Math.max(0, view.height - HANDLE_HIT),
+  }
+  const anchored = within(pivot, r)
+  const reach = (p: Point): Point => (within(p, r) ? p : anchored ? exitPoint(pivot, p, r) : clampTo(p, r))
+  const placed = corners.map(reach)
+  if (within(knob, r)) return { corners: placed, knob, stem: [topMid, knob] }
+  const inside: Point = [2 * topMid[0] - knob[0], 2 * topMid[1] - knob[1]]
+  if (within(inside, r)) return { corners: placed, knob: inside, stem: [topMid, inside] }
+  const far: Point = [pivot[0] + up[0] * 1e6, pivot[1] + up[1] * 1e6]
+  return { corners: placed, knob: anchored ? exitPoint(pivot, far, r) : clampTo(knob, r), stem: null }
+}
+
+/**
+ * The resize cursor for corner i of an outline: along the corner's diagonal as the clip is turned (top-left is
+ * nwse-resize upright), whatever the box's proportions, since a corner scales both axes.
+ */
+export function resizeCursor(corners: Point[], i: number): string {
+  const at = (k: number): Point => corners[(k + 4) % 4] ?? [0, 0]
+  const unit = (a: Point, b: Point): Point => {
+    const len = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1
+    return [(a[0] - b[0]) / len, (a[1] - b[1]) / len]
+  }
+  const c = at(i)
+  const a = unit(c, at(i - 1))
+  const b = unit(c, at(i + 1))
+  const deg = ((Math.atan2(a[1] + b[1], a[0] + b[0]) * 180) / Math.PI + 360) % 180
   return ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'][Math.round(deg / 45) % 4] ?? 'move'
 }
 

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTextClip, type Project, type VisualClip } from '../../../src/model/index.ts'
 import {
+  blockedNote,
   canDrag,
   knobOf,
   moved,
+  placeHandles,
   resizeCursor,
   rotated,
   scaled,
@@ -54,16 +56,82 @@ describe('handle drags', () => {
       [100, 50],
       [0, 50],
     ]
-    expect(knobOf(upright)).toEqual({ topMid: [50, 0], knob: [50, -22] })
+    expect(knobOf(upright)).toEqual({ topMid: [50, 0], up: [0, -1], knob: [50, -22] })
     const upsideDown = [upright[2]!, upright[3]!, upright[0]!, upright[1]!]
     expect(knobOf(upsideDown).knob).toEqual([50, 72])
   })
 
-  it('points the resize cursor from the anchor to the corner', () => {
-    expect(resizeCursor([10, 10], [0, 0])).toBe('nwse-resize')
-    expect(resizeCursor([10, -10], [0, 0])).toBe('nesw-resize')
-    expect(resizeCursor([10, 0.5], [0, 0])).toBe('ew-resize')
-    expect(resizeCursor([0.5, -10], [0, 0])).toBe('ns-resize')
+  it('points each corner cursor along its diagonal as the clip is turned, whatever its proportions', () => {
+    const wide: Point[] = [
+      [0, 0],
+      [300, 0],
+      [300, 30],
+      [0, 30],
+    ]
+    expect([0, 1, 2, 3].map((i) => resizeCursor(wide, i))).toEqual([
+      'nwse-resize',
+      'nesw-resize',
+      'nwse-resize',
+      'nesw-resize',
+    ])
+    // Turned 45° clockwise about its middle, the top-left corner points straight up.
+    const a = Math.PI / 4
+    const turned = wide.map(([x, y]): Point => [
+      150 + (x - 150) * Math.cos(a) - (y - 15) * Math.sin(a),
+      15 + (x - 150) * Math.sin(a) + (y - 15) * Math.cos(a),
+    ])
+    expect(resizeCursor(turned, 0)).toBe('ns-resize')
+    expect(resizeCursor(turned, 1)).toBe('ew-resize')
+  })
+})
+
+describe('handles on the visible stage', () => {
+  // A 800 × 450 frame at Fit, with 12 px of stage around it.
+  const view = { x: -12, y: -12, width: 824, height: 474 }
+  const pivot: Point = [400, 225]
+  const fullFrame: Point[] = [
+    [0, 0],
+    [800, 0],
+    [800, 450],
+    [0, 450],
+  ]
+
+  it('keeps the knob beyond the top edge when it fits there', () => {
+    const half: Point[] = [
+      [200, 100],
+      [600, 100],
+      [600, 350],
+      [200, 350],
+    ]
+    const placed = placeHandles(half, pivot, view)
+    expect(placed.corners).toEqual(half)
+    expect(placed.knob).toEqual([400, 78])
+  })
+
+  it('puts the knob of a full-frame clip inside its top edge, where the stage still shows it', () => {
+    const placed = placeHandles(fullFrame, pivot, view)
+    expect(placed.corners).toEqual(fullFrame)
+    expect(placed.knob).toEqual([400, 22])
+    expect(placed.stem).toEqual([
+      [400, 0],
+      [400, 22],
+    ])
+  })
+
+  it('moves corners off the stage to where the line from the anchor leaves it, and the knob to where up leaves it', () => {
+    // At Scale 200% every corner and the top edge are off the stage.
+    const double: Point[] = [
+      [-400, -225],
+      [1200, -225],
+      [1200, 675],
+      [-400, 675],
+    ]
+    const placed = placeHandles(double, pivot, view)
+    // Each whole 24 px hit area stays on the stage: centers at least 12 px inside its edge.
+    expect(placed.corners).toEqual(fullFrame)
+    expect(placed.knob[0]).toBeCloseTo(400, 6)
+    expect(placed.knob[1]).toBeCloseTo(0, 6)
+    expect(placed.stem).toBeNull()
   })
 })
 
@@ -128,6 +196,16 @@ describe('dragging a clip of the sample project', () => {
       tracks: p.tracks.map((t) => (t.id === title.trackId ? { ...t, locked: true } : t)),
     }
     expect(canDrag(locked, title)).toBe(false)
+    expect(blockedNote(locked, title)).toBe('That track is locked. Unlock it to edit.')
+    expect(blockedNote(p, title)).toBeNull()
+  })
+
+  it('gives lyric lines no handles: they move together, from the lyric Inspector', () => {
+    const p = project()
+    const line = Object.values(p.clips).find((c) => c.type === 'text' && c.lyricLineId)
+    expect(line).toBeDefined()
+    expect(canDrag(p, line)).toBe(false)
+    expect(blockedNote(p, line)).toBe('Lyrics move together. Use Position in the Inspector.')
   })
 
   it('shows each frame at once, writes the project every 100 ms and on release, as one undo step', () => {

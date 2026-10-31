@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -51,6 +52,7 @@ import { jumpSection } from '../../state/playback.ts'
 import { setPref, usePrefs } from '../../state/prefs.ts'
 import {
   isFullscreen,
+  loopRange,
   PREVIEW_ZOOMS,
   setFullscreenTarget,
   subscribeFullscreen,
@@ -74,6 +76,7 @@ import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
 import { changeAspect } from '../../state/reframe.ts'
 import { PickOverlay } from './PickOverlay.tsx'
+import type { Rect } from './handles.ts'
 import { SelectionOverlay } from './SelectionOverlay.tsx'
 import { connectPreview, fitStage } from './stage.ts'
 import styles from './Preview.module.css'
@@ -107,6 +110,23 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
   const [generation, setGeneration] = useState(0)
   const restarts = useRef<number[]>([])
   const centerNext = useRef(false)
+  const frameRef = useRef<HTMLDivElement>(null)
+  // The part of the stage on screen, in frame pixels (scrolled when zoomed in), for the handles.
+  const [view, setView] = useState<Rect | null>(null)
+  const measureView = useCallback(() => {
+    const wrap = wrapRef.current
+    const frame = frameRef.current
+    if (!wrap || !frame) return
+    const next = {
+      x: wrap.scrollLeft - frame.offsetLeft,
+      y: wrap.scrollTop - frame.offsetTop,
+      width: wrap.clientWidth,
+      height: wrap.clientHeight,
+    }
+    setView((v) =>
+      v && v.x === next.x && v.y === next.y && v.width === next.width && v.height === next.height ? v : next,
+    )
+  }, [])
   const picking = usePick((s) => !!s.request)
   const zoom = useUi((s) => s.previewZoom)
   const full = useSyncExternalStore(subscribeFullscreen, () => isFullscreen(wrapRef.current))
@@ -170,11 +190,12 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
       sizeRef.current = size
       setSize(size)
       previewRef.current?.setViewport(size.width, size.height)
+      measureView()
     }
     const ro = new ResizeObserver(layout)
     ro.observe(wrap)
     return () => ro.disconnect()
-  }, [ratio, zoom, zoomed, projectWidth, full])
+  }, [ratio, zoom, zoomed, projectWidth, full, measureView])
 
   // A new zoom level opens on the middle of the frame.
   useLayoutEffect(() => {
@@ -185,13 +206,16 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
     wrap.scrollTop = (wrap.scrollHeight - wrap.clientHeight) / 2
   }, [size])
 
+  useLayoutEffect(() => measureView(), [size, zoomed, full, measureView])
+
   return (
     <div
       ref={wrapRef}
       className={[styles.stage, zoomed && styles.zoomed].filter(Boolean).join(' ')}
       tabIndex={-1}
+      onScroll={measureView}
     >
-      <div className={styles.frame} style={{ width: size.width, height: size.height }}>
+      <div ref={frameRef} className={styles.frame} style={{ width: size.width, height: size.height }}>
         <canvas
           key={generation}
           ref={canvasRef}
@@ -200,7 +224,9 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
           aria-busy={status === 'loading'}
           role="img"
         />
-        {status === 'ready' && !full && <SelectionOverlay width={size.width} height={size.height} />}
+        {status === 'ready' && !full && (
+          <SelectionOverlay width={size.width} height={size.height} view={view} />
+        )}
         {status === 'ready' && picking && <PickOverlay width={size.width} height={size.height} />}
         {status === 'loading' && (
           <div className={styles.stageNote}>
@@ -296,6 +322,25 @@ function ZoomMenu({ disabled }: { disabled: boolean }) {
   )
 }
 
+function LoopButton({ disabled }: { disabled: boolean }) {
+  const loop = useUi((s) => s.loop)
+  // Names what loops, since a seek into another section moves the loop there without a toast.
+  const looping = useUi((s) =>
+    s.loop ? (loopRange(editor.getProject(), s.playhead).label ?? 'Whole video') : '',
+  )
+  return (
+    <IconButton
+      label={looping ? `Loop playback · ${looping}` : 'Loop playback'}
+      shortcut="Mod L"
+      active={loop}
+      onClick={toggleLoop}
+      disabled={disabled}
+    >
+      <Repeat />
+    </IconButton>
+  )
+}
+
 function VolumeControl() {
   const volume = usePrefs((p) => p.previewVolume)
   const pct = Math.round(volume * 100)
@@ -308,7 +353,12 @@ function VolumeControl() {
       </PopoverTrigger>
       <PopoverContent title="Volume" side="top" align="end">
         <div className={styles.volume}>
-          <Slider value={pct} onChange={(v) => setPref('previewVolume', v / 100)} ariaLabel="Volume" />
+          <Slider
+            value={pct}
+            onChange={(v) => setPref('previewVolume', v / 100)}
+            ariaLabel="Volume"
+            valueText={`${pct}%`}
+          />
           <span className={`${styles.volumeValue} tnum`}>{pct}%</span>
         </div>
       </PopoverContent>
@@ -319,7 +369,6 @@ function VolumeControl() {
 export function Preview() {
   const playing = useUi((s) => s.playing)
   const starting = useUi((s) => s.starting)
-  const loop = useUi((s) => s.loop)
   const empty = useProjectValue((p) => !hasSong(p))
   const aspect = useProjectValue((p) => p.settings.aspect)
   const width = useProjectValue((p) => p.settings.width)
@@ -432,15 +481,7 @@ export function Preview() {
           </IconButton>
         </div>
         <div className={styles.transportRight}>
-          <IconButton
-            label="Loop playback"
-            shortcut="Mod L"
-            active={loop}
-            onClick={toggleLoop}
-            disabled={empty}
-          >
-            <Repeat />
-          </IconButton>
+          <LoopButton disabled={empty} />
           <VolumeControl />
           <IconButton label="Full-screen preview" shortcut="F" onClick={toggleFullscreen} disabled={empty}>
             <Maximize2 />

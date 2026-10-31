@@ -82,11 +82,13 @@
   color: var(--text-2);
 }
 
+/* Clipped, so the outline and handles of a clip larger than the frame stay on the stage. */
 .stage {
   position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
+  overflow: hidden;
   outline: none;
 }
 
@@ -97,7 +99,7 @@
 }
 
 .stage:fullscreen {
-  background: #000;
+  background: var(--letterbox);
 }
 
 /* Auto margins center the frame and, unlike centering the flex items, let a zoomed frame scroll to every edge. */
@@ -151,6 +153,32 @@
 .selHit {
   fill: transparent;
   pointer-events: all;
+}
+
+/* An outline without handles still takes a drag, to say why it does not move. */
+.selStatic {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.selNoteRegion {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.selNote {
+  position: absolute;
+  max-width: 320px;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius);
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+  transform: translate(-50%, -100%);
 }
 
 .selRotate {

@@ -60,6 +60,6 @@ export function toggleFullscreen() {
   el.requestFullscreen().then(
     // Keys go to the focused element, which would otherwise stay on the button outside the full-screen stage.
     () => el.focus({ preventScroll: true }),
-    () => toast('This browser window can’t go full screen.'),
+    () => toast('This browser window can’t go full screen'),
   )
 }
