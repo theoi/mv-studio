@@ -51,14 +51,14 @@ export interface UiState {
   libraryOpen: boolean
   playhead: number
   playing: boolean
+  /** Play was pressed and the preview is still loading audio. */
+  starting: boolean
   pxPerSec: number
   snap: boolean
   beatSnap: boolean
   showEnergy: boolean
   review: boolean
   dismissed: string[]
-  /** Mock of a matte on the lyric clips; the real feature writes Matte data to the project. */
-  behindSubject: boolean
   toasts: Toast[]
 }
 
@@ -88,13 +88,13 @@ export const initialUi: UiState = {
   libraryOpen: storedLibraryOpen(),
   playhead: 73.6,
   playing: false,
+  starting: false,
   pxPerSec: 12,
   snap: true,
   beatSnap: true,
   showEnergy: true,
   review: true,
   dismissed: [],
-  behindSubject: false,
   toasts: [],
 }
 

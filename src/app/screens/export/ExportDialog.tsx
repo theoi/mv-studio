@@ -19,8 +19,9 @@ import { Dialog } from '../../ds/Dialog.tsx'
 import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select } from '../../ds/Fields.tsx'
 import { formatTime } from '../../format.ts'
-import { exportSeconds, startExport, type ExportKind } from '../../mock/actions.ts'
 import { sceneThumb } from '../../mock/art.ts'
+import type { ExportResolution } from '../../../engine/export.ts'
+import { downloadAgain, exportTitle, startExports, type ExportKind } from '../../state/exports.ts'
 import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
 import { sectionColor, sectionKind, sectionsOf, timelineDuration, useProject } from '../../state/project.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
@@ -131,6 +132,7 @@ function rowStatus(job: JobSnapshot | undefined): string {
   if (job.status === 'succeeded') return 'Saved'
   if (job.status === 'cancelled') return 'Cancelled'
   if (job.status === 'failed') return job.error?.message ?? 'Failed'
+  if (job.progress.stage === 'waiting') return 'Waiting'
   const eta = job.progress.etaSeconds ?? 0
   const left = eta < 50 ? 'less than a minute left' : `about ${Math.round(eta / 60)} min left`
   return `${Math.round((job.progress.fraction ?? 0) * 100)}% · ${left}`
@@ -139,7 +141,7 @@ function rowStatus(job: JobSnapshot | undefined): string {
 /** Matches each output to its most recent export job by title, so the list survives closing the dialog. */
 function useExportJobs(outputs: Output[]) {
   const list = useJobs().filter((j) => j.kind === JOB_KINDS.export)
-  return outputs.map((o) => [...list].reverse().find((j) => j.title === `Exporting ${o.name}`))
+  return outputs.map((o) => [...list].reverse().find((j) => j.title === exportTitle(o.name)))
 }
 
 function ExportingView({ outputs, onClose }: { outputs: Output[]; onClose: () => void }) {
@@ -180,8 +182,8 @@ function ExportingView({ outputs, onClose }: { outputs: Output[]; onClose: () =>
                 />
               </div>
               {finished ? (
-                <Button size="sm" variant="ghost" icon={<FolderDown />}>
-                  Show
+                <Button size="sm" variant="ghost" icon={<FolderDown />} onClick={() => downloadAgain(o.name)}>
+                  Download
                 </Button>
               ) : active ? (
                 <IconButton label="Cancel this file" size="sm" onClick={() => job && jobs.cancel(job.id)}>
@@ -248,6 +250,7 @@ export function ExportDialog() {
   const close = () => set({ dialog: null, exportPhase: 'setup' })
   const remaining = suggestions.filter((s) => !outputs.some((o) => o.name === s.name))
   const slug = project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+  const fileBase = (o: Output) => `${slug}-${o.name.toLowerCase().replace(/\s+/g, '-')}`
 
   return (
     <Dialog
@@ -278,7 +281,16 @@ export function ExportDialog() {
               variant="primary"
               disabled={!active.length}
               onClick={() => {
-                startExport(active.map((o) => ({ name: o.name, seconds: exportSeconds(o.kind) })))
+                startExports(
+                  active.map((o) => ({
+                    name: o.name,
+                    fileName: `${fileBase(o)}.mp4`,
+                    kind: o.kind,
+                    aspect: o.aspect,
+                    resolution: `${o.res}p` as ExportResolution,
+                    fps: Number(o.fps),
+                  })),
+                )
                 set({ exportPhase: 'exporting' })
               }}
             >
@@ -374,10 +386,7 @@ export function ExportDialog() {
             <div className={styles.form}>
               <label className={styles.formRow}>
                 <span>Name</span>
-                <Input
-                  value={`${slug}-${sel.name.toLowerCase().replace(/\s+/g, '-')}`}
-                  onChange={() => undefined}
-                />
+                <Input value={fileBase(sel)} onChange={() => undefined} />
               </label>
               <div className={styles.formRow}>
                 <span>Aspect</span>

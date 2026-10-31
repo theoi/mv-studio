@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AudioLines,
   ChevronDown,
@@ -14,9 +14,10 @@ import {
   Upload,
   Volume2,
 } from 'lucide-react'
+import type { PreviewController } from '../../../engine/preview.ts'
 import { settingsForAspect, type AspectPreset } from '../../../model/index.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
-import { EmptyState } from '../../ds/Feedback.tsx'
+import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
 import { formatTimecode } from '../../format.ts'
@@ -31,8 +32,8 @@ import {
   timelineDuration,
   useProject,
 } from '../../state/project.ts'
-import { get, set, toast, useUi } from '../../state/ui.ts'
-import { describeFrame, renderFrame } from './render.ts'
+import { set, toast, useUi } from '../../state/ui.ts'
+import { connectPreview, fitStage, selectionOutline } from './stage.ts'
 import styles from './Preview.module.css'
 
 const aspects: { value: AspectPreset; desc: string; icon: ReactNode; ratio: number }[] = [
@@ -42,74 +43,87 @@ const aspects: { value: AspectPreset; desc: string; icon: ReactNode; ratio: numb
   { value: '4:5', desc: 'Portrait · feeds', icon: <RectangleVertical />, ratio: 4 / 5 },
 ]
 
+function SelectionOverlay({ width, height }: { width: number; height: number }) {
+  const selection = useUi((s) => s.selection)
+  const t = useUi((s) => s.playhead)
+  const playing = useUi((s) => s.playing)
+  const project = useProject()
+  if (playing || !width) return null
+  const corners = selectionOutline(project, selection, t, width, height)
+  if (!corners) return null
+  return (
+    <svg className={styles.overlay} width={width} height={height} aria-hidden>
+      <polygon className={styles.selBox} points={corners.map((c) => c.join(',')).join(' ')} />
+      {corners.map(([x, y], i) => (
+        <rect key={i} className={styles.selHandle} x={x - 3.5} y={y - 3.5} width={7} height={7} />
+      ))}
+    </svg>
+  )
+}
+
+type StageStatus = 'loading' | 'ready' | 'failed'
+
 function Stage({ ratio }: { ratio: number }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const previewRef = useRef<PreviewController | null>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+  const [status, setStatus] = useState<StageStatus>('loading')
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const wrap = wrapRef.current
+    if (!canvas || !wrap) return
+    const { width, height } = editor.getProject().settings
+    let connection: ReturnType<typeof connectPreview>
+    try {
+      connection = connectPreview(canvas, fitStage(wrap, width / height))
+    } catch (error) {
+      console.error('The preview could not start', error)
+      void Promise.resolve().then(() => setStatus('failed'))
+      return
+    }
+    previewRef.current = connection.preview
+    const offFirstFrame = connection.preview.onFrame(() => {
+      setStatus('ready')
+      offFirstFrame()
+    })
+    return () => {
+      offFirstFrame()
+      connection.dispose()
+      previewRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     const wrap = wrapRef.current
-    const canvas = canvasRef.current
-    const ctx = canvas?.getContext('2d')
-    if (!wrap || !canvas || !ctx) return
-    let cssW = 0
-    let cssH = 0
-    const draw = () => {
-      const s = get()
-      const dpr = canvas.width / Math.max(1, cssW)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      renderFrame(
-        ctx,
-        cssW,
-        cssH,
-        describeFrame(editor.getProject(), s.playhead, {
-          behindSubject: s.behindSubject,
-          selectedLyricId: s.selection.type === 'lyric' ? s.selection.id : undefined,
-          selectedClipId: s.selection.type === 'clip' ? s.selection.id : undefined,
-          showSelection: !s.playing,
-        }),
-      )
-    }
+    if (!wrap) return
     const layout = () => {
-      const r = wrap.getBoundingClientRect()
-      const pad = 12
-      cssW = Math.max(1, Math.floor(Math.min(r.width - pad * 2, (r.height - pad * 2) * ratio)))
-      cssH = Math.max(1, Math.floor(cssW / ratio))
-      const dpr = Math.min(2, window.devicePixelRatio || 1)
-      canvas.style.width = `${cssW}px`
-      canvas.style.height = `${cssH}px`
-      canvas.width = Math.round(cssW * dpr)
-      canvas.height = Math.round(cssH * dpr)
-      draw()
-    }
-    let pending = 0
-    const schedule = () => {
-      cancelAnimationFrame(pending)
-      pending = requestAnimationFrame(draw)
+      const size = fitStage(wrap, ratio)
+      setSize(size)
+      previewRef.current?.setViewport(size.width, size.height)
     }
     const ro = new ResizeObserver(layout)
     ro.observe(wrap)
-    const unsubUi = useUi.subscribe((s, prev) => {
-      if (
-        s.playhead !== prev.playhead ||
-        s.selection !== prev.selection ||
-        s.behindSubject !== prev.behindSubject ||
-        s.playing !== prev.playing
-      )
-        schedule()
-    })
-    const unsubProject = editor.subscribe(schedule)
-    void document.fonts?.ready.then(draw)
-    return () => {
-      ro.disconnect()
-      unsubUi()
-      unsubProject()
-      cancelAnimationFrame(pending)
-    }
+    return () => ro.disconnect()
   }, [ratio])
 
   return (
     <div ref={wrapRef} className={styles.stage}>
-      <canvas ref={canvasRef} className={styles.canvas} aria-label="Video preview" role="img" />
+      <div className={styles.frame} style={{ width: size.width, height: size.height }}>
+        <canvas ref={canvasRef} className={styles.canvas} aria-label="Video preview" role="img" />
+        {status === 'ready' && <SelectionOverlay width={size.width} height={size.height} />}
+        {status === 'loading' && (
+          <div className={styles.stageNote}>
+            <Spinner /> Preparing the preview
+          </div>
+        )}
+        {status === 'failed' && (
+          <div className={styles.stageNote}>
+            The preview needs WebGL 2. Turn on hardware acceleration in your browser settings.
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -144,6 +158,7 @@ function Position() {
 
 export function Preview() {
   const playing = useUi((s) => s.playing)
+  const starting = useUi((s) => s.starting)
   const project = useProject()
   const empty = !hasSong(project)
   const current = aspects.find((a) => a.value === project.settings.aspect) ?? aspects[0]!
@@ -232,7 +247,7 @@ export function Preview() {
               onClick={() => set({ playing: !playing })}
               disabled={empty}
             >
-              {playing ? <Pause /> : <Play className={styles.playIcon} />}
+              {starting ? <Spinner size={16} /> : playing ? <Pause /> : <Play className={styles.playIcon} />}
             </button>
           </Tooltip>
           <IconButton label="Next section" shortcut="↓" onClick={() => jumpSection(1)} disabled={empty}>

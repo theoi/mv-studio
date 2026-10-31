@@ -38,7 +38,6 @@ import { Badge } from '../../ds/Feedback.tsx'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { formatTime } from '../../format.ts'
 import { sceneThumb } from '../../mock/art.ts'
-import { media } from '../../mock/media.ts'
 import { sceneOf } from '../../mock/demoProject.ts'
 import {
   bpmOf,
@@ -48,9 +47,11 @@ import {
   lyricLines,
   sectionsOf,
   songAnalysis,
+  undo,
   useProject,
 } from '../../state/project.ts'
 import { get, openAssist, set, toast, useUi } from '../../state/ui.ts'
+import { bringToFront, canCutOut, hasCutout, putBehind } from '../../state/behind.ts'
 import { InlineSuggestion } from './Suggestion.tsx'
 import styles from './Inspector.module.css'
 
@@ -411,10 +412,15 @@ function ProjectInspector() {
 
 function MediaInspector({ clip }: { clip: VisualClip & { assetId: string } }) {
   const project = useProject()
-  const behind = useUi((s) => s.behindSubject)
+  const cutoutOf = typeof clip.meta?.behindSubjectOf === 'string' ? clip.meta.behindSubjectOf : undefined
+  const behind = !!cutoutOf || hasCutout(project, clip.id)
+  const cutOut = canCutOut(project, clip)
+  const setBehind = (on: boolean) => {
+    if (on) return putBehind([clip.id]) > 0
+    return bringToFront([cutoutOf ?? clip.id])
+  }
   const asset = project.assets[clip.assetId]
   const scene = sceneOf(asset)
-  const item = media.find((m) => m.id === clip.assetId)
   const isImage = clip.type === 'image'
   const end = clip.start + clip.duration
   const meta = `${isImage ? 'Image' : 'Video'} · ${formatTime(clip.start, true)} – ${formatTime(end, true)} · ${clip.duration.toFixed(1)} s`
@@ -425,16 +431,13 @@ function MediaInspector({ clip }: { clip: VisualClip & { assetId: string } }) {
         title={clip.name ?? asset?.name ?? 'Clip'}
         meta={meta}
       />
-      {item?.subject === 'large' && !behind && (
+      {cutOut && !behind && (
         <InlineSuggestion
           id={`behind-${clip.assetId}`}
           action="Put lyrics behind"
           onAction={() => {
-            set({ behindSubject: true })
-            toast('Lyrics now sit behind the singer on this clip', {
-              label: 'Undo',
-              run: () => set({ behindSubject: false }),
-            })
+            if (setBehind(true))
+              toast('Lyrics now sit behind the singer on this clip', { label: 'Undo', run: undo })
           }}
         >
           The singer fills this shot. Put the lyrics behind them?
@@ -455,7 +458,8 @@ function MediaInspector({ clip }: { clip: VisualClip & { assetId: string } }) {
         <FieldRow label="Behind subject" trailing={<span className={styles.trailSpacer} />}>
           <Switch
             checked={behind}
-            onCheckedChange={(v) => set({ behindSubject: v })}
+            onCheckedChange={setBehind}
+            disabled={!cutOut && !behind}
             ariaLabel="Put text and effects behind the subject"
           />
           {behind && (

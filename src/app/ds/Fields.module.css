@@ -428,6 +428,11 @@
   background: var(--accent);
 }
 
+.switch[data-disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .switchThumb {
   display: block;
   width: 14px;
