@@ -268,4 +268,27 @@ describe('adding visuals', () => {
     s.p.clips[title.id] = title
     expect(visualPlacement(s.p, 1)).toEqual({ start: 1, duration: 8, newTrackIndex: 2 })
   })
+
+  it('drops a visual on a free stretch of a track, up to the next clip there, and nowhere else', () => {
+    const s = scene()
+    editor.load(s.p)
+    const footage = s.a.trackId
+    startLibraryDrag({ dataTransfer: null }, { kind: 'visual', id: 'visualizer.spectrum' })
+    // The gap from 11 s ends where the next clip starts, at 14 s.
+    expect(libraryDropHint(footage, 11.5)).toEqual({ trackId: footage, start: 11.5, end: 14 })
+    expect(libraryDropHint(footage, 5)).toBeNull()
+    expect(libraryDropHint(s.line.trackId, 6)).toBeNull()
+    expect(libraryDropHint(s.top.trackId, 6)).toEqual({ trackId: s.top.trackId, locked: true, at: 6 })
+    endLibraryDrag()
+
+    dropLibraryItem({ kind: 'visual', id: 'visualizer.spectrum' }, { trackId: footage, time: 11.5 })
+    const clip = Object.values(editor.getProject().clips).find((c) => c.type === 'generator')
+    expect(clip).toMatchObject({ trackId: footage, start: 11.5, duration: 2.5, name: 'Spectrum bars' })
+    expect(get().selection).toEqual({ type: 'clip', id: clip!.id })
+    expect(editor.undoLabel()).toBe('Add visual: Spectrum bars')
+
+    dropLibraryItem({ kind: 'visual', id: 'visualizer.spectrum' }, { trackId: footage, time: 5 })
+    expect(Object.values(editor.getProject().clips).filter((c) => c.type === 'generator')).toHaveLength(1)
+    expect(get().toasts.at(-1)?.message).toBe('Drop “Spectrum bars” on an empty part of a track')
+  })
 })

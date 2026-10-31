@@ -71,3 +71,32 @@ test('a visual from the library plays over the footage for the rest of the secti
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
   await expect(page.getByRole('button', { name: /^Circle spectrum, 1:13\.\d to / })).toHaveCount(0)
 })
+
+test('a visual dragged onto a free stretch of a track lands there, up to the next clip', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?lib=visuals&t=4'
+  })
+  await waitForPreview(page)
+  const library = page.getByRole('tabpanel', { name: 'Visuals' })
+  // The sample title is on the Overlay track from 0:01 to 0:09; drop just after it.
+  const title = page.getByRole('button', { name: 'Title, 0:01.0 to 0:09.0', exact: true })
+  const box = (await title.boundingBox())!
+  await library
+    .getByRole('button', { name: 'Particles', exact: true })
+    .dragTo(title, { targetPosition: { x: box.width + 40, y: box.height / 2 } })
+  await expect(page.getByText(/^“Particles” added from 0:\d\d to \d+:\d\d$/)).toBeVisible()
+  const added = await page.evaluate(() => {
+    const project: Project = window.mvStudio.app.project.editor.getProject()
+    const title = project.clips['o-title']!
+    const clip = Object.values(project.clips).find(
+      (c) => c.type === 'generator' && c.generatorId === 'visualizer.particles' && c.start < 30,
+    )
+    return clip ? { sameTrack: clip.trackId === title.trackId, start: clip.start } : null
+  })
+  expect(added?.sameTrack).toBe(true)
+  expect(added!.start).toBeGreaterThan(9)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+  await expect(page.getByRole('button', { name: /^Particles, 0:/ })).toHaveCount(0)
+})

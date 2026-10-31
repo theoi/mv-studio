@@ -3,7 +3,7 @@
  * clicked item lands, the one undoable edit it makes, and the toast that says so.
  */
 import { pluginRegistry } from '../../engine/registry.ts'
-import type { PluginCatalogEntry } from '../../engine/types.ts'
+import type { GeneratorDefinition, PluginCatalogEntry } from '../../engine/types.ts'
 import {
   createTrack,
   type Clip,
@@ -261,13 +261,14 @@ function putTransition(
 
 /** What a library drag carries. */
 export interface LibraryItem {
-  kind: 'effect' | 'transition'
+  kind: 'effect' | 'transition' | 'visual'
   id: string
 }
 
 /**
  * What a dragged library item would land on, for the timeline to show: a clip's span for an effect, a cut (start
- * equals end) for a transition, or a locked track where nothing lands (`at` is where to say so).
+ * equals end) for a transition, the span a visual would fill, or a locked track where nothing lands (`at` is where
+ * to say so).
  */
 export type LibraryDropHint =
   { trackId: string; start: Seconds; end: Seconds } | { trackId: string; locked: true; at: Seconds }
@@ -343,6 +344,10 @@ export function libraryDropHint(trackId: string, time: Seconds): LibraryDropHint
     const target = cutAt(project, trackId, time)
     return target ? { trackId, start: target.clip.start, end: target.clip.start } : null
   }
+  if (dragging?.kind === 'visual') {
+    const span = visualDrop(project, trackId, time)
+    return span ? { trackId, start: span.start, end: span.start + span.duration } : null
+  }
   return null
 }
 
@@ -363,6 +368,11 @@ export function dropLibraryItem(item: LibraryItem, at: { trackId: string; time: 
     const target = cutAt(project, at.trackId, at.time)
     if (target) putTransition(project, target, effectNamed(def))
     else toast(`Drop “${def.name}” on a cut between two clips`)
+  }
+  if (item.kind === 'visual' && def?.kind === 'generator') {
+    const span = visualDrop(project, at.trackId, at.time)
+    if (span) putVisual(project, def, { ...span, trackId: at.trackId })
+    else toast(`Drop “${def.name}” on an empty part of a track`)
   }
 }
 
@@ -392,11 +402,8 @@ export function visualPlacement(
 ):
   | { start: Seconds; duration: Seconds; trackId: Id }
   | { start: Seconds; duration: Seconds; newTrackIndex: number } {
-  const section = sectionAt(project, time)
-  const end = section && section.end - time >= 2 ? section.end : time + VISUAL_SECONDS
-  const duration = Math.max(1, Math.min(end, Math.max(timelineDuration(project), time + 1)) - time)
-  const clips = Object.values(project.clips)
-  const onTrack = (trackId: Id) => clips.filter((c) => c.trackId === trackId)
+  const duration = visualDuration(project, time)
+  const onTrack = (trackId: Id) => Object.values(project.clips).filter((c) => c.trackId === trackId)
   const footage = project.tracks.findIndex(
     (t) => t.kind === 'visual' && onTrack(t.id).some((c) => c.type === 'video' || c.type === 'image'),
   )
@@ -406,13 +413,41 @@ export function visualPlacement(
     if (index >= below) break
     if (track.kind !== 'visual' || track.locked) continue
     const here = onTrack(track.id)
-    const special =
-      here.length > 0 &&
-      (here.every((c) => c.type === 'text' && c.lyricLineId) || here.every((c) => c.type === 'adjustment'))
     const busy = here.some((c) => c.start < time + duration && c.start + c.duration > time)
-    if (!special && !busy) return { start: time, duration, trackId: track.id }
+    if (!holdsLyricsOrLook(here) && !busy) return { start: time, duration, trackId: track.id }
   }
   return { start: time, duration, newTrackIndex: below }
+}
+
+/** How long a visual added at `time` lasts: to the end of the song section there (at least 2 s), else 8 s. */
+function visualDuration(project: Project, time: Seconds): Seconds {
+  const section = sectionAt(project, time)
+  const end = section && section.end - time >= 2 ? section.end : time + VISUAL_SECONDS
+  return Math.max(1, Math.min(end, Math.max(timelineDuration(project), time + 1)) - time)
+}
+
+/** A track of lyric lines or of the look layer, which visuals stay off. */
+const holdsLyricsOrLook = (clips: Clip[]) =>
+  clips.length > 0 &&
+  (clips.every((c) => c.type === 'text' && c.lyricLineId) || clips.every((c) => c.type === 'adjustment'))
+
+/**
+ * Where a visual dropped on a track at `time` goes: from `time`, as long as a click would make it but ending where
+ * the next clip on the track starts, if at least a second is free there. Nothing on a clip, on an audio, lyrics or
+ * look track, or on a locked one.
+ */
+function visualDrop(
+  project: Project,
+  trackId: Id,
+  time: Seconds,
+): { start: Seconds; duration: Seconds } | null {
+  const track = project.tracks.find((t) => t.id === trackId)
+  if (!track || track.kind !== 'visual' || track.locked) return null
+  const here = Object.values(project.clips).filter((c) => c.trackId === trackId)
+  if (holdsLyricsOrLook(here) || here.some((c) => c.start <= time && c.start + c.duration > time)) return null
+  const next = Math.min(...here.filter((c) => c.start > time).map((c) => c.start))
+  const end = Math.min(time + visualDuration(project, time), next)
+  return end - time >= 1 ? { start: time, duration: end - time } : null
 }
 
 /** Adds a visualizer or shader visual at the playhead in the colors of the video's look, as one undo step. */
@@ -420,7 +455,15 @@ export function addVisual(generatorId: string): void {
   const def = pluginRegistry.get(generatorId)
   if (def?.kind !== 'generator') return
   const project = editor.getProject()
-  const place = visualPlacement(project, get().playhead)
+  putVisual(project, def, visualPlacement(project, get().playhead))
+}
+
+function putVisual(
+  project: Project,
+  def: GeneratorDefinition,
+  place: ReturnType<typeof visualPlacement>,
+): void {
+  const generatorId = def.id
   const commands: EditCommand[] = []
   let trackId: Id
   if ('trackId' in place) trackId = place.trackId

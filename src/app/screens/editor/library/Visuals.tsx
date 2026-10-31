@@ -1,6 +1,12 @@
 import { AudioWaveform } from 'lucide-react'
 import type { PluginCatalogEntry } from '../../../../engine/types.ts'
-import { addVisual, isReactive, visualItems } from '../../../state/library.ts'
+import {
+  addVisual,
+  endLibraryDrag,
+  isReactive,
+  startLibraryDrag,
+  visualItems,
+} from '../../../state/library.ts'
 import { previewHandlers } from '../../../state/tilePreview.ts'
 import styles from '../Library.module.css'
 import { TilePreview } from './TilePreview.tsx'
@@ -14,6 +20,9 @@ function Group({ label, items }: { label: string; items: PluginCatalogEntry[] })
           <button
             key={v.id}
             className={styles.tile}
+            draggable
+            onDragStart={(e) => startLibraryDrag(e.nativeEvent, { kind: 'visual', id: v.id })}
+            onDragEnd={endLibraryDrag}
             onClick={() => addVisual(v.id)}
             {...previewHandlers({ kind: 'plugin', id: v.id })}
           >
