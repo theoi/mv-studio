@@ -66,16 +66,25 @@ export function FieldRow({
   trailing,
   hint,
   stacked,
+  wideLabel,
 }: {
   label: string
   children: ReactNode
   trailing?: ReactNode
   hint?: string
   stacked?: boolean
+  /** The label takes the width it needs instead of the label column (for a lone switch with a longer label). */
+  wideLabel?: boolean
 }) {
   const row = (
-    <div className={[styles.row, stacked && styles.rowStacked].filter(Boolean).join(' ')}>
-      <span className={styles.rowLabel}>{label}</span>
+    <div
+      className={[styles.row, stacked && styles.rowStacked, wideLabel && styles.rowWide]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      <span className={styles.rowLabel} title={label}>
+        {label}
+      </span>
       <div className={styles.rowControl}>{children}</div>
       {trailing !== undefined && <div className={styles.rowTrailing}>{trailing}</div>}
     </div>

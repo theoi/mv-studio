@@ -134,6 +134,10 @@
   opacity: 1;
 }
 
+.rowWide {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
 .rowStacked {
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:

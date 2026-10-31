@@ -1,6 +1,6 @@
 import type { Asset, StemName } from '../../model/index.ts'
-import { jobs } from '../../shared/jobs.ts'
-import { JOB_KINDS, isRunning, runMockJob, runningJobs } from '../state/jobs.ts'
+import { showExport } from '../state/exports.ts'
+import { JOB_KINDS, isRunning, runMockJob } from '../state/jobs.ts'
 import { dispatch, editor, songAnalysis } from '../state/project.ts'
 import { toast, openAssist } from '../state/ui.ts'
 import { SONG_ASSET_ID } from './demoProject.ts'
@@ -90,24 +90,22 @@ export function startAutocut(startAt = 0) {
   runMockJob({ kind: JOB_KINDS.autocut, title: 'Cutting to the beat', seconds: 2, startAt })
 }
 
-export type ExportKind = 'full' | 'format' | 'teaser' | 'loop'
-
-export function exportSeconds(kind: ExportKind): number {
-  return kind === 'full' ? 16 : kind === 'format' ? 22 : 4
-}
-
-/** Starts one export job per output, skipping outputs that are already exporting. */
-export function startExport(outputs: { name: string; seconds: number; startAt?: number }[]) {
-  const busy = new Set(runningJobs(jobs.list()).map((j) => j.title))
-  for (const o of outputs) {
-    const title = `Exporting ${o.name}`
-    if (busy.has(title)) continue
-    runMockJob({
-      kind: JOB_KINDS.export,
-      title,
-      seconds: o.seconds,
-      startAt: o.startAt,
-      onDone: () => toast(`Saved ${o.name} to Downloads`),
-    })
-  }
+/** The design preview's export in progress: the full video and a vertical version, rendered in one job. */
+export function startMockExport(startAt = 0) {
+  if (isRunning(JOB_KINDS.export)) return
+  const handle = runMockJob({
+    kind: JOB_KINDS.export,
+    title: 'Exporting 2 videos',
+    seconds: 40,
+    startAt,
+    stages: [
+      { at: 0, stage: 'render', message: '1 of 2: Rendering' },
+      { at: 0.5, stage: 'render', message: '2 of 2: Rendering' },
+    ],
+    onDone: () => toast('Saved 2 files to Downloads'),
+  })
+  showExport(handle.id, [
+    { id: 'mock-full', title: 'Full video', aspect: '16:9', frames: 6120 },
+    { id: 'mock-vertical', title: 'Vertical', aspect: '9:16', frames: 6120 },
+  ])
 }

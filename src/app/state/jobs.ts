@@ -26,7 +26,7 @@ export const JOB_KINDS = {
   stems: 'analysis.stems',
   director: 'director.draft',
   autocut: 'edit.autocut',
-  export: 'export.mp4',
+  export: 'export.outputs',
 } as const
 
 interface MockJobOptions {

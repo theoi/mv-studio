@@ -455,7 +455,7 @@ function MediaInspector({ clip }: { clip: VisualClip & { assetId: string } }) {
       <TransformSection clip={clip} />
       <CompositingSection clip={clip} />
       <Section title="Layering" defaultOpen={behind}>
-        <FieldRow label="Behind subject" trailing={<span className={styles.trailSpacer} />}>
+        <FieldRow label="Behind subject" wideLabel trailing={<span className={styles.trailSpacer} />}>
           <Switch
             checked={behind}
             onCheckedChange={setBehind}

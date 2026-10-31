@@ -1,11 +1,4 @@
-import {
-  applyMockStems,
-  exportSeconds,
-  startAutocut,
-  startDirector,
-  startExport,
-  startStems,
-} from '../mock/actions.ts'
+import { applyMockStems, startAutocut, startDirector, startMockExport, startStems } from '../mock/actions.ts'
 import type { Project } from '../../model/index.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
 import { editor, loadDemoProject, loadEmptyProject } from './project.ts'
@@ -118,11 +111,7 @@ function applyHash(hash: string) {
     if (behind) putBehind(suitableClips(project))
     else bringToFront(Object.keys(project.clips))
   }
-  if (q.get('export') === 'exporting')
-    startExport([
-      { name: 'Full video', seconds: exportSeconds('full'), startAt: 0.62 },
-      { name: 'Vertical', seconds: exportSeconds('format'), startAt: 0.18 },
-    ])
+  if (q.get('export') === 'exporting') startMockExport(0.31)
   set({
     ...initialUi,
     ...(wantEmpty ? { playhead: 0 } : {}),
