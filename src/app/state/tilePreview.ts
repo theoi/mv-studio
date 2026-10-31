@@ -4,7 +4,7 @@
  * It draws in the render worker, so compiling an item's shaders the first time does not stall the page. Any kind of
  * library item can be previewed this way. Previews never touch the user's project.
  */
-import { useSyncExternalStore, type FocusEvent } from 'react'
+import { useSyncExternalStore, type FocusEvent, type PointerEvent } from 'react'
 import { PreviewController } from '../../engine/preview.ts'
 import type { MediaFileSource } from '../../engine/types.ts'
 import type { Asset } from '../../model/index.ts'
@@ -52,7 +52,10 @@ const media: MediaFileSource = {
 let shared: { preview: PreviewController; canvas: HTMLCanvasElement } | null = null
 let idleTimer = 0
 let hoverTimer = 0
+let pendingKey: string | null = null
 let activeKey: string | null = null
+/** Where the pointer was at the last move over a tile, to tell a real move from the list moving under it. */
+let pointerAt = ''
 const listeners = new Set<() => void>()
 
 export const previewKey = (item: PreviewItem) => `${item.kind}:${item.id}`
@@ -68,10 +71,13 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
+/** The key of the item whose preview is playing, if any. */
+export const activeTilePreview = (): string | null => activeKey
+
 /** Whether `item`'s preview is the one playing. */
 export function useTilePreviewActive(item: PreviewItem): boolean {
   const key = previewKey(item)
-  return useSyncExternalStore(subscribe, () => activeKey === key)
+  return useSyncExternalStore(subscribe, () => activeTilePreview() === key)
 }
 
 /** Settings › Reduce motion, or the system setting. */
@@ -80,21 +86,42 @@ const reducedMotion = () =>
 
 /** Plays `item` after a short hover, in place of any other preview. Nothing plays when motion is reduced. */
 export function showTilePreview(item: PreviewItem): void {
-  window.clearTimeout(hoverTimer)
-  if (reducedMotion()) return
   const key = previewKey(item)
-  hoverTimer = window.setTimeout(() => setActive(key), HOVER_DELAY_MS)
-}
-
-export function hideTilePreview(item: PreviewItem): void {
+  if (key === activeKey || key === pendingKey) return
   window.clearTimeout(hoverTimer)
-  if (activeKey === previewKey(item)) setActive(null)
+  pendingKey = null
+  if (reducedMotion()) return
+  pendingKey = key
+  hoverTimer = window.setTimeout(() => {
+    pendingKey = null
+    setActive(key)
+  }, HOVER_DELAY_MS)
 }
 
-/** Hover and keyboard-focus handlers for a tile, which start and stop its preview. */
+/** Stops `item`'s preview, or its pending start; another item's preview carries on. */
+export function hideTilePreview(item: PreviewItem): void {
+  const key = previewKey(item)
+  if (pendingKey === key) {
+    window.clearTimeout(hoverTimer)
+    pendingKey = null
+  }
+  if (activeKey === key) setActive(null)
+}
+
+/**
+ * Hover and keyboard-focus handlers for a tile, which start and stop its preview. Hover starts when the pointer
+ * moves, not on pointer enter: when keyboard focus scrolls the list under a resting pointer, the browser sends
+ * enter (and sometimes move) events for the tiles passing under it, which would take the preview away from the
+ * focused tile.
+ */
 export function previewHandlers(item: PreviewItem) {
   return {
-    onPointerEnter: () => showTilePreview(item),
+    onPointerMove: (e: PointerEvent<HTMLElement>) => {
+      const at = `${e.clientX},${e.clientY}`
+      if (at === pointerAt) return
+      pointerAt = at
+      showTilePreview(item)
+    },
     onPointerLeave: () => hideTilePreview(item),
     onFocus: (e: FocusEvent<HTMLElement>) => {
       if (e.currentTarget.matches(':focus-visible')) showTilePreview(item)

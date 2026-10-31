@@ -1,4 +1,5 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useState, type MouseEvent, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import type { PluginCatalogEntry } from '../../../../engine/types.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { EmptyState } from '../../../ds/Feedback.tsx'
@@ -40,27 +41,45 @@ function useColumns() {
 
 /**
  * A titled grid of tiles that shows its first rows, with "Show all N" to expand it for the session. While searching,
- * every match shows and there is no button.
+ * every match shows and there is no button. The item `keep` (the chosen look) always shows, in the last slot when
+ * it is past the first rows.
  */
 function TileGroup<T extends { id: string }>({
   group,
   name,
   items,
   searching,
+  keep,
   tile,
 }: {
   group: string
   name: string
   items: T[]
   searching: boolean
+  keep?: string
   tile: (item: T) => ReactNode
 }) {
   const expanded = useUi((s) => s.libraryExpanded.includes(group))
   const [gridRef, columns] = useColumns()
   if (!items.length) return null
-  const collapsible = !searching && items.length > GROUP_ROWS * columns
-  const shown = collapsible && !expanded ? items.slice(0, GROUP_ROWS * columns) : items
+  const limit = GROUP_ROWS * columns
+  const collapsible = !searching && items.length > limit
+  let shown = items
+  if (collapsible && !expanded) {
+    const kept = items.findIndex((i) => i.id === keep)
+    shown = kept >= limit ? [...items.slice(0, limit - 1), items[kept]!] : items.slice(0, limit)
+  }
   const gridId = `library-group-${group}`
+  const toggle = (e: MouseEvent<HTMLButtonElement>) => {
+    const button = e.currentTarget
+    const top = button.getBoundingClientRect().top
+    flushSync(() => toggleLibraryGroup(group))
+    if (!expanded) return
+    // Collapsing moves the focused button up by the hidden rows; scroll so it stays where it was on screen.
+    const scroller = button.closest(`.${styles.scroller}`)
+    if (scroller) scroller.scrollTop += button.getBoundingClientRect().top - top
+    button.scrollIntoView({ block: 'nearest' })
+  }
   return (
     <>
       <div className={styles.groupLabel}>
@@ -71,13 +90,7 @@ function TileGroup<T extends { id: string }>({
       </div>
       {collapsible && (
         <div className={styles.groupMore}>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-expanded={expanded}
-            aria-controls={gridId}
-            onClick={() => toggleLibraryGroup(group)}
-          >
+          <Button variant="ghost" size="sm" aria-expanded={expanded} aria-controls={gridId} onClick={toggle}>
             {expanded ? 'Show fewer' : `Show all ${items.length}`}
           </Button>
         </div>
@@ -140,6 +153,7 @@ export function EffectsTab() {
             name="Looks"
             items={looks}
             searching={searching}
+            keep={chosen}
             tile={(l) => (
               <button
                 key={l.id}
