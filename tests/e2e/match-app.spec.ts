@@ -199,6 +199,29 @@ test('Assist › Match analyzes the clips on request, picks clips for each part 
     )
     .toBe(0)
 
+  // Placing keeps Match open, so picks can be placed one after another from the keyboard: focus stays on the pick
+  // and Tab moves to the next one.
+  const pick = group.getByRole('button', { name: `Use ${best.name} in Chorus` })
+  await pick.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('status').filter({ hasText: `Added ${best.name} to Chorus` })).toBeVisible()
+  await expect(assist).toBeVisible()
+  await expect(pick).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(group.getByRole('button').nth(1)).toBeFocused()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ assetId, start }) =>
+          Object.values(
+            window.mvStudio.app.project.editor.getProject().clips as Record<string, Untyped>,
+          ).filter((c) => c.assetId === assetId && Math.abs(c.start - start) < 1e-6).length,
+        { assetId: best.assetId, start: chorus.start },
+      ),
+    )
+    .toBe(0)
+
   // Library › Media shows each clip's tags on hover: the clip name, then the tags analysis stored.
   const asset = await page.evaluate((id) => {
     const project = window.mvStudio.app.project.editor.getProject()

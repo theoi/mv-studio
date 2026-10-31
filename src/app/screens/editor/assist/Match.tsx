@@ -73,11 +73,15 @@ function Pick({ asset, result, section }: { asset: Asset; result: FootageResult;
       ? `Best part ${formatTime(result.range.start)}–${formatTime(result.range.end)}`
       : ''
   const place = () => {
-    const added = addAsset(asset.id, {
-      start: section.start,
-      duration: Math.min(section.end - section.start, Math.max(2, result.range.end - result.range.start)),
-      sourceStart: result.range.start,
-    })
+    const added = addAsset(
+      asset.id,
+      {
+        start: section.start,
+        duration: Math.min(section.end - section.start, Math.max(2, result.range.end - result.range.start)),
+        sourceStart: result.range.start,
+      },
+      { inspect: false },
+    )
     if (!added) return
     const label = editor.undoLabel()
     toast(`Added ${name} to ${sectionName(section)}`, {
@@ -234,18 +238,20 @@ export function MatchView() {
         <div className={styles.callout}>
           <Info />
           <div>
-            Analyzing your footage… {indexing?.done ?? 0} of {indexing?.total ?? clipCount} clips. Picks
-            update as clips finish.
+            <div>
+              Analyzing your footage… {indexing?.done ?? 0} of {indexing?.total ?? clipCount} clips. Picks
+              update as clips finish.
+            </div>
+            <div className={styles.calloutBtn}>
+              <CancelButton
+                inline
+                onCancel={() => {
+                  refocus.current = true
+                  cancelFootageAnalysis()
+                }}
+              />
+            </div>
           </div>
-          <span className={styles.calloutAction}>
-            <CancelButton
-              inline
-              onCancel={() => {
-                refocus.current = true
-                cancelFootageAnalysis()
-              }}
-            />
-          </span>
         </div>
       ) : (
         <>

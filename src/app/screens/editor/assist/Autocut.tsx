@@ -242,18 +242,20 @@ export function AutocutView() {
       {note && (
         <div className={styles.callout}>
           <Info />
-          <div>{note}</div>
-          {showAnalyzing && (
-            <span className={styles.calloutAction}>
-              <CancelButton
-                inline
-                onCancel={() => {
-                  cancelFootageAnalysis()
-                  cutButton.current?.focus()
-                }}
-              />
-            </span>
-          )}
+          <div>
+            <div>{note}</div>
+            {showAnalyzing && (
+              <div className={styles.calloutBtn}>
+                <CancelButton
+                  inline
+                  onCancel={() => {
+                    cancelFootageAnalysis()
+                    cutButton.current?.focus()
+                  }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
       <Field label="Cut every" {...(sectionsOnly ? { hint: 'Not used while each section is one shot' } : {})}>

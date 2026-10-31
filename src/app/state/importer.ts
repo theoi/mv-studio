@@ -183,13 +183,18 @@ export interface Placement {
   sourceStart?: number
 }
 
-/** Adds an asset on the first free track of its kind (footage tracks first), adding one if needed. */
-export function addAsset(assetId: string, at: Placement = {}): boolean {
+/**
+ * Adds an asset on the first free track of its kind (footage tracks first), adding one if needed, and selects the new
+ * clip. `inspect: false` leaves the right panel as it is, for panels that place several clips in a row.
+ */
+export function addAsset(assetId: string, at: Placement = {}, { inspect = true } = {}): boolean {
   const project = editor.getProject()
   const asset = project.assets[assetId]
   const placed = asset && assetPlacement(project, asset, at)
   if (!placed || !dispatch(placed.commands, { label: `Add ${baseName(asset.name)}` })) return false
-  select({ type: 'clip', id: placed.clip.id })
+  const selection = { type: 'clip', id: placed.clip.id } as const
+  if (inspect) select(selection)
+  else set({ selection })
   return true
 }
 
