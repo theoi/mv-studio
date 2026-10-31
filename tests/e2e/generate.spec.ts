@@ -374,7 +374,9 @@ test('a Cancel while the video downloads says it is stopping, and keeps the vide
 
   // As in the director: the subtitle and the card say it is stopping, and Cancel is disabled but keeps focus.
   await expect(page.getByText('Keeping 1 video that is downloading')).toBeVisible()
-  await expect(page.getByText('Stopping…', { exact: true })).toHaveCount(2)
+  await expect(
+    page.getByRole('tabpanel', { name: 'Assist' }).getByText('Stopping…', { exact: true }),
+  ).toHaveCount(2)
   await expect(cancel).toHaveAttribute('aria-disabled', 'true')
   await expect(cancel).toBeFocused()
   // The hint is for a Cancel not yet taken, and the video goes to Media, not the timeline.
