@@ -41,7 +41,8 @@ export async function predictInWorker(
     return await camera().call('predict', request, signal ? { signal } : {})
   } catch (error) {
     // The next call starts a fresh worker, whose script has to load again.
-    if (error instanceof JobError && error.code === 'worker-crashed') started = null
+    if (error instanceof JobError && (error.code === 'worker-crashed' || error.code === 'out-of-memory'))
+      started = null
     throw error
   }
 }

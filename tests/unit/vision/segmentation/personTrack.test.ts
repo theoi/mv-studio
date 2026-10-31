@@ -117,7 +117,7 @@ describe('buildPersonTrack', () => {
       faceFps: 0,
     })
     expect(noOne.track.packed).toEqual(withPeople.track.packed)
-    expect(noOne.suitability).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+    expect(noOne.suitability).toMatchObject({ verdict: 'unsuitable', reasons: ['no-person-found'] })
   })
 
   it('cuts out without the detectors when they cannot be downloaded, judging the whole mask', async () => {

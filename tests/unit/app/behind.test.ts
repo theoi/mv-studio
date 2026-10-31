@@ -108,7 +108,7 @@ describe('suitability', () => {
 
   it('says when no one was looked for because the person detector could not download', () => {
     const note =
-      "Couldn't check for people, so the cutout may include animals or objects. It checks again when you're back online."
+      'Couldn’t check for people, so the cutout may include animals or objects. It checks again when you’re back online.'
     expect(suitabilityText({ status: 'checked', verdict: 'good', reasons: [], peopleSkipped: true })).toEqual(
       { status: 'Person found', why: note, brief: 'Not checked for people', ok: true },
     )
@@ -177,6 +177,26 @@ describe('suitability', () => {
     expect(refusalText(refused('no-subject'))).toBe('On a closer look, no one is large enough to cut out.')
     expect(refusalText(refused('subject-too-small'))).toBe(
       'On a closer look, people are too small in this wide shot.',
+    )
+  })
+
+  it('says no person was found where the cutout shape is large but not a person', () => {
+    expect(
+      suitabilityText({
+        status: 'checked',
+        verdict: 'unsuitable',
+        reasons: ['no-person-found', 'no-subject'],
+      }),
+    ).toEqual({ status: 'Not suitable', why: 'Couldn’t find a person to cut out in this shot.', ok: false })
+    expect(suitabilityText({ status: 'checked', verdict: 'marginal', reasons: ['no-person-found'] })).toEqual(
+      {
+        status: 'Person found',
+        why: 'Works in parts of this shot. Couldn’t find a person in the other parts.',
+        ok: true,
+      },
+    )
+    expect(refusalText({ status: 'checked', verdict: 'unsuitable', reasons: ['no-person-found'] })).toBe(
+      'On a closer look, the cutout couldn’t find a person in this shot.',
     )
   })
 

@@ -368,11 +368,11 @@ describe('person evidence for the verdict', () => {
     const now = samples.map((s, i) => ({ t: s.t, boxes: i % 5 ? [] : [around] }))
     expect(assessSuitability(samples, 0.2, {}, now)).toMatchObject({
       verdict: 'unsuitable',
-      reasons: ['no-subject'],
+      reasons: ['no-person-found'],
     })
   })
 
-  it('finds no one in a mask the detector does not see as a person', () => {
+  it('says no person was found in a large mask the detector does not see as a person', () => {
     const samples = Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask: subject }))
     expect(assessSuitability(samples, 0.2).verdict).toBe('good')
     const noOne = assessSuitability(
@@ -381,7 +381,32 @@ describe('person evidence for the verdict', () => {
       {},
       samples.map((s) => ({ t: s.t, boxes: [] })),
     )
-    expect(noOne).toMatchObject({ verdict: 'unsuitable', reasons: ['no-subject'] })
+    expect(noOne).toMatchObject({ verdict: 'unsuitable', reasons: ['no-person-found'] })
+  })
+
+  it('says no one is large enough, not that no person was found, when the mask holds only small shapes or someone was found elsewhere', () => {
+    const shot = (mask: ReturnType<typeof rectMask>) =>
+      Array.from({ length: 10 }, (_, i) => ({ t: i * 0.2, mask }))
+    const nobody = (samples: ReadonlyArray<{ t: number }>) => samples.map((s) => ({ t: s.t, boxes: [] }))
+    // A small figure, as in a wide shot the detector finds no one in.
+    const figure = shot(rectMask(W, H, 4, 20, 8, 30))
+    expect(assessSuitability(figure, 0.2, {}, nobody(figure))).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['no-subject'],
+    })
+    // The large shape, with a person found in a corner of the frame.
+    const large = shot(subject)
+    const corner = large.map((s) => ({ t: s.t, boxes: [{ x: 0, y: 0, width: 4 / W, height: 4 / H }] }))
+    expect(assessSuitability(large, 0.2, {}, corner)).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['no-subject'],
+    })
+    // A shape that fills the frame, as in a close-up of an animal, is large enough.
+    const full = shot(rectMask(W, H, 0, 0, W, H))
+    expect(assessSuitability(full, 0.2, {}, nobody(full))).toMatchObject({
+      verdict: 'unsuitable',
+      reasons: ['no-person-found'],
+    })
   })
 
   it('counts boxes from the minimum score, and can judge again at another limit from the stored scores', () => {
@@ -389,7 +414,7 @@ describe('person evidence for the verdict', () => {
     const unsure = samples.map((s) => ({ t: s.t, boxes: [around], scores: [0.25] }))
     expect(assessSuitability(samples, 0.2, {}, unsure)).toMatchObject({
       verdict: 'unsuitable',
-      reasons: ['no-subject'],
+      reasons: ['no-person-found'],
     })
     expect(assessSuitability(samples, 0.2, { minPersonScore: 0.2 }, unsure).verdict).toBe('good')
     // Boxes stored without scores all passed the detector's former 0.3 floor.
@@ -457,7 +482,7 @@ describe('person evidence for the verdict', () => {
     expect(assessSuitability(subjectFor(cat), 0.2, {}, withoutAnimals).verdict).toBe('good')
     expect(assessSuitability(subjectFor(cat), 0.2, {}, cat)).toMatchObject({
       verdict: 'unsuitable',
-      reasons: ['no-subject'],
+      reasons: ['no-person-found'],
     })
   })
 

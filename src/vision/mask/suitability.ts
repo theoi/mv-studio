@@ -69,7 +69,7 @@ export function assessFrame(t: number, mask: Mask, options: SuitabilityOptions =
  * Bumped whenever the verdict for the same masks changes, or the report gains what the app needs, so stored reports
  * are judged again.
  */
-export const SUITABILITY_VERSION = 6
+export const SUITABILITY_VERSION = 7
 /**
  * The first `SUITABILITY_VERSION` whose stored people come from the current detection (with the animals found along
  * with them). People stored by an older version are detected again.
@@ -254,6 +254,26 @@ export function keepPeople(mask: Mask, boxes: ReadonlyArray<Rect>, margin = PERS
   return { width: w, height: h, data }
 }
 
+/**
+ * A frame judged on its mask inside the people found near it. With no one found there although the whole mask holds a
+ * shape large enough for the effect (an animal, or a person the detector missed), the frame says no person was found
+ * rather than that no one is large enough: the whole mask of an empty shot or of a wide shot of small people has no
+ * such shape. People found elsewhere in the frame keep it at "no one large enough", since someone was found.
+ */
+function assessPeople(
+  t: number,
+  mask: Mask,
+  boxes: ReadonlyArray<Rect>,
+  o: Required<SuitabilityOptions>,
+): FrameAssessment {
+  const inPeople = assessFrame(t, keepPeople(mask, boxes), o)
+  if (inPeople.verdict !== 'no-subject' || boxes.length) return inPeople
+  const whole = assessFrame(t, mask, o).verdict
+  return whole === 'ok' || whole === 'subject-fills-frame'
+    ? { ...inPeople, verdict: 'no-person-found' }
+    : inPeople
+}
+
 export interface SuitabilitySample {
   t: number
   mask: Mask
@@ -291,7 +311,9 @@ export function assessSuitability(
 ): SuitabilityReport {
   const o = { ...DEFAULTS, ...options }
   const near = people && peopleIndex(people, undefined, o.minPersonScore)
-  const frames = samples.map((s) => assessFrame(s.t, near ? keepPeople(s.mask, near(s.t)) : s.mask, o))
+  const frames = samples.map((s) =>
+    near ? assessPeople(s.t, s.mask, near(s.t), o) : assessFrame(s.t, s.mask, o),
+  )
   const popping: number[] = []
   pops?.shares.forEach((p, i) => {
     if (p >= POP_MIN_SHARE) popping.push(i)
