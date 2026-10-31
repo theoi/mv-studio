@@ -54,7 +54,7 @@ import {
   useProject,
 } from '../../state/project.ts'
 import { useThumbnail } from '../../state/thumbs.ts'
-import { setActiveVjSession } from '../../state/vj.ts'
+import { midiControllers, midiDevicesLabel, setActiveVjSession, vjMidi } from '../../state/vj.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
 import styles from './VjMode.module.css'
 
@@ -80,10 +80,7 @@ function usePlaying(preview: PreviewController | undefined): boolean {
 
 function midiChip(midi: VjSnapshot['midi'] | undefined): string {
   const status: MidiStatus = midi?.status ?? 'off'
-  if (status === 'ready' && midi?.devices.length)
-    return midi.devices.length > 1
-      ? `${midi.devices[0]!.name} +${midi.devices.length - 1}`
-      : midi.devices[0]!.name
+  if (status === 'ready' && midi?.devices.length) return midiDevicesLabel(midi.devices)
   if (status === 'requesting') return 'Connecting…'
   if (status === 'denied') return 'MIDI blocked'
   if (status === 'unsupported') return 'No Web MIDI'
@@ -160,7 +157,7 @@ function useEngine(
     preview.setViewport(first.width, first.height)
     preview.seek(get().playhead)
     preview.setProject(project)
-    const session = new VjSession({ editor, preview, onExit: () => exitEvent(session) })
+    const session = new VjSession({ editor, preview, midi: vjMidi(), onExit: () => exitEvent(session) })
     // Each visit starts as a rehearsal: nothing lands on the timeline until Record is on.
     session.setArmed(false)
     const detach = session.attachKeyboard(window)
@@ -554,9 +551,9 @@ export function VjMode() {
               <MenuLabel>MIDI controller</MenuLabel>
               {snapshot?.midi.status === 'ready' ? (
                 snapshot.midi.devices.length ? (
-                  snapshot.midi.devices.map((d) => (
-                    <MenuItem key={d.id} disabled description={d.manufacturer}>
-                      {d.name}
+                  midiControllers(snapshot.midi.devices).map((c) => (
+                    <MenuItem key={c.ports[0]?.id ?? c.name} disabled description={c.manufacturer}>
+                      {c.name}
                     </MenuItem>
                   ))
                 ) : (
@@ -568,14 +565,26 @@ export function VjMode() {
                 <MenuItem disabled description="Use desktop Chrome or Edge for MIDI controllers">
                   This browser has no Web MIDI
                 </MenuItem>
-              ) : snapshot?.midi.status === 'denied' ? (
-                <MenuItem disabled description="Allow MIDI devices in the site settings, then try again">
-                  MIDI access was blocked
-                </MenuItem>
+              ) : snapshot?.midi.status === 'denied' || snapshot?.midi.status === 'error' ? (
+                <>
+                  <MenuItem disabled description={snapshot.midi.error}>
+                    {snapshot.midi.status === 'denied' ? 'MIDI access was blocked' : 'MIDI couldn’t start'}
+                  </MenuItem>
+                  <MenuItem
+                    description={
+                      snapshot.midi.status === 'denied'
+                        ? 'Allow MIDI devices in the site settings first'
+                        : 'Reconnect the controller first'
+                    }
+                    onSelect={() => void session?.connectMidi()}
+                  >
+                    Try again
+                  </MenuItem>
+                </>
               ) : (
                 <MenuItem
                   disabled={snapshot?.midi.status === 'requesting'}
-                  description={snapshot?.midi.error ?? 'The browser asks for permission once'}
+                  description="The browser asks for permission once"
                   onSelect={() => void session?.connectMidi()}
                 >
                   Connect a MIDI controller

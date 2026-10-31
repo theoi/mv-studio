@@ -49,18 +49,58 @@ export function defaultBindings(): VjBindings {
   keys.BracketRight = { kind: 'transport', action: 'bank-next' }
   keys.Backspace = { kind: 'transport', action: 'panic' }
   keys.Escape = { kind: 'transport', action: 'exit' }
+  return { version: 1, keys, midi: presetMidi('pads') }
+}
 
-  // Pads on most controllers send notes from 36 up (General MIDI drums); the first 16 cover clips 1-8 and effects
-  // 1-8. Knob blocks commonly send CC 21-28 (Novation, Arturia) or CC 70-77 (Akai); CC 1 is the mod wheel.
+/**
+ * The first note of each default MIDI mapping: pads on most controllers send notes from 36 up (General MIDI drums),
+ * keyboards are played from middle C (60).
+ */
+export const MIDI_PRESETS = { pads: 36, keys: 60 } as const
+export type MidiPreset = keyof typeof MIDI_PRESETS
+
+/**
+ * A default MIDI mapping: 16 notes from the preset's first one play clips 1-8 and effects 1-8. Knob blocks commonly
+ * send CC 21-28 (Novation, Arturia) or CC 70-77 (Akai); CC 1 is the mod wheel.
+ */
+export function presetMidi(preset: MidiPreset): VjBindings['midi'] {
+  const first = MIDI_PRESETS[preset]
   const midi: VjBindings['midi'] = []
   for (let i = 0; i < 8; i++) {
-    midi.push({ match: { type: 'note', number: 36 + i }, target: { kind: 'pad', row: 'clips', index: i } })
-    midi.push({ match: { type: 'note', number: 44 + i }, target: { kind: 'pad', row: 'effects', index: i } })
+    midi.push({ match: { type: 'note', number: first + i }, target: { kind: 'pad', row: 'clips', index: i } })
+    midi.push({
+      match: { type: 'note', number: first + 8 + i },
+      target: { kind: 'pad', row: 'effects', index: i },
+    })
     midi.push({ match: { type: 'cc', number: 21 + i }, target: { kind: 'knob', index: i } })
     midi.push({ match: { type: 'cc', number: 70 + i }, target: { kind: 'knob', index: i } })
   }
   midi.push({ match: { type: 'cc', number: 1 }, target: { kind: 'knob', index: 0 } })
-  return { version: 1, keys, midi }
+  return midi
+}
+
+/** The default mapping the MIDI bindings are, or null when some were mapped by hand. */
+export function midiPresetOf(bindings: VjBindings): MidiPreset | null {
+  const midi = JSON.stringify(bindings.midi)
+  return (
+    (Object.keys(MIDI_PRESETS) as MidiPreset[]).find((p) => JSON.stringify(presetMidi(p)) === midi) ?? null
+  )
+}
+
+/** The bindings with a default MIDI mapping in place of the current one; keys stay as they are. */
+export function withMidiPreset(bindings: VjBindings, preset: MidiPreset): VjBindings {
+  return { ...bindings, midi: presetMidi(preset) }
+}
+
+/** MIDI bindings that are not in the closest default mapping: the ones learned by hand. */
+export function midiMappedByHand(bindings: VjBindings): number {
+  const key = (b: VjBindings['midi'][number]) => JSON.stringify([b.match, b.target])
+  return Math.min(
+    ...(Object.keys(MIDI_PRESETS) as MidiPreset[]).map((p) => {
+      const preset = new Set(presetMidi(p).map(key))
+      return bindings.midi.filter((b) => !preset.has(key(b))).length
+    }),
+  )
 }
 
 export function sameTarget(a: BindingTarget, b: BindingTarget): boolean {

@@ -58,7 +58,24 @@ import {
 } from '../../state/models.ts'
 import { setPref, usePrefs } from '../../state/prefs.ts'
 import { set, toast, useUi, type SettingsPage } from '../../state/ui.ts'
-import { setVjQuantize, vjMidiDevices, vjSettings } from '../../state/vj.ts'
+import {
+  MIDI_PRESETS,
+  midiMappedByHand,
+  midiPresetOf,
+  withMidiPreset,
+  type MidiPreset,
+} from '../../../vj/index.ts'
+import {
+  midiDevicesLabel,
+  midiErrorText,
+  setVjBindings,
+  setVjQuantize,
+  useVjMidi,
+  vjBindings,
+  vjMidi,
+  vjSettings,
+  type VjMidiState,
+} from '../../state/vj.ts'
 import styles from './SettingsDialog.module.css'
 
 const NOTICES_URL = 'https://github.com/theoi/mv-studio/blob/main/THIRD_PARTY_NOTICES.md'
@@ -832,8 +849,62 @@ function StoragePage() {
 
 type QuantizeChoice = 'off' | 'beat' | 'bar'
 
+function midiDescription(midi: VjMidiState): string {
+  switch (midi.status) {
+    case 'ready':
+      return midi.devices.length ? 'Plays pads and knobs in VJ mode.' : 'Plug one in and it shows up here.'
+    case 'unsupported':
+      return 'This browser has no Web MIDI. Use desktop Chrome or Edge.'
+    case 'denied':
+      return 'MIDI access was blocked. Allow MIDI devices in the site settings, then try again.'
+    case 'error':
+      return midiErrorText(midi.error)
+    default:
+      return 'Connect a controller to play pads and knobs in VJ mode. The browser asks once.'
+  }
+}
+
+function MidiConnection({ midi }: { midi: VjMidiState }) {
+  if (midi.status === 'ready')
+    return midi.devices.length ? (
+      <span className={styles.midiBadge} title={midi.devices.map((d) => d.name).join(', ')}>
+        <Badge tone="success" icon={<Check />}>
+          <span className={styles.midiName}>{midiDevicesLabel(midi.devices)}</span>
+        </Badge>
+      </span>
+    ) : (
+      <Badge>None connected</Badge>
+    )
+  if (midi.status === 'unsupported') return <Badge>No Web MIDI</Badge>
+  const retry = midi.status === 'denied' || midi.status === 'error'
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      disabled={midi.status === 'requesting'}
+      onClick={() => void vjMidi().enable()}
+    >
+      {midi.status === 'requesting' ? 'Connecting…' : retry ? 'Try again' : 'Connect'}
+    </Button>
+  )
+}
+
+const PRESET_LABELS: Record<MidiPreset, string> = { pads: 'Pad controller', keys: 'Keyboard' }
+
+function mappingDescription(preset: MidiPreset | null, byHand: number): string {
+  if (!preset)
+    return byHand
+      ? `${plural(byHand, 'MIDI control')} mapped by hand in VJ mode. Pick a mapping to replace ${byHand === 1 ? 'it' : 'them'}.`
+      : 'Mapped by hand in VJ mode. Pick a mapping to replace it.'
+  const first = MIDI_PRESETS[preset]
+  return `Notes ${first}–${first + 7} play the clip pads, ${first + 8}–${first + 15} the effect pads. Knobs follow CC 21–28, CC 70–77 and the mod wheel.`
+}
+
 /** VJ settings are saved per browser and reach VJ mode at once when it is open. */
 function VjPage() {
+  const midi = useVjMidi()
+  const [bindings, setBindings] = useState(vjBindings)
+  const preset = midiPresetOf(bindings)
   const [quantize, setQuantize] = useState(() => vjSettings().quantize)
   const choice: QuantizeChoice = !quantize.enabled ? 'off' : quantize.grid === 'bar' ? 'bar' : 'beat'
   const choose = (value: QuantizeChoice) => {
@@ -846,9 +917,39 @@ function VjPage() {
   }
   return (
     <>
-      <Row title="MIDI controller" desc="Connect a controller, then map pads in VJ mode.">
-        <Badge>{vjMidiDevices()}</Badge>
+      <Row title="MIDI controller" desc={midiDescription(midi)}>
+        <MidiConnection midi={midi} />
       </Row>
+      {midi.status !== 'unsupported' && (
+        <Row title="MIDI mapping" desc={mappingDescription(preset, midiMappedByHand(bindings))}>
+          <Select
+            value={preset ?? 'custom'}
+            onChange={(value: MidiPreset | 'custom') => {
+              if (value === 'custom') return
+              const previous = bindings
+              const next = withMidiPreset(bindings, value)
+              setVjBindings(next)
+              setBindings(next)
+              // Learning pads by hand takes a while, and Settings changes have no editor undo.
+              if (!preset)
+                toast(`MIDI mapping set to ${PRESET_LABELS[value]}`, {
+                  label: 'Undo',
+                  run: () => {
+                    setVjBindings(previous)
+                    setBindings(previous)
+                  },
+                })
+            }}
+            ariaLabel="MIDI mapping"
+            size="sm"
+            options={[
+              { value: 'pads', label: PRESET_LABELS.pads, description: 'Notes from 36' },
+              { value: 'keys', label: PRESET_LABELS.keys, description: 'Notes from 60, middle C' },
+              ...(preset ? [] : [{ value: 'custom' as const, label: 'Mapped by hand' }]),
+            ]}
+          />
+        </Row>
+      )}
       <Row title="Quantize triggers" desc="Line up recorded pad hits with the nearest beat or bar.">
         <Select
           value={choice}
