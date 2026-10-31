@@ -20,6 +20,7 @@ jobs:
   checks:
     name: Lint, typecheck, unit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/node-deps
@@ -34,6 +35,9 @@ jobs:
     # without OffscreenCanvas workers (or pages opened with ?preview-worker=0) use.
     name: E2E (Chromium${{ matrix.preview == 'main' && ', main-thread preview' || format(', {0} of 2', matrix.half) }})
     runs-on: ubuntu-latest
+    # A leg takes about 25 minutes. Without a limit, an apt-get that hangs on a stalled mirror holds the job for six
+    # hours, and with it every later push to main, which waits behind the running main run.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -69,12 +73,17 @@ jobs:
           echo "run=$run" >> "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/node-deps
+      - name: Let apt retry failed downloads
+        if: steps.scope.outputs.run == 'true'
+        run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/80-retries
       - name: Install Chromium for Playwright
         if: steps.scope.outputs.run == 'true'
+        timeout-minutes: 12
         run: for attempt in 1 2 3; do npx playwright install --with-deps chromium && exit 0; sleep $((attempt * 20)); done; exit 1
       - name: Install ffmpeg (test fixtures and export verification)
         if: steps.scope.outputs.run == 'true'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        timeout-minutes: 12
+        run: for attempt in 1 2 3; do sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg && exit 0; sleep $((attempt * 20)); done; exit 1
       - if: steps.scope.outputs.run == 'true'
         run: npm run build
       - if: steps.scope.outputs.run == 'true' && matrix.preview == 'worker'
