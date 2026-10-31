@@ -347,6 +347,64 @@ describe('lyricChorusRanges', () => {
     ])
   })
 
+  it('keeps a last chorus sung with new words when the lyrics confirm its repeat group, and only then', () => {
+    const REWRITTEN = [
+      'We sing all night long under',
+      'tomorrow brings another day',
+      'and every river finds the sea',
+    ]
+    const sections = [
+      section('a', 0, 20, 'verse', 0),
+      section('b', 20, 40, 'chorus', 1, 0.4),
+      section('c', 40, 60, 'verse', 0),
+      section('d', 60, 80, 'chorus', 1, 0.4),
+      section('e', 80, 100, 'verse', 2),
+      section('f', 100, 120, 'chorus', 1, 0.4),
+    ]
+    const lines = [
+      ...say(VERSE_1, 2),
+      ...say(CHORUS, 21),
+      ...say(VERSE_2, 42),
+      ...say(CHORUS, 61),
+      ...say(VERSE_3, 82),
+      ...say(REWRITTEN, 101),
+    ]
+    // f repeats 6 of its 16 words: too few to be an occurrence of the chorus, enough not to be a verse.
+    expect(chorusAt(sections, lines)).toEqual([
+      [20, 40, 0.8],
+      [60, 80, 0.8],
+      [100, 120, 0.4],
+    ])
+    // Outside the repeat group the lyrics confirm, the same words make it a verse.
+    const apart = sections.map((s) => (s.id === 'f' ? { ...s, repeatGroup: 3 } : s))
+    expect(chorusAt(apart, lines).at(-1)).toEqual([60, 80, 0.8])
+  })
+
+  it('lets a short repeated line neither add a chorus nor turn a sung detected chorus into a verse', () => {
+    const OPENER = ['Here we go again my friend']
+    const sections = [
+      section('a', 0, 20, 'verse', 0),
+      section('b', 20, 40, 'chorus', 1, 0.4),
+      section('c', 40, 60, 'verse', 0),
+      section('d', 60, 80, 'chorus', 1, 0.4),
+      section('e', 80, 100, 'chorus', 1, 0.4),
+    ]
+    const lines = [
+      ...say(OPENER, 2),
+      ...say(VERSE_1, 6),
+      ...say(VERSE_2, 22),
+      ...say(OPENER, 42),
+      ...say(VERSE_3, 46),
+      ...say(VERSE_4, 62),
+    ]
+    // The lyrics' chorus is the opener, 3 s each time against 20 s sections. b and d hold words sung nowhere else; e
+    // is instrumental.
+    expect(chorusAt(sections, lines)).toEqual([
+      [20, 40, 0.4],
+      [60, 80, 0.4],
+    ])
+  })
+
   it('keeps a detected chorus where repeated words are sung and extends one by at most a tenth', () => {
     const PRE = ['Here it comes again tonight', 'can you feel it rising']
     const sections = [
