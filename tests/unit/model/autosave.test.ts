@@ -87,6 +87,46 @@ describe('autosave', () => {
     autosave.stop()
   })
 
+  it('ignores an older save failing after a newer one saved everything it had', async () => {
+    const editor = new ProjectEditor(createProject())
+    const calls: { resolve: () => void; reject: (e: Error) => void }[] = []
+    const save = () => new Promise<void>((resolve, reject) => calls.push({ resolve, reject }))
+    const target = new EventTarget()
+    const autosave = startAutosave(editor, save, { delayMs: 100, target })
+    editor.dispatch({ type: 'project.rename', name: 'A' })
+    await vi.advanceTimersByTimeAsync(100)
+    editor.dispatch({ type: 'project.rename', name: 'B' })
+    // The user cancels the leave prompt: the page stays, with both saves running.
+    target.dispatchEvent(new Event('pagehide'))
+    calls[1]!.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    calls[0]!.reject(new Error('disk full'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(autosave.getState()).toEqual(expect.objectContaining({ status: 'saved', error: undefined }))
+    expect(calls).toHaveLength(2)
+    autosave.stop()
+  })
+
+  it('writes the project once when a tab closes (beforeunload, visibilitychange and pagehide)', async () => {
+    const editor = new ProjectEditor(createProject())
+    const saved: boolean[] = []
+    const save = (_p: Project, { leaving }: { leaving: boolean }) =>
+      new Promise<void>((resolve) => {
+        saved.push(leaving)
+        setTimeout(resolve, 50)
+      })
+    const target = new EventTarget()
+    const autosave = startAutosave(editor, save, { delayMs: 100, target })
+    editor.dispatch({ type: 'project.rename', name: 'A' })
+    void autosave.flush({ leaving: true })
+    target.dispatchEvent(new Event('visibilitychange'))
+    target.dispatchEvent(new Event('pagehide'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(saved).toEqual([true])
+    expect(autosave.getState().status).toBe('saved')
+    autosave.stop()
+  })
+
   it('saves derived writes that skip the undo history', async () => {
     const editor = new ProjectEditor(createProject())
     const saved: Project[] = []

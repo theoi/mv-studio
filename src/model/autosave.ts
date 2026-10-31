@@ -46,6 +46,8 @@ export function startAutosave(
   let firstPendingAt: number | undefined
   let dirty = false
   let inFlight: Promise<void> | undefined
+  /** Whether the save in flight was started because the page is leaving. */
+  let inFlightLeaving = false
 
   const set = (patch: Partial<AutosaveState>) => {
     state = { ...state, ...patch }
@@ -63,6 +65,11 @@ export function startAutosave(
       if (!dirty) return
     }
     if (!dirty && !(leaving && inFlight)) return
+    // beforeunload, visibilitychange and pagehide all fire on a tab close: one leaving save of the project is enough.
+    if (!dirty && inFlightLeaving) {
+      await inFlight
+      return
+    }
     dirty = false
     const project = editor.getProject()
     set({ status: 'saving' })
@@ -72,14 +79,18 @@ export function startAutosave(
           set({ status: dirty ? 'pending' : 'saved', lastSavedAt: project.updatedAt, error: undefined })
       },
       (error: unknown) => {
+        // A newer save holds everything this one had; if it fails too, it reports that itself.
+        if (inFlight !== attempt) return
         dirty = true
         set({ status: 'error', error: error instanceof Error ? error.message : String(error) })
       },
     )
     inFlight = attempt
+    inFlightLeaving = leaving
     await attempt
     if (inFlight !== attempt) return
     inFlight = undefined
+    inFlightLeaving = false
     if (dirty && state.status === 'pending') schedule()
   }
 
@@ -98,7 +109,9 @@ export function startAutosave(
     schedule()
   })
 
-  const onHide = () => {
+  const onHide = (e: Event) => {
+    // Coming back to the page is not leaving it.
+    if (e.type === 'visibilitychange' && globalThis.document?.visibilityState === 'visible') return
     if (dirty || inFlight) void run(true)
   }
   options.target?.addEventListener('pagehide', onHide)

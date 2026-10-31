@@ -318,14 +318,9 @@ export async function openProject(id: Id): Promise<void> {
   void refreshRecents()
 }
 
-/** The sample project the editor starts with, before any link or edit replaces it. */
-const startupProject = editor.getProject()
-
 /** Opens the project a link names (`#/editor?project=<id>`), unless it is already open. */
 export function openFromLink(id: Id): void {
-  const open = editor.getProject()
-  // A kept copy of the sample has the sample's id, so the untouched sample loaded at startup isn't it.
-  if (open.id === id && open !== startupProject) return
+  if (editor.getProject().id === id) return
   usePersistence.setState({ restoring: true })
   void openStoredProject(id).then((ok) => {
     usePersistence.setState({ restoring: false })

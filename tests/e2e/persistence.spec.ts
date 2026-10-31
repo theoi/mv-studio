@@ -185,6 +185,53 @@ test('an edit made right before a reload or closing the tab is kept, and the pro
   expect(thumbnail).toBeGreaterThan(0)
 })
 
+test('a new sample never saves over a kept one, from a fresh #/editor or from Use a sample', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  const kept = () =>
+    page.evaluate(async () =>
+      ((await window.mvStudio.media.projectStore.list()) as { id: string; name: string }[])
+        .map((s) => `${s.id === 'demo-neon-skyline' ? 'legacy' : 'own'}:${s.name}`)
+        .sort(),
+    )
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor'
+  })
+  await waitForPreview(page)
+  // A sample kept before samples had ids of their own: every one had this id.
+  await page.evaluate(async () => {
+    const sample = window.mvStudio.app.project.editor.getProject()
+    await window.mvStudio.media.projectStore.save({ ...sample, id: 'demo-neon-skyline', name: 'Mine A' })
+  })
+  await page.keyboard.press(`${mod}+s`)
+  await expect(page.getByText('Saved in this browser')).toBeVisible()
+  await renameOpenProject(page, 'Neon Skyline', 'Mine B')
+  await expect.poll(kept).toEqual(['legacy:Mine A', 'own:Mine B'])
+
+  // A fresh visit to #/editor shows a new sample; an edit keeps it as a project of its own.
+  await page.evaluate(() => (window.location.hash = '#/editor'))
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await waitForPreview(page)
+  await renameOpenProject(page, 'Neon Skyline', 'Other 1')
+  await expect.poll(kept).toEqual(['legacy:Mine A', 'own:Mine B', 'own:Other 1'])
+
+  // So does Use a sample on an empty project.
+  await page.evaluate(() => (window.location.hash = '#/editor?project=empty&kind=blank'))
+  await expect(page.getByText('Start with a song')).toBeVisible()
+  await page.getByRole('button', { name: 'Use a sample' }).click()
+  await waitForPreview(page)
+  await renameOpenProject(page, 'Neon Skyline', 'Other 2')
+  await expect.poll(kept).toEqual(['legacy:Mine A', 'own:Mine B', 'own:Other 1', 'own:Other 2'])
+
+  // The kept sample with the old id still opens from a link.
+  await page.evaluate(() => (window.location.hash = '#/editor?project=demo-neon-skyline'))
+  await expect(page.getByRole('button', { name: 'Project: Mine A' })).toBeVisible()
+})
+
 test('the sample is only kept once it changes or Mod S is pressed', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {

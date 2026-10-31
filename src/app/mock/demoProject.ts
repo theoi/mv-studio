@@ -284,9 +284,10 @@ export function buildDemoProject(): Project {
     })),
   }
 
+  // Each sample keeps the fresh id createProject gave it: a kept sample is a project of its own, which a new sample
+  // must never be saved over.
   return {
     ...base,
-    id: 'demo-neon-skyline',
     songAssetId: SONG_ASSET_ID,
     assets,
     tracks: [
