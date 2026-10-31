@@ -58,6 +58,39 @@ describe('lyric checks', () => {
     expect(timed.lines.map((l) => l.check)).toEqual([undefined, 'timing'])
   })
 
+  it('flags the lines within 10 s of unlisted singing of 4 s or more for it, rather than for their timing', () => {
+    const lines = [
+      line([0.02, 0.6], [9, 9.4]),
+      line([0.6, 0.7], [9.6, 10]),
+      line([0.02, 0.05], [25, 25.5]),
+      line([0.6], [40]),
+      line([0.6], [40.2]),
+      line([0.02, 0.05], [50, 50.5]),
+    ]
+    const checks = (unlisted: { start: number; end: number }[]) =>
+      withTimingChecks({ source: 'pasted', lines }, unlisted).lines.map((l) => l.check)
+    expect(checks([{ start: 20, end: 30 }])).toEqual([
+      undefined,
+      'unlisted',
+      'unlisted',
+      'unlisted',
+      undefined,
+      'timing',
+    ])
+    expect(checks([{ start: 20, end: 24 }])).toEqual([
+      undefined,
+      'unlisted',
+      'unlisted',
+      undefined,
+      undefined,
+      'timing',
+    ])
+    // A shorter stretch, or none (the lyrics list every sung part), leaves the timing check alone.
+    const timingOnly = [undefined, undefined, 'timing', undefined, undefined, 'timing']
+    expect(checks([{ start: 20, end: 23.9 }])).toEqual(timingOnly)
+    expect(checks([])).toEqual(timingOnly)
+  })
+
   it('names Whisper’s language codes, Javanese included', () => {
     expect(languageName('sv')).toBe('Swedish')
     expect(languageName('jw')).toBe('Javanese')

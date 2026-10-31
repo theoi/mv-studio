@@ -10,12 +10,17 @@ type Word = { text: string; confidence: number; start?: number }
 
 /**
  * Opens Assist › Lyrics on the sample with a stand-in that answers a draft or a timing run with `lines` (and the
- * draft's `language`), keeping the requests it got in window.requests.
+ * draft's `language`, and run n's `unlisted` singing), keeping the requests it got in window.requests.
  */
-async function openWithLyrics(page: Page, lines: Word[][], language = 'en') {
+async function openWithLyrics(
+  page: Page,
+  lines: Word[][],
+  language = 'en',
+  unlisted: { start: number; end: number }[][] = [],
+) {
   await openHarness(page)
   await page.evaluate(
-    ({ lines, language }) => {
+    ({ lines, language, unlisted }) => {
       localStorage.setItem('mv-studio.guide-seen', '1')
       const { app, shared } = window.mvStudio
       const w = window as unknown as { requests: { kind: string; language?: string }[] }
@@ -47,14 +52,19 @@ async function openWithLyrics(page: Page, lines: Word[][], language = 'en') {
                   }
                 }),
               }
-              return { doc, language: request.language ?? language, chorus: null }
+              return {
+                doc,
+                language: request.language ?? language,
+                chorus: null,
+                unlisted: unlisted[w.requests.length - 1],
+              }
             },
           })
         },
       })
       window.location.hash = '#/editor?tab=assist&assist=lyrics&t=60'
     },
-    { lines, language },
+    { lines, language, unlisted },
   )
   await waitForPreview(page)
 }
@@ -201,4 +211,43 @@ test('timed lyrics mark the lines the aligner was unsure about; re-timing one ch
   await page.getByRole('tab', { name: 'Assist' }).click()
   await expect(summary).toHaveText('Timed 3 lines · 1 to check')
   await expect(page.getByRole('button', { name: /, check the timing$/ })).toHaveCount(1)
+})
+
+test('timed lines near singing the pasted lyrics leave out say so, until the missing lines are added and timed again', async ({
+  page,
+}) => {
+  const shaky: Word[] = 'We run until the morning'.split(' ').map((t) => ({ text: t, confidence: 0.04 }))
+  // The lines are at 64, 68 and 72 s; the first run hears 13 s of singing from 82 s that the lyrics leave out.
+  await openWithLyrics(page, [sure('Neon lights are calling'), shaky, sure('Hold on tonight')], 'en', [
+    [{ start: 82, end: 95 }],
+    [],
+  ])
+  const box = page.getByRole('textbox', { name: 'Lyrics' })
+  await box.fill('Neon lights are calling\nWe run until the morning\nHold on tonight')
+  await page.getByRole('button', { name: 'Time words to the vocals' }).click()
+
+  const summary = page.getByText(/^Timed 3 lines · /)
+  await expect(summary).toHaveText('Timed 3 lines · 2 to check')
+  const near = page.getByRole('button', {
+    name: 'Lyric: Hold on tonight, singing nearby isn’t in the lyrics, check the timing',
+  })
+  await expect(near).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Lyric: We run until the morning, check the timing' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Show on timeline' }).click()
+  await near.click()
+  await expect(
+    page.getByText(
+      'Singing near this line isn’t in the pasted lyrics, so some words may be timed wrong. Play the line to check, or add the missing lines in Assist\u00a0›\u00a0Lyrics and time the words again.',
+      { exact: true },
+    ),
+  ).toBeVisible()
+
+  // The stand-in answers with the same lines; with the missing line pasted, it hears no unlisted singing.
+  await page.getByRole('tab', { name: 'Assist' }).click()
+  await box.fill('Neon lights are calling\nWe run until the morning\nHold on tonight\nSay you will stay')
+  await page.getByRole('button', { name: 'Time words to the vocals' }).click()
+  await expect(summary).toHaveText('Timed 3 lines · 1 to check')
+  await expect(page.getByRole('button', { name: /singing nearby/ })).toHaveCount(0)
 })

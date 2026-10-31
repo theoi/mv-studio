@@ -417,7 +417,11 @@ function labelWidth(text: string): number {
 const MIN_WORD_PX = 12
 
 /** Added to a lyric chip's name while its line is to check. */
-const CHECK_NAMES = { words: ', draft, check the words', timing: ', check the timing' } as const
+const CHECK_NAMES = {
+  words: ', draft, check the words',
+  timing: ', check the timing',
+  unlisted: ', singing nearby isn’t in the lyrics, check the timing',
+} as const
 
 /**
  * A lyric line shows its words only where they fit whole. Zoomed in, each word sits at its sung time and its edges

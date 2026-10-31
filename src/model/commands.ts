@@ -468,7 +468,9 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
         ('start' in patch && patch.start !== line.start) ||
         ('end' in patch && patch.end !== line.end) ||
         (patch.words !== undefined && timesOf(patch.words) !== timesOf(line.words))
-      const checked = (line.check === 'words' && retyped) || (line.check === 'timing' && retimed)
+      const checked =
+        (line.check === 'words' && retyped) ||
+        ((line.check === 'timing' || line.check === 'unlisted') && retimed)
       setFields(line, patch, Object.keys(patch) as (keyof typeof patch)[])
       if (checked && !('check' in patch)) delete line.check
       return

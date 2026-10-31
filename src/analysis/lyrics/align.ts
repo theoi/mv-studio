@@ -56,6 +56,8 @@ export interface AlignOptions {
   unlistedEntry?: number
   /** Whether unlisted singing may come before the first word; not when it starts at `from` (a word dragged there). */
   unlistedBefore?: boolean
+  /** When given, collects where the alignment took unlisted singing (seconds, in order). */
+  unlistedFound?: TimeRange[]
 }
 
 const DEFAULT_MAX_HOLD = 0.6
@@ -139,10 +141,13 @@ export function alignWords(
   unlistedAt[0] = options.unlistedBefore === false ? 0 : 1
   unlistedAt[tokens.length] = 1
   const unlistedCost = options.unlistedCost ?? DEFAULT_UNLISTED_COST
+  const used: { start: number; end: number }[] = []
   const filler: Filler | undefined = Number.isFinite(unlistedCost)
-    ? { at: unlistedAt, cost: unlistedCost, entry: options.unlistedEntry ?? DEFAULT_UNLISTED_ENTRY }
+    ? { at: unlistedAt, cost: unlistedCost, entry: options.unlistedEntry ?? DEFAULT_UNLISTED_ENTRY, used }
     : undefined
   const spans = forcedAlign(em, tokens, vocab.blank, from, to, pauseCost, unvoiced, filler)
+  for (const u of used.reverse())
+    options.unlistedFound?.push({ start: round(u.start * fs), end: round(u.end * fs) })
   const timed: (LyricWord | null)[] = words.map((text, i) => {
     const r = ranges[i]
     if (!spans || !r) return null

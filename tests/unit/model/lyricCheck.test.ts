@@ -57,19 +57,29 @@ describe('a lyric line to check', () => {
     expect(line(editor, 'a').check).toBeUndefined()
   })
 
-  it('timing: stays to check when only its text is retyped, which says nothing about where the words fall', () => {
-    const editor = withLines('timing')
-    editor.dispatch({ type: 'lyrics.updateLine', lineId: 'a', patch: { text: 'neon lights keep calling' } })
-    expect(line(editor, 'a').check).toBe('timing')
-  })
+  it.each(['timing', 'unlisted'] as const)(
+    '%s: stays to check when only its text is retyped, which says nothing about where the words fall',
+    (check) => {
+      const editor = withLines(check)
+      editor.dispatch({ type: 'lyrics.updateLine', lineId: 'a', patch: { text: 'neon lights keep calling' } })
+      expect(line(editor, 'a').check).toBe(check)
+    },
+  )
 
-  it('timing: is checked when the line or its words are re-timed', () => {
-    const editor = withLines('timing')
-    editor.dispatch({ type: 'lyrics.updateLine', lineId: 'a', patch: { start: 0.2 } })
-    expect(line(editor, 'a').check).toBeUndefined()
-    editor.dispatch({ type: 'lyrics.updateLine', lineId: 'b', patch: { words: shifted(line(editor, 'b')) } })
-    expect(line(editor, 'b').check).toBeUndefined()
-  })
+  it.each(['timing', 'unlisted'] as const)(
+    '%s: is checked when the line or its words are re-timed',
+    (check) => {
+      const editor = withLines(check)
+      editor.dispatch({ type: 'lyrics.updateLine', lineId: 'a', patch: { start: 0.2 } })
+      expect(line(editor, 'a').check).toBeUndefined()
+      editor.dispatch({
+        type: 'lyrics.updateLine',
+        lineId: 'b',
+        patch: { words: shifted(line(editor, 'b')) },
+      })
+      expect(line(editor, 'b').check).toBeUndefined()
+    },
+  )
 
   it('is marked as checked by a patch that sets check to undefined, and undo brings it back', () => {
     const editor = withLines('words')
