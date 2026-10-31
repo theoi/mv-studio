@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
 async function openEditor(page: Page, hash = '#/editor?t=67') {
@@ -92,8 +92,8 @@ test('the activity indicator shows the first task’s progress, counts the other
     )
   const finish = (kind: string) => page.evaluate((k) => (window as unknown as Hooks).finish[k]!(), kind)
   const bar = page.getByRole('banner')
-  const measuring = bar.getByRole('button', { name: /Measuring the song/ })
-  const thinking = bar.getByRole('button', { name: /Thinking it over/ })
+  const measuring = bar.getByRole('button', { name: /^Measuring the song/ })
+  const thinking = bar.getByRole('button', { name: /^Thinking it over/ })
 
   await start('test.measured', 'Measuring the song', 0.25)
   await expect(measuring).toContainText('25%')
@@ -103,6 +103,7 @@ test('the activity indicator shows the first task’s progress, counts the other
   // A second task adds a count; the indicator keeps showing the first.
   await start('test.unmeasured', 'Thinking it over')
   await expect(measuring).toContainText('+1')
+  await expect(measuring).toHaveAccessibleName('Measuring the song 60% +1')
   await expect(thinking).toHaveCount(0)
 
   // A task that can't measure its progress shows no percentage.
@@ -110,23 +111,74 @@ test('the activity indicator shows the first task’s progress, counts the other
   await expect(thinking).toBeVisible()
   await expect(thinking).not.toContainText('%')
   await expect(thinking).not.toContainText('+')
+  await expect(thinking).toHaveAccessibleName('Thinking it over')
 
   await finish('test.unmeasured')
   await expect(thinking).toHaveCount(0)
   await expect(measuring).toHaveCount(0)
 
-  // A task that took a Cancel but has not ended (keeping a result it paid for) says so, without a percentage.
-  const stopping = bar.getByRole('button', { name: /Stopping…/ })
+  // A task that took a Cancel but has not ended (keeping a result it paid for) says so, without a percentage. Its
+  // name keeps the title the chip no longer shows.
+  const stopping = bar.getByRole('button', { name: 'Stopping: Measuring the song', exact: true })
   await start('test.measured', 'Measuring the song', 0.4)
   await expect(measuring).toContainText('40%')
   await page.evaluate(() => window.mvStudio.shared.jobs.cancelAll('test.measured'))
   await expect(stopping).toBeVisible()
+  await expect(stopping).toContainText('Stopping…')
   await expect(stopping).not.toContainText('%')
   await expect(measuring).toHaveCount(0)
   await finish('test.measured')
   await expect(stopping).toHaveCount(0)
 })
 
+test('at 1280 wide a task with a long title gets its title cut off, keeping its percentage, its count and the buttons beside it whole', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openEditor(page)
+  const title = 'Generating 12 clips · about $3.04'
+  await page.evaluate((t) => {
+    const w = window as unknown as { finish: (() => void)[] }
+    w.finish = []
+    const tasks = [
+      ['cloud.generate', t, 0.33],
+      ['analysis.lyrics', 'Timing lyrics', 0.5],
+    ] as const
+    for (const [kind, title, fraction] of tasks)
+      window.mvStudio.shared.jobs.run({
+        kind,
+        title,
+        run: (ctx: { progress: (p: { fraction: number }) => void }) =>
+          new Promise<void>((resolve) => {
+            ctx.progress({ fraction })
+            w.finish.push(resolve)
+          }),
+      })
+  }, title)
+  const bar = page.getByRole('banner')
+  const chip = bar.getByRole('button', { name: `${title} 33% +1`, exact: true })
+  await expect(chip).toBeVisible()
+  // It slides in from the right.
+  await chip.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+  const box = async (l: Locator) => (await l.boundingBox())!
+  const c = await box(chip)
+  const search = await box(bar.getByRole('button', { name: /^Search actions/ }))
+  const vj = await box(bar.getByRole('button', { name: 'VJ', exact: true }))
+  const help = await box(bar.getByRole('button', { name: 'Help' }))
+  expect(c.x).toBeGreaterThanOrEqual(search.x + search.width)
+  expect(c.x + c.width).toBeLessThanOrEqual(vj.x)
+  expect(help.width).toBeCloseTo(28, 0)
+  for (const shown of ['33%', '+1']) {
+    const b = await box(chip.getByText(shown, { exact: true }))
+    expect(b.x + b.width).toBeLessThanOrEqual(c.x + c.width)
+  }
+  const cut = await chip.getByText(title, { exact: true }).evaluate((el) => el.scrollWidth > el.clientWidth)
+  expect(cut).toBe(true)
+  await chip.hover()
+  await expect(page.getByRole('tooltip')).toContainText(title)
+  await page.evaluate(() => (window as unknown as { finish: (() => void)[] }).finish.forEach((f) => f()))
+  await expect(chip).toHaveCount(0)
+})
 test('Help › Replay the guide and Settings › General › Replay show the guide again from its first step', async ({
   page,
 }) => {

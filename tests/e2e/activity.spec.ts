@@ -54,7 +54,7 @@ test('the activity indicator opens the panel that shows the running job, never t
   await finish()
 })
 
-test('a job that took a Cancel says Stopping… in the top bar and in Assist’s Running list until it ends', async ({
+test('a job that took a Cancel says Stopping… in the top bar, in Assist’s Running list and on its tool’s progress card until it ends', async ({
   page,
 }) => {
   await openHarness(page)
@@ -76,11 +76,9 @@ test('a job that took a Cancel says Stopping… in the top bar and in Assist’s
         }),
     })
   })
-  const chip = page.getByRole('banner').getByRole('button', { name: /Timing lyrics|Stopping…/ })
-  const running = page
-    .getByRole('tabpanel', { name: 'Assist' })
-    .getByText('Running', { exact: true })
-    .locator('..')
+  const chip = page.getByRole('banner').getByRole('button', { name: /Timing lyrics/ })
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  const running = panel.getByText('Running', { exact: true }).locator('..')
   await expect(chip).toContainText('Timing lyrics')
   await expect(chip).toContainText('40%')
   await expect(running).toContainText('Timing lyrics')
@@ -89,12 +87,20 @@ test('a job that took a Cancel says Stopping… in the top bar and in Assist’s
   await page.evaluate(() => window.mvStudio.shared.jobs.cancelAll('analysis.lyrics'))
   await expect(chip).toContainText('Stopping…')
   await expect(chip).not.toContainText('%')
+  await expect(chip).toHaveAccessibleName('Stopping: Timing lyrics')
   await expect(running.getByText('Stopping…', { exact: true })).toBeVisible()
   await expect(running).not.toContainText('%')
   // The row still says which job is stopping.
   await expect(running).toContainText('Timing lyrics')
 
+  // The Lyrics tool's card has a spinner where the percentage was.
+  await chip.click()
+  const card = panel
+    .getByRole('progressbar', { name: 'Lyrics progress' })
+    .locator('xpath=preceding-sibling::div[1]')
+  await expect(card).toHaveText('Stopping…')
+
   await page.evaluate(() => (window as unknown as { finishJob: () => void }).finishJob())
   await expect(chip).toHaveCount(0)
-  await expect(running).toHaveCount(0)
+  await expect(card).toHaveCount(0)
 })

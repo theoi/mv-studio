@@ -50,19 +50,28 @@ function Activity() {
   // Jobs that can't measure their progress (a language model thinking) show a spinner instead of a stuck 0%.
   const fraction = jobFraction(first)
   const label = jobLabel(first)
+  // A narrow window cuts the title off, and "Stopping…" leaves it out: the tooltip and the name keep all of it.
+  const name = first.stopping ? `Stopping: ${first.title}` : first.title
+  const more = running.length - 1
   return (
-    <Tooltip label="Background tasks" description="You can keep editing. Click for details.">
-      <button className={styles.activity} onClick={() => openJob(first.kind)}>
+    <Tooltip label="Background tasks" description={`${name}. You can keep editing. Click for details.`}>
+      <button
+        className={styles.activity}
+        aria-label={[name, fraction !== undefined && `${Math.round(fraction * 100)}%`, more > 0 && `+${more}`]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={() => openJob(first.kind)}
+      >
         {fraction === undefined ? (
           <Spinner size={14} />
         ) : (
           <ProgressRing value={fraction} size={16} label={label} />
         )}
-        <span>{label}</span>
+        <span className={styles.activityTitle}>{label}</span>
         {fraction !== undefined && (
           <span className={`${styles.activityPct} tnum`}>{Math.round(fraction * 100)}%</span>
         )}
-        {running.length > 1 && <span className={styles.activityMore}>+{running.length - 1}</span>}
+        {more > 0 && <span className={styles.activityMore}>+{more}</span>}
       </button>
     </Tooltip>
   )
