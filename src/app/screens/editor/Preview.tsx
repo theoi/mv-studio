@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AudioLines,
   ChevronDown,
+  ImageDown,
   Maximize2,
   Pause,
   Play,
@@ -18,10 +19,22 @@ import type { PreviewController } from '../../../engine/preview.ts'
 import type { AspectPreset } from '../../../model/index.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  MenuTrigger,
+} from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
 import { formatTimecode } from '../../format.ts'
 import { jumpSection } from '../../state/playback.ts'
+import { saveFrame } from '../../state/stills.ts'
 import {
   bpmOf,
   editor,
@@ -32,7 +45,7 @@ import {
   timelineDuration,
   useProject,
 } from '../../state/project.ts'
-import { set, toast, useUi } from '../../state/ui.ts'
+import { get, set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
 import { changeAspect } from '../../state/reframe.ts'
@@ -209,6 +222,8 @@ export function Preview() {
   const project = useProject()
   const empty = !hasSong(project)
   const current = aspects.find((a) => a.value === project.settings.aspect) ?? aspects[0]!
+  // Playback goes on while the menu is open: Save frame saves the frame that was right-clicked.
+  const menuTime = useRef(0)
 
   return (
     <>
@@ -268,7 +283,21 @@ export function Preview() {
           />
         </div>
       ) : (
-        <Stage ratio={current.ratio} />
+        <ContextMenu onOpenChange={(open) => open && (menuTime.current = get().playhead)}>
+          {/* display: contents keeps the stage's layout; the menu opens where the pointer is. */}
+          <ContextMenuTrigger style={{ display: 'contents' }}>
+            <Stage ratio={current.ratio} />
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem
+              icon={<ImageDown />}
+              description={`PNG · ${project.settings.width} × ${project.settings.height}`}
+              onSelect={() => void saveFrame(menuTime.current)}
+            >
+              Save frame
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       )}
 
       <div className={styles.transport}>

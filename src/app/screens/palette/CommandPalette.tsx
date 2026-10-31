@@ -27,12 +27,14 @@ import {
   Film,
   FolderOpen,
   Save,
+  ImageDown,
 } from 'lucide-react'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { ask } from '../../state/ask.ts'
 import { openImport } from '../../state/importer.ts'
 import { downloadProjectFile, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { changeAspect } from '../../state/reframe.ts'
+import { saveFrameFromPalette } from '../../state/stills.ts'
 import { addTextAtPlayhead, splitAtPlayhead, undo } from '../../state/project.ts'
 import { openAssist, set, useUi } from '../../state/ui.ts'
 import styles from './CommandPalette.module.css'
@@ -155,6 +157,13 @@ const actions: Action[] = [
     shortcut: 'Shift V',
     keywords: 'live perform midi',
     run: () => set({ screen: 'vj' }),
+  },
+  {
+    group: 'Project',
+    label: 'Save frame',
+    icon: <ImageDown />,
+    keywords: 'still png image screenshot picture thumbnail',
+    run: () => void saveFrameFromPalette(),
   },
   {
     group: 'Project',
