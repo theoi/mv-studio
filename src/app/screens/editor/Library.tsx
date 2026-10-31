@@ -30,6 +30,7 @@ import {
   bpmOf,
   hasSong,
   lyricLines,
+  sectionName,
   sectionsOf,
   songAnalysis,
   timelineDuration,
@@ -212,7 +213,7 @@ function Suggestions() {
   const section = target.type === 'section' ? sectionsOf(project).find((s) => s.id === target.id) : undefined
   const picks = (results ?? []).filter((r) => r.score >= strong && project.assets[r.assetId]).slice(0, 3)
   if (!picks.length) return null
-  const label = line ? `“${line.text}”` : (section?.label ?? 'this section')
+  const label = line ? `“${line.text}”` : section ? sectionName(section) : 'this section'
   const place = (r: FootageResult) => {
     const lyric =
       line && Object.values(project.clips).find((c) => c.type === 'text' && c.lyricLineId === line.id)

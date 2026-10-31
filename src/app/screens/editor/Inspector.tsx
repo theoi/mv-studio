@@ -45,7 +45,9 @@ import {
   editor,
   hasSong,
   lyricLines,
+  sectionName,
   sectionsOf,
+  sectionUnsure,
   songAnalysis,
   undo,
   useProject,
@@ -739,7 +741,7 @@ function LyricInspector({ id }: { id: string }) {
       <Header
         icon={<Mic2 />}
         title="Lyric line"
-        meta={`${sec?.label ?? 'Lyrics'} · ${formatTime(line.start ?? 0, true)} – ${formatTime(line.end ?? 0, true)}`}
+        meta={`${sec ? sectionName(sec) : 'Lyrics'} · ${formatTime(line.start ?? 0, true)} – ${formatTime(line.end ?? 0, true)}`}
       />
       <Section title="Words">
         <div className={styles.padded}>
@@ -908,7 +910,7 @@ function SectionInspector({ id }: { id: string }) {
     <>
       <Header
         icon={<Film />}
-        title={`Section: ${sec.label}`}
+        title={`Section: ${sectionName(sec)}`}
         meta={`${formatTime(sec.start)} – ${formatTime(sec.end)} · ${bars} bars`}
       />
       <Section title="Section">
@@ -931,8 +933,14 @@ function SectionInspector({ id }: { id: string }) {
           />
         </FieldRow>
         <p className={styles.note}>
-          Found automatically{plays > 1 ? `, plays ${plays} times in the song` : ''}. Drag its edges on the
-          timeline to adjust.
+          {sec.confidence === 1
+            ? 'Named by you'
+            : sectionUnsure(sec)
+              ? 'Name guessed from the audio'
+              : 'Found automatically'}
+          {plays > 1 ? `, plays ${plays} times in the song` : ''}.{' '}
+          {sectionUnsure(sec) ? 'Rename it if the guess is wrong. ' : ''}Drag its edges on the timeline to
+          adjust.
         </p>
       </Section>
       <Section title="Do more with this section">

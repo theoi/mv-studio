@@ -49,7 +49,9 @@ import {
   lyricLines,
   sectionColor,
   sectionKind,
+  sectionName,
   sectionsOf,
+  sectionUnsure,
   songAnalysis,
   timelineDuration,
   useProject,
@@ -837,7 +839,10 @@ export function Timeline() {
                       onDoubleClick={() => setRenaming(s.id)}
                       role="button"
                       tabIndex={0}
-                      aria-label={`Section ${s.label}, ${formatTime(s.start)} to ${formatTime(s.end)}`}
+                      aria-label={`Section ${sectionName(s)}, ${formatTime(s.start)} to ${formatTime(s.end)}`}
+                      title={
+                        sectionUnsure(s) ? 'Name guessed from the audio. Double-click to rename.' : undefined
+                      }
                     >
                       {renaming === s.id ? (
                         <input
@@ -857,12 +862,13 @@ export function Timeline() {
                             setRenaming(null)
                           }}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur()
+                            if (e.key === 'Escape') e.currentTarget.value = s.label
+                            if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur()
                           }}
-                          aria-label="Section name"
+                          aria-label="Rename section"
                         />
                       ) : (
-                        <span className={styles.sectionLabel}>{s.label}</span>
+                        <span className={styles.sectionLabel}>{sectionName(s)}</span>
                       )}
                       {sel && (
                         <div className={styles.sectionSuggest}>
