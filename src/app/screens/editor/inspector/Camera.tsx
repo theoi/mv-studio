@@ -14,6 +14,7 @@ import {
   motionOf,
   removeCameraMove,
   setCameraMove,
+  smearNote,
   startCameraMoves,
   undoCameraMoves,
   useCamera,
@@ -49,7 +50,13 @@ export function CameraSuggestion({ clip }: { clip: VisualClip }) {
           chosenIntensity(),
         )
         handle?.promise.then(
-          (result) => toast('3D camera move added', { label: 'Undo', run: () => undoCameraMoves(result) }),
+          (result) => {
+            const smear = smearNote(result.moves.length, result.moves.filter((m) => m.smearRisk).length)
+            toast(smear ? `3D camera move added. ${smear}` : '3D camera move added', {
+              label: 'Undo',
+              run: () => undoCameraMoves(result),
+            })
+          },
           (err: unknown) => {
             if (!(err instanceof JobError && err.code === 'cancelled'))
               toast('The 3D camera move could not be added. Try again from Assist › 3D camera.')

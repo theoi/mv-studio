@@ -4,7 +4,7 @@ import type { Clip, EditCommand, Id, ImageClip, Project } from '../../model/inde
 import { mediaStore } from '../../media/mediaStore.ts'
 import { jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
-import type { CameraMovesResult, CameraPreset } from '../../vision/index.ts'
+import type { CameraMoveResult, CameraMovesResult, CameraPreset } from '../../vision/index.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from '../../vision/render/cameraEffect.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { visionService } from './footage.ts'
@@ -147,6 +147,31 @@ export function startCameraMoves(
     presets: { ...s.presets, [id]: preset },
   }))
   return handle
+}
+
+/**
+ * The moves of a result that may still smear: vision predicted it (`smearRisk`) and the clip still has the move
+ * with `preset` at a strength above the still's safe amount. A move changed to another preset is left out, since its
+ * safe amount is for the preset it was added with.
+ */
+export function smearingMoves(
+  project: Pick<Project, 'clips'>,
+  result: Pick<CameraMovesResult, 'moves'>,
+  preset: CameraPreset | undefined,
+): CameraMoveResult[] {
+  return result.moves.filter((m) => {
+    const clip = project.clips[m.clipId]
+    const move = clip && cameraMoveOf(clip)
+    return m.smearRisk && !!move && move.preset === preset && move.intensity > m.safeIntensity
+  })
+}
+
+/** What to tell the user when `smearing` of the `total` stills just given a move may smear; null when none may. */
+export function smearNote(total: number, smearing: number): string | null {
+  if (!smearing) return null
+  const rest = 'may smear behind the foreground at this strength. Try a lower Strength.'
+  if (total === 1) return `This image ${rest}`
+  return `${smearing === total ? `All ${total}` : `${smearing} of ${total}`} images ${rest}`
 }
 
 /** Undoes the camera moves while they are still the latest edit. Returns whether it did. */
