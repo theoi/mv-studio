@@ -9,6 +9,7 @@ import { resample } from '../dsp/resample.ts'
 import { computeAudioFeatures, featureReference } from '../features/features.ts'
 import { ANALYSIS_SAMPLE_RATE, analyzeSpectrum } from '../frontend.ts'
 import { DEMUCS_SAMPLE_RATE, DEMUCS_SOURCES, separateStems, type DemucsModel } from './demucs.ts'
+import { STEM_FINISH_SECONDS_PER_SECOND } from './device.ts'
 import { createStemEncoder, pickStemCodec, type EncodedAudio, type StemCodec } from './encode.ts'
 
 export interface StemsWorkerDeps {
@@ -81,7 +82,13 @@ export function createStemsApi(deps: StemsWorkerDeps) {
           },
           {
             signal: ctx.signal,
-            onProgress: (f) => ctx.progress({ stage: 'separate', fraction: 0.15 + 0.75 * f, message }),
+            onProgress: (f) => {
+              // Remaining time from this run's own pace, so it holds on any machine.
+              const elapsed = (performance.now() - t0) / 1000
+              const etaSeconds =
+                (elapsed * (1 - f)) / f + (n / DEMUCS_SAMPLE_RATE) * STEM_FINISH_SECONDS_PER_SECOND
+              ctx.progress({ stage: 'separate', fraction: 0.15 + 0.75 * f, message, etaSeconds })
+            },
           },
         )
       } catch (error) {

@@ -40,9 +40,11 @@ function reflect(i: number, n: number): number {
  * Complex spectrogram of a stereo segment as demucs feeds it: reflect padding so frames align with the time
  * branch, centered torch.stft (normalized), last bin dropped, 2 edge frames trimmed. Layout [ch*2 + re/im][bin][frame].
  */
-export function segmentSpectrogram(mix: Float32Array): Float32Array {
+export function segmentSpectrogram(
+  mix: Float32Array,
+  spec = new Float32Array(4 * BINS * FRAMES),
+): Float32Array {
   const { fft, window } = fftSetup()
-  const spec = new Float32Array(4 * BINS * FRAMES)
   const padded = new Float64Array(SEGMENT + PAD + (PAD + FRAMES * HOP - SEGMENT))
   const centered = new Float64Array(padded.length + NFFT)
   const frame = new Float64Array(NFFT)
@@ -148,6 +150,7 @@ export async function separateStems(
   const acc = Array.from({ length: SOURCES }, () => [new Float32Array(SEGMENT), new Float32Array(SEGMENT)])
   const wsum = new Float32Array(SEGMENT)
   const mix = new Float32Array(2 * SEGMENT)
+  const spec = new Float32Array(4 * BINS * FRAMES)
   const offsets: number[] = []
   for (let o = 0; o < n; o += stride) offsets.push(o)
   let emitted = 0
@@ -162,7 +165,7 @@ export async function separateStems(
       mix[i] = inside ? ((left[j] as number) - mean) / std : 0
       mix[SEGMENT + i] = inside ? ((right[j] as number) - mean) / std : 0
     }
-    const { x, xt } = await model.run(mix, segmentSpectrogram(mix))
+    const { x, xt } = await model.run(mix, segmentSpectrogram(mix, spec))
     throwIfAborted(options.signal)
     const base = offset - emitted
     for (let s = 0; s < SOURCES; s++) {
