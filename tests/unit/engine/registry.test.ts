@@ -10,14 +10,15 @@ describe('plugin registry', () => {
         .catalog(kind)
         .map((e) => e.id)
         .sort()
-    expect(byKind('transition')).toEqual(['fade', 'flash', 'wipe-left', 'zoom'])
-    expect(byKind('effect')).toEqual(['blur', 'film-grain', 'glow', 'rgb-split', 'vignette'])
-    expect(byKind('generator')).toEqual([
-      'visualizer.particles',
-      'visualizer.spectrum',
-      'visualizer.waveform',
-    ])
-    expect(byKind('text-animation')).toEqual(['fade-up', 'pop', 'typewriter'])
+    // Other plugins (src/plugins) may add more; these ids must always be there.
+    expect(byKind('transition')).toEqual(expect.arrayContaining(['fade', 'flash', 'wipe-left', 'zoom']))
+    expect(byKind('effect')).toEqual(
+      expect.arrayContaining(['blur', 'film-grain', 'glow', 'rgb-split', 'vignette']),
+    )
+    expect(byKind('generator')).toEqual(
+      expect.arrayContaining(['visualizer.particles', 'visualizer.spectrum', 'visualizer.waveform']),
+    )
+    expect(byKind('text-animation')).toEqual(expect.arrayContaining(['fade-up', 'pop', 'typewriter']))
   })
 
   it('lists which numeric params accept keyframes and audio modulation', () => {

@@ -3,10 +3,13 @@
  * an `e2e` query parameter, as a separate chunk.
  */
 import * as animation from '../engine/animation.ts'
+import * as audio from '../engine/audio.ts'
 import { createAudioSampler } from '../engine/audioFeatures.ts'
 import { WebGLCompositor } from '../engine/compositor.ts'
 import { DecoderFrameProvider, VideoElementFrameProvider } from '../engine/frames.ts'
 import { planFrame } from '../engine/layout.ts'
+import { WebAudioPlaybackClock } from '../engine/playback.ts'
+import { PreviewController } from '../engine/preview.ts'
 import { pluginRegistry } from '../engine/registry.ts'
 import { mediaStore } from '../media/mediaStore.ts'
 import { projectStore } from '../media/projectStore.ts'
@@ -45,12 +48,15 @@ export function installHarness(): void {
     media: { mediaStore, projectStore },
     engine: {
       animation,
+      audio,
       createAudioSampler,
       planFrame,
       pluginRegistry,
       WebGLCompositor,
       VideoElementFrameProvider,
       DecoderFrameProvider,
+      WebAudioPlaybackClock,
+      PreviewController,
     },
     shared: { jobs, detectCapabilities },
     testing: { createCompositor, readPixels },

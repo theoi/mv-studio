@@ -1,0 +1,230 @@
+import path from 'node:path'
+import { FIXTURE_DIR } from './global-setup.ts'
+import { expect, openHarness, test } from './fixtures.ts'
+
+test('offline mixdown places clips at their timeline position with trim, volume and fades', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'song.wav')])
+  const r = await page.evaluate(async () => {
+    const { model, media, engine } = window.mvStudio
+    const song = await media.mediaStore.importFile(window.mvStudio.files()[0])
+    const p = model.createProject({ name: 'mix' })
+    p.assets[song.id] = song
+    const track = p.tracks.find((t: { kind: string }) => t.kind === 'audio')
+    // Timeline 1..4 s plays song 2..5 s at half volume, fading out over the last second.
+    const clip = model.createAudioClip({
+      trackId: track.id,
+      assetId: song.id,
+      start: 1,
+      duration: 3,
+      sourceStart: 2,
+    })
+    clip.volume = { value: 0.5 }
+    clip.fadeOut = 1
+    p.clips[clip.id] = clip
+    const cache = new engine.audio.AudioBufferCache(media.mediaStore)
+    const source: AudioBuffer = await cache.get(song)
+    const sr = source.sampleRate
+    const mix: AudioBuffer = await engine.audio.renderMix(p, cache, { start: 0, end: 5 }, sr)
+    const out = mix.getChannelData(0)
+    const src = source.getChannelData(0)
+    const peak = (data: Float32Array, from: number, to: number) => {
+      let m = 0
+      for (let i = Math.round(from * sr); i < Math.round(to * sr); i++)
+        m = Math.max(m, Math.abs(data[i] ?? 0))
+      return m
+    }
+    const rms = (data: Float32Array, from: number, to: number) => {
+      let s = 0
+      let n = 0
+      for (let i = Math.round(from * sr); i < Math.round(to * sr); i++, n++) s += (data[i] ?? 0) ** 2
+      return Math.sqrt(s / n)
+    }
+    let bodyError = 0
+    for (let i = Math.round(1.1 * sr); i < Math.round(2.9 * sr); i++)
+      bodyError = Math.max(bodyError, Math.abs((out[i] as number) - 0.5 * (src[i + sr] as number)))
+    return {
+      channels: mix.numberOfChannels,
+      seconds: mix.length / sr,
+      silenceBefore: peak(out, 0, 0.99),
+      silenceAfter: peak(out, 4.01, 5),
+      bodyPeak: peak(out, 1.1, 2.9),
+      bodyError,
+      // Halfway through the 1 s fade-out the gain is 0.5 * 0.5.
+      fadeRatio: rms(out, 3.45, 3.55) / rms(src, 4.45, 4.55),
+    }
+  })
+  expect(r.channels).toBe(2)
+  expect(r.seconds).toBeCloseTo(5, 3)
+  expect(r.silenceBefore).toBeLessThan(1e-4)
+  expect(r.silenceAfter).toBeLessThan(1e-4)
+  expect(r.bodyPeak).toBeGreaterThan(0.1)
+  expect(r.bodyError).toBeLessThan(1e-3)
+  expect(r.fadeRatio).toBeGreaterThan(0.2)
+  expect(r.fadeRatio).toBeLessThan(0.3)
+})
+
+test('preview plays in step with the audio clock, pauses, seeks, loops and stops at the end', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.setInputFiles(
+    '#e2e-file-input',
+    ['song.mp3', 'clip.mp4'].map((f) => path.join(FIXTURE_DIR, f)),
+  )
+  const r = await page.evaluate(async () => {
+    const { model, media, engine } = window.mvStudio
+    const [song, video] = await Promise.all(
+      window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
+    )
+    const p = model.createProject({ name: 'preview' })
+    p.assets[song.id] = song
+    p.assets[video.id] = video
+    p.songAssetId = song.id
+    const audioTrack = p.tracks.find((t: { kind: string }) => t.kind === 'audio')
+    const visualTrack = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    const songClip = model.createAudioClip({
+      trackId: audioTrack.id,
+      assetId: song.id,
+      start: 0,
+      duration: 6,
+    })
+    const shot = model.createVideoClip({ trackId: visualTrack.id, assetId: video.id, start: 0, duration: 4 })
+    p.clips[songClip.id] = songClip
+    p.clips[shot.id] = shot
+    const canvas = document.createElement('canvas')
+    document.body.appendChild(canvas)
+    const preview = new engine.PreviewController({ canvas, media: media.mediaStore })
+    const states: string[] = []
+    preview.subscribe(() => states.push(preview.getSnapshot().state))
+    let frames = 0
+    preview.onFrame(() => frames++)
+    preview.setProject(p)
+    preview.setViewport(480, 270, 1)
+    await preview.rendered()
+    const size = [canvas.width, canvas.height]
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+    await preview.play()
+    const wall0 = performance.now()
+    const clock0 = preview.currentTime()
+    await sleep(1500)
+    const elapsed = (performance.now() - wall0) / 1000
+    const advanced = preview.currentTime() - clock0
+    const stats = preview.stats()
+    const framesWhilePlaying = frames
+
+    preview.pause()
+    const pausedAt = preview.currentTime()
+    await sleep(300)
+    const drift = preview.currentTime() - pausedAt
+
+    preview.seek(3)
+    await preview.rendered()
+    const seeked = preview.getSnapshot().time
+
+    preview.setLoop({ start: 1, end: 1.5 })
+    preview.seek(1)
+    await preview.play()
+    await sleep(200)
+    // Sample the clock across two loop wraps: it must stay inside the loop and never stall at the wrap.
+    const loopSamples: number[] = []
+    for (let i = 0; i < 60; i++) {
+      loopSamples.push(preview.currentTime())
+      await sleep(20)
+    }
+    let longestStall = 0
+    let stall = 0
+    for (let i = 1; i < loopSamples.length; i++) {
+      stall = loopSamples[i] === loopSamples[i - 1] ? stall + 1 : 0
+      longestStall = Math.max(longestStall, stall)
+    }
+    const wraps = loopSamples.filter((t, i) => i > 0 && t < loopSamples[i - 1]).length
+    const loopRange = [Math.min(...loopSamples), Math.max(...loopSamples)]
+    preview.pause()
+    preview.setLoop(null)
+
+    preview.seek(5.5)
+    await preview.play()
+    await sleep(1000)
+    const ended = preview.getSnapshot()
+    preview.dispose()
+    return {
+      size,
+      elapsed,
+      advanced,
+      stats,
+      framesWhilePlaying,
+      drift,
+      seeked,
+      wraps,
+      longestStall,
+      loopRange,
+      ended,
+      states,
+    }
+  })
+  console.log('preview playback', JSON.stringify(r))
+  expect(r.size).toEqual([480, 270])
+  // The clock follows real time, minus the scheduling lookahead and output latency at the start.
+  expect(r.advanced).toBeGreaterThan(r.elapsed - 0.25)
+  expect(r.advanced).toBeLessThan(r.elapsed + 0.05)
+  expect(r.stats.fps).toBeGreaterThan(20)
+  expect(r.framesWhilePlaying).toBeGreaterThan(30)
+  expect(r.drift).toBe(0)
+  expect(r.seeked).toBe(3)
+  expect(r.wraps).toBeGreaterThanOrEqual(2)
+  expect(r.longestStall).toBeLessThanOrEqual(1)
+  expect(r.loopRange[0]).toBeGreaterThanOrEqual(1)
+  expect(r.loopRange[1]).toBeLessThan(1.5)
+  expect(r.ended).toMatchObject({ state: 'paused', time: 6, duration: 6 })
+  expect(r.states).toContain('playing')
+})
+
+test('a paused preview frame matches the export render of the same time', async ({ page }) => {
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'clip.mp4')])
+  const r = await page.evaluate(async () => {
+    const { model, media, engine, testing } = window.mvStudio
+    const video = await media.mediaStore.importFile(window.mvStudio.files()[0])
+    const p = model.createProject({ name: 'match' })
+    p.assets[video.id] = video
+    const visual = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    const shot = model.createVideoClip({ trackId: visual.id, assetId: video.id, start: 0, duration: 4 })
+    shot.transform.rotation = { value: 8 }
+    shot.effects = [{ id: 'v', effectId: 'vignette', enabled: true, params: {} }]
+    p.clips[shot.id] = shot
+    const title = model.createTextClip({ trackId: visual.id, text: 'Frame match', start: 0, duration: 4 })
+    title.trackId = model.createTrack('visual').id
+    p.tracks.unshift({ ...model.createTrack('visual'), id: title.trackId })
+    p.clips[title.id] = title
+
+    const canvas = document.createElement('canvas')
+    const preview = new engine.PreviewController({
+      canvas,
+      media: media.mediaStore,
+      preserveDrawingBuffer: true,
+    })
+    preview.setProject(p)
+    preview.setViewport(480, 270, 1)
+    const exp = testing.createCompositor('export', 480, 270)
+    const diffs = []
+    for (const t of [0.5, 2.2, 1.1]) {
+      preview.seek(t)
+      await preview.rendered()
+      const a = testing.readPixels(canvas, 480, 270)
+      await exp.compositor.render(p, t)
+      const b = testing.readPixels(exp.compositor.canvas, 480, 270)
+      let sum = 0
+      for (let i = 0; i < a.length; i += 4)
+        sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])
+      diffs.push(sum / (a.length / 4) / 3)
+    }
+    preview.dispose()
+    exp.compositor.dispose()
+    return diffs
+  })
+  for (const d of r) expect(d).toBeLessThan(0.5)
+})
