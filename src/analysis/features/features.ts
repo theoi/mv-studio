@@ -106,21 +106,46 @@ function frameMeanSquare(
 const SILENCE_DB = -70
 /** Bands quieter than the loudest band by more than this keep their real level instead of full range. */
 const BAND_SPAN_DB = 20
-/** "Loud level" of a signal: high enough to ignore a few clipped peaks. */
-const LOUD_QUANTILE = 0.995
+/**
+ * "Loud level" of a signal: the level of its loud sections rather than its peaks, so loud, compressed masters do not
+ * sit at full range all song long. Louder frames are compressed into the top of the range (see `softKnee`).
+ */
+const LOUD_QUANTILE = 0.9
+/** The quiet end of the range follows the song's own dynamics (its 5th percentile), within these limits (dB). */
+const MIN_RANGE_DB = 15
+const MAX_RANGE_DB = 40
+/** Where the loud level lands in 0..1; louder frames approach 1 smoothly. */
+const KNEE = 0.9
 
 const toDb = (ms: Float64Array) => ms.map((v) => 10 * Math.log10(v + 1e-12))
 
+/** Linear up to the loud level (x = 1, mapped to KNEE), then compressed towards 1 with a continuous slope. */
+function softKnee(x: number): number {
+  if (x <= 0) return 0
+  if (x <= 1) return KNEE * x
+  return KNEE + (1 - KNEE) * (1 - Math.exp((-KNEE / (1 - KNEE)) * (x - 1)))
+}
+
+/** How a level curve maps to 0..1: its loud level and the dB range below it that is shown. */
+interface LevelScale {
+  refDb: number
+  rangeDb: number
+}
+
+/** A signal's own scale: its loud level, and a range that spans its dynamics (down to its 5th percentile). */
+function levelScale(db: Float64Array): LevelScale {
+  const refDb = Math.max(quantile(db, LOUD_QUANTILE), SILENCE_DB)
+  const active = db.filter((v) => v > refDb - 60)
+  const quiet = active.length ? quantile(active, 0.05) : refDb - MAX_RANGE_DB
+  return { refDb, rangeDb: Math.min(MAX_RANGE_DB, Math.max(MIN_RANGE_DB, refDb - quiet)) }
+}
+
 /**
- * Maps dB to 0..1 over `rangeDb` below a reference: the signal's own loud level, but at least `minRefDb`.
- * Rounded for compact storage.
+ * Maps dB to 0..1 so the loud level lands at KNEE and quiet sections visibly drop, on compressed and dynamic songs
+ * alike. Rounded for compact storage.
  */
-function normalizeDb(db: Float64Array, rangeDb: number, minRefDb = SILENCE_DB): number[] {
-  const ref = Math.max(quantile(db, LOUD_QUANTILE), minRefDb)
-  return Array.from(
-    db,
-    (v) => Math.round(Math.min(1, Math.max(0, (v - (ref - rangeDb)) / rangeDb)) * 1000) / 1000,
-  )
+function normalizeDb(db: Float64Array, { refDb, rangeDb }: LevelScale): number[] {
+  return Array.from(db, (v) => Math.round(softKnee((v - (refDb - rangeDb)) / rangeDb) * 1000) / 1000)
 }
 
 /**
@@ -152,10 +177,10 @@ export function pickOnsets(onset: Float32Array, fps: number, lag = DSP_BEAT_OFFS
   return times
 }
 
-/** Loud levels (dB, 99.5th percentile) of a mix, against which its stems are normalized. */
+/** Level scales of a mix, against which its stems are normalized so stem and mix values compare. */
 export interface FeatureReference {
-  loudnessDb: number
-  bandDb: number[]
+  loudness: LevelScale
+  bands: LevelScale[]
 }
 
 /** A stem never reaches full range while it stays this far below the mix, so bleed and quiet stems stay low. */
@@ -180,13 +205,20 @@ function measureLevels(mono: Float32Array, sampleRate: number) {
   return { frames, loudnessDb, bandDb }
 }
 
-/** The mix's loud levels, for `computeAudioFeatures` on its stems. */
+/** The mix's level scales, for `computeAudioFeatures` on its stems. */
 export function featureReference(mono: Float32Array, sampleRate: number): FeatureReference {
   const { loudnessDb, bandDb } = measureLevels(mono, sampleRate)
-  return {
-    loudnessDb: quantile(loudnessDb, LOUD_QUANTILE),
-    bandDb: bandDb.map((db) => quantile(db, LOUD_QUANTILE)),
-  }
+  return { loudness: levelScale(loudnessDb), bands: bandDb.map(levelScale) }
+}
+
+/**
+ * A signal's scale, with its loud level raised to at least `minRefDb`. A stem uses its mix's range, and its loud
+ * level is at least just below the mix's, so a stem that barely contributes stays low.
+ */
+function scaleFor(db: Float64Array, minRefDb: number, mix?: LevelScale): LevelScale {
+  const own = levelScale(db)
+  const refDb = Math.max(own.refDb, minRefDb, mix ? mix.refDb - STEM_REFERENCE_SPAN_DB : SILENCE_DB)
+  return { refDb, rangeDb: mix?.rangeDb ?? own.rangeDb }
 }
 
 /**
@@ -203,12 +235,10 @@ export function computeAudioFeatures(
   reference?: FeatureReference,
 ): AudioFeatures {
   const { frames, loudnessDb, bandDb } = measureLevels(mono, sampleRate)
-  const floor = (refDb: number | undefined) =>
-    refDb === undefined ? SILENCE_DB : Math.max(SILENCE_DB, refDb - STEM_REFERENCE_SPAN_DB)
-  const loudness = normalizeDb(loudnessDb, 36, floor(reference?.loudnessDb))
+  const loudness = normalizeDb(loudnessDb, scaleFor(loudnessDb, SILENCE_DB, reference?.loudness))
   const loudestBand = Math.max(...bandDb.map((db) => quantile(db, LOUD_QUANTILE)))
   const bandColumns = bandDb.map((db, b) =>
-    normalizeDb(db, 40, Math.max(loudestBand - BAND_SPAN_DB, floor(reference?.bandDb[b]))),
+    normalizeDb(db, scaleFor(db, loudestBand - BAND_SPAN_DB, reference?.bands[b])),
   )
   const bands = Array.from({ length: frames }, (_, f) => bandColumns.map((col) => col[f] as number))
   return {

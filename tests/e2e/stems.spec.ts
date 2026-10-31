@@ -27,7 +27,8 @@ test('separates stems in a worker, stores them as assets and measures each stem'
     const stems: Record<string, string> = project.analysis.audio[song.id].stems
     const drumsFile = await media.mediaStore.getFile(project.assets[stems.drums])
     const drums = await analysis.decodeAudioFile(drumsFile)
-    const median = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1]
+    // The kicks, not the gaps between them, show how loud the drums stem is.
+    const p90 = (v: number[]) => [...v].sort((a, b) => a - b)[Math.floor(v.length * 0.9)]
     return {
       ms,
       device: result.device,
@@ -38,8 +39,8 @@ test('separates stems in a worker, stores them as assets and measures each stem'
       stemBytes: drumsFile.size,
       drumsSeconds: drums.channels[0].length / drums.sampleRate,
       drumOnsets: result.stemFeatures.drums.onsets.length,
-      vocalsLoudness: median(result.stemFeatures.vocals.loudness),
-      drumsLoudness: median(result.stemFeatures.drums.loudness),
+      vocalsLoudness: p90(result.stemFeatures.vocals.loudness),
+      drumsLoudness: p90(result.stemFeatures.drums.loudness),
     }
   })
 
