@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Activity, AlertTriangle, Check, RotateCcw } from 'lucide-react'
 import { MIN_TAPS, TAP_RESET_SECONDS, tapTempo } from '../../../../analysis/beats/tap.ts'
 import { BARS_NOTES } from '../../../../model/index.ts'
@@ -114,6 +114,20 @@ export function AnalysisView() {
   // Also while the song file loads before the first analysis starts (no job yet).
   const analyzing = phase === 'running' || state === 'analyzing'
   const finding = state === 'analyzing'
+  // The button that starts a run goes away with it, so focus moves to the status line that takes its place, not to
+  // Cancel, where a second Enter would stop the run.
+  const focusStatus = useRef(false)
+  const start = () => {
+    focusStatus.current = true
+    void analyzeAgain().finally(() => {
+      focusStatus.current = false
+    })
+  }
+  const focusOnMount = (el: HTMLElement | null) => {
+    if (!el || !focusStatus.current) return
+    focusStatus.current = false
+    el.focus()
+  }
 
   if (phase === 'failed') {
     return (
@@ -125,12 +139,7 @@ export function AnalysisView() {
             <Button variant="secondary" onClick={() => dismiss(job)}>
               Back
             </Button>
-            <Button
-              variant="primary"
-              icon={<RotateCcw />}
-              className={styles.grow}
-              onClick={() => void analyzeAgain()}
-            >
+            <Button variant="primary" icon={<RotateCcw />} className={styles.grow} onClick={start}>
               Try again
             </Button>
           </div>
@@ -155,7 +164,7 @@ export function AnalysisView() {
         title="Song analysis"
         subtitle={name}
         footer={
-          <Button variant="primary" block disabled={!hasSong(project)} onClick={() => void analyzeAgain()}>
+          <Button variant="primary" block disabled={!hasSong(project)} onClick={start}>
             Analyze
           </Button>
         }
@@ -235,7 +244,11 @@ export function AnalysisView() {
             : `${BARS_NOTES.notFound}. Analyze again to look for them.`}
         </div>
       )}
-      {!analyzing && (
+      {analyzing ? (
+        <p ref={focusOnMount} tabIndex={-1} role="status" className={styles.lede}>
+          {SONG_STATE_TEXT.analyzing}
+        </p>
+      ) : (
         <div className={styles.linkRow}>
           <Tooltip
             label="Tap tempo"
@@ -277,12 +290,7 @@ export function AnalysisView() {
             label="Analyze again"
             description="Finds the beats, bars and sections again. Undo brings back your corrections."
           >
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={!hasSong(project) || busy}
-              onClick={() => void analyzeAgain()}
-            >
+            <Button size="sm" variant="ghost" disabled={!hasSong(project) || busy} onClick={start}>
               Analyze again
             </Button>
           </Tooltip>

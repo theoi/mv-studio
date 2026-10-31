@@ -413,12 +413,14 @@ test('Assist › Song analysis shows a running state with only Cancel while the 
     panel.getByRole('button', { name: 'Analyze again' }),
   ]
   const levels = panel.getByRole('button', { name: /^(Half|Double) tempo/ })
+  const status = panel.getByRole('status').filter({ hasText: 'Analyzing the song…' })
 
   await expect(panel.getByRole('progressbar', { name: 'Song analysis progress' })).toBeVisible()
   for (const label of ['Tempo', 'Beats', 'Bar starts', 'Sections', 'Energy curve'])
     await expect(row(label)).toHaveText(`${label}Finding…`)
   await expect(panel.getByText('None found')).toHaveCount(0)
   for (const action of actions) await expect(action).toHaveCount(0)
+  await expect(status).toBeVisible()
   await expect(panel.getByRole('button', { name: 'Cancel' })).toBeVisible()
   await shot(page, 'analysis-first-run')
 
@@ -439,8 +441,12 @@ test('Assist › Song analysis shows a running state with only Cancel while the 
   expect(await look(0)).toEqual(await look(2))
   await shot(page, 'analysis-found')
 
-  // Analyzing again keeps the facts found so far until the new ones arrive, with only Cancel.
-  await actions[2]!.click()
+  // Analyzing again keeps the facts found so far until the new ones arrive, with only Cancel. Analyze again goes away,
+  // so focus moves to the status line in its place, where another Enter does nothing.
+  await actions[2]!.focus()
+  await page.keyboard.press('Enter')
+  await expect(status).toBeFocused()
+  await page.keyboard.press('Enter')
   await expect(panel.getByRole('progressbar', { name: 'Song analysis progress' })).toBeVisible()
   await expect(row('Beats')).toHaveText('Beats16 found')
   for (const action of actions) await expect(action).toHaveCount(0)
