@@ -1,11 +1,11 @@
 import { JobError } from '../../shared/jobs.ts'
 import type { CameraPose, DepthMap, Size } from '../types.ts'
+import { PARALLAX_MARCH_GLSL } from './cameraEffect.ts'
 
 /**
  * 2.5D parallax renderer: one full-screen pass that re-projects an image through its depth map with
- * parallax occlusion mapping. The shader sources and uniform contract are exported so the engine
- * compositor can embed the same pass in its own WebGL2 pipeline; `createParallaxRenderer` is a
- * self-contained wrapper that also works on an OffscreenCanvas inside a worker.
+ * parallax occlusion mapping (the same ray march as the compositor's 3D camera move effect).
+ * `createParallaxRenderer` is self-contained and also works on an OffscreenCanvas inside a worker.
  *
  * Geometry (all coordinates normalized, y down, matching `requiredZoom` in camera.ts):
  *   p = 0.5 + (uv - 0.5) * uvScale / zoom - pan          image point before parallax
@@ -14,9 +14,6 @@ import type { CameraPose, DepthMap, Size } from '../types.ts'
  * The ray march walks the depth layers h from 1 (near) down to 0 (far) along q(h) = p - v * (h - focus) and
  * stops at the first layer the depth map reaches, so near content occludes far content.
  */
-
-export const PARALLAX_MIN_STEPS = 16
-export const PARALLAX_MAX_STEPS = 48
 
 export const PARALLAX_VERTEX_SHADER = `#version 300 es
 out vec2 v_uv;
@@ -44,41 +41,11 @@ uniform vec2 u_depthSize;
 
 in vec2 v_uv;
 out vec4 outColor;
-
-const int MIN_STEPS = ${PARALLAX_MIN_STEPS};
-const int MAX_STEPS = ${PARALLAX_MAX_STEPS};
-
-float depthAt(vec2 q) {
-  return textureLod(u_depth, q, 0.0).r;
-}
-
+${PARALLAX_MARCH_GLSL}
 void main() {
   vec2 p = 0.5 + (v_uv - 0.5) * u_uvScale / u_zoom - u_pan;
   vec2 v = u_offset + (p - 0.5) * u_dolly;
-  // One step per depth texel along the whole ray, so thin near features are not stepped over.
-  float rayTexels = length(v * u_depthSize);
-  int steps = int(clamp(ceil(rayTexels), float(MIN_STEPS), float(MAX_STEPS)));
-  float dh = 1.0 / float(steps);
-
-  float h = 1.0;
-  float d = depthAt(p - v * (h - u_focus));
-  float prevH = h;
-  float prevD = d;
-  for (int i = 0; i < MAX_STEPS; i++) {
-    if (d >= h || i >= steps) break;
-    prevH = h;
-    prevD = d;
-    h -= dh;
-    d = depthAt(p - v * (h - u_focus));
-  }
-
-  // Linear refinement between the last layer above the surface and the first one at or below it.
-  float hit = h;
-  float above = prevD - prevH;
-  float below = d - h;
-  if (above < 0.0 && above - below < 0.0) hit = mix(prevH, h, clamp(above / (above - below), 0.0, 1.0));
-
-  vec2 q = clamp(p - v * (hit - u_focus), 0.0, 1.0);
+  vec2 q = clamp(parallaxMarch(u_depth, vec2(1.0), vec2(0.0), u_depthSize, p, v, u_focus), 0.0, 1.0);
   // The image texture holds premultiplied alpha, so filtering and the output stay premultiplied.
   outColor = textureLod(u_image, q, 0.0);
 }

@@ -49,11 +49,14 @@ export type { FootageMatcher } from './matching/matcher.ts'
 export type { DepthService, DepthRequest } from './depth/service.ts'
 export { prepareDepthForParallax, suggestFocus } from './depth/prepare.ts'
 export { CAMERA_PRESETS, cameraPoseAt, defaultCameraMove, requiredOverscan } from './render/camera.ts'
+export { createParallaxRenderer, type ParallaxRenderer } from './render/parallax.ts'
+export { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from './render/cameraEffect.ts'
 export {
-  createParallaxRenderer,
-  PARALLAX_FRAGMENT_SHADER,
-  PARALLAX_UNIFORMS,
-  PARALLAX_VERTEX_SHADER,
-  parallaxUniformValues,
-  type ParallaxRenderer,
-} from './render/parallax.ts'
+  addCameraMove,
+  cameraMoveCommands,
+  cameraMoveEffect,
+  encodeDepthImage,
+  findDepthAsset,
+  type CameraMoveDeps,
+  type CameraMoveOptions,
+} from './cameraMove.ts'

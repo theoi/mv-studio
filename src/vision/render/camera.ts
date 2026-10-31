@@ -23,12 +23,13 @@ export const CAMERA_PRESETS: readonly CameraPreset[] = [
 ]
 
 /** Parallax offset at depth 1 (relative to the focus plane) at full intensity. */
-const MAX_OFFSET = 0.06
+export const MAX_OFFSET = 0.06
 const DEFAULT_INTENSITY = 0.5
 const DEFAULT_FOCUS = 0.5
-const OVERSCAN_SAMPLES = 64
+/** Every preset's largest required zoom falls on one of these evenly spaced progress values (see tests). */
+export const OVERSCAN_SAMPLES = 8
 /** Keeps rounding in the shader's coordinate math from exposing a sub-pixel border. */
-const OVERSCAN_MARGIN = 1.002
+export const OVERSCAN_MARGIN = 1.002
 
 export function defaultCameraMove(preset: CameraPreset): CameraMove {
   return { preset, intensity: DEFAULT_INTENSITY, focus: DEFAULT_FOCUS }

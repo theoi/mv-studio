@@ -23,7 +23,7 @@ jobs.run({
 - `selectionTrack(source, { t, points })`: object the user clicked, followed through the clip.
 - `subjects(source)`: subject track for auto-reframe (see below).
 - `indexClip(source)` + `matcher.rank(library, { text, mood, energy })`: footage ranking for lyric lines. `createDirectorFootageMatcher` adapts this to the director's interface.
-- `depth.get({ mediaId, quality, sourceSize, frame })`: Depth Anything V2 Small depth map, cached per media id and quality.
+- `depth.get({ mediaId, quality, sourceSize, frame })`: Depth Anything V2 Small depth map, cached per media id and quality. `addCameraMove` builds on it (see below).
 
 Frames come from a `FrameSource` (`runtime/frames.ts`). Use `createAssetFrameSource(asset, mediaStore)` for stored assets: it decodes through the engine's export decoder, so analysis sees exactly the exported pixels, and it is about 4x faster than seeking a `<video>`. `createVideoElementSource` covers blobs that are not stored yet.
 
@@ -48,9 +48,14 @@ For a virtual camera, call `reframePlanFor(asset, analysis, aspect, options?)` o
 
 `MASK_REFINE_GLSL` / `createMaskRefinePass` refine a low-resolution mask to output resolution with the frame as guide (GPU version of `mask/upsample.ts`).
 
-## Depth and camera moves
+## 3D camera moves on stills
 
-`prepareDepthForParallax(depth)` dilates the foreground and softens depth steps so moves do not tear objects, `cameraPoseAt(defaultCameraMove('orbit-left'), progress)` gives the camera for a preset move, and `createParallaxRenderer()` draws the 2.5D view of a still or frame. `PARALLAX_FRAGMENT_SHADER`, `PARALLAX_UNIFORMS` and `parallaxUniformValues` expose the same pass for hosting in the compositor; it needs a depth texture next to the layer input. Known limits: some background bending at the ends of large moves and a faint halo around the subject.
+`addCameraMove({ editor, media: mediaStore, depth: vision.depth }, clipId, { preset, intensity, ...fromJob(ctx) })` is the "Add 3D camera move" action. It estimates the still's depth (Depth Anything V2 Small, cached; about 4–8 s on CPU the first time), stores it as a derived grayscale PNG (reused on later calls), and adds the `camera-3d` effect (`src/plugins/parallax.ts`) first on the clip with `progress` keyframed from 0 to 1 across the clip, replacing an earlier camera move. Everything lands in one dispatch, so it is one undo step.
+
+- Defaults: dolly in at amount 0.5, clean on every test still; edge stretching starts to show near amount 1. Presets: dolly in/out, pan left/right, tilt up/down, orbit left/right, crane up, Ken Burns. Each eases in and out and zooms just enough that no border shows.
+- The effect works on the fitted layer and reads depth through its `fit` param (set from the clip), so it assumes the clip has no position, scale or rotation transform. Without a depth map it still pans and zooms, with no parallax.
+- `createParallaxRenderer()` draws the same camera outside the compositor: it shares the shader's ray march, and `cameraPoseAt` (TS) and the shader compute identical poses (checked per preset in `tests/e2e/vision-media.spec.ts`).
+- Known limits: some background bending at the ends of large moves and a faint halo around the subject. The ray march takes up to 48 depth reads per pixel.
 
 ## Benchmarks
 
