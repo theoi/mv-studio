@@ -5,7 +5,7 @@ import {
   computeEnergyCurve,
   labelSections,
 } from '../../../src/analysis/structure/sections.ts'
-import { drumLoop } from './synth.ts'
+import { chordPad, concat, drumLoop, mix } from './synth.ts'
 
 /** Raw segments from consecutive [group, energy, seconds] triples. */
 function segments(spec: [number, number, number][]) {
@@ -18,6 +18,51 @@ function segments(spec: [number, number, number][]) {
 }
 
 describe('analyzeStructure', () => {
+  it('finds the chorus as the most repeated loud passage, on bars', () => {
+    const chords = {
+      verse: [
+        [57, 60, 64],
+        [53, 57, 60],
+        [55, 59, 62],
+        [52, 55, 59],
+      ],
+      chorus: [
+        [60, 64, 67],
+        [65, 69, 72],
+        [67, 71, 74],
+        [62, 65, 69],
+      ],
+      bridge: [
+        [50, 53, 57],
+        [48, 52, 55],
+        [50, 53, 57],
+        [52, 55, 59],
+      ],
+    }
+    const part = (kind: keyof typeof chords, seconds: number, seed: number, loud: number) =>
+      mix(
+        drumLoop({ bpm: 120, seconds, offset: 0, seed, gain: loud }).audio,
+        chordPad(chords[kind], 120, seconds, 0, 0.3 * loud),
+      )
+    const audio = concat(
+      part('verse', 16, 1, 0.4),
+      part('chorus', 8, 2, 1),
+      part('verse', 16, 3, 0.4),
+      part('chorus', 8, 4, 1),
+      part('bridge', 16, 5, 0.7),
+      part('chorus', 8, 6, 1),
+    )
+    const { spec, onset, grid } = analyzeMono(audio)
+    const { chorus } = analyzeStructure(spec, grid, computeEnergyCurve(spec, onset))
+    expect(chorus.map((r) => [r.start, r.end])).toEqual(
+      [
+        [16, 24],
+        [40, 48],
+        [64, 72],
+      ].map((r) => r.map((t) => expect.closeTo(t, 0))),
+    )
+  })
+
   it('does not split off a beat at the very end of a clip as its own section', () => {
     const { audio } = drumLoop({ bpm: 120, seconds: 8, offset: 0.5 })
     const { spec, onset } = analyzeMono(audio)

@@ -17,7 +17,10 @@ export interface Section {
 export interface SongSections {
   version: 1
   sections: Section[]
-  /** Time ranges of the detected repeated chorus. */
+  /**
+   * Time ranges of the chorus: the most repeated loud passage when one stands out, else the sections labeled chorus.
+   * The section labels do not follow it yet; `withChorus` (structure/chorus.ts) cuts and relabels them.
+   */
   chorus: { start: number; end: number }[]
 }
 
@@ -304,6 +307,79 @@ function segmentSimilarity(
   return best
 }
 
+/** A repeat must stand out from the song's typical self-similarity by this many standard deviations. */
+const CHORUS_MIN_Z = 1.5
+/** Preference for loud passages: fitness times 1 + CHORUS_LOUDNESS x (passage energy - song energy). */
+const CHORUS_LOUDNESS = 8
+/** Candidate chorus lengths in beats: 4 and 8 bars of 4/4. */
+const CHORUS_BEATS = [16, 32]
+
+/**
+ * The chorus as the song's most repeated loud passage (audio thumbnailing), independent of the section boundaries.
+ * For each 4- or 8-bar window starting on a bar, the other bar-aligned windows whose beat-by-beat similarity stands
+ * out from the song's typical similarity are its repeats; the window whose repeats stand out most, weighted by length
+ * and loudness, wins. Returns its occurrences as beat ranges, or [] when nothing repeats.
+ */
+function repeatedPassage(
+  feat: BeatFeatures,
+  sigma2: number,
+  bars: number[],
+  beatEnergy: Float64Array,
+): { a: number; z: number }[] {
+  const n = feat.chroma.length
+  const S = new Float32Array(n * n)
+  let sum = 0
+  let sum2 = 0
+  let count = 0
+  for (let i = 0; i < n; i++)
+    for (let j = i; j < n; j++) {
+      let e = 0
+      for (let k = 0; k < 12; k++) e += (feat.timbre[i][k] - feat.timbre[j][k]) ** 2
+      const v = 0.7 * Math.exp(-e / sigma2) + 0.3 * Math.max(0, dot(feat.chroma[i], feat.chroma[j]))
+      S[i * n + j] = v
+      S[j * n + i] = v
+      if (j - i > 8) {
+        sum += v
+        sum2 += v * v
+        count++
+      }
+    }
+  if (count === 0) return []
+  const mu = sum / count
+  const sd = Math.sqrt(Math.max(1e-12, sum2 / count - mu * mu))
+  let songEnergy = 0
+  for (const e of beatEnergy) songEnergy += e / n
+  let best = { fitness: 0, starts: [] as number[], length: 0 }
+  for (const length of CHORUS_BEATS) {
+    for (const a of bars) {
+      if (a + length > n) break
+      const repeats: { b: number; z: number }[] = []
+      for (const b of bars) {
+        if (b + length > n || Math.abs(b - a) < length) continue
+        let v = 0
+        for (let k = 0; k < length; k++) v += S[(a + k) * n + b + k]
+        const z = (v / length - mu) / sd
+        if (z >= CHORUS_MIN_Z) repeats.push({ b, z })
+      }
+      repeats.sort((x, y) => y.z - x.z)
+      const starts = [a]
+      let fitness = 0
+      for (const r of repeats) {
+        if (starts.some((s) => Math.abs(s - r.b) < length)) continue
+        starts.push(r.b)
+        fitness += r.z - CHORUS_MIN_Z
+      }
+      if (starts.length < 2) continue
+      let e = 0
+      for (const s of starts) for (let k = 0; k < length; k++) e += beatEnergy[s + k]
+      e /= starts.length * length
+      fitness *= length * Math.max(0.05, 1 + CHORUS_LOUDNESS * (e - songEnergy))
+      if (fitness > best.fitness) best = { fitness, starts: starts.sort((x, y) => x - y), length }
+    }
+  }
+  return best.starts.map((a) => ({ a, z: Math.min(n, a + best.length) }))
+}
+
 export function computeEnergyCurve(spec: SpectralAnalysis, onset: Float32Array, fps = 10): EnergyCurve {
   const step = Math.round(spec.fps / fps)
   const nb = spec.bandPower.length / spec.frames
@@ -467,7 +543,15 @@ export function analyzeStructure(
     energy: eAt(times[s.a], times[s.z]),
   }))
   options.debug?.({ segments: raw, novelty: nov, barScore })
-  return labelSections(raw, spec.duration)
+  const result = labelSections(raw, spec.duration)
+  const bars = barStarts.filter((b) => b < n)
+  const beatEnergy = Float64Array.from({ length: n }, (_, i) => eAt(times[i], times[i + 1]))
+  const passage = repeatedPassage(feat, sigma2, bars, beatEnergy)
+  if (passage.length > 0) {
+    const round = (t: number) => Math.round(t * 1000) / 1000
+    result.chorus = passage.map(({ a, z }) => ({ start: round(times[a]), end: round(times[z]) }))
+  }
+  return result
 }
 
 interface RawSegment {
