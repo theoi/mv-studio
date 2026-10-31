@@ -48,6 +48,7 @@ import {
   useCloud,
   type LlmChoice,
 } from '../../state/cloud.ts'
+import { SHORTCUTS, SHORTCUT_GROUPS } from '../../state/keymap.ts'
 import {
   LOCAL_MODELS,
   clearModels,
@@ -545,65 +546,31 @@ function GeneralPage() {
   )
 }
 
-const shortcutGroups: { label: string; items: [string, string][] }[] = [
-  {
-    label: 'General',
-    items: [
-      ['Command palette', 'Mod K'],
-      ['Save now', 'Mod S'],
-      ['Ask Assist', 'Mod J'],
-      ['Export', 'Mod E'],
-      ['Settings', 'Mod ,'],
-      ['Undo / redo', 'Mod Z'],
-      ['Toggle library', 'Mod B'],
-    ],
-  },
-  {
-    label: 'Playback',
-    items: [
-      ['Play / pause', 'Space'],
-      ['Previous / next section', '↑'],
-      ['Previous / next beat', 'Shift ←'],
-      ['Frame back / forward', '←'],
-      ['Full-screen preview', 'F'],
-    ],
-  },
-  {
-    label: 'Timeline',
-    items: [
-      ['Split at playhead', 'S'],
-      ['Copy', 'Mod C'],
-      ['Cut', 'Mod X'],
-      ['Paste at playhead', 'Mod V'],
-      ['Duplicate', 'Mod D'],
-      ['Delete', 'Delete'],
-      ['Select all on the track', 'Mod A'],
-      ['Snapping', 'N'],
-      ['Beat snapping', 'Shift N'],
-      ['Add text', 'T'],
-      ['Add keyframe', 'Alt K'],
-      ['Nudge lyric line a frame', 'Alt ← →'],
-      ['Add marker', 'M'],
-      ['Zoom to fit', 'Shift Z'],
-    ],
-  },
-]
-
 function ShortcutsPage() {
   const [q, setQ] = useState('')
+  const query = q.trim().toLowerCase()
   return (
     <>
       <SearchInput value={q} onChange={setQ} placeholder="Search shortcuts" />
-      {shortcutGroups.map((g) => {
-        const items = g.items.filter(([l]) => l.toLowerCase().includes(q.toLowerCase()))
+      {SHORTCUT_GROUPS.map((group) => {
+        const items = SHORTCUTS.filter(
+          (s) => s.group === group && [s.label, ...s.keys].join(' ').toLowerCase().includes(query),
+        )
         if (!items.length) return null
         return (
-          <div key={g.label} className={styles.scGroup}>
-            <div className={styles.scLabel}>{g.label}</div>
-            {items.map(([l, k]) => (
-              <div key={l} className={styles.scRow}>
-                <span>{l}</span>
-                <Kbd keys={k} />
+          <div key={group} className={styles.scGroup}>
+            <div className={styles.scLabel}>{group}</div>
+            {items.map((s) => (
+              <div key={s.id} className={styles.scRow}>
+                <span>{s.label}</span>
+                <span className={styles.scKeys}>
+                  {s.keys.map((k, i) => (
+                    <Fragment key={k}>
+                      {i > 0 && 'or'}
+                      <Kbd keys={k} />
+                    </Fragment>
+                  ))}
+                </span>
               </div>
             ))}
           </div>

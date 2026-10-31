@@ -165,6 +165,14 @@ export class ProjectEditor {
     return this.redoStack[this.redoStack.length - 1]?.label
   }
 
+  /** Labels of the undo and redo steps, the next one to undo or redo first. */
+  history(): { undo: string[]; redo: string[] } {
+    return {
+      undo: this.undoStack.map((e) => e.label).reverse(),
+      redo: this.redoStack.map((e) => e.label).reverse(),
+    }
+  }
+
   undo(): boolean {
     const entry = this.undoStack.pop()
     if (!entry) return false

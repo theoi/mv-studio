@@ -118,6 +118,7 @@ import {
   toggleStem,
   type StemMix,
 } from '../../../state/stems.ts'
+import { MAX_PPS, MIN_PPS, registerFit, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { LaneMenu } from './LaneMenu.tsx'
 import { openLaneMenu } from './laneMenu.ts'
@@ -126,8 +127,6 @@ import styles from './Timeline.module.css'
 const HEADER_W = 148
 const RULER_H = 24
 const SONG_H = 34
-const MIN_PPS = 3
-const MAX_PPS = 80
 
 type LaneKind = 'video' | 'overlay' | 'lyrics' | 'look' | 'audio'
 
@@ -384,8 +383,7 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
   const beatSnap = useUi((s) => s.beatSnap)
   const showEnergy = useUi((s) => s.showEnergy)
   const pps = useUi((s) => s.pxPerSec)
-  const [tool, setTool] = useState('select')
-  const zoomTo = (v: number) => set({ pxPerSec: Math.min(MAX_PPS, Math.max(MIN_PPS, v)) })
+  const tool = useUi((s) => s.tool)
   const sliderVal = Math.round((Math.log(pps / MIN_PPS) / Math.log(MAX_PPS / MIN_PPS)) * 100)
   return (
     <div className={styles.toolbar}>
@@ -393,7 +391,7 @@ const Toolbar = memo(function Toolbar({ onFit, bpm }: { onFit: () => void; bpm?:
         <Segmented
           size="sm"
           value={tool}
-          onChange={setTool}
+          onChange={(v) => set({ tool: v })}
           ariaLabel="Timeline tool"
           options={[
             { value: 'select', label: <MousePointer2 />, title: 'Select (V)' },
@@ -578,9 +576,13 @@ function ClipBlockView({ clip, pps, selected, onPointerDown }: ClipBlockProps) {
           tabIndex={0}
           aria-label={`${label}, ${formatTime(clip.start, true)} to ${formatTime(clip.end, true)}`}
           aria-pressed={selected}
+          aria-keyshortcuts="Enter Shift+Enter"
+          // Enter selects and Shift Enter adds to the selection; Space plays or pauses, as in other editors, even
+          // with the clip focused from the keyboard.
+          data-space-plays
           onPointerDown={(e) => onPointerDown(e, clip, 'move')}
           onKeyDown={(e) => {
-            if (e.key !== 'Enter' && e.key !== ' ') return
+            if (e.key !== 'Enter') return
             e.preventDefault()
             if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(clip.id)
             else select({ type: 'clip', id: clip.id })
@@ -1093,6 +1095,7 @@ export function Timeline() {
       ),
     [],
   )
+  useEffect(() => registerFit(fit), [fit])
 
   const scrubFrom = (e: React.PointerEvent<HTMLDivElement>) => {
     const lane = e.currentTarget
@@ -1554,7 +1557,15 @@ export function Timeline() {
                               role="button"
                               tabIndex={0}
                               aria-label={`Lyric: ${c.name}`}
+                              aria-pressed={sel}
+                              aria-keyshortcuts="Enter"
+                              data-space-plays
                               onPointerDown={(e) => drag(e, { type: 'line', edge: 'move' })}
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter' || !lineId) return
+                                e.preventDefault()
+                                select({ type: 'lyric', id: lineId })
+                              }}
                             >
                               <LyricChipContent
                                 text={line?.text ?? c.name}
