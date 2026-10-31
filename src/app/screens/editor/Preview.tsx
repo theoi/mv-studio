@@ -35,6 +35,8 @@ import {
 } from '../../state/project.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'
+import { usePick } from '../../state/pick.ts'
+import { PickOverlay } from './PickOverlay.tsx'
 import { connectPreview, fitStage, selectionOutline } from './stage.ts'
 import styles from './Preview.module.css'
 
@@ -49,8 +51,9 @@ function SelectionOverlay({ width, height }: { width: number; height: number }) 
   const selection = useUi((s) => s.selection)
   const t = useUi((s) => s.playhead)
   const playing = useUi((s) => s.playing)
+  const picking = usePick((s) => !!s.request)
   const project = useProject()
-  if (playing || !width) return null
+  if (playing || picking || !width) return null
   const corners = selectionOutline(project, selection, t, width, height)
   if (!corners) return null
   return (
@@ -78,6 +81,7 @@ function Stage({ ratio }: { ratio: number }) {
   // Each preview gets a fresh canvas (the canvas key): a canvas handed to a render worker that died can't draw again.
   const [generation, setGeneration] = useState(0)
   const restarts = useRef<number[]>([])
+  const picking = usePick((s) => !!s.request)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -144,6 +148,7 @@ function Stage({ ratio }: { ratio: number }) {
           role="img"
         />
         {status === 'ready' && <SelectionOverlay width={size.width} height={size.height} />}
+        {status === 'ready' && picking && <PickOverlay width={size.width} height={size.height} />}
         {status === 'loading' && (
           <div className={styles.stageNote}>
             <Spinner /> Preparing the preview

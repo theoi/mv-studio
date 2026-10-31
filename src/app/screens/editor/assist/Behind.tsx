@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { AlertTriangle, Check, Eye, Lock, RotateCcw, Undo2 } from 'lucide-react'
+import { AlertTriangle, Check, Eye, Lock, MousePointerClick, RotateCcw, Undo2 } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
@@ -17,6 +17,7 @@ import {
   usePersonDownload,
   type FootageRow,
 } from '../../../state/behind.ts'
+import { pickObject, trackingText } from '../../../state/behindObject.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
 import { set, toast } from '../../../state/ui.ts'
@@ -122,7 +123,8 @@ export function BehindView() {
         icon={<Undo2 />}
         disabled={!canUndo}
         onClick={() => {
-          if (canUndo && editor.undo()) toast('Lyrics are back in front')
+          if (canUndo && editor.undo())
+            toast(result.object ? 'The object cutout is undone' : 'Lyrics are back in front')
           dismiss(job)
         }}
       >
@@ -168,14 +170,18 @@ export function BehindView() {
           </span>
           <div>
             <div className={styles.successTitle}>
-              {result.count
-                ? `Lyrics now sit behind the person on ${plural(result.count, 'clip')}`
-                : 'No clip changed'}
+              {result.object
+                ? 'Lyrics now sit behind the object'
+                : result.count
+                  ? `Lyrics now sit behind the person on ${plural(result.count, 'clip')}`
+                  : 'No clip changed'}
             </div>
             <div className={styles.muted}>
-              {result.count
-                ? 'Each cutout is on the Subject track, above the lyrics.'
-                : 'The clips have no person large enough to cut out, or already have a cutout.'}
+              {result.object
+                ? `${trackingText(result.object)}${result.object.fix.length ? ' Show the clip to fix those spots.' : ''}`
+                : result.count
+                  ? 'Each cutout is on the Subject track, above the lyrics.'
+                  : 'The clips have no person large enough to cut out, or already have a cutout.'}
             </div>
           </div>
         </div>
@@ -210,7 +216,20 @@ export function BehindView() {
         </>
       }
     >
-      <p className={styles.lede}>People are cut out automatically on this device.</p>
+      <p className={styles.lede}>
+        People are cut out automatically on this device. For other objects, click them in the preview.
+      </p>
+      <div className={styles.rowActions}>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<MousePointerClick />}
+          disabled={!rows.length}
+          onClick={() => pickObject()}
+        >
+          Pick an object in the preview
+        </Button>
+      </div>
       <div className={styles.groupLabelInset}>Clips on the timeline</div>
       {rows.length ? (
         rows.map((row) => <SuitRow key={row.asset.id} {...row} />)

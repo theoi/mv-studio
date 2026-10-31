@@ -1,18 +1,25 @@
 import { useEffect } from 'react'
-import { Check } from 'lucide-react'
+import { Check, Crosshair, MousePointerClick } from 'lucide-react'
 import type { VisualClip } from '../../../../model/index.ts'
+import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { FieldRow, Section, Switch } from '../../../ds/Fields.tsx'
+import { formatTime } from '../../../format.ts'
 import {
   bringToFront,
   canTryCutout,
   checkFootage,
+  cutoutsOf,
   hasCutout,
+  objectOf,
   putBehind,
   suitabilityOf,
   suitabilityText,
   useBehind,
+  type ObjectPick,
+  type VideoClip,
 } from '../../../state/behind.ts'
+import { fixObject, pickObject, timelineTimeOf, trackingText } from '../../../state/behindObject.ts'
 import { backgroundAnalysisOn } from '../../../state/footage.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
@@ -23,6 +30,9 @@ import styles from '../Inspector.module.css'
 
 type MediaClip = VisualClip & { assetId: string }
 
+/** Lost spots offered as "Fix at" buttons; more are fixed by re-running from the next one. */
+const MAX_FIXES = 3
+
 function useBehindState(clip: MediaClip) {
   const project = useProject()
   const checks = useBehind((s) => s.checks)
@@ -30,16 +40,21 @@ function useBehindState(clip: MediaClip) {
   const { job, phase } = useJob(JOB_KINDS.cutout)
   const cutoutOf = typeof clip.meta?.behindSubjectOf === 'string' ? clip.meta.behindSubjectOf : undefined
   const hostId = cutoutOf ?? clip.id
-  const suitability = suitabilityOf(project, project.clips[hostId], checks)
-  const asked = !!job && !!requests[job.id]?.includes(hostId)
+  const host = project.clips[hostId]
+  const suitability = suitabilityOf(project, host, checks)
+  const request = job ? requests[job.id] : undefined
+  const asked = !!request?.clips.includes(hostId)
   return {
     hostId,
-    assetId:
-      project.clips[hostId] && 'assetId' in project.clips[hostId] ? project.clips[hostId].assetId : undefined,
+    host: host?.type === 'video' ? host : undefined,
+    assetId: host && 'assetId' in host ? host.assetId : undefined,
     behind: !!cutoutOf || hasCutout(project, clip.id),
+    object: objectOf(cutoutsOf(project, hostId)[0]),
     suitability,
+    busy: phase === 'running',
     cutting: asked && phase === 'running' ? job : undefined,
     failure: asked && phase === 'failed' ? job?.error?.message : undefined,
+    objectFailure: !!request?.object,
   }
 }
 
@@ -76,8 +91,40 @@ export function BehindSuggestion({ clip }: { clip: MediaClip }) {
   )
 }
 
+/** How well the picked object was followed, with a button for each spot where it was lost. */
+function ObjectTracking({ host, pick, disabled }: { host: VideoClip; pick: ObjectPick; disabled: boolean }) {
+  const fixes = pick.fix.slice(0, MAX_FIXES)
+  // formatTime floors the tenths, so 11.2 computed as 11.1999… would read 0:11.1.
+  const timeLabel = (t: number) => formatTime(timelineTimeOf(host, t) + 1e-6, true)
+  return (
+    <>
+      <p className={styles.note}>
+        {trackingText(pick)}
+        {pick.fix.length ? ' Click the object there to fix it.' : ''}
+      </p>
+      {fixes.length > 0 && (
+        <div className={styles.inlineActions}>
+          {fixes.map((t) => (
+            <Button
+              key={t}
+              size="sm"
+              variant="ghost"
+              icon={<Crosshair />}
+              disabled={disabled}
+              onClick={() => fixObject(host.id, t)}
+            >
+              Fix at {timeLabel(t)}
+            </Button>
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
 export function LayeringSection({ clip }: { clip: MediaClip }) {
-  const { hostId, assetId, behind, suitability, cutting, failure } = useBehindState(clip)
+  const { hostId, host, assetId, behind, object, suitability, busy, cutting, failure, objectFailure } =
+    useBehindState(clip)
   const text = suitabilityText(suitability)
   const unchecked = suitability.status === 'unchecked'
   useEffect(() => {
@@ -96,7 +143,7 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
           <Badge tone="accent">Cutting out… {pct(cutting)}%</Badge>
         ) : behind ? (
           <Badge tone="success" icon={<Check />}>
-            Person found
+            {object ? 'Object picked' : 'Person found'}
           </Badge>
         ) : suitability.status === 'checking' ? (
           <Badge>{text.status}</Badge>
@@ -104,10 +151,26 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
       </FieldRow>
       {failure ? (
         <p className={styles.note} role="alert">
-          {failure} Your project is unchanged. Turn it on again to retry.
+          {failure} Your project is unchanged.{' '}
+          {objectFailure ? 'Pick the object again to retry.' : 'Turn it on again to retry.'}
         </p>
+      ) : behind && object && host ? (
+        <ObjectTracking host={host} pick={object} disabled={busy} />
       ) : (
         !behind && text.why && <p className={styles.note}>{text.why}</p>
+      )}
+      {host && (
+        <div className={styles.inlineActions}>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<MousePointerClick />}
+            disabled={busy}
+            onClick={() => pickObject(hostId)}
+          >
+            Pick another object in the preview
+          </Button>
+        </div>
       )}
     </Section>
   )
