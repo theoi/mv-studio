@@ -356,6 +356,22 @@ button.songRow:hover {
   box-shadow: 0 0 0 2px var(--accent-line);
 }
 
+.tilePreview {
+  position: absolute;
+  inset: 0;
+}
+
+.tilePreview canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tilePreview canvas[data-ready='false'] {
+  visibility: hidden;
+}
+
 .tileName {
   padding: 0 2px;
   color: var(--text-2);
