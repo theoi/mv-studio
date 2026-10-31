@@ -571,6 +571,23 @@
   background: var(--accent-line);
 }
 
+/* How many keyframes a mark stands for, just right of its diamond. It takes no clicks, so it never blocks a
+   neighboring mark. */
+.keyframeCount {
+  position: absolute;
+  top: 2px;
+  left: calc(var(--diamond-x) + 7px);
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-overlay);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  color: var(--text-1);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  line-height: 12px;
+  pointer-events: none;
+}
+
 /* Lyrics */
 .lyric {
   position: absolute;

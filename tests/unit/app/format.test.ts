@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { aboutMinutes, editedAgo, formatParam } from '../../../src/app/format.ts'
+import { aboutMinutes, editedAgo, formatParam, formatTime } from '../../../src/app/format.ts'
 
 const now = new Date(2026, 9, 31, 15, 0).getTime()
 const at = (...parts: [number, number, number, number, number]) => new Date(...parts).toISOString()
@@ -36,4 +36,12 @@ it('rounds a wait up to the next minute, so "About 5 min" never stands for 5 min
   expect(aboutMinutes(45)).toBe('Under a minute')
   expect(aboutMinutes(300)).toBe('About 5 min')
   expect(aboutMinutes(326)).toBe('About 6 min')
+})
+
+it('shows the tenth a time was set at, though sums land a hair under it', () => {
+  expect(formatTime(3.4, true)).toBe('0:03.4')
+  expect(formatTime(1 + 2.8, true)).toBe('0:03.8')
+  expect(formatTime(73.65, true)).toBe('1:13.6')
+  expect(formatTime(59.95)).toBe('0:59')
+  expect(formatTime(125.04, true)).toBe('2:05.0')
 })

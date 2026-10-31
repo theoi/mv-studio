@@ -117,6 +117,7 @@ import { templateState } from '../../../../plugins/templates.ts'
 import { addMarkerAtPlayhead } from '../../../state/markers.ts'
 import {
   EASINGS,
+  groupMarks,
   keyframeMarks,
   markTargets,
   removeKeyframes,
@@ -624,7 +625,8 @@ function snapTime(t: number, pps: number, grid: BeatGrid | null, edges: number[]
 /**
  * The selected clip's keyframes, one Tab stop: Left and Right (Home, End) move between them, Enter or a click moves
  * the playhead to one and opens its easing menu, Delete removes it. After a removal, focus goes to the neighboring
- * mark, or to the clip when none is left.
+ * mark, or to the clip when none is left. Keyframes whose diamonds would overlap share one mark with their count,
+ * whose menu sets the easing of all of them or removes them.
  */
 function KeyframeMarks({
   clip,
@@ -639,18 +641,24 @@ function KeyframeMarks({
 }) {
   const [active, setActive] = useState(0)
   const buttons = useRef(new Map<number, HTMLButtonElement>())
-  /** Where focus goes once a removal's menu has closed: a mark's time, or the clip. */
+  /** Where focus goes once a removal's menu has closed: a mark's first time, or the clip. */
   const after = useRef<{ remove: number; focus: number | 'clip' } | null>(null)
-  const current = Math.min(active, marks.length - 1)
-  const focusMark = (i: number) => buttons.current.get(marks[i]!.time)?.focus()
-  const focusAfterRemoving = (i: number): number | 'clip' =>
-    marks[i + 1]?.time ?? marks[i - 1]?.time ?? 'clip'
+  const groups = groupMarks(
+    marks,
+    marks.map((m) => Math.min(width - 8, Math.max(8, m.time * pps))),
+  )
+  const targets = markTargets(
+    groups.map((g) => g.at),
+    width,
+  )
+  const firstTime = (i: number) => groups[i]?.marks[0]?.time
+  const current = Math.min(active, groups.length - 1)
+  const focusGroup = (i: number) => buttons.current.get(firstTime(i)!)?.focus()
+  const focusAfterRemoving = (i: number): number | 'clip' => firstTime(i + 1) ?? firstTime(i - 1) ?? 'clip'
   const moveFocus = (target: number | 'clip') => {
     if (target === 'clip') document.querySelector<HTMLElement>(`[data-clip-id="${clip.id}"]`)?.focus()
     else buttons.current.get(target)?.focus()
   }
-  const diamonds = marks.map((m) => Math.min(width - 8, Math.max(8, m.time * pps)))
-  const targets = markTargets(diamonds, width)
   return (
     <span
       className={[styles.keyframes, clip.kind === 'look' && styles['keyframes-look']]
@@ -658,24 +666,35 @@ function KeyframeMarks({
         .join(' ')}
       style={{ left: clip.start * pps, width }}
     >
-      {marks.map((mark, i) => {
-        const at = clip.start + mark.time
+      {groups.map((group, i) => {
+        const first = group.marks[0]!
+        const last = group.marks.at(-1)!
+        const times = group.marks.map((m) => m.time)
+        const count = times.length
+        const at = clip.start + first.time
+        const easing = group.marks.every((m) => m.easing === first.easing) ? first.easing : null
+        const hasNext = group.marks.some((m) => m.hasNext)
+        const target = targets[i]!
         return (
-          <Menu key={mark.time}>
+          <Menu key={first.time}>
             <MenuTrigger asChild>
               <button
                 ref={(el) => {
-                  if (el) buttons.current.set(mark.time, el)
-                  else buttons.current.delete(mark.time)
+                  if (el) buttons.current.set(first.time, el)
+                  else buttons.current.delete(first.time)
                 }}
                 className={styles.keyframe}
                 style={{
-                  left: targets[i]!.left,
-                  width: targets[i]!.width,
-                  ['--diamond-x' as string]: `${diamonds[i]! - targets[i]!.left}px`,
+                  left: target.left,
+                  width: target.width,
+                  ['--diamond-x' as string]: `${group.at - target.left}px`,
                 }}
                 tabIndex={i === current ? 0 : -1}
-                aria-label={`Keyframe at ${formatTime(at, true)}`}
+                aria-label={
+                  count > 1
+                    ? `${count} keyframes, ${formatTime(at, true)} to ${formatTime(clip.start + last.time, true)}`
+                    : `Keyframe at ${formatTime(at, true)}`
+                }
                 onFocus={() => setActive(i)}
                 onPointerDown={(e) => {
                   e.stopPropagation()
@@ -688,13 +707,13 @@ function KeyframeMarks({
                     : e.key === 'Home'
                       ? 0
                       : e.key === 'End'
-                        ? marks.length - 1
+                        ? groups.length - 1
                         : null
                   if (to !== null) {
                     // The global Left and Right move the playhead; here they move between the marks.
                     e.preventDefault()
                     e.stopPropagation()
-                    focusMark(Math.max(0, Math.min(marks.length - 1, to)))
+                    focusGroup(Math.max(0, Math.min(groups.length - 1, to)))
                   } else if (e.key === 'Enter' || e.key === ' ') {
                     e.stopPropagation()
                     set({ playhead: at })
@@ -702,45 +721,51 @@ function KeyframeMarks({
                     // Without this, the global Delete would remove the whole clip.
                     e.preventDefault()
                     e.stopPropagation()
-                    const target = focusAfterRemoving(i)
-                    removeKeyframes(clip.id, mark.time)
-                    requestAnimationFrame(() => moveFocus(target))
+                    const next = focusAfterRemoving(i)
+                    removeKeyframes(clip.id, times)
+                    requestAnimationFrame(() => moveFocus(next))
                   }
                 }}
-              />
+              >
+                {count > 1 && (
+                  <span className={`${styles.keyframeCount} tnum`} aria-hidden>
+                    {count}
+                  </span>
+                )}
+              </button>
             </MenuTrigger>
             <MenuContent
               side="top"
               align="center"
               onCloseAutoFocus={(e) => {
                 const pending = after.current
-                if (!pending || pending.remove !== mark.time) return
+                if (!pending || pending.remove !== first.time) return
                 // Remove once the menu has closed, so its trigger is still there to close against.
                 e.preventDefault()
                 after.current = null
-                removeKeyframes(clip.id, mark.time)
+                removeKeyframes(clip.id, times)
                 requestAnimationFrame(() => moveFocus(pending.focus))
               }}
             >
-              <MenuLabel>{mark.hasNext ? 'Easing to the next keyframe' : 'No next keyframe'}</MenuLabel>
-              {EASINGS.map((easing) => (
+              <MenuLabel>{hasNext ? 'Easing to the next keyframe' : 'No next keyframe'}</MenuLabel>
+              {EASINGS.map((option) => (
                 <MenuCheckItem
-                  key={easing.value}
-                  checked={mark.easing === easing.value}
-                  disabled={!mark.hasNext}
-                  onCheckedChange={() => setKeyframeEasing(clip.id, mark.time, easing.value)}
+                  key={option.value}
+                  checked={easing === option.value}
+                  disabled={!hasNext}
+                  onCheckedChange={() => setKeyframeEasing(clip.id, times, option.value)}
                 >
-                  {easing.label}
+                  {option.label}
                 </MenuCheckItem>
               ))}
               <MenuSeparator />
               <MenuItem
                 danger
                 onSelect={() => {
-                  after.current = { remove: mark.time, focus: focusAfterRemoving(i) }
+                  after.current = { remove: first.time, focus: focusAfterRemoving(i) }
                 }}
               >
-                Remove keyframe
+                {count > 1 ? `Remove ${count} keyframes` : 'Remove keyframe'}
               </MenuItem>
             </MenuContent>
           </Menu>

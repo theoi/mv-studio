@@ -144,3 +144,93 @@ test('a lone keyframe mark is 24 px wide, and a click beside a diamond opens tha
   await expect(expanded.nth(1)).toHaveAttribute('aria-expanded', 'false')
   await expect(page.getByText(/^00:03\.00/)).toBeVisible()
 })
+
+test('a VJ take’s strobe keys share one mark with their count, which removes them all at once', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  // A take that holds the Strobe pad from 10 s to 14 s: its clip's opacity flashes on the beat grid, many keys a
+  // second, as recorded in VJ mode.
+  const clipId: string = await page.evaluate(() => {
+    const { vj, app, engine } = window.mvStudio
+    const editor = app.project.editor
+    const project = editor.getProject()
+    const catalog = engine.pluginRegistry.catalog()
+    const strobe = vj
+      .layoutPads(vj.defaultLayout(project, catalog))
+      .find((p: { label: string }) => p.label === 'Strobe')
+    const take = {
+      id: 'e2e-take',
+      start: 10,
+      end: 15,
+      pads: { [strobe.id]: strobe },
+      events: [
+        { t: 10, type: 'press', pad: strobe.id, velocity: 1 },
+        { t: 14, type: 'release', pad: strobe.id },
+      ],
+      amounts: {},
+      cursors: {},
+    }
+    editor.dispatch(vj.takeToCommands(project, take, { catalog, grid: vj.beatGridOf(project) }).commands, {
+      label: 'VJ take',
+    })
+    const after: Project = editor.getProject()
+    return Object.values(after.clips).find((c) => vj.laneOfClip(c) === `fx:${strobe.id}`)?.id ?? ''
+  })
+  const keyCount = () =>
+    page.evaluate((id) => {
+      const project: Project = window.mvStudio.app.project.editor.getProject()
+      const clip = project.clips[id]
+      return clip && clip.type !== 'audio' ? (clip.opacity.keyframes ?? []).length : -1
+    }, clipId)
+  const keys = await keyCount()
+  expect(keys).toBeGreaterThan(8)
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?sel=clip:${id}&t=10`
+  }, clipId)
+
+  const marks = page.locator('button[aria-label^="Keyframe at "], button[aria-label*=" keyframes, "]')
+  await expect(marks).toHaveCount(1)
+  const group = page.getByRole('button', { name: new RegExp(`^${keys} keyframes, 0:10\\.0 to 0:13\\.9`) })
+  await expect(group).toBeVisible()
+  await expect(group).toHaveText(String(keys))
+
+  await group.click()
+  await page.getByRole('menuitem', { name: `Remove ${keys} keyframes` }).click()
+  await expect(
+    page.getByRole('status').getByText(new RegExp(`^${keys} keyframes removed, 0:10\\.0 to 0:13\\.9`)),
+  ).toBeVisible()
+  expect(await keyCount()).toBe(0)
+  await expect(marks).toHaveCount(0)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+  await expect.poll(keyCount).toBe(keys)
+  await expect(marks).toHaveCount(1)
+})
+
+test('keyframes close together share one mark until zooming in splits them, and fitting the song groups them again', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await at(page, 3)
+  await waitForPreview(page)
+  for (const t of [3, 3.3, 3.6]) {
+    await at(page, t)
+    await page.getByRole('button', { name: 'Add keyframe: Rotation' }).click()
+  }
+  const marks = page.locator('button[aria-label^="Keyframe at "], button[aria-label*=" keyframes, "]')
+  const group = page.getByRole('button', { name: /^3 keyframes, 0:03\.0 to 0:03\.6/ })
+  await expect(group).toHaveText('3')
+  await expect(marks).toHaveCount(1)
+
+  await page.locator('body').click({ position: { x: 1, y: 1 } })
+  await page.evaluate(() => window.mvStudio.app.ui.selectClips(['o-title']))
+  for (let i = 0; i < 16 && (await marks.count()) < 3; i++) await page.keyboard.press('ControlOrMeta+=')
+  await expect(page.getByRole('button', { name: /^Keyframe at / })).toHaveCount(3)
+  await page.keyboard.press('Shift+Z')
+  await expect(group).toBeVisible()
+  await expect(marks).toHaveCount(1)
+})

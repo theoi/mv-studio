@@ -100,35 +100,78 @@ export function markTargets(at: readonly number[], clipWidth: number): { left: n
   })
 }
 
-function markOf(clipId: Id, time: Seconds) {
-  const clip = editor.getProject().clips[clipId]
-  const mark = clip && keyframeMarks(clip).find((m) => Math.abs(m.time - time) < SAME_TIME)
-  return clip && mark ? { clip, mark } : null
+/** Diamonds closer than this (px, a diamond's size) overlap, so their keyframes share one mark. */
+export const MARK_OVERLAP = 8
+
+/** Keyframes that share one mark on the timeline, and where its diamond is drawn (px over the clip). */
+export interface MarkGroup {
+  marks: KeyframeMark[]
+  at: number
 }
 
-/** Gives every keyframe of the clip at `time` the easing, as one undo step. */
-export function setKeyframeEasing(clipId: Id, time: Seconds, easing: Exclude<Easing, object>): void {
-  const found = markOf(clipId, time)
+/**
+ * The marks as drawn, given their diamonds' positions `at` (px over the clip, in order): a mark whose diamond sits
+ * closer than `gap` to the previous one joins its group, so dense keyframes (a VJ take's strobe) become one mark
+ * instead of a pile where only the top diamond can be clicked. A group's diamond sits between its first and last.
+ */
+export function groupMarks(
+  marks: readonly KeyframeMark[],
+  at: readonly number[],
+  gap = MARK_OVERLAP,
+): MarkGroup[] {
+  const groups: { marks: KeyframeMark[]; first: number; last: number }[] = []
+  marks.forEach((mark, i) => {
+    const x = at[i] ?? 0
+    const group = groups.at(-1)
+    if (group && x - group.last < gap) {
+      group.marks.push(mark)
+      group.last = x
+    } else groups.push({ marks: [mark], first: x, last: x })
+  })
+  return groups.map((g) => ({ marks: g.marks, at: (g.first + g.last) / 2 }))
+}
+
+function marksAt(clipId: Id, times: readonly Seconds[]) {
+  const clip = editor.getProject().clips[clipId]
+  if (!clip) return null
+  const marks = keyframeMarks(clip).filter((m) => isAt(times, m.time))
+  return marks.length ? { clip, marks } : null
+}
+
+const isAt = (times: readonly Seconds[], time: Seconds) => times.some((t) => Math.abs(t - time) < SAME_TIME)
+
+/** Gives every keyframe of the clip at `times` the easing, as one undo step. */
+export function setKeyframeEasing(
+  clipId: Id,
+  times: readonly Seconds[],
+  easing: Exclude<Easing, object>,
+): void {
+  const found = marksAt(clipId, times)
   if (!found) return
   const commands: EditCommand[] = []
-  for (const { path, keyframes } of keyedProperties(found.clip)) {
-    const k = keyframes.find((x) => Math.abs(x.time - time) < SAME_TIME)
-    if (k) commands.push({ type: 'keyframe.set', clipId, path, keyframe: { ...k, easing } })
-  }
+  for (const { path, keyframes } of keyedProperties(found.clip))
+    for (const k of keyframes)
+      if (isAt(times, k.time))
+        commands.push({ type: 'keyframe.set', clipId, path, keyframe: { ...k, easing } })
   const label = EASINGS.find((e) => e.value === easing)?.label ?? easing
   dispatch(commands, { label: `Keyframe easing: ${label}` })
 }
 
-/** Removes every keyframe of the clip at `time`, as one undo step. */
-export function removeKeyframes(clipId: Id, time: Seconds): void {
-  const found = markOf(clipId, time)
+/** Removes every keyframe of the clip at `times`, as one undo step. */
+export function removeKeyframes(clipId: Id, times: readonly Seconds[]): void {
+  const found = marksAt(clipId, times)
   if (!found) return
-  const label = 'Remove keyframe'
-  if (
-    dispatch(
-      found.mark.paths.map((path) => ({ type: 'keyframe.remove', clipId, path, time: found.mark.time })),
-      { label },
-    )
+  const { clip, marks } = found
+  const label = marks.length > 1 ? 'Remove keyframes' : 'Remove keyframe'
+  const commands = marks.flatMap((mark) =>
+    mark.paths.map((path): EditCommand => ({ type: 'keyframe.remove', clipId, path, time: mark.time })),
   )
-    toast(`Keyframe removed at ${formatTime(found.clip.start + found.mark.time, true)}`, undoAction(label))
+  if (!dispatch(commands, { label })) return
+  const first = formatTime(clip.start + marks[0]!.time, true)
+  toast(
+    marks.length > 1
+      ? `${marks.length} keyframes removed, ${first} to ${formatTime(clip.start + marks.at(-1)!.time, true)}`
+      : `Keyframe removed at ${first}`,
+    undoAction(label),
+  )
 }

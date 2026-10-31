@@ -1,11 +1,13 @@
 import type { ParamSpec } from '../engine/types.ts'
 
 export function formatTime(t: number, withTenths = false): string {
-  const m = Math.floor(t / 60)
-  const s = t - m * 60
-  const whole = Math.floor(s)
+  // Times land a hair under the tenth they were set at (3.4 - 3 is 0.3999…, 1 + 2.8 is 3.7999…), so count tenths
+  // with a little slack instead of flooring the fraction.
+  const tenths = Math.floor(t * 10 + 1e-6)
+  const m = Math.floor(tenths / 600)
+  const whole = Math.floor((tenths - m * 600) / 10)
   const base = `${m}:${String(whole).padStart(2, '0')}`
-  return withTenths ? `${base}.${Math.floor((s - whole) * 10)}` : base
+  return withTenths ? `${base}.${tenths % 10}` : base
 }
 
 export function formatTimecode(t: number): string {
