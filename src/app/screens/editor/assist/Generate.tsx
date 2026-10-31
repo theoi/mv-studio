@@ -11,7 +11,7 @@ import {
   Undo2,
 } from 'lucide-react'
 import { cloudErrorInfo } from '../../../../cloud/errors.ts'
-import { formatUsd, PRICES_CHECKED_ON } from '../../../../cloud/pricing.ts'
+import { formatEstimate, formatUsd, PRICES_CHECKED_ON } from '../../../../cloud/pricing.ts'
 import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Dialog } from '../../../ds/Dialog.tsx'
@@ -20,7 +20,6 @@ import { Segmented, Select, TextArea } from '../../../ds/Fields.tsx'
 import { formatTime, plural } from '../../../format.ts'
 import { useCloud } from '../../../state/cloud.ts'
 import {
-  costLabel,
   durationOf,
   estimateOf,
   generateCancelNotice,
@@ -92,7 +91,7 @@ function useStartGenerate(): { start: (at?: number) => void; starting: boolean; 
     <Dialog
       open={check !== null}
       onOpenChange={(open) => !open && setCheck(null)}
-      title={`Generate ${what} for ${costLabel(estimate.usd)}?`}
+      title={`Generate ${what} for ${formatEstimate(estimate)}?`}
       width={440}
       footer={
         <>
@@ -100,7 +99,7 @@ function useStartGenerate(): { start: (at?: number) => void; starting: boolean; 
             Cancel
           </Button>
           <Button variant="primary" icon={<Sparkles />} onClick={() => run(check?.at)}>
-            Generate · {costLabel(estimate.usd)}
+            Generate · {formatEstimate(estimate)}
           </Button>
         </>
       }
@@ -112,7 +111,7 @@ function useStartGenerate(): { start: (at?: number) => void; starting: boolean; 
         {check && check.spend.reminderUsd > 0 && (
           <p className={styles.lede}>
             This takes your estimated fal.ai spend this month past your {formatUsd(check.spend.reminderUsd)}{' '}
-            reminder ({costLabel(check.spend.monthTotal)} so far).
+            reminder ({formatEstimate({ usd: check.spend.monthTotal })} so far).
           </p>
         )}
         <p className={styles.muted}>Choose when to be asked in Settings › AI and cloud.</p>
@@ -150,7 +149,7 @@ function Setup() {
               disabled={!ready || starting}
               onClick={() => start()}
             >
-              Generate · {costLabel(estimate.usd)}
+              Generate · {formatEstimate(estimate)}
             </Button>
             <div className={styles.costLine}>
               <Info /> {estimate.breakdown}, charged by fal.ai to your key
@@ -163,8 +162,8 @@ function Setup() {
               Connect fal.ai to generate
             </Button>
             <div className={styles.costLine}>
-              <Info /> {capitalize(costLabel(each))} per {video ? `${duration} s clip` : 'image'}, charged by
-              fal.ai to your key
+              <Info /> {capitalize(formatEstimate({ usd: each }))} per{' '}
+              {video ? `${duration} s clip` : 'image'}, charged by fal.ai to your key
             </div>
           </>
         )
@@ -318,7 +317,7 @@ function Done({ job }: { job?: JobSnapshot }) {
           <div className={styles.muted}>
             In Media › Generated and at {formatTime(outcome?.start ?? 0)} on the timeline, as{' '}
             {assets.length === 1 ? 'a normal clip' : 'normal clips'}.{' '}
-            {capitalize(costLabel(outcome?.usd ?? 0))}, charged by fal.ai.
+            {capitalize(formatEstimate({ usd: outcome?.usd ?? 0 }))}, charged by fal.ai.
           </div>
         </div>
       </div>
