@@ -1,11 +1,9 @@
 import type { OnnxBackend, SegmentationBackend, SegmentationRole, VisionBackends } from '../backends.ts'
-import { JobError } from '../../shared/jobs.ts'
 import {
   createWorkerClient,
   type CallOptions,
   type Transferred,
   type WorkerApi,
-  type WorkerClient,
 } from '../../shared/worker.ts'
 import type { OnnxWorkerApi } from './onnx.worker.ts'
 import type { SegmentationWorkerApi } from './segmentation.worker.ts'
@@ -21,50 +19,24 @@ type Methods<Api extends WorkerApi> = {
 }
 
 /**
- * Worker handle that is (re)created on demand: after a crash the next call starts a fresh worker instead of
- * failing forever, and calls pending at the crash reject instead of hanging. State in the crashed worker
- * (loaded models, unfinished tracks) is lost, so running jobs fail.
+ * Methods of a worker that starts on the first call. A worker that dies (an uncaught error, a message that cannot
+ * be read, or the browser stopping it) is replaced on the next call; calls pending at that moment reject with
+ * `worker-crashed` or `out-of-memory`. State the dead worker held (loaded models, unfinished tracks) is lost, so
+ * running jobs fail and the user's retry starts fresh.
  */
 function lazyWorker<Api extends WorkerApi>(
   create: () => Worker,
 ): { client: Methods<Api>; terminate(): void } {
-  let current: { worker: Worker; client: WorkerClient<Api>; crashed: Promise<never> } | null = null
-
-  const get = () => {
-    if (current) return current
-    const worker = create()
-    const client = createWorkerClient<Api>(worker)
-    const crashed = new Promise<never>((_, reject) => {
-      worker.addEventListener('error', (event) => {
-        if (current?.worker === worker) current = null
-        client.terminate()
-        reject(new JobError('internal', event.message || 'The vision worker stopped unexpectedly.'))
-      })
-    })
-    crashed.catch(() => undefined)
-    current = { worker, client, crashed }
-    return current
-  }
-
+  const worker = createWorkerClient<Api>(create)
   const client = new Proxy({} as Methods<Api>, {
     get(_target, method) {
       if (typeof method !== 'string' || method === 'then') return undefined
-      return (args: unknown, options?: CallOptions) => {
-        const w = get()
-        const call = w.client.call(method as keyof Api & string, args as never, options)
-        return Promise.race([call, w.crashed])
-      }
+      return (args: unknown, options?: CallOptions) =>
+        worker.call(method as keyof Api & string, args as never, options)
     },
   })
-  return {
-    client,
-    terminate() {
-      current?.client.terminate()
-      current = null
-    },
-  }
+  return { client, terminate: () => worker.terminate() }
 }
-
 export interface WorkerBackends extends VisionBackends {
   dispose(): void
 }
