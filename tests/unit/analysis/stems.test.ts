@@ -210,9 +210,9 @@ describe('StemSeparationService', () => {
     expect(pace.get()).toEqual({ secondsPerSecond: 2.4, device: 'wasm', threads: 1 })
     const after = await service.estimate(editor.getProject(), song.id)
     expect(after.seconds).toBeLessThan(before.seconds)
-    // The separation stage at 2.4 s per second of song, plus reading and saving.
-    expect(after.seconds).toBeGreaterThanOrEqual(144)
-    expect(after.seconds).toBeLessThan(160)
+    // The separation stage at 2.4 s per second of song plus a 10% margin, plus reading and saving.
+    expect(after.seconds).toBeGreaterThanOrEqual(144 * 1.1)
+    expect(after.seconds).toBeLessThan(175)
     expect(await service.slowdown()).toBeLessThan(1)
   })
 

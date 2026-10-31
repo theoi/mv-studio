@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { type DemucsModel, SEGMENT, separateStems } from '../../../src/analysis/stems/demucs.ts'
+import {
+  type DemucsModel,
+  SEGMENT,
+  segmentSpectrogram,
+  separateStems,
+} from '../../../src/analysis/stems/demucs.ts'
 
 const RATE = 44100
 
@@ -87,5 +92,18 @@ describe('separateStems', () => {
     }
     await expect(run(model, [tone(20)], controller.signal)).rejects.toThrow('cancelled')
     expect(calls).toBe(1)
+  })
+})
+
+describe('segmentSpectrogram', () => {
+  it('writes every entry of a reused buffer, so nothing of the previous segment remains', () => {
+    const mix = new Float32Array(2 * SEGMENT)
+    mix.set(tone(SEGMENT / RATE))
+    mix.set(tone(SEGMENT / RATE, 1), SEGMENT)
+    const fresh = segmentSpectrogram(mix)
+    const reused = segmentSpectrogram(mix, new Float32Array(fresh.length).fill(123.25))
+    let differ = 0
+    for (let i = 0; i < fresh.length; i++) if (reused[i] !== fresh[i]) differ++
+    expect(differ).toBe(0)
   })
 })

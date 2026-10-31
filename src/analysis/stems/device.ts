@@ -11,12 +11,13 @@ export function stemDevice(caps: RuntimeCapabilities): ModelDevice {
  * machines without a GPU it was measured on: 1.50-1.55 s per second of song for the separation stage with 3 WASM
  * threads, through the app, on 3, 4 and 5 minute songs. Another 4-core machine took 1.09, so speeds differ by half
  * between machines that look alike; after its first separation a device uses its own pace (`MeasuredPace`). The split
- * between the fixed and per-thread parts is from runs with 1 to 4 threads. The GPU figure is a guess until measured
- * on real GPUs.
+ * between the fixed and per-thread parts is from runs with 1 to 4 threads. WebGPU uses the same figure until the
+ * device has separated a song on it: no GPU has been measured, and a GPU session can run parts of the model on WASM.
  */
 const WASM_FIXED = 0.4
 const WASM_PER_THREAD = 3.5
-const WEBGPU_SECONDS_PER_SECOND = 0.6
+/** On top of a measured pace: the next run on the same device may be busier than the one measured. */
+const MEASURED_MARGIN = 1.1
 /** Reading the song and starting the cached model. */
 const SETUP_SECONDS = 5
 /** Measuring, encoding and saving the four stems after the separation, per second of song (11-19 s per song). */
@@ -29,26 +30,38 @@ export interface MeasuredPace {
   threads: number
 }
 
-function defaultPace(device: ModelDevice, threads: number): number {
-  return device === 'webgpu' ? WEBGPU_SECONDS_PER_SECOND : WASM_FIXED + WASM_PER_THREAD / Math.max(1, threads)
+function wasmPace(threads: number): number {
+  return WASM_FIXED + WASM_PER_THREAD / Math.max(1, threads)
+}
+
+function measuredOn(device: ModelDevice, measured?: MeasuredPace): measured is MeasuredPace {
+  return measured?.device === device && measured.secondsPerSecond > 0
 }
 
 /**
- * How many times longer than the defaults work takes on this device: from its measured pace (on the same device
- * kind), else 1. Clamped, so one odd run cannot make an estimate absurd.
+ * How many times longer than the WASM defaults work takes on this device: from the pace of its last separation on
+ * WASM, with a margin, else 1. Clamped, so one odd run cannot make an estimate absurd. A WebGPU pace says nothing
+ * about the WASM threads the lyrics models share with stems, so it gives 1.
  */
 export function deviceSlowdown(device: ModelDevice, measured?: MeasuredPace): number {
-  if (!measured || measured.device !== device || !(measured.secondsPerSecond > 0)) return 1
-  return Math.min(4, Math.max(0.25, measured.secondsPerSecond / defaultPace(device, measured.threads)))
+  if (device !== 'wasm' || !measuredOn('wasm', measured)) return 1
+  const ratio = (MEASURED_MARGIN * measured.secondsPerSecond) / wasmPace(measured.threads)
+  return Math.min(4, Math.max(0.25, ratio))
 }
 
-/** Seconds the separation stage takes per second of song. */
+/**
+ * Seconds the separation stage takes per second of song: the WASM default until the device has measured its own pace
+ * on `device`, then that pace with a margin.
+ */
 export function separateSecondsPerSecond(
   device: ModelDevice,
   threads: number,
   measured?: MeasuredPace,
 ): number {
-  return defaultPace(device, threads) * deviceSlowdown(device, measured)
+  if (device === 'wasm') return wasmPace(threads) * deviceSlowdown(device, measured)
+  return measuredOn(device, measured)
+    ? Math.min(4 * wasmPace(threads), MEASURED_MARGIN * measured.secondsPerSecond)
+    : wasmPace(threads)
 }
 
 /** Seconds a whole separation job takes for a song of `duration` seconds, once the model is downloaded. */
