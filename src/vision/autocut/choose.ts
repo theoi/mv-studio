@@ -235,17 +235,18 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
   const hasRanking = ranked.size > 0
   const hasVideo = pool.some((p) => p.kind === 'video')
   /**
-   * Best clips for lyrics that start in the next few shots. This shot leaves them free: a clip used just before its
-   * lyric would still score lower there for having been used recently.
+   * Best clips for lyrics that start in the next few shots, by how many shots ahead. This shot leaves them free: a
+   * clip used right before its lyric could not play there at all, and one used a little earlier would score lower
+   * there for having been used recently.
    */
-  const lyricLeads = (shot: number): Set<Id> => {
-    const saved = new Set<Id>()
+  const lyricLeads = (shot: number): Map<Id, number> => {
+    const saved = new Map<Id, number>()
     for (let j = shot + 1; j <= shot + LYRIC_LOOKAHEAD && j < queries.length; j++) {
       const text = queries[j]?.text
       if (!text || text === queries[j - 1]?.text || text === queries[shot]?.text) continue
       const matches = ranked.get(keyOf(queries[j] as MatchQuery))
       const best = matches ? [...matches.values()].sort((a, b) => b.score - a.score)[0]?.mediaId : undefined
-      if (best) saved.add(best)
+      if (best && !saved.has(best)) saved.set(best, j - shot)
     }
     return saved
   }
@@ -256,7 +257,7 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
     const matches = ranked.get(keyOf(query))
     const fitting = pool.filter((p) => covers(p, length))
     const candidates = fitting.length ? fitting : pool
-    const saved = candidates.length > 2 ? lyricLeads(shot) : new Set<Id>()
+    const saved = candidates.length > 2 ? lyricLeads(shot) : new Map<Id, number>()
     let best: PoolItem | undefined
     let bestScore = -Infinity
     for (const item of candidates) {
@@ -264,7 +265,8 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
       const match = matches?.get(item.assetId)
       let score = match ? sigmoid(match.score) : hasRanking ? 0.35 : 0.5
       if (item.kind === 'image' && hasVideo) score -= 0.15
-      if (saved.has(item.assetId)) score -= 0.4
+      const ahead = saved.get(item.assetId)
+      if (ahead !== undefined) score -= ahead === 1 ? 10 : 0.4
       if (span.prefer?.includes(item.assetId)) score += PREFER_BONUS
       if (!u) score += 0.3
       else {
