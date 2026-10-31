@@ -95,6 +95,52 @@ describe('ProjectEditor', () => {
     expect(editor.getProject().name).toBe('My video')
     expect(editor.getProject().updatedAt).toBe(new Date(1000).toISOString())
   })
+
+  it('keeps derived writes out of history, and undo and redo around them leave them in place', () => {
+    const { editor, visual, asset } = setup()
+    const clip = createVideoClip({ trackId: visual.id, assetId: asset.id, start: 0, duration: 4 })
+    editor.dispatch({ type: 'clip.add', clip })
+    const sources: string[] = []
+    editor.subscribe((_p, change) => sources.push(change.source))
+    const analysis = { assetId: asset.id, version: 'test', data: { motion: [1, 2] } }
+    editor.dispatch({ type: 'analysis.setVisual', analysis }, { history: 'skip' })
+    expect(editor.undoLabel()).toBe('Add clip')
+    editor.dispatch({ type: 'project.rename', name: 'Renamed' })
+
+    const derived = () => editor.getProject().analysis.visual[asset.id]
+    editor.undo()
+    expect(editor.getProject().name).toBe('Untitled video')
+    expect(derived()).toEqual(analysis)
+    editor.undo()
+    expect(editor.getProject().clips[clip.id]).toBeUndefined()
+    expect(derived()).toEqual(analysis)
+    editor.redo()
+    editor.redo()
+    expect(editor.getProject().clips[clip.id]?.start).toBe(0)
+    expect(editor.getProject().name).toBe('Renamed')
+    expect(derived()).toEqual(analysis)
+    expect(sources).toEqual(['derived', 'edit', 'undo', 'undo', 'redo', 'redo'])
+  })
+
+  it('a derived write neither clears redo nor ends a gesture being coalesced', () => {
+    const { editor, visual, asset } = setup()
+    const analysis = (v: number) => ({ assetId: asset.id, version: 'test', data: { v } })
+    editor.dispatch({ type: 'project.rename', name: 'A' })
+    editor.undo()
+    editor.dispatch({ type: 'analysis.setVisual', analysis: analysis(1) }, { history: 'skip' })
+    expect(editor.redo()).toBe(true)
+    expect(editor.getProject().name).toBe('A')
+
+    const clip = createVideoClip({ trackId: visual.id, assetId: asset.id, start: 0, duration: 4 })
+    editor.dispatch({ type: 'clip.add', clip })
+    editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start: 1 }] }, { coalesceKey: 'drag' })
+    editor.dispatch({ type: 'analysis.setVisual', analysis: analysis(2) }, { history: 'skip' })
+    editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start: 2 }] }, { coalesceKey: 'drag' })
+    editor.endGesture()
+    editor.undo()
+    expect(editor.getProject().clips[clip.id]?.start).toBe(0)
+    expect(editor.getProject().analysis.visual[asset.id]?.data).toEqual({ v: 2 })
+  })
 })
 
 describe('edit commands', () => {

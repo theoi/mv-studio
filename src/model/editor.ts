@@ -17,10 +17,18 @@ export interface DispatchOptions {
    * updates). Use a key unique to the gesture, such as `drag:${pointerId}:${clipId}`.
    */
   coalesceKey?: string
+  /**
+   * 'skip' applies the change (it is saved and exported like any other) without an undo step and without clearing
+   * redo, for derived data written in the background, such as analysis results. Undo and redo restore exactly what
+   * their own step recorded, so only use it for paths that undoable edits do not also change, or those edits will
+   * overwrite it when they are undone or redone.
+   */
+  history?: 'record' | 'skip'
 }
 
 export interface EditChange {
-  source: 'edit' | 'undo' | 'redo' | 'load'
+  /** 'derived' is a dispatch with `history: 'skip'`. */
+  source: 'edit' | 'derived' | 'undo' | 'redo' | 'load'
   /** Commands applied (empty for undo/redo/load). */
   commands: EditCommand[]
   patches: Patch[]
@@ -80,6 +88,11 @@ export class ProjectEditor {
       draft.updatedAt = stamp
     })
     if (patches.length === 0) return
+    if (options.history === 'skip') {
+      this.project = next
+      this.emit({ source: 'derived', commands: list, patches })
+      return
+    }
 
     const last = this.undoStack[this.undoStack.length - 1]
     if (options.coalesceKey && last?.coalesceKey === options.coalesceKey && this.redoStack.length === 0) {
