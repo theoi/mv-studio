@@ -31,6 +31,7 @@ import {
   loopCrossfade,
   loopRange,
   placeLoop,
+  sectionEndAt,
   teaserRange,
   teaserWindow,
   type LoopLength,
@@ -311,8 +312,8 @@ export function movedRange(project: Project, planned: PlannedOutput, start: Seco
 }
 
 /**
- * The spec changes for a new teaser length (null: as long as its section): a range the user placed keeps its start;
- * an automatic one is picked again for the new length.
+ * The spec changes for a new teaser length (null: as long as the section it starts on): a range the user placed
+ * keeps its start; an automatic one is picked again for the new length.
  */
 export function teaserLengthPatch(
   project: Project,
@@ -322,7 +323,8 @@ export function teaserLengthPatch(
   const { spec, range } = planned
   if (!spec.range) return { maxLength: maxLength ?? undefined }
   const window = teaserWindow(maxLength ?? undefined)
-  const wanted = maxLength ?? range.end - range.start
+  const sectionEnd = sectionEndAt(project, range.start)
+  const wanted = maxLength ?? (sectionEnd !== null ? sectionEnd - range.start : range.end - range.start)
   return {
     maxLength: maxLength ?? undefined,
     range: fitTeaserRange(project, { start: range.start, end: range.start + wanted }, window),

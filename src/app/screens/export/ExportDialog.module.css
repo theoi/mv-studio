@@ -260,6 +260,7 @@
   height: 24px;
   border-radius: var(--radius-sm);
   overflow: hidden;
+  cursor: pointer;
 }
 
 .rangeSel {
@@ -269,7 +270,7 @@
   border-radius: 3px;
   box-shadow:
     0 0 0 2px var(--accent-line) inset,
-    0 0 0 999px rgb(0 0 0 / 0.45);
+    0 0 0 999px var(--bg-scrim);
   cursor: grab;
   touch-action: none;
 }
@@ -281,8 +282,9 @@
 .rangeSel:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 3px var(--accent-line) inset,
-    0 0 0 999px rgb(0 0 0 / 0.55);
+    0 0 0 2px var(--accent-line) inset,
+    0 0 0 4px var(--text-1) inset,
+    0 0 0 999px var(--bg-scrim);
 }
 
 /* Loop seam: the loop's last frame next to its first */

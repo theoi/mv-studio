@@ -43,7 +43,14 @@ import { formatTime, plural } from '../../format.ts'
 import { downloadAgain, useExports, type ExportRow } from '../../state/exports.ts'
 import { startFootageAnalysis } from '../../state/footage.ts'
 import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
-import { sectionColor, sectionKind, sectionsOf, timelineDuration, useProject } from '../../state/project.ts'
+import {
+  sectionColor,
+  sectionKind,
+  sectionName,
+  sectionsOf,
+  timelineDuration,
+  useProject,
+} from '../../state/project.ts'
 import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
 import {
@@ -310,11 +317,13 @@ function Frame({
     </div>
   )
 }
-function rangeReason(planned: PlannedOutput): string {
+function rangeReason(project: Project, planned: PlannedOutput): string {
   if (planned.loop) {
     const { bars, barAligned } = planned.loop
     return `${plural(bars, 'bar')}, ${barAligned ? 'loops seamlessly on the beat' : 'not on the beat, so the loop point may jump'}`
   }
+  const section = planned.spec.section && sectionsOf(project).find((s) => s.id === planned.spec.section)
+  if (section) return `starts on ${sectionName(section)}`
   if (planned.spec.range) return 'the range you picked'
   const pick = planned.teaser
   if (pick?.source === 'chorus') return 'starts on the strongest chorus'
@@ -324,8 +333,8 @@ function rangeReason(planned: PlannedOutput): string {
 }
 
 /**
- * The song's sections with the output's range on top: where a teaser or loop comes from. The range is dragged (or
- * moved a bar at a time with the arrow keys) to another part of the song; it lands on bars when released.
+ * The song's sections with the output's range on top: where a teaser or loop comes from. The range is dragged, moved
+ * a bar at a time with the arrow keys, or placed by clicking the lane; it lands on bars.
  */
 function RangeLane({
   project,
@@ -343,6 +352,7 @@ function RangeLane({
   const length = planned.range.end - planned.range.start
   const start = drag ? drag.at : planned.range.start
   const end = start + length
+  const latest = Math.max(0, duration - length)
   const step = (direction: 1 | -1) => {
     const from = planned.range.start
     const bars = barTimes(project)
@@ -352,7 +362,7 @@ function RangeLane({
           ? bars.find((b) => b > from + 1e-3)
           : bars.findLast((b) => b < from - 1e-3)
         : from + direction
-    if (next !== undefined) onMove(clamp(next, 0, Math.max(0, duration - length)))
+    if (next !== undefined) onMove(clamp(next, 0, latest))
   }
   const lane: { key: string; flex: number; background?: string }[] = []
   let cursor = 0
@@ -373,7 +383,14 @@ function RangeLane({
     })
   return (
     <div className={styles.range}>
-      <div className={styles.rangeLane}>
+      <div
+        className={styles.rangeLane}
+        onPointerDown={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect()
+          const at = ((e.clientX - rect.left) / Math.max(rect.width, 1)) * duration
+          onMove(clamp(at - length / 2, 0, latest))
+        }}
+      >
         {lane.map((s) => (
           <span key={s.key} style={{ flex: s.flex, background: s.background }} />
         ))}
@@ -388,6 +405,7 @@ function RangeLane({
           aria-valuenow={Math.round(start * 10) / 10}
           aria-valuetext={`${formatTime(start)} to ${formatTime(end)}`}
           onPointerDown={(e) => {
+            e.stopPropagation()
             const lane = e.currentTarget.parentElement
             e.currentTarget.setPointerCapture(e.pointerId)
             setDrag({ pointerId: e.pointerId, x: e.clientX, width: lane?.clientWidth ?? 1, at: start })
@@ -395,7 +413,7 @@ function RangeLane({
           onPointerMove={(e) => {
             if (drag?.pointerId !== e.pointerId) return
             const at = planned.range.start + ((e.clientX - drag.x) / drag.width) * duration
-            setDrag({ ...drag, at: clamp(at, 0, Math.max(0, duration - length)) })
+            setDrag({ ...drag, at: clamp(at, 0, latest) })
           }}
           onPointerUp={(e) => {
             if (drag?.pointerId !== e.pointerId) return
@@ -404,14 +422,15 @@ function RangeLane({
           }}
           onPointerCancel={() => setDrag(null)}
           onKeyDown={(e) => {
-            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+            if (e.key === 'Home' || e.key === 'End') onMove(e.key === 'Home' ? 0 : latest)
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') step(e.key === 'ArrowLeft' ? -1 : 1)
+            else return
             e.preventDefault()
-            step(e.key === 'ArrowLeft' ? -1 : 1)
           }}
         />
       </div>
       <div className={`${styles.rangeText} tnum`}>
-        {formatTime(start)} – {formatTime(end)} · {rangeReason(planned)}
+        {formatTime(start)} – {formatTime(end)} · {rangeReason(project, planned)}
       </div>
       {planned.loop && <LoopSeam project={project} planned={planned} />}
     </div>
@@ -825,7 +844,7 @@ function ExportDialogBody() {
                 title={outputTitle(project, sel.spec)}
                 onMove={(start) => {
                   const range = movedRange(project, selPlan, start)
-                  if (range) update({ range })
+                  if (range) update({ range, section: undefined })
                 }}
               />
             )}
@@ -845,7 +864,7 @@ function ExportDialogBody() {
                     ariaLabel="Teaser length"
                     options={[
                       { value: 'section', label: sectionsOf(project).length > 0 ? 'Whole section' : 'Auto' },
-                      ...TEASER_CHOICES.map((s) => ({ value: String(s), label: `${s} s` })),
+                      ...TEASER_CHOICES.map((s) => ({ value: String(s), label: `Up to ${s} s` })),
                     ]}
                   />
                 </div>

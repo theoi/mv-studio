@@ -26,6 +26,8 @@ export interface OutputSpec {
    * it starts on, 15 to 30 s.
    */
   maxLength?: Seconds
+  /** Teaser: the song section its range starts on, when it was made from one (Section › Export as a teaser). */
+  section?: string
   /** Include the song. Loops default to silent, like Spotify Canvas. */
   audio?: boolean
 }

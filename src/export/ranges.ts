@@ -169,6 +169,17 @@ export function sectionTeaserRange(project: Project, sectionId: string): TimeRan
   return fitTeaserRange(project, { start, end: toTimeline(section.end) ?? projectDuration(project) })
 }
 
+/** Timeline end of the song section playing at `t`. Null without sections. */
+export function sectionEndAt(project: Project, t: Seconds): Seconds | null {
+  const toTimeline = songToTimeline(project)
+  for (const s of analysisOf(project)?.sections ?? []) {
+    const start = toTimeline(s.start)
+    const end = toTimeline(s.end) ?? projectDuration(project)
+    if (start !== null && t >= start - 1e-3 && t < end - 1e-3) return end
+  }
+  return null
+}
+
 /** The chorus teaser range: the strongest chorus, on bars, 15 to 30 s long. Null when the timeline is empty. */
 export function teaserRange(
   project: Project,

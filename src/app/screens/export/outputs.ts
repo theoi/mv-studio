@@ -39,8 +39,8 @@ const RESOLUTION_LABELS: Record<OutputSpec['resolution'], string> = {
 }
 
 /** The row title: what the output is, independent of its file name. */
-export function outputTitle(project: Project, spec: Pick<OutputSpec, 'kind' | 'aspect'>): string {
-  if (spec.kind === 'teaser') return 'Chorus teaser'
+export function outputTitle(project: Project, spec: Pick<OutputSpec, 'kind' | 'aspect' | 'range'>): string {
+  if (spec.kind === 'teaser') return spec.range ? 'Teaser' : 'Chorus teaser'
   if (spec.kind === 'loop') return 'Loop for Canvas'
   return spec.aspect === project.settings.aspect ? 'Full video' : FORMAT_LABELS[spec.aspect]
 }
@@ -84,7 +84,7 @@ export function initialItems(
   if (!range) return { items, selectedId: items[0]?.spec.id }
   const existing = items.find((i) => i.spec.kind === 'teaser')
   const { maxLength: _auto, ...base } = existing?.spec ?? newOutput(project, 'teaser')
-  const teaser = { spec: { ...base, range }, on: true }
+  const teaser = { spec: { ...base, range, section: teaserSection ?? undefined }, on: true }
   return {
     items: existing ? items.map((i) => (i === existing ? teaser : i)) : [...items, teaser],
     selectedId: teaser.spec.id,

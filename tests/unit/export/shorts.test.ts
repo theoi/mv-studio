@@ -274,6 +274,26 @@ describe('teaser length and moving a range on the song lane', () => {
     const auto = planOutput(project, newOutput(project, 'teaser'), { measure })
     expect(teaserLengthPatch(project, auto, 30)).toEqual({ maxLength: 30 })
   })
+
+  it('makes a placed teaser as long as the section it starts on again for "Whole section"', () => {
+    const { project } = song({
+      duration: 90,
+      sections: [
+        { start: 0, end: 28, label: 'verse', repeatGroup: 1, energy: 0.3 },
+        { start: 28, end: 44, label: 'chorus', repeatGroup: 2, energy: 0.8 },
+        { start: 44, end: 90, label: 'outro', repeatGroup: 3, energy: 0.2 },
+      ],
+    })
+    const short = planOutput(
+      project,
+      newOutput(project, 'teaser', { maxLength: 15, range: { start: 0, end: 14 } }),
+      { measure },
+    )
+    expect(teaserLengthPatch(project, short, null)).toEqual({
+      maxLength: undefined,
+      range: { start: 0, end: 28 },
+    })
+  })
 })
 
 describe('loop length and seam', () => {
