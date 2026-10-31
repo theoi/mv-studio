@@ -41,7 +41,8 @@ import {
   BLEND_MODE_INDEX,
   COPY_FS,
   effectShader,
-  FINISH_FS,
+  finishShader,
+  finishVariant,
   FULLSCREEN_VS,
   generatorShader,
   LAYER_SOLID_FS,
@@ -133,12 +134,13 @@ interface Programs {
   layerTexture: Program
   layerSolid: Program
   copy: Program
-  finish: Program
   blend: Program
 }
 
 interface GpuState {
   programs: Programs
+  /** Finish-pass programs by `finishVariant`, compiled on first use. */
+  finish: (Program | undefined)[]
   pool: TargetPool
   quad: WebGLVertexArrayObject
   transparent: WebGLTexture
@@ -401,12 +403,12 @@ export class WebGLCompositor implements Compositor {
         layerTexture: createProgram(gl, LAYER_VS, LAYER_TEXTURE_FS),
         layerSolid: createProgram(gl, LAYER_VS, LAYER_SOLID_FS),
         copy: createProgram(gl, FULLSCREEN_VS, COPY_FS),
-        finish: createProgram(gl, FULLSCREEN_VS, FINISH_FS),
         blend: createProgram(gl, FULLSCREEN_VS, BLEND_FS),
       },
       pool: new TargetPool(gl),
       quad: createUnitQuad(gl),
       transparent,
+      finish: [],
       plugins: new WeakMap(),
       textures: new Map(),
     }
@@ -719,7 +721,8 @@ export class WebGLCompositor implements Compositor {
     const out = gpu.pool.acquire()
     gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo)
     gl.disable(gl.BLEND)
-    const p = gpu.programs.finish
+    const variant = finishVariant(adjust)
+    const p = (gpu.finish[variant] ??= createProgram(gl, FULLSCREEN_VS, finishShader(variant)))
     gl.useProgram(p.program)
     this.bindTexture(p, 'u_tex', 0, current.texture)
     this.bindTexture(p, 'u_matte', 1, matte?.target.texture ?? gpu.transparent)
@@ -1205,7 +1208,7 @@ export class WebGLCompositor implements Compositor {
       gpu.pool.dispose()
       for (const entry of gpu.textures.values()) this.gl.deleteTexture(entry.texture)
       this.gl.deleteTexture(gpu.transparent)
-      for (const p of Object.values(gpu.programs)) this.gl.deleteProgram(p.program)
+      for (const p of [...Object.values(gpu.programs), ...gpu.finish]) if (p) this.gl.deleteProgram(p.program)
     }
     this.text.dispose()
     this.canvases2d.clear()

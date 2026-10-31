@@ -167,3 +167,136 @@ test('no look blows out a bright still or crushes a dark one', async ({ page }) 
     expect(s.crushed, `${id} crushed`).toBeLessThan(5)
   }
 })
+
+test('contrast keeps fully saturated solids, text and visualizers at full strength', async ({ page }) => {
+  await openHarness(page)
+  const r = await page.evaluate(async () => {
+    const { model, plugins, testing } = window.mvStudio
+    const W = 256
+    const H = 144
+    const { compositor } = testing.createCompositor('export', W, H)
+    const render = async (p: unknown, time = 1) => {
+      await compositor.render(p, time)
+      return testing.readPixels(compositor.canvas, W, H) as Uint8ClampedArray
+    }
+    const center = (px: Uint8ClampedArray) => {
+      const i = ((H / 2) * W + W / 2) * 4
+      return [px[i]!, px[i + 1]!, px[i + 2]!]
+    }
+    const project = () => {
+      const p = model.createProject({ name: 'saturated' })
+      p.settings.backgroundColor = '#000000'
+      return p
+    }
+    /** Puts contrast on everything below, the way looks apply as adjustment layers. */
+    const withContrastLayer = (p: ReturnType<typeof project>, contrast: number) => {
+      const q = structuredClone(p)
+      const track = model.createTrack('visual', 'Adjust')
+      q.tracks.unshift(track)
+      const { color: _c, ...base } = model.createSolidClip({
+        trackId: track.id,
+        color: '#000',
+        start: 0,
+        duration: 4,
+      })
+      const layer = { ...base, type: 'adjustment', adjustments: { contrast: { value: contrast } } }
+      q.clips[layer.id] = layer
+      return q
+    }
+    /** Largest channel difference over the pixels that hold exactly `color` in the reference render. */
+    const fillDiff = (ref: Uint8ClampedArray, px: Uint8ClampedArray, color: number[]) => {
+      let n = 0
+      let d = 0
+      for (let i = 0; i < ref.length; i += 4) {
+        if (ref[i] !== color[0] || ref[i + 1] !== color[1] || ref[i + 2] !== color[2]) continue
+        n++
+        for (let c = 0; c < 3; c++) d = Math.max(d, Math.abs(px[i + c]! - ref[i + c]!))
+      }
+      return { n, d }
+    }
+
+    const solids: Record<string, Record<string, number[]>> = {}
+    for (const color of [
+      '#ff0000',
+      '#00ff00',
+      '#0000ff',
+      '#ffff00',
+      '#00ffff',
+      '#ff00ff',
+      '#ffffff',
+      '#b3665c',
+    ]) {
+      for (const contrast of [0.3, 0.6]) {
+        const p = project()
+        const clip = model.createSolidClip({ trackId: p.tracks[0].id, color, start: 0, duration: 4 })
+        clip.adjustments = { contrast: { value: contrast } }
+        p.clips[clip.id] = clip
+        ;(solids[color] ??= {})[contrast] = center(await render(p))
+      }
+    }
+
+    const fills: Record<string, { n: number; d: number }> = {}
+    for (const [color, rgb] of [
+      ['#0000ff', [0, 0, 255]],
+      ['#ff0000', [255, 0, 0]],
+      ['#ffff00', [255, 255, 0]],
+    ] as const) {
+      const p = project()
+      const text = model.createTextClip({
+        trackId: p.tracks[0].id,
+        text: 'LOUD',
+        start: 0,
+        duration: 4,
+        style: { color, fontSize: 300 },
+      })
+      p.clips[text.id] = text
+      fills[`text ${color}`] = fillDiff(await render(p), await render(withContrastLayer(p, 0.6)), [...rgb])
+    }
+    for (const [color, rgb] of [
+      ['#0000ff', [0, 0, 255]],
+      ['#ff0000', [255, 0, 0]],
+    ] as const) {
+      const { project: p, time } = plugins.preview.pluginPreview('visualizer.spectrum')
+      for (const clip of Object.values(p.clips) as { type: string; params: Record<string, unknown> }[])
+        if (clip.type === 'generator')
+          Object.assign(clip.params, { color: { value: color }, color2: { value: color } })
+      fills[`spectrum ${color}`] = fillDiff(
+        await render(p, time),
+        await render(withContrastLayer(p, 0.6), time),
+        [...rgb],
+      )
+    }
+
+    // Exposure alone past white: an orange highlight goes toward white with its hue, not to yellow.
+    const p = project()
+    const orange = model.createSolidClip({ trackId: p.tracks[0].id, color: '#ff8000', start: 0, duration: 4 })
+    orange.adjustments = { exposure: { value: 0.3 } }
+    p.clips[orange.id] = orange
+    const exposed = center(await render(p))
+    compositor.dispose()
+    return { solids, fills, exposed }
+  })
+  console.log('saturated', JSON.stringify(r))
+  // Primaries, secondaries and white have a channel at 1 and one at 0, so contrast leaves them as they are.
+  for (const [color, byContrast] of Object.entries(r.solids)) {
+    if (color === '#b3665c') continue
+    const want = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16))
+    for (const [contrast, got] of Object.entries(byContrast))
+      for (let c = 0; c < 3; c++)
+        expect(Math.abs(got[c]! - want[c]!), `${color} at contrast ${contrast}`).toBeLessThanOrEqual(2)
+  }
+  // A midtone color still gets contrast: its brightest channel rises, its darkest falls, so it gains saturation.
+  const [mr, , mb] = r.solids['#b3665c']['0.6']
+  expect(mr).toBeGreaterThan(0xb3 + 8)
+  expect(mb).toBeLessThan(0x5c - 8)
+  for (const [name, { n, d }] of Object.entries(r.fills)) {
+    expect(n, `${name} draws its color`).toBeGreaterThan(50)
+    expect(d, `${name} keeps its color under contrast`).toBeLessThanOrEqual(2)
+  }
+  // #ff8000 has a hue of 30 degrees; clamping channels would move it toward yellow (about 46 at this exposure).
+  const [er, eg, eb] = r.exposed
+  expect(er).toBeGreaterThanOrEqual(254)
+  expect(eg).toBeGreaterThan(eb + 10)
+  const hue = (Math.atan2(Math.sqrt(3) * (eg - eb), 2 * er - eg - eb) * 180) / Math.PI
+  expect(Math.abs(hue - 30)).toBeLessThan(4)
+})
