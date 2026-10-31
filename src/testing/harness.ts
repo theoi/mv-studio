@@ -23,6 +23,7 @@ import * as looks from '../plugins/looks.ts'
 import * as lut from '../plugins/lut.ts'
 import * as preview from '../plugins/preview.ts'
 import * as reactions from '../plugins/reactions.ts'
+import * as templates from '../plugins/templates.ts'
 import * as thumbnails from '../plugins/thumbnails.ts'
 import * as typography from '../plugins/typography/index.ts'
 import { detectCapabilities } from '../shared/capabilities.ts'
@@ -76,7 +77,7 @@ export function installHarness(): void {
     analysis,
     director,
     shared: { jobs, detectCapabilities },
-    plugins: { library, looks, lut, preview, reactions, thumbnails, typography },
+    plugins: { library, looks, lut, preview, reactions, templates, thumbnails, typography },
     testing: { createCompositor, readPixels, bench },
     vision,
     vj,
