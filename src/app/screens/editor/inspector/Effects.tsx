@@ -1,4 +1,16 @@
-import { AudioWaveform, Plus } from 'lucide-react'
+import {
+  Brush,
+  Droplet,
+  Film,
+  Palette,
+  Plus,
+  SlidersHorizontal,
+  Sparkles,
+  Sun,
+  Waves,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { ColorAdjustmentKey, VisualClip } from '../../../../model/index.ts'
 import { IconButton } from '../../../ds/Button.tsx'
@@ -8,11 +20,29 @@ import { set } from '../../../state/ui.ts'
 import { useAnimatable } from './animatable.ts'
 import styles from '../Inspector.module.css'
 
-const ADJUSTMENTS = [
+/** An effect row's icon, by the effect's library category. */
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  Basic: SlidersHorizontal,
+  Blur: Droplet,
+  Color: Palette,
+  Distort: Waves,
+  Glitch: Zap,
+  Light: Sun,
+  Stylize: Brush,
+  Texture: Film,
+}
+
+const ADJUSTMENTS: readonly { key: ColorAdjustmentKey; label: string }[] = [
   { key: 'exposure', label: 'Exposure' },
+  { key: 'brightness', label: 'Brightness' },
   { key: 'contrast', label: 'Contrast' },
   { key: 'saturation', label: 'Saturation' },
-] as const
+  { key: 'temperature', label: 'Temperature' },
+  { key: 'tint', label: 'Tint' },
+  { key: 'hue', label: 'Hue' },
+]
+/** Shown on every clip; the others only once the clip has them, as a look's temperature. */
+const ALWAYS: ReadonlySet<ColorAdjustmentKey> = new Set(['exposure', 'contrast', 'saturation'])
 
 /** One color adjustment (-1..1, neutral 0) on a 0..100 slider. */
 function AdjustmentRow({
@@ -39,21 +69,21 @@ function AdjustmentRow({
   )
 }
 
-export function ColorSection({ clip }: { clip: VisualClip }) {
+export function ColorSection({ clip, defaultOpen = false }: { clip: VisualClip; defaultOpen?: boolean }) {
   return (
-    <Section title="Color" defaultOpen={false}>
-      {ADJUSTMENTS.map((x) => (
+    <Section title="Color" defaultOpen={defaultOpen}>
+      {ADJUSTMENTS.filter((x) => ALWAYS.has(x.key) || clip.adjustments?.[x.key]).map((x) => (
         <AdjustmentRow key={x.key} clip={clip} adjustment={x.key} label={x.label} />
       ))}
     </Section>
   )
 }
 
-export function EffectsSection({ clip }: { clip: VisualClip }) {
+export function EffectsSection({ clip, defaultOpen = false }: { clip: VisualClip; defaultOpen?: boolean }) {
   return (
     <Section
       title="Effects"
-      defaultOpen={false}
+      defaultOpen={defaultOpen}
       badge={clip.effects.length ? <Badge>{clip.effects.length}</Badge> : undefined}
       actions={
         <IconButton
@@ -69,12 +99,16 @@ export function EffectsSection({ clip }: { clip: VisualClip }) {
       {clip.effects.length === 0 ? (
         <p className={styles.note}>No effects yet. Add one from Library › Effects.</p>
       ) : (
-        clip.effects.map((fx) => (
-          <div key={fx.id} className={styles.effectRow}>
-            <AudioWaveform className={styles.effectIcon} />
-            <span className={styles.effectName}>{pluginRegistry.get(fx.effectId)?.name ?? fx.effectId}</span>
-          </div>
-        ))
+        clip.effects.map((fx) => {
+          const def = pluginRegistry.get(fx.effectId)
+          const Icon = CATEGORY_ICONS[def?.category ?? ''] ?? Sparkles
+          return (
+            <div key={fx.id} className={styles.effectRow}>
+              <Icon className={styles.effectIcon} />
+              <span className={styles.effectName}>{def?.name ?? fx.effectId}</span>
+            </div>
+          )
+        })
       )}
     </Section>
   )

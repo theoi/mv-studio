@@ -178,7 +178,8 @@ describe('applying looks', () => {
     const p = editor.getProject()
     const looks = Object.values(p.clips).filter((c) => c.meta?.role === 'look')
     expect(looks).toHaveLength(1)
-    expect(looks[0]).toMatchObject({ start: 2, duration: 5, meta: { lookId: 'ember' } })
+    // Same id, so a selection of the look layer stays on it.
+    expect(looks[0]).toMatchObject({ id: first.clipId, start: 2, duration: 5, meta: { lookId: 'ember' } })
     expect(p.tracks.filter((t) => t.name === 'Look')).toHaveLength(1)
   })
 
@@ -246,10 +247,12 @@ describe('applying looks', () => {
     const editor = new ProjectEditor(s.p)
     applyLook(editor, 'moody')
     const p = editor.getProject()
-    expect(p.clips[draft.id]).toBeUndefined()
     const adjustmentClips = Object.values(p.clips).filter((c) => c.type === 'adjustment')
     expect(adjustmentClips).toHaveLength(1)
+    // The look takes the draft layer's place and id; its grade is gone.
     expect(adjustmentClips[0]).toMatchObject({
+      id: draft.id,
+      adjustments: { saturation: { value: -0.3 } },
       trackId: lookTrack.id,
       start: 0,
       duration: 12,

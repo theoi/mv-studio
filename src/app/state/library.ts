@@ -95,6 +95,14 @@ export function chooseLook(id: string): void {
     toast(`Look “${look.name}” applied to the whole video`, undoAction(label))
 }
 
+/** Opens Library › Effects with focus on the current look's tile, for the inspector's Change buttons. */
+export function revealLooks(): void {
+  set({ libraryTab: 'effects', libraryOpen: true })
+  requestAnimationFrame(() =>
+    document.querySelector<HTMLElement>('[data-look-tile][aria-pressed="true"]')?.focus(),
+  )
+}
+
 /** Color and texture effects are listed as filters. */
 const FILTER_CATEGORIES = new Set(['Color', 'Texture'])
 
