@@ -317,12 +317,17 @@ test('a marquee or a dragged clip held at the timeline’s edge scrolls it, and 
   await page.mouse.up()
   const scrolled = (await scrollLeft()) / pps - 60
   const reach = visibleEnd + scrolled
-  const picked = (await clipsOn(page, ['t-overlay', 't-video'])).filter(
-    (c) => c.start < reach - 0.5 && c.end > 62.5,
-  )
+  // Where the marquee ended depends on the last scroll frame before the release, so a clip starting within half a
+  // second of `reach` may go either way.
+  const clips = (await clipsOn(page, ['t-overlay', 't-video'])).filter((c) => c.end > 62.5)
+  const inside = clips.filter((c) => c.start < reach - 0.5).map((c) => c.id)
+  const outside = clips.filter((c) => c.start > reach + 0.5).map((c) => c.id)
   // It reaches clips that were off screen when it started.
-  expect(picked.some((c) => c.start > visibleEnd + 2)).toBe(true)
-  expect(new Set(await selectedIds(page))).toEqual(new Set(picked.map((c) => c.id)))
+  expect(clips.some((c) => c.start > visibleEnd + 2 && c.start < reach - 0.5)).toBe(true)
+  expect(outside.length).toBeGreaterThan(0)
+  const selected = await selectedIds(page)
+  expect(selected).toEqual(expect.arrayContaining(inside))
+  expect(selected.filter((id) => outside.includes(id) || !clips.some((c) => c.id === id))).toEqual([])
 
   // A clip dragged to the right edge and held there moves on with the scroll.
   await page.keyboard.press('Escape')
