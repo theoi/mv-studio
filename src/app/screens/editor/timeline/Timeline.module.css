@@ -617,6 +617,14 @@
   box-shadow: inset 0 0 0 1px rgb(95 212 200 / 0.4);
 }
 
+/* A selected chip shows the selection's outline (.selected), over the chip's own one declared just above. */
+.lyric.selected,
+.lyric.selected:hover {
+  box-shadow:
+    inset 0 0 0 2px var(--accent-line),
+    0 0 0 1px rgb(0 0 0 / 0.6);
+}
+
 /* A line drafted from the vocals and not checked yet */
 .draftDot {
   position: absolute;

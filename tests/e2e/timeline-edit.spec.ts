@@ -474,3 +474,143 @@ test('with the split tool, a click cuts a clip where it is clicked, snapping to 
   )
   expect(await cursor(singer)).toBe('grab')
 })
+
+test('lyric chips join Shift and Mod click and marquee selections; Delete takes their lines out in one undo step, and copies paste as text', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await openEditor(page, '#/editor?t=67')
+  const singer = page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' })
+  // Clips are drawn only where the timeline is scrolled to; a paste scrolls to the copies.
+  const scroller = page.locator('[data-timeline-scroller]')
+  const scrolled = await scroller.evaluate((el) => el.scrollLeft)
+  // The two lyric lines nearest the singer clip, in time order.
+  const lines: { id: string; lineId: string; start: number }[] = await page.evaluate(() => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    return (Object.values(p.clips) as { id: string; type: string; lyricLineId: string; start: number }[])
+      .filter((c) => c.type === 'text' && c.lyricLineId)
+      .sort((a, b) => Math.abs(a.start - 66) - Math.abs(b.start - 66))
+      .slice(0, 2)
+      .sort((a, b) => a.start - b.start)
+      .map((c) => ({ id: c.id, lineId: c.lyricLineId, start: c.start }))
+  })
+  const [first, second] = lines
+  if (!first || !second) throw new Error('The sample has lyric lines near 1:06')
+  // Chorus lines repeat, so a chip is found by its line.
+  const chipOf = (lineId: string) =>
+    page.getByRole('button', { name: /^Lyric: / }).and(page.locator(`[data-lyric-line="${lineId}"]`))
+  const chip1 = chipOf(first.lineId)
+  const chip2 = chipOf(second.lineId)
+  const lineIds = (): Promise<string[]> =>
+    page.evaluate(() =>
+      (window.mvStudio.app.project.editor.getProject().lyrics?.lines ?? []).map((l: { id: string }) => l.id),
+    )
+  const undoLabel = () => page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())
+  const allLines = await lineIds()
+
+  // Shift and Mod click add a chip to the selection and take it out; Shift Enter adds it from the keyboard.
+  await singer.click()
+  await chip1.click({ modifiers: ['Shift'] })
+  await expect(singer).toHaveAttribute('aria-pressed', 'true')
+  await expect(chip1).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByText('2 clips', { exact: true })).toBeVisible()
+  // A selected chip shows the selection's outline, as a selected clip does, hovered or not.
+  const shadow = (l: Locator) => l.evaluate((el) => getComputedStyle(el).boxShadow)
+  expect(await shadow(chip1)).toBe(await shadow(singer))
+  await chip1.click({ modifiers: [mod] })
+  await expect(chip1).toHaveAttribute('aria-pressed', 'false')
+  await expect(singer).toHaveAttribute('aria-pressed', 'true')
+  await chip1.focus()
+  await page.keyboard.press('Shift+Enter')
+  await expect(chip1).toHaveAttribute('aria-pressed', 'true')
+  expect(await selectedIds(page)).toHaveLength(2)
+
+  // A selected line takes a Shift-clicked clip along.
+  await chip2.click()
+  await singer.click({ modifiers: ['Shift'] })
+  await expect(chip2).toHaveAttribute('aria-pressed', 'true')
+  await expect(singer).toHaveAttribute('aria-pressed', 'true')
+  expect(await selectedIds(page)).toContain(second.id)
+
+  // Delete removes the clip, the chip and its line, as one undo step.
+  await page.keyboard.press('Delete')
+  await expect(singer).toHaveCount(0)
+  await expect(chip2).toHaveCount(0)
+  expect(await lineIds()).toEqual(allLines.filter((id) => id !== second.lineId))
+  expect(await undoLabel()).toBe('Delete 1 clip and 1 lyric line')
+  await page.keyboard.press(`${mod}+z`)
+  await expect(singer).toBeVisible()
+  await expect(chip2).toBeVisible()
+  expect(await lineIds()).toEqual(allLines)
+
+  // Copies of lyric chips paste as text clips on a Text track; the lyrics stay as they are.
+  await singer.click()
+  await chip1.click({ modifiers: ['Shift'] })
+  await page.keyboard.press(`${mod}+c`)
+  await expect(page.getByRole('status').getByText('Copied 1 clip and 1 lyric line')).toBeVisible()
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 150 }))
+  await page.keyboard.press(`${mod}+v`)
+  await expect(page.getByRole('status').getByText('Pasted 1 clip and 1 lyric line as text')).toBeVisible()
+  const pasted = await page.evaluate(() => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    const track = p.tracks.find((t: { name: string }) => t.name === 'Text')
+    return (
+      Object.values(p.clips) as { trackId: string; type: string; lyricLineId?: string; start: number }[]
+    )
+      .filter((c) => c.trackId === track?.id)
+      .map((c) => [c.type, c.lyricLineId ?? null, +c.start.toFixed(3)])
+  })
+  const earliest = Math.min(66, first.start)
+  expect(pasted).toEqual([['text', null, +(150 + first.start - earliest).toFixed(3)]])
+  expect(await lineIds()).toEqual(allLines)
+  await page.keyboard.press(`${mod}+z`)
+
+  // A marquee from empty Overlay space up into the lyrics takes the chips it touches with the other clips.
+  await scroller.evaluate((el, x) => (el.scrollLeft = x), scrolled)
+  await expect(chip1).toBeVisible()
+  const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
+
+  // A group drag moves the clips and leaves the chips with their sung lines; the toast says so.
+  await page.keyboard.press('n')
+  const spectrum = page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' })
+  await spectrum.click()
+  await chip1.click({ modifiers: ['Shift'] })
+  const chipStart = () =>
+    page.evaluate((id) => window.mvStudio.app.project.editor.getProject().clips[id].start as number, first.id)
+  const chipBefore = await chipStart()
+  const from = (await spectrum.boundingBox())!
+  await page.mouse.move(from.x + 20, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 20 - 2 * pps, from.y + from.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await expect(
+    page.getByRole('status').getByText('Moved 1 clip. Lyric lines stay with the vocals.'),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Spectrum bars, 1:02.0 to 1:34.0' })).toBeVisible()
+  expect(await chipStart()).toBe(chipBefore)
+  await page.keyboard.press(`${mod}+z`)
+  await page.keyboard.press('n')
+
+  const spec = (await page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' }).boundingBox())!
+  const lyricRow = (await chip1.boundingBox())!
+  const xAt = (t: number) => spec.x + (t - 64) * pps
+  await page.mouse.move(xAt(50.5), spec.y + spec.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(xAt(second.start + 0.2), lyricRow.y + lyricRow.height / 2, { steps: 20 })
+  await page.mouse.up()
+  const picked = await selectedIds(page)
+  expect(picked).toEqual(expect.arrayContaining([first.id, second.id]))
+  expect(picked.length).toBeGreaterThan(2)
+
+  // On a locked Lyrics track, the delete is refused as a whole.
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    const lyrics = editor.getProject().tracks.find((t: { name: string }) => t.name === 'Lyrics')
+    editor.dispatch({ type: 'track.update', trackId: lyrics.id, patch: { locked: true } })
+  })
+  await page.keyboard.press('Delete')
+  await expect(page.getByRole('status').getByText('That track is locked. Unlock it to edit.')).toBeVisible()
+  await expect(chip1).toBeVisible()
+  expect(await lineIds()).toEqual(allLines)
+  expect(await selectedIds(page)).toEqual(picked)
+})

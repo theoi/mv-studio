@@ -12,10 +12,12 @@ import {
   type Project,
   type Track,
 } from '../../model/index.ts'
+import { plural } from '../format.ts'
+import { removeLyricLinesCommands } from './lyrics.ts'
 import { dispatch, editor, isLookClip } from './project.ts'
 import { revealClips } from './reveal.ts'
 import { removeTransition } from './transitions.ts'
-import { get, selectClips, selectedClipIds, toast } from './ui.ts'
+import { get, select, selectClips, selectedClipIds, toast, type Selection } from './ui.ts'
 
 interface ClipboardContent {
   clips: Clip[]
@@ -34,6 +36,28 @@ export function isSelectableClip(c: Clip): boolean {
   return c.type !== 'audio' && !(c.type === 'text' && c.lyricLineId)
 }
 
+/** A lyric line's clip (its chip on the timeline). */
+export const isLyricClip = (c: Clip | undefined): boolean => c?.type === 'text' && !!c.lyricLineId
+
+/**
+ * The clips a selection stands for on the timeline: the selected clips, or a selected lyric line's clip (on `trackId`
+ * when it has one there), so a lyric chip can join a selection that started on a line.
+ */
+export function timelineSelectionIds(p: Project, selection: Selection, trackId?: string): string[] {
+  if (selection.type !== 'lyric') return selectedClipIds(selection)
+  const clips = Object.values(p.clips).filter((c) => c.type === 'text' && c.lyricLineId === selection.id)
+  const clip = clips.find((c) => c.trackId === trackId) ?? clips[0]
+  return clip ? [clip.id] : []
+}
+
+/** Selects these clips; a lyric line's clip alone selects its line, as a click on its chip does. */
+export function selectTimelineClips(p: Project, ids: readonly string[]): void {
+  const [only] = ids
+  const clip = ids.length === 1 && only !== undefined ? p.clips[only] : undefined
+  if (clip?.type === 'text' && clip.lyricLineId) select({ type: 'lyric', id: clip.lyricLineId })
+  else selectClips(ids)
+}
+
 function selectedClips(p: Project): Clip[] {
   return selectedClipIds(get().selection).flatMap((id) => {
     const c = p.clips[id]
@@ -42,6 +66,23 @@ function selectedClips(p: Project): Clip[] {
 }
 
 const clipCount = (n: number) => (n === 1 ? 'clip' : `${n} clips`)
+const lineCount = (n: number) => (n === 1 ? 'lyric line' : `${n} lyric lines`)
+
+/** For toasts: "1 clip", "2 lyric lines", "1 clip and 2 lyric lines". Lyric chips are named as their lines. */
+function clipsCounted(clips: Clip[]): string {
+  const lines = clips.filter(isLyricClip).length
+  const others = clips.length - lines
+  return [others && plural(others, 'clip'), lines && plural(lines, 'lyric line')]
+    .filter(Boolean)
+    .join(' and ')
+}
+
+/** For undo labels: "clip", "2 clips", "2 lyric lines", "1 clip and 1 lyric line". */
+function clipsNamed(clips: Clip[]): string {
+  const lines = clips.filter(isLyricClip).length
+  if (!lines) return clipCount(clips.length)
+  return lines === clips.length ? lineCount(lines) : clipsCounted(clips)
+}
 
 export function hasClipboard(): boolean {
   return !!clipboard?.clips.length
@@ -59,11 +100,23 @@ function copy(p: Project, clips: Clip[]): void {
   }
 }
 
-function remove(clips: Clip[], verb: 'Cut' | 'Delete'): boolean {
-  const ok = dispatch(
-    { type: 'clip.remove', clipIds: clips.map((c) => c.id) },
-    { label: `${verb} ${clipCount(clips.length)}` },
-  )
+/**
+ * Removes the clips as one undo step. Lyric chips take their lines out of the lyrics too (removeLyricLinesCommands),
+ * so no line is left without its clip.
+ */
+function remove(p: Project, clips: Clip[], verb: 'Cut' | 'Delete'): boolean {
+  const lineIds = [
+    ...new Set(clips.flatMap((c) => (c.type === 'text' && c.lyricLineId ? [c.lyricLineId] : []))),
+  ]
+  const ids = new Set(clips.map((c) => c.id))
+  const commands: EditCommand[] = []
+  // One clip.remove at the end: the lines' edits can remove a selected clip too (a director's emphasized word).
+  for (const cmd of lineIds.length ? removeLyricLinesCommands(p, lineIds) : []) {
+    if (cmd.type === 'clip.remove') for (const id of cmd.clipIds) ids.add(id)
+    else commands.push(cmd)
+  }
+  commands.push({ type: 'clip.remove', clipIds: [...ids] })
+  const ok = dispatch(commands, { label: `${verb} ${clipsNamed(clips)}` })
   if (ok) selectClips([])
   return ok
 }
@@ -74,7 +127,7 @@ export function copySelection(): boolean {
   const clips = selectedClips(p)
   if (!clips.length) return false
   copy(p, clips)
-  toast(clips.length === 1 ? 'Copied 1 clip' : `Copied ${clips.length} clips`)
+  toast(`Copied ${clipsCounted(clips)}`)
   return true
 }
 
@@ -85,7 +138,7 @@ export function cutSelection(): boolean {
   if (!clips.length) return false
   const previous = clipboard
   copy(p, clips)
-  if (!remove(clips, 'Cut')) clipboard = previous
+  if (!remove(p, clips, 'Cut')) clipboard = previous
   return true
 }
 
@@ -96,9 +149,10 @@ export function deleteSelection(): boolean {
     removeTransition(selection.id, selection.edge)
     return true
   }
-  const clips = selectedClips(editor.getProject())
+  const p = editor.getProject()
+  const clips = selectedClips(p)
   if (!clips.length) return false
-  remove(clips, 'Delete')
+  remove(p, clips, 'Delete')
   return true
 }
 /** Pastes the clipboard with its first clip at the playhead, keeping the clips' spacing and tracks. */
@@ -138,6 +192,10 @@ function pasteHereArgs(p: Project, source: ClipboardContent, trackId: string, ti
   return [at - first, hereTrack(p, source.clips, trackId, at)] as const
 }
 
+/** The lyrics lane: a track named Lyrics, or one that holds lyric lines. */
+const isLyricLane = (p: Project, track: Track) =>
+  track.name === 'Lyrics' || clipsOnTrack(p, track.id).some(isLyricClip)
+
 /** The track at `trackId` when all `clips` come from one track, it holds clips like them and is free for them at `time`. */
 function hereTrack(p: Project, clips: Clip[], trackId: string, time: number): Track | undefined {
   const track = p.tracks.find((t) => t.id === trackId)
@@ -145,7 +203,7 @@ function hereTrack(p: Project, clips: Clip[], trackId: string, time: number): Tr
   if (track.kind !== (clips[0]?.type === 'audio' ? 'audio' : 'visual')) return undefined
   const there = clipsOnTrack(p, track.id)
   // Not the lyrics lane, and a look lane only for looks.
-  if (track.name === 'Lyrics' || there.some((c) => c.type === 'text' && c.lyricLineId)) return undefined
+  if (isLyricLane(p, track)) return undefined
   const looks = clips.every(isLookClip)
   if (there.length ? there.every(isLookClip) !== looks : looks) return undefined
   const first = Math.min(...clips.map((c) => c.start))
@@ -165,18 +223,26 @@ export function duplicateSelection(): boolean {
   return true
 }
 
-/** Adds copies of the clips moved by `offset` seconds (see plan), as one undo step, and selects them. */
+/**
+ * Adds copies of the clips moved by `offset` seconds (see plan), as one undo step, and selects them. Copies of lyric
+ * chips are plain text clips, and the toast says so.
+ */
 function place(source: ClipboardContent, verb: 'Paste' | 'Duplicate', offset: number, onto?: Track): void {
   const { commands, ids } = plan(editor.getProject(), source, offset, onto)
   if (!dispatch(commands, { label: `${verb} ${clipCount(ids.length)}` })) return
   selectClips(ids)
   revealClips(ids)
+  const lines = source.clips.filter(isLyricClip).length
+  if (!lines) return
+  toast(`${verb === 'Paste' ? 'Pasted' : 'Duplicated'} ${clipsCounted(source.clips)} as text`)
 }
 
 /**
  * The edits that add copies of the clips moved by `offset` seconds, and where each source track's clips land. They go
  * back on that track when it is unlocked and free over their span ('own'), else on a new track of the same kind and
  * name added above it ('new'). `onto`, already checked by hereTrack, takes the clips of a single source track ('here').
+ * Copies of lyric chips are text clips not linked to a line, so they never go back on a lane of lyric lines: a new
+ * "Text" track takes them.
  */
 function plan(
   p: Project,
@@ -196,16 +262,19 @@ function plan(
     const start = Math.min(...group.map((c) => c.start)) + offset
     const end = Math.max(...group.map((c) => c.start + c.duration)) + offset
     const own = p.tracks.find((t) => t.id === trackId)
+    const lyrics = group.some(isLyricClip)
     const free =
       own &&
       !own.locked &&
+      !(lyrics && isLyricLane(p, own)) &&
       !clipsOnTrack(p, own.id).some((c) => c.start < end - EPS && c.start + c.duration > start + EPS)
     let target = onto ?? (free ? own : undefined)
     landings.push(onto ? 'here' : target ? 'own' : 'new')
     if (!target) {
       const like = own ?? source.tracks.find((t) => t.id === trackId)
       const kind = like?.kind ?? (group[0]?.type === 'audio' ? 'audio' : 'visual')
-      target = createTrack(kind, numberedName(tracks, like?.name ?? (kind === 'audio' ? 'Audio' : 'Video')))
+      const name = lyrics ? 'Text' : (like?.name ?? (kind === 'audio' ? 'Audio' : 'Video'))
+      target = createTrack(kind, numberedName(tracks, name))
       const at = tracks.findIndex((t) => t.id === trackId)
       const index = at >= 0 ? at : kind === 'audio' ? tracks.length : 0
       tracks.splice(index, 0, target)
@@ -218,6 +287,7 @@ function plan(
         trackId: target.id,
         start: Math.max(0, c.start + offset),
       }
+      if (copy.type === 'text') delete copy.lyricLineId
       ids.push(copy.id)
       commands.push({ type: 'clip.add', clip: copy })
     }

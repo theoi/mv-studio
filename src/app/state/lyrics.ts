@@ -4,8 +4,9 @@ import type {
   LyricsRequest,
   LyricsService,
 } from '../../analysis/lyrics/client.ts'
+import { directorMeta } from '../../director/meta.ts'
 import { retimeDirectorLyricCommands } from '../../director/retime.ts'
-import { createTrack, type EditCommand, type LyricsDoc, type Project } from '../../model/index.ts'
+import { createTrack, type EditCommand, type Id, type LyricsDoc, type Project } from '../../model/index.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { lyricClipCommands } from '../../plugins/lyricClips.ts'
 import { starterTemplate, templateState } from '../../plugins/templates.ts'
@@ -131,4 +132,36 @@ function busiestLyricTrack(project: Project): string | undefined {
   for (const c of Object.values(project.clips))
     if (c.type === 'text' && c.lyricLineId) counts.set(c.trackId, (counts.get(c.trackId) ?? 0) + 1)
   return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0]
+}
+
+/**
+ * Edits that remove lyric lines: from the lyrics, with their clips and the director's emphasized words and previews
+ * of those lines, on every track, so a locked track refuses the whole edit as for any clip. The other lines' clips
+ * keep their ids and timing. Empty when none of the lines is in the lyrics.
+ */
+export function removeLyricLinesCommands(project: Project, lineIds: readonly Id[]): EditCommand[] {
+  const doc = project.lyrics
+  const gone = new Set(lineIds)
+  if (!doc?.lines.some((l) => gone.has(l.id))) return []
+  const next: LyricsDoc = { ...doc, lines: doc.lines.filter((l) => !gone.has(l.id)) }
+  const ids = new Set(
+    Object.values(project.clips)
+      .filter((c) => {
+        const lineId = c.type === 'text' ? (c.lyricLineId ?? directorMeta(c)?.lyricLineId) : undefined
+        return lineId !== undefined && gone.has(lineId)
+      })
+      .map((c) => c.id),
+  )
+  // Re-timing the other lines' director clips reads the lyrics being replaced, so it runs before `lyrics.set`. Its
+  // removals join the one clip.remove: removing a clip twice fails.
+  const moves: EditCommand[] = []
+  for (const cmd of retimeDirectorLyricCommands(project, next)) {
+    if (cmd.type === 'clip.remove') for (const id of cmd.clipIds) ids.add(id)
+    else moves.push(cmd)
+  }
+  return [
+    ...moves,
+    { type: 'lyrics.set', lyrics: next },
+    ...(ids.size ? [{ type: 'clip.remove' as const, clipIds: [...ids] }] : []),
+  ]
 }
