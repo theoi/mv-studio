@@ -916,8 +916,8 @@
   background: var(--accent-softer);
 }
 
-/* A drop that adds a track: the ghost shows on the hovered track, so it says so */
-.dropNewTrack {
+/* What the drop does, on its ghost: adds a track (the ghost shows on the hovered track) or replaces the clip under it */
+.dropLabel {
   position: absolute;
   top: 50%;
   left: var(--space-1);
@@ -931,7 +931,31 @@
   transform: translateY(-50%);
 }
 
-.dropLocked {
+/* On a clip narrower than the label, it sits above the clip and points down at it, so it covers no neighbor */
+.dropLabel[data-above] {
+  top: auto;
+  bottom: calc(100% + 5px);
+  left: 0;
+  transform: none;
+}
+
+.dropLabel[data-above]::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 6px;
+  border: 4px solid transparent;
+  border-top-color: var(--accent);
+}
+
+/* The clip a drop replaces: tinted, with its whole outline showing */
+.dropReplace {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* A note beside a drop: the track is locked, or Alt replaces the clip under the pointer */
+.dropNote {
   position: absolute;
   top: 50%;
   z-index: 3;
@@ -944,6 +968,11 @@
   white-space: nowrap;
   transform: translateY(-50%);
   pointer-events: none;
+}
+
+/* Off the clip's edge, where the playhead may be */
+.dropNote[data-beside] {
+  margin-left: var(--space-1);
 }
 
 .dropHint {

@@ -19,7 +19,7 @@ import {
   Wand2,
   ZoomIn,
 } from 'lucide-react'
-import type { Clip } from '../../../model/index.ts'
+import type { Asset, Clip } from '../../../model/index.ts'
 import {
   availableReactions,
   canReact,
@@ -50,8 +50,9 @@ import {
 } from '../../state/library.ts'
 import { prefs, setPref } from '../../state/prefs.ts'
 import { PREVIEW_ZOOMS, zoomLabel } from '../../state/previewControls.ts'
-import { dispatch, editor, redo, undo } from '../../state/project.ts'
-import { get, set, toast } from '../../state/ui.ts'
+import { dispatch, editor, redo, undo, viewOf } from '../../state/project.ts'
+import { replaceClipMedia, replacementAssets, replaceTarget } from '../../state/replace.ts'
+import { get, set, toast, type PageId } from '../../state/ui.ts'
 import {
   animatableRow,
   clipProperties,
@@ -59,7 +60,6 @@ import {
   reactionTarget,
   type ClipProperty,
 } from '../editor/inspector/animatable.ts'
-import type { PageId } from './actions.tsx'
 
 /** A page of choices, or the reactions for one property (opened from React to music…). */
 export type PageState = { id: PageId } | { id: 'reactions'; property: ClipProperty }
@@ -69,6 +69,8 @@ export interface PageItem {
   value: string
   label: string
   icon?: ReactNode
+  /** A video or image shown as a frame in place of the icon, like the Library's tiles. */
+  thumb?: Asset
   /** Searched by: the first ranks as the item's name. Default: the label. */
   keywords?: string[]
   /** The choice in use now, marked with a check. */
@@ -171,11 +173,29 @@ function mediaItems(remove: boolean): PageItem[] {
       value: asset.id,
       label: name,
       icon: asset.origin.type === 'generated' ? <Sparkles /> : MEDIA_ICONS[asset.kind],
+      ...(asset.kind === 'video' || asset.kind === 'image' ? { thumb: asset } : {}),
       keywords: [name, asset.kind, asset.origin.type],
       unavailable: removal && 'why' in removal ? removal.why : undefined,
       detail:
         removal && 'clips' in removal && removal.clips ? `With ${plural(removal.clips, 'clip')}` : undefined,
       run: () => (remove ? removeMedia(asset.id) : addAssetAtPlayhead(asset.id)),
+    }
+  })
+}
+
+/** The library's videos and images the selected clip can show instead, the one it shows checked. */
+function replacementItems(clip: Clip): PageItem[] {
+  return replacementAssets(project()).map((asset) => {
+    const name = asset.name.replace(/\.[^.]+$/, '')
+    return {
+      value: asset.id,
+      label: name,
+      icon: asset.origin.type === 'generated' ? <Sparkles /> : MEDIA_ICONS[asset.kind],
+      thumb: asset,
+      keywords: [name, asset.kind, asset.origin.type],
+      current: 'assetId' in clip && clip.assetId === asset.id,
+      detail: asset.kind === 'image' ? 'Image' : asset.duration ? formatTime(asset.duration) : undefined,
+      run: () => replaceClipMedia(clip.id, asset.id),
     }
   })
 }
@@ -303,6 +323,20 @@ export const PAGES: Record<PageState['id'], PageDef> = {
     placeholder: 'Search media',
     empty: 'No matching media. Try fewer words.',
     groups: () => [{ heading: 'Remove from the project', items: mediaItems(true) }],
+  },
+  replaceMedia: {
+    placeholder: 'Search media',
+    empty: 'No matching media. Try fewer words.',
+    groups: () => {
+      const target = replaceTarget(project(), get().selection)
+      if ('why' in target) return []
+      return [
+        {
+          heading: `Replace “${viewOf(project(), target.clip).name}” with`,
+          items: replacementItems(target.clip),
+        },
+      ]
+    },
   },
   textStyle: {
     placeholder: 'Search text styles',

@@ -164,6 +164,7 @@ import {
   type StayingSpan,
   type SwapPlan,
 } from '../../../state/clipDrag.ts'
+import { isReplaceable } from '../../../state/replace.ts'
 import { registerReveal } from '../../../state/reveal.ts'
 import {
   cutClipsToSection,
@@ -203,6 +204,8 @@ import styles from './Timeline.module.css'
 const HEADER_W = 148
 const RULER_H = 24
 const SONG_H = 30
+/** About the width of the "Replace" label on a drop's ghost: on a narrower clip it sits above the clip instead. */
+const REPLACE_LABEL_W = 64
 
 type LaneKind = 'video' | 'overlay' | 'lyrics' | 'look' | 'audio'
 
@@ -1086,6 +1089,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
   const [transitions, setTransitions] = useState<TransitionSpot[]>([])
   const [gap, setGap] = useState<Gap | null>(null)
   const [trackLocked, setTrackLocked] = useState(false)
+  const [replaceable, setReplaceable] = useState(false)
   const menuTime = useRef(clip.start)
   const { width, isMedia, inW, outW, showLabel } = zoomedLook(clip, pps)
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
@@ -1111,6 +1115,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
           setTransitions(transitionsAtClip(editor.getProject(), clip.id))
           setGap(gapBefore(editor.getProject(), clip.id))
           setTrackLocked(!!editor.getProject().tracks.find((t) => t.id === clip.trackId)?.locked)
+          setReplaceable(isReplaceable(editor.getProject().clips[clip.id]))
         }}
       >
         <ContextMenuTrigger asChild>
@@ -1214,6 +1219,16 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
             </ContextMenuItem>
           ))}
           <ContextMenuSeparator />
+          {replaceable && (
+            <ContextMenuItem
+              onSelect={() => {
+                select({ type: 'clip', id: clip.id })
+                set({ paletteOpen: true, palettePage: 'replaceMedia' })
+              }}
+            >
+              Replace with…
+            </ContextMenuItem>
+          )}
           <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
           <ContextMenuItem onSelect={() => openAssist('match')}>Find matching footage…</ContextMenuItem>
           <ContextMenuSeparator />
@@ -2723,7 +2738,12 @@ export function Timeline() {
                       if (!media && (kind === 'audio' || !isLibraryDrag(e))) return
                       const time = (e.clientX - e.currentTarget.getBoundingClientRect().left) / pps
                       const next = media
-                        ? mediaDropHint(track.id, dropTime(track.id, time))
+                        ? mediaDropHint({
+                            trackId: track.id,
+                            time: dropTime(track.id, time),
+                            pointer: time,
+                            alt: e.altKey,
+                          })
                         : libraryDropHint(track.id, time)
                       // Media lands where it is dropped here, so the editor's "Drop to import" overlay stays away.
                       if (media) e.stopPropagation()
@@ -2744,7 +2764,12 @@ export function Timeline() {
                         e.preventDefault()
                         e.stopPropagation()
                         setDropHint(null)
-                        dropMedia(e, { trackId: track.id, time: dropTime(track.id, time) })
+                        dropMedia(e, {
+                          trackId: track.id,
+                          time: dropTime(track.id, time),
+                          pointer: time,
+                          alt: e.altKey,
+                        })
                         return
                       }
                       const item = kind === 'audio' ? null : droppedLibraryItem(e)
@@ -2756,12 +2781,18 @@ export function Timeline() {
                   >
                     {dropHint?.trackId === track.id &&
                       ('locked' in dropHint ? (
-                        <div className={styles.dropLocked} style={{ left: dropHint.at * pps }}>
+                        <div className={styles.dropNote} style={{ left: dropHint.at * pps }}>
                           Track is locked
                         </div>
                       ) : (
                         <div
-                          className={dropHint.end > dropHint.start ? styles.dropClip : styles.dropCut}
+                          className={
+                            dropHint.end > dropHint.start
+                              ? [styles.dropClip, 'replace' in dropHint && styles.dropReplace]
+                                  .filter(Boolean)
+                                  .join(' ')
+                              : styles.dropCut
+                          }
                           style={{
                             left: dropHint.start * pps,
                             width:
@@ -2770,9 +2801,28 @@ export function Timeline() {
                                 : undefined,
                           }}
                         >
-                          {'newTrack' in dropHint && <span className={styles.dropNewTrack}>New track</span>}
+                          {'newTrack' in dropHint && <span className={styles.dropLabel}>New track</span>}
+                          {'replace' in dropHint && (
+                            <span
+                              className={styles.dropLabel}
+                              data-above={
+                                (dropHint.end - dropHint.start) * pps < REPLACE_LABEL_W || undefined
+                              }
+                            >
+                              Replace
+                            </span>
+                          )}
                         </div>
                       ))}
+                    {dropHint && 'canReplace' in dropHint && dropHint.canReplace?.trackId === track.id && (
+                      <div
+                        className={styles.dropNote}
+                        style={{ left: dropHint.canReplace.at * pps }}
+                        data-beside
+                      >
+                        Hold {keyName('Alt')} to replace
+                      </div>
+                    )}
                     {kind === 'lyrics' &&
                       !empty &&
                       !lines.length &&

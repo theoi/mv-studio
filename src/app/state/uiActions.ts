@@ -173,6 +173,12 @@ export const UI_ACTIONS: readonly UiAction[] = [
     search: ['close gap before clip', 'remove empty space'],
   },
   { area: 'Timeline', name: 'Close gap', palette: 'closeGap', search: ['close gap', 'close the gap'] },
+  {
+    area: 'Timeline',
+    name: 'Replace with…',
+    palette: 'replaceMedia',
+    search: ['replace', 'replace clip', 'swap footage'],
+  },
   { area: 'Timeline', name: 'Select all on the track', palette: 'selectAll', search: ['select all'] },
   {
     area: 'Timeline',
@@ -229,6 +235,12 @@ export const UI_ACTIONS: readonly UiAction[] = [
     name: 'Add at playhead',
     palette: 'addMedia',
     search: ['add media at playhead', 'add clip to timeline'],
+  },
+  {
+    area: 'Library',
+    name: 'Replace the selected clip',
+    palette: 'replaceMedia',
+    search: ['replace selected clip', 'replace footage'],
   },
   {
     area: 'Library',
