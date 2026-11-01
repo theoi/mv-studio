@@ -30,6 +30,7 @@ import {
   jobChipLabel,
   jobFraction,
   jobLabel,
+  jobSecondsLeft,
   openJob,
   runningJobs,
   useIsRunning,
@@ -46,7 +47,7 @@ import {
 import { editor, redo, undo, useProject } from '../../state/project.ts'
 import { openDocs, set, useUi } from '../../state/ui.ts'
 import { enterVj, takeVjButtonFocus, useVjEntering } from '../../state/vj.ts'
-import { undoAction } from '../../format.ts'
+import { shortTimeLeft, timeLeft, undoAction } from '../../format.ts'
 import { LogoMark } from '../common/Logo.tsx'
 import styles from './TopBar.module.css'
 
@@ -60,12 +61,25 @@ function Activity() {
   // The chip leaves out a title's details (a price), a narrow window cuts the rest off, and "Stopping…" replaces it:
   // the tooltip and the name keep all of it.
   const name = first.stopping ? `Stopping: ${first.title}` : first.title
+  const seconds = jobSecondsLeft(first)
+  const left = seconds === undefined ? undefined : timeLeft(seconds)
+  // Only an export's short label leaves room for its time left at 1280 px; other jobs' titles would be cut to a few
+  // letters, so their time stays in the tooltip, the name and Assist.
+  const shownLeft = first.kind === JOB_KINDS.export ? seconds : undefined
   const more = running.length - 1
   return (
-    <Tooltip label="Background tasks" description={`${name}. You can keep editing. Click for details.`}>
+    <Tooltip
+      label="Background tasks"
+      description={`${name}.${left ? ` ${left}.` : ''} You can keep editing. Click for details.`}
+    >
       <button
         className={styles.activity}
-        aria-label={[name, fraction !== undefined && `${Math.round(fraction * 100)}%`, more > 0 && `+${more}`]
+        aria-label={[
+          name,
+          fraction !== undefined && `${Math.round(fraction * 100)}%`,
+          left && `· ${left.toLowerCase()}`,
+          more > 0 && `+${more}`,
+        ]
           .filter(Boolean)
           .join(' ')}
         onClick={() => openJob(first.kind)}
@@ -76,8 +90,15 @@ function Activity() {
           <ProgressRing value={fraction} size={16} label={label} />
         )}
         <span className={styles.activityTitle}>{jobChipLabel(first)}</span>
-        {fraction !== undefined && (
-          <span className={`${styles.activityPct} tnum`}>{Math.round(fraction * 100)}%</span>
+        {(fraction !== undefined || shownLeft !== undefined) && (
+          <span className={`${styles.activityPct} tnum`}>
+            {[
+              fraction !== undefined && `${Math.round(fraction * 100)}%`,
+              shownLeft !== undefined && shortTimeLeft(shownLeft),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
         )}
         {more > 0 && <span className={styles.activityMore}>+{more}</span>}
       </button>

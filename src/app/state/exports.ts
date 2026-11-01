@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import type { AspectPreset } from '../../model/index.ts'
-import { set, toast } from './ui.ts'
+import { jobs, type JobSnapshot } from '../../shared/jobs.ts'
+import { editor } from './project.ts'
+import { dismissToast, get, set, toast, useUi } from './ui.ts'
+import { leaveVj } from './vj.ts'
 
 /*
  * The latest export as the exporting view shows it: one job that renders several files in order. Kept outside the
@@ -20,6 +23,10 @@ export interface ExportRow {
 
 interface ExportsState {
   jobId: string | null
+  /** The export's job as last seen. Kept once it ends, when the job list may have dropped it for newer jobs. */
+  job: JobSnapshot | null
+  /** The project exported, when known (the design preview's mock export leaves it out). */
+  projectId: string | null
   rows: ExportRow[]
   /** Finished files by row id. */
   files: Record<string, File>
@@ -33,6 +40,8 @@ export type ExportPreset = 'vertical' | 'teaser' | 'loop'
 
 export const useExports = create<ExportsState>(() => ({
   jobId: null,
+  job: null,
+  projectId: null,
   rows: [],
   files: {},
   teaserSection: null,
@@ -51,10 +60,81 @@ export function exportWithOutput(preset: ExportPreset): void {
   set({ dialog: 'export', exportPhase: 'setup' })
 }
 
-/** Shows a job in the exporting view. */
-export function showExport(jobId: string, rows: ExportRow[]): void {
-  useExports.setState({ jobId, rows, files: {} })
+let unfollow = (): void => undefined
+
+/** Shows a job in the exporting view, which follows it until the next export. */
+export function showExport(jobId: string, rows: ExportRow[], projectId: string | null = null): void {
+  unfollow()
+  dismissExportEnd()
+  const handle = jobs.get(jobId)
+  useExports.setState({ jobId, job: handle?.snapshot() ?? null, projectId, rows, files: {} })
+  unfollow = handle?.subscribe((job) => useExports.setState({ job })) ?? (() => undefined)
 }
+
+const EXPORT_END = 'export-end'
+
+/** The note an export left when it ended, while it may still be showing. */
+let endNote: { message: string; rowId?: string; sticky: boolean } | null = null
+
+function dismissExportEnd(): void {
+  endNote = null
+  const end = get().toasts.find((t) => t.key === EXPORT_END)
+  if (end) dismissToast(end.id)
+}
+
+/**
+ * Whether Show can open the export dialog from the screen showing. Not from the setup screen, which leaving would
+ * drop, nor from the start screen once another project is open: the dialog belongs to the open project's editor.
+ */
+function canShowLastExport(): boolean {
+  const { screen } = get()
+  if (screen === 'setup') return false
+  const { projectId } = useExports.getState()
+  return screen !== 'start' || projectId === null || projectId === editor.getProject().id
+}
+
+function noteExportEnd(): void {
+  if (!endNote) return
+  const { message, rowId, sticky } = endNote
+  const download = rowId ? { label: 'Download', run: () => downloadAgain(rowId) } : undefined
+  toast(message, download, {
+    show: canShowLastExport() ? showLastExport : undefined,
+    key: EXPORT_END,
+    sticky,
+  })
+}
+
+/** Opens the export dialog on the latest export, from VJ mode or the start screen too: how it ended, and its files. */
+export function showLastExport(): void {
+  const open = () => set({ dialog: 'export', exportPhase: 'exporting' })
+  const { screen } = get()
+  if (screen === 'vj') leaveVj(open)
+  else if (screen === 'start') set({ screen: 'editor', dialog: 'export', exportPhase: 'exporting' })
+  else open()
+}
+
+/**
+ * Says how an export ended. With the export dialog open, it shows that itself (or lists the files under Last export),
+ * so a plain note. Otherwise the user may be in another tab, so the note stays (unless `sticky` is false) until it is
+ * dismissed, used or the dialog opens, with Show and, for a single file (`rowId`), Download.
+ */
+export function toastExportEnd(
+  message: string,
+  { rowId, sticky = true }: { rowId?: string; sticky?: boolean } = {},
+) {
+  if (get().dialog === 'export') {
+    toast(message)
+    return
+  }
+  endNote = { message, rowId, sticky }
+  noteExportEnd()
+}
+
+useUi.subscribe((s, prev) => {
+  if (s.dialog === 'export' && prev.dialog !== 'export') dismissExportEnd()
+  // Show comes and goes with the screens it can open the dialog from.
+  else if (s.screen !== prev.screen && s.toasts.some((t) => t.key === EXPORT_END)) noteExportEnd()
+})
 
 export function downloadFile(file: Blob, name: string): void {
   const url = URL.createObjectURL(file)
@@ -68,7 +148,7 @@ export function downloadFile(file: Blob, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-/** Downloads a finished file again (it stays in browser storage until the next export replaces it). */
+/** Downloads a finished file again (it stays in memory until the next export or a reload). */
 export function downloadAgain(rowId: string): void {
   const file = useExports.getState().files[rowId]
   if (file) downloadFile(file, file.name)

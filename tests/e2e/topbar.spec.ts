@@ -228,6 +228,53 @@ for (const shown of ['Generating 12 clips', 'Generating 4 images', 'Generating a
       await expect(chip).toHaveCount(0)
     })
 
+for (const [kind, title, shown] of [
+  ['analysis.stems', 'Separating stems', 'Separating stems'],
+  ['vision.index', 'Analyzing footage', 'Analyzing footage'],
+  ['vision.cutout', 'Cutting out the subject', 'Cutting out the subject'],
+  ['cloud.generate', 'Generating a clip · about $3.04', 'Generating a clip'],
+])
+  test(`at 1280 wide “${shown}” keeps its whole title and its percentage in the activity indicator, with its time left in the name and the tooltip only`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await openEditor(page)
+    await page.evaluate(
+      ([k, t]) => {
+        const w = window as unknown as { finish: () => void }
+        window.mvStudio.shared.jobs.run({
+          kind: k,
+          title: t,
+          run: (ctx: { progress: (p: { fraction: number; etaSeconds: number }) => void }) =>
+            new Promise<void>((resolve) => {
+              ctx.progress({ fraction: 0.4, etaSeconds: 600 })
+              w.finish = resolve
+            }),
+        })
+      },
+      [kind, title] as const,
+    )
+    const chip = page
+      .getByRole('banner')
+      .getByRole('button', { name: `${title} 40% · about 10 min left`, exact: true })
+    await expect(chip).toBeVisible()
+    await chip.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+    await expect(chip).toContainText('40%')
+    await expect(chip).not.toContainText('left')
+    const text = chip.getByText(shown, { exact: true })
+    await expect(text).toBeVisible()
+    const [needs, gets] = await text.evaluate((el) => {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      return [range.getBoundingClientRect().width, el.getBoundingClientRect().width]
+    })
+    expect(needs).toBeLessThanOrEqual(gets + 0.01)
+    await chip.hover()
+    await expect(page.getByRole('tooltip')).toContainText('About 10 min left')
+    await page.evaluate(() => (window as unknown as { finish: () => void }).finish())
+    await expect(chip).toHaveCount(0)
+  })
+
 test('Help › Replay the guide and Settings › General › Replay show the guide again from its first step', async ({
   page,
 }) => {
