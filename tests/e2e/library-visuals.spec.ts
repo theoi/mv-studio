@@ -80,6 +80,98 @@ test('a visual from the library plays over the footage for the rest of the secti
   await expect(page.getByRole('button', { name: /^Circle spectrum, 1:13\.\d to / })).toHaveCount(0)
 })
 
+const generators = (page: Page) =>
+  page.evaluate(() => {
+    const project: Project = window.mvStudio.app.project.editor.getProject()
+    return Object.values(project.clips).flatMap((c) =>
+      c.type === 'generator'
+        ? [
+            {
+              id: c.id,
+              generatorId: c.generatorId,
+              track: project.tracks.findIndex((t) => t.id === c.trackId),
+            },
+          ]
+        : [],
+    )
+  })
+
+test('with a visual selected, a click on another visual changes it, and the tile’s menu adds one instead', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?lib=visuals&t=73.6&sel=clip:o-spec1'
+  })
+  await waitForPreview(page)
+  const preview = page.getByRole('img', { name: 'Video preview' })
+  const library = page.getByRole('tabpanel', { name: 'Visuals' })
+  await expect(
+    library.getByText(
+      'Click a visual to change “Spectrum bars” to it. Right-click or drag one to add it instead.',
+    ),
+  ).toBeVisible()
+  const before = await generators(page)
+  const shot = await preview.screenshot()
+
+  await library.getByRole('button', { name: 'Circle spectrum, reacts to the music', exact: true }).click()
+  await expect(page.getByText('Changed “Spectrum bars” to “Circle spectrum”', { exact: true })).toBeVisible()
+  expect(await generators(page)).toEqual(
+    before.map((g) => (g.id === 'o-spec1' ? { ...g, generatorId: 'visualizer.circle' } : g)),
+  )
+  await expect(page.getByRole('button', { name: /^Circle spectrum, 1:04\.0 to / })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await expect.poll(async () => imageDiff(page, shot, await preview.screenshot())).toBeGreaterThan(1)
+
+  // The menu still adds one, and names the visual a click would change.
+  await library
+    .getByRole('button', { name: 'Orb, reacts to the music', exact: true })
+    .click({ button: 'right' })
+  await expect(page.getByRole('menuitem', { name: /^Change “Circle spectrum”/ })).toBeVisible()
+  await page.getByRole('menuitem', { name: /^Add at playhead/ }).click()
+  await expect(page.getByText(/^“Orb” added from 1:13 to \d+:\d\d$/)).toBeVisible()
+  const added = await generators(page)
+  expect(added).toHaveLength(before.length + 1)
+  expect(added.find((g) => g.id === 'o-spec1')?.generatorId).toBe('visualizer.circle')
+
+  const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+  await page.keyboard.press(`${mod}+z`)
+  await page.keyboard.press(`${mod}+z`)
+  expect(await generators(page)).toEqual(before)
+})
+
+test('a visual added over a scene goes on a track above it, so the preview shows it', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?lib=visuals&t=73.6'
+  })
+  await waitForPreview(page)
+  const preview = page.getByRole('img', { name: 'Video preview' })
+  const library = page.getByRole('tabpanel', { name: 'Visuals' })
+  await library.getByRole('button', { name: 'Show all 7' }).click()
+  await library.getByRole('button', { name: /^Retro grid\b/ }).click()
+  await expect(page.getByText(/^“Retro grid” added from 1:13 to /)).toBeVisible()
+  // With nothing selected, the next click adds.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ selection: { type: 'none' } }))
+  await expect(
+    library.getByText('Click a visual to add it at the playhead, or drag it onto a track.'),
+  ).toBeVisible()
+  const shot = await preview.screenshot()
+
+  await library.getByRole('button', { name: 'Circle spectrum, reacts to the music', exact: true }).click()
+  await expect(page.getByText(/^“Circle spectrum” added from 1:13 to /)).toBeVisible()
+  const all = await generators(page)
+  const scene = all.find((g) => g.generatorId === 'generator.synthwave')!
+  const circle = all.find((g) => g.generatorId === 'visualizer.circle')!
+  // Tracks are listed top first: the circle is drawn over the scene.
+  expect(circle.track).toBeLessThan(scene.track)
+  await expect.poll(async () => imageDiff(page, shot, await preview.screenshot())).toBeGreaterThan(1)
+})
+
 test('a visual dragged onto a free stretch of a track lands there, up to the next clip', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {

@@ -18,6 +18,7 @@ import {
   applyTextAnimation,
   chooseLook,
   chosenLookId,
+  clickVisual,
   dropLibraryItem,
   effectItems,
   effectTarget,
@@ -31,7 +32,9 @@ import {
   textTargets,
   transitionTarget,
   visualPlacement,
+  visualTargetHint,
 } from '../../../src/app/state/library.ts'
+import { createGeneratorClip } from '../../../src/plugins/library.ts'
 import { editor } from '../../../src/app/state/project.ts'
 import { get, set, type Selection } from '../../../src/app/state/ui.ts'
 
@@ -274,6 +277,88 @@ describe('adding visuals', () => {
     const title = createTextClip({ trackId: overlay.id, text: 'Title', start: 6, duration: 2 })
     s.p.clips[title.id] = title
     expect(visualPlacement(s.p, 1)).toEqual({ start: 1, duration: 8, newTrackIndex: 2 })
+  })
+
+  it('puts a visual above a scene or background visual, which covers the frame like footage unless see-through', () => {
+    const p: Project = createProject({ name: 'visualizer video' })
+    const spectrum = createTrack('visual', 'Visualizer')
+    const background = createTrack('visual', 'Background')
+    p.tracks = [spectrum, background, ...p.tracks.filter((t) => t.kind === 'audio')]
+    for (const [track, generatorId] of [
+      [spectrum, 'visualizer.spectrum'],
+      [background, 'generator.synthwave'],
+    ] as const) {
+      const clip = createGeneratorClip({ trackId: track.id, generatorId, start: 0, duration: 60 })
+      p.clips[clip.id] = clip
+    }
+    expect(visualPlacement(p, 1)).toEqual({ start: 1, duration: 8, newTrackIndex: 1 })
+    const scene = Object.values(p.clips).find((c) => c.trackId === background.id)
+    if (scene?.type === 'generator') scene.params.background = { value: '#00000000' }
+    expect(visualPlacement(p, 1)).toEqual({ start: 1, duration: 8, newTrackIndex: 2 })
+  })
+
+  it('changes the selected visual to the clicked one, keeping its place, its colors and the rest, as one undo step', () => {
+    const s = scene()
+    editor.load(s.p)
+    chooseLook('warm')
+    addVisual('visualizer.spectrum')
+    const before = Object.values(editor.getProject().clips).find((c) => c.type === 'generator')!
+    editor.dispatch({
+      type: 'clip.set',
+      clipId: before.id,
+      path: ['params', 'color', 'value'],
+      value: '#123456',
+    })
+    const spectrum = editor.getProject().clips[before.id]!
+    expect(visualTargetHint(editor.getProject(), get().selection)).toBe(
+      'Click a visual to change “Spectrum bars” to it. Right-click or drag one to add it instead.',
+    )
+
+    clickVisual('visualizer.circle')
+    const after = editor.getProject().clips[before.id]
+    expect(after).toMatchObject({
+      type: 'generator',
+      generatorId: 'visualizer.circle',
+      name: 'Circle spectrum',
+      trackId: spectrum.trackId,
+      start: spectrum.start,
+      duration: spectrum.duration,
+    })
+    // Its own color carries over; the circle's height is its own default, not the bars' 60%.
+    expect(after?.type === 'generator' && after.params.color?.value).toBe('#123456')
+    expect(after?.type === 'generator' && after.params.height?.value).toBe(0.16)
+    expect(after?.type === 'generator' && Object.keys(after.params)).toContain('radius')
+    expect(Object.values(editor.getProject().clips).filter((c) => c.type === 'generator')).toHaveLength(1)
+    expect(get().selection).toEqual({ type: 'clip', id: before.id })
+    expect(editor.undoLabel()).toBe('Change visual to Circle spectrum')
+    expect(get().toasts.at(-1)?.message).toBe('Changed “Spectrum bars” to “Circle spectrum”')
+    get().toasts.at(-1)?.action?.run()
+    expect(editor.getProject().clips[before.id]).toEqual(spectrum)
+
+    clickVisual('visualizer.spectrum')
+    expect(get().toasts.at(-1)?.message).toBe('It’s already “Spectrum bars”')
+    expect(editor.getProject().clips[before.id]).toEqual(spectrum)
+  })
+
+  it('adds the clicked visual when no visual is selected, and says why when the selected one is locked', () => {
+    const s = scene()
+    editor.load(s.p)
+    set({ selection: { type: 'clip', id: s.a.id } })
+    expect(visualTargetHint(editor.getProject(), get().selection)).toBe(
+      'Click a visual to add it at the playhead, or drag it onto a track.',
+    )
+    clickVisual('visualizer.orb')
+    const orb = Object.values(editor.getProject().clips).find((c) => c.type === 'generator')!
+    expect(orb).toMatchObject({ generatorId: 'visualizer.orb' })
+    expect(editor.undoLabel()).toBe('Add visual: Orb')
+
+    editor.dispatch({ type: 'track.update', trackId: orb.trackId, patch: { locked: true } })
+    expect(visualTargetHint(editor.getProject(), get().selection)).toBe(
+      'That track is locked. Unlock it to change this visual.',
+    )
+    clickVisual('visualizer.circle')
+    expect(get().toasts.at(-1)?.message).toBe('That track is locked. Unlock it to change this visual.')
+    expect(editor.getProject().clips[orb.id]).toMatchObject({ generatorId: 'visualizer.orb' })
   })
 
   it('drops a visual on a free stretch of a track, up to the next clip there, and nowhere else', () => {

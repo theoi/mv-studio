@@ -9,6 +9,7 @@ import {
   type Asset,
   type Clip,
   type EditCommand,
+  type GeneratorClip,
   type Id,
   type Project,
   type Seconds,
@@ -409,9 +410,20 @@ export function isReactive(entry: PluginCatalogEntry): boolean {
 const VISUAL_SECONDS = 8
 
 /**
+ * A clip that covers the whole frame, so a visual under it can't be seen: footage, or a scene or background visual
+ * unless its background is see-through (then it lays over what is below, like a visualizer).
+ */
+function fillsFrame(c: Clip): boolean {
+  if (c.type === 'video' || c.type === 'image') return true
+  if (c.type !== 'generator' || pluginRegistry.get(c.generatorId)?.category === 'Visualizer') return false
+  const background = c.params.background?.value
+  return typeof background !== 'string' || !/^#[0-9a-f]{6}00$/i.test(background)
+}
+
+/**
  * Where a visual added at `time` goes: from `time` to the end of the song section there (at least 2 s, else 8 s), on
- * the first free unlocked track above the footage that holds neither lyrics nor the look, or a new Visuals track
- * right above the footage.
+ * the first free unlocked track above the footage (or a scene or background visual, which covers the frame too) that
+ * holds neither lyrics nor the look, or a new Visuals track right above the footage.
  */
 export function visualPlacement(
   project: Project,
@@ -421,9 +433,7 @@ export function visualPlacement(
   | { start: Seconds; duration: Seconds; newTrackIndex: number } {
   const duration = visualDuration(project, time)
   const onTrack = (trackId: Id) => Object.values(project.clips).filter((c) => c.trackId === trackId)
-  const footage = project.tracks.findIndex(
-    (t) => t.kind === 'visual' && onTrack(t.id).some((c) => c.type === 'video' || c.type === 'image'),
-  )
+  const footage = project.tracks.findIndex((t) => t.kind === 'visual' && onTrack(t.id).some(fillsFrame))
   const firstAudio = project.tracks.findIndex((t) => t.kind === 'audio')
   const below = footage >= 0 ? footage : firstAudio >= 0 ? firstAudio : project.tracks.length
   for (const [index, track] of project.tracks.entries()) {
@@ -493,11 +503,7 @@ function putVisual(
     ...createGeneratorClip({ trackId, generatorId, start: place.start, duration: place.duration }),
     name: def.name,
   }
-  const look = chosenLookId(project)
-  const palette = look ? lookRegistry.get(look) : undefined
-  if (palette)
-    for (const [key, value] of Object.entries(lookPaletteParams(palette, def)))
-      clip.params[key] = { ...clip.params[key], value }
+  withLookColors(project, def, clip.params)
   commands.push({ type: 'clip.add', clip })
   const label = `Add visual: ${def.name}`
   if (!dispatch(commands, { label })) return
@@ -506,6 +512,109 @@ function putVisual(
     `“${def.name}” added from ${formatTime(place.start)} to ${formatTime(place.start + place.duration)}`,
     undoAction(label),
   )
+}
+
+/** Gives a visual's color params the colors of the video's look, if it has one. */
+function withLookColors(project: Project, def: GeneratorDefinition, params: GeneratorClip['params']): void {
+  const look = chosenLookId(project)
+  const palette = look ? lookRegistry.get(look) : undefined
+  if (palette)
+    for (const [key, value] of Object.entries(lookPaletteParams(palette, def)))
+      params[key] = { ...params[key], value }
+}
+
+const VISUAL_LOCKED = 'That track is locked. Unlock it to change this visual.'
+const VISUALS_LOCKED = 'Their tracks are locked. Unlock them to change these visuals.'
+
+/**
+ * The selected visuals (visualizers and shader visuals) a clicked visual changes, leaving out those on locked tracks
+ * (`skipped`). Null when no visual is selected, so a click adds one; `why` when every selected visual is locked.
+ */
+export function visualTargets(
+  project: Project,
+  selection: Selection,
+): { clipIds: Id[]; what: string; skipped: number } | { why: string } | null {
+  const locked = lockedTracks(project)
+  const chosen = selectedClipIds(selection)
+    .map((id) => project.clips[id])
+    .filter((c): c is GeneratorClip => c?.type === 'generator')
+  if (!chosen.length) return null
+  const open = chosen.filter((c) => !locked.has(c.trackId))
+  const [first] = open
+  if (!first) return { why: chosen.length === 1 ? VISUAL_LOCKED : VISUALS_LOCKED }
+  return {
+    clipIds: open.map((c) => c.id),
+    what: open.length === 1 ? `“${viewOf(project, first).name}”` : plural(open.length, 'visual'),
+    skipped: chosen.length - open.length,
+  }
+}
+
+/** The note at the top of Library › Visuals: what a click on a visual does with this selection, before the click. */
+export function visualTargetHint(project: Project, selection: Selection): string {
+  const t = visualTargets(project, selection)
+  if (!t) return 'Click a visual to add it at the playhead, or drag it onto a track.'
+  if ('why' in t) return t.why
+  const skipped = t.skipped
+    ? ` ${plural(t.skipped, 'visual')} on ${t.skipped === 1 ? 'a locked track stays' : 'locked tracks stay'} as ${t.skipped === 1 ? 'it is' : 'they are'}.`
+    : ''
+  return `Click a visual to change ${t.what} to it.${skipped} Right-click or drag one to add it instead.`
+}
+
+/** A visual tile's click: changes the selected visuals to it, or adds it at the playhead when none is selected. */
+export function clickVisual(generatorId: string): void {
+  const t = visualTargets(editor.getProject(), get().selection)
+  if (!t) addVisual(generatorId)
+  else if ('why' in t) toast(t.why)
+  else changeVisual(generatorId)
+}
+
+/**
+ * Changes the selected visuals to another one as one undo step. Each keeps its place, length, track, transform,
+ * effects and audio source, and gets the new visual's settings at their defaults in the look's colors. Colors and
+ * images set on it carry over to the new visual's settings of the same name and kind, and a name that was the old
+ * visual's becomes the new one's.
+ */
+export function changeVisual(generatorId: string): boolean {
+  const def = pluginRegistry.get(generatorId)
+  if (def?.kind !== 'generator') return false
+  const project = editor.getProject()
+  const t = visualTargets(project, get().selection)
+  if (!t) return false
+  if ('why' in t) {
+    toast(t.why)
+    return false
+  }
+  const commands: EditCommand[] = []
+  for (const id of t.clipIds) {
+    const clip = project.clips[id]
+    if (clip?.type !== 'generator' || clip.generatorId === generatorId) continue
+    const old = pluginRegistry.get(clip.generatorId)
+    const params = createGeneratorClip({ trackId: clip.trackId, generatorId, start: 0, duration: 1 }).params
+    withLookColors(project, def, params)
+    for (const spec of def.params) {
+      const was = old?.params.find((p) => p.key === spec.key)
+      const value = clip.params[spec.key]
+      if (value && was?.type === spec.type && (spec.type === 'color' || spec.type === 'image'))
+        params[spec.key] = value
+    }
+    commands.push(
+      { type: 'clip.set', clipId: id, path: ['generatorId'], value: generatorId },
+      { type: 'clip.set', clipId: id, path: ['params'], value: params },
+    )
+    if (clip.name === undefined || clip.name === old?.name)
+      commands.push({ type: 'clip.set', clipId: id, path: ['name'], value: def.name })
+  }
+  if (!commands.length) {
+    toast(t.clipIds.length === 1 ? `It’s already “${def.name}”` : `They’re already “${def.name}”`)
+    return false
+  }
+  const label = `Change visual to ${def.name}`
+  if (!dispatch(commands, { label })) return false
+  const skipped = t.skipped
+    ? `${plural(t.skipped, 'visual')} on ${t.skipped === 1 ? 'a locked track was' : 'locked tracks were'} left as is`
+    : undefined
+  toast([`Changed ${t.what} to “${def.name}”`, skipped].filter(Boolean).join(' · '), undoAction(label))
+  return true
 }
 
 /** The project's media in the library: everything but the song, masks, stems and fonts, newest imports first. */
