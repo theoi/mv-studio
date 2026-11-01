@@ -64,6 +64,7 @@ import {
   midiControllers,
   midiDevicesLabel,
   setActiveVjSession,
+  SHOWN_AFTER_MS,
   subscribeVjEntryFrame,
   vjEntryFrame,
   vjMidi,
@@ -135,9 +136,6 @@ function failedTakeMessage(take: VjSnapshot['takes'][number]): string {
   return `Take ${take.number} could not be added${why}. The timeline is unchanged.`
 }
 
-/** How long the editor's frame stays over the live output after its first frame is drawn. */
-const SHOWN_AFTER_MS = 400
-
 /** Runs the engine preview and the VJ session on the stage while VJ mode is open. */
 function useEngine(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
@@ -202,7 +200,7 @@ function useEngine(
     })
     ro.observe(stage)
     setEngine({ preview, session })
-    setActiveVjSession(session)
+    setActiveVjSession(session, { preview, canvas })
     return () => {
       setActiveVjSession(null)
       ro.disconnect()
@@ -491,17 +489,18 @@ export function VjMode() {
       setMapping(false)
       return
     }
-    const kept = session && !closed.current ? session.close().kept : 0
-    closed.current = true
-    leaveVj()
-    if (kept > 0)
-      toast(`Performance added to the timeline: ${plural(kept, 'take')}, all editable`, {
-        label: 'Undo',
-        run: () => {
-          const removed = undoTakes(kept)
-          toast(removed > 0 ? `Removed ${plural(removed, 'take')} from the timeline` : 'Nothing to undo')
-        },
-      })
+    leaveVj(() => {
+      const kept = session && !closed.current ? session.close().kept : 0
+      closed.current = true
+      if (kept > 0)
+        toast(`Performance added to the timeline: ${plural(kept, 'take')}, all editable`, {
+          label: 'Undo',
+          run: () => {
+            const removed = undoTakes(kept)
+            toast(removed > 0 ? `Removed ${plural(removed, 'take')} from the timeline` : 'Nothing to undo')
+          },
+        })
+    })
   }
 
   const { engine, size, drawn, shown } = useEngine(canvasRef, stageRef, (s) => exit(s, true))

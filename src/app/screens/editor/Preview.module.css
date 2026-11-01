@@ -190,6 +190,21 @@
   cursor: grabbing;
 }
 
+.returnFrame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  pointer-events: none;
+  /* 200 ms, scaled from --dur so Reduce motion turns it off. */
+  transition: opacity calc(var(--dur) * 200 / 170) var(--ease-out);
+}
+
+.returnFrameOut {
+  opacity: 0;
+}
+
 .stageNote {
   position: absolute;
   inset: 0;

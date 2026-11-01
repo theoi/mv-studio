@@ -11,16 +11,27 @@ import {
   type VjSession,
   type VjSettings,
 } from '../../vj/index.ts'
+import type { PreviewController } from '../../engine/preview.ts'
 import { loadVjMode } from '../preload.ts'
 import { stagePreview } from '../screens/editor/stage.ts'
-import { get, set, toastLoadFailed } from './ui.ts'
+import { get, set, toastLoadFailed, useUi } from './ui.ts'
 
 /** The VJ session while VJ mode is open, so Settings › VJ and MIDI changes reach it as well as the saved settings. */
 let active: VjSession | null = null
+/** VJ mode's live output, for its last frame on the way back to the editor (see leaveVj). */
+let live: { preview: PreviewController; canvas: HTMLCanvasElement } | null = null
 
-export function setActiveVjSession(session: VjSession | null) {
+export function setActiveVjSession(
+  session: VjSession | null,
+  output: { preview: PreviewController; canvas: HTMLCanvasElement } | null = null,
+) {
   active = session
+  live = output
 }
+
+/** How long a stand-in frame stays over a stage after its own preview's first frame: with a software GPU, that
+ * frame reaches the screen a few hundred ms after it is drawn. */
+export const SHOWN_AFTER_MS = 400
 
 let entryFrame: ImageBitmap | null = null
 const entryListeners = new Set<() => void>()
@@ -98,11 +109,92 @@ export function clearVjEntryFrame() {
   setEntryFrame(null)
 }
 
-/** Back to the editor from VJ mode; the editor then focuses its VJ button (see takeVjButtonFocus). */
-export function leaveVj() {
+/** VJ mode's last frame, or 'pending' while it is captured, for the editor's stage while its preview starts. */
+let returnFrame: ImageBitmap | 'pending' | null = null
+let returns = 0
+const returnListeners = new Set<() => void>()
+
+function setReturnFrame(frame: ImageBitmap | 'pending' | null) {
+  if (frame === returnFrame) return
+  if (returnFrame && returnFrame !== 'pending') returnFrame.close()
+  returnFrame = frame
+  for (const listener of returnListeners) listener()
+}
+
+export function subscribeVjReturnFrame(listener: () => void): () => void {
+  returnListeners.add(listener)
+  return () => returnListeners.delete(listener)
+}
+
+export function vjReturnFrame(): ImageBitmap | 'pending' | null {
+  return returnFrame
+}
+
+export function clearVjReturnFrame() {
+  setReturnFrame(null)
+}
+
+// Only for the stage right after leaving: dropped once the editor closes, shown or not.
+useUi.subscribe((s, prev) => {
+  if (prev.screen === 'editor' && s.screen !== 'editor') setReturnFrame(null)
+})
+
+/** How long leaving VJ mode waits for the live output's last frame before the editor opens without it. */
+const RETURN_WAIT_MS = 100
+/** Set while leaving waits for that frame, so another press does not start a second one. */
+let leaving = false
+
+/**
+ * The live output as it was last drawn, with the performance on. Only a canvas drawn by the render worker keeps its
+ * last frame for this thread to read (in about a millisecond); a WebGL canvas drawn on this thread is blank by then.
+ */
+function lastLiveFrame(): Promise<ImageBitmap> | null {
+  if (!live?.preview.stats().worker) return null
+  try {
+    return createImageBitmap(live.canvas)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Back to the editor from VJ mode, taking the live output's last frame on the way for the editor's stage to show
+ * while its own preview starts, as entering does the other way. `beforeOpen` runs just before the editor opens: it
+ * closes the session, which takes the performance off the live output, so it waits until the frame is taken. The
+ * editor then focuses its VJ button (see takeVjButtonFocus).
+ */
+export function leaveVj(beforeOpen?: () => void) {
+  if (leaving) return
   clearVjEntryFrame()
   focusVjButton = true
-  set({ screen: 'editor', playing: false })
+  const id = ++returns
+  const frame = lastLiveFrame()
+  setReturnFrame(frame ? 'pending' : null)
+  let timer = 0
+  const open = () => {
+    leaving = false
+    window.clearTimeout(timer)
+    if (get().screen !== 'vj') return
+    beforeOpen?.()
+    set({ screen: 'editor', playing: false })
+  }
+  if (!frame) {
+    open()
+    return
+  }
+  leaving = true
+  timer = window.setTimeout(open, RETURN_WAIT_MS)
+  frame.then(
+    (bitmap) => {
+      if (leaving) open()
+      if (id === returns && returnFrame === 'pending' && get().screen === 'editor') setReturnFrame(bitmap)
+      else bitmap.close()
+    },
+    () => {
+      if (leaving) open()
+      if (id === returns && returnFrame === 'pending') setReturnFrame(null)
+    },
+  )
 }
 
 /** True once after leaving VJ mode, for the editor to put focus back on the VJ button. */

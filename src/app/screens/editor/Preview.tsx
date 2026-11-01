@@ -75,6 +75,7 @@ import { get, set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
 import { changeAspect } from '../../state/reframe.ts'
+import { clearVjReturnFrame, SHOWN_AFTER_MS, subscribeVjReturnFrame, vjReturnFrame } from '../../state/vj.ts'
 import { PickOverlay } from './PickOverlay.tsx'
 import type { Rect } from './handles.ts'
 import { SelectionOverlay } from './SelectionOverlay.tsx'
@@ -98,6 +99,8 @@ type StageStatus = 'loading' | 'ready' | 'failed' | 'stopped'
 /** More restarts than this within the window and the stage stops trying and asks for a reload. */
 const MAX_RESTARTS = 3
 const RESTART_WINDOW_MS = 120_000
+/** How long the frame from VJ mode takes to fade out (`.returnFrame`'s transition). */
+const RETURN_FADE_MS = 200
 
 function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number }) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -131,6 +134,41 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
   const zoom = useUi((s) => s.previewZoom)
   const full = useSyncExternalStore(subscribeFullscreen, () => isFullscreen(wrapRef.current))
   const zoomed = zoom !== 'fit' && !full
+  // Back from VJ mode: its last frame stands in until this preview shows its own, instead of "Preparing the preview".
+  const returnFrame = useSyncExternalStore(subscribeVjReturnFrame, vjReturnFrame)
+  const returnBitmap = returnFrame === 'pending' ? null : returnFrame
+  const [returnFading, setReturnFading] = useState(false)
+  const drawReturn = useCallback(
+    (canvas: HTMLCanvasElement | null) => {
+      if (!canvas || !returnBitmap) return
+      canvas.width = returnBitmap.width
+      canvas.height = returnBitmap.height
+      try {
+        canvas.getContext('2d')?.drawImage(returnBitmap, 0, 0)
+      } catch {
+        // Closed already: this preview has shown its own frame.
+      }
+    },
+    [returnBitmap],
+  )
+
+  useEffect(() => {
+    if (status === 'loading') return
+    if (status !== 'ready') {
+      clearVjReturnFrame()
+      return
+    }
+    // A frame with a look or pad on differs from this one: fading reads as the performance coming off the picture.
+    let faded = 0
+    const timer = window.setTimeout(() => {
+      setReturnFading(true)
+      faded = window.setTimeout(clearVjReturnFrame, RETURN_FADE_MS)
+    }, SHOWN_AFTER_MS)
+    return () => {
+      window.clearTimeout(timer)
+      window.clearTimeout(faded)
+    }
+  }, [status])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -228,7 +266,14 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
           <SelectionOverlay width={size.width} height={size.height} view={view} />
         )}
         {status === 'ready' && picking && <PickOverlay width={size.width} height={size.height} />}
-        {status === 'loading' && (
+        {returnBitmap && (
+          <canvas
+            ref={drawReturn}
+            className={[styles.returnFrame, returnFading && styles.returnFrameOut].filter(Boolean).join(' ')}
+            aria-hidden
+          />
+        )}
+        {status === 'loading' && !returnBitmap && (
           <div className={styles.stageNote}>
             <Spinner /> Preparing the preview
           </div>
