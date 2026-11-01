@@ -54,25 +54,31 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   from the audio alone (`SongSection.confidence` below 0.6) on a section no louder than the rest of the song is
   treated as a verse (`roleOf`): no chorus pace, particles, emphasis or behind-subject lines staked on a guess. The
   LLM brief marks such labels `labelGuessed`.
-- **Pace and brightness words in the idea** (`ideaAsks`), without an LLM: "fast", "punchy", "slow", "calm" and the
-  like move a section's pace a step ("very fast" two), and "bright", "vivid", "dark" or "moody" go into its mood (a
-  section called bright also gets a glow). The idea is read in parts that each say one thing: they end at a full
-  stop, "but" or "then", before "except", "apart from", "aside from", "other than" or "excluding", at "and" or a
-  comma unless it joins two descriptions ("fast and bright", "a fast, punchy chorus") or a list of them still
-  waiting for its section ("slow, dreamy verses"), and after a section named with "in the" or "for every" ("fast in
-  the chorus and slow in the verses"). In a part, a word applies to the section named nearest to it ("keep the chorus
-  fast and the verses slow"), else to the one the part before named ("in the chorus, fast and bright"), else to the
-  whole video. Sections go by the song map's labels (a guessed chorus too); a section's mood becomes the user's
-  words, after any brightness word asked of the whole video, and its own pace word replaces the whole video's ("fast
-  video, slow chorus" slows the chorus). Without a section, pace words shift every section and brightness words lead
-  every mood. A part with "not", "don't", "no", "avoid", "too" and the like is left out, and opposite words for one
-  section cancel out: a missed word leaves the draft as it would be, a misread one would turn it the wrong way. A
-  part that starts with "except" and the like, or is negated, and names sections leaves those sections out of the
-  whole-video words of its sentence, as does a part after "but" that only names sections: "fast everywhere except
-  the bridge", "everything fast but the chorus" and "fast cuts, but not in the verses" leave those sections as the
-  song gives them. In a sentence with no whole-video words of its own, it reaches the whole idea ("Fast cuts. Don't
-  touch the bridge."). The part after it is about that section only when it starts with "which", "where" or the
-  like ("except the bridge, which should be slow").
+- **Pace and brightness words in the idea** (`ideaAsks`), without an LLM: "fast", "punchy", "slow", "calm" and the like
+  move a section's pace a step ("very fast" two), and "bright", "vivid", "dark" or "moody" go into its mood (a section
+  called bright also gets a glow). The idea is read in parts that each say one thing: they end at a full stop, "but" or
+  "then", before "except", "apart from", "aside from", "other than" or "excluding", at "and" or a comma unless it joins
+  two descriptions ("fast and bright", "a fast, punchy chorus") or a list of them still waiting for its section ("slow,
+  dreamy verses"; a list ends at a noun such as "footage" or "colors" that ends its phrase, so in "dark, grainy footage,
+  fast chorus" only "fast" is the chorus's, but all of "bright, feel good chorus" is), and after a section named with
+  "in the" or "for every" ("fast in the chorus and slow in the verses"). In a part, a word applies to the section named
+  nearest to it ("keep the chorus fast and the verses slow"), else to the one the part before named ("in the chorus,
+  fast and bright"), else to the whole video. Sections go by the song map's labels (a guessed chorus too); a section's
+  mood becomes the user's words, after any brightness word asked of the whole video, and its own pace word replaces the
+  whole video's ("fast video, slow chorus" slows the chorus). Without a section, pace words shift every section and
+  brightness words lead every mood. A part with "not", "don't", "no", "avoid", "too" and the like is left out, and
+  opposite words for one section cancel out: a missed word leaves the draft as it would be, a misread one would turn it
+  the wrong way. A part that starts with "except" and the like, is negated, or says to leave them alone ("alone",
+  "untouched", "unchanged", "intact", "as they are", "the same" but not "the same as", "let the bridge be"), and names
+  sections leaves those sections out of the whole-video words of its sentence, as does a part after "but" that only
+  names sections: "fast everywhere except the bridge", "everything fast but the chorus", "fast cuts, but not in the
+  verses" and "fast everywhere, leave the bridge alone" leave those sections as the song gives them. Leaving alone also
+  reaches sections named just before it in its sentence by parts that only name them ("keep the intro and outro
+  untouched"), but not past a part with words of its own ("show the band in the intro and leave the bridge alone"), nor
+  when its own part starts with "keep", "leave" or "let" ("fast verses and chorus, leave the bridge alone"). In a
+  sentence with no whole-video words of its own, it reaches the whole idea ("Fast cuts. Don't touch the bridge."). The
+  part after it is about that section only when it starts with "which", "where" or the like ("except the bridge, which
+  should be slow").
 - **Phrasing inside a section** (`phrasedCutTimes`): bars clearly louder than the rest of their section cut twice as
   often, clearly quieter bars half as often, and the last bar before a faster section speeds up into it.
 - **Lyric timing**: a line shows up to 0.3 s before it is sung and holds up to 1 s after (longer for long lines,
