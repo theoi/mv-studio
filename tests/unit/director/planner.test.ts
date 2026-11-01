@@ -567,8 +567,25 @@ describe('pace and brightness words in the idea', () => {
       { pace: 1, light: 1, words: ['fast', 'bright'] },
     ],
     ['fast video, slow chorus', { chorus: { pace: -1, light: 0, words: ['slow'] } }, fast],
+    // A list ends at its own noun, even with a section named after it, but not at a noun describing the next word.
+    [
+      'dark, grainy footage, fast chorus',
+      { chorus: { pace: 1, light: 0, words: ['fast'] } },
+      { pace: 0, light: -1, words: ['dark'] },
+    ],
+    [
+      'dark and grainy footage, fast chorus',
+      { chorus: { pace: 1, light: 0, words: ['fast'] } },
+      { pace: 0, light: -1, words: ['dark'] },
+    ],
+    ['bright, feel good chorus', { chorus: { pace: 0, light: 1, words: ['bright'] } }, none],
+    ['slow, video game verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
+    ['dark, camera shake verses', { verse: { pace: 0, light: -1, words: ['dark'] } }, none],
     // A part after "but" with words of its own is about its section, not an exception.
     ['fast cuts but keep the bridge slow', { bridge: { pace: -1, light: 0, words: ['slow'] } }, fast],
+    // "the same as" matches a section to another, it doesn't leave either alone.
+    ['fast cuts, keep the bridge the same as the chorus', {}, fast],
+    ['fast everywhere, the outro the same as the intro', {}, fast],
   ])('reads “%s”', (idea, roles, all) => {
     const asks = ideaAsks(idea)
     expect(Object.fromEntries(asks.roles)).toEqual(roles)
@@ -588,6 +605,30 @@ describe('pace and brightness words in the idea', () => {
     ['fast everywhere but the bridge', {}, { bridge: none }],
     ['everything fast but the chorus', {}, { chorus: none }],
     ['fast cuts, but the bridge is different', {}, { bridge: none }],
+    // Leaving a section alone leaves it out, without "but" or "except".
+    ['fast everywhere, leave the bridge alone', {}, { bridge: none }],
+    ['fast cuts and keep the outro as it is', {}, { outro: none }],
+    ['fast all the way through, the intro untouched', {}, { intro: none }],
+    ['fast everywhere, keep the verses as they are', {}, { verse: none }],
+    ['fast everywhere, keep the bridge the same', {}, { bridge: none }],
+    ['fast everywhere, let the bridge be', {}, { bridge: none }],
+    // Leaving alone reaches back to sections named just before it in its sentence by parts that only name them.
+    [
+      'fast everywhere, slow verses and the bridge untouched',
+      { verse: { pace: -1, light: 0, words: ['slow'] } },
+      { bridge: none },
+    ],
+    ['fast everywhere, keep the intro and outro untouched', {}, { intro: none, outro: none }],
+    ['fast everywhere, leave the verses and the bridge alone', {}, { verse: none, bridge: none }],
+    [
+      'fast everywhere, keep the intro, the verses and the outro as they are',
+      {},
+      { intro: none, verse: none, outro: none },
+    ],
+    ['fast everywhere, show the band in the intro and leave the bridge alone', {}, { bridge: none }],
+    ['fast everywhere, the singer in the chorus and the bridge untouched', {}, { bridge: none }],
+    ['Fast everywhere. Keep the intro. Leave the outro alone.', {}, { outro: none }],
+    ['fast everywhere, keep the intro, but leave the outro alone', {}, { outro: none }],
     // The part after a section left out goes to the whole video, unless it starts with "which" or the like.
     ['Apart from the bridge, fast cuts', {}, { bridge: none }],
     [
@@ -600,6 +641,23 @@ describe('pace and brightness words in the idea', () => {
     expect(asks.all).toEqual(fast)
     expect(Object.fromEntries(asks.roles)).toEqual(roles)
     expect(Object.fromEntries(asks.excepted)).toEqual(excepted)
+  })
+
+  // "leave" or "keep" starts a clause of its own, so leaving alone doesn't reach back past it into a described list.
+  it.each([
+    [
+      'dark everywhere, fast verses and chorus, leave the bridge alone',
+      { verse: { pace: 1, light: 0, words: ['fast'] } },
+    ],
+    [
+      'dark everywhere, slow verses and the chorus, keep the bridge untouched',
+      { verse: { pace: -1, light: 0, words: ['slow'] } },
+    ],
+  ])('keeps the chorus dark in “%s”', (idea, roles) => {
+    const asks = ideaAsks(idea)
+    expect(asks.all).toEqual({ pace: 0, light: -1, words: ['dark'] })
+    expect(Object.fromEntries(asks.roles)).toEqual(roles)
+    expect(Object.fromEntries(asks.excepted)).toEqual({ bridge: none })
   })
 
   it('leaves a section out of only the whole-video words of the sentences that except it', () => {
