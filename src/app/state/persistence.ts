@@ -429,8 +429,10 @@ export async function renameProject(id: Id, name: string): Promise<void> {
 export async function duplicateProject(id: Id): Promise<Project> {
   const source = editor.getProject().id === id ? editor.getProject() : await store.load(id)
   const now = new Date().toISOString()
-  // Numbered like projects of one song: a copy of "Neon Skyline (2)" is the next free "Neon Skyline (n)".
-  const name = distinctName(source.name.replace(/ \(\d+\)$/, ''), [...storedNames.values(), source.name])
+  // Numbered like projects of one song, from (2): a copy of "Neon Skyline (2)" is the next free "Neon Skyline (n)",
+  // never a name a kept project or the open one (kept or not) has.
+  const base = source.name.replace(/ \(\d+\)$/, '')
+  const name = distinctName(base, [...storedNames.values(), source.name, editor.getProject().name, base])
   const copy = { ...source, id: newId(), name, createdAt: now, updatedAt: now }
   await writeProject(copy)
   return copy
