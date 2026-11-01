@@ -130,7 +130,7 @@ export function localSetupSteps(runner: 'ollama' | 'lmstudio' | 'other', origin 
   if (runner === 'lmstudio') {
     return [
       'Open LM Studio, go to the Developer tab and start the local server.',
-      'In the server settings, turn on "Enable CORS".',
+      'In the server settings, turn on “Enable CORS”.',
       'Load a model in LM Studio.',
       lna,
       'Choose Test connection again.',

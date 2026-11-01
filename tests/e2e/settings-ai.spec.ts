@@ -128,7 +128,7 @@ test('says how to let this site reach LM Studio when it does not answer, and sav
   await llm.getByRole('button', { name: 'Test connection' }).click()
   const alert = llm.getByRole('alert')
   await expect(alert).toContainText('Couldn’t connect to LM Studio on this computer')
-  await expect(alert).toContainText('turn on "Enable CORS"')
+  await expect(alert).toContainText('turn on “Enable CORS”')
   expect(seen).toEqual(['GET http://localhost:1234/v1/models'])
   expect((await saved(page)).llm ?? null).toBeNull()
   await expect(llm.getByText('Not connected')).toBeVisible()

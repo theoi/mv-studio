@@ -626,7 +626,7 @@ export class OpenAICompatibleClient {
         const model = this.endpoint.model ?? ''
         return this.error('model-not-found', {
           status,
-          title: `Model "${model}" isn’t available`,
+          title: `Model “${model}” isn’t available`,
           message,
           steps:
             guessLocalRunner(this.baseUrl, this.endpoint.preset) === 'ollama'
