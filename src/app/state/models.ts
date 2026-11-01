@@ -76,9 +76,21 @@ async function deviceDtype(): Promise<VisionDtype> {
   return visionDtype(await detectCapabilities())
 }
 
+/**
+ * The weights of a vision model to count as on this device: its own (`dtype`), or q8 when only the q8 files are all
+ * cached. A device whose WebGPU fails before its weights are fetched runs the model on q8 every time, and would
+ * otherwise always show the model as still to download.
+ */
+async function cachedDtype(id: VisionModel, dtype: VisionDtype): Promise<VisionDtype> {
+  if (dtype === 'q8') return dtype
+  const all = async (d: VisionDtype) =>
+    (await Promise.all(visionModelFiles(id, d).map(fileCached))).every(Boolean)
+  return !(await all(dtype)) && (await all('q8')) ? 'q8' : dtype
+}
+
 /** Bytes a vision model still has to download on this device, for the cost lines; 0 when it is cached. */
 export async function visionDownloadBytes(id: VisionModel): Promise<number> {
-  const files = visionModelFiles(id, await deviceDtype())
+  const files = visionModelFiles(id, await cachedDtype(id, await deviceDtype()))
   const cached = await Promise.all(files.map(fileCached))
   return files.reduce((sum, f, i) => sum + (cached[i] ? 0 : (f.bytes ?? 0)), 0)
 }
@@ -112,7 +124,10 @@ export function localModels(dtype: VisionDtype): LocalModel[] {
 export type ModelDownload = 'all' | 'some' | 'none'
 
 interface ModelsState {
-  /** The models as this device downloads them (`localModels`); `LOCAL_MODELS` until checked. */
+  /**
+   * The models as this device downloads them (`localModels`), or with the q8 weights it ran on instead when only those
+   * are cached; `LOCAL_MODELS` until checked.
+   */
   models: LocalModel[]
   /** How much of each model is downloaded (null until checked). */
   cached: Record<string, ModelDownload> | null
@@ -123,7 +138,12 @@ interface ModelsState {
 export const useModels = create<ModelsState>(() => ({ models: LOCAL_MODELS, cached: null, bytes: null }))
 
 export async function refreshModels(): Promise<void> {
-  const models = localModels(await deviceDtype())
+  const dtype = await deviceDtype()
+  const models = await Promise.all(
+    localModels(dtype).map(async (m) =>
+      isVisionModel(m.id) && (await cachedDtype(m.id, dtype)) !== dtype ? vision(m.id, m.desc, 'q8') : m,
+    ),
+  )
   const [entries, usage] = await Promise.all([
     Promise.all(
       models.map(async (m) => {

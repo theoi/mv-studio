@@ -64,17 +64,32 @@ describe('Settings › This device', () => {
   })
 
   it('shows a model as on this device when the weights for this device are cached', async () => {
-    h.cached.add(`${DEPTH}/model_quantized.onnx`)
-    h.caps = WEBGPU_F16
-    await refreshModels()
-    expect(useModels.getState().cached?.depth).toBe('none')
     h.cached.add(`${DEPTH_MAIN}/model_fp16.onnx`)
+    h.caps = WEBGPU_F16
     await refreshModels()
     expect(useModels.getState().cached?.depth).toBe('all')
     h.caps = NO_WEBGPU
-    h.cached.delete(`${DEPTH}/model_quantized.onnx`)
     await refreshModels()
     expect(useModels.getState().cached?.depth).toBe('none')
+  })
+
+  it('counts the q8 weights as on this device when only they are cached, as after WebGPU failed', async () => {
+    h.cached.add(`${DEPTH}/model_quantized.onnx`)
+    h.caps = WEBGPU_F16
+    await refreshModels()
+    expect(useModels.getState().cached?.depth).toBe('all')
+    expect(row('depth').bytes).toBe(27_258_801)
+    expect(await visionDownloadBytes('depth')).toBe(0)
+    // With its own weights cached too, the device's weights count.
+    h.cached.add(`${DEPTH_MAIN}/model_fp16.onnx`)
+    await refreshModels()
+    expect(row('depth').bytes).toBe(49_642_442)
+    h.cached.delete(`${DEPTH_MAIN}/model_fp16.onnx`)
+    await refreshModels()
+    await removeModel('depth')
+    expect(h.cached.size).toBe(0)
+    expect(useModels.getState().cached?.depth).toBe('none')
+    expect(row('depth').bytes).toBe(49_642_442)
   })
 
   it('removes a model’s weights for every device, and the copies cached under their former URLs', async () => {
