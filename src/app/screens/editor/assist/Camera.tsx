@@ -7,6 +7,7 @@ import { Segmented, Slider } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBytes, formatTime, plural } from '../../../format.ts'
 import {
+  MOTION_LABELS,
   MOTION_PRESETS,
   cameraTargets,
   chosenIntensity,
@@ -128,7 +129,12 @@ export function CameraView() {
     const risky = riskyMoves(project, result, preset)
     const note = riskNote(
       result.moves.length,
-      risky.map((r) => ({ risks: r.risks, alwaysBends: r.move.alwaysBends })),
+      risky.map((r) => ({
+        risks: r.risks,
+        alwaysBends: r.move.alwaysBends,
+        cleanAlternatives: r.move.cleanAlternatives,
+        strength: r.strength,
+      })),
     )
     const riskRows = risky.flatMap((r) => {
       const clip = project.clips[r.move.clipId]
@@ -252,11 +258,10 @@ export function CameraView() {
           value={motion}
           onChange={(m) => useCamera.setState({ motion: m })}
           ariaLabel="Camera motion"
-          options={[
-            { value: 'push', label: 'Push in' },
-            { value: 'orbit', label: 'Orbit' },
-            { value: 'drift', label: 'Drift' },
-          ]}
+          options={(Object.keys(MOTION_LABELS) as CameraMotion[]).map((value) => ({
+            value,
+            label: MOTION_LABELS[value],
+          }))}
         />
       </Field>
       <Field

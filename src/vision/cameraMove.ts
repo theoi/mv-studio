@@ -6,6 +6,7 @@ import { JobError } from '../shared/jobs.ts'
 import {
   predictCameraMove,
   type CameraPrediction,
+  type CleanAlternative,
   type PredictionRequest,
   type PredictionSource,
 } from './cameraPrediction.ts'
@@ -53,7 +54,7 @@ export interface CameraMoveOptions extends TaskOptions {
   intensity?: number
   /**
    * The other presets the user can choose. Where the move bends a still's straight lines even at 0.25, these are
-   * checked too, for `alwaysBends`.
+   * checked too, for `alwaysBends` and `cleanAlternatives`.
    */
   alternatives?: readonly CameraPreset[]
 }
@@ -77,6 +78,12 @@ export interface CameraMoveResult {
    * `alternatives`, so no other choice keeps them straight. False without alternatives.
    */
   alwaysBends: boolean
+  /**
+   * Where this preset bends the still's straight lines even at 0.25: the `alternatives` predicted neither to bend them
+   * nor to smear at 0.25, each with its `safeIntensity`, the one that can move the most first. Empty otherwise, and
+   * without alternatives.
+   */
+  cleanAlternatives: CleanAlternative[]
 }
 
 export interface CameraMovesResult {
@@ -167,6 +174,7 @@ export async function addCameraMoves(
         smearRisk: intensity > still.safe.smear,
         bendRisk: intensity > still.safe.bend,
         alwaysBends: still.alwaysBends,
+        cleanAlternatives: still.cleanAlternatives,
       })
     }
     // Depth images of these stills from older preparations go once no effect uses them.
