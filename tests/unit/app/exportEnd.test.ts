@@ -161,8 +161,8 @@ describe('a job’s time left in the activity chip', () => {
 
   it.each([
     [290, 'About 5 min left', '5 min left'],
-    [20, 'Less than a minute left', 'under 1 min left'],
-  ])('of %i s reads the same minutes in the chip as in the dialog', (seconds, long, short) => {
+    [20, 'Less than a minute left', 'almost done'],
+  ])('of %i s reads “%s” in the dialog and “%s” in the chip', (seconds, long, short) => {
     expect(timeLeft(seconds)).toBe(long)
     expect(shortTimeLeft(seconds)).toBe(short)
   })

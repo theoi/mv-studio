@@ -271,7 +271,7 @@ test('an export that ends after Keep editing says so until dismissed, with Downl
 
   // The activity chip says how long the export has left, the same figure as the export's own row.
   const chip = page.getByRole('button', { name: /^Exporting video \d+% · / })
-  await expect(chip).toContainText(/^Exporting\d+% · (\d+ min|under 1 min) left$/, { timeout: 60_000 })
+  await expect(chip).toContainText(/^Exporting\d+% · (\d+ min left|almost done)$/, { timeout: 60_000 })
   await chip.click()
   await expect(dialog).toBeVisible()
   const timesLeft = () =>
