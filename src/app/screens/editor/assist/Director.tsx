@@ -560,7 +560,7 @@ function DoneView({ state, actionRef, onRedraft }: { state: StateOf<'applied'> }
         label="Refine the draft"
         hint={
           builtIn
-            ? 'The built-in planner takes the look and mood from your words. Connect a language model in Settings for changes like this.'
+            ? 'The built-in planner takes the look, mood and pace from your words (“faster in the chorus”). Connect a language model in Settings for changes like this.'
             : 'Press Enter to draft again with this change.'
         }
       >

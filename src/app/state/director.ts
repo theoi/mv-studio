@@ -11,6 +11,7 @@ import type { Id } from '../../model/types.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import type { Project } from '../../model/index.ts'
+import { templateState } from '../../plugins/templates.ts'
 import { JobError, jobs, type JobSnapshot } from '../../shared/jobs.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
 import { directorFootage } from './footage.ts'
@@ -142,8 +143,13 @@ async function waitForSong({
   }
 }
 
-/** The kind of video to draft for the project's kind (a blank project picks from what it has). */
-export function videoKindFor(kind: Kind, project: Project): VideoKind {
+/**
+ * The kind of video to draft: the kind the project was made as, else the editor's (a blank project picks from what
+ * it has). The editor's kind comes from the link, so a project reopened without one would otherwise draft as a lyric
+ * video.
+ */
+export function videoKindFor(uiKind: Kind, project: Project): VideoKind {
+  const kind = templateState(project)?.kind ?? uiKind
   if (kind === 'footage') return 'beat-cut'
   if (kind !== 'blank') return kind
   if (project.lyrics?.lines.some((l) => l.text.trim())) return 'lyric'
