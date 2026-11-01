@@ -292,6 +292,146 @@ test('the time an export takes is worked out on this device, and the export stay
   expect(took).toBeLessThanOrEqual(1.5 * (estimate ?? 0))
 })
 
+/**
+ * Opens the sample with background analysis on, as in a real user's browser, and model-free footage analysis that
+ * keeps all cores but one busy for `busyMs` per batch of frames, as the footage tagger does without a GPU.
+ */
+async function openWithBusyAnalysis(page: Page, busyMs: number) {
+  await page.addInitScript(() => localStorage.removeItem('mv-studio.export-pace'))
+  await openApp(page, './?e2e=1')
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate((ms) => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem('mv-studio.background-analysis', 'on')
+    const source = `onmessage = (e) => { const end = performance.now() + e.data; let x = 0; while (performance.now() < end) x += Math.sqrt(x + 1); postMessage(x) }`
+    const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
+    const workers = Array.from(
+      { length: Math.max(2, navigator.hardwareConcurrency - 1) },
+      () => new Worker(url),
+    )
+    const busy = () =>
+      Promise.all(
+        workers.map(
+          (w) =>
+            new Promise((resolve) => {
+              w.onmessage = resolve
+              w.postMessage(ms)
+            }),
+        ),
+      )
+    const vector = [0.5, 0.5, 0.5, 0.5]
+    window.mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => ({
+        async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+          await busy()
+          for (const b of bitmaps) b.close()
+          return { dim: 4, data: new Float32Array(bitmaps.flatMap(() => vector)) }
+        },
+        async embedTexts({ texts }: { texts: string[] }) {
+          return { dim: 4, data: new Float32Array(texts.flatMap(() => vector)) }
+        },
+      }),
+      segmentation: () => {
+        throw new Error('unused')
+      },
+    })
+    window.location.hash = '#/editor'
+  }, busyMs)
+  await waitForPreview(page)
+}
+
+/** Opens Export with only the Full video, at 720p. */
+async function openExport720(page: Page) {
+  await page.keyboard.press(`${mod}+e`)
+  const dialog = page.getByRole('dialog', { name: 'Export' })
+  await dialog.getByRole('radio', { name: '720p' }).click()
+  await dialog.getByLabel('Include Vertical').uncheck()
+  return dialog
+}
+
+/** The current project's 720p trial estimate in seconds, or null before it has one. */
+function trial720(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    const { exportEstimate, project } = window.mvStudio.app
+    const drawn = exportEstimate.drawnKey(project.editor.getProject())
+    const trials = exportEstimate.trialEstimates() as Record<string, number | null>
+    return (
+      Object.entries(trials).find(([k]) => k.startsWith(`${drawn}|`) && k.includes('|1280|720|'))?.[1] ?? null
+    )
+  })
+}
+
+const unsettled = (page: Page) =>
+  page.evaluate(() => window.mvStudio.app.exportEstimate.unsettledTrials() as string[])
+
+const footageStatus = (page: Page) =>
+  page.evaluate(() => window.mvStudio.app.footage.useFootage.getState().indexing?.status ?? 'none')
+
+/** A trial of the 720p output with nothing else running: renaming the project makes the dialog time it again. */
+async function quietTrial(page: Page): Promise<number> {
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    editor.dispatch({ type: 'project.rename', name: `${editor.getProject().name} (quiet)` })
+  })
+  await expect.poll(() => trial720(page), { timeout: 60_000 }).not.toBeNull()
+  return (await trial720(page)) ?? 0
+}
+
+test('with background analysis on, Export times its outputs before it starts footage analysis, so the time is not inflated by it', async ({
+  page,
+}) => {
+  test.setTimeout(240_000)
+  await openWithBusyAnalysis(page, 600)
+  const dialog = await openExport720(page)
+  const time = dialog.getByText(
+    /^\s*(Working out the time…|Timing once other tasks finish…|.* on this device)$/,
+  )
+  await expect(time).toHaveText(/^About .* on this device$/, { timeout: 60_000 })
+  const first = (await trial720(page)) ?? 0
+  // The dialog still starts footage analysis for framing, after the trial, and it runs to the end.
+  await expect.poll(() => footageStatus(page), { timeout: 30_000 }).toBe('indexing')
+  await expect.poll(() => footageStatus(page), { timeout: 150_000 }).not.toBe('indexing')
+  const quiet = await quietTrial(page)
+  console.log('trial', first, 'quiet', quiet)
+  expect(first).toBeGreaterThan(0)
+  expect(first).toBeLessThanOrEqual(1.25 * quiet)
+  expect(await unsettled(page)).toEqual([])
+})
+
+test('a time worked out while footage analysis runs is shown, not kept: it is worked out again when the analysis ends, also after Export opens again', async ({
+  page,
+}) => {
+  test.setTimeout(300_000)
+  await openWithBusyAnalysis(page, 2000)
+  await page.evaluate(() => window.mvStudio.app.footage.startFootageAnalysis())
+  await expect.poll(() => footageStatus(page), { timeout: 30_000 }).toBe('indexing')
+  let dialog = await openExport720(page)
+  const timeOf = (d: Locator) =>
+    d.getByText(/^\s*(Working out the time…|Timing once other tasks finish…|.* on this device)$/)
+  // It says why there is no time yet, then times the output anyway rather than wait for the whole analysis.
+  await expect(timeOf(dialog)).toHaveText('Timing once other tasks finish…', { timeout: 15_000 })
+  // A time from under load is likely too long, and says so.
+  await expect(timeOf(dialog)).toHaveText(/^Up to .* on this device$/, { timeout: 90_000 })
+  expect(await footageStatus(page)).toBe('indexing')
+  expect(await unsettled(page)).toHaveLength(1)
+  const underLoad = (await trial720(page)) ?? 0
+
+  // Closed and opened again while the analysis runs: the time from under load shows, but is still to be redone.
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  dialog = await openExport720(page)
+  await expect(timeOf(dialog)).toHaveText(/^Up to .* on this device$/)
+  expect(await unsettled(page)).toHaveLength(1)
+
+  // Once the analysis ends, the output is timed again and that time replaces the one from under load.
+  await expect.poll(() => unsettled(page), { timeout: 200_000 }).toEqual([])
+  expect(await footageStatus(page)).not.toBe('indexing')
+  const settled = (await trial720(page)) ?? 0
+  console.log('under load', underLoad, 'settled', settled)
+  expect(settled).toBeGreaterThan(0)
+  expect(settled).toBeLessThan(underLoad)
+  await expect(timeOf(dialog)).toHaveText(/^About .* on this device$/)
+})
 /** Start and length, in seconds, of the range written under the song lane ("1:04 – 1:34 · ..."). */
 async function laneRange(dialog: Locator): Promise<{ start: number; length: number }> {
   const text = await dialog.getByText(/^\d+:\d\d – \d+:\d\d · /).textContent()

@@ -726,13 +726,17 @@ function ExportDialogBody() {
     edit((draft) => ({ items: change(draft.items) }))
   const setSelectedId = (selectedId: string) => edit(() => ({ selectedId }))
   const [candidates] = useState(() => candidateOutputs(project))
-  // Reframed outputs follow the subjects that footage analysis finds.
-  useEffect(startFootageAnalysis, [])
   /** The moment the preview shows once a shot is picked; otherwise each output's own moment. */
   const [viewTime, setViewTime] = useState<number | null>(null)
   const planned = useMemo(() => items.map((i) => planOutput(project, i.spec)), [project, items])
   const active = useMemo(() => planned.filter((_, k) => items[k]?.on), [planned, items])
-  const seconds = useExportEstimate(project, active, phase === 'setup')
+  const estimate = useExportEstimate(project, active, phase === 'setup')
+  // Reframed outputs follow the subjects that footage analysis finds. It starts once the outputs have been timed:
+  // running under their trials, it made the time shown about 1.7 times too long.
+  const analyze = estimate.timed || phase !== 'setup'
+  useEffect(() => {
+    if (analyze) startFootageAnalysis()
+  }, [analyze])
   const index = Math.max(
     0,
     items.findIndex((i) => i.spec.id === selectedId),
@@ -780,7 +784,7 @@ function ExportDialogBody() {
                   <span>
                     <Clock />{' '}
                     <span className={styles.time}>
-                      <span>{timeLabel(seconds)}</span>
+                      <span>{timeLabel(estimate.seconds, estimate)}</span>
                     </span>
                   </span>
                 </>
