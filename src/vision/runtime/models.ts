@@ -8,6 +8,12 @@ export const MEDIAPIPE_VERSION = '1.2.0'
 export const MEDIAPIPE_WASM_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`
 
 /**
+ * What the MediaPipe runtime transfers the first time, measured for `MEDIAPIPE_VERSION`: jsDelivr sends its module build
+ * (14.8 MB of JS and WebAssembly) brotli-compressed. MediaPipe's models arrive uncompressed, at their size.
+ */
+export const MEDIAPIPE_RUNTIME_TRANSFER_BYTES = 3_784_928
+
+/**
  * A MediaPipe model at version 1 of its path. `latest` served the same bytes (unchanged since 2023), so a copy
  * cached from there moves to the pinned URL instead of downloading again.
  */

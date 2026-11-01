@@ -25,7 +25,11 @@ import type {
 import type * as Vision from '../../vision/index.ts'
 import { suitabilityInRange } from '../../vision/mask/suitability.ts'
 import { PERSON_TRACK_VERSION } from '../../vision/segmentation/personTrack.ts'
-import { VISION_MODEL_PARTS, VISION_MODELS } from '../../vision/runtime/models.ts'
+import {
+  MEDIAPIPE_RUNTIME_TRANSFER_BYTES,
+  VISION_MODEL_PARTS,
+  VISION_MODELS,
+} from '../../vision/runtime/models.ts'
 import { mediaById } from '../mock/media.ts'
 import { maskStorageKey, sceneOf } from '../mock/demoProject.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
@@ -661,10 +665,10 @@ export function footageRows(
     .sort((a, b) => rowRank(a.suitability) - rowRank(b.suitability))
 }
 
-/** Uncompressed size of the MediaPipe vision runtime (JS and WebAssembly), loaded once with the first model. */
-const MEDIAPIPE_RUNTIME_BYTES = 14_800_000
-
-/** Bytes finding and cutting out people still has to download (models and runtime, once), 0 when cached. */
+/**
+ * Bytes finding and cutting out people still has to download, once, as they arrive: the models, and the MediaPipe
+ * runtime with the first of them. 0 when cached.
+ */
 export async function personDownloadBytes(): Promise<number> {
   const needed = VISION_MODEL_PARTS.cutout
   const mediapipe = [...needed, VISION_MODELS.magicTouch, VISION_MODELS.selfieMulticlass]
@@ -673,11 +677,14 @@ export async function personDownloadBytes(): Promise<number> {
     mediapipe.map((m) => modelCache.has(fileOf(m)?.url ?? '').catch(() => false)),
   )
   const models = needed.reduce((sum, m, i) => sum + (cached[i] ? 0 : (fileOf(m)?.bytes ?? 0)), 0)
-  return models + (cached.some(Boolean) ? 0 : MEDIAPIPE_RUNTIME_BYTES)
+  return models + (cached.some(Boolean) ? 0 : MEDIAPIPE_RUNTIME_TRANSFER_BYTES)
 }
 
-/** Bytes finding people still has to download, once; 0 when cached or not `needed`. */
-export function usePersonDownload(needed: boolean): number {
+/**
+ * Bytes finding people still has to download, once; 0 when cached or not `needed`. Counted again when `checking`
+ * changes, since checking footage for people downloads most of them.
+ */
+export function usePersonDownload(needed: boolean, checking: boolean): number {
   const [bytes, setBytes] = useState(0)
   useEffect(() => {
     if (!needed) return
@@ -688,7 +695,7 @@ export function usePersonDownload(needed: boolean): number {
     return () => {
       live = false
     }
-  }, [needed])
+  }, [needed, checking])
   return needed ? bytes : 0
 }
 
