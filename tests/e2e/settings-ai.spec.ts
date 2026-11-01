@@ -194,7 +194,7 @@ test('checks a fal.ai key for free before saving it, and removes it', async ({ p
 
   await key.fill('not-a-key')
   await fal.getByRole('button', { name: 'Connect' }).click()
-  await expect(fal.getByRole('alert')).toContainText('That doesn’t look like a fal.ai key'.replace('’', "'"))
+  await expect(fal.getByRole('alert')).toContainText('That doesn’t look like a fal.ai key')
   expect(seen).toEqual([])
 
   await key.fill('key-id:wrong-secret')
@@ -261,9 +261,9 @@ test('a fal.ai key check that gets no answer stops with Try again, and the typed
   await key.fill('key-id:key-secret')
   await fal.getByRole('button', { name: 'Connect' }).click()
   await expect(fal.getByRole('button', { name: 'Checking…' })).toBeDisabled()
-  await expect(fal.getByRole('alert')).toContainText("fal.ai didn't answer")
+  await expect(fal.getByRole('alert')).toContainText('fal.ai didn’t answer')
   await expect(fal.getByRole('alert')).toContainText(
-    "No answer after 2 s, so MV Studio stopped waiting. The key isn't saved yet.",
+    'No answer after 2 s, so MV Studio stopped waiting. The key isn’t saved yet.',
   )
   await expect(fal.getByRole('button', { name: 'Try again' })).toBeEnabled()
   await expect(key).toHaveValue('key-id:key-secret')
@@ -277,7 +277,7 @@ test('a fal.ai key check that gets no answer stops with Try again, and the typed
   await page.evaluate(() => (window.location.hash = '#/editor?dialog=settings&page=ai'))
   await expect(key).toHaveValue('key-id:key-secret')
   await expect(fal.getByText('Not connected')).toBeVisible()
-  await expect(fal.getByRole('alert')).toContainText("fal.ai didn't answer")
+  await expect(fal.getByRole('alert')).toContainText('fal.ai didn’t answer')
 
   answer = true
   await fal.getByRole('button', { name: 'Try again' }).click()
@@ -325,6 +325,36 @@ test('Chrome doesn’t offer to save a fal.ai or LLM key as a password', async (
   } finally {
     await context.close()
   }
+})
+
+test('both key fields draw the key as the same dots, and copying one gives dots, not the key', async ({
+  page,
+}) => {
+  await openAiSettings(page)
+  const fields = [
+    card(page, 'fal.ai').getByLabel('fal.ai key'),
+    card(page, 'Language model').getByLabel('LLM API key'),
+  ]
+  const looks: string[] = []
+  for (const field of fields) {
+    await field.fill('key-id:key-secret')
+    looks.push(
+      await field.evaluate((el) => {
+        const s = getComputedStyle(el)
+        return [s.getPropertyValue('-webkit-text-security'), s.fontFamily, s.fontSize].join(' | ')
+      }),
+    )
+  }
+  expect(looks[0]).toMatch(/^disc \| /)
+  expect(looks[1]).toBe(looks[0])
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await fields[0].focus()
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.press('ControlOrMeta+C')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    '•'.repeat('key-id:key-secret'.length),
+  )
 })
 
 test('saves the spending settings', async ({ page }) => {

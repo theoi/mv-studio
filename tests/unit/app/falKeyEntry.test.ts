@@ -16,7 +16,7 @@ vi.mock('../../../src/cloud/fal/provider.ts', () => ({
 const noAnswer = new CloudError({
   kind: 'timeout',
   provider: 'fal',
-  title: "fal.ai didn't answer",
+  title: 'fal.ai didn’t answer',
   message: 'No answer',
 })
 

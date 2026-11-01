@@ -335,8 +335,8 @@ describe('fal.ai adapter against a mock fal queue', () => {
     const result = await provider.validateKey()
     expect(result.ok === false && result.error).toMatchObject({
       kind: 'timeout',
-      title: "fal.ai didn't answer",
-      message: "No answer after 0 s, so MV Studio stopped waiting. The key isn't saved yet.",
+      title: 'fal.ai didn’t answer',
+      message: 'No answer after 0 s, so MV Studio stopped waiting. The key isn’t saved yet.',
     })
 
     const controller = new AbortController()

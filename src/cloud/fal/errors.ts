@@ -59,7 +59,7 @@ export function falKeyFormatError(): CloudError {
   return new CloudError({
     kind: 'bad-key',
     provider: 'fal',
-    title: "That doesn't look like a fal.ai key",
+    title: 'That doesn’t look like a fal.ai key',
     message: 'fal.ai keys have two parts separated by a colon: the key id, then the secret.',
     steps: ['Copy the whole key from fal.ai › Dashboard › Keys, including the part after the colon.'],
     helpUrl: FAL_KEYS_URL,
@@ -70,8 +70,8 @@ export function falKeyCheckNoAnswerError(seconds: number, cause?: unknown): Clou
   return new CloudError({
     kind: 'timeout',
     provider: 'fal',
-    title: "fal.ai didn't answer",
-    message: `No answer after ${Math.round(seconds)} s, so MV Studio stopped waiting. The key isn't saved yet.`,
+    title: 'fal.ai didn’t answer',
+    message: `No answer after ${Math.round(seconds)} s, so MV Studio stopped waiting. The key isn’t saved yet.`,
     steps: [
       'Check your internet connection.',
       'Allow fal.ai, fal.run and fal.media in any ad or content blocker.',
@@ -93,7 +93,7 @@ export function mapFalError(
     return new CloudError({
       kind: 'network',
       provider: 'fal',
-      title: offline ? "You're offline" : "Couldn't reach fal.ai",
+      title: offline ? 'You’re offline' : 'Couldn’t reach fal.ai',
       message: offline
         ? 'Generation needs an internet connection.'
         : 'The request to fal.ai did not get through. This is usually a connection problem or a browser extension blocking fal.ai.',
@@ -143,7 +143,7 @@ export function mapFalError(
         kind: 'bad-key',
         provider: 'fal',
         status,
-        title: "This key can't use that model",
+        title: 'This key can’t use that model',
         message: text || 'fal.ai refused the request for this key.',
         steps: ['Check the key’s permissions on fal.ai, or pick a different model.'],
         helpUrl: FAL_KEYS_URL,

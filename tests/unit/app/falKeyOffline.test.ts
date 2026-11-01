@@ -11,6 +11,6 @@ it('says it could not reach fal.ai when the code that checks the key does not lo
   expect(useFalKeyEntry.getState()).toMatchObject({
     draft: 'key-id:key-secret',
     checking: false,
-    error: { kind: 'network', title: "Couldn't reach fal.ai" },
+    error: { kind: 'network', title: 'Couldn’t reach fal.ai' },
   })
 })

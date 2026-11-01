@@ -74,9 +74,9 @@ export async function connectFalKey(): Promise<boolean> {
     error: new CloudError({
       kind: 'network',
       provider: 'fal',
-      title: "Couldn't reach fal.ai",
+      title: 'Couldn’t reach fal.ai',
       message:
-        "MV Studio couldn't load what it needs to check the key. This is usually a connection problem.",
+        'MV Studio couldn’t load what it needs to check the key. This is usually a connection problem.',
       steps: ['Check your internet connection.', 'Choose Try again.'],
       cause,
     }),
