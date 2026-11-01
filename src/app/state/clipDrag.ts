@@ -173,9 +173,10 @@ export interface RearrangeSpan extends Span {
 }
 
 /**
- * A rearranging insert drag: the moving clips leave their tracks, which close up behind them (closeUp), and go in at
- * `shift` as insertPlan puts them, on the closed-up tracks. A clip moved along its own track leaves no gap and the track
- * keeps its length. `staying` gives the clips that stay on a track, where they were before the drag; `moves` are those
+ * A rearranging insert drag: the moving clips go in at `shift` as insertPlan puts them. A clip moved along its own track
+ * leaves no gap there: the track closes up behind it (closeUp) before it goes in, and keeps its length. A clip moved to
+ * another track leaves the one it was on as it was, so clips the person is not looking at don't move; Close gap closes
+ * the gap it leaves. `staying` gives the clips that stay on a track, where they were before the drag; `moves` are those
  * that end up somewhere else. Null as for insertPlan.
  */
 export function rearrangePlan(
@@ -190,7 +191,7 @@ export function rearrangePlan(
     if (!spans) {
       spans = closeUp(
         staying(trackId),
-        moving.filter((c) => c.from === trackId),
+        moving.filter((c) => c.from === trackId && c.to === trackId),
       )
       closed.set(trackId, spans)
     }

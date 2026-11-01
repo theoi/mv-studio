@@ -353,15 +353,20 @@ describe('rearrangePlan', () => {
     })
   })
 
-  it('closes up the track a clip leaves and pushes the later clips on the track it goes to', () => {
+  it('pushes the later clips on the track a clip goes to, and leaves the track it comes from as it was', () => {
     expect(rearrangePlan([{ start: 0, end: 2, from: 't', to: 'u' }], staying('a'), 3, 0)).toEqual({
       shift: 3,
       at: 3,
+      moves: [{ id: 'y', start: 7 }],
+    })
+    // The other way: x leaves u for t, going in where c starts; y stays where it was.
+    const fromOther = (trackId: string) => (trackId === 't' ? track : other.filter((o) => o.id !== 'x'))
+    expect(rearrangePlan([{ start: 0, end: 3, from: 'u', to: 't' }], fromOther, 4, 0)).toEqual({
+      shift: 4,
+      at: 4,
       moves: [
-        { id: 'b', start: 0 },
-        { id: 'c', start: 2 },
-        { id: 'd', start: 4 },
-        { id: 'y', start: 7 },
+        { id: 'c', start: 7 },
+        { id: 'd', start: 9 },
       ],
     })
   })

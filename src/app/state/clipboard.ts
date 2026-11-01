@@ -13,7 +13,7 @@ import {
   type Track,
 } from '../../model/index.ts'
 import { plural } from '../format.ts'
-import { withCutouts } from './behind.ts'
+import { idsWithCutouts, withCutouts } from './behind.ts'
 import { undoAction } from './library.ts'
 import { removeLyricLinesCommands } from './lyrics.ts'
 import { dispatch, editor, isLookClip } from './project.ts'
@@ -105,13 +105,15 @@ function copy(p: Project, clips: Clip[]): void {
 
 /**
  * Removes the clips as one undo step. Lyric chips take their lines out of the lyrics too (removeLyricLinesCommands),
- * so no line is left without its clip. With `closeGaps`, their tracks close up behind them (ripple.ts).
+ * so no line is left without its clip, and clips take their cutouts for text behind the subject. With `closeGaps`,
+ * their tracks close up behind them (ripple.ts).
  */
 function remove(p: Project, clips: Clip[], verb: 'Cut' | 'Delete', closeGaps = false): boolean {
   const lineIds = [
     ...new Set(clips.flatMap((c) => (c.type === 'text' && c.lyricLineId ? [c.lyricLineId] : []))),
   ]
-  const ids = new Set(clips.map((c) => c.id))
+  const selected = clips.map((c) => c.id)
+  const ids = new Set(idsWithCutouts(p, selected))
   const commands: EditCommand[] = []
   // One clip.remove at the end: the lines' edits can remove a selected clip too (a director's emphasized word).
   for (const cmd of lineIds.length ? removeLyricLinesCommands(p, lineIds) : []) {

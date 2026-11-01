@@ -38,15 +38,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import type {
-  Clip,
-  EditCommand,
-  FeatureSeries,
-  LyricWord,
-  Project,
-  StemName,
-  Track,
-} from '../../../../model/index.ts'
+import type { Clip, FeatureSeries, LyricWord, Project, StemName, Track } from '../../../../model/index.ts'
 import { BARS_NOTES, clipsOnTrack, STEM_NAMES } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Segmented, Slider } from '../../../ds/Fields.tsx'
@@ -102,7 +94,7 @@ import {
   selectTimelineClips,
   timelineSelectionIds,
 } from '../../../state/clipboard.ts'
-import { withCutouts } from '../../../state/behind.ts'
+import { withCutoutTrims, withCutouts } from '../../../state/behind.ts'
 import { closeGap, gapBefore, gapLength, type Gap } from '../../../state/ripple.ts'
 import {
   bpmOf,
@@ -1593,8 +1585,13 @@ export function Timeline() {
     label: string
     /** The box of the clip that can't drop, which carries the label. */
     labelAt: number
-    /** A second line under the label. */
-    hint?: string
+    /** Lines under the label. */
+    hints?: string[]
+    /**
+     * Set when the labelled box starts in the right half of the lanes: the label then ends this many pixels inside the
+     * box's right edge, where the lanes end, so it stays in view.
+     */
+    labelEnd?: number
     boxes: { top: number; height: number; start: number; duration: number }[]
   } | null>(null)
   // Where the pointer is during an insert or swap drag, for the "Insert" or "Swap" pill beside it.
@@ -2055,20 +2052,30 @@ export function Timeline() {
             setSnapLine(null)
             const shift = Math.min(hi, Math.max(lo, dt))
             if (!refusal) refusedAt = blockedAt(spans, shift)
-            const insert = `${keyName('Mod')} while dragging to insert`
+            const insert = `Hold ${keyName('Mod')} while dragging to insert`
+            const boxes = grabbedFirst.map((c) => {
+              const row = rows[rowOf(c) + offset] as TrackRow
+              return { top: row.top, height: row.height, start: c.start + shift, duration: c.duration }
+            })
+            const labelAt = Math.max(0, refusedAt)
+            const box = boxes[labelAt]
+            const lanes = scrollRef.current
+            const from = (lanes?.scrollLeft ?? 0) / scale
+            const to = from + ((lanes?.clientWidth ?? 0) - HEADER_W) / scale
             setRefusedDrop({
               label: refusalLabel(refused),
-              hint:
+              hints:
                 refusal || inserting
                   ? undefined
                   : unswappable
-                    ? `Swaps only with a neighbor or a clip of the same length · Hold ${insert}`
-                    : `Hold ${insert}`,
-              labelAt: Math.max(0, refusedAt),
-              boxes: grabbedFirst.map((c) => {
-                const row = rows[rowOf(c) + offset] as TrackRow
-                return { top: row.top, height: row.height, start: c.start + shift, duration: c.duration }
-              }),
+                    ? ['Swaps only with a neighbor or a clip of the same length', insert]
+                    : [insert],
+              labelAt,
+              labelEnd:
+                lanes && box && box.start > (from + to) / 2
+                  ? Math.max(0, (box.start + box.duration - to) * scale)
+                  : undefined,
+              boxes,
             })
             return
           }
@@ -2109,28 +2116,28 @@ export function Timeline() {
             }
             setSnapLine(null)
             showPill('Swap', pillX, y)
-            const commands: EditCommand[] = [
-              {
-                type: 'clip.move',
-                moves: withCutouts(p, [
-                  { clipId: self.id, start: swap.clip.start, trackId: toTrack.id },
-                  { clipId: other.id, start: swap.other.start, trackId: self.trackId },
-                ]),
-              },
-            ]
+            const moves = withCutouts(p, [
+              { clipId: self.id, start: swap.clip.start, trackId: toTrack.id },
+              { clipId: other.id, start: swap.other.start, trackId: self.trackId },
+            ])
             // Same-length clips trade lengths too, so the cuts stay put; after the move, so a trim keeps the in-point.
-            for (const [c, span] of [
-              [self, swap.clip],
-              [other, swap.other],
-            ] as const)
-              if (Math.abs(span.end - span.start - c.duration) > 0.001)
-                commands.push({
-                  type: 'clip.trim',
-                  clipId: c.id,
-                  start: span.start,
-                  duration: span.end - span.start,
-                })
-            dispatch(commands, { coalesceKey: key, label: 'Swap clips' })
+            const trims = (
+              [
+                [self, swap.clip],
+                [other, swap.other],
+              ] as const
+            )
+              .filter(([c, span]) => Math.abs(span.end - span.start - c.duration) > 0.001)
+              .map(([c, span]) => ({
+                type: 'clip.trim' as const,
+                clipId: c.id,
+                start: span.start,
+                duration: span.end - span.start,
+              }))
+            dispatch([{ type: 'clip.move', moves }, ...withCutoutTrims(p, moves, trims)], {
+              coalesceKey: key,
+              label: 'Swap clips',
+            })
             return
           }
           hidePill()
@@ -2140,23 +2147,28 @@ export function Timeline() {
           begin(trimTo === undefined ? 'move' : 'move:trim')
           const cut = trimTo === undefined ? 0 : self.duration - trimTo
           dropNote =
-            cut >= 0.005 ? { message: `Trimmed ${cut.toFixed(2)} s off its end to fit the gap` } : null
+            cut >= 0.005
+              ? {
+                  message: `Trimmed ${cut.toFixed(2)} s off ${viewOf(p, self).name} to fit the gap`,
+                  undo: 'Move clip',
+                }
+              : null
           setSnapLine(
             place?.edge ??
               (r.snapped !== null && Math.abs(r.snapped - (clip.start + shift)) < 0.001 ? r.snapped : null),
           )
-          const commands: EditCommand[] = [
-            {
-              type: 'clip.move',
-              moves: withCutouts(
-                p,
-                moving.map((c) => ({ clipId: c.id, start: c.start + shift, trackId: trackFor(c).id })),
-              ),
-            },
-          ]
-          if (trimTo !== undefined)
-            commands.push({ type: 'clip.trim', clipId: self.id, start: self.start + shift, duration: trimTo })
-          dispatch(commands, { coalesceKey: key, label: 'Move clip' })
+          const moves = withCutouts(
+            p,
+            moving.map((c) => ({ clipId: c.id, start: c.start + shift, trackId: trackFor(c).id })),
+          )
+          const trims =
+            trimTo === undefined
+              ? []
+              : [{ type: 'clip.trim' as const, clipId: self.id, start: self.start + shift, duration: trimTo }]
+          dispatch([{ type: 'clip.move', moves }, ...withCutoutTrims(p, moves, trims)], {
+            coalesceKey: key,
+            label: 'Move clip',
+          })
         } else if (mode === 'start') {
           const r = snapTime(clip.start + dt, scale, grid, edges, sectionEdges)
           const start = Math.min(clip.end - 0.25, Math.max(min, r.t))
@@ -2928,10 +2940,22 @@ export function Timeline() {
               }}
             >
               {i === refusedDrop.labelAt && (
-                <span className={styles.refusedLabel} style={{ left: HEADER_W + 3 }}>
+                <span
+                  className={styles.refusedLabel}
+                  data-end={refusedDrop.labelEnd === undefined ? undefined : ''}
+                  style={
+                    refusedDrop.labelEnd === undefined
+                      ? { left: HEADER_W + 3 }
+                      : { right: refusedDrop.labelEnd }
+                  }
+                >
                   <span className={styles.refusedText}>
                     <span>{refusedDrop.label}</span>
-                    {refusedDrop.hint && <span className={styles.refusedHint}>{refusedDrop.hint}</span>}
+                    {refusedDrop.hints?.map((hint) => (
+                      <span key={hint} className={styles.refusedHint}>
+                        {hint}
+                      </span>
+                    ))}
                   </span>
                 </span>
               )}

@@ -1,10 +1,11 @@
 /**
  * Ripple edits: removing clips or an empty stretch of a track and moving the track's later clips left to close the
  * gap (the clip menu, the lane menu, the palette and Shift Delete). Only the track the gap is on moves; lyric lines
- * stay with the vocals, so the Lyrics track never closes up.
+ * stay with the vocals, so the Lyrics track never closes up, and cutouts for text behind the subject stay with their
+ * clips, so neither does a track that holds one.
  */
 import { clipsOnTrack, type Clip, type Project } from '../../model/index.ts'
-import { withCutouts } from './behind.ts'
+import { followsClip, idsWithCutouts, withCutouts } from './behind.ts'
 import { closeUp, gapAt, isLyricsTrack } from './clipDrag.ts'
 import { undoAction } from './library.ts'
 import { dispatch, editor } from './project.ts'
@@ -22,9 +23,11 @@ export interface Gap {
 /** "3.6 s", for a gap's length. */
 export const gapLength = (gap: Gap) => `${(gap.end - gap.start).toFixed(1)} s`
 
-function closes(p: Project, trackId: string): boolean {
+/** Whether a track closes up when the clips `leaving` go. */
+function closes(p: Project, trackId: string, leaving: ReadonlySet<string> = new Set()): boolean {
   const track = p.tracks.find((t) => t.id === trackId)
-  return !!track && !isLyricsTrack(p, track)
+  if (!track || isLyricsTrack(p, track)) return false
+  return !clipsOnTrack(p, trackId).some((c) => !leaving.has(c.id) && followsClip(p, c))
 }
 
 /**
@@ -33,9 +36,10 @@ function closes(p: Project, trackId: string): boolean {
  */
 export function closeUpMoves(p: Project, removed: readonly Clip[]): { clipId: string; start: number }[] {
   const ids = new Set(removed.map((c) => c.id))
+  const gone = new Set(idsWithCutouts(p, ids))
   const moves: { clipId: string; start: number }[] = []
   for (const trackId of new Set(removed.map((c) => c.trackId))) {
-    if (!closes(p, trackId)) continue
+    if (!closes(p, trackId, gone)) continue
     const leaving = removed
       .filter((c) => c.trackId === trackId)
       .map((c) => ({ start: c.start, end: c.start + c.duration }))
@@ -48,7 +52,10 @@ export function closeUpMoves(p: Project, removed: readonly Clip[]): { clipId: st
   return moves
 }
 
-/** The empty stretch of a track at `time` with a clip after it, so closing it moves something; not on the Lyrics track. */
+/**
+ * The empty stretch of a track at `time` with a clip after it, so closing it moves something; not on the Lyrics track
+ * or a track with cutouts.
+ */
 export function gapToClose(p: Project, trackId: string, time: number): Gap | null {
   if (!closes(p, trackId)) return null
   const gap = gapAt(p, trackId, time)

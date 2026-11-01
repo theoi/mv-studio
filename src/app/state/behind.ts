@@ -356,6 +356,61 @@ export function withCutouts(project: Project, moves: readonly ClipMove[]): ClipM
   return [...moves, ...follow]
 }
 
+type ClipTrim = Extract<EditCommand, { type: 'clip.trim' }>
+
+/**
+ * `trims`, made after `moves` (as withCutouts gives them), with each trimmed clip's cutouts trimmed to match, so a
+ * cutout still covers its clip when a swap or a gap fill trims it. A cutout edge that met its clip's edge follows it;
+ * one inside the clip is cut back to the clip's new edge when it would stick out. `project` has the clips where they
+ * were before the moves. A cutout trimmed itself, or on a locked track, stays as given.
+ */
+export function withCutoutTrims(
+  project: Project,
+  moves: readonly ClipMove[],
+  trims: readonly ClipTrim[],
+): ClipTrim[] {
+  const EPS = 1e-3
+  const movedTo = new Map(moves.map((m) => [m.clipId, Math.max(0, m.start)]))
+  const startOf = (c: Clip) => movedTo.get(c.id) ?? c.start
+  const trimmed = new Set(trims.map((t) => t.clipId))
+  const locked = new Set(project.tracks.filter((t) => t.locked).map((t) => t.id))
+  const follow = trims.flatMap((t) => {
+    const host = project.clips[t.clipId]
+    if (!host) return []
+    const from = startOf(host)
+    const to = from + host.duration
+    const start = Math.max(0, t.start)
+    const end = start + t.duration
+    return cutoutsOf(project, host.id)
+      .filter((c) => !trimmed.has(c.id) && !locked.has(c.trackId))
+      .flatMap((c): ClipTrim[] => {
+        const was = { start: startOf(c), end: startOf(c) + c.duration }
+        const s = Math.abs(was.start - from) < EPS ? start : Math.max(was.start, start)
+        const e = Math.abs(was.end - to) < EPS ? end : Math.min(was.end, end)
+        const same = Math.abs(s - was.start) < EPS && Math.abs(e - was.end) < EPS
+        return same || e - s < 0.01 ? [] : [{ type: 'clip.trim', clipId: c.id, start: s, duration: e - s }]
+      })
+  })
+  return [...trims, ...follow]
+}
+
+/**
+ * `clipIds` with the cutouts of those clips, which show only with their clip, so deleting a clip deletes its cutouts.
+ * A cutout on a locked track stays.
+ */
+export function idsWithCutouts(project: Project, clipIds: Iterable<string>): string[] {
+  const ids = new Set(clipIds)
+  const locked = new Set(project.tracks.filter((t) => t.locked).map((t) => t.id))
+  for (const id of [...ids]) for (const c of cutoutsOf(project, id)) if (!locked.has(c.trackId)) ids.add(c.id)
+  return [...ids]
+}
+
+/** A cutout whose clip is in the project: it moves only with that clip (withCutouts), never on its own. */
+export function followsClip(project: Project, clip: Clip): boolean {
+  const host = clip.meta?.behindSubjectOf
+  return typeof host === 'string' && !!project.clips[host]
+}
+
 export function hasCutout(project: Project, clipId: string): boolean {
   return cutoutsOf(project, clipId).length > 0
 }
