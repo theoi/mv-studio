@@ -56,8 +56,12 @@ export async function estimateLyrics(kind: LyricsRequest['kind']): Promise<Lyric
   return (await lyricsService()).estimate(project, project.songAssetId, { kind })
 }
 
-/** The one line that says what timing or drafting will do: separation, downloads and time on this device. */
-export function lyricsCost(e: LyricsEstimate | null): { text: string; detail?: string } {
+/**
+ * The one line that says what timing or drafting will do: separation, downloads and time on this device. `e` is
+ * undefined while the estimate is still being worked out, null without a song.
+ */
+export function lyricsCost(e: LyricsEstimate | null | undefined): { text: string; detail?: string } {
+  if (e === undefined) return { text: 'Working out the download and time…' }
   if (!e) return { text: 'Uses the vocals stem for precise timing' }
   const parts = [
     ...(e.separatesStems ? ['Separates the vocals first'] : []),

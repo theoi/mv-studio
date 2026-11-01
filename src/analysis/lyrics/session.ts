@@ -3,6 +3,7 @@ import { loadOrt } from '../ort.ts'
 import { JobError, type JobProgress } from '../../shared/jobs.ts'
 import { loadModelFiles } from '../../shared/models.ts'
 import { ctcVocabulary, type CtcVocabulary } from './align.ts'
+import { ALIGNER_STARTING, alignerLoadProgress } from './loadProgress.ts'
 import type { CtcModel } from './wav2vec2.ts'
 
 /** The wav2vec2 aligner on WASM threads (its 8-bit graph has no WebGPU kernels). */
@@ -10,16 +11,12 @@ export async function createCtcModel(
   options: { signal?: AbortSignal; onProgress?: (progress: JobProgress) => void } = {},
 ): Promise<{ model: CtcModel; vocab: CtcVocabulary }> {
   const ort = await loadOrt()
-  const mb = Math.round((WAV2VEC2_MODEL.files.model?.bytes ?? 0) / 1e6)
+  const report = options.onProgress ?? (() => undefined)
   const files = await loadModelFiles(WAV2VEC2_MODEL, {
     signal: options.signal,
-    onProgress: (p) =>
-      options.onProgress?.({
-        ...p,
-        stage: 'download',
-        message: `Downloading the lyrics aligner (${mb} MB, once)`,
-      }),
+    onProgress: alignerLoadProgress(report),
   })
+  report(ALIGNER_STARTING)
   const vocab = ctcVocabulary(JSON.parse(new TextDecoder().decode(files.vocab)) as Record<string, number>)
   let session: Awaited<ReturnType<typeof ort.InferenceSession.create>>
   try {

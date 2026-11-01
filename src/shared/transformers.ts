@@ -11,15 +11,18 @@ import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url
 import { JobError, type JobProgress } from './jobs.ts'
 import { configureOnnxEnv, fetchModelFile } from './models.ts'
 
+/** Progress of one file a model loads: `file` names it, `cached` when it was read from the model cache. */
+export type ModelFileProgress = JobProgress & { file: string; cached: boolean }
+
 /**
  * Download progress of the current worker call. Workers handle one heavy call at a time, so a single sink per realm
  * is enough; calls set it while they may trigger downloads.
  */
-let progressSink: ((p: JobProgress) => void) | null = null
+let progressSink: ((p: ModelFileProgress) => void) | null = null
 
 /** Reports model downloads started while `run` runs (by Transformers.js or `downloadProgress`) to `onProgress`. */
 export async function withModelProgress<T>(
-  onProgress: ((p: JobProgress) => void) | undefined,
+  onProgress: ((p: ModelFileProgress) => void) | undefined,
   run: () => Promise<T>,
 ): Promise<T> {
   const previous = progressSink
@@ -33,15 +36,41 @@ export async function withModelProgress<T>(
 
 /** Progress callback for downloading `name` inside the current `withModelProgress` call. */
 export function downloadProgress(name: string): (p: JobProgress) => void {
-  return (p) => progressSink?.({ ...p, stage: 'download', message: `Downloading ${name}` })
+  return (p) =>
+    progressSink?.({
+      ...p,
+      stage: 'download',
+      message: `Downloading ${name}`,
+      file: name,
+      cached: p.stage === 'cached',
+    })
+}
+
+/** The revision each Hugging Face repo loads at, by repo id (see `pinRevision`). */
+const pinnedRevisions = new Map<string, string>()
+
+/**
+ * Loads every file of Hugging Face repo `repo` from `revision`, also where Transformers.js asks for its `main`
+ * branch: in 4.3, `pipeline()` and `AutoTokenizer.from_pretrained()` look up which files a model has at `main`,
+ * whatever revision they are given.
+ */
+export function pinRevision(repo: string, revision: string): void {
+  pinnedRevisions.set(repo, revision)
+}
+
+function pinnedUrl(url: string): string {
+  const repo = /^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\/resolve\/main\//.exec(url)?.[1]
+  const revision = repo && pinnedRevisions.get(repo)
+  return revision ? url.replace('/resolve/main/', `/resolve/${revision}/`) : url
 }
 
 /**
- * `fetch` for Transformers.js that goes through the shared model loader. Its optional-file probing relies on real
- * HTTP statuses, so loader errors that carry one become responses with that status.
+ * `fetch` for Transformers.js that goes through the shared model loader, at pinned revisions (`pinRevision`). Its
+ * optional-file probing relies on real HTTP statuses, so loader errors that carry one become responses with that
+ * status.
  */
 export async function sharedFetch(input: string | URL): Promise<Response> {
-  const url = String(input)
+  const url = pinnedUrl(String(input))
   try {
     const buf = await fetchModelFile({ url }, { onProgress: downloadProgress(url.split('/').pop() ?? url) })
     return new Response(buf, { status: 200, headers: { 'content-length': String(buf.byteLength) } })
