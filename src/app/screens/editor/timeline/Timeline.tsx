@@ -431,18 +431,21 @@ function makeEnergy(series: FeatureSeries | undefined): DrawFn {
 
 const LABEL_PAD = 12
 const WORD_GAP = 1
-const labelWidths = new Map<string, number>()
+const CHIP_FONT = '400 11px "Inter Variable", Inter, sans-serif'
+const labelWidths = new Map<string, Map<string, number>>()
 let measureCtx: CanvasRenderingContext2D | null | undefined
 
-/** Width of a label in the 11 px chip font, cached; falls back to an average glyph width before fonts load. */
-function labelWidth(text: string): number {
-  const hit = labelWidths.get(text)
+/** Width of a label in a font (default the 11 px chip font), cached; an average glyph width without a canvas. */
+function labelWidth(text: string, font = CHIP_FONT): number {
+  let widths = labelWidths.get(font)
+  if (!widths) labelWidths.set(font, (widths = new Map()))
+  const hit = widths.get(text)
   if (hit !== undefined) return hit
   measureCtx ??= document.createElement('canvas').getContext('2d')
   if (!measureCtx) return text.length * 6.2
-  measureCtx.font = '400 11px "Inter Variable", Inter, sans-serif'
+  measureCtx.font = font
   const w = measureCtx.measureText(text).width
-  labelWidths.set(text, w)
+  widths.set(text, w)
   return w
 }
 
@@ -1045,7 +1048,10 @@ function toggleInSelection(clipId: string) {
   selectTimelineClips(p, picked.includes(clipId) ? picked.filter((id) => id !== clipId) : [...picked, clipId])
 }
 
-/** Narrowest room, in pixels, for a footage clip's name chip; the `.mediaLabel` container query hides it below. */
+/** `.mediaLabel`: its font, and its padding plus its inset from the clip's edges. */
+const MEDIA_LABEL_FONT = '520 10px "Inter Variable", Inter, sans-serif'
+const MEDIA_LABEL_EXTRA = 10 + 6
+/** Room from which a footage clip's name chip shows even when the name does not fit whole (it is cut off). */
 const MEDIA_LABEL_MIN = 96
 
 /** What a clip block shows that depends on the zoom, besides its position and width. */
@@ -1055,7 +1061,11 @@ function zoomedLook(clip: ClipView, pps: number) {
   // A media clip's name sits beside its transition marks, which straddle its top edge where the name would be.
   const inW = clip.transitionIn ? transitionMarkWidth(clip.transitionIn, pps) : 0
   const outW = clip.transitionOut ? transitionMarkWidth(clip.transitionOut, pps) : 0
-  const showLabel = isMedia ? width - inW - outW > MEDIA_LABEL_MIN : width > 54
+  const room = width - inW - outW
+  // Below MEDIA_LABEL_MIN a cut-off name ("clip…") would cover most of the picture and name nothing.
+  const showLabel = isMedia
+    ? room > MEDIA_LABEL_MIN || labelWidth(clip.name, MEDIA_LABEL_FONT) + MEDIA_LABEL_EXTRA <= room
+    : width > 54
   return { width, isMedia, inW, outW, showLabel }
 }
 
@@ -1073,7 +1083,11 @@ const ClipBlock = memo(
     a.onPointerDown === b.onPointerDown &&
     a.unit === b.unit &&
     sameView(a.clip, b.clip) &&
-    (a.pps === b.pps || (!b.marks && !b.clip.transitionIn && !b.clip.transitionOut)),
+    (a.pps === b.pps ||
+      (!b.marks &&
+        !b.clip.transitionIn &&
+        !b.clip.transitionOut &&
+        zoomedLook(a.clip, a.pps).showLabel === zoomedLook(b.clip, b.pps).showLabel)),
 )
 
 function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDown }: ClipBlockProps) {
@@ -1123,6 +1137,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
             role="button"
             tabIndex={0}
             data-clip-id={clip.id}
+            title={isMedia && !showLabel ? clip.name : undefined}
             aria-label={`${label}, ${formatTime(clip.start, true)} to ${formatTime(clip.end, true)}`}
             aria-pressed={selected}
             aria-keyshortcuts="Enter Shift+Enter"
@@ -1146,7 +1161,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
             }}
           >
             {clip.kind === 'look' ? <span className={styles.lookName}>{name}</span> : name}
-            {isMedia && (showLabel || !(inW || outW)) && (
+            {isMedia && showLabel && (
               <span
                 className={styles.mediaLabel}
                 style={inW || outW ? { left: inW + 3, maxWidth: width - inW - outW - 6 } : undefined}

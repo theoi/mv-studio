@@ -137,7 +137,7 @@ test('a short clip shows its name once a zoom makes it wide enough, and hides it
   await expect(label).toHaveText('', { useInnerText: true })
 })
 
-test('a short footage clip shows its picture without its name chip over it, and its name once a zoom makes room', async ({
+test('a short footage clip shows its name chip only when the name fits or the clip is wide, else its picture and a title', async ({
   page,
 }) => {
   await openEditor(page, '#/editor?t=67')
@@ -152,13 +152,30 @@ test('a short footage clip shows its picture without its name chip over it, and 
       await new Promise(requestAnimationFrame)
       document.querySelector('[data-timeline-scroller]')!.scrollLeft = 66 * v - 200
     }, pps)
-  // 70 px, as a two-bar shot of a director draft is at the default zoom: room for "clip…" and little picture.
-  await zoom(70 / duration)
+  // 96 px, as the sample's 8 s shots are at the default zoom: room for a short name whole.
+  await zoom(96 / duration)
+  await expect(label).toHaveText('Singer close-up')
+  await expect(label).toBeVisible()
+  await expect(tile).not.toHaveAttribute('title')
+
+  // A long file name would show as "clip…" over most of the picture: the picture shows alone, the name on hover.
+  const long = 'clip05_16x9_bay-4k.webm'
+  await page.evaluate(
+    (name) =>
+      window.mvStudio.app.project.editor.dispatch({
+        type: 'clip.set',
+        clipId: 'c-s-c1-1',
+        path: ['name'],
+        value: name,
+      }),
+    long,
+  )
+  await expect(label).toHaveCount(0)
+  await expect(tile).toHaveAttribute('title', long)
   await expect(tile).toHaveCSS('background-image', /^url\(/)
-  await expect(label).toBeHidden()
   await zoom(200 / duration)
   await expect(label).toBeVisible()
-  await expect(label).toHaveText('Singer close-up')
-  await zoom(70 / duration)
-  await expect(label).toBeHidden()
+  await expect(tile).not.toHaveAttribute('title')
+  await zoom(96 / duration)
+  await expect(label).toHaveCount(0)
 })
