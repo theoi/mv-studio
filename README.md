@@ -19,7 +19,9 @@ MV Studio turns a song into a finished music video in your browser. Make a lyric
 
 The Start screen has a starting point for each kind, plus a blank project and **Open project file**. Every automatic or AI result becomes normal project content (clips, keyframes, text and effects) that you can change by hand. Nothing is locked in.
 
-![One frame of each kind: a lyric video, a visualizer, beat-cut footage and an AI music video](docs/screenshots/kinds.jpg)
+![One frame of each kind, labelled: a lyric video, a visualizer, beat-cut footage and an AI music video](docs/screenshots/kinds.jpg)
+
+_The beat-cut frame is “Chinese fitness dancing in Haikou People's Park” by Anna Frodesiak (CC0, Wikimedia Commons), cut to the sample song. The AI music video frame comes from the built-in sample project, whose shots are drawn stand-ins: with your fal.ai key, the director generates real shots in their place._
 
 ## Local-first and private
 
@@ -76,7 +78,9 @@ The Start screen has a starting point for each kind, plus a blank project and **
 - Save frame: a full-size PNG of the current frame, from the preview's right-click menu or the command palette.
 - Live VJ mode: trigger clips, effects and looks from the keyboard or a MIDI controller during playback, quantized to the beat or bar if you like. The performance is recorded as editable timeline content. The default MIDI mapping is in **Settings › VJ and MIDI**.
 
-<img src="docs/screenshots/director.jpg" alt="Assist › Director after a draft: what it placed and the plan for each section, with Undo draft and Play the draft" width="49%"> <img src="docs/screenshots/vj.jpg" alt="VJ mode: pads for clips, effects and looks under the preview" width="49%">
+![Assist › Director after a draft of the sample project: what it placed and the plan for each section, with Undo draft and Play the draft](docs/screenshots/director.jpg)
+
+![VJ mode while playing, with the Dancer clip on screen and the Glow effect held; pads for clips, effects and looks below the preview](docs/screenshots/vj.jpg)
 
 ## Browser support
 
@@ -154,10 +158,10 @@ Developer notes on the providers, error states and model choice are in [src/clou
 
 - Automatic lyric transcription of sung vocals is a draft and needs correcting. For precise word timing, paste the lyrics and separate the stems.
 - On a 4-core computer without a capable GPU, stem separation (and so precise lyric timing) takes about 1.2 to 1.7 times the song's length, depending on the computer (3.5 to 9 minutes for a 3 to 5 minute song). It is a little faster once the song's analysis has finished, so right after importing a song it takes longest. It needs about 3.5 GB of memory on top of what the browser already uses, which the studio shows as about 4 GB of free memory; the whole browser uses about 4 to 5 GB while it runs (1 GB = 1,000,000,000 bytes). The studio shows an estimate before you start; after your first separation, it is based on how fast your computer was. A capable GPU is expected to make it faster, but that hasn't been measured yet.
-- Word timing can drift in dense, layered vocals and may need touching up by hand. It can also drift where lead and backing vocals sing different words at the same time, and a song's very first or last line can land a few seconds off. The lyrics check flags many of these lines; drag them into place.
+- Word timing can drift in dense, layered vocals and may need touching up by hand. It can also drift where lead and backing vocals sing different words at the same time, and a song's very first or last line can land a few seconds off. Assist › Lyrics marks many of these lines "to check"; drag them into place.
 - If the pasted lyrics leave out sung lines, nearby listed lines can still be pulled into that singing. The app marks lines near singing it can tell is missing ("singing nearby isn't in the lyrics"), but it does not always detect it. For best results, paste every sung line.
 - The tempo is sometimes found at half or twice the speed you feel (in testing, in about one in six songs). About one song in 25, the tempo switches to half or double speed once the bar analysis finishes (about a minute after import). Half and Double next to the tempo, in Assist › Song analysis, fix it in one click.
-- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. With pasted lyrics, chorus marks are tight: on some songs a chorus starts up to 3 s late or ends up to 3 s early. No chorus is lost or added, and lyrics still find more of the chorus than audio alone. You can rename a section by double-clicking it on the timeline, or in **Inspector › Section**.
+- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. With pasted lyrics, a chorus mark can start up to 3 s late or end up to 3 s early on some songs. Lyrics still find more of the chorus than audio alone. You can rename a section by double-clicking it on the timeline, or in **Inspector › Section**.
 
 ### Subject cutout and 3D camera
 
@@ -165,21 +169,21 @@ Developer notes on the providers, error states and model choice are in [src/clou
 - Cutout can miss people who are only partly in frame, mostly hidden (spray, crowds), seen from behind, or lying down; it then says there is no one to cut out. It works best when one person is clearly visible.
 - On a few clips, the quick check and the full cutout analysis disagree: a clip first rated good can be rated marginal once the cutout runs, or one of them may not find a person the other found.
 - Subject cutout can still take a large animal close to the camera for a person: in testing, 1 of 27 shots with no one in them was offered for text behind the subject. In a shot that also has a person, an animal can be cut out with them.
-- 3D camera moves on stills can bend or stretch edges around the subject. On photos with thin foreground objects in front of a background (tree rows, lamp posts), some camera moves can make the background ripple, even at the default strength (in a test on photos the studio had not seen, on 1 of 15). Lower the Strength or try another Motion.
+- 3D camera moves on stills can bend or stretch edges around the subject. On photos with thin foreground objects in front of a background (tree rows, lamp posts), some camera moves can make the background ripple, even at the default strength (in a test on photos the studio had not seen, on 1 of 15). Try another Motion; a lower Strength may not remove it.
 
 ### Speed on a computer without a graphics card
 
 Measured on a 4-core computer without a graphics card, where Chrome draws the preview and decodes video in software. A graphics card and hardware video decoding are expected to be faster, but that hasn't been measured, nor have Windows and macOS.
 
-- On computers without a graphics card, the preview and VJ mode play below 60 fps, especially at large window sizes and with several layered HD videos. The app lowers preview quality automatically to keep up. Exports are not affected.
-- In projects with several layered HD videos, jumping, stepping or scrubbing can take 0.1-0.2 s to show the new frame, and up to about half a second at 2560x1440 on a computer without a graphics card. In projects with many 4K clips, jumping back to a 4K clip you haven't viewed recently takes about a third of a second, because the app frees memory so long edits and exports don't run out.
-- At very large window sizes on a computer without a graphics card, slider drags and keyframe edits can take a fraction of a second to show in the preview.
+- The preview and VJ mode play below 60 fps, especially at large window sizes and with several layered HD videos. The app lowers preview quality automatically to keep up. Exports are not affected.
+- In projects with several layered HD videos, jumping, stepping or scrubbing can take 0.1 to 0.2 s to show the new frame, and up to about half a second at 2560x1440. In projects with many 4K clips, jumping back to a 4K clip you haven't viewed recently takes about a third of a second, because the app frees memory so long edits and exports don't run out.
+- At very large window sizes, slider drags and keyframe edits can take a fraction of a second to show in the preview.
 - Zooming a timeline with hundreds of clips with the mouse wheel can drop slightly below 60 fps.
 
 ### AI services and local models
 
 - AI images and video clips need your fal.ai key and cost money per use. The richer director and plain-language edits need an LLM endpoint, in the cloud or on your computer.
-- Local models through Ollama need a larger context than Ollama's default: set its context length to 16k, or 32k after a long director draft (about 1.5 GB more memory with qwen2.5:7b). The app says when a request doesn't fit and which length to set. On computers without a graphics card a 7B model is slow (on a 2-core test machine, 6 to 10 minutes for a director plan and 1 to 9 minutes for an edit) and gets some edits wrong (2 of 5 right in the last test); the director uses its built-in planner if the model's plan doesn't arrive within the answer time limit.
+- Local models through Ollama need a larger context than Ollama's default: set its context length to 16k, or 32k for the largest edits or after a long director draft (about 1.5 GB more memory with qwen2.5:7b). The app says when a request doesn't fit and which length to set. On computers without a graphics card, a 7B model is slow (on a 2-core test machine, 6 to 10 minutes for a director plan and 1 to 9 minutes for an edit) and gets some edits wrong (2 of 5 right in the last test); the director uses its built-in planner if the model's plan doesn't arrive within the answer time limit.
 
 ### Not planned
 
