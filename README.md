@@ -24,7 +24,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 ## Local-first and private
 
 - **No account and no server.** MV Studio is a static web page. Your projects and imported media are stored in your browser's own storage on your computer.
-- **AI runs on your computer.** Beat and tempo detection, song sections, stem separation, lyric timing, subject cutout, depth and footage tagging all run in the browser. Each model downloads once and then works offline.
+- **AI runs on your computer.** Beat and tempo detection, song sections, stem separation, lyric timing, subject cutout, depth and footage tagging all run in the browser. Each model downloads once and then works offline. MediaPipe, the library behind subject cutout, click-to-select and auto-reframe, would also send Google usage statistics (which of its tasks ran and how fast); MV Studio blocks them.
 - **Your media never leaves the browser** unless you use a cloud feature that needs it. fal.ai receives your prompts, plus the image or audio you choose for image-to-video or cloud transcription. An LLM endpoint receives text only: a summary of the song analysis, the lyrics, clip names, footage tags and your request.
 - **Cloud features are optional** and use your own keys. Keys stay in this browser and are sent only to the service they belong to.
 
