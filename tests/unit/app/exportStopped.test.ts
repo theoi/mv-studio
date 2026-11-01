@@ -48,3 +48,43 @@ describe('without Web Locks', () => {
     expect(useStoppedExport.getState().stopped).toBeNull()
   })
 })
+
+describe('an export of several files that stopped', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('says how many of them were saved, so they aren’t exported again', () => {
+    expect(exportStoppedMessage(720, undefined, { saved: 1, total: 2 })).toBe(
+      'The last export didn’t finish. 1 of 2 files was saved to Downloads. The browser may have run out of memory. Close other tabs and try again.',
+    )
+    expect(exportStoppedMessage(1080, 'Night drive', { saved: 2, total: 3 })).toBe(
+      'The export of “Night drive” didn’t finish. 2 of 3 files were saved to Downloads. The browser may have run out of memory. Try a lower resolution.',
+    )
+  })
+
+  it('keeps the count of saved files in its mark, where the next visit finds it', async () => {
+    const stored = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+      removeItem: (key: string) => stored.delete(key),
+    })
+    vi.stubGlobal('window', { addEventListener: () => undefined, removeEventListener: () => undefined })
+    // No lock is held at the next visit: the tab that ran the export died.
+    vi.stubGlobal('navigator', {
+      locks: {
+        request: async (_name: string, run: () => unknown) => run(),
+        query: async () => ({ held: [] }),
+      },
+    })
+    const saved = markExportRunning(
+      720,
+      { id: 'p', name: 'Night drive', kept: true },
+      new Promise(() => undefined),
+      2,
+    )
+    await vi.waitFor(() => expect(stored.has(MARK)).toBe(true))
+    saved(1)
+    const stopped = await findStoppedExport()
+    expect(stopped?.files).toEqual({ saved: 1, total: 2 })
+  })
+})

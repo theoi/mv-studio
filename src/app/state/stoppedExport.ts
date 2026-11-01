@@ -33,15 +33,15 @@ export async function reportStoppedExport(): Promise<void> {
   if (!stopped) return
   await restored()
   if (useStoppedExport.getState().stopped !== stopped) return
-  const { project, resolution } = stopped
+  const { project, resolution, files } = stopped
   const showing = (s: UiState) => s.screen === 'editor' && editor.getProject().id === project?.id
   const inDialog = (s: UiState) => showing(s) && s.dialog === 'export'
   if (inDialog(get())) return
   if (!project || showing(get()))
-    toast(exportStoppedMessage(resolution), undefined, { key: TOAST_KEY, sticky: true })
+    toast(exportStoppedMessage(resolution, undefined, files), undefined, { key: TOAST_KEY, sticky: true })
   else
     toast(
-      exportStoppedMessage(resolution, project.name),
+      exportStoppedMessage(resolution, project.name, files),
       project.kept ? { label: 'Open', run: () => void openInExport(project.id) } : undefined,
       { key: TOAST_KEY, sticky: true },
     )

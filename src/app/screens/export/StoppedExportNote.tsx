@@ -11,7 +11,9 @@ export function StoppedExportNote() {
   return (
     <div className={styles.warning} role="alert">
       <AlertTriangle className={styles.icon} />
-      <span className={styles.text}>{exportStoppedMessage(stopped.resolution)}</span>
+      <span className={styles.text}>
+        {exportStoppedMessage(stopped.resolution, undefined, stopped.files)}
+      </span>
     </div>
   )
 }
