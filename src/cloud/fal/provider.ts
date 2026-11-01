@@ -17,7 +17,7 @@ import type {
   TranscriptionResult,
 } from '../types.ts'
 import { FAL_MODELS, falModel, type FalModel } from './catalog.ts'
-import { falKeyFormatError, falMissingKeyError, mapFalError } from './errors.ts'
+import { falKeyCheckNoAnswerError, falKeyFormatError, falMissingKeyError, mapFalError } from './errors.ts'
 import { parseTranscription, transcriptionModel } from './transcribe.ts'
 
 export interface FalProviderOptions {
@@ -27,6 +27,8 @@ export interface FalProviderOptions {
   pollIntervalMs?: number
   /** Give up waiting after this long (the request is cancelled at fal.ai). */
   timeoutMs?: number
+  /** How long a key check waits for fal.ai's answer. */
+  keyCheckTimeoutMs?: number
   now?: () => number
 }
 
@@ -35,6 +37,19 @@ export const FAL_CANCEL_NOTICE =
   'Cancelling stops the request if it is still waiting in line. fal.ai may still charge for one that already started.'
 
 const NIL_REQUEST_ID = '00000000-0000-0000-0000-000000000000'
+
+/**
+ * Settles as soon as `signal` aborts. The fal client retries a failed status request up to five times, and its waits
+ * between tries don't listen to the signal.
+ */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    if (signal.aborted) return abort()
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+  })
+}
 
 const ascii = (b: Uint8Array, from: number, to: number) => String.fromCharCode(...b.subarray(from, to))
 
@@ -114,6 +129,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
       fetch: doFetch,
       pollIntervalMs: options.pollIntervalMs ?? 1500,
       timeoutMs: options.timeoutMs ?? 20 * 60_000,
+      keyCheckTimeoutMs: options.keyCheckTimeoutMs ?? 15_000,
       now: options.now ?? (() => Date.now()),
     }
     this.client = createFalClient({
@@ -136,11 +152,20 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
     const key = this.options.getKey()
     if (!key) return { ok: false, error: falMissingKeyError() }
     if (!/^[^:\s]+:[^:\s]+$/.test(key)) return { ok: false, error: falKeyFormatError() }
+    const waitMs = this.options.keyCheckTimeoutMs
+    const timeout = AbortSignal.timeout(waitMs)
+    const abortSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
     try {
       // Status of a request that doesn't exist: free, and fal checks the key before looking the request up.
-      await this.client.queue.status('fal-ai/flux', { requestId: NIL_REQUEST_ID, abortSignal: signal })
+      await untilAborted(
+        this.client.queue.status('fal-ai/flux', { requestId: NIL_REQUEST_ID, abortSignal }),
+        abortSignal,
+      )
       return { ok: true, message: 'fal.ai accepted the key.' }
     } catch (error) {
+      if (timeout.aborted && !signal?.aborted) {
+        return { ok: false, error: falKeyCheckNoAnswerError(waitMs / 1000, error) }
+      }
       if (error instanceof ApiError && [400, 404, 405, 422].includes(error.status)) {
         return { ok: true, message: 'fal.ai accepted the key.' }
       }

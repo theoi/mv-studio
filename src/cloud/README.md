@@ -20,7 +20,7 @@ Optional cloud features with the user's own keys: fal.ai image and video generat
 ## States the UI can show
 
 - **Not configured:** `services.status()` returns `needs-key` / `needs-setup`. Link to Settings › AI and cloud.
-- **Testing a key:** `FalProvider.validateKey()` and `OpenAICompatibleClient.validate()` return `{ ok: true, message, models? }` or `{ ok: false, error }`, and never spend money.
+- **Testing a key:** `FalProvider.validateKey()` and `OpenAICompatibleClient.validate()` return `{ ok: true, message, models? }` or `{ ok: false, error }`, and never spend money. A fal.ai key check that gets no answer stops after 15 s with a `timeout` error (`keyCheckTimeoutMs`).
 - **Cost before spending:** `provider.estimate(request)` returns `{ usd, breakdown, approximate, pricesCheckedOn }`. Put `formatUsd()` on the button ("Generate · about $0.20"), and ask first when `needsSpendConfirmation()` is true.
 - **Running:** generation runs as a job. Progress `stage` is `upload` → `submit` → `queue` (message includes the queue position) → `generate` (fraction and `etaSeconds` estimated from the model's typical time) → `download` → `store`. fal.ai bills at COMPLETED, so `download` starts there, before the result is fetched. Show `FAL_CANCEL_NOTICE` next to Cancel until a Cancel is taken. Run paid requests through `generateKeepingPaid()`: after a cancel, a request already at `download` gets `PAID_RESULT_GRACE_MS` (30 s) to return its result, which you keep. `onBilled` counts a request when it settles: returned, or failed after `download`, unless the error is `uncharged` (fal.ai's own 5xx result, which it doesn't charge).
 - **Done:** `storeGeneratedMedia()` returns the stored `Asset`s. Add them with `asset.add`, plus any `clip.add`, as one undo step.

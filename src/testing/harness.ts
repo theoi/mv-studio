@@ -36,6 +36,7 @@ import type { CrashTestApi } from './crash.worker.ts'
 import * as appAutocut from '../app/state/autocut.ts'
 import * as appCamera from '../app/state/camera.ts'
 import * as appClipboard from '../app/state/clipboard.ts'
+import * as appCloud from '../app/state/cloud.ts'
 import * as appExportEstimate from '../app/state/exportEstimate.ts'
 import * as appFootage from '../app/state/footage.ts'
 import * as appLyrics from '../app/state/lyrics.ts'
@@ -117,6 +118,7 @@ export function installHarness(): void {
       autocut: appAutocut,
       camera: appCamera,
       clipboard: appClipboard,
+      cloud: appCloud,
       exportEstimate: appExportEstimate,
       footage: appFootage,
       lyrics: appLyrics,
