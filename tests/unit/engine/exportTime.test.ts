@@ -53,8 +53,8 @@ describe('the time left in an export', () => {
   it('eases up a rise in the time left instead of jumping', () => {
     const timeLeft = exportTimeLeft(FRAMES)
     expect(timeLeft(0.2 * FRAMES, 60)).toBe(240)
-    // Its own pace now says 450 s.
-    expect(timeLeft(0.25 * FRAMES, 150)).toBe(240 + 0.2 * (450 - 240))
+    // Its pace since the update at 20%, three times slower, now says 612 s.
+    expect(timeLeft(0.32 * FRAMES, 168)).toBe(Math.round(240 + 0.2 * (612 - 240)))
   })
 
   it('follows the pace of the latest frames, so frames dearer than the trial expected count in full', () => {
@@ -68,6 +68,21 @@ describe('the time left in an export', () => {
     const truth = elapsedAt(1) - elapsedAt(0.75)
     expect(left).toBeGreaterThan(0.97 * truth)
     expect(left).toBeLessThan(1.03 * truth)
+  })
+
+  it('moves no more for a one-off stall of a minute than for any other update', () => {
+    const asExpected = (share: number) => quietIntro.seconds * expectedShare(quietIntro, share)
+    const stalled = (share: number) => asExpected(share) + (share >= 0.5 ? 60 : 0)
+    const timeLeft = exportTimeLeft(FRAMES, quietIntro)
+    const ratios: number[] = []
+    for (let done = 1; done <= 0.56 * FRAMES; done += 5) {
+      const left = timeLeft(done, stalled(done / FRAMES))
+      if (done / FRAMES >= 0.5 && left !== undefined)
+        ratios.push(left / (stalled(1) - stalled(done / FRAMES)))
+    }
+    expect(ratios.length).toBeGreaterThan(50)
+    expect(Math.max(...ratios)).toBeLessThan(1.03)
+    expect(Math.min(...ratios)).toBeGreaterThan(0.97)
   })
 
   it('follows the pace of the latest frames without an expected time too', () => {

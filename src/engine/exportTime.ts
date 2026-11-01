@@ -4,9 +4,10 @@
  * export starts from what a trial before it expected (src/export/estimate.ts), and over its first frames moves to
  * its own measured pace, compared with what the trial expected for the same frames.
  *
- * That pace is measured over the latest tenth of the frames, not all of them: the trial samples only some frames, so
- * where its profile of the costs is off (an opening cheaper than expected) or the device slows down as it runs, the
- * pace of the frames so far kept saying a third too little from halfway on.
+ * That pace is the export's own over the latest tenth of the frames. The trial samples only some frames, so it can
+ * misjudge a part of the project (an opening cheaper than expected), and a device can slow down as it runs; frames
+ * further back would keep the figure off for the rest of the export. Within that tenth it is the median of the pace
+ * between updates, weighted by the work each covered, so a one-off stall moves the figure no more than one update.
  */
 
 /** What a trial before an export expects its frames to take. */
@@ -41,6 +42,31 @@ export function expectedShare(expected: ExpectedTime, share: number): number {
   return a + (b - a) * (x - i)
 }
 
+/** Where an export stood at an update: the shares of its frames and of its expected work done, and seconds elapsed. */
+interface Point {
+  share: number
+  work: number
+  seconds: number
+}
+
+/** The seconds per unit of work that half the work between successive points went at or under. */
+function medianRate(points: readonly Point[]): number | undefined {
+  const steps: { rate: number; work: number }[] = []
+  let prev: Point | undefined
+  for (const p of points) {
+    if (prev && p.work > prev.work)
+      steps.push({ rate: (p.seconds - prev.seconds) / (p.work - prev.work), work: p.work - prev.work })
+    prev = p
+  }
+  steps.sort((a, b) => a.rate - b.rate)
+  let half = steps.reduce((sum, s) => sum + s.work, 0) / 2
+  for (const s of steps) {
+    half -= s.work
+    if (half <= 0) return s.rate
+  }
+  return undefined
+}
+
 /**
  * Seconds left in an export of `frameCount` frames, from frames done and seconds since the first frame started.
  * With nothing expected, no figure shows until a tenth of the frames are done. Keep one per export: it remembers
@@ -50,27 +76,29 @@ export function exportTimeLeft(
   frameCount: number,
   expected?: ExpectedTime,
 ): (framesDone: number, elapsedSeconds: number) => number | undefined {
+  const expects = expected !== undefined && expected.seconds > 0
+  const workAt = (share: number) => (expected && expects ? expectedShare(expected, share) : share)
   let shown: number | undefined
-  /** The share of the frames done and the seconds elapsed where the pace is measured from. */
-  let from = { share: 0, seconds: 0 }
-  /** The same at each update after `from`. */
-  const later: (typeof from)[] = []
+  /** The update the pace is measured from: the latest at or before the start of the latest tenth of the frames. */
+  let from: Point = { share: 0, work: 0, seconds: 0 }
+  /** Each update after `from`. */
+  const later: Point[] = []
   return (framesDone, elapsedSeconds) => {
     const f = Math.min(1, framesDone / Math.max(1, frameCount))
     if (!(f > 0)) return undefined
     while ((later[0]?.share ?? Infinity) <= f - PACE_SHARE) from = later.shift() ?? from
-    later.push({ share: f, seconds: elapsedSeconds })
+    later.push({ share: f, work: workAt(f), seconds: elapsedSeconds })
+    const rate = medianRate([from, ...later])
     let left: number
-    if (expected && expected.seconds > 0) {
+    if (expected && expects) {
       const done = expectedShare(expected, f)
-      const since = done - expectedShare(expected, from.share)
       // How much slower (above 1) or faster this export runs than expected, over the same recent frames.
-      const pace = since > 0 ? (elapsedSeconds - from.seconds) / (expected.seconds * since) : 1
+      const pace = rate === undefined ? 1 : rate / expected.seconds
       const trust = Math.min(1, f / TRUST_SHARE)
       left = (1 - trust + trust * pace) * expected.seconds * (1 - done)
     } else {
       if (f < TRUST_SHARE) return undefined
-      left = ((elapsedSeconds - from.seconds) * (1 - f)) / (f - from.share)
+      left = (rate ?? (elapsedSeconds - from.seconds) / (f - from.share)) * (1 - f)
     }
     if (shown !== undefined && left > shown) left = shown + (left - shown) * RISE
     shown = left
