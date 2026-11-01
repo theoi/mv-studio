@@ -90,6 +90,8 @@ function directorSession(): Promise<DirectorSession> {
         client: () => cloud.llm(),
         model: () => cloudSettings.get().llm?.model,
       }),
+      // The planner falls back to the built-in one when there is no model to ask.
+      plansWithModel: () => Boolean(cloud.llm()),
     })
     s.subscribe(() => {
       const state = s.getState()

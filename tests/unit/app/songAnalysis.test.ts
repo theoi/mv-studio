@@ -186,14 +186,16 @@ describe('ensureBars', () => {
     expect(runs).toHaveLength(0)
   })
 
-  it('follows a refinement already running and reports its progress', async () => {
+  it('follows a refinement already running and reports its progress and the time it still needs', async () => {
     editor.load(project({}))
     void findBars(songId())
     await vi.waitFor(() => expect(runs).toHaveLength(1))
-    const progress: number[] = []
-    const waiting = ensureBars({ progress: (f) => progress.push(f) })
+    const progress: [number, number | undefined][] = []
+    const waiting = ensureBars({ progress: (f, eta) => progress.push([f, eta]) })
     runs[0]?.ctx.progress({ fraction: 0.4 })
-    await vi.waitFor(() => expect(progress).toContain(0.4))
+    await vi.waitFor(() => expect(progress).toContainEqual([0.4, undefined]))
+    runs[0]?.ctx.progress({ fraction: 0.7, etaSeconds: 12 })
+    await vi.waitFor(() => expect(progress).toContainEqual([0.7, 12]))
     runs[0]?.resolve(refined())
     expect(await waiting).toBe(true)
     expect(runs).toHaveLength(1)

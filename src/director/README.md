@@ -139,7 +139,10 @@ removes clips whose line is gone or no longer has their words.
   run), a "Use the local draft instead" button that calls `useLocalDraft()`. It stops waiting for the model and makes
   the draft with the built-in planner. The job's progress never moves back. When finding the bars starts a second
   pass (the beat model's download, then the song's analysis), that pass gets its own band above the first, so the bar
-  keeps moving.
+  keeps moving. While the bars are found, the job's `etaSeconds` is the time Beat This! still needs (from the windows
+  it has run; `ensureBars` passes it on) plus 2 s for the built-in planner, so the card says "Less than a minute
+  left". There is none during the song's fast pass or the model's first download, and none at all when a language
+  model writes the plan (`plansWithModel`), since its time is unknown.
 - `ready`: `preview.summary`, `preview.changes`, `preview.items` behind "Show changes", `preview.warnings` as
   notes, sections with mood and pace, "Try another version" (`tryAnother()`), and the main button labeled
   `actionLabel` ("Make video" or "Generate 12 shots · about $2.40"). When `confirmRequired` is true the button opens

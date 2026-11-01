@@ -6,6 +6,7 @@ import {
   DirectorError,
   DirectorSession,
   directorMeta,
+  planLocally,
   type DirectorState,
   type Planner,
 } from '../../../src/director/index.ts'
@@ -465,6 +466,73 @@ describe('DirectorSession and the song’s bars', () => {
     await planWith(new ProjectEditor(makeProject()), () => Promise.resolve(true), quick)
     expect(quickSeen.map(([stage]) => stage)).not.toContain('bars')
     expect(quickSeen).toContainEqual(['gather', 0.05])
+  })
+
+  /** The stages and times left the plan job reports, in order. */
+  function etasOf(jobs: JobRunner): [string | undefined, number | undefined][] {
+    const seen: [string | undefined, number | undefined][] = []
+    jobs.subscribe((list) => {
+      const p = list.find((s) => s.kind === 'director.plan')?.progress
+      const last = seen[seen.length - 1]
+      if (p && (last?.[0] !== p.stage || last?.[1] !== p.etaSeconds)) seen.push([p.stage, p.etaSeconds])
+    })
+    return seen
+  }
+  const findsBars =
+    (editor: ProjectEditor): DirectorDeps['ensureBars'] =>
+    ({ progress }) => {
+      // The beat model downloads first, with no time known; then the time Beat This! still needs.
+      progress(0.2)
+      progress(0.6, 20)
+      editor.dispatch(
+        { type: 'analysis.setAudio', analysis: analysis({ downbeats: DOWNBEATS }) },
+        { history: 'skip' },
+      )
+      return Promise.resolve(true)
+    }
+
+  it('says how long finding the bars and the built-in planner take, and nothing more once it plans', async () => {
+    const editor = withoutBars()
+    const jobs = new JobRunner()
+    const seen = etasOf(jobs)
+    await planWith(editor, findsBars(editor), jobs)
+    expect(seen).toContainEqual(['bars', undefined])
+    // Beat This!'s 20 s, then 2 s to plan.
+    expect(seen).toContainEqual(['bars', 22])
+    const after = seen.slice(seen.findIndex(([stage]) => stage === 'gather'))
+    expect(after.length).toBeGreaterThan(0)
+    expect(after.every(([, eta]) => eta === undefined)).toBe(true)
+  })
+
+  it('gives no time left when a language model writes the plan, since its time is unknown', async () => {
+    const editor = withoutBars()
+    const jobs = new JobRunner()
+    const seen = etasOf(jobs)
+    ready(
+      await new DirectorSession({
+        editor,
+        jobs,
+        ensureBars: findsBars(editor),
+        planner: (input) => planLocally(input),
+      }).plan(REQUEST),
+    )
+    expect(seen.map(([stage]) => stage)).toContain('bars')
+    expect(seen.every(([, eta]) => eta === undefined)).toBe(true)
+
+    // With no model connected, that planner plans on this device, so the time left shows again.
+    const offline = withoutBars()
+    const offlineJobs = new JobRunner()
+    const offlineSeen = etasOf(offlineJobs)
+    ready(
+      await new DirectorSession({
+        editor: offline,
+        jobs: offlineJobs,
+        ensureBars: findsBars(offline),
+        planner: (input) => planLocally(input),
+        plansWithModel: () => false,
+      }).plan(REQUEST),
+    )
+    expect(offlineSeen).toContainEqual(['bars', 22])
   })
 
   it('says the cuts follow the beats when the bars could not be found', async () => {

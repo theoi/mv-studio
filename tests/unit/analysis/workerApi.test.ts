@@ -93,6 +93,38 @@ describe('analysis worker API', () => {
     expect(fractions).toEqual([0, 0, 0.25, 0.5, 0.75, 1])
   }, 20_000)
 
+  it('says how long Beat This! still needs from the windows it has run, leaving the download out', async () => {
+    channel = new MessageChannel()
+    let clock = 0
+    const api = createAnalysisApi({
+      beatThisModel: async (ctx) => {
+        ctx.progress({ stage: 'download', fraction: 0 })
+        clock += 60_000
+        ctx.progress({ stage: 'download', fraction: 1 })
+        // Each window takes 8 s.
+        return {
+          run: (spect, frames) => {
+            clock += 8_000
+            return fakeBeatThis.run(spect, frames)
+          },
+        }
+      },
+      now: () => clock,
+    })
+    exposeWorker(api, channel.port1 as unknown as Endpoint)
+    const client = createWorkerClient<typeof api>(channel.port2 as unknown as Endpoint)
+    // Just over Beat This!'s 30 s window, so it runs in two windows.
+    const loop = drumLoop({ bpm: 120, seconds: 31, offset: 0.3, seed: 5 })
+    const seen: (number | undefined)[] = []
+    await client.call(
+      'refineBeats',
+      { assetId: 'a', audio: { sampleRate: SR, channels: [loop.audio] } },
+      { onProgress: (p) => seen.push(p.etaSeconds) },
+    )
+    // Nothing while the model downloads; 8 s after the first window, then 0.
+    expect(seen).toEqual([undefined, undefined, undefined, 8, 0])
+  }, 20_000)
+
   it('needs the audio again to refine a song it does not hold', async () => {
     const client = connect()
     const error = await client.call('refineBeats', { assetId: 'unknown' }).catch((e: unknown) => e)

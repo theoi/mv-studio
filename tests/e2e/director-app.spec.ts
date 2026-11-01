@@ -674,6 +674,50 @@ test('a tagged song names the project, and the title card shows its title and ar
   expect(titles).toEqual(['Neon Skyline', 'The Night Shift'])
 })
 
+/** A mono 16-bit WAV of `seconds` of kicks every 0.5 s (120 BPM) over a low chord, long enough for several Beat This! windows. */
+function kickWav(seconds: number): Buffer {
+  const rate = 22_050
+  const n = Math.round(seconds * rate)
+  const wav = Buffer.alloc(44 + n * 2)
+  wav.write('RIFF', 0)
+  wav.writeUInt32LE(36 + n * 2, 4)
+  wav.write('WAVEfmt ', 8)
+  wav.writeUInt32LE(16, 16)
+  wav.writeUInt16LE(1, 20)
+  wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(rate, 24)
+  wav.writeUInt32LE(rate * 2, 28)
+  wav.writeUInt16LE(2, 32)
+  wav.writeUInt16LE(16, 34)
+  wav.write('data', 36)
+  wav.writeUInt32LE(n * 2, 40)
+  for (let i = 0; i < n; i++) {
+    const t = i / rate
+    const k = t % 0.5
+    const kick = 0.6 * Math.sin(2 * Math.PI * (45 + 120 * Math.exp(-25 * k)) * t) * Math.exp(-7 * k)
+    const pad = 0.1 * (Math.sin(2 * Math.PI * 220 * t) + Math.sin(2 * Math.PI * 277.2 * t))
+    wav.writeInt16LE(Math.round(Math.max(-1, Math.min(1, kick + pad)) * 32_000), 44 + i * 2)
+  }
+  return wav
+}
+
+test('a draft says how long is left while it finds the song’s bars', async ({ page }, testInfo) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await page.getByRole('button', { name: /^AI music video/ }).click()
+  await page.getByRole('textbox', { name: 'Describe your video' }).fill('a rainy city at dawn')
+  // 95 s: Beat This! runs it in four windows, and the first one done says how long the rest take.
+  await page
+    .getByLabel('Song file')
+    .setInputFiles({ name: 'long-song.wav', mimeType: 'audio/wav', buffer: kickWav(95) })
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(assist.getByText('Less than a minute left')).toBeVisible({ timeout: 60_000 })
+  await expect(assist.getByText('Drafting your video')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('director-draft-eta.png') })
+  await expect(page.getByRole('button', { name: 'Undo draft' })).toBeVisible({ timeout: 60_000 })
+  await expect(assist.getByText('Less than a minute left')).toHaveCount(0)
+})
 test('a draft from the setup screen waits for the song analysis still running', async ({ page }) => {
   // Holds the analysis worker's script back, so the song is still being analyzed when Draft my video is pressed.
   let release: () => void = () => {}

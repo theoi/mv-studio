@@ -79,9 +79,17 @@ export interface DirectorDeps {
   media?: MediaFileSource
   /**
    * Waits for the song's bars before planning (the app's `ensureBars`): resolves whether the song has them. Without
-   * them the plan cuts on beats and says so.
+   * them the plan cuts on beats and says so. `progress` gets the seconds finding them still needs once that is known.
    */
-  ensureBars?: (options: { signal: AbortSignal; progress: (fraction: number) => void }) => Promise<boolean>
+  ensureBars?: (options: {
+    signal: AbortSignal
+    progress: (fraction: number, etaSeconds?: number) => void
+  }) => Promise<boolean>
+  /**
+   * Whether `planner` will ask a language model this time (one is connected), rather than plan on this device. A
+   * model's time is unknown, so the draft then gives no time left. Without it, any `planner` counts as a model.
+   */
+  plansWithModel?: () => boolean
   /**
    * Waits for a song analysis that is still running (beats, sections; an import or the setup screen started it), so
    * the plan has them. Reports progress only while it waits.
@@ -97,6 +105,8 @@ const BARS_PASS_SHARE = 0.2
 const SONG_SHARE = 0.25
 /** As the song's row in the Library says while it is analyzed. */
 const SONG_NOTE = 'Finding beats and sections…'
+/** Time left for the built-in planner once the bars are found: it plans in about a second. */
+const LOCAL_PLAN_SECONDS = 2
 
 export interface PlanPreview {
   /** What the plan makes, e.g. "Beat-cut video with 6 sections, 48 shots, 5 of your clips, Vivid look." */
@@ -252,6 +262,7 @@ export class DirectorSession {
     const local = (input: PlannerInput) => planLocally(input)
     const planner = options.local ? local : (this.deps.planner ?? local)
     const aiPlanner = planner !== local
+    const modelPlans = aiPlanner && (this.deps.plansWithModel?.() ?? true)
     const handle = this.deps.jobs.run({
       kind: 'director.plan',
       // As the Director panel's subtitle says, so the top bar's job reads as the same job in every stage.
@@ -288,7 +299,7 @@ export class DirectorSession {
         const bars = this.deps.ensureBars
           ? await this.deps.ensureBars({
               signal: ctx.signal,
-              progress: (f) => {
+              progress: (f, eta) => {
                 // Planning keeps at least a tenth of the bar.
                 if (f < lastBars) [barsFrom, barsTo] = [barsTo, Math.min(0.9, barsTo + BARS_PASS_SHARE)]
                 lastBars = f
@@ -297,6 +308,9 @@ export class DirectorSession {
                   stage: 'bars',
                   fraction: barsFrom + (barsTo - barsFrom) * f,
                   message: BARS_NOTES.finding,
+                  // Finding the bars is the draft's long wait. The built-in planner then takes a second; a language
+                  // model's time is unknown, so with one no time left is given at all.
+                  etaSeconds: eta === undefined || modelPlans ? undefined : eta + LOCAL_PLAN_SECONDS,
                 })
               },
             })
@@ -312,7 +326,13 @@ export class DirectorSession {
                     p.fraction === undefined ? p : { ...p, fraction: share + p.fraction * (1 - share) },
                   ),
               }
-        planCtx.progress({ stage: 'gather', fraction: 0.05, message: 'Reading the song and your media' })
+        // The time left for the bars no longer holds (the job keeps the last one it was given).
+        planCtx.progress({
+          stage: 'gather',
+          fraction: 0.05,
+          message: 'Reading the song and your media',
+          etaSeconds: undefined,
+        })
         const project = this.deps.editor.getProject()
         const input = await buildPlannerInput(project, {
           kind: request.kind,

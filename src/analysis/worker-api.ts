@@ -23,10 +23,13 @@ const within = (p: JobProgress, from: number, to: number): JobProgress =>
 
 export interface AnalysisWorkerDeps {
   beatThisModel(ctx: WorkerCallContext): Promise<BeatThisModel>
+  /** Milliseconds, to time Beat This!'s windows (default performance.now). */
+  now?: () => number
 }
 
 /** Worker methods for song analysis. Kept free of worker globals so tests can drive them over a MessageChannel. */
 export function createAnalysisApi(deps: AnalysisWorkerDeps) {
+  const now = deps.now ?? (() => performance.now())
   const states = new Map<string, SongState>()
   // Beat This! output outlives a released state (it is ~100 kB a song), so finding bars again skips the network.
   const logits = new Map<string, BeatThisLogits>()
@@ -75,9 +78,22 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
           ctx.progress(within(p, 0, MODEL_DOWNLOAD_SHARE))
         },
       }
-      const { fields } = await refineSongBeats(state, () => deps.beatThisModel(download), {
+      let running = 0
+      const model = async () => {
+        const loaded = await deps.beatThisModel(download)
+        running = now()
+        return loaded
+      }
+      const { fields } = await refineSongBeats(state, model, {
         signal: ctx.signal,
-        onProgress: (p) => ctx.progress(downloaded ? within(p, MODEL_DOWNLOAD_SHARE, 1) : p),
+        onProgress: (p) => {
+          // Beat This! runs the song in windows of one length, so the windows done say how long the rest take. The
+          // download is left out: once the model is cached, it never comes again.
+          const f = p.fraction ?? 0
+          const timed =
+            f > 0 ? { ...p, etaSeconds: Math.ceil((((now() - running) / 1000) * (1 - f)) / f) } : p
+          ctx.progress(downloaded ? within(timed, MODEL_DOWNLOAD_SHARE, 1) : timed)
+        },
       })
       remember(args.assetId, state)
       return fields
