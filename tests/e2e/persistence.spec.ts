@@ -335,6 +335,94 @@ test('a project file carries the project and its media into another browser prof
   }
 })
 
+test('opening a project file shows each file it restores, and a cancelled open leaves nothing behind', async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(120_000)
+  await openBlank(page)
+  await importFiles(page, ['song.mp3', 'clip.mp4', 'image.png'])
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  await expect(page.getByLabel('clip, video')).toBeVisible()
+  await renameOpenProject(page, 'song', 'Portable')
+  await expect(saved(page)).toBeVisible()
+  const names = (await snapshot(page)).assets.map((a) => a.name)
+  await page.getByRole('button', { name: 'Project: Portable' }).click()
+  const download = page.waitForEvent('download')
+  await page.getByRole('menuitem', { name: /Download project file/ }).click()
+  const saveTo = testInfo.outputPath('Portable.mvstudio')
+  await (await download).saveAs(saveTo)
+
+  const other = await launchProfile(testInfo.outputPath('second-profile'), baseURL)
+  try {
+    const page2 = other.pages()[0] ?? (await other.newPage())
+    await openHarness(page2)
+    // Each write to browser storage waits until the test lets it through, so every step of the restore shows.
+    await page2.evaluate(() => {
+      const w = window as unknown as { held: (() => void)[]; release: () => void }
+      w.held = []
+      w.release = () => w.held.shift()?.()
+      const proto = FileSystemWritableFileStream.prototype
+      const write = proto.write
+      proto.write = function (this: FileSystemWritableFileStream, ...args: Parameters<typeof write>) {
+        return new Promise<void>((resolve, reject) =>
+          w.held.push(() => write.apply(this, args).then(resolve, reject)),
+        )
+      }
+    })
+    const held = () => page2.evaluate(() => (window as unknown as { held: unknown[] }).held.length)
+    const release = async () => {
+      await expect.poll(held).toBe(1)
+      await page2.evaluate(() => (window as unknown as { release: () => void }).release())
+    }
+    const openFile = async () => {
+      const chooser = page2.waitForEvent('filechooser')
+      await page2.getByRole('button', { name: 'Open project file' }).click()
+      await (await chooser).setFiles(saveTo)
+    }
+    const opening = page2.getByRole('region', { name: 'Opening Portable.mvstudio' })
+    const percent = async () => Number(/(\d+)%/.exec(await opening.innerText())?.[1])
+
+    await openFile()
+    await expect(opening).toContainText(/Restoring (.+) · 1 of 3 files/)
+    const first = /Restoring (.+) · 1 of 3 files/.exec(await opening.innerText())?.[1] ?? ''
+    expect(names).toContain(first)
+    await expect(page2.getByRole('button', { name: 'Open project file' })).toBeDisabled()
+    await opening.getByRole('button', { name: 'Cancel' }).click()
+    await release()
+    await expect(opening).toBeHidden()
+    await expect(page2.getByRole('heading', { name: 'What are you making?' })).toBeVisible()
+    expect(await keptCount(page2)).toBe(0)
+    const stored = await page2.evaluate(async () => {
+      const root = await navigator.storage.getDirectory()
+      const media = await root.getDirectoryHandle('media').catch(() => null)
+      let n = 0
+      if (media) for await (const _ of media.keys()) n++
+      return n
+    })
+    expect(stored).toBe(0)
+
+    await openFile()
+    const seen: string[] = []
+    const percents: number[] = []
+    for (let i = 1; i <= 3; i++) {
+      await expect(opening).toContainText(new RegExp(`Restoring (.+) · ${i} of 3 files`))
+      seen.push(new RegExp(`Restoring (.+) · ${i} of 3 files`).exec(await opening.innerText())?.[1] ?? '')
+      percents.push(await percent())
+      await release()
+    }
+    await expect(page2.getByRole('button', { name: 'Project: Portable' })).toBeVisible()
+    await expect(page2.getByText('Opened “Portable”')).toBeVisible()
+    expect([...seen].sort()).toEqual([...names].sort())
+    expect(percents[0]).toBe(0)
+    expect(percents[1]).toBeGreaterThan(0)
+    expect(percents[2]).toBeGreaterThan(percents[1] ?? 0)
+    expect(await storedSizes(page2)).toEqual((await snapshot(page2)).assets.map((a) => a.byteSize))
+  } finally {
+    await other.close()
+  }
+})
+
 test('a failed save says so, and saving again works', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {

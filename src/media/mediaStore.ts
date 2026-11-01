@@ -36,9 +36,12 @@ export class OpfsMediaStore implements MediaStore {
     return this.store(blob, info, ctx, blob.type)
   }
 
-  /** Writes bytes for an existing asset record (portable project import keeps asset ids and storage keys). */
-  async restore(asset: Asset, data: Blob): Promise<void> {
-    await writeOpfsFile(asset.storageKey, data)
+  /**
+   * Writes bytes for an existing asset record (portable project import keeps asset ids and storage keys), with the
+   * bytes written so far to `onWritten` (see `writeOpfsFile`).
+   */
+  async restore(asset: Asset, data: Blob, onWritten?: (bytes: number) => void): Promise<void> {
+    await writeOpfsFile(asset.storageKey, data, onWritten)
   }
 
   async has(asset: Asset): Promise<boolean> {

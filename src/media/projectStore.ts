@@ -1,7 +1,7 @@
 /** Project storage in IndexedDB, plus portable project files that bundle the project with its media. */
 import { parseProject } from '../model/migrations.ts'
 import { newId } from '../model/factory.ts'
-import type { Id, Project } from '../model/types.ts'
+import type { Asset, Id, Project } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
 import { mediaStore, type OpfsMediaStore } from './mediaStore.ts'
 import { readTar, writeTar, type TarEntry } from './tar.ts'
@@ -171,23 +171,53 @@ export class IdbProjectStore implements ProjectStore {
     }
     const byName = new Map(entries.map((e) => [e.name, e.data]))
     const assets = Object.values(project.assets)
-    for (const [i, asset] of assets.entries()) {
+    const total = assets.reduce((sum, a) => sum + (byName.get(a.storageKey)?.size ?? 0), 0)
+    const started = performance.now()
+    let before = 0
+    const report = (i: number, written: number) => {
       ctx?.throwIfCancelled()
+      const bytes = before + written
+      const fraction = total ? bytes / total : i / Math.max(1, assets.length)
       ctx?.progress({
         stage: 'restore',
-        fraction: i / Math.max(1, assets.length),
-        message: `Restoring ${asset.name}`,
+        fraction,
+        message: `Restoring ${assets[i]?.name} · ${i + 1} of ${assets.length} files`,
+        bytesLoaded: bytes,
+        bytesTotal: total,
+        etaSeconds: secondsLeft(started, fraction),
       })
-      const data = byName.get(asset.storageKey)
-      if (!data) throw new JobError('invalid-input', `The project file is missing media for "${asset.name}"`)
-      if (!(await this.media.has(asset))) await this.media.restore(asset, data)
     }
-    const existing = await this.list()
-    if (existing.some((s) => s.id === project.id))
-      project = { ...project, id: newId(), name: `${project.name} (imported)` }
-    await this.save(project)
+    const restored: Asset[] = []
+    try {
+      for (const [i, asset] of assets.entries()) {
+        report(i, 0)
+        const data = byName.get(asset.storageKey)
+        if (!data)
+          throw new JobError('invalid-input', `The project file is missing media for "${asset.name}"`)
+        if (!(await this.media.has(asset))) {
+          restored.push(asset)
+          await this.media.restore(asset, data, (written) => report(i, written))
+        }
+        before += data.size
+      }
+      const existing = await this.list()
+      if (existing.some((s) => s.id === project.id))
+        project = { ...project, id: newId(), name: `${project.name} (imported)` }
+      await this.save(project)
+    } catch (error) {
+      // No project refers to the media this open wrote, so a cancel or failure would leave it taking up storage.
+      await Promise.all(restored.map((a) => this.media.remove(a)))
+      throw error
+    }
     return project
   }
+}
+
+/** Seconds left at the pace so far, once there is enough of it to go by. */
+function secondsLeft(started: number, fraction: number): number | undefined {
+  const elapsed = (performance.now() - started) / 1000
+  if (elapsed < 2 || fraction < 0.05) return undefined
+  return (elapsed * (1 - fraction)) / fraction
 }
 
 export const projectStore = new IdbProjectStore()
