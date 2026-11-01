@@ -2246,7 +2246,8 @@ export function Timeline() {
 
   /**
    * Drags a lyric line (its body moves it, its edges move its start or end) or one edge of a word, as one undo step.
-   * A click without moving selects the line and puts the playhead at its start, so Play plays it.
+   * A click without moving selects the line and, without Shift, Ctrl or Cmd, puts the playhead at its start, so Play
+   * plays it.
    */
   const onLyricPointerDown = (e: React.PointerEvent, lineId: string, trackId: string, drag: LyricDrag) => {
     e.stopPropagation()
@@ -2258,8 +2259,9 @@ export function Timeline() {
       drag.type === 'line'
         ? lineDeltaRange(p, lineId, drag.edge)
         : wordEdgeRange(p, lineId, drag.index, drag.edge)
+    const click = e.shiftKey || e.metaKey || e.ctrlKey ? () => {} : () => playheadToLine(lineId)
     if (!limits) {
-      playheadToLine(lineId)
+      click()
       return
     }
     const track = p.tracks.find((t) => t.id === trackId)
@@ -2289,9 +2291,9 @@ export function Timeline() {
           : wordEdgeCommands(p, lineId, drag.index, drag.edge, d)
       if (commands) dispatch(commands, { coalesceKey: key, label })
     }
-    const finish = (click: boolean) => {
+    const finish = (clicked: boolean) => {
       if (moved) editor.endGesture()
-      else if (click) playheadToLine(lineId)
+      else if (clicked) click()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cancel)

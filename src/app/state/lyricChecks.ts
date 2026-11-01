@@ -169,7 +169,10 @@ export function showNextToCheck(): void {
   const line = nextToCheck(editor.getProject(), selectedLyricLine())
   if (!line) return
   select({ type: 'lyric', id: line.id })
-  if (line.start !== undefined) set({ playhead: line.start })
+  if (line.start !== undefined) {
+    stopPlayingLine?.()
+    set({ playhead: line.start })
+  }
   requestAnimationFrame(() =>
     document
       .querySelector(`[data-lyric-line="${CSS.escape(line.id)}"]`)
@@ -183,51 +186,66 @@ export function playheadToLine(lineId: string): void {
   if (line?.start === undefined) return
   const t = get().playhead
   if (t >= line.start && t < (line.end ?? line.start)) return
+  stopPlayingLine?.()
   set({ playhead: line.start })
 }
 
 /** How long Play line goes on past the line's end, so its last word is heard out. */
 export const PLAY_LINE_TAIL = 0.5
+/** Play line starts watching for the line's end once a frame shows playback within this long of its start (s). */
+const PLAY_LINE_ARM = 0.5
 /**
- * A playhead step forward larger than this (seconds) is a seek, a loop or a late frame, not playback moving on. The
- * preview reports one frame from the old position after playback starts.
+ * How far a playhead step may differ from the time that passed and still be playback (s). Playback runs at 1×, so a
+ * late frame (a stall, or a hidden tab while the audio plays on) is a long step that is still playback; a seek is not.
  */
-const PLAY_STEP = 0.5
-/** Play line stops watching for the line's end once this much more than the line has played (seconds). */
-const PLAY_LINE_GRACE = 2
+const PLAY_DRIFT = 0.1
+/** Play line stops waiting for playback from the line's start after this long once the preview has started (s). */
+const PLAY_LINE_WAIT = 1
 let stopPlayingLine: (() => void) | undefined
 
 /**
- * Plays a lyric line from its start and pauses as playback passes just after its end. Pausing, playing another line,
- * or a seek after which playback does not pass the line's end soon leaves playback as it is.
+ * Plays a lyric line from its start and pauses as playback passes just after its end. Pausing, seeking, or playing
+ * another line before then leaves playback as it is.
  */
 export function playLine(lineId: string): void {
   const line = lyricLines(editor.getProject()).find((l) => l.id === lineId)
   if (line?.start === undefined || line.end === undefined) return
+  const start = line.start
   stopPlayingLine?.()
   const end = line.end + PLAY_LINE_TAIL
-  const budget = end - line.start + PLAY_LINE_GRACE
   // Playing from the click itself, so the browser lets audio start.
-  set({ playhead: line.start, playing: true })
-  let last = line.start
-  let played = 0
+  set({ playhead: start, playing: true })
+  /** The last frame of playback from the line's start, once there is one, and when it came (ms). */
+  let last: { t: number; at: number } | undefined
+  /** Since when the preview has played without playback from the line's start (ms). */
+  let waitingSince = get().starting ? undefined : performance.now()
   let unsubscribe = () => {}
   const stop = () => {
     unsubscribe()
     if (stopPlayingLine === stop) stopPlayingLine = undefined
   }
-  unsubscribe = useUi.subscribe((s) => {
+  unsubscribe = useUi.subscribe((s, prev) => {
     if (!s.playing) return stop()
-    const from = last
-    last = s.playhead
-    if (s.playhead <= from || s.playhead - from > PLAY_STEP) return
-    if (from < end && s.playhead >= end) {
-      stop()
-      set({ playing: false })
+    if (s.starting) {
+      waitingSince = undefined
       return
     }
-    played += s.playhead - from
-    if (played > budget) stop()
+    const now = performance.now()
+    waitingSince ??= now
+    if (s.playhead === prev.playhead) return
+    if (last && Math.abs(s.playhead - last.t - (now - last.at) / 1000) <= PLAY_DRIFT) {
+      if (last.t < end && s.playhead >= end) {
+        stop()
+        set({ playing: false })
+        return
+      }
+      last = { t: s.playhead, at: now }
+      return
+    }
+    // Not playback on from the last frame: playback from the line's start (again), a frame from before the seek to
+    // it (the preview reports one after playback starts), or a seek elsewhere.
+    if (s.playhead >= start && s.playhead <= start + PLAY_LINE_ARM) last = { t: s.playhead, at: now }
+    else if (last || now - waitingSince > PLAY_LINE_WAIT * 1000) stop()
   })
   stopPlayingLine = stop
 }

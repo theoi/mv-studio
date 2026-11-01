@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LyricLine, LyricsDoc, Project } from '../../../src/model/index.ts'
 import { createProject } from '../../../src/model/factory.ts'
 import {
@@ -11,11 +11,12 @@ import {
   PLAY_LINE_TAIL,
   playheadToLine,
   playLine,
+  showNextToCheck,
   timingLooksUncertain,
   withTimingChecks,
 } from '../../../src/app/state/lyricChecks.ts'
 import { editor } from '../../../src/app/state/project.ts'
-import { get, set } from '../../../src/app/state/ui.ts'
+import { get, select, set } from '../../../src/app/state/ui.ts'
 
 /** A line whose words have these confidences and start at these times (one per second by default). */
 const line = (confidences: number[], starts = confidences.map((_, i) => i)): LyricLine => ({
@@ -152,7 +153,11 @@ function checking(): Project {
 }
 
 describe('stepping through and playing the lines to check', () => {
-  afterEach(() => set({ playing: false }))
+  afterEach(() => {
+    set({ playing: false })
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
 
   it('finds the next line to check after a line, from the first again after the last', () => {
     const project = checking()
@@ -179,55 +184,136 @@ describe('stepping through and playing the lines to check', () => {
     expect(get().playhead).toBe(11)
   })
 
+  /** The time `performance.now()` gives, in ms. */
+  let clock = 0
+  /** Frames of playback at 1×: each moves the clock on by as long as the playhead moves. */
+  const play = (...times: number[]) => {
+    for (const t of times) {
+      clock += (t - get().playhead) * 1000
+      set({ playhead: t })
+    }
+  }
+  /** A frame one frame's time after the last, at `t`: a seek, or a frame from before one. */
+  const jump = (t: number) => {
+    clock += 16
+    set({ playhead: t })
+  }
+
   it('plays a line from its start and pauses once the playhead is past its end and the tail', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
     editor.load(checking())
     set({ playhead: 3 })
     playLine('c')
     expect(get()).toMatchObject({ playhead: 10.6, playing: true })
-    for (const t of [11, 11.5, 11.9]) {
-      set({ playhead: t })
+    for (const t of [10.62, 11, 11.5, 11.9]) {
+      play(t)
       expect(get().playing).toBe(true)
     }
-    set({ playhead: 11.5 + PLAY_LINE_TAIL })
+    play(11.5 + PLAY_LINE_TAIL)
     expect(get().playing).toBe(false)
     playLine('d')
     expect(get().playing).toBe(false)
   })
 
-  it('pauses at the line’s end after a frame from where the playhead was before', () => {
+  it('pauses at the end after a frame from before the seek to the line, also one from early in the line', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
     editor.load(checking())
     set({ playhead: 3 })
     playLine('c')
-    for (const t of [3, 10.6, 11, 11.4, 11.8]) set({ playhead: t })
+    jump(3)
+    jump(10.62)
+    play(11, 11.4, 11.8)
     expect(get().playing).toBe(true)
-    set({ playhead: 12.1 })
+    play(12.1)
+    expect(get().playing).toBe(false)
+
+    // Play line again 0.3 s into the line: the frame from before reads 10.9 s, then playback goes on from 10.62 s.
+    set({ playhead: 10.9 })
+    playLine('c')
+    jump(10.9)
+    jump(10.62)
+    play(11.5, 11.9)
+    expect(get().playing).toBe(true)
+    play(12.05)
     expect(get().playing).toBe(false)
   })
 
-  it('leaves playback alone after a pause, a seek past the end or a while playing elsewhere, and when another line is played', () => {
+  it('pauses at the end after a late frame (a stall, or a hidden tab while the audio plays on)', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
     editor.load(checking())
     playLine('a')
+    play(10.02, 10.4)
+    expect(get().playing).toBe(true)
+    play(11.6)
+    expect(get().playing).toBe(false)
+  })
+
+  it('leaves playback alone once the playhead moves to the next line before the end', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    // Line a would pause at 11 s; b starts at 10.6 s.
+    playLine('a')
+    play(10.02, 10.3)
+    jump(10.6)
+    play(10.8, 11.2)
+    expect(get().playing).toBe(true)
+
+    // Even when the time that passed matches the jump.
+    playLine('a')
+    play(10.02, 10.45)
+    clock += 150
+    playheadToLine('b')
+    expect(get().playhead).toBe(10.6)
+    play(10.8, 11.2)
+    expect(get().playing).toBe(true)
+
+    // Or when Next line to check moves it to the next line to check (c, also at 10.6 s).
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    select({ type: 'lyric', id: 'a' })
+    playLine('a')
+    play(10.02, 10.45)
+    clock += 150
+    showNextToCheck()
+    expect(get()).toMatchObject({ playhead: 10.6, selection: { type: 'lyric', id: 'c' } })
+    play(10.8, 11.2)
+    expect(get().playing).toBe(true)
+  })
+
+  it('leaves playback alone after a pause, a seek past the end, or a wait with no playback from the line', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    playLine('a')
+    play(10.1)
     set({ playing: false })
-    set({ playing: true, playhead: 10.7 })
-    set({ playhead: 11.1 })
+    set({ playing: true })
+    play(10.7, 11.1)
     expect(get().playing).toBe(true)
 
     playLine('a')
-    set({ playhead: 15 })
-    set({ playhead: 15.2 })
+    play(10.1)
+    jump(15)
+    play(15.2)
     expect(get().playing).toBe(true)
 
-    // Line a lasts 1 s with its tail: after 3 s of playing from elsewhere, its end goes by.
     playLine('a')
-    for (let t = 5; t <= 11.2; t += 0.2) set({ playhead: t })
+    clock += 1500
+    jump(30)
+    jump(10.1)
+    play(10.6, 11.2)
     expect(get().playing).toBe(true)
+  })
 
-    // Line a would pause at 11 s; playing c from 10.6 s goes on to 12 s.
+  it('stops watching line a when line c is played', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    // Line a would pause at 11 s, and the jump to c's start passes as playback of a; c goes on to 12 s.
     playLine('a')
+    play(10.02, 10.3)
+    clock += 300
     playLine('c')
-    for (const t of [11, 11.4, 11.8]) set({ playhead: t })
+    play(10.62, 11, 11.4, 11.8)
     expect(get().playing).toBe(true)
-    set({ playhead: 12 })
+    play(12)
     expect(get().playing).toBe(false)
   })
 })
