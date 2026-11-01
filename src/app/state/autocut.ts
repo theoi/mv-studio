@@ -11,7 +11,7 @@ import type {
 } from '../../vision/index.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { plural, shortFileName } from '../format.ts'
-import { analyzeFootageAndWait, useFootage, visionService } from './footage.ts'
+import { analyzeFootageAndWait, showingDownloads, useFootage, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { editor, sectionAt, sectionsOf } from './project.ts'
 import { barsState, ensureBars } from './songAnalysis.ts'
@@ -225,7 +225,7 @@ export function startAutoCut(
   const handle = jobs.run({
     kind: JOB_KINDS.autocut,
     title: 'Cutting to the beat',
-    run: async (ctx) => {
+    run: showingDownloads(['tagger', 'cutout'], async (ctx) => {
       const matched = (options.order ?? 'matched') === 'matched'
       const wanted = options.assetIds && new Set(options.assetIds)
       const waiting = unanalyzed(editor.getProject())
@@ -280,7 +280,7 @@ export function startAutoCut(
       const result = beatsOnly ? { ...cut, warnings: [...cut.warnings, BARS_NOTES.beatsOnly] } : cut
       useAutoCut.setState((s) => ({ results: { ...s.results, [id]: result } }))
       return result
-    },
+    }),
   })
   id = handle.id
   return handle

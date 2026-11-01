@@ -19,4 +19,19 @@ describe('sharedFetch', () => {
     )
     expect((await sharedFetch(`${base}other.json`)).status).toBe(200)
   })
+
+  it('answers an error status with that status, but throws it as a failed download for a registered file', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 503 })),
+    )
+    const revision = '89abcdef0123456789abcdef0123456789abcdef'
+    const base = `https://huggingface.co/x/z/resolve/${revision}/`
+    registerModelFiles([{ url: `${base}onnx/model.onnx`, sha256: '00'.repeat(32) }])
+    expect((await sharedFetch(`${base}tokenizer.json`)).status).toBe(503)
+    await expect(sharedFetch(`${base}onnx/model.onnx`)).rejects.toMatchObject({
+      code: 'model-load',
+      retryable: true,
+    })
+  })
 })

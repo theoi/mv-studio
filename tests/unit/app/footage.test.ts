@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from 'vitest'
-import { clipTags, waitForMatching } from '../../../src/app/state/footage.ts'
+import { clipTags, footageDownloadNote, waitForMatching } from '../../../src/app/state/footage.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import { VISION_ANALYSIS_VERSION } from '../../../src/vision/analysisData.ts'
 import type { AssetIndexStatus, IndexingState } from '../../../src/vision/index.ts'
@@ -14,6 +14,25 @@ const setTags = (assetId: string, tags: string[]) =>
     },
     { history: 'skip' },
   )
+
+it('says how far the model footage analysis downloads is, and that the clips are analyzed next', () => {
+  const downloading: IndexingState = {
+    status: 'indexing',
+    total: 10,
+    done: 0,
+    failed: [],
+    download: { message: 'Downloading the footage tagger (154 MB, once)', fraction: 0.4 },
+  }
+  expect(footageDownloadNote(downloading)).toBe(
+    'Downloading the footage tagger (154 MB, once)… 40%. Your clips are analyzed next.',
+  )
+  expect(footageDownloadNote({ ...downloading, done: 3 })).toBe(
+    'Downloading the footage tagger (154 MB, once)… 40%. The rest of your clips are analyzed next.',
+  )
+  const { download: _, ...analyzing } = downloading
+  expect(footageDownloadNote(analyzing)).toBeUndefined()
+  expect(footageDownloadNote({ ...downloading, status: 'paused' })).toBeUndefined()
+})
 
 it('shows the tags footage analysis stored, at most five, over the sample’s own descriptions', () => {
   const sample = clipTags(editor.getProject(), 'm-city')

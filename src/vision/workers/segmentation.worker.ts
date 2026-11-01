@@ -21,7 +21,7 @@ import { isModelUnavailable, visionError } from '../errors.ts'
 import { floatToMask, resizeMask } from '../mask/ops.ts'
 import { DETECTOR_MIN_SCORE } from '../mask/suitability.ts'
 import { createMediaPipeTask, mediapipeModel } from '../runtime/loaders.ts'
-import { withModelProgress } from '../../shared/transformers.ts'
+import { loadingModel } from '../runtime/loading.ts'
 import { VISION_MODELS } from '../runtime/models.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../../shared/worker.ts'
 import {
@@ -46,9 +46,9 @@ async function getSegmenter(): Promise<ImageSegmenter> {
   if (segmenter && segmenterKey === key) return segmenter
   segmenter?.close()
   segmenter = null
-  const modelAssetBuffer = await mediapipeModel(VISION_MODELS[config.model])
+  const modelAssetBuffer = await mediapipeModel(VISION_MODELS[config.model], 'cutout')
   const create = (delegate: Delegate) =>
-    createMediaPipeTask((fileset) =>
+    createMediaPipeTask('cutout', (fileset) =>
       ImageSegmenter.createFromOptions(fileset, {
         baseOptions: { modelAssetBuffer, delegate },
         runningMode: 'VIDEO',
@@ -70,8 +70,8 @@ async function getSegmenter(): Promise<ImageSegmenter> {
 
 async function getFaceDetector(): Promise<FaceDetector> {
   if (faceDetector) return faceDetector
-  const modelAssetBuffer = await mediapipeModel(VISION_MODELS.faceShortRange)
-  faceDetector ??= await createMediaPipeTask((fileset) =>
+  const modelAssetBuffer = await mediapipeModel(VISION_MODELS.faceShortRange, 'cutout')
+  faceDetector ??= await createMediaPipeTask('cutout', (fileset) =>
     FaceDetector.createFromOptions(fileset, {
       baseOptions: { modelAssetBuffer, delegate: 'CPU' },
       runningMode: 'IMAGE',
@@ -91,8 +91,8 @@ const MAX_BOXES = 10
 
 async function getPersonDetector(): Promise<ObjectDetector> {
   if (personDetector) return personDetector
-  const modelAssetBuffer = await mediapipeModel(VISION_MODELS.personDetector)
-  personDetector ??= await createMediaPipeTask((fileset) =>
+  const modelAssetBuffer = await mediapipeModel(VISION_MODELS.personDetector, 'cutout')
+  personDetector ??= await createMediaPipeTask('cutout', (fileset) =>
     ObjectDetector.createFromOptions(fileset, {
       baseOptions: { modelAssetBuffer, delegate: 'CPU' },
       runningMode: 'IMAGE',
@@ -107,9 +107,9 @@ async function getPersonDetector(): Promise<ObjectDetector> {
 
 async function getSelector(): Promise<InteractiveSegmenterLegacy> {
   if (selector) return selector
-  const modelAssetBuffer = await mediapipeModel(VISION_MODELS.magicTouch)
+  const modelAssetBuffer = await mediapipeModel(VISION_MODELS.magicTouch, 'picker')
   // The newer InteractiveSegmenter class fails to create its engine with magic_touch in 1.2.0.
-  selector ??= await createMediaPipeTask((fileset) =>
+  selector ??= await createMediaPipeTask('picker', (fileset) =>
     InteractiveSegmenterLegacy.createFromOptions(fileset, {
       baseOptions: { modelAssetBuffer, delegate: 'CPU' },
       outputConfidenceMasks: true,
@@ -208,7 +208,7 @@ async function detectPeople(
  */
 async function unlessUnavailable<T>(ctx: WorkerCallContext, detect: () => Promise<T>): Promise<T | null> {
   try {
-    return await withModelProgress(ctx.progress, detect)
+    return await loadingModel('cutout', ctx.progress, detect)
   } catch (err) {
     if (isModelUnavailable(err)) return null
     throw err
@@ -269,7 +269,7 @@ function nextTimestamp(requested: number): number {
 const api = {
   async configure(input: { model: PersonModel; delegate: Delegate }, ctx: WorkerCallContext) {
     config = { ...input }
-    await withModelProgress(ctx.progress, getSegmenter)
+    await loadingModel('cutout', ctx.progress, getSegmenter)
   },
 
   async resetStream(_input: null) {
@@ -316,7 +316,7 @@ const api = {
     try {
       if (!points.length)
         throw new JobError('invalid-input', 'At least one point is needed to select an object.')
-      const sel = await withModelProgress(ctx.progress, getSelector)
+      const sel = await loadingModel('picker', ctx.progress, getSelector)
       const roi = points.length === 1 ? { keypoint: points[0]! } : { scribble: points }
       const result = sel.segment(bitmap, roi)
       let mask: Mask
@@ -335,7 +335,7 @@ const api = {
   },
 
   async beginTrack(config: MaskTrackBuildConfig, ctx: WorkerCallContext): Promise<{ id: number }> {
-    await withModelProgress(ctx.progress, getSegmenter)
+    await loadingModel('cutout', ctx.progress, getSegmenter)
     timestampOffset = lastTimestamp + 1000
     const id = nextTrackId++
     tracks.set(id, createMaskTrackBuilder(config))

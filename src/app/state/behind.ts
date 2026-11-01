@@ -25,11 +25,11 @@ import type {
 import type * as Vision from '../../vision/index.ts'
 import { suitabilityInRange } from '../../vision/mask/suitability.ts'
 import { PERSON_TRACK_VERSION } from '../../vision/segmentation/personTrack.ts'
-import { VISION_MODELS } from '../../vision/runtime/models.ts'
+import { VISION_MODEL_PARTS, VISION_MODELS } from '../../vision/runtime/models.ts'
 import { mediaById } from '../mock/media.ts'
 import { maskStorageKey, sceneOf } from '../mock/demoProject.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
-import { visionService } from './footage.ts'
+import { showingDownloads, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { dispatch, editor } from './project.ts'
@@ -591,12 +591,7 @@ const MEDIAPIPE_RUNTIME_BYTES = 14_800_000
 
 /** Bytes finding and cutting out people still has to download (models and runtime, once), 0 when cached. */
 export async function personDownloadBytes(): Promise<number> {
-  const needed = [
-    VISION_MODELS.selfieLandscape,
-    VISION_MODELS.selfie,
-    VISION_MODELS.faceShortRange,
-    VISION_MODELS.personDetector,
-  ]
+  const needed = VISION_MODEL_PARTS.cutout
   const mediapipe = [...needed, VISION_MODELS.magicTouch, VISION_MODELS.selfieMulticlass]
   const fileOf = (m: (typeof mediapipe)[number]) => Object.values(m.files)[0]
   const cached = await Promise.all(
@@ -727,7 +722,7 @@ export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefin
   const handle = jobs.run({
     kind: JOB_KINDS.suitability,
     title: n === 1 ? 'Looking for a person in the clip' : `Looking for people in ${n} clips`,
-    run: async (ctx) => {
+    run: showingDownloads(['cutout'], async (ctx) => {
       const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
       for (const [i, id] of pending.entries()) {
         const asset = editor.getProject().assets[id]
@@ -748,7 +743,7 @@ export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefin
           source.dispose()
         }
       }
-    },
+    }),
   })
   handle.promise.catch(() => {
     for (const id of pending)
@@ -772,7 +767,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
   const handle = jobs.run({
     kind: JOB_KINDS.cutout,
     title: 'Cutting out the subject',
-    run: async (ctx) => {
+    run: showingDownloads(['cutout', 'matte'], async (ctx) => {
       const start = editor.getProject()
       const unsuitable = (s: Suitability) => s.status === 'checked' && s.verdict === 'unsuitable'
       const wanted = [...new Set(clipIds)].filter(
@@ -872,7 +867,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
         )
       useBehind.setState((s) => ({ results: { ...s.results, [jobId]: result } }))
       return result
-    },
+    }),
   })
   jobId = handle.id
   useBehind.setState((s) => ({ requests: { ...s.requests, [jobId]: { clips: clipIds, object: false } } }))
@@ -921,7 +916,7 @@ export function remakeOfflineMasks(): JobHandle<void> | undefined {
   const handle = jobs.run({
     kind: JOB_KINDS.cutoutRemake,
     title: n === 1 ? 'Checking the cutout for people' : `Checking ${n} cutouts for people`,
-    run: async (ctx) => {
+    run: showingDownloads(['cutout'], async (ctx) => {
       const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
       for (const [i, old] of offline.entries()) {
         const now = editor.getProject()
@@ -951,7 +946,7 @@ export function remakeOfflineMasks(): JobHandle<void> | undefined {
         // Also when the cutout went meanwhile: an undo or redo can bring it back on the old mask.
         dispatch(replaceMaskCommands(editor.getProject(), old.id, mask, record), { history: 'skip' })
       }
-    },
+    }),
   })
   remake = handle
   useBehind.setState({ remaking: ids })

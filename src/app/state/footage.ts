@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import type { Id, Project } from '../../model/index.ts'
-import { JobError } from '../../shared/jobs.ts'
+import { JobError, type JobContext } from '../../shared/jobs.ts'
 import type {
   AssetIndexStatus,
   DirectorFootageMatcher,
@@ -10,6 +10,7 @@ import type {
   FootageResult,
   FootageService,
   IndexingState,
+  VisionModel,
   VisionService,
   VisionServiceOptions,
 } from '../../vision/index.ts'
@@ -78,6 +79,20 @@ export function visionService(): Promise<VisionService> {
   return visionLoading
 }
 
+/**
+ * A vision job's `run` that shows the first-time downloads of `models` as its progress line ("Downloading the depth
+ * estimator (27 MB, once)") while they last.
+ */
+export function showingDownloads<T>(
+  models: readonly VisionModel[],
+  run: (ctx: JobContext) => Promise<T>,
+): (ctx: JobContext) => Promise<T> {
+  return async (ctx) => {
+    const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
+    return v.withDownloadLines(vision, models, run)(ctx)
+  }
+}
+
 export function footageService(): Promise<FootageService> {
   loading ??= Promise.all([import('../../vision/index.ts'), visionService()]).then(([v, vision]) => {
     const service = v.createFootageService({ editor, vision, media: appMedia })
@@ -86,6 +101,17 @@ export function footageService(): Promise<FootageService> {
     return service
   })
   return loading
+}
+
+/**
+ * What footage analysis says while it downloads a model, in place of how many clips are done: "Downloading the
+ * footage tagger (154 MB, once)… 40%. Your clips are analyzed next."
+ */
+export function footageDownloadNote(indexing: IndexingState | null): string | undefined {
+  const download = indexing?.status === 'indexing' ? indexing.download : undefined
+  if (!download) return undefined
+  const next = indexing?.done ? 'The rest of your clips are analyzed next.' : 'Your clips are analyzed next.'
+  return `${download.message}… ${Math.round(download.fraction * 100)}%. ${next}`
 }
 
 /**

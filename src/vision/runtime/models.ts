@@ -1,4 +1,4 @@
-import type { ModelDescriptor, ModelFile } from '../../shared/models.ts'
+import { modelBytes, type ModelDescriptor, type ModelFile } from '../../shared/models.ts'
 
 const MP = 'https://storage.googleapis.com/mediapipe-models'
 const HF = 'https://huggingface.co'
@@ -232,6 +232,50 @@ export const VISION_MODELS = {
 } as const satisfies Record<string, ModelDescriptor>
 
 export type VisionModelKey = keyof typeof VISION_MODELS
+
+/**
+ * What the app calls the models vision features download, the same in Settings › This device, progress lines and
+ * errors.
+ */
+export const VISION_MODEL_TITLES = {
+  cutout: 'Person finder',
+  matte: 'Edge refiner',
+  depth: 'Depth estimator',
+  tagger: 'Footage tagger',
+  picker: 'Object picker',
+} as const
+
+export type VisionModel = keyof typeof VISION_MODEL_TITLES
+
+/**
+ * The files each named model is made of, as Settings › This device counts and removes them. The person finder is the
+ * person segmenters (landscape and portrait) and the face and person detectors.
+ */
+export const VISION_MODEL_PARTS: Record<VisionModel, readonly ModelDescriptor[]> = {
+  cutout: [
+    VISION_MODELS.selfieLandscape,
+    VISION_MODELS.selfie,
+    VISION_MODELS.faceShortRange,
+    VISION_MODELS.personDetector,
+  ],
+  matte: [VISION_MODELS.modnet],
+  depth: [VISION_MODELS.depthAnythingSmall],
+  tagger: [VISION_MODELS.clipB32],
+  picker: [VISION_MODELS.magicTouch],
+}
+
+/** Total size of a named model's files. */
+export const visionModelBytes = (model: VisionModel) =>
+  VISION_MODEL_PARTS[model].reduce((sum, m) => sum + modelBytes(m), 0)
+
+/** Whether `url` is one of a named model's files, its weights for every device included. */
+export function isVisionModelFile(model: VisionModel, url: string): boolean {
+  return VISION_MODEL_PARTS[model].some((m) =>
+    m.homepage.startsWith(`${HF}/`)
+      ? url.startsWith(`${HF}/${hfRepo(m)}/resolve/`)
+      : Object.values(m.files).some((f) => f.url === url),
+  )
+}
 
 /** Hugging Face repo id of a Transformers.js model descriptor. */
 export function hfRepo(model: ModelDescriptor): string {

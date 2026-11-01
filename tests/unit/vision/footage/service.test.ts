@@ -8,6 +8,7 @@ import {
   FOOTAGE_INDEX_JOB,
   STRONG_MATCH,
 } from '../../../../src/vision/footage/service.ts'
+import type { ModelDownload } from '../../../../src/vision/runtime/downloads.ts'
 import type { FrameSource } from '../../../../src/vision/runtime/frames.ts'
 import type { SubjectTrack } from '../../../../src/vision/types.ts'
 import { CLIPS, clipIndex, fakeMatcher, makeProject, TOPICS } from '../autocut/fixtures.ts'
@@ -83,9 +84,16 @@ function setup(
     if (options.gateSubjects) await gate(`${source.mediaId}:subjects`, o)
     return subjectTrack(source)
   })
+  let downloads: ((d: ModelDownload) => void) | undefined
+  const watchDownloads = (listener: (d: ModelDownload) => void) => {
+    downloads = listener
+    return () => {
+      downloads = undefined
+    }
+  }
   const service = createFootageService({
     editor,
-    vision: { matcher, indexClip, subjects } as never,
+    vision: { matcher, indexClip, subjects, watchDownloads } as never,
     media: { getFile: async () => new Blob() },
     jobs,
     frameSource: async (asset) => ({
@@ -113,7 +121,8 @@ function setup(
     Object.keys(editor.getProject().analysis.visual).filter((id) =>
       readClipIndex(editor.getProject().analysis.visual[id]),
     )
-  return { editor, jobs, service, started, disposed, release, tick, indexed, indexClip, subjects }
+  const download = (d: ModelDownload) => downloads?.(d)
+  return { editor, jobs, service, started, disposed, release, tick, indexed, indexClip, subjects, download }
 }
 
 describe('background footage analysis', () => {
@@ -141,6 +150,28 @@ describe('background footage analysis', () => {
     expect(editor.getProject().name).not.toBe('Before')
     expect(indexed()).toHaveLength(4)
     stop()
+  })
+
+  it('says which model the run downloads and how far it is, until the download ends', async () => {
+    const { service, release, tick, download } = setup()
+    service.indexing.start()
+    await tick()
+    const message = 'Downloading the footage tagger (154 MB, once)'
+    const tagger: ModelDownload = {
+      stage: 'download',
+      model: 'tagger',
+      message,
+      fraction: 0.4,
+      bytesLoaded: 61_000_000,
+      bytesTotal: 153_000_000,
+    }
+    download(tagger)
+    expect(service.indexing.getState().download).toEqual({ message, fraction: 0.4 })
+    download({ ...tagger, fraction: 1, done: true })
+    expect(service.indexing.getState().download).toBeUndefined()
+    download({ ...tagger, model: 'depth' })
+    expect(service.indexing.getState().download).toBeUndefined()
+    for (const id of ['city', 'ocean', 'crowd', 'misc']) await release(id)
   })
 
   it('picks up clips imported while it runs, and analyzes each clip only once', async () => {

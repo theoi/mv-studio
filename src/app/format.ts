@@ -24,6 +24,9 @@ export function formatBpm(bpm: number): string {
   return `${Math.round(bpm)} BPM`
 }
 
+/** `text` as a sentence: with a period at the end unless it already ends with one, or with ? ! or …. */
+export const sentence = (text: string) => (/[.?!…]$/.test(text) ? text : `${text}.`)
+
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }

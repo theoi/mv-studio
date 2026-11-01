@@ -7,7 +7,7 @@ import { modelCache } from '../../shared/models.ts'
 import type { CameraMoveResult, CameraMovesResult, CameraPreset, SafeAmounts } from '../../vision/index.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from '../../vision/render/cameraEffect.ts'
 import { VISION_MODELS } from '../../vision/runtime/models.ts'
-import { visionService } from './footage.ts'
+import { showingDownloads, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { dispatch, editor } from './project.ts'
@@ -122,7 +122,7 @@ export function startCameraMoves(
   const handle = jobs.run({
     kind: JOB_KINDS.camera,
     title: n === 1 ? 'Adding a 3D camera move' : `Adding 3D camera moves to ${n} images`,
-    run: async (ctx) => {
+    run: showingDownloads(['depth'], async (ctx) => {
       const message = (fraction: number) => {
         const i = Math.min(n - 1, Math.floor(fraction * n))
         return n === 1
@@ -140,7 +140,7 @@ export function startCameraMoves(
       })
       useCamera.setState((s) => ({ results: { ...s.results, [id]: result } }))
       return result
-    },
+    }),
   })
   id = handle.id
   useCamera.setState((s) => ({

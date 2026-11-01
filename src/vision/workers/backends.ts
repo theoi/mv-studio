@@ -5,6 +5,7 @@ import {
   type Transferred,
   type WorkerApi,
 } from '../../shared/worker.ts'
+import { routeDownloads, type ModelDownload } from '../runtime/downloads.ts'
 import type { OnnxWorkerApi } from './onnx.worker.ts'
 import type { SegmentationWorkerApi } from './segmentation.worker.ts'
 
@@ -22,17 +23,24 @@ type Methods<Api extends WorkerApi> = {
  * Methods of a worker that starts on the first call. A worker that dies (an uncaught error, a message that cannot
  * be read, or the browser stopping it) is replaced on the next call; calls pending at that moment reject with
  * `worker-crashed` or `out-of-memory`. State the dead worker held (loaded models, unfinished tracks) is lost, so
- * running jobs fail and the user's retry starts fresh.
+ * running jobs fail and the user's retry starts fresh. Model downloads a call starts go to `downloads` instead of
+ * the call's progress (`routeDownloads`).
  */
 function lazyWorker<Api extends WorkerApi>(
   create: () => Worker,
+  downloads: (d: ModelDownload) => void,
 ): { client: Methods<Api>; terminate(): void } {
   const worker = createWorkerClient<Api>(create)
   const client = new Proxy({} as Methods<Api>, {
     get(_target, method) {
       if (typeof method !== 'string' || method === 'then') return undefined
       return (args: unknown, options?: CallOptions) =>
-        worker.call(method as keyof Api & string, args as never, options)
+        routeDownloads(
+          (onProgress) =>
+            worker.call(method as keyof Api & string, args as never, { ...options, onProgress }),
+          options?.onProgress,
+          downloads,
+        )
     },
   })
   return { client, terminate: () => worker.terminate() }
@@ -44,6 +52,10 @@ export interface WorkerBackends extends VisionBackends {
 export function createWorkerBackends(): WorkerBackends {
   const segmentation = new Map<SegmentationRole, ReturnType<typeof lazyWorker<SegmentationWorkerApi>>>()
   let onnx: ReturnType<typeof lazyWorker<OnnxWorkerApi>> | null = null
+  const listeners = new Set<(d: ModelDownload) => void>()
+  const downloads = (d: ModelDownload) => {
+    for (const listener of listeners) listener(d)
+  }
   return {
     segmentation(role = 'interactive'): SegmentationBackend {
       let w = segmentation.get(role)
@@ -54,6 +66,7 @@ export function createWorkerBackends(): WorkerBackends {
               type: 'module',
               name: `vision-segmentation-${role}`,
             }),
+          downloads,
         )
         segmentation.set(role, w)
       }
@@ -63,8 +76,15 @@ export function createWorkerBackends(): WorkerBackends {
       onnx ??= lazyWorker<OnnxWorkerApi>(
         () =>
           new Worker(new URL('./onnx.worker.ts', import.meta.url), { type: 'module', name: 'vision-onnx' }),
+        downloads,
       )
       return onnx.client
+    },
+    watchDownloads(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
     },
     dispose() {
       for (const w of segmentation.values()) w.terminate()

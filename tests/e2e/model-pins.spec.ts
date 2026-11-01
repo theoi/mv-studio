@@ -8,11 +8,14 @@ test('models cached before their URLs were pinned are listed as downloaded and l
 }) => {
   test.setTimeout(120_000)
   await openHarness(page)
-  // The person cutout's models as an earlier version cached them, under their `latest` URLs.
+  // The person finder's models as an earlier version cached them, under their `latest` URLs.
   const files: { url: string; former: string }[] = await page.evaluate(async () => {
     const { VISION_MODELS } = window.mvStudio.vision
     const cache = await caches.open('mv-studio-models-v1')
     const models = [VISION_MODELS.selfieLandscape, VISION_MODELS.personDetector, VISION_MODELS.faceShortRange]
+    // The portrait segmenter is part of the person finder too, though the landscape clip below does not load it.
+    const portrait = VISION_MODELS.selfie.files.model
+    await cache.put(portrait.formerUrls[0], new Response(await (await fetch(portrait.url)).arrayBuffer()))
     return Promise.all(
       models.map(async (m) => {
         const { url, formerUrls } = m.files.model
@@ -27,7 +30,7 @@ test('models cached before their URLs were pinned are listed as downloaded and l
     window.location.hash = '#/editor?dialog=settings&page=local'
   })
   const dialog = page.getByRole('dialog', { name: 'Settings' })
-  await expect(dialog.getByRole('group', { name: 'Person cutout' }).getByText('On this device')).toBeVisible()
+  await expect(dialog.getByRole('group', { name: 'Person finder' }).getByText('On this device')).toBeVisible()
 
   const downloads: string[] = []
   context.on('request', (r) => {

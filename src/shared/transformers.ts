@@ -11,8 +11,11 @@ import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url
 import { JobError, type JobProgress } from './jobs.ts'
 import { configureOnnxEnv, fetchModelFile, type ModelFile } from './models.ts'
 
-/** Progress of one file a model loads: `file` names it, `cached` when it was read from the model cache. */
-export type ModelFileProgress = JobProgress & { file: string; cached: boolean }
+/**
+ * Progress of one file a model loads: `file` names it and `url`, where known, is where it loads from; `cached` when
+ * it was read from the model cache.
+ */
+export type ModelFileProgress = JobProgress & { file: string; cached: boolean; url?: string }
 
 /**
  * Download progress of the current worker call. Workers handle one heavy call at a time, so a single sink per realm
@@ -34,14 +37,15 @@ export async function withModelProgress<T>(
   }
 }
 
-/** Progress callback for downloading `name` inside the current `withModelProgress` call. */
-export function downloadProgress(name: string): (p: JobProgress) => void {
+/** Progress callback for downloading `name` (from `url`) inside the current `withModelProgress` call. */
+export function downloadProgress(name: string, url?: string): (p: JobProgress) => void {
   return (p) =>
     progressSink?.({
       ...p,
       stage: 'download',
       message: `Downloading ${name}`,
       file: name,
+      ...(url ? { url } : {}),
       cached: p.stage === 'cached',
     })
 }
@@ -75,16 +79,19 @@ export function registerModelFiles(files: Iterable<ModelFile>): void {
 /**
  * `fetch` for Transformers.js that goes through the shared model loader, at pinned revisions (`pinRevision`). Its
  * optional-file probing relies on real HTTP statuses, so loader errors that carry one become responses with that
- * status.
+ * status. Registered files (`registerModelFiles`) exist, so for them an error status is a download that failed and
+ * the loader's error is thrown, where Transformers.js would turn the status into an error of its own.
  */
 export async function sharedFetch(input: string | URL): Promise<Response> {
   const url = pinnedUrl(String(input))
+  const known = knownFiles.get(url)
   try {
-    const file = knownFiles.get(url) ?? { url }
-    const buf = await fetchModelFile(file, { onProgress: downloadProgress(url.split('/').pop() ?? url) })
+    const buf = await fetchModelFile(known ?? { url }, {
+      onProgress: downloadProgress(url.split('/').pop() ?? url, url),
+    })
     return new Response(buf, { status: 200, headers: { 'content-length': String(buf.byteLength) } })
   } catch (err) {
-    const status = err instanceof JobError ? /\((\d{3})\)/.exec(err.message)?.[1] : undefined
+    const status = !known && err instanceof JobError ? /\((\d{3})\)/.exec(err.message)?.[1] : undefined
     if (status) return new Response(null, { status: Number(status) })
     throw err
   }

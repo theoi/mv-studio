@@ -10,6 +10,7 @@ import {
   analyzeFootageNow,
   cancelFootageAnalysis,
   clipTags,
+  footageDownloadNote,
   retryFootageAnalysis,
   startFootageAnalysis,
   useFootage,
@@ -240,8 +241,8 @@ export function MatchView() {
           <Info />
           <div>
             <div>
-              Analyzing your footage… {indexing?.done ?? 0} of {indexing?.total ?? clipCount} clips. Picks
-              update as clips finish.
+              {footageDownloadNote(indexing) ??
+                `Analyzing your footage… ${indexing?.done ?? 0} of ${indexing?.total ?? clipCount} clips. Picks update as clips finish.`}
             </div>
             <div className={styles.calloutBtn}>
               <CancelButton

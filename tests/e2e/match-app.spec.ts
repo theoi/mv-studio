@@ -55,10 +55,17 @@ async function openSample(page: Page, hash: string) {
         }
       },
     }
+    // Model downloads a test sends to `__downloadListeners` reach the app as the worker backends' would.
+    const downloadListeners = new Set<(d: unknown) => void>()
+    ;(window as Untyped).__downloadListeners = downloadListeners
     ;(window as Untyped).mvStudio.app.footage.setVisionBackendsForTests({
       onnx: () => onnx,
       segmentation: () => {
         throw new Error('unused')
+      },
+      watchDownloads: (listener: (d: unknown) => void) => {
+        downloadListeners.add(listener)
+        return () => downloadListeners.delete(listener)
       },
     })
     window.location.hash = h
@@ -235,6 +242,43 @@ test('Assist › Match analyzes the clips on request, picks clips for each part 
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toContainText(asset.name)
   await expect(tooltip).toContainText(asset.tags.slice(0, 5).join(' · '))
+})
+
+test('while footage analysis downloads its model, Match says which and how far it is, then counts the clips again', async ({
+  page,
+}) => {
+  await openSample(page, '#/editor?kind=footage&tab=assist&assist=match&t=73.6')
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await page.evaluate(() => {
+    const w = window as Untyped
+    w.__embedGate = new Promise<void>((resolve) => (w.__releaseEmbeds = resolve))
+  })
+  await assist.getByRole('button', { name: 'Analyze footage' }).click()
+  const counting = assist.getByText(/^Analyzing your footage… 0 of \d+ clips\./)
+  await expect(counting).toBeVisible()
+  const download = (fraction: number) =>
+    page.evaluate((fraction) => {
+      const bytesTotal = 153_744_253
+      for (const listener of (window as Untyped).__downloadListeners)
+        listener({
+          stage: 'download',
+          model: 'tagger',
+          message: 'Downloading the footage tagger (154 MB, once)',
+          fraction,
+          bytesLoaded: Math.round(fraction * bytesTotal),
+          bytesTotal,
+          ...(fraction === 1 ? { done: true } : {}),
+        })
+    }, fraction)
+  await download(0.4)
+  await expect(
+    assist.getByText('Downloading the footage tagger (154 MB, once)… 40%. Your clips are analyzed next.'),
+  ).toBeVisible()
+  await expect(counting).toHaveCount(0)
+  await download(1)
+  await expect(counting).toBeVisible()
+  await page.evaluate(() => (window as Untyped).__releaseEmbeds())
+  await analysisDone(page)
 })
 
 test('a selected section says "N clips match this chorus" in the Inspector once its footage matches, leaving the lyrics under it clear', async ({
