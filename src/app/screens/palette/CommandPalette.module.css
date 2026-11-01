@@ -136,6 +136,18 @@
   font-size: var(--text-sm);
 }
 
+/* What an action acts on ("Video", "Chorus 1"): it gives way to the label when the row is short of room. */
+.detail {
+  flex: 0 1 auto;
+  max-width: 40%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .footer {
   display: flex;
   align-items: center;

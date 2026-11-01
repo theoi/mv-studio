@@ -27,6 +27,9 @@ const actions: [string, string, string[]?][] = [
   ['Editing settings: snapping and durations', 'still text default'],
   ['Open settings', 'general autosave suggestions motion frame rate', ['preferences', 'options']],
   ['Keyboard shortcuts', '', ['hotkeys', 'key bindings', 'keymap']],
+  // What searches that match nothing used to show (the scattered-letters tier).
+  ['Switch to vertical 9:16', 'aspect ratio shorts reels tiktok'],
+  ['Show or hide the library', 'panel media sidebar'],
 ]
 
 /** Labels in palette order for a search: best first, hidden ones left out. */
@@ -84,11 +87,20 @@ describe('palette ranking', () => {
       )
   })
 
-  it('keeps scattered letters as the weakest match and hides what does not match', () => {
-    expect(paletteScore('Find matching footage', ['tags search clips'], 'fit')).toBeGreaterThan(0)
-    expect(paletteScore('Find matching footage', ['tags search clips'], 'fit')).toBeLessThan(
-      paletteScore('Zoom to fit', [], 'fit'),
+  it('finds a near miss of a word (a typo, an abbreviation) as the weakest match', () => {
+    expect(ranked('seperate')).toEqual(['Separate stems'])
+    expect(ranked('lyircs')).toEqual(['Time lyrics to the vocals'])
+    expect(ranked('stms')).toEqual(['Separate stems'])
+    expect(ranked('shorcuts')).toEqual(['Keyboard shortcuts'])
+    expect(paletteScore('Separate stems', [], 'seperate')).toBeLessThan(
+      paletteScore('Find matching footage', ['tags search clips'], 'tag'),
     )
-    expect(paletteScore('Zoom in', [], 'qq')).toBe(0)
+  })
+
+  it('hides every action that only shares scattered letters with the search', () => {
+    // "home" showed Zoom to fit, Show or hide the library and Save frame; "select tool" showed Switch to vertical.
+    for (const search of ['home', 'landscape', 'select tool', 'volume', 'qq'])
+      expect(ranked(search), search).toEqual([])
+    expect(ranked('fit')).toEqual(['Zoom to fit'])
   })
 })

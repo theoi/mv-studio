@@ -701,14 +701,17 @@ const useDraft = create<{ draft: OutputsDraft | null }>(() => ({ draft: null }))
 useUi.subscribe((s, prev) => {
   if (prev.dialog !== 'export' || s.dialog === 'export') return
   useDraft.setState({ draft: null })
-  useExports.setState({ teaserSection: null })
+  useExports.setState({ teaserSection: null, preset: null })
 })
 
 function ExportDialogBody() {
   const phase = useUi((s) => s.exportPhase)
   const playhead = useUi((s) => s.playhead)
   const project = useProject()
-  const [initial] = useState<OutputsDraft>(() => initialItems(project, useExports.getState().teaserSection))
+  const [initial] = useState<OutputsDraft>(() => {
+    const { teaserSection, preset } = useExports.getState()
+    return initialItems(project, teaserSection, preset)
+  })
   const { items, selectedId } = useDraft((s) => s.draft) ?? initial
   const edit = (change: (draft: OutputsDraft) => Partial<OutputsDraft>) => {
     const draft = useDraft.getState().draft ?? initial

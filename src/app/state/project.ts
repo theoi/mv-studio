@@ -14,6 +14,7 @@ import {
   type EditCommand,
   type LyricLine,
   type Project,
+  type PropertyPath,
   type SongSection,
 } from '../../model/index.ts'
 import { directorMeta } from '../../director/meta.ts'
@@ -102,6 +103,21 @@ export function splitClipAt(clipId: string, t: number): boolean {
   return dispatch(
     { type: 'clip.split', clipId, time: t, newClipId: crypto.randomUUID() },
     { label: 'Split clip' },
+  )
+}
+
+/** Puts a clip back in the middle of the frame at full size and no rotation, as one undo step. */
+export function resetTransform(clipId: string) {
+  const set = (path: PropertyPath, value: number): EditCommand => ({ type: 'clip.set', clipId, path, value })
+  dispatch(
+    [
+      set(['transform', 'x', 'value'], 0.5),
+      set(['transform', 'y', 'value'], 0.5),
+      set(['transform', 'scaleX', 'value'], 1),
+      set(['transform', 'scaleY', 'value'], 1),
+      set(['transform', 'rotation', 'value'], 0),
+    ],
+    { label: 'Reset transform' },
   )
 }
 

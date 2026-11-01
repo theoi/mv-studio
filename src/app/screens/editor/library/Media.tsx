@@ -22,7 +22,7 @@ import {
   useFootageResults,
 } from '../../../state/footage.ts'
 import { addAsset, addAssetAtPlayhead, openImport } from '../../../state/importer.ts'
-import { mediaRemoval, removeMedia } from '../../../state/library.ts'
+import { libraryAssets, mediaRemoval, removeMedia } from '../../../state/library.ts'
 import { endMediaDrag, startMediaDrag } from '../../../state/mediaDrag.ts'
 import {
   bpmOf,
@@ -61,30 +61,20 @@ interface LibraryItem {
   tags: string[]
 }
 
-/** The project's media for the library: everything but the song, masks and fonts, newest imports first. */
 function libraryItems(project: Project): LibraryItem[] {
-  return Object.values(project.assets)
-    .filter(
-      (a) =>
-        a.id !== project.songAssetId &&
-        a.origin.type !== 'derived' &&
-        a.origin.type !== 'stem' &&
-        a.kind !== 'font',
-    )
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((asset) => ({
-      asset,
-      name: asset.name.replace(/\.[^.]+$/, ''),
-      type:
-        asset.origin.type === 'generated'
-          ? 'generated'
-          : asset.kind === 'audio'
-            ? 'audio'
-            : asset.kind === 'image'
-              ? 'image'
-              : 'video',
-      tags: clipTags(project, asset.id),
-    }))
+  return libraryAssets(project).map((asset) => ({
+    asset,
+    name: asset.name.replace(/\.[^.]+$/, ''),
+    type:
+      asset.origin.type === 'generated'
+        ? 'generated'
+        : asset.kind === 'audio'
+          ? 'audio'
+          : asset.kind === 'image'
+            ? 'image'
+            : 'video',
+    tags: clipTags(project, asset.id),
+  }))
 }
 
 const ANALYZING_NAMES = { analyzing: ', analyzing', waiting: ', waiting to be analyzed' } as const

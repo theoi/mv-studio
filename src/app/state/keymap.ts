@@ -67,6 +67,12 @@ function nudgeSelectedLine(frames: -1 | 1) {
   else stepPlayhead(frames, false)
 }
 
+/** Mod J: Assist with its Ask box focused. */
+export function askAssist() {
+  openAssist('home')
+  requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(ASK_BOX)?.focus())
+}
+
 /** Alt K: presses the keyframe diamond of the Inspector row that has focus. */
 function keyframeFocusedProperty() {
   const row = (document.activeElement as HTMLElement | null)?.closest('[data-field-row]')
@@ -94,10 +100,7 @@ export const SHORTCUTS = [
     label: 'Ask Assist',
     group: 'General',
     keys: ['Mod J'],
-    run: () => {
-      openAssist('home')
-      requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(ASK_BOX)?.focus())
-    },
+    run: askAssist,
   },
   { id: 'undo', label: 'Undo', group: 'General', keys: ['Mod Z'], repeat: true, run: undo },
   { id: 'redo', label: 'Redo', group: 'General', keys: ['Mod Shift Z', 'Mod Y'], repeat: true, run: redo },

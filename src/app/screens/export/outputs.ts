@@ -17,7 +17,7 @@ import type { AspectPreset, ImageClip, Project, VideoClip } from '../../../model
 import { JobError, jobs } from '../../../shared/jobs.ts'
 import { readSubjectTrack } from '../../../vision/analysisData.ts'
 import { formatTime } from '../../format.ts'
-import { downloadFile, showExport, useExports } from '../../state/exports.ts'
+import { downloadFile, showExport, useExports, type ExportPreset } from '../../state/exports.ts'
 import { JOB_KINDS, runningJobs } from '../../state/jobs.ts'
 import { appMedia } from '../../state/media.ts'
 import { dispatch, editor } from '../../state/project.ts'
@@ -71,16 +71,19 @@ function sameSlot(a: OutputSpec, b: OutputSpec): boolean {
 
 /**
  * The dialog's starting list: the outputs saved with the project, else the suggested ones. With `teaserSection`,
- * the list's teaser (added when there is none) starts on that song section and comes first in `selected`.
+ * the list's teaser (added when there is none) starts on that song section and comes first in `selected`. With
+ * `preset`, the list's output of that kind (added when there is none) is turned on and selected.
  */
 export function initialItems(
   project: Project,
   teaserSection: string | null = null,
+  preset: ExportPreset | null = null,
 ): { items: OutputItem[]; selectedId: string | undefined } {
   const saved = exportPreferences(project).outputs
   const specs = saved?.length ? saved : suggestedOutputs(project).selected
   const items = specs.map((spec) => ({ spec, on: true }))
   const range = teaserSection ? sectionTeaserRange(project, teaserSection) : null
+  if (!range && preset) return withPreset(project, items, preset)
   if (!range) return { items, selectedId: items[0]?.spec.id }
   const existing = items.find((i) => i.spec.kind === 'teaser')
   const { maxLength: _auto, ...base } = existing?.spec ?? newOutput(project, 'teaser')
@@ -89,6 +92,23 @@ export function initialItems(
     items: existing ? items.map((i) => (i === existing ? teaser : i)) : [...items, teaser],
     selectedId: teaser.spec.id,
   }
+}
+
+function withPreset(
+  project: Project,
+  items: OutputItem[],
+  preset: ExportPreset,
+): { items: OutputItem[]; selectedId: string | undefined } {
+  const kind = preset === 'vertical' ? 'video' : preset
+  const fits = (spec: OutputSpec) => spec.kind === kind && (kind !== 'video' || spec.aspect === '9:16')
+  const existing = items.find((i) => fits(i.spec))
+  if (existing)
+    return {
+      items: items.map((i) => (i === existing ? { ...i, on: true } : i)),
+      selectedId: existing.spec.id,
+    }
+  const spec = newOutput(project, kind, kind === 'video' ? { aspect: '9:16' } : {})
+  return { items: [...items, { spec, on: true }], selectedId: spec.id }
 }
 
 /** Every suggested output, for "Add another" (those already in the list are hidden). */

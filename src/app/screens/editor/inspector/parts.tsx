@@ -3,7 +3,7 @@ import { RotateCcw } from 'lucide-react'
 import type { BlendMode, Clip, PropertyPath, VisualClip } from '../../../../model/index.ts'
 import { IconButton } from '../../../ds/Button.tsx'
 import { AnimateButtons, FieldRow, NumberField, Section, Select, Slider } from '../../../ds/Fields.tsx'
-import { dispatch, useProject } from '../../../state/project.ts'
+import { dispatch, resetTransform, useProject } from '../../../state/project.ts'
 import { useAnimatable } from './animatable.ts'
 import { blendModes } from './blendModes.ts'
 import styles from '../Inspector.module.css'
@@ -83,17 +83,7 @@ export function TransformSection({ clip }: { clip: VisualClip }) {
     linked: [['transform', 'scaleY']],
   })
   const rot = useAnimatable(clip, ['transform', 'rotation'])
-  const reset = () =>
-    dispatch(
-      [
-        { type: 'clip.set', clipId: clip.id, path: ['transform', 'x', 'value'], value: 0.5 },
-        { type: 'clip.set', clipId: clip.id, path: ['transform', 'y', 'value'], value: 0.5 },
-        { type: 'clip.set', clipId: clip.id, path: ['transform', 'scaleX', 'value'], value: 1 },
-        { type: 'clip.set', clipId: clip.id, path: ['transform', 'scaleY', 'value'], value: 1 },
-        { type: 'clip.set', clipId: clip.id, path: ['transform', 'rotation', 'value'], value: 0 },
-      ],
-      { label: 'Reset transform' },
-    )
+  const reset = () => resetTransform(clip.id)
   return (
     <Section
       title="Transform"

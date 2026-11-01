@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import {
   AlertTriangle,
   BookOpen,
@@ -35,13 +35,11 @@ import {
   usePersistence,
 } from '../../state/persistence.ts'
 import { editor, redo, undo, useProject } from '../../state/project.ts'
-import { set } from '../../state/ui.ts'
+import { openDocs, set, useUi } from '../../state/ui.ts'
 import { enterVj, takeVjButtonFocus, useVjEntering } from '../../state/vj.ts'
 import { undoAction } from '../../format.ts'
 import { LogoMark } from '../common/Logo.tsx'
 import styles from './TopBar.module.css'
-
-const DOCS_URL = 'https://github.com/theoi/mv-studio#readme'
 
 function Activity() {
   const running = runningJobs(useJobs())
@@ -145,7 +143,10 @@ export function TopBar() {
   const project = useProject()
   const undoLabel = editor.undoLabel()
   const redoLabel = editor.redoLabel()
-  const [renaming, setRenaming] = useState(false)
+  const renaming = useUi((s) => s.renaming)
+  const setRenaming = (on: boolean) => set({ renaming: on })
+  // Leaving the editor mid-rename removes the field without a blur, so the next visit starts with the name.
+  useEffect(() => () => set({ renaming: false }), [])
   const vjButton = useRef<HTMLButtonElement>(null)
   const vjEntering = useVjEntering()
   // Back from VJ mode, focus returns to the button that opened it.
@@ -265,10 +266,7 @@ export function TopBar() {
             <MenuItem icon={<GraduationCap />} onSelect={() => set({ guideStep: 0 })}>
               Replay the guide
             </MenuItem>
-            <MenuItem
-              icon={<BookOpen />}
-              onSelect={() => window.open(DOCS_URL, '_blank', 'noopener,noreferrer')}
-            >
+            <MenuItem icon={<BookOpen />} onSelect={openDocs}>
               Documentation
             </MenuItem>
           </MenuContent>

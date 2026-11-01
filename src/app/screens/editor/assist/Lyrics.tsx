@@ -23,7 +23,7 @@ import {
   songAnalysis,
   useProject,
 } from '../../../state/project.ts'
-import { select, set } from '../../../state/ui.ts'
+import { select, set, useUi, type LyricsMode } from '../../../state/ui.ts'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -37,8 +37,6 @@ export function LyricsBadge() {
   if (lyricLines(project).some((l) => l.start !== undefined)) return <Badge tone="success">Timed</Badge>
   return null
 }
-
-type LyricsMode = 'paste' | 'draft'
 
 const lyricsKind = (mode: LyricsMode) => (mode === 'paste' ? 'time' : 'draft')
 
@@ -152,7 +150,10 @@ export function LyricsView() {
   const { job, phase } = useJob(JOB_KINDS.lyrics)
   // Timing separates stems first when the song has none; two separations at once would need twice the memory.
   const separating = useJob(JOB_KINDS.stems).phase === 'running'
-  const [mode, setMode] = useState<LyricsMode>('paste')
+  const mode = useUi((s) => s.lyricsMode)
+  const setMode = (lyricsMode: LyricsMode) => set({ lyricsMode })
+  // Each visit starts on Paste unless the palette asked for Draft on the way in.
+  useEffect(() => () => set({ lyricsMode: 'paste' }), [])
   const [text, setText] = useState(() => lines.map((l) => l.text).join('\n'))
   const textRef = useRef<HTMLTextAreaElement>(null)
   const pasteInstead = () => {

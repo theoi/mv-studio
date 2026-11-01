@@ -63,6 +63,28 @@ const generateShot: LaneItem = {
   run: (spot) => generateInGap(spot.trackId, spot.time),
 }
 
+/**
+ * Where Generate a shot here goes at `time` when it isn't picked on a lane (the command palette): the preferred
+ * track, else the first track with an empty spot there. Null with why when there is none.
+ */
+export function generateSpotAt(
+  project: Project,
+  time: number,
+  preferTrackId?: string,
+): LaneSpot | { why: string } {
+  const spots = [...new Set([preferTrackId, ...project.tracks.map((t) => t.id)])]
+    .filter((trackId): trackId is string => !!trackId)
+    .map((trackId) => ({ trackId, time }))
+    .filter((spot) => generateShot.applies(project, spot))
+  const open = spots.find((spot) => !locked(project, spot))
+  if (open) return open
+  return { why: spots.length ? 'The track is locked' : 'No empty spot on a video track at the playhead' }
+}
+
+export function generateShotAt(spot: LaneSpot): void {
+  generateShot.run(spot)
+}
+
 /** Snapping distance on screen, as for dragged clips. */
 const SNAP_PX = 8
 

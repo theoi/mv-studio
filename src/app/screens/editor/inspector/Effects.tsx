@@ -24,7 +24,7 @@ import { Badge } from '../../../ds/Feedback.tsx'
 import { AnimateButtons, FieldRow, Section, Slider, Switch } from '../../../ds/Fields.tsx'
 import { dispatch } from '../../../state/project.ts'
 import { set } from '../../../state/ui.ts'
-import { useAnimatable } from './animatable.ts'
+import { ADJUSTMENTS, ALWAYS, useAnimatable } from './animatable.ts'
 import { PluginParams } from './PluginParams.tsx'
 import styles from '../Inspector.module.css'
 
@@ -39,18 +39,6 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
   Stylize: Brush,
   Texture: Film,
 }
-
-const ADJUSTMENTS: readonly { key: ColorAdjustmentKey; label: string }[] = [
-  { key: 'exposure', label: 'Exposure' },
-  { key: 'brightness', label: 'Brightness' },
-  { key: 'contrast', label: 'Contrast' },
-  { key: 'saturation', label: 'Saturation' },
-  { key: 'temperature', label: 'Temperature' },
-  { key: 'tint', label: 'Tint' },
-  { key: 'hue', label: 'Hue' },
-]
-/** Shown on every clip; the others only once the clip has them, as a look's temperature. */
-const ALWAYS: ReadonlySet<ColorAdjustmentKey> = new Set(['exposure', 'contrast', 'saturation'])
 
 /** One color adjustment (-1..1, neutral 0) on a 0..100 slider. */
 function AdjustmentRow({
