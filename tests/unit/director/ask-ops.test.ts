@@ -12,7 +12,7 @@ import {
 } from '../../../src/director/index.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import type { AudioClip, Project, TextClip, VideoClip } from '../../../src/model/types.ts'
-import { makeProject } from './fixtures.ts'
+import { makeProject, SONG_ID } from './fixtures.ts'
 
 /** A lyric draft: video shots, lyric text, a look layer and the song. */
 async function draft() {
@@ -48,6 +48,32 @@ describe('compileOperations', () => {
     expect(texts(after).every((t) => t.style.fontSize === 120)).toBe(true)
     expect(videos(after)).toEqual(videos(project))
     expect(warnings).toEqual([])
+  })
+
+  it('lays a retyped director title card out again, so a longer title clears the artist', async () => {
+    const base = makeProject()
+    base.assets[SONG_ID] = { ...base.assets[SONG_ID]!, name: 'Josh Woodward - Show Me.mp3' }
+    const plan = await planLocally(await buildPlannerInput(base, { kind: 'lyric', seed: 5 }))
+    const editor = new ProjectEditor(base)
+    editor.dispatch(compilePlan(plan, base).commands)
+    const project = editor.getProject()
+    const summary = summarizeProject(project)
+    const title = texts(project).find((t) => t.text === 'Show Me')!
+    const artist = texts(project).find((t) => t.text === 'Josh Woodward')!
+    const { after } = run(
+      project,
+      [
+        {
+          op: 'set',
+          clips: [summary.ids.toShort.get(title.id)!],
+          property: 'text',
+          value: 'Show Me Where The Long Road Ends Tonight',
+        },
+      ],
+      summary.ids,
+    )
+    expect((after.clips[title.id] as TextClip).text).toContain('\n')
+    expect((after.clips[artist.id] as TextClip).transform.y.value).toBeGreaterThan(artist.transform.y.value)
   })
 
   it('limits a selector to a song section', async () => {

@@ -1010,9 +1010,38 @@ test('a tagged song names the project, and the title card shows its title and ar
   expect(tracks.filter((t) => t.clips === 0)).toEqual([])
   expect(tracks.map((t) => t.name).slice(-2)).toEqual(['Video 1', 'Song'])
 
-  // The user corrects the title on its card in the inspector: another version keeps the correction.
+  // The user corrects the title on its card in the inspector. Leaving the field lays the card out again, so the longer
+  // title breaks into rows that clear the artist, in the same undo step as the typing.
+  const card = () =>
+    page.evaluate(
+      (ids) => {
+        const project = window.mvStudio.app.project.editor.getProject()
+        return ids.map((id) => {
+          const c = project.clips[id] as {
+            text: string
+            style: { fontSize: number; lineHeight: number }
+            transform: { y: { value: number } }
+          }
+          const half = (c.text.split('\n').length * c.style.lineHeight * c.style.fontSize) / 1080 / 2
+          return { text: c.text, top: c.transform.y.value - half, bottom: c.transform.y.value + half }
+        })
+      },
+      titles.map((t) => t.id),
+    )
+  const drafted = await card()
   await page.locator(`[data-clip-id="${titles[0]!.id}"]`).click()
-  await page.getByRole('textbox', { name: 'Text content' }).fill('Neon Skyline (Night Mix)')
+  const field = page.getByRole('textbox', { name: 'Text content' })
+  await field.fill('Neon Skyline (Night Mix)')
+  await field.blur()
+  const relaid = await card()
+  expect(relaid[0]!.text).toContain('\n')
+  expect(relaid[0]!.bottom).toBeLessThan(relaid[1]!.top)
+  await page.keyboard.press('ControlOrMeta+z')
+  expect(await card()).toEqual(drafted)
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  expect(await card()).toEqual(relaid)
+
+  // Another version keeps the correction.
   await page.evaluate(() => {
     window.location.hash = '#/editor?tab=assist&assist=director'
   })

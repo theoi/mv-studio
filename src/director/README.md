@@ -112,7 +112,12 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   song's title or artist for later drafts, the language model's included (`buildPlannerInput`), so the card is laid
   out again for it. It is read from the card each time: a card put back to the song's own name ends it, and one of
   another song, or drafted before cards recorded their song, counts for nothing. Only each row's first card counts:
-  what the user types on a duplicated or pasted copy (which keeps the tag) is new text, not a correction.
+  what the user types on a duplicated or pasted copy (which keeps the tag) is new text, not a correction. The title
+  is laid out like a lyric line, the artist under it shrinks on one row before it breaks, and the rows stack about
+  the middle (`stackTitleCard`). A title or artist the user retypes (on leaving the Inspector's text field, or
+  through Ask) lays the card out again the same way about where it is (`titleCardCommands` in `titleCard.ts`),
+  growing the text back toward the size it was laid out from (`meta.director.titleSize`) unless the user set another
+  size, and keeping line breaks the user typed where the rows fit.
 - **Opening and ending**: the first shot fades in from black and the last fades out, ending when the music does
   when the song has a silent tail (`musicEnd`).
 - **Clip choice** (`chooseFootage`): footage and stills come from src/vision's `chooseClips`, the chooser auto-cut

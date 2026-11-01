@@ -328,6 +328,9 @@ export function balancedRows(words: string[], rows: number): string {
   return split ? split.rows.join('\n') : words.join(' ')
 }
 
+/** Smallest share of its size laid-out text shrinks to. */
+const MIN_SHRINK = 0.7
+
 /**
  * A lyric line laid out in balanced rows (explicit line breaks, so wrapping never leaves one word alone on a row):
  * as few rows as fit, shrinking the type (to 70% at most) when even the most rows allowed do not.
@@ -350,8 +353,57 @@ export function layoutLine(
     if (split.widest <= limit) return { text: split.rows.join('\n'), fontSize: size, rows }
   }
   if (!last) return { text, fontSize: size, rows: 1 }
-  const fontSize = Math.round(size * Math.max(0.7, limit / last.widest))
+  const fontSize = Math.round(size * Math.max(MIN_SHRINK, limit / last.widest))
   return { text: last.rows.join('\n'), fontSize, rows: last.rows.length }
+}
+
+/** Height of laid-out text as a fraction of the frame. */
+export const blockHeight = (rows: number, style: Pick<TextStyleSpec, 'fontSize' | 'lineHeight'>) =>
+  (rows * (style.lineHeight ?? 1.15) * (style.fontSize ?? 80)) / 1080
+
+/** Space between a title card's title and its artist, as a fraction of the frame height. */
+export const TITLE_GAP = 0.02
+
+/**
+ * A title card row at its style's size: in the rows typed with line breaks when each fits, else like a lyric line
+ * (balanced rows, shrunk when even those do not fit). The artist and other rows under the title shrink on one row
+ * first, as far as a lyric line would, and break into rows only past that.
+ */
+function fitTitleRow(text: string, style: TextStyleSpec, aspect: AspectPreset, under: boolean) {
+  const typed = text
+    .split('\n')
+    .map((row) => row.split(/\s+/).filter(Boolean).join(' '))
+    .filter(Boolean)
+  const size = style.fontSize ?? LINE_SIZE[aspect]
+  const fill = (row: string) => rowWidth(style, aspect) / textWidth(row, style, size)
+  if (typed.length > 1 && typed.length <= MAX_ROWS[aspect] && typed.every((row) => fill(row) >= 1))
+    return { text: typed.join('\n'), fontSize: size, rows: typed.length }
+  const one = typed.join(' ')
+  if (under && fill(one) >= MIN_SHRINK)
+    return { text: one, fontSize: Math.round(size * Math.min(1, fill(one))), rows: 1 }
+  return layoutLine(text, style, aspect)
+}
+
+/**
+ * A title card's rows (the title, then the artist) each laid out from its style's size and stacked about `center` (a
+ * fraction of the frame height): each row's text, font size and center.
+ */
+export function stackTitleCard(
+  rows: readonly { text: string; style: TextStyleSpec }[],
+  aspect: AspectPreset,
+  center = 0.5,
+): { text: string; fontSize: number; y: number }[] {
+  const laid = rows.map(({ text, style }, i) => {
+    const fit = fitTitleRow(text, style, aspect, i > 0)
+    return { ...fit, height: blockHeight(fit.rows, { ...style, fontSize: fit.fontSize }) }
+  })
+  const total = laid.reduce((sum, l, i) => sum + (i > 0 ? TITLE_GAP + l.height : l.height), 0)
+  let top = center - total / 2
+  return laid.map((l) => {
+    const y = top + l.height / 2
+    top = top + l.height + TITLE_GAP
+    return { text: l.text, fontSize: l.fontSize, y: Math.round(y * 1000) / 1000 }
+  })
 }
 
 const STOPWORDS = new Set(
