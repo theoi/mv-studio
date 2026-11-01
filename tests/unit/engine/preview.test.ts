@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as Compositor from '../../../src/engine/compositor.ts'
 import type * as Frames from '../../../src/engine/frames.ts'
 import type * as RenderHost from '../../../src/engine/renderHost.ts'
+import { VideoElementFrameProvider } from '../../../src/engine/frames.ts'
 import { PreviewController } from '../../../src/engine/preview.ts'
 import { createProject, createVideoClip } from '../../../src/model/factory.ts'
 import type { Asset } from '../../../src/model/types.ts'
@@ -400,6 +401,54 @@ describe('scrubbing on the main thread', () => {
     }
     expect(compositor.render.mock.calls.length).toBeGreaterThan(50)
     expect(lowest).toBe(1)
+    preview.dispose()
+  })
+})
+
+describe('a seek that a paused frame stopped waiting for, once it ends', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  /** What the preview gave its frame provider to call then. */
+  const lateFrame = () => vi.mocked(VideoElementFrameProvider).mock.calls.at(-1)?.[1]?.onLateFrame
+
+  it('draws the paused frame again', async () => {
+    compositor.render.mockResolvedValue(undefined)
+    const preview = open()
+    await preview.rendered()
+    lateFrame()?.()
+    await preview.rendered()
+    expect(compositor.render).toHaveBeenCalledTimes(2)
+    preview.dispose()
+  })
+
+  it('draws the paused frame again once the frame in flight is drawn, at full resolution rather than as a drag step', async () => {
+    let finish = () => {}
+    compositor.render.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve
+      }),
+    )
+    compositor.render.mockResolvedValue(undefined)
+    const preview = open()
+    lateFrame()?.()
+    finish()
+    await preview.rendered()
+    // A drag step would draw a reduced frame, then settle with a third at full resolution.
+    expect(compositor.render).toHaveBeenCalledTimes(2)
+    preview.dispose()
+  })
+
+  it('draws nothing more while playing, whose frames do not wait for seeks', async () => {
+    compositor.render.mockResolvedValue(undefined)
+    const preview = open()
+    await preview.rendered()
+    vi.spyOn(preview.clock, 'state', 'get').mockReturnValue('playing')
+    lateFrame()?.()
+    await preview.rendered()
+    expect(lateFrame()).toBeDefined()
+    expect(compositor.render).toHaveBeenCalledTimes(1)
     preview.dispose()
   })
 })

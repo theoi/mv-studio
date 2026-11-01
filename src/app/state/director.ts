@@ -292,12 +292,27 @@ export async function draftLocally(): Promise<void> {
 export async function applyDraft(options: { confirmSpend?: boolean; skipGeneration?: boolean } = {}) {
   const s = await directorSession()
   try {
-    const state = await s.apply(options)
-    if (state.status !== 'applied') return
     // Loaded with the session already.
     const { openingFrame } = await import('../../director/index.ts')
-    const opening = openingFrame(state.plan)
-    if (getUi().playhead < opening) setUi({ playhead: opening })
+    // Where beforeApply moved the playhead from and to (-1 while it hasn't).
+    const moved = { from: 0, to: -1 }
+    const state = await s.apply({
+      ...options,
+      // Before the draft is on the timeline: moved after, the preview would first seek the draft's clips for the black
+      // first frame of its fade from black, and seek them again for the opening once that frame is drawn.
+      beforeApply: (plan) => {
+        const opening = openingFrame(plan)
+        const from = getUi().playhead
+        if (from >= opening) return
+        Object.assign(moved, { from, to: opening })
+        setUi({ playhead: opening })
+      },
+    })
+    if (state.status !== 'applied') {
+      // The draft's edits failed once the playhead had moved for them: it goes back, unless it was moved since.
+      if (getUi().playhead === moved.to) setUi({ playhead: moved.from })
+      return
+    }
     toast('Your draft is on the timeline', { label: 'Undo', run: () => void undoDraft() })
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error))
