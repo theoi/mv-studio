@@ -11,9 +11,12 @@ vi.mock('../../../src/app/state/persistence.ts', () => ({
 vi.mock('../../../src/app/state/importer.ts', () => ({ analyzeSong: vi.fn(), storeFiles: vi.fn() }))
 vi.mock('../../../src/app/state/director.ts', () => ({ draftFromSetup: vi.fn() }))
 
-const { buildSetupProject, chooseSong, isAudioFile, isVisualFile, useSetup } =
+const { buildSetupProject, chooseSong, isAudioFile, isVisualFile, openFromSetup, useSetup } =
   await import('../../../src/app/state/setup.ts')
 const { storeFiles } = await import('../../../src/app/state/importer.ts')
+const { startProject } = await import('../../../src/app/state/persistence.ts')
+const { draftFromSetup } = await import('../../../src/app/state/director.ts')
+const { set: setUi } = await import('../../../src/app/state/ui.ts')
 
 const onTrack = (p: Project, name: string): Clip[] => {
   const track = p.tracks.find((t) => t.name === name)
@@ -60,6 +63,20 @@ describe('the project the setup screen opens', () => {
     })
     expect(p.lyrics?.lines.map((l) => l.text)).toEqual(['First line', 'Second line'])
     expect(p.lyrics?.lines.every((l) => l.words.length === 0)).toBe(true)
+  })
+
+  it('keeps the clips given to an AI video in its project, before its first draft', async () => {
+    const clip = { ...sample.asset, id: 'clip-ai', kind: 'video' as const, name: 'drive.mp4' }
+    setUi({ kind: 'ai' })
+    useSetup.setState({
+      song: { status: 'ready', name: 'song.mp3', title: 'Song', asset: sample.asset, analysis: 'done' },
+      footage: [clip],
+      idea: 'neon night drive',
+    })
+    await openFromSetup()
+    const project = vi.mocked(startProject).mock.calls.at(-1)?.[0]
+    expect(project?.assets['clip-ai']?.name).toBe('drive.mp4')
+    expect(draftFromSetup).toHaveBeenCalledWith('neon night drive')
   })
 
   it('keeps the clips of a beat-cut video as media, and makes a project without a song when skipped', () => {

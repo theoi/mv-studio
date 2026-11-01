@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'vitest'
-import { directorRequest, draftProgress, videoKindFor } from '../../../src/app/state/director.ts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  clipsNoun,
+  clipsSinceDraft,
+  directorRequest,
+  draftProgress,
+  useDirector,
+  videoKindFor,
+} from '../../../src/app/state/director.ts'
 import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
+import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
+import { dismissToast, get as getUi, set as setUi } from '../../../src/app/state/ui.ts'
+import type { DirectorState } from '../../../src/director/index.ts'
 import { createProject } from '../../../src/model/factory.ts'
+import type { Asset, AssetOrigin } from '../../../src/model/types.ts'
 import { createFromTemplate } from '../../../src/plugins/templates.ts'
 import type { JobSnapshot } from '../../../src/shared/jobs.ts'
 
@@ -53,5 +64,78 @@ describe('videoKindFor', () => {
 
   it('takes the editor’s kind for a project made without a starter template', () => {
     expect(videoKindFor('visualizer', createProject({ name: 'Imported' }))).toBe('visualizer')
+  })
+})
+
+describe('clips imported after a draft', () => {
+  const asset = (id: string, kind: Asset['kind'], origin: AssetOrigin['type'] = 'import'): Asset => ({
+    id,
+    kind,
+    name: `${id}.${kind === 'image' ? 'png' : 'mp4'}`,
+    mimeType: kind === 'image' ? 'image/png' : 'video/mp4',
+    byteSize: 1,
+    storageKey: `media/${id}`,
+    origin: { type: origin },
+    createdAt: new Date(0).toISOString(),
+  })
+  const applied = (useMedia: boolean) =>
+    ({ status: 'applied', request: { kind: 'ai', useMedia } }) as unknown as DirectorState
+  const offers = () =>
+    getUi()
+      .toasts.filter((t) => t.key === 'director:new-clips')
+      .map((t) => t.message)
+
+  beforeEach(() => {
+    vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => undefined })
+    loadDemoProject()
+    setUi({ toasts: [], rightTab: 'inspector' })
+    useDirector.setState({ state: { status: 'idle' }, clipsAtDraft: [] })
+  })
+
+  it('lists the clips and images imported since the draft, not generated shots, masks or audio', () => {
+    const atDraft = Object.keys(editor.getProject().assets)
+    useDirector.setState({ state: applied(true), clipsAtDraft: atDraft })
+    editor.dispatch([
+      { type: 'asset.add', asset: asset('new-clip', 'video') },
+      { type: 'asset.add', asset: asset('new-still', 'image') },
+      { type: 'asset.add', asset: asset('ai-shot', 'image', 'generated') },
+      { type: 'asset.add', asset: asset('mask', 'video', 'derived') },
+      { type: 'asset.add', asset: asset('voice', 'audio') },
+    ])
+    const added = clipsSinceDraft(editor.getProject(), useDirector.getState())
+    expect(added.map((a) => a.id).sort()).toEqual(['new-clip', 'new-still'])
+    expect(clipsNoun(added)).toBe('2 files')
+    expect(clipsNoun(added.filter((a) => a.kind === 'image'))).toBe('1 image')
+    expect(clipsNoun(added.filter((a) => a.kind === 'video'))).toBe('1 clip')
+  })
+
+  it('lists none before a draft is applied, or for a draft of AI shots only', () => {
+    editor.dispatch({ type: 'asset.add', asset: asset('new-clip', 'video') })
+    expect(clipsSinceDraft(editor.getProject(), { state: { status: 'idle' }, clipsAtDraft: [] })).toEqual([])
+    expect(clipsSinceDraft(editor.getProject(), { state: applied(false), clipsAtDraft: [] })).toEqual([])
+  })
+
+  it('offers to draft again once per import, in one notice that newer imports update', () => {
+    const atDraft = Object.keys(editor.getProject().assets)
+    useDirector.setState({ state: applied(true), clipsAtDraft: atDraft })
+    editor.dispatch({ type: 'asset.add', asset: asset('first', 'video') })
+    expect(offers()).toEqual(['1 clip added after the draft. Draft again to use it?'])
+    expect(getUi().toasts.find((t) => t.key === 'director:new-clips')?.action?.label).toBe('Draft again')
+    // Dismissed, it stays away through other edits.
+    dismissToast(getUi().toasts.find((t) => t.key === 'director:new-clips')!.id)
+    editor.dispatch({ type: 'project.rename', name: 'Renamed' })
+    expect(offers()).toEqual([])
+    editor.dispatch({ type: 'asset.add', asset: asset('second', 'video') })
+    expect(offers()).toEqual(['2 clips added after the draft. Draft again to use them?'])
+  })
+
+  it('leaves the offer to the Director panel while it is open', () => {
+    useDirector.setState({ state: applied(true), clipsAtDraft: Object.keys(editor.getProject().assets) })
+    setUi({ rightTab: 'assist', assistView: 'director' })
+    editor.dispatch({ type: 'asset.add', asset: asset('first', 'video') })
+    expect(offers()).toEqual([])
+    setUi({ rightTab: 'inspector' })
+    editor.dispatch({ type: 'asset.add', asset: asset('second', 'image') })
+    expect(offers()).toEqual(['2 files added after the draft. Draft again to use them?'])
   })
 })

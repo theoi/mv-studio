@@ -10,7 +10,7 @@ import type {
 import type { Id } from '../../model/types.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
-import type { Project } from '../../model/index.ts'
+import type { Asset, Project } from '../../model/index.ts'
 import { templateState } from '../../plugins/templates.ts'
 import { JobError, jobs, type JobSnapshot } from '../../shared/jobs.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
@@ -18,6 +18,7 @@ import { directorFootage } from './footage.ts'
 import { appMedia } from './media.ts'
 import { songAnalysisRunning } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
+import { plural } from '../format.ts'
 import { editor } from './project.ts'
 import { ensureBars } from './songAnalysis.ts'
 import { get as getUi, set as setUi, toast, type Kind } from './ui.ts'
@@ -46,6 +47,8 @@ interface DirectorUi {
   applying: boolean
   /** The last planning job, so its finished progress stays on screen while a free draft is applied. */
   planJobId?: string
+  /** The user's clips and images when the last draft was planned (see clipsSinceDraft()). */
+  clipsAtDraft: Id[]
 }
 
 export const useDirector = create<DirectorUi>(() => ({
@@ -56,6 +59,7 @@ export const useDirector = create<DirectorUi>(() => ({
   aiShots: 'images',
   cancelNotice: '',
   applying: false,
+  clipsAtDraft: [],
 }))
 
 /** Set while a draft started from the panel is planned: one that costs nothing is applied right away. */
@@ -187,10 +191,31 @@ async function applyIfFree(state: DirectorState) {
   }
 }
 
+/** The clips and images the user imported, which a draft from their media uses. */
+function userClips(project: Project): Asset[] {
+  return Object.values(project.assets).filter(
+    (a) => (a.kind === 'video' || a.kind === 'image') && a.origin.type === 'import',
+  )
+}
+
+/** Clips and images imported after the applied draft was planned, when the draft takes the user's media. */
+export function clipsSinceDraft(project: Project, ui: Pick<DirectorUi, 'state' | 'clipsAtDraft'>): Asset[] {
+  if (ui.state.status !== 'applied' || !ui.state.request.useMedia) return []
+  const before = new Set(ui.clipsAtDraft)
+  return userClips(project).filter((a) => !before.has(a.id))
+}
+
+/** "2 clips", "1 image", "3 files" for a mix. */
+export function clipsNoun(assets: Asset[]): string {
+  const kinds = new Set(assets.map((a) => a.kind))
+  return plural(assets.length, kinds.size > 1 ? 'file' : kinds.has('image') ? 'image' : 'clip')
+}
+
 /** Plans a draft; one that costs nothing goes on the timeline right away. */
 export async function draftVideo(request: DirectorRequest): Promise<void> {
   const s = await directorSession()
   autoApply = true
+  useDirector.setState({ clipsAtDraft: userClips(editor.getProject()).map((a) => a.id) })
   await applyIfFree(await s.plan(request))
 }
 
@@ -198,8 +223,37 @@ export async function draftVideo(request: DirectorRequest): Promise<void> {
 export async function tryAnotherVersion(): Promise<void> {
   const s = await directorSession()
   autoApply = true
+  useDirector.setState({ clipsAtDraft: userClips(editor.getProject()).map((a) => a.id) })
   await applyIfFree(await s.tryAnother())
 }
+
+let clipsOffered = 0
+
+/**
+ * Clips imported after a draft that uses the user's media aren't in it: offers to draft again, once per new batch. A
+ * new import replaces the offer instead of stacking another one, and while the Director panel is open its own callout
+ * makes the offer.
+ */
+function offerNewClips(project: Project): void {
+  const ui = useDirector.getState()
+  const { state } = ui
+  const added = clipsSinceDraft(project, ui)
+  if (state.status !== 'applied' || added.length <= clipsOffered) {
+    clipsOffered = Math.min(clipsOffered, added.length)
+    return
+  }
+  clipsOffered = added.length
+  const { rightTab, assistView } = getUi()
+  if (rightTab === 'assist' && assistView === 'director') return
+  const { request } = state
+  toast(
+    `${clipsNoun(added)} added after the draft. Draft again to use ${added.length === 1 ? 'it' : 'them'}?`,
+    { label: 'Draft again', run: () => void draftVideo(request) },
+    { key: 'director:new-clips' },
+  )
+}
+
+editor.subscribe(offerNewClips)
 
 /** Stops waiting for the AI model and drafts with the built-in planner. */
 export async function draftLocally(): Promise<void> {

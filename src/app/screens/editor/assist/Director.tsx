@@ -6,6 +6,7 @@ import {
   Clock,
   Cpu,
   EyeOff,
+  Film,
   Info,
   KeyRound,
   Lock,
@@ -33,6 +34,8 @@ import { llmLabel, useCloud } from '../../../state/cloud.ts'
 import {
   applyDraft,
   backToPlan,
+  clipsNoun,
+  clipsSinceDraft,
   directorRequest,
   draftLocally,
   draftProgress,
@@ -119,6 +122,36 @@ function Notes({
         </div>
       )}
     </>
+  )
+}
+
+/** Clips imported after a draft that uses the user's media: drafting again puts them in. */
+function NewClips({ onRedraft }: { onRedraft: () => void }) {
+  const state = useDirector((s) => s.state)
+  const clipsAtDraft = useDirector((s) => s.clipsAtDraft)
+  const added = clipsSinceDraft(useProject(), { state, clipsAtDraft })
+  if (state.status !== 'applied' || !added.length) return null
+  const { request } = state
+  return (
+    <div className={styles.callout}>
+      <Film />
+      <div>
+        <div>
+          {clipsNoun(added)} added after this draft. Draft again to use {added.length === 1 ? 'it' : 'them'}.
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          className={styles.calloutBtn}
+          onClick={() => {
+            onRedraft()
+            void draftVideo(request)
+          }}
+        >
+          Draft again
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -541,6 +574,7 @@ function DoneView({ state, actionRef, onRedraft }: { state: StateOf<'applied'> }
         </div>
       </div>
       <Notes warnings={state.warnings} request={state.request} onRedraft={onRedraft} />
+      <NewClips onRedraft={onRedraft} />
       {state.failedShots > 0 && (
         <div className={styles.rowActions}>
           <Button

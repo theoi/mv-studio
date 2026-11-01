@@ -158,7 +158,7 @@ export async function chooseSampleSong(): Promise<void> {
   await loadDraft(asset, title, analysis)
 }
 
-/** Adds clips and images for a beat-cut video: copies them into browser storage. */
+/** Adds clips and images for a beat-cut or AI video: copies them into browser storage. */
 export async function addFootage(files: File[]): Promise<void> {
   const visual = files.filter(isVisualFile)
   const skipped = files.filter((f) => !isVisualFile(f))
@@ -276,7 +276,7 @@ export async function openFromSetup(withSong = true): Promise<void> {
     ...(analysis ? { analysis } : {}),
     ...(song?.sample && kind === 'lyric' ? { timedLyrics: sampleSong().lyrics } : {}),
     ...(kind === 'lyric' ? { lyrics: s.lyrics } : {}),
-    ...(kind === 'footage' ? { footage: s.footage } : {}),
+    ...(kind === 'footage' || kind === 'ai' ? { footage: s.footage } : {}),
     ...(kind === 'ai' ? { idea: s.idea } : {}),
     ...(kind === 'visualizer' ? { visualizerStyle: s.visualizerStyle } : {}),
   }
