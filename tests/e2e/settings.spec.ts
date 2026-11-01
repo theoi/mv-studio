@@ -122,3 +122,20 @@ test('About opens the licenses of the code in this build, served with the site',
   await expect(licenses.locator('body')).toContainText('“')
   await expect(licenses.locator('body')).not.toContainText('â€')
 })
+
+test('one Esc closes a dialog while its Close button shows its tooltip', async ({ page }) => {
+  await openHarness(page)
+  const dialog = await openSettings(page, 'general')
+  const close = dialog.getByRole('button', { name: 'Close' })
+  await expect(close).toBeVisible()
+  // Tab from the dialog's start gives Close keyboard focus, which shows its tooltip.
+  for (let i = 0; i < 10 && !(await close.evaluate((el) => el === document.activeElement)); i++)
+    await page.keyboard.press('Tab')
+  await expect(close).toBeFocused()
+  const tooltip = page.getByRole('tooltip')
+  await expect(tooltip).toContainText('Close')
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(tooltip).toHaveCount(0)
+})

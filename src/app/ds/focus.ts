@@ -1,5 +1,15 @@
 import { useRef } from 'react'
 
+/**
+ * Escape presses that closed a tooltip. Radix gives Escape only to the topmost layer, and a showing tooltip (a focused
+ * button's) is one, so the dialog under it would need a second press; `Dialog` closes on these presses too.
+ */
+const tooltipEscapes = new WeakSet<KeyboardEvent>()
+
+export const tooltipTookEscape = (e: KeyboardEvent) => void tooltipEscapes.add(e)
+
+export const escapeClosedTooltip = (e: KeyboardEvent) => tooltipEscapes.has(e)
+
 /** What opened each open dialog, so a dialog opened from inside another one can go back past it. */
 const openedFrom = new WeakMap<Element, HTMLElement>()
 
