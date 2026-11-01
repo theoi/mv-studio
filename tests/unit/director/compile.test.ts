@@ -213,7 +213,7 @@ describe('compilePlan', () => {
   })
 
   it('names the draft’s title rows around a Titles track the user already has', async () => {
-    const { project, editor, plan } = await titledDraft()
+    const { editor, plan } = await titledDraft()
     const mine = createTrack('visual', 'Titles')
     editor.dispatch([
       { type: 'track.add', track: mine, index: 0 },
