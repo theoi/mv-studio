@@ -110,15 +110,15 @@ async function movedFormerCopy(cache: Cache, file: ModelFile): Promise<ArrayBuff
 }
 
 /**
- * How long a download waits for its first bytes, or for more, before it counts as not arriving. A request can get
- * no response at all (a stalled proxy or CDN), and the browser then waits for many minutes without an error.
+ * How long a download waits for a response, and then for each next chunk, before it counts as not arriving. A request
+ * can get no response at all (a stalled proxy or CDN), and the browser then waits for many minutes without an error.
  */
 const STALL_SECONDS = 30
 
 /** The error for a download that stopped arriving: a network error, so the job's Try again applies. */
 function notArriving(file: ModelFile, title: string | undefined): JobError {
   const download = title ? `The download of ${theModel(title)}` : 'The model download'
-  return new JobError('network', `${download} isn't arriving. Check your connection, then try again.`, {
+  return new JobError('network', `${download} isn’t arriving. Check your connection, then try again.`, {
     details: { url: file.url, seconds: STALL_SECONDS },
   })
 }
@@ -159,7 +159,7 @@ export async function fetchModelFile(
   const failed = (error: unknown) => {
     if (signal?.aborted) return new JobError('cancelled', 'Cancelled', { cause: error })
     if (stall.signal.aborted) return notArriving(file, options.title)
-    return new JobError('network', `Could not download model file ${file.url}`, { cause: error })
+    return new JobError('network', `Couldn’t download model file ${file.url}`, { cause: error })
   }
 
   const chunks: Uint8Array[] = []
@@ -175,6 +175,7 @@ export async function fetchModelFile(
     } catch (error) {
       throw failed(error)
     }
+    quiet = 0
     if (!response.ok) {
       throw new JobError('model-load', `Model download failed (${response.status}) for ${file.url}`, {
         retryable: response.status >= 500 || response.status === 429,

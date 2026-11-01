@@ -74,16 +74,29 @@ function silentFetch() {
   )
 }
 
-/** A fetch whose response bytes arrive when the test sends them; its body fails as the browser's does when aborted. */
-function tricklingFetch() {
+/**
+ * A fetch whose response bytes arrive when the test sends them; its body fails as the browser's does when aborted.
+ * With `answerLater`, the response itself comes only when the test calls `answer()`.
+ */
+function tricklingFetch(options: { answerLater?: boolean } = {}) {
   let body: ReadableStreamDefaultController<Uint8Array> | undefined
-  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-    const stream = new ReadableStream<Uint8Array>({ start: (c) => void (body = c) })
-    init?.signal?.addEventListener('abort', () => body?.error(new DOMException('Aborted', 'AbortError')))
-    return new Response(stream, { status: 200 })
-  })
+  let answer = (): void => undefined
+  const fetchMock = vi.fn(
+    (_url: string, init?: RequestInit) =>
+      new Promise<Response>((resolve) => {
+        answer = () => {
+          const stream = new ReadableStream<Uint8Array>({ start: (c) => void (body = c) })
+          init?.signal?.addEventListener('abort', () =>
+            body?.error(new DOMException('Aborted', 'AbortError')),
+          )
+          resolve(new Response(stream, { status: 200 }))
+        }
+        if (!options.answerLater) answer()
+      }),
+  )
   return {
     fetchMock,
+    answer: () => answer(),
     send: (bytes: number) => body?.enqueue(new Uint8Array(bytes)),
     end: () => body?.close(),
   }
@@ -132,7 +145,7 @@ describe('a model download that gets no bytes', () => {
     expect(error).toBeInstanceOf(JobError)
     expect([error.code, error.retryable]).toEqual(['network', true])
     expect(error.message).toBe(
-      "The download of the lyrics aligner isn't arriving. Check your connection, then try again.",
+      'The download of the lyrics aligner isn’t arriving. Check your connection, then try again.',
     )
     // The request itself is aborted, so the browser drops it instead of waiting on.
     expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
@@ -153,8 +166,21 @@ describe('a model download that gets no bytes', () => {
     await settled
     expect(seen.outcome).toBeInstanceOf(JobError)
     expect((seen.outcome as JobError).message).toBe(
-      "The model download isn't arriving. Check your connection, then try again.",
+      'The model download isn’t arriving. Check your connection, then try again.',
     )
+  })
+
+  it('gives the body 30 s for its first bytes once the server answers', async () => {
+    const server = tricklingFetch({ answerLater: true })
+    vi.stubGlobal('fetch', server.fetchMock)
+    const { seen, settled } = watch(fetchModelFile({ url }))
+    await vi.advanceTimersByTimeAsync(25_000)
+    server.answer()
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(seen.outcome).toBe('waiting')
+    await vi.advanceTimersByTimeAsync(1_000)
+    await settled
+    expect((seen.outcome as JobError).code).toBe('network')
   })
 
   it('stops watching once the file is in', async () => {

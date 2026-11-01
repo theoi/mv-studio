@@ -33,10 +33,12 @@ test('a model download that gets no response shows its line at once and, after 3
 
   const failure = assist.getByRole('alert')
   await expect(failure).toContainText(
-    "The download of the lyrics aligner isn't arriving. Check your connection, then try again.",
+    'The download of the lyrics aligner isn’t arriving. Check your connection, then try again.',
     { timeout: 60_000 },
   )
   expect(Date.now() - shown).toBeGreaterThan(25_000)
+  // The Cancel button that had focus is gone; Try again takes focus instead of the page.
+  await expect(assist.getByRole('button', { name: 'Try again' })).toBeFocused()
 
   await assist.getByRole('button', { name: 'Try again' }).click()
   await expect(assist.getByText(ALIGNER_LINE)).toBeVisible({ timeout: 15_000 })

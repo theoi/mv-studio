@@ -64,6 +64,22 @@ export function revealInTool(el: HTMLElement) {
   el.scrollIntoView({ block: 'nearest' })
 }
 
+/**
+ * Focus for a tool's Try again once its run fails: the running view's Cancel, which had focus, goes away, and focus
+ * would drop to the page. Leaves focus alone when something else has it by then.
+ */
+export function useFocusOnFailure(phase: Phase) {
+  const target = useRef<HTMLButtonElement>(null)
+  const last = useRef(phase)
+  useEffect(() => {
+    const failed = last.current === 'running' && phase === 'failed'
+    last.current = phase
+    if (failed && (!document.activeElement || document.activeElement === document.body))
+      target.current?.focus()
+  }, [phase])
+  return target
+}
+
 /** Returns a finished or failed tool view to idle. */
 export function dismiss(job?: JobSnapshot) {
   if (job) set((s) => ({ dismissed: [...s.dismissed, job.id] }))
