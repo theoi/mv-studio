@@ -121,6 +121,7 @@ function ObjectTracking({ host, pick, disabled }: { host: VideoClip; pick: Objec
               size="sm"
               variant="ghost"
               icon={<Crosshair />}
+              className={styles.forwardAction}
               disabled={disabled}
               onClick={() => fixObject(host.id, t)}
             >
@@ -197,6 +198,7 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
             size="sm"
             variant="ghost"
             icon={<MousePointerClick />}
+            className={styles.forwardAction}
             disabled={busy}
             onClick={() => pickObject(hostId)}
           >

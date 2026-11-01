@@ -15,7 +15,13 @@ export function AnimateAction({ clip }: { clip: ImageClip }) {
         label="Make a video clip from this image with fal.ai. You see the price first."
         description={falKey ? undefined : 'Needs fal.ai'}
       >
-        <Button size="sm" variant="ghost" icon={<Sparkles />} onClick={() => animateImage(clip)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<Sparkles />}
+          className={styles.forwardAction}
+          onClick={() => animateImage(clip)}
+        >
           Animate with AI
         </Button>
       </Tooltip>

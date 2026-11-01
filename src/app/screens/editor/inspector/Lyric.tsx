@@ -138,7 +138,12 @@ function CheckNote({ line }: { line: LyricLine }) {
         </p>
       )}
       <span className={styles.draftAction}>
-        <Button size="sm" variant="ghost" onClick={() => markLineChecked(line.id)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className={styles.forwardAction}
+          onClick={() => markLineChecked(line.id)}
+        >
           Mark as checked
         </Button>
       </span>
@@ -173,6 +178,7 @@ function WordsSection({ line }: { line: LyricLine }) {
       ref={retimeRef}
       size="sm"
       variant="ghost"
+      className={styles.forwardAction}
       disabled={!project.songAssetId || !line.text.trim() || !!busy || phase === 'running'}
       onClick={() => void retimeLine(line.id)}
     >

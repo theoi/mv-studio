@@ -152,6 +152,19 @@
   padding: 0 var(--space-3) 0 var(--space-4);
 }
 
+/*
+ * Text (ghost) actions that move forward take the accent, like a toast's action and the Assist panels' forward text
+ * actions, so they don't read as captions. Ones that remove or cancel (Remove transition) stay grey.
+ */
+button.forwardAction[data-variant='ghost'] {
+  color: var(--accent-text);
+}
+
+button.forwardAction[data-variant='ghost']:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
 .swatches {
   display: flex;
   flex-wrap: wrap;
@@ -216,18 +229,9 @@
   line-height: var(--lh-xs);
 }
 
-/* A forward text action under a note takes the accent, like a toast's action, so it doesn't read as part of the note. */
+/* A forward text action under a note (with .forwardAction): its text lines up with the note's. */
 .noteAction {
   margin: var(--space-1) 0 0 calc(-1 * var(--space-2));
-}
-
-.noteAction[data-variant='ghost'] {
-  color: var(--accent-text);
-}
-
-.noteAction[data-variant='ghost']:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--accent-text);
 }
 
 /* A job's progress with its Cancel at the right end (Motion). */

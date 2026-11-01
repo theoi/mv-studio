@@ -166,7 +166,13 @@ export function SectionInspector({ id }: { id: string }) {
           <Button size="sm" variant="secondary" block onClick={() => cutClipsToSection(sec.id)}>
             Cut clips to this section…
           </Button>
-          <Button size="sm" variant="ghost" block onClick={() => exportSectionTeaser(sec.id)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            block
+            className={styles.forwardAction}
+            onClick={() => exportSectionTeaser(sec.id)}
+          >
             Export as a teaser…
           </Button>
         </div>

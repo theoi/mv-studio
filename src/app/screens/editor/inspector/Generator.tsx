@@ -71,7 +71,12 @@ export function GeneratorInspector({ clip }: { clip: Extract<Clip, { type: 'gene
           <div className={styles.padded}>
             <div className={styles.timedRow}>
               <span className={styles.meta}>Stems not separated yet</span>
-              <Button size="sm" variant="ghost" onClick={() => openAssist('stems')}>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={styles.forwardAction}
+                onClick={() => openAssist('stems')}
+              >
                 Separate stems
               </Button>
             </div>
