@@ -170,7 +170,7 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
         {cutting ? (
           <Badge tone="accent">Cutting out… {pct(cutting)}%</Badge>
         ) : checkingPeople ? (
-          <Badge tone="accent">Checking for people… {pct(checkingPeople)}%</Badge>
+          <Badge tone="accent">Checking… {pct(checkingPeople)}%</Badge>
         ) : behind ? (
           <Badge tone="success" icon={<Check />}>
             {object ? 'Object picked' : 'Person found'}

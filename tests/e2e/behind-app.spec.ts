@@ -202,7 +202,7 @@ test('a clip is cut out when the person and face detectors cannot download, says
   })
   await page.context().setOffline(true)
   await page.context().setOffline(false)
-  await expect(inspector.getByText(/^Checking for people… \d+%$/)).toBeVisible()
+  await expect(inspector.getByText(/^Checking… \d+%$/)).toBeVisible()
   await expect(inspector.getByText(note.replace(/ It checks.+$/, ''), { exact: true })).toBeVisible()
   await page.getByRole('tab', { name: 'Assist' }).click()
   await expect(assist.getByText('Checking for people', { exact: true })).toBeVisible()
