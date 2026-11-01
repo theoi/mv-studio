@@ -1,3 +1,5 @@
+import { create } from 'zustand'
+import { CloudError } from '../../cloud/errors.ts'
 import {
   CloudSettingsStore,
   type CloudSettings,
@@ -32,10 +34,65 @@ export function cloudServices(): Promise<CloudServices> {
   return services
 }
 
+let falKeyCheckMs: number | undefined
+
 /** Checks a fal.ai key before saving it. Free: fal.ai checks the key without running anything. */
 export async function testFalKey(key: string, signal?: AbortSignal): Promise<KeyCheck> {
   const { FalProvider } = await import('../../cloud/fal/provider.ts')
-  return new FalProvider({ getKey: () => key.trim() }).validateKey(signal)
+  return new FalProvider({
+    getKey: () => key.trim(),
+    ...(falKeyCheckMs ? { keyCheckTimeoutMs: falKeyCheckMs } : {}),
+  }).validateKey(signal)
+}
+
+export function setFalKeyCheckTimeoutForTests(ms: number | undefined): void {
+  falKeyCheckMs = ms
+}
+
+interface FalKeyEntry {
+  /** The key as typed; saved only once fal.ai accepts it. */
+  draft: string
+  checking: boolean
+  /** Why the last check failed. */
+  error: CloudError | null
+}
+
+/** The fal.ai key typed in Settings and its check, kept in memory outside the dialog so closing Settings keeps them. */
+export const useFalKeyEntry = create<FalKeyEntry>(() => ({ draft: '', checking: false, error: null }))
+
+export function typeFalKey(draft: string): void {
+  useFalKeyEntry.setState({ draft })
+}
+
+/** Checks the typed fal.ai key and saves it once fal.ai accepts it. True when it was saved. */
+export async function connectFalKey(): Promise<boolean> {
+  const { draft, checking } = useFalKeyEntry.getState()
+  if (checking || !draft.trim()) return false
+  useFalKeyEntry.setState({ checking: true, error: null })
+  const result = await testFalKey(draft).catch((cause: unknown): KeyCheck => ({
+    ok: false,
+    error: new CloudError({
+      kind: 'network',
+      provider: 'fal',
+      title: 'Couldn’t reach fal.ai',
+      message:
+        'MV Studio couldn’t load what it needs to check the key. This is usually a connection problem.',
+      steps: ['Check your internet connection.', 'Choose Try again.'],
+      cause,
+    }),
+  }))
+  // The user typed another key while this one was checked: the result is not about what the field shows.
+  if (useFalKeyEntry.getState().draft !== draft) {
+    useFalKeyEntry.setState({ checking: false })
+    return false
+  }
+  if (!result.ok) {
+    useFalKeyEntry.setState({ checking: false, error: result.error })
+    return false
+  }
+  cloudSettings.setFalKey(draft)
+  useFalKeyEntry.setState({ draft: '', checking: false, error: null })
+  return true
 }
 
 /** Checks an LLM endpoint and lists its models (GET /models, free on every provider). */
