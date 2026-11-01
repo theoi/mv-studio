@@ -261,3 +261,20 @@ test('the palette tells a vertical version from switching the project to vertica
   await input.fill('zebra stripes')
   await expect(dialog.getByText('No matching action. Try fewer words.')).toBeVisible()
 })
+
+test('Ask Assist shows the Enter key only while it is the highlighted row, since Enter runs the highlighted row', async ({
+  page,
+}) => {
+  await openEditor(page)
+  const { dialog, input, selected, open } = palette(page)
+  const askKey = dialog.getByRole('option', { name: /^Ask Assist/ }).locator('kbd')
+
+  await open()
+  await input.fill('make a copy of this project')
+  await expect(selected).toHaveText(/^Duplicate project/)
+  await expect(askKey).toBeHidden()
+  for (let i = 0; i < 10 && !/^Ask Assist/.test((await selected.textContent()) ?? ''); i++)
+    await page.keyboard.press('ArrowDown')
+  await expect(selected).toHaveText(/^Ask Assist/)
+  await expect(askKey).toBeVisible()
+})
