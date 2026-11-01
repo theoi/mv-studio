@@ -53,6 +53,7 @@ import {
   adjustFraming,
   candidateOutputs,
   cropBox,
+  exportSummary,
   initialItems,
   outputSummary,
   outputTitle,
@@ -583,31 +584,10 @@ function OutputRow({
 }
 
 function ExportingView({ onClose }: { onClose: () => void }) {
-  const { jobId, rows, files } = useExports()
-  const job = useJobs().find((j) => j.id === jobId)
-  const states = rowStates(job, rows, files)
+  const { job, rows, files } = useExports()
+  const states = rowStates(job ?? undefined, rows, files)
   const savedCount = rows.filter((r) => files[r.id]).length
-  const running = job?.status === 'running' || job?.status === 'queued'
-  const title = running
-    ? `Exporting ${plural(rows.length, 'file')}`
-    : job?.status === 'succeeded'
-      ? `${plural(rows.length, 'file')} saved`
-      : job?.status === 'failed'
-        ? 'Export failed'
-        : job?.status === 'cancelled'
-          ? 'Export cancelled'
-          : 'Nothing is exporting'
-  const note = running
-    ? 'Rendering on this device. You can keep editing; files save to your Downloads folder.'
-    : job?.status === 'succeeded'
-      ? 'Find them in your Downloads folder.'
-      : job
-        ? savedCount === 0
-          ? 'Nothing was saved.'
-          : savedCount < rows.length
-            ? `${savedCount} of ${rows.length} files saved to your Downloads folder. The rest were not saved.`
-            : `${plural(savedCount, 'file')} saved to your Downloads folder.`
-        : ''
+  const { title, note, running } = exportSummary(job, rows, files)
   return (
     <div className={styles.exporting}>
       <div className={styles.exportingHead}>
@@ -696,6 +676,36 @@ const QUALITY: { value: ExportQuality; label: string }[] = [
 interface OutputsDraft {
   items: OutputItem[]
   selectedId: string | undefined
+}
+
+/** The files of the export that ended last, to download again until the next export starts. */
+function LastExport() {
+  const { job, rows, files } = useExports()
+  const saved = rows.flatMap((r) => {
+    const file = files[r.id]
+    return file ? [{ row: r, name: file.name }] : []
+  })
+  if (!saved.length || !job || job.status === 'running' || job.status === 'queued') return null
+  return (
+    <section aria-label="Last export">
+      <div className={styles.colLabel}>Last export</div>
+      {saved.length < rows.length && (
+        <div className={styles.lastNote}>{`${saved.length} of ${rows.length} files saved`}</div>
+      )}
+      {saved.map(({ row, name }) => (
+        <div key={row.id} className={styles.lastFile}>
+          <span className={styles.suggestIcon}>{aspectIcon(row.aspect)}</span>
+          <span className={styles.outText}>
+            <span className={styles.outName}>{row.title}</span>
+            <span className={styles.outSpecs}>{name}</span>
+          </span>
+          <IconButton label={`Download ${name}`} tooltipSide="right" onClick={() => downloadAgain(row.id)}>
+            <FolderDown />
+          </IconButton>
+        </div>
+      ))}
+    </section>
+  )
 }
 
 /**
@@ -814,6 +824,7 @@ function ExportDialogBody() {
       ) : (
         <div className={styles.layout}>
           <div className={styles.outputs}>
+            <LastExport />
             <div className={styles.colLabel}>Outputs</div>
             {items.map((item, k) => {
               const plan = planned[k]

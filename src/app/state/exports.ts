@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { AspectPreset } from '../../model/index.ts'
-import { set, toast } from './ui.ts'
+import { jobs, type JobSnapshot } from '../../shared/jobs.ts'
+import { dismissToast, get, set, toast } from './ui.ts'
 
 /*
  * The latest export as the exporting view shows it: one job that renders several files in order. Kept outside the
@@ -20,6 +21,8 @@ export interface ExportRow {
 
 interface ExportsState {
   jobId: string | null
+  /** The export's job as last seen. Kept once it ends, when the job list may have dropped it for newer jobs. */
+  job: JobSnapshot | null
   rows: ExportRow[]
   /** Finished files by row id. */
   files: Record<string, File>
@@ -33,6 +36,7 @@ export type ExportPreset = 'vertical' | 'teaser' | 'loop'
 
 export const useExports = create<ExportsState>(() => ({
   jobId: null,
+  job: null,
   rows: [],
   files: {},
   teaserSection: null,
@@ -51,9 +55,45 @@ export function exportWithOutput(preset: ExportPreset): void {
   set({ dialog: 'export', exportPhase: 'setup' })
 }
 
-/** Shows a job in the exporting view. */
+let unfollow = (): void => undefined
+
+/** Shows a job in the exporting view, which follows it until the next export. */
 export function showExport(jobId: string, rows: ExportRow[]): void {
-  useExports.setState({ jobId, rows, files: {} })
+  unfollow()
+  dismissExportEnd()
+  const handle = jobs.get(jobId)
+  useExports.setState({ jobId, job: handle?.snapshot() ?? null, rows, files: {} })
+  unfollow = handle?.subscribe((job) => useExports.setState({ job })) ?? (() => undefined)
+}
+
+const EXPORT_END = 'export-end'
+
+function dismissExportEnd(): void {
+  const end = get().toasts.find((t) => t.key === EXPORT_END)
+  if (end) dismissToast(end.id)
+}
+
+/** Opens the export dialog on the latest export: how it ended, and its files to download again. */
+export function showLastExport(): void {
+  dismissExportEnd()
+  set({ dialog: 'export', exportPhase: 'exporting' })
+}
+
+/**
+ * Says how an export ended. While the export dialog shows the export, it says so itself; otherwise the user may be in
+ * another tab, so the toast stays (unless `sticky` is false) with Show, and Download for a single file (`rowId`).
+ */
+export function toastExportEnd(
+  message: string,
+  { rowId, sticky = true }: { rowId?: string; sticky?: boolean } = {},
+) {
+  const { dialog, exportPhase } = get()
+  if (dialog === 'export' && exportPhase === 'exporting') {
+    toast(message)
+    return
+  }
+  const download = rowId ? { label: 'Download', run: () => downloadAgain(rowId) } : undefined
+  toast(message, download, { show: showLastExport, key: EXPORT_END, sticky })
 }
 
 export function downloadFile(file: Blob, name: string): void {
@@ -68,7 +108,7 @@ export function downloadFile(file: Blob, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-/** Downloads a finished file again (it stays in browser storage until the next export replaces it). */
+/** Downloads a finished file again (it stays in memory until the next export or a reload). */
 export function downloadAgain(rowId: string): void {
   const file = useExports.getState().files[rowId]
   if (file) downloadFile(file, file.name)

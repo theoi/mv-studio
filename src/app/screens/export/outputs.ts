@@ -17,13 +17,14 @@ import {
 import type { AspectPreset, ImageClip, Project, VideoClip } from '../../../model/index.ts'
 import { JobError, jobs, type JobSnapshot } from '../../../shared/jobs.ts'
 import { readSubjectTrack } from '../../../vision/analysisData.ts'
-import { formatTime, timeLeft } from '../../format.ts'
+import { formatTime, plural, timeLeft } from '../../format.ts'
 import { outputEstimate } from '../../state/exportEstimate.ts'
 import {
   downloadFile,
   exportResolution,
   markExportRunning,
   showExport,
+  toastExportEnd,
   useExports,
   type ExportPreset,
   type ExportRow,
@@ -189,6 +190,37 @@ export interface RowState {
   status: string
 }
 
+/** What the exporting view says about an export: its title and the note under it. */
+export function exportSummary(
+  job: JobSnapshot | null,
+  rows: ExportRow[],
+  files: Record<string, File>,
+): { title: string; note: string; running: boolean } {
+  const savedCount = rows.filter((r) => files[r.id]).length
+  const running = job?.status === 'running' || job?.status === 'queued'
+  const title = running
+    ? `Exporting ${plural(rows.length, 'file')}`
+    : job?.status === 'succeeded'
+      ? `${plural(rows.length, 'file')} saved`
+      : job?.status === 'failed'
+        ? 'Export failed'
+        : job?.status === 'cancelled'
+          ? 'Export cancelled'
+          : 'Nothing is exporting'
+  const note = running
+    ? 'Rendering on this device. You can keep editing; files save to your Downloads folder.'
+    : job?.status === 'succeeded'
+      ? 'Find them in your Downloads folder.'
+      : job
+        ? savedCount === 0
+          ? 'Nothing was saved.'
+          : savedCount < rows.length
+            ? `${savedCount} of ${rows.length} files saved to your Downloads folder. The rest were not saved.`
+            : `${plural(savedCount, 'file')} saved to your Downloads folder.`
+        : ''
+  return { title, note, running }
+}
+
 /**
  * Each file's share of the job is its share of the frames; files render in order. The job's time left counts each
  * file after the one rendering at its estimate, so that file has the rest.
@@ -274,19 +306,22 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
   )
   handle.promise.then(
     (results) => {
-      toast(
-        results.length === 1
-          ? `Saved ${results[0]?.file.name ?? 'the video'} to Downloads`
-          : `Saved ${results.length} files to Downloads`,
+      const only = results.length === 1 ? results[0] : undefined
+      toastExportEnd(
+        only ? `Saved “${only.file.name}” to Downloads` : `Saved ${results.length} files to Downloads`,
+        { rowId: only?.spec.id },
       )
     },
     (error: unknown) => {
       if (error instanceof JobError && error.code === 'cancelled') {
         const { files } = useExports.getState()
-        toast(cancelledMessage(planned.length, planned.filter((p) => files[p.spec.id]).length))
+        const saved = planned.filter((p) => files[p.spec.id]).length
+        // The user cancelled it, so it needn't stay; Show only leads somewhere when files were saved.
+        if (saved) toastExportEnd(cancelledMessage(planned.length, saved), { sticky: false })
+        else toast(cancelledMessage(planned.length, saved))
         return
       }
-      toast(`Export failed: ${error instanceof Error ? error.message : String(error)}`)
+      toastExportEnd(`Export failed: ${error instanceof Error ? error.message : String(error)}`)
     },
   )
   return true

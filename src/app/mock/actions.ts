@@ -1,7 +1,7 @@
 import { DEMUCS_MODEL, MODEL_TITLES } from '../../analysis/models.ts'
 import type { Asset, StemName } from '../../model/index.ts'
 import { downloadingModel, modelBytes } from '../../shared/models.ts'
-import { showExport } from '../state/exports.ts'
+import { showExport, toastExportEnd } from '../state/exports.ts'
 import { JOB_KINDS, isRunning, runMockJob } from '../state/jobs.ts'
 import { dispatch, editor, songAnalysis } from '../state/project.ts'
 import { toast, openAssist } from '../state/ui.ts'
@@ -82,7 +82,7 @@ export function startMockExport(startAt = 0) {
       { at: 0, stage: 'render', message: '1 of 2: Rendering' },
       { at: 0.5, stage: 'render', message: '2 of 2: Rendering' },
     ],
-    onDone: () => toast('Saved 2 files to Downloads'),
+    onDone: () => toastExportEnd('Saved 2 files to Downloads'),
   })
   showExport(handle.id, [
     { id: 'mock-full', title: 'Full video', aspect: '16:9', frames: 6120, seconds: 20 },

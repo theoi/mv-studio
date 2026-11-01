@@ -254,6 +254,91 @@ test('cancelling an export keeps the files that are already done', async ({ page
   expect((await again).suggestedFilename()).toBe('Neon Skyline - Canvas.mp4')
 })
 
+test('an export that ends after Keep editing says so until dismissed, with Download and Show, and Export lists its file until the next export', async ({
+  page,
+}) => {
+  test.setTimeout(360_000)
+  const dialog = await openExport(page, './?e2e=1')
+  await dialog.getByLabel('Include Full video').uncheck()
+  await dialog.getByLabel('Include Vertical').uncheck()
+  await dialog.getByRole('button', { name: /Loop for Canvas/ }).click()
+  await dialog.getByRole('radio', { name: '720p' }).click()
+  const file = 'Neon Skyline - Canvas.mp4'
+  let download = page.waitForEvent('download', { timeout: 200_000 })
+  await dialog.getByRole('button', { name: 'Export 1 file' }).click()
+  await dialog.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(dialog).toBeHidden()
+
+  // The activity chip says how long the export has left, the same figure as the export's own row.
+  const chip = page.getByRole('button', { name: /^Exporting video \d+% · / })
+  await expect(chip).toContainText(/\d+%\s*· (\d+ min|under 1 min) left$/, { timeout: 60_000 })
+  await chip.click()
+  await expect(dialog).toBeVisible()
+  const timesLeft = () =>
+    page.evaluate(() => {
+      const left = (text: string | null | undefined) =>
+        text?.match(/· ((about \d+ min|less than a minute) left)/)?.[1]
+      const chipLabel = document
+        .querySelector('button[aria-label^="Exporting video"]')
+        ?.getAttribute('aria-label')
+      const row = [...document.querySelectorAll('[role="dialog"] span')].find((s) =>
+        /^\d+% · /.test(s.textContent ?? ''),
+      )
+      return { chip: left(chipLabel), row: left(row?.textContent) }
+    })
+  await expect
+    .poll(async () => {
+      const { chip, row } = await timesLeft()
+      return row !== undefined && chip === row
+    })
+    .toBe(true)
+  await dialog.getByRole('button', { name: 'Keep editing' }).click()
+
+  // The toast stays past the usual 5 s, and its Download saves the file again.
+  expect((await download).suggestedFilename()).toBe(file)
+  const saved = page.locator('[data-toast]').filter({ hasText: `Saved “${file}” to Downloads` })
+  await expect(saved).toBeVisible()
+  await page.waitForTimeout(6_000)
+  await expect(saved).toBeVisible()
+  download = page.waitForEvent('download')
+  await saved.getByRole('button', { name: 'Download' }).click()
+  expect((await download).suggestedFilename()).toBe(file)
+  await expect(saved).toBeHidden()
+
+  // Export opens on the outputs, with the file of the last export to download again.
+  await page.keyboard.press(`${mod}+e`)
+  const last = dialog.getByRole('region', { name: 'Last export' })
+  await expect(last.getByText('Loop for Canvas')).toBeVisible()
+  download = page.waitForEvent('download')
+  await last.getByRole('button', { name: `Download ${file}` }).click()
+  expect((await download).suggestedFilename()).toBe(file)
+
+  // The next export replaces it.
+  download = page.waitForEvent('download', { timeout: 200_000 })
+  await dialog.getByRole('button', { name: 'Export 1 file' }).click()
+  await dialog.getByRole('button', { name: 'Keep editing' }).click()
+  await page.keyboard.press(`${mod}+e`)
+  await expect(dialog.getByText('Outputs', { exact: true })).toBeVisible()
+  await expect(last).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  expect((await download).suggestedFilename()).toBe(file)
+
+  // Show opens the finished export, even once newer jobs have pushed it out of the job list.
+  const pushedOut = await page.evaluate(async () => {
+    const { jobs } = window.mvStudio.shared
+    const list = (): { id: string; title: string }[] => jobs.list()
+    const id = list().find((j) => j.title.startsWith('Exporting'))?.id
+    for (let i = 0; i < 21; i++)
+      await jobs.run({ kind: 'test', title: 'Test', run: async () => undefined }).promise
+    return id !== undefined && !list().some((j) => j.id === id)
+  })
+  expect(pushedOut).toBe(true)
+  await saved.getByRole('button', { name: 'Show' }).click()
+  await expect(dialog.getByText('1 file saved', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Download' })).toHaveCount(1)
+  await expect(saved).toBeHidden()
+})
+
 test('the time an export takes is worked out on this device, and the export stays within 1.5 times it, while Export stays available', async ({
   page,
 }) => {

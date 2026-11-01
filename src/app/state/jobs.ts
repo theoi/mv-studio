@@ -39,6 +39,11 @@ export function jobFraction(job: JobSnapshot): number | undefined {
   return job.stopping ? undefined : job.progress.fraction
 }
 
+/** The seconds a job has left, while it can tell and isn't stopping. */
+export function jobSecondsLeft(job: JobSnapshot): number | undefined {
+  return job.stopping ? undefined : job.progress.etaSeconds
+}
+
 export function isRunning(kind: string): boolean {
   return runningJobs(jobs.list()).some((j) => j.kind === kind)
 }
