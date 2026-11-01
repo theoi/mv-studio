@@ -141,8 +141,8 @@ test('imported footage shows its own frames: the library card, and the inspector
   expect(seen).not.toContain(wholeUrl)
 })
 
-/** The names of the files kept beside an asset's media (its thumbnails), or null once its folder is gone. */
-function keptFiles(page: Page, assetId: string) {
+/** What an asset's folder in browser storage holds (a folder ends in "/"), or null once it is gone. */
+function assetFolder(page: Page, assetId: string) {
   return page.evaluate(async (id) => {
     const root = await navigator.storage.getDirectory()
     let folder: FileSystemDirectoryHandle
@@ -152,13 +152,8 @@ function keptFiles(page: Page, assetId: string) {
       return null
     }
     const names: string[] = []
-    try {
-      const derived = await folder.getDirectoryHandle('derived')
-      for await (const name of (derived as unknown as { keys(): AsyncIterable<string> }).keys())
-        names.push(name)
-    } catch {
-      // Nothing kept yet.
-    }
+    const entries = (folder as unknown as { values(): AsyncIterable<FileSystemHandle> }).values()
+    for await (const entry of entries) names.push(entry.kind === 'directory' ? `${entry.name}/` : entry.name)
     return names.sort()
   }, assetId)
 }
@@ -191,8 +186,9 @@ test('a reload shows the thumbnails kept beside the media without decoding the v
     const assets = Object.values(project.assets) as { id: string; kind: string }[]
     return { projectId: project.id as string, assetId: assets.find((a) => a.kind === 'video')!.id }
   })
-  const kept = ['thumb1-card-320x180.jpg', 'thumb1-frame-160x90-0.jpg']
-  await expect.poll(() => keptFiles(page, assetId)).toEqual(kept)
+  // Beside the media file, so the folder holds only files.
+  const kept = ['@thumb1-card-320x180.jpg', '@thumb1-frame-160x90-0.jpg', 'frames.mp4']
+  await expect.poll(() => assetFolder(page, assetId)).toEqual(kept)
   await page.waitForFunction((id) => location.hash.includes(`project=${id}`), projectId)
 
   await page.addInitScript(() => {
@@ -225,7 +221,8 @@ test('a reload shows the thumbnails kept beside the media without decoding the v
   await page.evaluate(async (id) => {
     const root = await navigator.storage.getDirectory()
     const folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
-    await folder.removeEntry('derived', { recursive: true })
+    for (const name of ['@thumb1-card-320x180.jpg', '@thumb1-frame-160x90-0.jpg'])
+      await folder.removeEntry(name)
   }, assetId)
   await page.reload()
   await waitForPreview(page)
@@ -233,9 +230,9 @@ test('a reload shows the thumbnails kept beside the media without decoding the v
   const log = await thumbLog()
   expect(log.decoder).toHaveLength(1)
   expect(log.decoder[0]).toBeGreaterThan(log.firstFrame!)
-  await expect.poll(() => keptFiles(page, assetId)).toEqual(kept)
+  await expect.poll(() => assetFolder(page, assetId)).toEqual(kept)
 
   // They go with the media.
   await page.evaluate((id) => window.mvStudio.app.persistence.deleteProject(id), projectId)
-  await expect.poll(() => keptFiles(page, assetId)).toBeNull()
+  await expect.poll(() => assetFolder(page, assetId)).toBeNull()
 })

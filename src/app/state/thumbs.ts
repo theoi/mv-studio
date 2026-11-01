@@ -18,9 +18,9 @@ const CARD = `card-${WIDTH}x${HEIGHT}`
  */
 const kept = {
   get: (asset: Asset, name: string): Promise<Blob | null> =>
-    mediaStore.readDerived(asset, `thumb1-${name}.jpg`),
+    mediaStore.readSidecar(asset, `thumb1-${name}.jpg`),
   put: (asset: Asset, name: string, jpeg: Blob): void => {
-    void mediaStore.writeDerived(asset, `thumb1-${name}.jpg`, jpeg).catch(() => undefined)
+    void mediaStore.writeSidecar(asset, `thumb1-${name}.jpg`, jpeg).catch(() => undefined)
   },
 }
 

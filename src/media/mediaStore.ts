@@ -20,8 +20,12 @@ export function storageKeyFor(assetId: string, name: string): string {
   return `${MEDIA_ROOT}/${assetId}/${safeFileName(name)}`
 }
 
-/** The folder holding an asset's media file (`media/<asset id>`). */
-const assetFolder = (asset: Asset) => asset.storageKey.split('/').slice(0, 2).join('/')
+/**
+ * Where a sidecar of an asset's media is kept: beside the media file, as "@<name>". Stored media names never hold an
+ * "@" (safeFileName), so the two can't collide, and the asset's folder holds only files.
+ */
+const sidecarPath = (asset: Asset, name: string) =>
+  `${asset.storageKey.split('/').slice(0, 2).join('/')}/@${name}`
 
 export class OpfsMediaStore implements MediaStore {
   async importFile(file: File, ctx?: JobContext): Promise<Asset> {
@@ -93,21 +97,21 @@ export class OpfsMediaStore implements MediaStore {
   }
 
   async remove(asset: Asset): Promise<void> {
-    await removeOpfsEntry(assetFolder(asset)).catch(() => undefined)
+    await removeOpfsEntry(asset.storageKey.split('/').slice(0, 2).join('/')).catch(() => undefined)
   }
 
   /**
-   * A small file made from an asset's media, such as a thumbnail, kept in the asset's folder so it goes when the media
-   * is removed. Null when there is none.
+   * A sidecar: a small file made from an asset's media, such as its thumbnail, kept beside the media file so it goes
+   * when the media is removed. Null when there is none.
    */
-  async readDerived(asset: Asset, name: string): Promise<File | null> {
-    return readOpfsFile(`${assetFolder(asset)}/derived/${name}`).catch(() => null)
+  async readSidecar(asset: Asset, name: string): Promise<File | null> {
+    return readOpfsFile(sidecarPath(asset, name)).catch(() => null)
   }
 
-  /** Keeps a file made from the asset's media (see readDerived), unless its media is gone. */
-  async writeDerived(asset: Asset, name: string, data: Blob): Promise<void> {
+  /** Keeps a sidecar of the asset's media (see readSidecar), unless the media is gone. */
+  async writeSidecar(asset: Asset, name: string, data: Blob): Promise<void> {
     if (!(await opfsFileExists(asset.storageKey))) return
-    await writeOpfsFile(`${assetFolder(asset)}/derived/${name}`, data)
+    await writeOpfsFile(sidecarPath(asset, name), data)
   }
 
   async usage(): Promise<{ usedBytes: number; quotaBytes: number; persisted: boolean }> {
