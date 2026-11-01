@@ -66,10 +66,10 @@ async function start(hash: string) {
   vi.resetModules()
   const { initHashSync } = await import('../../../src/app/state/hash.ts')
   const ui = await import('../../../src/app/state/ui.ts')
-  const { editor } = await import('../../../src/app/state/project.ts')
+  const { editor, timelineDuration } = await import('../../../src/app/state/project.ts')
   const { usePersistence } = await import('../../../src/app/state/persistence.ts')
   initHashSync()
-  return { page, ...ui, editor, usePersistence }
+  return { page, ...ui, editor, timelineDuration, usePersistence }
 }
 
 beforeEach(() => {
@@ -141,5 +141,29 @@ describe('the URL hash and the app state', () => {
     page.window.location.hash = '#/editor?t=20'
     page.fire('hashchange')
     expect(get().playhead).toBe(20)
+  })
+
+  it('opens a link to a kept project at its start, where the sample opens at its chorus', async () => {
+    const sample = await start('#/editor')
+    expect(sample.get().playhead).toBeGreaterThan(0)
+
+    const { page, get } = await start('#/editor?project=kept')
+    expect(get().playhead).toBe(0)
+    page.window.location.hash = '#/editor?t=10'
+    page.fire('hashchange')
+    expect(get().playhead).toBe(10)
+    page.window.location.hash = '#/editor?project=other'
+    page.fire('hashchange')
+    expect(get().playhead).toBe(0)
+  })
+
+  it('keeps a link’s time within the timeline', async () => {
+    const { page, get, editor, timelineDuration } = await start('#/editor?t=9999')
+    const end = timelineDuration(editor.getProject())
+    expect(end).toBeLessThan(9999)
+    expect(get().playhead).toBe(end)
+    page.window.location.hash = '#/editor?t=-5'
+    page.fire('hashchange')
+    expect(get().playhead).toBe(0)
   })
 })

@@ -5,7 +5,7 @@ import { startAutoCut } from './autocut.ts'
 import { isRunning, JOB_KINDS } from './jobs.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
 import { isStored, openFromLink, untracked, usePersistence } from './persistence.ts'
-import { editor, loadDemoProject, loadEmptyProject } from './project.ts'
+import { clampToTimeline, editor, loadDemoProject, loadEmptyProject } from './project.ts'
 import { setupFromLink } from './setup.ts'
 import {
   get,
@@ -108,11 +108,14 @@ function applyHash(hash: string, navigated = false) {
   // An export doesn't survive a reload: a link to one in progress opens the export setup.
   if (next.exportPhase === 'exporting' && !isRunning(JOB_KINDS.export)) next.exportPhase = 'setup'
   const keepTime = navigated && editor.getProject().id === openId && (project === null || project === openId)
+  // The sample opens at its chorus, any other project at its start.
+  const time = next.playhead ?? (keepTime ? get().playhead : project ? 0 : initialUi.playhead)
+  // A kept project still opening has its length checked once it opens (openFromLink).
+  const opening = project !== null && !wantEmpty && project !== openId
   set({
     ...initialUi,
-    ...(keepTime ? { playhead: get().playhead } : {}),
-    ...(wantEmpty ? { playhead: 0 } : {}),
     ...next,
+    playhead: opening ? time : clampToTimeline(editor.getProject(), time),
     toasts: get().toasts,
     libraryOpen: get().libraryOpen,
     playing: false,

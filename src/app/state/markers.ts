@@ -4,7 +4,7 @@
  */
 import { newId, type Marker } from '../../model/index.ts'
 import { formatTime } from '../format.ts'
-import { dispatch, editor, timelineDuration, undo } from './project.ts'
+import { clampToTimeline, dispatch, editor, undo } from './project.ts'
 import { get, toast } from './ui.ts'
 
 /** Markers closer than this are at the same place, so M twice does not stack two flags. */
@@ -52,7 +52,7 @@ export function moveMarker(id: string, time: number, gesture = false): void {
   const p = editor.getProject()
   const marker = p.markers.find((m) => m.id === id)
   if (!marker) return
-  const t = Math.min(timelineDuration(p), Math.max(0, time))
+  const t = clampToTimeline(p, time)
   if (Math.abs(t - marker.time) < 1e-6) return
   dispatch(
     { type: 'marker.update', markerId: id, patch: { time: t } },

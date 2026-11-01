@@ -155,6 +155,11 @@ export function timelineDuration(p: Project): number {
   return Math.max(projectDuration(p), 1)
 }
 
+/** A time kept within the timeline, from its start to its end. */
+export function clampToTimeline(p: Project, t: number): number {
+  return Math.min(timelineDuration(p), Math.max(0, t))
+}
+
 export type SectionKind = 'intro' | 'verse' | 'pre' | 'chorus' | 'bridge' | 'outro'
 
 /** Color family for a section, from its label. Repeat groups say nothing about the kind: verses repeat too. */

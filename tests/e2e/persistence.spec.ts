@@ -127,6 +127,35 @@ test('a project comes back after a reload: edits, imported media, analysis and l
   expect((await snapshot(page)).id).toBe(before.id)
 })
 
+test('a kept project opens at its start after a reload, and a link’s time stays within its song', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await openBlank(page)
+  await importFiles(page, ['song.mp3'])
+  await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
+  await expect(saved(page)).toBeVisible()
+  const { id } = await snapshot(page)
+  expect(page.url()).toContain(`project=${id}`)
+  const now = page.locator('[class*="tcNow"]')
+  const total = page.locator('[class*="tcTotal"]')
+
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
+  await expect(total).toHaveText(/00:0[78]\.\d\d$/)
+  await expect(now).toHaveText('00:00.00')
+
+  // From another project, a link to a time past the song's end opens the song at its end.
+  await page.evaluate(() => (window.location.hash = '#/editor?project=empty&kind=blank'))
+  await expect(page.getByText('Start with a song')).toBeVisible()
+  await page.evaluate((projectId) => (window.location.hash = `#/editor?project=${projectId}&t=60`), id)
+  await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
+  const end = ((await total.textContent()) ?? '').replace('/', '').trim()
+  expect(end).toMatch(/^00:0[78]\.\d\d$/)
+  await expect(now).toHaveText(end)
+})
+
 test('an edit made right before a reload or closing the tab is kept, and the project keeps its thumbnail', async ({
   page,
   context,
