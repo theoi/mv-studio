@@ -1,5 +1,6 @@
 import { createElement, lazy, useState, type ComponentType, type LazyExoticComponent } from 'react'
 import { loadedVjMode, loaders, loadVjMode } from './preload.ts'
+import { checkForUpdate } from './state/update.ts'
 
 /** Code for a screen or dialog that did not arrive (offline, or a deploy replaced the file). */
 export class LoadError extends Error {
@@ -23,6 +24,7 @@ function retryable(load: () => Promise<ComponentType>): ComponentType {
         (component) => ({ default: component }),
         (error: unknown) => {
           failed.add(reset)
+          checkForUpdate({ now: true })
           throw new LoadError(error)
         },
       ),
