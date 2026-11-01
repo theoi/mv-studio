@@ -278,7 +278,7 @@ describe('LLM planner against OpenAI-compatible endpoints', () => {
     const plan = await createDirectorPlanner({ client: () => client })(await input(), testCtx())
     expect(plan.planner).toBe('local')
     expect(plan.warnings[0]).toBe(
-      "Your AI model couldn't help (Ollama read only part of the request), so the built-in planner made this draft. Raise its context length to 16k, then draft again.",
+      "Your AI model couldn't help (Ollama read only part of the request), so the built-in planner made this draft. Raise Ollama’s context length to 16k, then draft again.",
     )
     expect(server.chatBodies).toHaveLength(1)
   })

@@ -45,6 +45,8 @@ export interface CloudErrorInfo {
   /** What the user can do, in order. */
   steps: string[]
   helpUrl?: string
+  /** The fix in a few words, for a note with no room for the steps, e.g. "Raise Ollama’s context length to 16k". */
+  action?: string
 }
 
 const JOB_CODE: Record<CloudErrorKind, JobErrorCode> = {
@@ -94,6 +96,7 @@ export class CloudError extends JobError {
       status: info.status,
       steps,
       helpUrl: info.helpUrl,
+      ...(info.action ? { action: info.action } : {}),
     }
     super(JOB_CODE[info.kind], info.message, {
       retryable: RETRYABLE.has(info.kind),

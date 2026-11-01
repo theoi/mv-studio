@@ -6,7 +6,8 @@ import {
   type EditPlan,
   type PlanShot,
 } from '../../../src/director/index.ts'
-import { musicEnd, songInfoFromProject, songTitle, songTitleFromName } from '../../../src/director/inputs.ts'
+import { musicEnd, songInfoFromProject } from '../../../src/director/inputs.ts'
+import { songName, songTitle, songTitleFromName } from '../../../src/director/songTitle.ts'
 import { parseProject } from '../../../src/model/migrations.ts'
 import { paceFor } from '../../../src/director/rules.ts'
 import { beatGrid, cutTimes, phrasedCutTimes } from '../../../src/director/timing.ts'
@@ -170,8 +171,28 @@ describe('songTitleFromName', () => {
     ['03 - Night Drive.wav', { title: 'Night Drive' }],
     ['demo.mp3', { title: 'Demo' }],
     ['neon-skyline.wav', { title: 'Neon Skyline' }],
-    ['NEON_SKYLINE - NIGHT DRIVE.mp3', { artist: 'Neon Skyline', title: 'Night Drive' }],
+    ['NEON_SKYLINE - NIGHT DRIVE.mp3', { artist: 'NEON SKYLINE', title: 'NIGHT DRIVE' }],
     ['Jay-Z - Empire State of Mind.mp3', { artist: 'Jay-Z', title: 'Empire State of Mind' }],
+    ['Jay-Z_-_Empire_State_of_Mind.mp3', { artist: 'Jay-Z', title: 'Empire State of Mind' }],
+    ['song_show-me_josh-woodward.mp3', { title: 'Song Show Me Josh Woodward' }],
+    ['rxbyn_-_bad_side.mp3', { artist: 'Rxbyn', title: 'Bad Side' }],
+    // Capitals and hyphens in a name are kept as written.
+    ['DNA.mp3', { title: 'DNA' }],
+    ['HUMBLE.mp3', { title: 'HUMBLE' }],
+    ['ACDC_-_TNT.mp3', { artist: 'ACDC', title: 'TNT' }],
+    ['AC-DC.mp3', { title: 'AC-DC' }],
+    ['Spider-Man_Theme.mp3', { title: 'Spider-Man Theme' }],
+    ['Re-Wind_(Original_Mix).mp3', { title: 'Re-Wind (Original Mix)' }],
+    ['artist - song (feat. other).mp3', { artist: 'Artist', title: 'Song (feat. Other)' }],
+    ['SOS.mp3', { title: 'SOS' }],
+    ['BTS - DNA.mp3', { artist: 'BTS', title: 'DNA' }],
+    // Small words stay lowercase after the first word, unless they end the title or open parentheses.
+    ['the end of the world.mp3', { title: 'The End of the World' }],
+    ['mix (final).wav', { title: 'Mix (Final)' }],
+    ['my song (feat. jay).mp3', { title: 'My Song (feat. Jay)' }],
+    ['what are you waiting for.mp3', { title: 'What Are You Waiting For' }],
+    ['mv_2024-05-01.wav', { title: 'Mv 2024-05-01' }],
+    ['part 1: the beginning.mp3', { title: 'Part 1: The Beginning' }],
   ])('%s', (name, expected) => {
     expect(songTitleFromName(name)).toEqual(expected)
   })
@@ -192,8 +213,38 @@ describe('songTitle', () => {
       { title: 'Bad Side', artist: 'The Night Shift' },
     ],
     ['the file name without tags', undefined, { artist: 'Rxbyn', title: 'Bad Side' }],
+    [
+      'the file name’s title for a placeholder title tag',
+      { title: 'Track 01', artist: 'The Night Shift' },
+      { title: 'Bad Side', artist: 'The Night Shift' },
+    ],
+    ['the file name for an “Untitled” tag', { title: 'Untitled' }, { artist: 'Rxbyn', title: 'Bad Side' }],
+    [
+      'the file name for a tag holding a file name',
+      { title: 'take3.wav' },
+      { artist: 'Rxbyn', title: 'Bad Side' },
+    ],
+    [
+      'the file name for a tag holding its name',
+      { title: 'Rxbyn_-_Bad_Side' },
+      { artist: 'Rxbyn', title: 'Bad Side' },
+    ],
   ])('uses %s', (_, tags, expected) => {
     expect(songTitle({ name, ...(tags ? { tags } : {}) })).toEqual(expected)
+  })
+
+  it.each([
+    ['its tagged title', { title: 'Show Me', artist: 'Josh Woodward' }, 'Show Me'],
+    ['the title in its file name', { artist: 'Josh Woodward' }, 'Song Show Me Josh Woodward'],
+  ])('names the song by %s', (_, tags, expected) => {
+    expect(songName({ name: 'song_show-me_josh-woodward.mp3', tags })).toBe(expected)
+  })
+
+  it.each([
+    ['dna.mp3', 'DNA'],
+    ['iphone.mp3', 'iPhone'],
+  ])('keeps a title tag that is %s’s name only in other capitals', (name, title) => {
+    expect(songName({ name, tags: { title } })).toBe(title)
   })
 
   it('reads tags from a saved project, and the file name from one saved before tags were read', () => {

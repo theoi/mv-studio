@@ -21,6 +21,7 @@ import {
   llmPreset,
   llmTimeoutSeconds,
   localSetupSteps,
+  raiseContextLength,
   pageOrigin,
 } from './presets.ts'
 
@@ -272,6 +273,7 @@ export class OpenAICompatibleClient {
         `Its context length is too small (it read ${count(read)} of about ${count(Math.round(sent / 1000) * 1000)} ` +
         'tokens). Nothing was changed, since an answer to part of the request would be wrong.',
       steps: contextLengthSteps(runner, this.endpoint.model),
+      action: raiseContextLength(runner),
     })
   }
 
@@ -713,7 +715,14 @@ export class OpenAICompatibleClient {
 
   private error(
     kind: CloudErrorKind,
-    o: { title: string; message: string; steps?: string[]; status?: number; cause?: unknown },
+    o: {
+      title: string
+      message: string
+      steps?: string[]
+      status?: number
+      cause?: unknown
+      action?: string
+    },
   ): CloudError {
     return new CloudError({ kind, provider: 'llm', ...o })
   }

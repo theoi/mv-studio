@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RefinedFields } from '../../../src/analysis/song.ts'
-import { autoCut } from '../../../src/vision/autocut/index.ts'
+import { autoCut, autoCutPool } from '../../../src/vision/autocut/index.ts'
 import {
+  analysisBacklog,
+  autoCutAssets,
   autoCutOptions,
+  clipChoice,
   DEFAULT_AUTOCUT_CHOICES,
   matchesMood,
+  setClipChoice,
   startAutoCut,
   unanalyzedClipCount,
   unanalyzedWarning,
@@ -56,6 +60,93 @@ it('uses only the selected clip’s media for "Selected clips", and shuffles whe
   ).toBeUndefined()
 })
 
+it('cuts every clip but the ones left out for "Choose clips", including clips imported after the choice', () => {
+  const project = editor.getProject()
+  const pool = autoCutAssets(project).map((a) => a.id)
+  expect(pool.length).toBeGreaterThan(2)
+  const [first, second] = pool as [string, string]
+  const chosen = (leftOut: string[]) =>
+    autoCutOptions({ ...choices, clips: 'chosen', leftOut }, editor.getProject(), { type: 'none' }, 0)
+      .assetIds
+  expect(chosen([first, second])).toEqual(pool.slice(2))
+  // Ids of clips no longer in the project change nothing.
+  expect(chosen(['gone', first])).toEqual(pool.slice(1))
+  // Nothing left out cuts the whole library, as "All clips" does; everything left out cuts nothing.
+  expect(chosen([])).toBeUndefined()
+  expect(chosen(pool)).toEqual([])
+
+  const video = project.assets[first]!
+  const createdAt = '2999-01-01T00:00:00.000Z'
+  editor.dispatch({ type: 'asset.add', asset: { ...video, id: 'later', name: 'Imported later', createdAt } })
+  expect(chosen([first])).toEqual([...pool.slice(1), 'later'])
+})
+
+it('saves the clip choice with the project, with no undo step, so another project starts from its own', () => {
+  const pool = autoCutAssets(editor.getProject()).map((a) => a.id)
+  const undo = editor.undoLabel()
+  setClipChoice({ clips: 'chosen', leftOut: [pool[0]!] })
+  expect(editor.undoLabel()).toBe(undo)
+  const saved = structuredClone(editor.getProject())
+
+  // A fresh copy of the sample has the same asset ids, and still cuts every clip.
+  loadDemoProject()
+  expect(clipChoice(editor.getProject())).toEqual({ clips: 'all', leftOut: [] })
+  expect(
+    autoCutOptions(
+      { ...choices, ...clipChoice(editor.getProject()) },
+      editor.getProject(),
+      { type: 'none' },
+      0,
+    ).assetIds,
+  ).toBeUndefined()
+
+  // Reopened, the project keeps its choice.
+  editor.load(saved)
+  expect(clipChoice(editor.getProject())).toEqual({ clips: 'chosen', leftOut: [pool[0]] })
+  expect(
+    autoCutOptions(
+      { ...choices, ...clipChoice(editor.getProject()) },
+      editor.getProject(),
+      { type: 'none' },
+      0,
+    ).assetIds,
+  ).toEqual(pool.slice(1))
+})
+it('lists the clips in the order the cut pools them, also after a removed clip comes back', () => {
+  const first = autoCutAssets(editor.getProject())[0]!
+  editor.dispatch({ type: 'asset.remove', assetId: first.id })
+  editor.undo()
+  const project = editor.getProject()
+  expect(Object.keys(project.assets).at(-1)).toBe(first.id)
+  expect(autoCutAssets(project).map((a) => a.id)).toEqual(autoCutPool(project).map((p) => p.assetId))
+})
+it('uses the media of every selected clip for "Selected clips", each once', () => {
+  const project = editor.getProject()
+  const media = Object.values(project.clips).filter(
+    (c): c is Extract<typeof c, { assetId: string }> => c.type === 'video' || c.type === 'image',
+  )
+  const a = media[0]!
+  const sameAsset = media.find((c) => c.id !== a.id && c.assetId === a.assetId)!
+  const other = media.find((c) => c.assetId !== a.assetId)!
+  expect(sameAsset).toBeDefined()
+  const options = autoCutOptions(
+    { ...choices, clips: 'selected' },
+    project,
+    { type: 'clip', id: other.id, ids: [a.id, sameAsset.id, other.id] },
+    0,
+  )
+  expect(options.assetIds).toEqual([a.assetId, other.assetId])
+})
+
+it('counts the clips still to analyze among the clips a cut uses', () => {
+  const project = editor.getProject()
+  const pool = autoCutAssets(project).map((a) => a.id)
+  expect(analysisBacklog(project, null).waiting).toBe(pool.length)
+  expect(analysisBacklog(project, null, pool.slice(0, 2)).waiting).toBe(2)
+  const failed = [{ assetId: pool[0]!, name: 'a.mp4', message: 'Could not read this media file.' }]
+  const indexing: IndexingState = { status: 'idle', total: 0, done: 0, failed }
+  expect(analysisBacklog(project, indexing, pool.slice(0, 2))).toEqual({ waiting: 1, unreadable: failed })
+})
 it('undoes an auto-cut only while it is the latest edit', async () => {
   const before = editor.getProject()
   const first = await autoCut({ editor }, { pace: 'bar' })

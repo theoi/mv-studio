@@ -1,6 +1,7 @@
 import type { GrayImage, Mask, PackedMaskTrack, Point, Rect, RgbaImage, Size } from './types.ts'
 import type { CallOptions } from '../shared/worker.ts'
 import type { MaskTrackBuildConfig, TrackFrameStats } from './segmentation/trackBuilder.ts'
+import type { WatchDownloads } from './runtime/downloads.ts'
 
 /**
  * Contracts between the main-thread vision services and the model workers. Job logic
@@ -136,6 +137,8 @@ export type SegmentationRole = 'interactive' | 'background'
 export interface VisionBackends {
   segmentation(role?: SegmentationRole): SegmentationBackend
   onnx(): OnnxBackend
+  /** First-time model downloads in any worker, whichever call started them (see `downloadLines`). Returns stop. */
+  watchDownloads?: WatchDownloads
 }
 
 export type { Size }

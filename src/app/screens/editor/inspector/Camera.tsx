@@ -28,7 +28,7 @@ import { JOB_KINDS } from '../../../state/jobs.ts'
 import { formatBytes } from '../../../format.ts'
 import { editor } from '../../../state/project.ts'
 import { toast } from '../../../state/ui.ts'
-import { pct, useJob } from '../assist/jobState.ts'
+import { downloadPct, pct, useJob } from '../assist/jobState.ts'
 import { CancelButton } from '../assist/ToolView.tsx'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import styles from '../Inspector.module.css'
@@ -153,7 +153,11 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
       )}
       {adding ? (
         <div className={styles.progressRow}>
-          <span>Estimating depth… {pct(adding)}%</span>
+          <span>
+            {downloadPct(adding) === undefined
+              ? `Estimating depth… ${pct(adding)}%`
+              : `Downloading… ${downloadPct(adding)}%`}
+          </span>
           <CancelButton job={adding} inline onCancel={() => (refocus.current = true)} />
         </div>
       ) : busy ? (

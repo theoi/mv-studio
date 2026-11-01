@@ -25,6 +25,7 @@ import {
   type VisualAnalysisParts,
 } from '../analysisData.ts'
 import { visionError } from '../errors.ts'
+import { withDownloadLines, type ModelDownload } from '../runtime/downloads.ts'
 import { createAssetFrameSource } from '../runtime/assetSource.ts'
 import type { FrameSource } from '../runtime/frames.ts'
 import { describeClips, tagWords } from '../matching/tags.ts'
@@ -80,6 +81,8 @@ export interface IndexingState {
   current?: { assetId: Id; name: string; fraction: number; step: IndexStep }
   failed: { assetId: Id; name: string; message: string }[]
   error?: { code: JobErrorCode; message: string }
+  /** A model the run is downloading ("Downloading the footage tagger (154 MB, once)") and how far it is. */
+  download?: { message: string; fraction: number }
 }
 
 export interface FootageIndexer {
@@ -105,7 +108,8 @@ export interface FootageService {
 
 export interface FootageServiceDeps {
   editor: Pick<ProjectEditor, 'getProject' | 'dispatch' | 'subscribe'>
-  vision: Pick<VisionService, 'indexClip' | 'matcher' | 'subjects'>
+  vision: Pick<VisionService, 'indexClip' | 'matcher' | 'subjects'> &
+    Partial<Pick<VisionService, 'watchDownloads'>>
   media: MediaFileSource
   jobs?: Pick<JobRunner, 'run'>
   /** Frames to analyze for an asset (default: the export decoder for clips, the image itself for stills). */
@@ -149,6 +153,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
   let error: IndexingState['error']
   let running: { handle: JobHandle<void>; token: object } | null = null
   let current: IndexingState['current']
+  let download: IndexingState['download']
   let total = 0
   let done = 0
   let scheduled = false
@@ -188,6 +193,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       total: running ? total : 0,
       done: running ? done : 0,
       ...(running && current ? { current: { ...current } } : {}),
+      ...(running && download ? { download: { ...download } } : {}),
       failed: [...new Set([...failedMatching.keys(), ...failedSubjects.keys()])].flatMap((assetId) =>
         assets[assetId]
           ? [
@@ -219,10 +225,19 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
     const token = {}
     total = 0
     done = 0
+    download = undefined
+    const lines = {
+      watchDownloads: vision.watchDownloads,
+      onLine: (d: ModelDownload | null) => {
+        if (running && running.token !== token) return
+        download = d ? { message: d.message, fraction: d.fraction } : undefined
+        emit()
+      },
+    }
     const handle = runner.run<void>({
       kind: FOOTAGE_INDEX_JOB,
       title: 'Analyzing footage',
-      run: async (ctx) => {
+      run: withDownloadLines(lines, ['tagger', 'cutout'], async (ctx) => {
         const report = () => {
           const fraction = total ? (done + (current?.fraction ?? 0)) / total : 0
           ctx.progress({
@@ -329,7 +344,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
           current = undefined
           report()
         }
-      },
+      }),
     })
     running = { handle, token }
     emit()
@@ -337,6 +352,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       if (running?.token !== token) return
       running = null
       current = undefined
+      download = undefined
       if (outcome !== 'done') {
         paused = true
         if (outcome.code !== 'cancelled') error = { code: outcome.code, message: outcome.message }

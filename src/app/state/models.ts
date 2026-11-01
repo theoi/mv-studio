@@ -8,7 +8,7 @@ import {
   whisperFileUrls,
 } from '../../analysis/models.ts'
 import { modelCache, type ModelDescriptor } from '../../shared/models.ts'
-import { VISION_MODELS } from '../../vision/runtime/models.ts'
+import { VISION_MODEL_PARTS, VISION_MODEL_TITLES, type VisionModel } from '../../vision/runtime/models.ts'
 
 /** A model a feature downloads on first use, as Settings › This device lists it. */
 export interface LocalModel {
@@ -33,6 +33,9 @@ function local(id: string, title: string, desc: string, ...models: ModelDescript
   }
 }
 
+const vision = (id: VisionModel, desc: string) =>
+  local(id, VISION_MODEL_TITLES[id], desc, ...VISION_MODEL_PARTS[id])
+
 async function isCached(model: LocalModel, url: string): Promise<boolean> {
   for (const u of [url, ...(model.formerUrls?.[url] ?? [])]) if (await modelCache.has(u)) return true
   return false
@@ -51,17 +54,11 @@ export const LOCAL_MODELS: LocalModel[] = [
     bytes: whisper.bytes,
   },
   local('aligner', MODEL_TITLES.aligner, 'Times each word to the vocals', WAV2VEC2_MODEL),
-  local(
-    'cutout',
-    'Person cutout',
-    'Text behind the subject',
-    VISION_MODELS.selfieLandscape,
-    VISION_MODELS.faceShortRange,
-    VISION_MODELS.personDetector,
-  ),
-  local('matte', 'Cutout edges', 'Cleaner edges where text overlaps the person', VISION_MODELS.modnet),
-  local('depth', 'Depth', '3D camera on stills', VISION_MODELS.depthAnythingSmall),
-  local('tagger', 'Footage tagger', 'Search and match clips', VISION_MODELS.clipB32),
+  vision('cutout', 'Text behind the subject'),
+  vision('matte', 'Cleaner edges where text overlaps the person'),
+  vision('picker', 'Pick an object to put text behind'),
+  vision('depth', '3D camera on stills'),
+  vision('tagger', 'Search and match clips'),
 ]
 
 /** How much of a model is in the browser's model cache: every file, some (an interrupted download) or none. */

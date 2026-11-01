@@ -59,7 +59,7 @@ test('importing a song into an empty project makes it the song and analyzes it',
   const seen = await page.evaluate(() => (window as unknown as { factsSeen: string[] }).factsSeen)
   expect(seen[0]).toBe('Analyzing the song…')
   expect(seen).not.toContain('Not analyzed yet')
-  await expect(page.getByRole('button', { name: 'Project: song' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
 
   // Undo removes the import; the analysis has no undo step of its own.
   await page.keyboard.press(`${mod}+z`)

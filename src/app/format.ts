@@ -24,6 +24,9 @@ export function formatBpm(bpm: number): string {
   return `${Math.round(bpm)} BPM`
 }
 
+/** `text` as a sentence: with a period at the end unless it already ends with one, or with ? ! or …. */
+export const sentence = (text: string) => (/[.?!…]$/.test(text) ? text : `${text}.`)
+
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
@@ -35,6 +38,15 @@ export function shortFileName(name: string, max = 23): string {
   const ext = dot > 0 && name.length - dot <= 6 ? name.length - dot : 0
   const end = Math.max(ext + 3, 7)
   return `${name.slice(0, max - 1 - end)}…${name.slice(-end)}`
+}
+
+/** `name`, or the first of "name (2)", "name (3)"... that `taken` doesn't have. */
+export function distinctName(name: string, taken: Iterable<string>): string {
+  const used = new Set(taken)
+  if (!used.has(name)) return name
+  let n = 2
+  while (used.has(`${name} (${n})`)) n++
+  return `${name} (${n})`
 }
 
 /** When a project was last changed, as on its card: "Edited 5 minutes ago", "Edited yesterday", "Edited Oct 24". */

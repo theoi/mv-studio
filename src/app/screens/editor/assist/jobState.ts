@@ -53,12 +53,43 @@ export function useKeepFocus(running: boolean) {
   return { keep, target }
 }
 
+/**
+ * Scrolls part of a tool's body into view when the user opens it below the fold. The footer pinned to the panel's
+ * bottom covers the end of the scroll area, so the part stops above it.
+ */
+export function revealInTool(el: HTMLElement) {
+  const footer = el.closest('.scroll')?.querySelector<HTMLElement>(':scope > [data-tool-footer]')
+  const covered = footer && getComputedStyle(footer).position === 'sticky' ? footer.offsetHeight : 0
+  el.style.scrollMarginBottom = `${covered + 8}px`
+  el.scrollIntoView({ block: 'nearest' })
+}
+
 /** Returns a finished or failed tool view to idle. */
 export function dismiss(job?: JobSnapshot) {
   if (job) set((s) => ({ dismissed: [...s.dismissed, job.id] }))
 }
 
 export const pct = (job?: JobSnapshot) => Math.round((job?.progress.fraction ?? 0) * 100)
+
+/**
+ * How far the model download a job shows as its line has got, in percent, rather than the job: undefined while the
+ * job shows no download.
+ */
+export function downloadPct(job?: JobSnapshot): number | undefined {
+  const p = job?.progress
+  if (p?.stage !== 'download' || !p.bytesTotal) return undefined
+  return Math.round(Math.min(1, (p.bytesLoaded ?? 0) / p.bytesTotal) * 100)
+}
+
+/**
+ * A job's line, with how far its model download is when that is the line: "Downloading the stem separator (181 MB,
+ * once)… 89%". The job's own percentage goes with its bar.
+ */
+export function jobLine(job?: JobSnapshot): string | undefined {
+  const message = job?.progress.message
+  const download = downloadPct(job)
+  return message && download !== undefined ? `${message}… ${download}%` : message
+}
 
 export function etaText(job?: JobSnapshot): string | undefined {
   const s = job?.progress.etaSeconds

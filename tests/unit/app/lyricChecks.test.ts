@@ -1,14 +1,22 @@
-import { describe, expect, it } from 'vitest'
-import type { LyricLine, LyricsDoc } from '../../../src/model/index.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { LyricLine, LyricsDoc, Project } from '../../../src/model/index.ts'
+import { createProject } from '../../../src/model/factory.ts'
 import {
   asDraft,
   draftLooksUnreliable,
   isUncertain,
   languageName,
   longUnlisted,
+  nextToCheck,
+  PLAY_LINE_TAIL,
+  playheadToLine,
+  playLine,
+  showNextToCheck,
   timingLooksUncertain,
   withTimingChecks,
 } from '../../../src/app/state/lyricChecks.ts'
+import { editor } from '../../../src/app/state/project.ts'
+import { get, select, set } from '../../../src/app/state/ui.ts'
 
 /** A line whose words have these confidences and start at these times (one per second by default). */
 const line = (confidences: number[], starts = confidences.map((_, i) => i)): LyricLine => ({
@@ -112,5 +120,217 @@ describe('lyric checks', () => {
   it('names Whisper’s language codes, Javanese included', () => {
     expect(languageName('sv')).toBe('Swedish')
     expect(languageName('jw')).toBe('Javanese')
+  })
+})
+
+/** Lines a (10–10.5 s, to check), b (10.6–11.5 s), c (10.6–11.5 s, to check), d (untimed, to check) and e (20 s). */
+function checking(): Project {
+  const project = createProject()
+  const at = (
+    id: string,
+    start: number | undefined,
+    end: number | undefined,
+    check?: 'timing',
+  ): LyricLine => ({
+    id,
+    text: id,
+    start,
+    end,
+    words: [],
+    ...(check ? { check } : {}),
+  })
+  project.lyrics = {
+    source: 'pasted',
+    lines: [
+      at('a', 10, 10.5, 'timing'),
+      at('b', 10.6, 11.5),
+      at('c', 10.6, 11.5, 'timing'),
+      at('d', undefined, undefined, 'timing'),
+      at('e', 20, 21),
+    ],
+  }
+  return project
+}
+
+describe('stepping through and playing the lines to check', () => {
+  afterEach(() => {
+    set({ playing: false })
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('finds the next line to check after a line, from the first again after the last', () => {
+    const project = checking()
+    expect(nextToCheck(project)?.id).toBe('a')
+    expect(nextToCheck(project, 'a')?.id).toBe('c')
+    expect(nextToCheck(project, 'b')?.id).toBe('c')
+    expect(nextToCheck(project, 'c')?.id).toBe('d')
+    expect(nextToCheck(project, 'd')?.id).toBe('a')
+    expect(nextToCheck(project, 'e')?.id).toBe('a')
+    expect(nextToCheck(project, 'gone')?.id).toBe('a')
+    project.lyrics!.lines = project.lyrics!.lines.map(({ check: _, ...l }) => l)
+    expect(nextToCheck(project, 'a')).toBeUndefined()
+  })
+
+  it('moves the playhead to a line’s start unless it is in the line already', () => {
+    editor.load(checking())
+    set({ playhead: 3 })
+    playheadToLine('c')
+    expect(get().playhead).toBe(10.6)
+    set({ playhead: 11 })
+    playheadToLine('c')
+    expect(get().playhead).toBe(11)
+    playheadToLine('d')
+    expect(get().playhead).toBe(11)
+  })
+
+  /** The time `performance.now()` gives, in ms. */
+  let clock = 0
+  /** Frames of playback at 1×: each moves the clock on by as long as the playhead moves. */
+  const play = (...times: number[]) => {
+    for (const t of times) {
+      clock += (t - get().playhead) * 1000
+      set({ playhead: t })
+    }
+  }
+  /** A frame one frame's time after the last, at `t`: a seek, or a frame from before one. */
+  const jump = (t: number) => {
+    clock += 16
+    set({ playhead: t })
+  }
+
+  it('plays a line from its start and pauses once the playhead is past its end and the tail', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    set({ playhead: 3 })
+    playLine('c')
+    expect(get()).toMatchObject({ playhead: 10.6, playing: true })
+    for (const t of [10.62, 11, 11.5, 11.9]) {
+      play(t)
+      expect(get().playing).toBe(true)
+    }
+    play(11.5 + PLAY_LINE_TAIL)
+    expect(get().playing).toBe(false)
+    playLine('d')
+    expect(get().playing).toBe(false)
+  })
+
+  it('pauses at the end after a frame from before the seek to the line, also one from early in the line', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    set({ playhead: 3 })
+    playLine('c')
+    jump(3)
+    jump(10.62)
+    play(11, 11.4, 11.8)
+    expect(get().playing).toBe(true)
+    play(12.1)
+    expect(get().playing).toBe(false)
+
+    // Play line again 0.3 s into the line: the frame from before reads 10.9 s, then playback goes on from 10.62 s.
+    set({ playhead: 10.9 })
+    playLine('c')
+    jump(10.9)
+    jump(10.62)
+    play(11.5, 11.9)
+    expect(get().playing).toBe(true)
+    play(12.05)
+    expect(get().playing).toBe(false)
+  })
+
+  it('pauses at the end after a slow draw: its frame comes late, and the next one a long step on', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    playLine('c')
+    play(10.62, 11.2)
+    // Each frame's time is taken before its draw and reported after it: this draw, past the line's first half second,
+    // takes 150 ms instead of 16.
+    clock += 150
+    set({ playhead: 11.216 })
+    clock += 16
+    set({ playhead: 11.366 })
+    play(11.9)
+    expect(get().playing).toBe(true)
+    play(12.05)
+    expect(get().playing).toBe(false)
+  })
+
+  it('pauses at the end after a late frame (a stall, or a hidden tab while the audio plays on)', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    playLine('a')
+    play(10.02, 10.4)
+    expect(get().playing).toBe(true)
+    play(11.6)
+    expect(get().playing).toBe(false)
+  })
+
+  it('leaves playback alone once the playhead moves to the next line before the end', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    // Line a would pause at 11 s; b starts at 10.6 s, here 0.58 s ahead in one frame.
+    playLine('a')
+    play(10.02)
+    jump(10.6)
+    play(10.8, 11.2)
+    expect(get().playing).toBe(true)
+
+    // Even when the time that passed matches the jump.
+    playLine('a')
+    play(10.02, 10.45)
+    clock += 150
+    playheadToLine('b')
+    expect(get().playhead).toBe(10.6)
+    play(10.8, 11.2)
+    expect(get().playing).toBe(true)
+
+    // Or when Next line to check moves it to the next line to check (c, also at 10.6 s).
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    select({ type: 'lyric', id: 'a' })
+    playLine('a')
+    play(10.02, 10.45)
+    clock += 150
+    showNextToCheck()
+    expect(get()).toMatchObject({ playhead: 10.6, selection: { type: 'lyric', id: 'c' } })
+    play(10.8, 11.2)
+    expect(get().playing).toBe(true)
+  })
+
+  it('leaves playback alone after a pause, a seek past the end, or a wait with no playback from the line', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    playLine('a')
+    play(10.1)
+    set({ playing: false })
+    set({ playing: true })
+    play(10.7, 11.1)
+    expect(get().playing).toBe(true)
+
+    playLine('a')
+    play(10.1)
+    jump(15)
+    play(15.2)
+    expect(get().playing).toBe(true)
+
+    playLine('a')
+    clock += 1500
+    jump(30)
+    jump(10.1)
+    play(10.6, 11.2)
+    expect(get().playing).toBe(true)
+  })
+
+  it('stops watching line a when line c is played', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    // Line a would pause at 11 s, and the jump to c's start passes as playback of a; c goes on to 12 s.
+    playLine('a')
+    play(10.02, 10.3)
+    clock += 300
+    playLine('c')
+    play(10.62, 11, 11.4, 11.8)
+    expect(get().playing).toBe(true)
+    play(12)
+    expect(get().playing).toBe(false)
   })
 })

@@ -12,7 +12,8 @@ import {
   linesToCheck,
   lyricsResultKind,
   markAllChecked,
-  showFirstToCheck,
+  nextToCheck,
+  showNextToCheck,
 } from '../../../state/lyricChecks.ts'
 import { estimateLyrics, lastLyricsRequest, lyricsCost, startLyrics } from '../../../state/lyrics.ts'
 import {
@@ -54,14 +55,15 @@ function draftLanguageOptions() {
 }
 
 /**
- * After a draft or timing: how many lines there are and how many are left to check, with Show on timeline and Mark
- * all as checked, then, for a draft that is probably mostly wrong, a warning with other ways to get the lyrics (and
- * no Mark all as checked: confirming such a draft is the wrong nudge).
+ * After a draft or timing: how many lines there are and how many are left to check, with Show on timeline (each
+ * click the next line to check) and Mark all as checked, then, for a draft that is probably mostly wrong, a warning
+ * with other ways to get the lyrics (and no Mark all as checked: confirming such a draft is the wrong nudge).
  */
 function LyricsResult({ onPaste }: { onPaste: () => void }) {
   const project = useProject()
   // Radix Select takes no empty value, so the detected language has a value of its own.
   const [language, setLanguage] = useState(DETECTED)
+  const selected = useUi((s) => (s.selection.type === 'lyric' ? s.selection.id : undefined))
   const kind = lyricsResultKind(project)
   const doc = project.lyrics
   if (!kind || !doc) return null
@@ -75,6 +77,8 @@ function LyricsResult({ onPaste }: { onPaste: () => void }) {
       ? `Drafted ${plural(doc.lines.length, 'line')} from the vocals · ${count}`
       : `Timed ${plural(doc.lines.filter((l) => l.start !== undefined).length, 'line')} · ${count}`
   const unreliable = kind === 'draft' && toCheck > 0 && draftLooksUnreliable(doc)
+  // With a lyric line selected, Show on timeline goes on to the next line to check after it.
+  const stepping = selected !== undefined && nextToCheck(project, selected)?.id !== selected
   return (
     <div className={styles.draftResult}>
       {/* A draft that is probably wrong gets the warning below instead of a success card. */}
@@ -90,8 +94,8 @@ function LyricsResult({ onPaste }: { onPaste: () => void }) {
       )}
       {toCheck > 0 && (
         <div className={styles.linkRow}>
-          <Button size="sm" variant="ghost" onClick={showFirstToCheck}>
-            Show on timeline
+          <Button size="sm" variant="ghost" onClick={showNextToCheck}>
+            {stepping ? 'Show next line to check' : 'Show on timeline'}
           </Button>
           {!unreliable && (
             <Button size="sm" variant="ghost" onClick={markAllChecked}>

@@ -147,6 +147,12 @@ export function localSetupSteps(runner: 'ollama' | 'lmstudio' | 'other', origin 
 /** A context length that holds Ask's prompts, which measured 11,000 to 16,000 tokens on a sample project. */
 export const LOCAL_CONTEXT_TOKENS = 16384
 
+/** "Raise Ollama’s context length to 16k": the fix for a request a local runner cut short. */
+export function raiseContextLength(runner: 'ollama' | 'lmstudio' | 'other'): string {
+  const owner = runner === 'ollama' ? 'Ollama’s' : runner === 'lmstudio' ? 'LM Studio’s' : 'the model’s'
+  return `Raise ${owner} context length to 16k`
+}
+
 /**
  * Steps for giving a local runner a context length that holds the whole request. Steps starting with two spaces are
  * alternatives under the step before them (see nestSteps()).
@@ -155,7 +161,7 @@ export function contextLengthSteps(runner: 'ollama' | 'lmstudio' | 'other', mode
   const n = LOCAL_CONTEXT_TOKENS
   if (runner === 'ollama') {
     return [
-      'Raise Ollama’s context length to 16k, then try again:',
+      `${raiseContextLength(runner)}, then try again:`,
       '  Ollama app (macOS, Windows): Settings › Context length › 16k.',
       `  Linux: run sudo systemctl edit ollama, add Environment="OLLAMA_CONTEXT_LENGTH=${n}" under [Service], then sudo systemctl restart ollama.`,
       `  From a terminal: OLLAMA_CONTEXT_LENGTH=${n} ollama serve`,

@@ -727,6 +727,7 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     expect(lmError.steps).toEqual([
       'In LM Studio, load the model again with Context Length set to 16384 or more, then try again.',
     ])
+    expect(lmError.info.action).toBe('Raise LM Studio’s context length to 16k')
     const OTHER = 'http://localhost:8080'
     const other = new MockLlmServer({ flavor: 'lmstudio', models: ['m'], contextTokens: 4096 }).reply({
       tool_calls: [editCall],
@@ -741,6 +742,7 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     expect(otherError.steps).toEqual([
       'Give the model a context length of at least 16,384 tokens in the server’s settings, then try again.',
     ])
+    expect(otherError.info.action).toBe('Raise the model’s context length to 16k')
   })
 
   it('trusts answers without a token count, and short requests', async () => {

@@ -23,6 +23,7 @@ import { decodeContainer, encodeContainer } from './runtime/container.ts'
 import type { FrameSource } from './runtime/frames.ts'
 import { createSharedRunner } from './runtime/shared.ts'
 import type { TaskOptions } from './runtime/tasks.ts'
+import type { WatchDownloads } from './runtime/downloads.ts'
 import { PEOPLE_VERSION, SUITABILITY_VERSION, type PeopleAt } from './mask/suitability.ts'
 import {
   buildPersonTrack,
@@ -103,6 +104,8 @@ export interface VisionService {
   readonly matcher: FootageMatcher
   /** Depth maps for 2.5D camera moves (cached; preview and full quality). */
   readonly depth: DepthService
+  /** First-time model downloads, for a job's progress line (`downloadLines`). Returns stop. */
+  watchDownloads: WatchDownloads
 }
 
 interface SelectionFileMeta {
@@ -379,5 +382,6 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
     },
     matcher,
     depth: createDepthService({ onnx: backends.onnx(), cache }),
+    watchDownloads: (listener) => backends.watchDownloads?.(listener) ?? (() => undefined),
   }
 }

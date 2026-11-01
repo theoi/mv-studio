@@ -20,6 +20,8 @@ export interface ProjectSummary {
   name: string
   updatedAt: string
   thumbnail?: Blob
+  /** The kind of video it was started as (the app's template kind), so projects of one song can be told apart. */
+  kind?: string
 }
 
 export interface ProjectStore {

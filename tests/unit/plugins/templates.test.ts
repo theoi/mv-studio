@@ -160,7 +160,7 @@ describe('next-step hints', () => {
     const editor = new ProjectEditor(createFromTemplate('footage', withSong))
     expect(templateHint(editor.getProject())).toEqual(TEMPLATE_HINTS.addClips)
     const title = clipsOnTrack(editor.getProject(), 'Titles')[0] as TextClip
-    expect([title.text, title.animation?.presetId]).toEqual(['neon skyline', 'stamp'])
+    expect([title.text, title.animation?.presetId]).toEqual(['Neon Skyline', 'stamp'])
 
     const clip = asset('clip', 'video', 'dance.mp4', 5)
     editor.dispatch(templateCommands(editor.getProject(), { footage: [clip] }))
@@ -171,6 +171,15 @@ describe('next-step hints', () => {
       clip: createImageClip({ trackId: video.id, assetId: 'clip', start: 0, duration: 2 }),
     })
     expect(templateHint(editor.getProject())).toBeNull()
+  })
+
+  it('footage: titles the cut with the song’s tagged title, not its file name', () => {
+    const tagged = {
+      ...asset('song', 'audio', 'song_show-me_josh-woodward.mp3', 8),
+      tags: { title: 'Show Me', artist: 'Josh Woodward' },
+    }
+    const p = createFromTemplate('footage', { song: tagged, analysis })
+    expect((clipsOnTrack(p, 'Titles')[0] as TextClip).text).toBe('Show Me')
   })
 
   it('ai: keeps the idea and is done once a director draft is on the timeline', () => {

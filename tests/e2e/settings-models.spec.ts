@@ -53,7 +53,7 @@ test('Settings › This device removes one downloaded model and keeps the others
   const beats = dialog.getByRole('group', { name: 'Beat and bar tracker' })
   const stems = dialog.getByRole('group', { name: 'Stem separator' })
   await expect(stems.getByText('On this device')).toBeVisible()
-  await expect(dialog.getByRole('group', { name: 'Depth' }).getByRole('button')).toHaveCount(0)
+  await expect(dialog.getByRole('group', { name: 'Depth estimator' }).getByRole('button')).toHaveCount(0)
 
   await beats.getByRole('button', { name: 'Remove Beat and bar tracker' }).focus()
   await page.keyboard.press('Enter')
@@ -93,7 +93,7 @@ test('a partly downloaded model says so and can be removed on its own', async ({
   expect(await page.evaluate((url) => caches.match(url).then(Boolean), model.urls[0]!)).toBe(false)
 })
 
-test('Settings › This device counts the person detector in Person cutout and removes it with the rest', async ({
+test('Settings › This device counts the person detector in Person finder and removes it with the rest', async ({
   page,
 }) => {
   await openHarness(page)
@@ -101,6 +101,7 @@ test('Settings › This device counts the person detector in Person cutout and r
     () => window.mvStudio.app.models.LOCAL_MODELS.find((m: { id: string }) => m.id === 'cutout').urls,
   )
   expect(urls.some((u) => u.endsWith('/efficientdet_lite0.tflite'))).toBe(true)
+  expect(urls.some((u) => u.endsWith('/selfie_segmenter.tflite'))).toBe(true)
   await page.evaluate(async (list) => {
     const cache = await caches.open('mv-studio-models-v1')
     for (const url of list) await cache.put(url, new Response(new Uint8Array(1000)))
@@ -109,19 +110,22 @@ test('Settings › This device counts the person detector in Person cutout and r
     localStorage.setItem('mv-studio.guide-seen', '1')
     window.location.hash = '#/editor?dialog=settings&page=local'
   })
-  const cutout = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'Person cutout' })
+  const cutout = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'Person finder' })
   await expect(cutout.getByText('On this device')).toBeVisible()
   await expect(cutout.getByText('5 MB')).toBeVisible()
-  await cutout.getByRole('button', { name: 'Remove Person cutout' }).click()
-  await expect(page.getByText('Person cutout removed (5 MB). It downloads again when needed.')).toBeVisible()
+  await cutout.getByRole('button', { name: 'Remove Person finder' }).click()
+  await expect(page.getByText('Person finder removed (5 MB). It downloads again when needed.')).toBeVisible()
   await expect(cutout.getByText('Downloads when used')).toBeVisible()
   const left = await page.evaluate(
     (list) => Promise.all(list.map((u) => caches.match(u).then(Boolean))),
     urls,
   )
   expect(left).toEqual(urls.map(() => false))
-  // The matte the cutout uses where text overlaps the person is listed on its own.
-  const matte = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'Cutout edges' })
+  // The matte the cutout uses where text overlaps the person, and the object picker, are listed on their own.
+  const matte = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'Edge refiner' })
   await expect(matte.getByText('7 MB')).toBeVisible()
   await expect(matte.getByText('Downloads when used')).toBeVisible()
+  const picker = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'Object picker' })
+  await expect(picker.getByText('Pick an object to put text behind')).toBeVisible()
+  await expect(picker.getByText('6 MB')).toBeVisible()
 })
