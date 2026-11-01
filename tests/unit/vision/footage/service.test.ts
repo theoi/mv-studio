@@ -70,6 +70,8 @@ function setup(
     gateBlank?: boolean
     blankCheckStallMs?: number
     showsSomething?: (id: string) => boolean
+    /** Called when a clip's frame source is let go. */
+    onDispose?: (id: string) => void
   } = {},
 ) {
   const editor = new ProjectEditor(project)
@@ -129,7 +131,10 @@ function setup(
       duration: asset.duration ?? 1,
       frameRate: 30,
       frameAt: () => Promise.reject(new Error('not used')),
-      dispose: () => void disposed.push(asset.id),
+      dispose: () => {
+        disposed.push(asset.id)
+        options.onDispose?.(asset.id)
+      },
     }),
     ...(options.blankCheckStallMs ? { blankCheckStallMs: options.blankCheckStallMs } : {}),
     ...(options.showsSomething ? { showsSomething: (a: Asset) => options.showsSomething!(a.id) } : {}),
@@ -457,30 +462,63 @@ describe('fast blank check', () => {
 describe('a blank check that hangs', () => {
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-  it('lets go of its frames, tries the clip once more at most, then goes on without it every time', async () => {
-    const { editor, service, peakLuma, disposed, tick } = setup(undefined, {
-      peakLuma: (id) => (id === 'ocean' ? new Promise<number>(() => undefined) : 120),
-      blankCheckStallMs: 30,
-    })
-    const tries = () => peakLuma.mock.calls.filter(([s]) => s.mediaId === 'ocean').length
-    const checked = () =>
-      Object.keys(editor.getProject().analysis.visual).filter((id) =>
-        hasBlankVerdict(editor.getProject().analysis.visual[id]),
-      )
-    await service.checkBlank()
-    expect([tries(), disposed.filter((id) => id === 'ocean').length]).toEqual([1, 1])
-    await service.checkBlank()
-    expect([tries(), disposed.filter((id) => id === 'ocean').length]).toEqual([2, 2])
-    expect(checked()).toEqual(['city'])
-    const started = performance.now()
-    await service.checkBlank()
-    expect(performance.now() - started).toBeLessThan(25)
-    expect(tries()).toBe(2)
-    expect(checked().sort()).toEqual(['city', 'crowd', 'misc'])
-    service.indexing.start()
-    await tick()
-    expect(tries()).toBe(2)
-  })
+  /** Runs `test` with fake timeouts, so a check's 30 ms stall passes only when the test moves time on. */
+  async function withFakeTime(test: () => Promise<void>) {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await test()
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+  /** Moves fake time on by `ms` and says whether `run` has settled by then. */
+  async function settlesWithin(run: Promise<unknown>, ms: number) {
+    let settled = false
+    void run.then(() => (settled = true))
+    await vi.advanceTimersByTimeAsync(ms)
+    return settled
+  }
+
+  it('lets go of its frames, tries the clip once more at most, then goes on without it every time', () =>
+    withFakeTime(async () => {
+      const { editor, service, peakLuma, disposed } = setup(undefined, {
+        peakLuma: (id) => (id === 'ocean' ? new Promise<number>(() => undefined) : 120),
+        blankCheckStallMs: 30,
+      })
+      const tries = () => peakLuma.mock.calls.filter(([s]) => s.mediaId === 'ocean').length
+      const checked = () =>
+        Object.keys(editor.getProject().analysis.visual).filter((id) =>
+          hasBlankVerdict(editor.getProject().analysis.visual[id]),
+        )
+      expect(await settlesWithin(service.checkBlank(), 30)).toBe(true)
+      expect([tries(), disposed.filter((id) => id === 'ocean').length]).toEqual([1, 1])
+      expect(await settlesWithin(service.checkBlank(), 30)).toBe(true)
+      expect([tries(), disposed.filter((id) => id === 'ocean').length]).toEqual([2, 2])
+      expect(checked()).toEqual(['city'])
+      // Hung twice, it costs no more waiting: the next request settles without time moving on.
+      expect(await settlesWithin(service.checkBlank(), 0)).toBe(true)
+      expect(tries()).toBe(2)
+      expect(checked().sort()).toEqual(['city', 'crowd', 'misc'])
+      service.indexing.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(tries()).toBe(2)
+    }))
+
+  it('takes a failure caused by letting go of a hung check’s frames for no sign that the clip is unreadable', () =>
+    withFakeTime(async () => {
+      const closing = new Map<string, (error: unknown) => void>()
+      const { service, peakLuma } = setup(undefined, {
+        // This decoder answers only when its frames are let go, and then with an error.
+        peakLuma: (id) =>
+          id === 'ocean' ? new Promise<number>((_, reject) => closing.set(id, reject)) : 120,
+        onDispose: (id) => closing.get(id)?.(new JobError('decode', 'The decoder was closed')),
+        blankCheckStallMs: 30,
+      })
+      expect(await settlesWithin(service.checkBlank(), 30)).toBe(true)
+      // Not marked unreadable, so the next request tries it once more.
+      expect(await settlesWithin(service.checkBlank(['ocean']), 30)).toBe(true)
+      expect(peakLuma.mock.calls.filter(([s]) => s.mediaId === 'ocean')).toHaveLength(2)
+    }))
 
   it('stops the wait, leaving the clips after it unchecked, and the next request checks them afresh', async () => {
     let hang = true
