@@ -11,7 +11,7 @@ import { JobError } from '../../shared/jobs.ts'
 import { lyricClipCommands } from '../../plugins/lyricClips.ts'
 import { starterTemplate, templateState } from '../../plugins/templates.ts'
 import { aboutMinutes, formatBytes, plural } from '../format.ts'
-import { asDraft, withTimingChecks } from './lyricChecks.ts'
+import { asDraft, longUnlisted, withTimingChecks } from './lyricChecks.ts'
 import { dispatch, editor } from './project.ts'
 import { stemStore } from './stems.ts'
 import { toast } from './ui.ts'
@@ -80,13 +80,15 @@ export async function startLyrics(request: LyricsRequest): Promise<void> {
     const result = await lyrics.run(songId, request, deps).promise
     if (editor.getProject().songAssetId !== songId) return
     const label = request.kind === 'time' ? 'Time lyrics' : 'Draft lyrics'
+    const unlisted = longUnlisted(result.unlisted ?? [])
     const doc =
       request.kind === 'draft'
         ? asDraft(result.doc, result.language)
-        : withTimingChecks(result.doc, result.unlisted)
+        : { ...withTimingChecks(result.doc, unlisted), ...(unlisted.length ? { unlisted } : {}) }
     if (!dispatch(lyricsCommands(editor.getProject(), doc), { label })) return
     // Relabels sections from repeated lines; derived data, so it is not part of the undo step.
-    if (result.chorus) dispatch(result.chorus, { history: 'skip' })
+    const chorus = await lyricChorus(songId)
+    if (chorus) dispatch(chorus, { history: 'skip' })
     const lines = result.doc.lines.length
     toast(
       request.kind === 'time'
@@ -103,6 +105,14 @@ export async function startLyrics(request: LyricsRequest): Promise<void> {
     // Failures and their messages show in Assist › Lyrics, from the job.
     if (!(error instanceof JobError)) throw error
   }
+}
+
+/** The edit that relabels the song's sections from the lyrics as stored now (`lyricChorusCommand`), or null. */
+async function lyricChorus(songId: Id): Promise<EditCommand | null> {
+  const { lyricChorusCommand } = await import('../../analysis/client.ts')
+  const project = editor.getProject()
+  const analysis = project.analysis.audio[songId]
+  return analysis && project.lyrics ? lyricChorusCommand(analysis, project.lyrics) : null
 }
 
 /**

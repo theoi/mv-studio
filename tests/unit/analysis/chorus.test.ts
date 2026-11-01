@@ -4,12 +4,14 @@ import {
   lyricChorusCommand,
   lyricChorusRanges,
   withChorus,
+  type TimeRange,
 } from '../../../src/analysis/structure/chorus.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import {
   createProject,
   type AudioAnalysis,
   type LyricLine,
+  type LyricsDoc,
   type SongSection,
 } from '../../../src/model/index.ts'
 
@@ -319,9 +321,38 @@ const VERSE_2 = ['Streets are empty and the shops are closed', 'shoes in my hand
 const VERSE_3 = ['Every window shows a different face', 'nobody knows my name']
 const VERSE_4 = ['Out in the cold where the rivers bend', 'we walk alone']
 
+/**
+ * Lyrics that write the chorus out once and then only "Chorus", timed with the later choruses' singing left unlisted
+ * (`UNLISTED`): their only repeat is the line that opens each verse.
+ */
+const OPENER = ['Here we go again my friend']
+const ONCE = [
+  ...say(OPENER, 2),
+  ...say(VERSE_1, 6),
+  ...say(['Chorus', CHORUS[0]!], 20.5),
+  ...say(OPENER, 42),
+  ...say(VERSE_2, 46),
+  ...say(['Chorus'], 60.5),
+  ...say(OPENER, 82),
+  ...say(VERSE_3, 86),
+  ...say(['Chorus'], 100.5),
+]
+const UNLISTED = [
+  { start: 61, end: 80 },
+  { start: 101, end: 120 },
+]
+const ONCE_SECTIONS = [
+  section('a', 0, 20, 'verse', 0),
+  section('b', 20, 40, 'chorus', 1, 0.4),
+  section('c', 40, 60, 'verse', 0),
+  section('d', 60, 80, 'chorus', 1, 0.4),
+  section('e', 80, 100, 'verse', 0),
+  section('f', 100, 120, 'chorus', 1),
+]
+
 describe('lyricChorusRanges', () => {
-  const chorusAt = (sections: SongSection[], lines: LyricLine[]) =>
-    lyricChorusRanges(sections, findLyricChorus(lines)!).map((r) => [r.start, r.end, r.confidence])
+  const chorusAt = (sections: SongSection[], lines: LyricLine[], unlisted: TimeRange[] = []) =>
+    lyricChorusRanges(sections, findLyricChorus(lines)!, unlisted).map((r) => [r.start, r.end, r.confidence])
 
   it('confirms a detected chorus without shrinking it and demotes one where a verse is sung', () => {
     const sections = [
@@ -471,6 +502,27 @@ describe('lyricChorusRanges', () => {
     ])
   })
 
+  it('keeps a detected chorus that unlisted singing fills at least half of, though hardly a word is sung in it', () => {
+    // b holds six words; d and f one each, the rest of their singing is unlisted.
+    expect(chorusAt(ONCE_SECTIONS, ONCE)).toEqual([[20, 40, 0.4]])
+    expect(chorusAt(ONCE_SECTIONS, ONCE, UNLISTED)).toEqual([
+      [20, 40, 0.4],
+      [60, 80, 0.4],
+      [100, 120, 0.4],
+    ])
+    const kept = (unlisted: TimeRange[]) => chorusAt(ONCE_SECTIONS, ONCE, unlisted).map(([start]) => start)
+    expect(kept([{ start: 70, end: 80 }])).toEqual([20, 60])
+    expect(kept([{ start: 70.5, end: 80 }])).toEqual([20])
+    expect(
+      kept([
+        { start: 61, end: 66 },
+        { start: 72, end: 77 },
+      ]),
+    ).toEqual([20, 60])
+    // Only the 5 s inside d count.
+    expect(kept([{ start: 50, end: 65 }])).toEqual([20])
+  })
+
   it('lets a lyric chorus take over a section it covers most of, and only that', () => {
     const sections = [
       section('a', 0, 20, 'verse', 0),
@@ -555,6 +607,53 @@ describe('lyricChorusCommand', () => {
     expect(sections?.filter((s) => s.label === 'chorus').map((s) => [s.start, s.end])).toEqual([
       [25, 33.5],
       [55, 70],
+    ])
+  })
+
+  it('keeps the choruses lyrics leave unlisted, except where a line is timed now', () => {
+    const once: AudioAnalysis = { assetId: 'song', version: '1', sections: ONCE_SECTIONS }
+    const choruses = (lyrics: LyricsDoc) => {
+      const command = lyricChorusCommand(once, lyrics)
+      const sections = command?.type === 'analysis.setRefined' ? command.refined.sections : undefined
+      return sections?.filter((s) => s.label === 'chorus').map((s) => [s.start, s.end])
+    }
+    expect(choruses({ source: 'pasted', lines: ONCE })).toEqual([[20, 40]])
+    expect(choruses({ source: 'pasted', lines: ONCE, unlisted: UNLISTED })).toEqual([
+      [20, 40],
+      [60, 80],
+      [100, 120],
+    ])
+    /** ONCE with a four-word line timed into d's unlisted singing, its words starting at `starts`. */
+    const timedAt = (starts: number[]) =>
+      choruses({
+        source: 'pasted',
+        lines: [
+          ...ONCE,
+          {
+            id: 'timed',
+            text: 'Oh oh oh oh',
+            start: starts[0],
+            end: starts.at(-1)! + 0.5,
+            words: starts.map((t) => ({ text: 'Oh', start: t, end: t + 0.5 })),
+          },
+        ],
+        unlisted: UNLISTED,
+      })
+    // Spread from 62 to 74 s: the singing between its words is the line's too, so 7 s of d stay unlisted.
+    expect(timedAt([62, 66, 70, 73.5])).toEqual([
+      [20, 40],
+      [100, 120],
+    ])
+    // Early or late in d, it leaves more than half of d unlisted.
+    expect(timedAt([61.5, 62.5, 63.5, 64.5])).toEqual([
+      [20, 40],
+      [60, 80],
+      [100, 120],
+    ])
+    expect(timedAt([75, 76, 77, 78])).toEqual([
+      [20, 40],
+      [60, 80],
+      [100, 120],
     ])
   })
 

@@ -49,6 +49,12 @@ const MAX_STRETCH = 1.25
 const COVERS_SECTION = 0.6
 /** Fewest words sung in a passage before the lyrics can say what it is; fewer is instrumental. */
 const MIN_SUNG_WORDS = 6
+/**
+ * A detected chorus the lyrics do not repeat in stays when singing they don't list (`LyricsDoc.unlisted`) fills at
+ * least this share of it. Lyrics that write the chorus out once and then only "Chorus" leave its later singing
+ * unlisted, with no words in it, and that singing is no instrumental.
+ */
+const UNLISTED_SHARE = 0.5
 /** How much the lyrics may extend a detected chorus they repeat in, at both ends together, as a share of its length. */
 const MAX_EXTENSION = 0.1
 /**
@@ -318,10 +324,15 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
  *   lyrics confirm another section of its repeat group, a quarter of repeated words is enough, so a last chorus sung
  *   with new words stays.
  * - A lyric chorus elsewhere takes over the sections it covers most of.
+ * - A detected chorus the lyrics do not repeat in also stays when `unlisted` singing (seconds) fills half of it.
  * A lyric chorus much shorter than the sections (`MIN_LYRIC_CHORUS_SHARE`) only confirms: it adds no chorus and turns
  * no sung detected chorus into a verse. Ranges the lyrics confirm or add get `LYRIC_CHORUS_CONFIDENCE`.
  */
-export function lyricChorusRanges(sections: readonly SongSection[], chorus: LyricChorus): ChorusRange[] {
+export function lyricChorusRanges(
+  sections: readonly SongSection[],
+  chorus: LyricChorus,
+  unlisted: readonly TimeRange[] = [],
+): ChorusRange[] {
   const sungIn = (range: TimeRange) =>
     chorus.words.filter((w) => (w.start + w.end) / 2 >= range.start && (w.start + w.end) / 2 < range.end)
   const hitsIn = (s: SongSection) =>
@@ -345,7 +356,8 @@ export function lyricChorusRanges(sections: readonly SongSection[], chorus: Lyri
       const share =
         s.repeatGroup !== undefined && confirmedGroups.has(s.repeatGroup) ? REWRITTEN_CHORUS_SHARE : 0.5
       const verse = !repeatedLine && sung.filter((w) => w.repeated).length < share * sung.length
-      if (sung.length >= MIN_SUNG_WORDS && !verse)
+      const unheard = unlisted.reduce((sum, u) => sum + overlap(u, s), 0)
+      if ((sung.length >= MIN_SUNG_WORDS && !verse) || unheard >= UNLISTED_SHARE * (s.end - s.start))
         ranges.push({ start: s.start, end: s.end, confidence: s.confidence ?? AUDIO_CHORUS_CONFIDENCE })
       continue
     }
@@ -475,8 +487,9 @@ export function withChorus(
  * pasted (drafts, edited or not) do not move the chorus: they mishear too many words, so their repeated passages come
  * out short and partial. When their chorus mostly lies inside the detected chorus they confirm it instead, raising
  * its confidence. Chorus edges go to downbeats, or to beats while bars are not found. Null when there is nothing to
- * change. A background result: dispatch with `{ history: 'skip' }`; it applies only if the sections are still the
- * ones it was computed from.
+ * change. Pasted lyrics' `unlisted` singing counts only where no timed line lies, so a line the user timed into it
+ * takes that part back. A background result: dispatch with `{ history: 'skip' }`; it applies only if the sections
+ * are still the ones it was computed from.
  */
 export function lyricChorusCommand(analysis: AudioAnalysis, lyrics: LyricsDoc): EditCommand | null {
   const sections = analysis.sections
@@ -486,7 +499,12 @@ export function lyricChorusCommand(analysis: AudioAnalysis, lyrics: LyricsDoc): 
   const grid = analysis.downbeats?.length ? analysis.downbeats : (analysis.beats ?? [])
   const refined =
     lyrics.source === 'pasted'
-      ? withChorus(sections, lyricChorusRanges(sections, chorus), grid, LYRIC_CHORUS_CONFIDENCE)
+      ? withChorus(
+          sections,
+          lyricChorusRanges(sections, chorus, unlistedParts(lyrics)),
+          grid,
+          LYRIC_CHORUS_CONFIDENCE,
+        )
       : confirmed(sections, chorus.ranges)
   if (!refined) return null
   return {
@@ -495,6 +513,30 @@ export function lyricChorusCommand(analysis: AudioAnalysis, lyrics: LyricsDoc): 
     refined: { sections: refined },
     baseline: { sections },
   }
+}
+
+/** The parts of the lyrics' unlisted singing outside every timed line, from its first word's start to its last's end. */
+function unlistedParts(lyrics: LyricsDoc): TimeRange[] {
+  const lines = lyrics.lines
+    .filter((l) => l.words.length)
+    .map((l) => ({
+      start: Math.min(...l.words.map((w) => w.start)),
+      end: Math.max(...l.words.map((w) => w.end)),
+    }))
+  return (lyrics.unlisted ?? []).flatMap((u) =>
+    lines.reduce<TimeRange[]>(
+      (parts, l) =>
+        parts.flatMap((p) =>
+          l.end <= p.start || l.start >= p.end
+            ? [p]
+            : [
+                ...(l.start > p.start ? [{ start: p.start, end: l.start }] : []),
+                ...(l.end < p.end ? [{ start: l.end, end: p.end }] : []),
+              ],
+        ),
+      [u],
+    ),
+  )
 }
 
 /** The sections with their detected chorus confirmed, or null when `chorus` mostly lies outside it. */

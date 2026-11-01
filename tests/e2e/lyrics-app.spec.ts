@@ -41,7 +41,7 @@ test('lyrics are timed as one job and land on the Lyrics track as one undo step'
                   end: 67 + i * 4,
                   words: [],
                 }))
-                resolve({ doc: { audioAssetId: songId, source: 'pasted', lines }, chorus: null })
+                resolve({ doc: { audioAssetId: songId, source: 'pasted', lines } })
               }
             }),
         })

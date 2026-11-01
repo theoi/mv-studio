@@ -32,6 +32,28 @@ export const TIMING_CHECK_GAP = 2
 export const UNLISTED_CHECK_NEAR = 10
 export const UNLISTED_CHECK_MIN = 4
 
+type Stretch = { start: number; end: number }
+
+/**
+ * The stretches of unlisted singing (seconds, from the aligner) that lines are checked for and timed lyrics keep
+ * (`LyricsDoc.unlisted`): rounded to 0.01 s, merged where they overlap or touch, in order, and at least
+ * UNLISTED_CHECK_MIN seconds long.
+ */
+export function longUnlisted(unlisted: readonly Stretch[]): Stretch[] {
+  const cs = (t: number) => Math.round(t * 100)
+  const merged: Stretch[] = []
+  for (const u of unlisted
+    .map((u) => ({ start: cs(u.start), end: cs(u.end) }))
+    .sort((a, b) => a.start - b.start)) {
+    const last = merged.at(-1)
+    if (last && u.start <= last.end) last.end = Math.max(last.end, u.end)
+    else merged.push(u)
+  }
+  return merged
+    .filter((u) => u.end - u.start >= UNLISTED_CHECK_MIN * 100)
+    .map((u) => ({ start: u.start / 100, end: u.end / 100 }))
+}
+
 export const isUncertain = (word: LyricWord): boolean =>
   word.confidence !== undefined && word.confidence < UNCERTAIN_CONFIDENCE
 
@@ -79,11 +101,8 @@ export function asDraft(doc: LyricsDoc, language: string | undefined): LyricsDoc
  * Timed lyrics as stored: the lines near `unlisted` singing (seconds, from the aligner) and the lines the aligner was
  * unsure about are to check, each line for one reason.
  */
-export function withTimingChecks(
-  doc: LyricsDoc,
-  unlisted: readonly { start: number; end: number }[] = [],
-): LyricsDoc {
-  const long = unlisted.filter((u) => u.end - u.start >= UNLISTED_CHECK_MIN)
+export function withTimingChecks(doc: LyricsDoc, unlisted: readonly Stretch[] = []): LyricsDoc {
+  const long = longUnlisted(unlisted)
   const nearUnlisted = ({ start, end }: LyricLine) =>
     start !== undefined &&
     end !== undefined &&

@@ -55,7 +55,6 @@ async function openWithLyrics(
               return {
                 doc,
                 language: request.language ?? language,
-                chorus: null,
                 unlisted: unlisted[w.requests.length - 1],
               }
             },
@@ -244,10 +243,21 @@ test('timed lines near singing the pasted lyrics leave out say so, until the mis
     ),
   ).toBeVisible()
 
+  // The lyrics keep where that singing is, for the chorus.
+  const unlisted = () =>
+    page.evaluate(() => window.mvStudio.app.project.editor.getProject().lyrics?.unlisted ?? null)
+  expect(await unlisted()).toEqual([{ start: 82, end: 95 }])
+
   // The stand-in answers with the same lines; with the missing line pasted, it hears no unlisted singing.
   await page.getByRole('tab', { name: 'Assist' }).click()
   await box.fill('Neon lights are calling\nWe run until the morning\nHold on tonight\nSay you will stay')
   await page.getByRole('button', { name: 'Time words to the vocals' }).click()
   await expect(summary).toHaveText('Timed 3 lines · 1 to check')
   await expect(page.getByRole('button', { name: /singing nearby/ })).toHaveCount(0)
+  expect(await unlisted()).toBeNull()
+
+  // Undoing the timing brings back the lyrics before it, their unlisted singing included.
+  await page.evaluate(() => window.mvStudio.app.project.editor.undo())
+  await expect(summary).toHaveText('Timed 3 lines · 2 to check')
+  expect(await unlisted()).toEqual([{ start: 82, end: 95 }])
 })

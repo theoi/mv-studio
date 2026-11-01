@@ -251,25 +251,6 @@ describe('LyricsService.run', () => {
     expect(result.doc.lines.flatMap((l) => l.words.map((w) => w.text))).toEqual(['Bonjour'])
   })
 
-  it('returns the chorus relabel when the lyrics repeat and the song has sections', async () => {
-    const { service, editor, song, deps } = setup({ storedVocals: true })
-    editor.dispatch(
-      {
-        type: 'analysis.setDetected',
-        analysis: {
-          assetId: song.id,
-          version: '1',
-          sections: [{ id: 's', start: 0, end: 8, label: 'verse' }],
-        },
-      },
-      { history: 'skip' },
-    )
-    const text = 'Hold on tight\nWe are almost there\nA verse\nHold on tight\nWe are almost there\n'
-    const { chorus } = await service.run(song.id, { kind: 'time', text }, deps).promise
-    expect(chorus).toMatchObject({ type: 'analysis.setRefined', assetId: song.id })
-    expect((await service.run(song.id, { kind: 'time', text: TEXT }, deps).promise).chorus).toBeNull()
-  })
-
   it('keeps the separated stems when the lyrics step fails', async () => {
     const { service, editor, song, deps } = setup({ alignFails: true })
     await expect(service.run(song.id, { kind: 'time', text: TEXT }, deps).promise).rejects.toMatchObject({

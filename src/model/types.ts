@@ -460,6 +460,11 @@ export interface LyricsDoc {
   lines: LyricLine[]
   /** Drafts: the language the transcriber heard or was told (Whisper code, e.g. 'sv'). */
   language?: string
+  /**
+   * Stretches (seconds) where the timing run took singing the pasted lyrics don't list, sorted and non-overlapping.
+   * Absent means none known.
+   */
+  unlisted?: { start: Seconds; end: Seconds }[]
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import {
   draftLooksUnreliable,
   isUncertain,
   languageName,
+  longUnlisted,
   timingLooksUncertain,
   withTimingChecks,
 } from '../../../src/app/state/lyricChecks.ts'
@@ -89,6 +90,23 @@ describe('lyric checks', () => {
     const timingOnly = [undefined, undefined, 'timing', undefined, undefined, 'timing']
     expect(checks([{ start: 20, end: 23.9 }])).toEqual(timingOnly)
     expect(checks([])).toEqual(timingOnly)
+  })
+
+  it('keeps unlisted singing rounded to 0.01 s, merged and in order, and only stretches of 4 s or more', () => {
+    expect(
+      longUnlisted([
+        { start: 30.004, end: 34.004 },
+        { start: 10, end: 13.996 },
+        { start: 1, end: 3 },
+        { start: 3, end: 6.5 },
+        { start: 4, end: 5 },
+        { start: 50, end: 53.99 },
+      ]),
+    ).toEqual([
+      { start: 1, end: 6.5 },
+      { start: 10, end: 14 },
+      { start: 30, end: 34 },
+    ])
   })
 
   it('names Whisper’s language codes, Javanese included', () => {
