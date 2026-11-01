@@ -5,7 +5,7 @@ import { startAutoCut } from './autocut.ts'
 import { isRunning, JOB_KINDS } from './jobs.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
 import { isStored, openFromLink, untracked, usePersistence } from './persistence.ts'
-import { clampToTimeline, editor, loadDemoProject, loadEmptyProject } from './project.ts'
+import { clampToLastFrame, editor, loadDemoProject, loadEmptyProject } from './project.ts'
 import { setupFromLink } from './setup.ts'
 import {
   get,
@@ -51,9 +51,11 @@ export function stateToHash(s: UiState, project: Project): string {
   const emptyProject = !project.songAssetId
   const q = new URLSearchParams()
   if (s.screen === 'setup') q.set('kind', s.kind)
-  if (s.screen === 'editor') {
+  if (s.screen === 'editor' || s.screen === 'vj') {
     if (isStored(project.id)) q.set('project', project.id)
     else if (emptyProject) q.set('project', 'empty')
+  }
+  if (s.screen === 'editor') {
     if (s.kind !== 'lyric') q.set('kind', s.kind)
     const sel = selToStr(s.selection)
     if (sel) q.set('sel', sel)
@@ -117,7 +119,7 @@ function applyHash(hash: string, navigated = false) {
     ...initialUi,
     ...snapChoices(get()),
     ...next,
-    playhead: opening ? time : clampToTimeline(editor.getProject(), time),
+    playhead: opening ? time : clampToLastFrame(editor.getProject(), time),
     toasts: get().toasts,
     libraryOpen: get().libraryOpen,
     playing: false,

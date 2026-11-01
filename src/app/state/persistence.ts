@@ -21,7 +21,7 @@ import { distinctName } from '../format.ts'
 import { isSampleAsset, sampleFile } from '../mock/sampleMedia.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { usePrefs } from './prefs.ts'
-import { clampToTimeline, dispatch, editor, loadEmptyProject } from './project.ts'
+import { clampToLastFrame, dispatch, editor, loadEmptyProject } from './project.ts'
 import { thumbnailBlob } from './thumbs.ts'
 import { get, set, toast, useUi } from './ui.ts'
 
@@ -62,6 +62,8 @@ interface PersistenceState {
   recents: RecentProject[] | null
   /** The project a link or the last visit points to is loading, so the editor shows nothing else meanwhile. */
   restoring: boolean
+  /** Which project is loading while `restoring`. */
+  restoringId: Id | null
   /** A project file whose project is already here, while the app asks what to open (`importProjectFile`). */
   sameProject: SameProject | null
 }
@@ -71,6 +73,7 @@ export const usePersistence = create<PersistenceState>(() => ({
   tracked: false,
   recents: null,
   restoring: false,
+  restoringId: null,
   sameProject: null,
 }))
 
@@ -361,11 +364,11 @@ export async function openProject(id: Id): Promise<void> {
 /** Opens the project a link names (`#/editor?project=<id>`), unless it is already open. */
 export function openFromLink(id: Id): void {
   if (editor.getProject().id === id) return
-  usePersistence.setState({ restoring: true })
+  usePersistence.setState({ restoring: true, restoringId: id })
   void openStoredProject(id).then((ok) => {
     // The link's time was set before the project's length was known.
-    if (ok) set({ playhead: clampToTimeline(editor.getProject(), get().playhead) })
-    usePersistence.setState({ restoring: false })
+    if (ok) set({ playhead: clampToLastFrame(editor.getProject(), get().playhead) })
+    usePersistence.setState({ restoring: false, restoringId: null })
     if (ok) return
     set({ screen: 'start', dialog: null })
     toast('That project isn’t in this browser anymore.')
@@ -728,10 +731,10 @@ export function initPersistence(): void {
   void refreshRecents()
   const last = window.location.hash ? null : lastProjectId()
   if (!last) return
-  usePersistence.setState({ restoring: true })
+  usePersistence.setState({ restoring: true, restoringId: last })
   void openStoredProject(last).then((ok) => {
     if (ok) set(editorUi)
     else forgetLast()
-    usePersistence.setState({ restoring: false })
+    usePersistence.setState({ restoring: false, restoringId: null })
   })
 }

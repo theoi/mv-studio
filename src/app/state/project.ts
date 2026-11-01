@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import {
   EditError,
+  LAST_FRAME_LEAD,
   ProjectEditor,
   clipsAt,
   createProject,
@@ -244,6 +245,16 @@ export function timelineDuration(p: Project): number {
 /** A time kept within the timeline, from its start to its end. */
 export function clampToTimeline(p: Project, t: number): number {
   return Math.min(timelineDuration(p), Math.max(0, t))
+}
+
+/** The last moment with a picture: every clip has ended at the timeline's end itself, so the frame there is empty. */
+export function lastFrameTime(p: Project): number {
+  return Math.max(0, timelineDuration(p) - LAST_FRAME_LEAD)
+}
+
+/** A time kept from the timeline's start to its last frame (see lastFrameTime). */
+export function clampToLastFrame(p: Project, t: number): number {
+  return Math.min(lastFrameTime(p), Math.max(0, t))
 }
 
 export type SectionKind = 'intro' | 'verse' | 'pre' | 'chorus' | 'bridge' | 'outro'
