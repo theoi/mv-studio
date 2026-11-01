@@ -1162,6 +1162,13 @@
   container-type: scroll-state;
 }
 
+/* In the right half of the lanes: ends at the outline's right edge, or where the lanes end (its right is set inline),
+   so it doesn't run out of view. */
+.refusedLabel[data-end] {
+  position: absolute;
+  top: 0;
+}
+
 /* On its own background: a short clip's outline is narrower than the label, which then runs over its neighbors. Its first
    line across the lane's top edge, between the clip rows, so it covers no clip names; a hint line hangs below it, into
    the target lane. */

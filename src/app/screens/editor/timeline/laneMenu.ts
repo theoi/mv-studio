@@ -1,12 +1,14 @@
 import type { ComponentType, MouseEvent } from 'react'
-import { ClipboardPaste, Sparkles } from 'lucide-react'
+import { ClipboardPaste, FoldHorizontal, Sparkles } from 'lucide-react'
 import { create } from 'zustand'
 import { clipsOnTrack, type Project } from '../../../../model/index.ts'
 import { formatTime } from '../../../format.ts'
 import { hasClipboard, pasteAt, pasteHereOutcome, type PasteHereOutcome } from '../../../state/clipboard.ts'
 import { cloudSettings } from '../../../state/cloud.ts'
-import { gapAt, generateInGap, shotStart } from '../../../state/generate.ts'
+import { gapAt } from '../../../state/clipDrag.ts'
+import { generateInGap, shotStart } from '../../../state/generate.ts'
 import { editor, isLookClip, sectionsOf } from '../../../state/project.ts'
+import { closeGap, gapLength, gapToClose } from '../../../state/ripple.ts'
 import { get } from '../../../state/ui.ts'
 import { beatGridOf } from '../../../../vj/quantize.ts'
 
@@ -133,8 +135,25 @@ const pasteHere: LaneItem = {
   run: (spot) => pasteAt(spot.trackId, pasteHereTime(editor.getProject(), spot)),
 }
 
+const closeGapHere: LaneItem = {
+  group: 'gap',
+  label: 'Close gap',
+  icon: FoldHorizontal,
+  applies: (project, spot) => gapToClose(project, spot.trackId, spot.time) !== null,
+  description: (project, spot) => {
+    if (locked(project, spot)) return 'The track is locked'
+    const gap = gapToClose(project, spot.trackId, spot.time)
+    return gap ? `${gapLength(gap)} · the later clips move left` : ''
+  },
+  disabled: locked,
+  run: (spot) => {
+    const gap = gapToClose(editor.getProject(), spot.trackId, spot.time)
+    if (gap) closeGap(gap)
+  },
+}
+
 /** The lane menu's items, in order. Generate a shot here stays last. */
-export const LANE_ITEMS: LaneItem[] = [pasteHere, generateShot]
+export const LANE_ITEMS: LaneItem[] = [pasteHere, closeGapHere, generateShot]
 
 /** The items offered at a spot. */
 export function laneItemsAt(project: Project, spot: LaneSpot): LaneItem[] {
