@@ -67,10 +67,11 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   "untouched", "unchanged", "intact", "as they are", "the same", "let the bridge be"), and names sections leaves those
   sections out of the whole-video words of its sentence, as does a part after "but" that only names sections: "fast
   everywhere except the bridge", "everything fast but the chorus", "fast cuts, but not in the verses" and "fast
-  everywhere, leave the bridge alone" leave those sections as the song gives them. Leaving alone also reaches the
-  sections named just before it in the sentence ("keep the intro and outro untouched"). In a sentence with no
-  whole-video words of its own, it reaches the whole idea ("Fast cuts. Don't touch the bridge."). The part after it is
-  about that section only when it starts with "which", "where" or the like ("except the bridge, which should be slow").
+  everywhere, leave the bridge alone" leave those sections as the song gives them. Leaving alone also reaches sections
+  named just before it in its sentence by parts that only name them ("keep the intro and outro untouched", but not "show
+  the band in the intro and leave the bridge alone"). In a sentence with no whole-video words of its own, it reaches the
+  whole idea ("Fast cuts. Don't touch the bridge."). The part after it is about that section only when it starts with
+  "which", "where" or the like ("except the bridge, which should be slow").
 - **Phrasing inside a section** (`phrasedCutTimes`): bars clearly louder than the rest of their section cut twice as
   often, clearly quieter bars half as often, and the last bar before a faster section speeds up into it.
 - **Lyric timing**: a line shows up to 0.3 s before it is sung and holds up to 1 s after (longer for long lines,

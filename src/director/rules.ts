@@ -133,6 +133,8 @@ const RELATIVES = new Set(['which', 'where', 'when', 'that', 'there'])
 /** "in the chorus" ends its part of the sentence: what follows is about something else. */
 const PREPOSITIONS = new Set(['in', 'during', 'for', 'on', 'through', 'throughout', 'at'])
 const DETERMINERS = new Set(['the', 'a', 'an', 'each', 'every', 'all', 'its', 'both'])
+/** Words a part can have besides sections and still only name them: "keep the intro" in "… and outro untouched". */
+const NAMING = new Set([...DETERMINERS, 'keep', 'leave', 'let', ',', 'and'])
 
 const roleWord = (word: string) => ROLE_WORDS.find(([pattern]) => pattern.test(word))?.[1]
 const paceOf = (word: string) => (FASTER.has(word) ? 1 : SLOWER.has(word) ? -1 : 0)
@@ -150,6 +152,7 @@ const endsPhrase = (next: string | undefined) =>
 /** "leave the bridge alone", "keep the verses as they are", "let the bridge be". */
 const keeps = (words: string[]) =>
   words.some((w) => KEEPERS.has(w)) || (words[0] === 'let' && words.at(-1) === 'be')
+const onlyNames = (words: string[]) => words.every((w) => !!roleWord(w) || NAMING.has(w))
 
 /** The prompt as words, with sentence ends as "." and commas as ",". */
 function ideaTokens(prompt: string): string[] {
@@ -277,16 +280,16 @@ function tally(votes: Vote[]): IdeaAsk | undefined {
  * leaves the draft as it would be, a misread one turns it the wrong way. A part that starts with "except" or "apart
  * from", or is negated, or says to leave them alone, and names sections leaves those sections out of the whole-video
  * words of its sentence ("fast everywhere except the bridge", "fast cuts, but not in the verses", "leave the bridge
- * alone"; leaving alone also reaches the sections named just before it, as in "keep the intro and outro untouched"),
- * as does a part naming only sections
- * after "but" ("everything fast but the chorus") or right after such a part ("except the bridge and the outro"). In
- * a sentence with no whole-video words of its own, it reaches the whole idea ("Fast cuts. Don't touch the bridge.").
+ * alone"), as does a part naming only sections after "but" ("everything fast but the chorus") or right after such a
+ * part ("except the bridge and the outro"). Leaving alone also reaches sections named just before it in its sentence
+ * by parts that only name them ("keep the intro and outro untouched"). In a sentence with no whole-video words of its
+ * own, it reaches the whole idea ("Fast cuts. Don't touch the bridge.").
  */
 export function ideaAsks(prompt: string): IdeaAsks {
   const votes = new Map<string | undefined, Vote[]>()
   const leftOut: { role: string; sentence: number }[] = []
   let previous: { role?: string; carries: boolean; excluding: boolean; sentence: number } | undefined
-  /** Sections the parts just before named with nothing else to say: "keep the intro" in "… and outro untouched". */
+  /** Sections named just before by parts that only name them: "keep the intro" in "… and outro untouched". */
   let waiting: { role: string; sentence: number }[] = []
   for (const { words, sentence, afterBut } of ideaParts(ideaTokens(prompt))) {
     const named = words.flatMap((w, i) => {
@@ -306,9 +309,7 @@ export function ideaAsks(prompt: string): IdeaAsks {
     // The word that leaves sections alone comes last, so it reaches back: "keep the intro and outro untouched".
     if (excluding && !negated && keeps(words)) leftOut.push(...waiting)
     waiting =
-      named.length && !described && !negated && !excluding
-        ? [...waiting, ...named.map(({ role }) => ({ role, sentence }))]
-        : []
+      named.length && onlyNames(words) ? [...waiting, ...named.map(({ role }) => ({ role, sentence }))] : []
     if (described && !negated) {
       const carried =
         !named.length &&

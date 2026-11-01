@@ -487,7 +487,7 @@ describe('pace and brightness words in the idea', () => {
     ['fast everywhere, keep the verses as they are', {}, { verse: none }],
     ['fast everywhere, keep the bridge the same', {}, { bridge: none }],
     ['fast everywhere, let the bridge be', {}, { bridge: none }],
-    // Leaving alone reaches back to the sections named just before it, but not past one with words of its own.
+    // Leaving alone reaches back to sections named just before it in its sentence by parts that only name them.
     [
       'fast everywhere, slow verses and the bridge untouched',
       { verse: { pace: -1, light: 0, words: ['slow'] } },
@@ -500,6 +500,10 @@ describe('pace and brightness words in the idea', () => {
       {},
       { intro: none, verse: none, outro: none },
     ],
+    ['fast everywhere, show the band in the intro and leave the bridge alone', {}, { bridge: none }],
+    ['fast everywhere, the singer in the chorus and the bridge untouched', {}, { bridge: none }],
+    ['Fast everywhere. Keep the intro. Leave the outro alone.', {}, { outro: none }],
+    ['fast everywhere, keep the intro, but leave the outro alone', {}, { outro: none }],
     // The part after a section left out goes to the whole video, unless it starts with "which" or the like.
     ['Apart from the bridge, fast cuts', {}, { bridge: none }],
     [
