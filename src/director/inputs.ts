@@ -13,7 +13,7 @@ import { createBrightnessProbe, type BrightnessProbe } from './contrast.ts'
 import { songTitle } from './songTitle.ts'
 import type { Pace } from './plan.ts'
 import type { DirectorFootageMatch, DirectorFootageMatcher, FootageInfo } from '../vision/director.ts'
-import { readClipIndex, readSubjectTrack } from '../vision/analysisData.ts'
+import { blankAssets, isBlankClip, readClipIndex, readSubjectTrack } from '../vision/analysisData.ts'
 import type { FootageMatcher as ClipMatcher } from '../vision/matching/matcher.ts'
 import type { ClipVisionIndex, MatchQuery, Mood, SubjectTrack } from '../vision/types.ts'
 
@@ -90,6 +90,8 @@ export interface PlannerInput {
   song: SongInfo
   lyrics?: LyricsDoc
   media: MediaItem[]
+  /** Names of the clips and images left out of `media` because they show nothing (black or fully transparent). */
+  blank?: string[]
   matcher?: FootageMatcher
   footage?: FootageRanker
   settings: { aspect: AspectPreset; width: number; height: number; fps: number }
@@ -207,15 +209,23 @@ function subjectMasks(project: Project): Map<Id, Id> {
   return masks
 }
 
-/** The user's clips and images (imported or generated), excluding stems, masks and proxies. */
-export function mediaFromProject(project: Project, info: FootageInfo[] = []): MediaItem[] {
+/**
+ * The user's clips and images (imported or generated), excluding stems, masks, proxies and the ones footage analysis
+ * found to show nothing (`isBlankClip`), unless they are in `keep` (chosen by the user).
+ */
+export function mediaFromProject(
+  project: Project,
+  info: FootageInfo[] = [],
+  keep: ReadonlySet<Id> = new Set(),
+): MediaItem[] {
   const byId = new Map(info.map((i) => [i.assetId, i]))
   const masks = subjectMasks(project)
   return Object.values(project.assets)
     .filter(
       (a): a is typeof a & { kind: 'video' | 'image' } =>
         (a.kind === 'video' || a.kind === 'image') &&
-        (a.origin.type === 'import' || a.origin.type === 'generated'),
+        (a.origin.type === 'import' || a.origin.type === 'generated') &&
+        (keep.has(a.id) || !isBlankClip(project.analysis.visual[a.id])),
     )
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name))
     .map((a) => {
@@ -264,12 +274,14 @@ export async function buildPlannerInput(project: Project, options: BuildInputOpt
       info = []
     }
   }
+  const blank = blankAssets(project).map((a) => a.name)
   return {
     kind: options.kind,
     prompt: (options.prompt ?? '').trim(),
     song: songInfoFromProject(project),
     lyrics: project.lyrics,
     media: mediaFromProject(project, info),
+    ...(blank.length ? { blank } : {}),
     matcher: options.matcher,
     ...(options.footage ? { footage: options.footage } : {}),
     settings: {

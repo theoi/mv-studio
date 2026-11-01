@@ -3,6 +3,7 @@
  * back to the real ids. Large projects keep the selected clips and those near the playhead; the rest are counted.
  */
 import type { Clip, Id, Project, Seconds } from '../model/types.ts'
+import { isBlankClip } from '../vision/analysisData.ts'
 import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
 import { directorMeta } from './meta.ts'
 
@@ -145,6 +146,9 @@ export function summarizeProject(project: Project, options: SummaryOptions = {})
       name: a.name,
       ...(a.duration ? { duration: r2(a.duration) } : {}),
       ...(a.id === project.songAssetId ? { mainSong: true } : {}),
+      ...((a.kind === 'video' || a.kind === 'image') && isBlankClip(project.analysis.visual[a.id])
+        ? { showsNothing: true }
+        : {}),
     }))
   const analysis = project.songAssetId ? project.analysis.audio[project.songAssetId] : undefined
   const sections = (analysis?.sections ?? [])

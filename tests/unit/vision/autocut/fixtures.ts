@@ -87,6 +87,8 @@ export interface ClipSpec {
   activity?: number
   image?: boolean
   indexed?: boolean
+  /** Footage analysis found every frame black or fully transparent. */
+  blank?: boolean
 }
 
 export const CLIPS: ClipSpec[] = [
@@ -122,11 +124,12 @@ export function makeProject(o: { clips?: ClipSpec[]; song?: boolean; analyzed?: 
     }
     if (c.indexed !== false) {
       const topic = c.topic === null || c.topic === undefined ? null : (TOPICS[c.topic] as number)
+      const index = clipIndex(c.id, c.duration ?? 1, topic, c.activity ?? 0)
       visual[c.id] = buildVisualAnalysis({
         assetId: c.id,
         duration: c.duration ?? 1,
         sourceSize: { width: 1920, height: 1080 },
-        index: clipIndex(c.id, c.duration ?? 1, topic, c.activity ?? 0),
+        index: c.blank ? { ...index, motion: { ...index.motion, peakLuma: 0 } } : index,
       })
     }
   })

@@ -112,6 +112,33 @@ describe('auto-cut plan', () => {
     await expect(plan(makeProject({ clips: [] }))).rejects.toBeInstanceOf(JobError)
   })
 
+  it('leaves out clips that show nothing and says so, and cuts them with a note when chosen', async () => {
+    const project = makeProject({ clips: CLIPS.map((c) => (c.id === 'misc' ? { ...c, blank: true } : c)) })
+    const result = await plan(project)
+    expect(result.shots.length).toBeGreaterThan(10)
+    expect(result.shots.map((s) => s.assetId)).not.toContain('misc')
+    expect(result.warnings).toContain(
+      'Left out “misc.mp4” because every frame of it is black or see-through.',
+    )
+    expect((await plan(project, { assetIds: ['city', 'ocean'] })).warnings.join(' ')).not.toMatch(/black/)
+    const chosen = await plan(project, { assetIds: ['misc', 'ocean'] })
+    expect(new Set(chosen.shots.map((s) => s.assetId))).toEqual(new Set(['misc', 'ocean']))
+    expect(chosen.warnings).toContain(
+      'Used “misc.mp4” because you chose it, but every frame of it is black or see-through.',
+    )
+    const only = await plan(project, { assetIds: ['misc'] })
+    expect(only.shots.length).toBeGreaterThan(0)
+    expect(only.shots.every((s) => s.assetId === 'misc')).toBe(true)
+    const none = makeProject({
+      clips: CLIPS.filter((c) => c.id === 'misc').map((c) => ({ ...c, blank: true })),
+    })
+    await expect(plan(none)).rejects.toMatchObject({
+      code: 'invalid-input',
+      message:
+        'Nothing to cut: every frame of “misc.mp4” is black or see-through. Import clips that show something.',
+    })
+  })
+
   it('follows an even grid with a warning when the song has no beat analysis', async () => {
     const result = await plan(makeProject({ analyzed: false }), { followEnergy: false })
     expect(result.estimatedGrid).toBe(true)

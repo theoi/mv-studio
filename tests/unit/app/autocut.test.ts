@@ -11,9 +11,11 @@ import {
   clipAnalysisSeconds,
   clipChoice,
   DEFAULT_AUTOCUT_CHOICES,
+  isChosen,
   matchesMood,
   setClipChoice,
   startAutoCut,
+  tickClip,
   unanalyzedClipCount,
   unanalyzedWarning,
   undoAutoCut,
@@ -118,6 +120,32 @@ it('saves the clip choice with the project, with no undo step, so another projec
     ).assetIds,
   ).toEqual(pool.slice(1))
 })
+it('starts a clip that shows nothing unticked in "Choose clips", and cuts it once ticked', () => {
+  const pool = autoCutAssets(editor.getProject()).map((a) => a.id)
+  const [first, blank] = pool as [string, string]
+  editor.dispatch({
+    type: 'analysis.setVisual',
+    analysis: { assetId: blank, version: VISION_ANALYSIS_VERSION, data: { motion: { peakLuma: 0 } } },
+  })
+  const project = () => editor.getProject()
+  const used = () =>
+    autoCutOptions({ ...choices, ...clipChoice(project()) }, project(), { type: 'none' }, 0).assetIds
+  setClipChoice({ clips: 'chosen' })
+  expect(isChosen(project(), clipChoice(project()), blank)).toBe(false)
+  // Every other clip ticked is the same cut as every clip, which leaves the one that shows nothing out.
+  expect(used()).toBeUndefined()
+
+  setClipChoice(tickClip(clipChoice(project()), blank, true))
+  expect(isChosen(project(), clipChoice(project()), blank)).toBe(true)
+  expect(used()).toEqual(pool)
+  setClipChoice(tickClip(clipChoice(project()), first, false))
+  expect(used()).toEqual(pool.slice(1))
+
+  setClipChoice(tickClip(clipChoice(project()), blank, false))
+  expect(isChosen(project(), clipChoice(project()), blank)).toBe(false)
+  expect(used()).toEqual(pool.filter((id) => id !== first && id !== blank))
+})
+
 it('lists the clips in the order the cut pools them, also after a removed clip comes back', () => {
   const first = autoCutAssets(editor.getProject())[0]!
   editor.dispatch({ type: 'asset.remove', assetId: first.id })

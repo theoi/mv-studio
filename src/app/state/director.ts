@@ -13,6 +13,7 @@ import { mediaStore } from '../../media/mediaStore.ts'
 import type { Asset, Project } from '../../model/index.ts'
 import { templateState } from '../../plugins/templates.ts'
 import { JobError, jobs, type JobSnapshot } from '../../shared/jobs.ts'
+import { isBlankClip } from '../../vision/analysisData.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
 import { directorFootage } from './footage.ts'
 import { appMedia } from './media.ts'
@@ -158,7 +159,11 @@ export function videoKindFor(uiKind: Kind, project: Project): VideoKind {
   if (kind === 'footage') return 'beat-cut'
   if (kind !== 'blank') return kind
   if (project.lyrics?.lines.some((l) => l.text.trim())) return 'lyric'
-  if (Object.values(project.assets).some((a) => a.kind === 'video' && a.origin.type === 'import'))
+  if (
+    Object.values(project.assets).some(
+      (a) => a.kind === 'video' && a.origin.type === 'import' && !isBlankClip(project.analysis.visual[a.id]),
+    )
+  )
     return 'beat-cut'
   return 'visualizer'
 }

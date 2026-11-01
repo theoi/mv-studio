@@ -60,6 +60,7 @@ export async function indexClip(
   let dim = 0
   let batch: ImageBitmap[] = []
   let inFlight: Promise<void> | null = null
+  let peakLuma: number | undefined
 
   const flush = async () => {
     if (!batch.length) return
@@ -81,6 +82,11 @@ export async function indexClip(
     const frames = prefetch(iterateFrames(source, times, { maxSide, signal }), 2, (f) => f.bitmap.close())
     for await (const { t, bitmap } of frames) {
       motion.push(t, deps.toGray(bitmap, graySize))
+      // At the decoded size, not the motion's 64 px, where a small light on black is sampled away.
+      peakLuma = Math.max(
+        peakLuma ?? 0,
+        peak(deps.toGray(bitmap, { width: bitmap.width, height: bitmap.height })),
+      )
       if (i % embedEvery === 0) {
         embedTimes.push(t)
         batch.push(bitmap)
@@ -108,13 +114,19 @@ export async function indexClip(
       times: embedTimes,
       embeddings,
       hubness: frameHubness(embeddings, dim, refs),
-      motion: motion.finish(),
+      motion: { ...motion.finish(), ...(peakLuma === undefined ? {} : { peakLuma }) },
     }
   } catch (err) {
     for (const b of batch) b.close()
     await Promise.resolve(inFlight).catch(() => undefined)
     throw visionError(err, 'internal')
   }
+}
+
+function peak(gray: GrayImage): number {
+  let max = 0
+  for (const v of gray.data) if (v > max) max = v
+  return max
 }
 
 function concat(chunks: Float32Array[]): Float32Array {

@@ -7,7 +7,13 @@ import type { ProjectEditor } from '../../model/editor.ts'
 import { newId } from '../../model/factory.ts'
 import type { Id, Project } from '../../model/types.ts'
 import { JobError } from '../../shared/jobs.ts'
-import { readClipIndex } from '../analysisData.ts'
+import {
+  blankAssets,
+  blankClipsNote,
+  blankClipsUsedNote,
+  quotedFileNames,
+  readClipIndex,
+} from '../analysisData.ts'
 import { songEnergyScale } from '../footage/song.ts'
 import type { FootageMatcher } from '../matching/matcher.ts'
 import { createProgress, type TaskOptions } from '../runtime/tasks.ts'
@@ -78,7 +84,7 @@ const DEFAULTS = { pace: 'bar', followEnergy: true, cutOn: 'beats', order: 'matc
 /** The clips and stills auto-cut can use (all, or `assetIds`), in import order, with their vision index if analyzed. */
 export function autoCutPool(project: Project, assetIds?: readonly Id[]): PoolItem[] {
   const wanted = assetIds ? new Set(assetIds) : undefined
-  return mediaFromProject(project)
+  return mediaFromProject(project, [], wanted)
     .filter((m) => !wanted || wanted.has(m.assetId))
     .filter((m) => m.kind === 'image' || (m.duration ?? 0) > 0)
     .map((m) => {
@@ -113,10 +119,16 @@ export async function planAutoCut(
   if (!song.assetId || !(song.duration > 0))
     throw new JobError('invalid-input', 'Add a song first: auto-cut cuts your clips to its beats.')
   const pool = autoCutPool(project, options.assetIds)
+  // Chosen clips are cut even when they show nothing (with a note); the rest are left out when nobody chose.
+  const blank = blankAssets(project)
+  const blankUsed = blank.filter((a) => pool.some((p) => p.assetId === a.id)).map((a) => a.name)
+  const leftOut = options.assetIds ? [] : blank.map((a) => a.name)
   if (!pool.length)
     throw new JobError(
       'invalid-input',
-      'Import some video clips or images first: auto-cut cuts them to the song.',
+      leftOut.length
+        ? `Nothing to cut: every frame of ${quotedFileNames(leftOut)} is black or see-through. Import clips that show something.`
+        : 'Import some video clips or images first: auto-cut cuts them to the song.',
     )
   progress(0.05, 'planning')
 
@@ -158,6 +170,8 @@ export async function planAutoCut(
     const pick = picks[i]
     if (pick) shots.push({ start: span.start, end: span.end, sectionId: span.sectionId, ...pick })
   })
+  const blankNote = blankClipsNote(leftOut) ?? blankClipsUsedNote(blankUsed)
+  if (blankNote) warnings.unshift(blankNote)
   if (rhythm.grid.estimated)
     warnings.unshift(
       `The song’s beats aren’t analyzed yet, so cuts follow an even ${Math.round(rhythm.grid.bpm)} BPM grid.`,

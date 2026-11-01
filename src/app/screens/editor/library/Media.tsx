@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import {
   AudioWaveform,
+  EyeOff,
   Image as ImageIcon,
   Music2,
   Plus,
@@ -23,6 +24,7 @@ import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import type { Asset, Project } from '../../../../model/index.ts'
 import type { FootageResult } from '../../../../vision/index.ts'
+import { isBlankClip } from '../../../../vision/analysisData.ts'
 import {
   clipTags,
   footageDownloadNote,
@@ -71,6 +73,8 @@ interface LibraryItem {
   name: string
   type: 'video' | 'image' | 'generated' | 'audio'
   tags: string[]
+  /** Footage analysis found every frame black or fully transparent. */
+  blank: boolean
 }
 
 function libraryItems(project: Project): LibraryItem[] {
@@ -86,8 +90,12 @@ function libraryItems(project: Project): LibraryItem[] {
             ? 'image'
             : 'video',
     tags: clipTags(project, asset.id),
+    blank: isBlankClip(project.analysis.visual[asset.id]),
   }))
 }
+
+const BLANK_NOTE =
+  'Shows nothing: every frame is black or see-through. Auto-cut and AI drafts leave it out; you can still pick it in Auto-cut.'
 
 const ANALYZING_NAMES = { analyzing: ', analyzing', waiting: ', waiting to be analyzed' } as const
 
@@ -158,7 +166,10 @@ function MediaCard({ item }: { item: LibraryItem }) {
   }
   return (
     <ContextMenu>
-      <Tooltip label={item.name} description={item.tags.length ? item.tags.join(' · ') : undefined}>
+      <Tooltip
+        label={item.name}
+        description={item.blank ? BLANK_NOTE : item.tags.length ? item.tags.join(' · ') : undefined}
+      >
         <ContextMenuTrigger asChild>
           <div
             ref={card}
@@ -166,7 +177,7 @@ function MediaCard({ item }: { item: LibraryItem }) {
             draggable
             role="button"
             tabIndex={0}
-            aria-label={`${item.name}, ${item.type}${analyzing ? ANALYZING_NAMES[analyzing] : ''}`}
+            aria-label={`${item.name}, ${item.type}${item.blank ? ', shows nothing' : ''}${analyzing ? ANALYZING_NAMES[analyzing] : ''}`}
             aria-description="Adds it at the playhead"
             onDragStart={(e) => startMediaDrag(e, item.asset.id)}
             onDragEnd={endMediaDrag}
@@ -201,6 +212,12 @@ function MediaCard({ item }: { item: LibraryItem }) {
               )}
               {duration !== undefined && (
                 <span className={`${styles.duration} tnum`}>{formatTime(duration)}</span>
+              )}
+              {item.blank && (
+                <span className={styles.blankBadge} aria-hidden>
+                  <EyeOff />
+                  <span className={styles.blankLabel}>Shows nothing</span>
+                </span>
               )}
               {analyzing && (
                 <span className={styles.analyzingMark} data-state={analyzing} aria-hidden>

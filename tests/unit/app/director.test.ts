@@ -12,9 +12,10 @@ import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import { dismissToast, get as getUi, set as setUi } from '../../../src/app/state/ui.ts'
 import type { DirectorState } from '../../../src/director/index.ts'
 import { createProject } from '../../../src/model/factory.ts'
-import type { Asset, AssetOrigin } from '../../../src/model/types.ts'
+import type { Asset, AssetOrigin, Project } from '../../../src/model/types.ts'
 import { createFromTemplate } from '../../../src/plugins/templates.ts'
 import type { JobSnapshot } from '../../../src/shared/jobs.ts'
+import { CLIPS, makeProject, type ClipSpec } from '../vision/autocut/fixtures.ts'
 
 const job = (
   kind: string,
@@ -64,6 +65,19 @@ describe('videoKindFor', () => {
 
   it('takes the editor’s kind for a project made without a starter template', () => {
     expect(videoKindFor('visualizer', createProject({ name: 'Imported' }))).toBe('visualizer')
+  })
+
+  const noLyrics = (clips: ClipSpec[]): Project => {
+    const project = makeProject({ clips })
+    return { ...project, lyrics: { ...project.lyrics!, lines: [] } }
+  }
+
+  it('drafts a blank project as a beat cut of its clips, unless they all show nothing', () => {
+    expect(videoKindFor('blank', noLyrics(CLIPS))).toBe('beat-cut')
+    expect(videoKindFor('blank', noLyrics(CLIPS.map((c) => ({ ...c, blank: c.id !== 'ocean' }))))).toBe(
+      'beat-cut',
+    )
+    expect(videoKindFor('blank', noLyrics(CLIPS.map((c) => ({ ...c, blank: true }))))).toBe('visualizer')
   })
 })
 

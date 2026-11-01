@@ -6,7 +6,7 @@
 import { newId } from '../model/factory.ts'
 import type { LyricLine, Seconds } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
-import { chooseClips, type ChooseSpan, type PoolItem } from '../vision/index.ts'
+import { blankClipsNote, chooseClips, type ChooseSpan, type PoolItem } from '../vision/index.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
 import { bestByTags, findItem, type CatalogItem, type LookPreset } from './catalog.ts'
 import type { BrightnessRequest } from './contrast.ts'
@@ -163,6 +163,8 @@ function resolveLook(
 
 function resolveVisual(wanted: CreativeBrief['visual'], input: PlannerInput, warnings: string[]): Visual {
   const media = input.useMedia ? input.media : []
+  const blank = input.useMedia && blankClipsNote(input.blank ?? [])
+  if (blank) warnings.push(blank)
   const hasVideo = media.some((m) => m.kind === 'video')
   const hasImage = media.some((m) => m.kind === 'image')
   const hasGenerators = input.catalog.generators.length > 0
