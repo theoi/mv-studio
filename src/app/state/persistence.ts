@@ -555,6 +555,40 @@ export function failSavesForTests(code: JobErrorCode | null): void {
   failSaves = code
 }
 
+/** Every open tab holds this lock (shared), so a tab can tell whether it is the only one open. */
+const TAB_LOCK = 'mv-studio.open-tab'
+/** How old media no project uses must be before it is deleted, so a file not yet saved into a project is left alone. */
+const UNUSED_MEDIA_AGE_MS = 24 * 60 * 60 * 1000
+let holdingTabLock = false
+
+/**
+ * Deletes stored media that no kept project nor the open one uses, once it is `minAgeMs` old (see
+ * `IdbProjectStore.removeUnusedMedia`), unless another tab is open: its unsaved edits and undo history can use media no
+ * kept project does, and not after an edit in this tab. Returns how many media folders it deleted, or null when it
+ * didn't look.
+ */
+export async function removeUnusedMedia(minAgeMs = UNUSED_MEDIA_AGE_MS): Promise<number | null> {
+  // Edits made in this tab can be undone back to media they removed.
+  if (!holdingTabLock || editor.canUndo() || editor.canRedo()) return null
+  try {
+    const { held = [] } = await navigator.locks.query()
+    if (held.filter((l) => l.name === TAB_LOCK).length > 1) return null
+    return (await store.removeUnusedMedia([editor.getProject()], { minAgeMs })).folders
+  } catch {
+    return null
+  }
+}
+
+function holdTabLock(): void {
+  void navigator.locks
+    ?.request(TAB_LOCK, { mode: 'shared' }, () => {
+      holdingTabLock = true
+      requestIdleCallback(() => void removeUnusedMedia(), { timeout: 10_000 })
+      return new Promise<never>(() => undefined)
+    })
+    .catch(() => undefined)
+}
+
 let started = false
 
 /**
@@ -579,6 +613,7 @@ export function initPersistence(): void {
     void refreshRecents()
   })
   window.addEventListener('beforeunload', onBeforeUnload)
+  holdTabLock()
   void refreshRecents()
   const last = window.location.hash ? null : lastProjectId()
   if (!last) return

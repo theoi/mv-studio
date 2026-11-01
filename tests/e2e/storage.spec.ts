@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { Page } from '@playwright/test'
 import { FIXTURE_DIR } from './global-setup.ts'
 import { expect, openHarness, test } from './fixtures.ts'
 
@@ -157,4 +158,83 @@ test('imports an audio-only WebM recording as audio even when typed video/webm',
   expect(asset.mimeType).toMatch(/^audio\/webm/)
   expect(asset.width).toBeUndefined()
   expect(asset.duration).toBeCloseTo(2, 1)
+})
+
+/** The asset folders ("media/<id>") in the profile's browser storage. */
+function mediaFolderNames(page: Page): Promise<string[]> {
+  return page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory()
+    const media = await root.getDirectoryHandle('media').catch(() => null)
+    const names: string[] = []
+    if (media) for await (const name of media.keys()) names.push(name)
+    return names.sort()
+  })
+}
+
+/** A file in a folder no project names, as a project file open leaves when its tab closes part way. */
+function leaveFileBehind(page: Page, folder: string): Promise<void> {
+  return page.evaluate(async (name) => {
+    const root = await navigator.storage.getDirectory()
+    const media = await root.getDirectoryHandle('media', { create: true })
+    const dir = await media.getDirectoryHandle(name, { create: true })
+    const writable = await (await dir.getFileHandle('song.wav', { create: true })).createWritable()
+    await writable.write(new Uint8Array(1000))
+    await writable.close()
+  }, folder)
+}
+
+test('media no kept project uses is deleted once a day old, unless another tab is open or this one was edited', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.setInputFiles(
+    '#e2e-file-input',
+    ['song.mp3', 'image.png'].map((f) => path.join(FIXTURE_DIR, f)),
+  )
+  // A kept project with the song. The image is stored but in no project, like a song left on the setup screen.
+  const kept = await page.evaluate(async () => {
+    const { model, media } = window.mvStudio
+    const [song, image] = await Promise.all(
+      window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
+    )
+    const editor = new model.ProjectEditor(model.createProject({ name: 'Sweep test' }))
+    editor.dispatch({ type: 'asset.add', asset: song })
+    await media.projectStore.save(editor.getProject())
+    const folder = (a: { storageKey: string }) => a.storageKey.split('/')[1]
+    return { song: folder(song), image: folder(image), songSize: song.byteSize as number }
+  })
+  await leaveFileBehind(page, 'left-behind')
+  const all = [kept.song, kept.image, 'left-behind'].sort()
+  expect(await mediaFolderNames(page)).toEqual(all)
+  const sweep = (minAgeMs?: number) =>
+    page.evaluate((age) => window.mvStudio.app.persistence.removeUnusedMedia(age), minAgeMs)
+
+  const other = await page.context().newPage()
+  await openHarness(other)
+  expect(await sweep(0)).toBeNull()
+  expect(await mediaFolderNames(page)).toEqual(all)
+  await other.close()
+  // Alone again, but the files are new: they may be writes not saved into a project yet.
+  await expect.poll(() => sweep()).toBe(0)
+  expect(await mediaFolderNames(page)).toEqual(all)
+
+  expect(await sweep(0)).toBe(2)
+  expect(await mediaFolderNames(page)).toEqual([kept.song])
+  const songSize = await page.evaluate(async () => {
+    const [summary] = await window.mvStudio.media.projectStore.list()
+    const project = await window.mvStudio.media.projectStore.load(summary.id)
+    const song = Object.values(project.assets as Record<string, { kind: string }>).find(
+      (a) => a.kind === 'audio',
+    )
+    return (await window.mvStudio.media.mediaStore.getFile(song)).size
+  })
+  expect(songSize).toBe(kept.songSize)
+
+  // After an edit in this tab, undo could bring back media the edit removed.
+  await leaveFileBehind(page, 'left-behind')
+  await page.evaluate(() =>
+    window.mvStudio.app.project.editor.dispatch({ type: 'project.rename', name: 'Edited' }),
+  )
+  expect(await sweep(0)).toBeNull()
+  expect(await mediaFolderNames(page)).toEqual([kept.song, 'left-behind'].sort())
 })

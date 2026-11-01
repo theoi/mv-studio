@@ -3,7 +3,7 @@ import { parseProject } from '../model/migrations.ts'
 import { newId } from '../model/factory.ts'
 import type { Asset, Id, Project } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
-import { mediaStore, type OpfsMediaStore } from './mediaStore.ts'
+import { mediaStore, storageFolder, type OpfsMediaStore } from './mediaStore.ts'
 import { readTar, writeTar, type TarEntry } from './tar.ts'
 import type { ProjectStore, ProjectSummary } from './types.ts'
 
@@ -129,6 +129,23 @@ export class IdbProjectStore implements ProjectStore {
     for (const asset of Object.values(project.assets)) {
       if (!inUse.has(asset.storageKey)) await this.media.remove(asset)
     }
+  }
+
+  /**
+   * Deletes stored media that no kept project, nor `alsoKeep`, uses once it is `minAgeMs` old: what an open of a
+   * project file wrote before its tab closed, a song left on the setup screen, media removed from a project. When a
+   * kept project can't be read, it throws and deletes nothing.
+   */
+  async removeUnusedMedia(
+    alsoKeep: Project[],
+    options: { minAgeMs: number; now?: number },
+  ): Promise<{ folders: number; bytes: number }> {
+    const db = await openDb()
+    const kept = (await request(db.transaction(PROJECTS).objectStore(PROJECTS).getAll())) as Project[]
+    const inUse = new Set(
+      [...kept, ...alsoKeep].flatMap((p) => Object.values(p.assets).map((a) => storageFolder(a.storageKey))),
+    )
+    return this.media.removeUnused(inUse, options)
   }
 
   /**
