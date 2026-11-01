@@ -210,7 +210,7 @@ export function exportSummary(
   const note = running
     ? 'Rendering on this device. You can keep editing; files save to your Downloads folder.'
     : job?.status === 'succeeded'
-      ? 'Find them in your Downloads folder.'
+      ? `Find ${rows.length === 1 ? 'it' : 'them'} in your Downloads folder.`
       : job
         ? savedCount === 0
           ? 'Nothing was saved.'
@@ -297,6 +297,7 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
       frames: p.frames,
       seconds: estimates[p.spec.id]?.seconds,
     })),
+    project.id,
   )
   markSaved = markExportRunning(
     exportResolution(planned.map((p) => p.settings)),

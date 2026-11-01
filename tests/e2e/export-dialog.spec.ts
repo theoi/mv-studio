@@ -254,7 +254,7 @@ test('cancelling an export keeps the files that are already done', async ({ page
   expect((await again).suggestedFilename()).toBe('Neon Skyline - Canvas.mp4')
 })
 
-test('an export that ends after Keep editing says so until dismissed, with Download and Show, and Export lists its file until the next export', async ({
+test('an export that ends after Keep editing says so until dismissed, with Download, and Export lists its file until the next export', async ({
   page,
 }) => {
   test.setTimeout(360_000)
@@ -271,7 +271,7 @@ test('an export that ends after Keep editing says so until dismissed, with Downl
 
   // The activity chip says how long the export has left, the same figure as the export's own row.
   const chip = page.getByRole('button', { name: /^Exporting video \d+% · / })
-  await expect(chip).toContainText(/\d+%\s*· (\d+ min|under 1 min) left$/, { timeout: 60_000 })
+  await expect(chip).toContainText(/^Exporting\d+% · (\d+ min|under 1 min) left$/, { timeout: 60_000 })
   await chip.click()
   await expect(dialog).toBeVisible()
   const timesLeft = () =>
@@ -313,17 +313,60 @@ test('an export that ends after Keep editing says so until dismissed, with Downl
   await last.getByRole('button', { name: `Download ${file}` }).click()
   expect((await download).suggestedFilename()).toBe(file)
 
-  // The next export replaces it.
+  // The next export replaces it. Ending while the dialog is open, it says so plainly; while the pointer is on the
+  // outputs, the list waits for it to leave instead of moving under it.
   download = page.waitForEvent('download', { timeout: 200_000 })
   await dialog.getByRole('button', { name: 'Export 1 file' }).click()
   await dialog.getByRole('button', { name: 'Keep editing' }).click()
   await page.keyboard.press(`${mod}+e`)
-  await expect(dialog.getByText('Outputs', { exact: true })).toBeVisible()
+  const outputs = dialog.getByText('Outputs', { exact: true })
+  await expect(outputs).toBeVisible()
   await expect(last).toHaveCount(0)
-  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await outputs.hover()
   expect((await download).suggestedFilename()).toBe(file)
+  await expect(saved).toBeVisible()
+  await expect(saved.getByRole('button', { name: /^(Show|Download)$/ })).toHaveCount(0)
+  await expect(last).toHaveCount(0)
+  await dialog.getByText('Name', { exact: true }).hover()
+  await expect(last.getByText('Loop for Canvas')).toBeVisible()
+})
 
-  // Show opens the finished export, even once newer jobs have pushed it out of the job list.
+test('Show on the note of an export that ended opens it from VJ mode, and from the start screen once newer jobs pushed it out of the job list', async ({
+  page,
+}) => {
+  test.setTimeout(360_000)
+  const dialog = await openExport(page, './?e2e=1')
+  await dialog.getByLabel('Include Full video').uncheck()
+  await dialog.getByLabel('Include Vertical').uncheck()
+  await dialog.getByRole('button', { name: /Loop for Canvas/ }).click()
+  await dialog.getByRole('radio', { name: '720p' }).click()
+  const file = 'Neon Skyline - Canvas.mp4'
+  const saved = page.locator('[data-toast]').filter({ hasText: `Saved “${file}” to Downloads` })
+  // The open dialog hides the rest of the page from the accessibility tree.
+  const backToEditor = page.getByRole('button', { name: 'Back to editor', includeHidden: true })
+
+  // From VJ mode, Show goes back to the editor and opens the export there.
+  let download = page.waitForEvent('download', { timeout: 200_000 })
+  await dialog.getByRole('button', { name: 'Export 1 file' }).click()
+  await dialog.getByRole('button', { name: 'Keep editing' }).click()
+  await page.getByRole('button', { name: 'VJ', exact: true }).click()
+  await expect(backToEditor).toBeVisible()
+  expect((await download).suggestedFilename()).toBe(file)
+  await saved.getByRole('button', { name: 'Show' }).click()
+  await expect(dialog.getByText('1 file saved', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Find it in your Downloads folder.')).toBeVisible()
+  await expect(backToEditor).toHaveCount(0)
+  await expect(saved).toBeHidden()
+  await dialog.getByRole('button', { name: 'Done' }).click()
+
+  // From the start screen, Show opens the project's editor on the export.
+  await page.keyboard.press(`${mod}+e`)
+  download = page.waitForEvent('download', { timeout: 200_000 })
+  await dialog.getByRole('button', { name: 'Export 1 file' }).click()
+  await dialog.getByRole('button', { name: 'Keep editing' }).click()
+  await page.getByRole('button', { name: 'Home' }).click()
+  await expect(page.getByRole('button', { name: 'Home' })).toHaveCount(0)
+  expect((await download).suggestedFilename()).toBe(file)
   const pushedOut = await page.evaluate(async () => {
     const { jobs } = window.mvStudio.shared
     const list = (): { id: string; title: string }[] => jobs.list()
@@ -336,9 +379,9 @@ test('an export that ends after Keep editing says so until dismissed, with Downl
   await saved.getByRole('button', { name: 'Show' }).click()
   await expect(dialog.getByText('1 file saved', { exact: true })).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Download' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Home', includeHidden: true })).toBeVisible()
   await expect(saved).toBeHidden()
 })
-
 test('the time an export takes is worked out on this device, and the export stays within 1.5 times it, while Export stays available', async ({
   page,
 }) => {

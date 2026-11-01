@@ -87,11 +87,15 @@ function Activity() {
           <ProgressRing value={fraction} size={16} label={label} />
         )}
         <span className={styles.activityTitle}>{jobChipLabel(first)}</span>
-        {fraction !== undefined && (
-          <span className={`${styles.activityPct} tnum`}>{Math.round(fraction * 100)}%</span>
-        )}
-        {seconds !== undefined && (
-          <span className={`${styles.activityPct} tnum`}>· {shortTimeLeft(seconds)}</span>
+        {(fraction !== undefined || seconds !== undefined) && (
+          <span className={`${styles.activityPct} tnum`}>
+            {[
+              fraction !== undefined && `${Math.round(fraction * 100)}%`,
+              seconds !== undefined && shortTimeLeft(seconds),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
         )}
         {more > 0 && <span className={styles.activityMore}>+{more}</span>}
       </button>

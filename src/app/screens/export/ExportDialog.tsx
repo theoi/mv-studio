@@ -678,14 +678,21 @@ interface OutputsDraft {
   selectedId: string | undefined
 }
 
-/** The files of the export that ended last, to download again until the next export starts. */
-function LastExport() {
+/**
+ * The files of the export that ended last, to download again until the next export starts. While the pointer is on
+ * the outputs (`hold`), one that ends waits for it to leave, so the list doesn't move under it.
+ */
+function LastExport({ hold }: { hold: boolean }) {
   const { job, rows, files } = useExports()
+  const endedId = job && job.status !== 'running' && job.status !== 'queued' ? job.id : null
+  const [shownFor, setShownFor] = useState(endedId)
+  const shown = endedId !== null && (shownFor === endedId || !hold)
+  if (shown && shownFor !== endedId) setShownFor(endedId)
   const saved = rows.flatMap((r) => {
     const file = files[r.id]
     return file ? [{ row: r, name: file.name }] : []
   })
-  if (!saved.length || !job || job.status === 'running' || job.status === 'queued') return null
+  if (!shown || !saved.length) return null
   return (
     <section aria-label="Last export">
       <div className={styles.colLabel}>Last export</div>
@@ -740,6 +747,7 @@ function ExportDialogBody() {
   useEffect(startFootageAnalysis, [])
   /** The moment the preview shows once a shot is picked; otherwise each output's own moment. */
   const [viewTime, setViewTime] = useState<number | null>(null)
+  const [overOutputs, setOverOutputs] = useState(false)
   const planned = useMemo(() => items.map((i) => planOutput(project, i.spec)), [project, items])
   const active = useMemo(() => planned.filter((_, k) => items[k]?.on), [planned, items])
   const seconds = useExportEstimate(project, active, phase === 'setup')
@@ -823,8 +831,12 @@ function ExportDialogBody() {
         <ExportingView onClose={close} />
       ) : (
         <div className={styles.layout}>
-          <div className={styles.outputs}>
-            <LastExport />
+          <div
+            className={styles.outputs}
+            onPointerEnter={() => setOverOutputs(true)}
+            onPointerLeave={() => setOverOutputs(false)}
+          >
+            <LastExport hold={overOutputs} />
             <div className={styles.colLabel}>Outputs</div>
             {items.map((item, k) => {
               const plan = planned[k]
