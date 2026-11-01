@@ -735,6 +735,45 @@ function placeTracks(
 }
 
 /**
+ * The track of each title card when title cards overlap in time (a song's title and its artist): each goes on the
+ * first title track that is free when it starts, with a track added just below the last one ("Titles 2") when none
+ * is. On one track the later clip would cover the earlier one, so only one of them could be seen or clicked.
+ */
+function titleRows(
+  plan: EditPlan,
+  project: Project,
+  placed: ReturnType<typeof placeTracks>,
+): Map<PlanText, Id> {
+  const rows = new Map<PlanText, Id>()
+  const first = placed.trackFor.get('title')
+  if (!first) return rows
+  const name = project.tracks.find((t) => t.id === first)?.name ?? TRACK_NAMES.title
+  const tracks: Id[] = [first]
+  /** When each track's last title card ends. */
+  const ends: Seconds[] = []
+  const titles = plan.texts
+    .filter((t) => textTrackRole(t) === 'title' && Math.min(t.end, plan.duration) - t.start > 0.01)
+    .sort((a, b) => a.start - b.start)
+  for (const t of titles) {
+    let row = ends.findIndex((end) => end <= t.start + 0.001)
+    if (row === -1) {
+      row = ends.length
+      if (row > 0) {
+        const track: Track = createTrack('visual', `${name} ${row + 1}`)
+        const index = placed.order.indexOf(tracks[row - 1] as Id) + 1
+        placed.order.splice(index, 0, track.id)
+        placed.commands.push({ type: 'track.add', track, index })
+        placed.added++
+        tracks.push(track.id)
+      }
+    }
+    ends[row] = Math.min(t.end, plan.duration)
+    rows.set(t, tracks[row] as Id)
+  }
+  return rows
+}
+
+/**
  * The user's tracks under the draft's main shots when those shots fill the frame for nearly the whole song. They
  * can't be seen there but would still be decoded in playback and export, and edits to them would seem to do nothing.
  */
@@ -852,6 +891,7 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
   }
   if (template) takeTemplateTracks(project, template, needed, cleanup)
   const placed = placeTracks(project, needed, cleanup, template)
+  const titleTracks = titleRows(plan, project, placed)
   stats.addedTracks = placed.added
 
   const assetCommands: EditCommand[] = []
@@ -872,7 +912,7 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     stats.shots++
   }
   for (const t of plan.texts) {
-    const trackId = placed.trackFor.get(textTrackRole(t))
+    const trackId = titleTracks.get(t) ?? placed.trackFor.get(textTrackRole(t))
     const clip = trackId && textClip(t, trackId, ctx)
     if (!clip) continue
     clips.push(clip)

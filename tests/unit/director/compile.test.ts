@@ -48,6 +48,71 @@ describe('compilePlan', () => {
     expect(editor.canUndo()).toBe(false)
   })
 
+  it('puts title cards that overlap in time on rows of their own, and a redraft keeps one row each', async () => {
+    const project = makeProject()
+    project.assets[SONG_ID] = { ...project.assets[SONG_ID]!, name: 'Josh Woodward - Show Me.mp3' }
+    const editor = new ProjectEditor(project)
+    const plan = await planLocally(await buildPlannerInput(project, { kind: 'lyric', seed: 5 }))
+    expect(plan.texts.filter((t) => t.role === 'title').map((t) => t.text)).toEqual([
+      'Show Me',
+      'Josh Woodward',
+    ])
+    const compiled = compilePlan(plan, project)
+    editor.dispatch(compiled.commands)
+    const titleRows = (p: Project) =>
+      p.tracks
+        .filter((track) => /^Titles/.test(track.name))
+        .map((track) => [
+          track.name,
+          ...clips(p)
+            .filter((c) => c.trackId === track.id)
+            .map((c) => (c as TextClip).text),
+        ])
+    const after = editor.getProject()
+    expect(titleRows(after)).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+    ])
+    // Just below the Titles track, above the lyrics.
+    expect(after.tracks.slice(0, 3).map((t) => t.name)).toEqual(['Titles', 'Titles 2', 'Text'])
+    expect(compiled.stats.addedTracks).toBe(after.tracks.length - project.tracks.length)
+
+    const again = await planLocally(await buildPlannerInput(after, { kind: 'lyric', seed: 9 }))
+    editor.dispatch(compilePlan(again, after).commands)
+    expect(titleRows(editor.getProject())).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+    ])
+
+    // Without an artist, the second row goes with the earlier draft.
+    const plain = editor.getProject()
+    const song = plain.assets[SONG_ID]!
+    const untitled = { ...plain, assets: { ...plain.assets, [SONG_ID]: { ...song, name: 'Show Me.mp3' } } }
+    const single = await planLocally(await buildPlannerInput(untitled, { kind: 'lyric', seed: 9 }))
+    const once = new ProjectEditor(untitled)
+    once.dispatch(compilePlan(single, untitled).commands)
+    expect(titleRows(once.getProject())).toEqual([['Titles', 'Show Me']])
+  })
+
+  it('keeps title cards that follow one another on one row', async () => {
+    const { project, editor, plan } = await setup('lyric')
+    const [title] = plan.texts.filter((t) => t.role === 'title')
+    expect(title).toBeDefined()
+    const texts = [
+      { ...title!, id: 'a', text: 'First', start: 0.5, end: 2 },
+      { ...title!, id: 'b', text: 'Second', start: 2, end: 4 },
+      ...plan.texts.filter((t) => t.role !== 'title'),
+    ]
+    editor.dispatch(compilePlan({ ...plan, texts }, project).commands)
+    const after = editor.getProject()
+    expect(after.tracks.filter((t) => /^Titles/.test(t.name)).map((t) => t.name)).toEqual(['Titles'])
+    expect(
+      clips(after)
+        .filter((c) => c.trackId === after.tracks[0]!.id)
+        .map((c) => (c as TextClip).text),
+    ).toEqual(['First', 'Second'])
+  })
+
   it('hides the user’s tracks under full-frame shots in the same undo step, deleting nothing', async () => {
     const { project: base, plan } = await setup('beat-cut')
     const editor = new ProjectEditor(base)
