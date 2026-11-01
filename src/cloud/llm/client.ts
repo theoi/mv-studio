@@ -15,7 +15,8 @@ import {
 import { extractJson, stripReasoning } from './json.ts'
 import {
   contextLengthSteps,
-  ESTIMATE_SHORTFALL,
+  ESTIMATE_MARGIN,
+  estimateTokens,
   guessLocalRunner,
   isLocalEndpoint,
   isLoopbackHost,
@@ -101,11 +102,11 @@ const MODES: StructuredMode[] = ['tools', 'json-object', 'json-schema', 'prompt'
 
 /**
  * Ollama cuts a prompt longer than its context length without an error (it keeps the end) and counts only the kept
- * tokens in usage.prompt_tokens, so the model answers without its instructions. 4 characters per token is more than
- * tokenizers average on these JSON-heavy requests (Qwen 2.5: about 3.4), so the estimate errs low, and a count under
- * 60% of it means a cut, not a different tokenizer.
+ * tokens in usage.prompt_tokens, so the model answers without its instructions. estimateTokens() is close for Qwen 2.5
+ * and errs high for tokenizers with larger vocabularies, so a count under 60% of it means a cut, not a different
+ * tokenizer.
  */
-const PROMPT_CUT = { charsPerToken: 4, ratio: 0.6, minTokens: 1000 } as const
+const PROMPT_CUT = { ratio: 0.6, minTokens: 1000 } as const
 
 /**
  * A request is checked against the context of the model Ollama has loaded only from this many tokens (half Ollama's
@@ -281,7 +282,7 @@ export class OpenAICompatibleClient {
     onLoadingModel: ((loading: boolean) => void) | undefined,
   ): Promise<CloudError | undefined> {
     if (this.endpoint.preset !== 'ollama') return undefined
-    const tokens = JSON.stringify(payload).length / PROMPT_CUT.charsPerToken
+    const tokens = estimateTokens(JSON.stringify(payload))
     if (tokens < OLLAMA_FIT.minTokens) return undefined
     let context = await this.ollamaContext(model, signal)
     if (context === null) {
@@ -299,7 +300,7 @@ export class OpenAICompatibleClient {
       }
     }
     // Ollama cuts only a prompt longer than its context, so the answer's room (which contextFor() adds) isn't asked for.
-    if (typeof context !== 'number' || tokens * ESTIMATE_SHORTFALL <= context) return undefined
+    if (typeof context !== 'number' || tokens * ESTIMATE_MARGIN <= context) return undefined
     const count = (n: number) => n.toLocaleString('en-US')
     return this.error('prompt-cut', {
       title: 'Ollama can read only part of this request',
@@ -366,7 +367,7 @@ export class OpenAICompatibleClient {
       return undefined
     const read = (response.usage as { prompt_tokens?: unknown } | undefined)?.prompt_tokens
     if (typeof read !== 'number' || !(read > 0)) return undefined
-    const sent = JSON.stringify(payload).length / PROMPT_CUT.charsPerToken
+    const sent = estimateTokens(JSON.stringify(payload))
     if (sent < PROMPT_CUT.minTokens || read >= sent * PROMPT_CUT.ratio) return undefined
     const name = runner === 'ollama' ? 'Ollama' : runner === 'lmstudio' ? 'LM Studio' : 'The model'
     const count = (n: number) => n.toLocaleString('en-US')

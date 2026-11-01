@@ -9,6 +9,7 @@ import {
 } from '../../../src/cloud/llm/client.ts'
 import {
   contextFor,
+  estimateTokens,
   LLM_TIMEOUT,
   llmTimeoutSeconds,
   modelHint,
@@ -606,7 +607,7 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     type: 'function' as const,
     function: { name: 'set_opacity', arguments: '{"clip":"c1","value":0.5}' },
   }
-  // About 11,000 tokens, as an Ask request on a small project.
+  // About 9,000 tokens, as an Ask request on a small project.
   const long = {
     messages: [{ role: 'user' as const, content: 'Make the chorus brighter. '.repeat(1500) }],
     tools,
@@ -620,11 +621,11 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
       models: ['qwen2.5:7b'],
       contextTokens,
     }).reply({ tool_calls: [editCall] })
-  /** Answers with the tool call and the usage made from the length of the request body. */
+  /** Answers with the tool call and the usage made from the request body. */
   const counting =
-    (usage: (length: number) => unknown): MockHandler =>
+    (usage: (body: string) => unknown): MockHandler =>
     async (request) => {
-      const reported = usage((await request.text()).length)
+      const reported = usage(await request.text())
       return json(
         {
           choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [editCall] } }],
@@ -642,7 +643,7 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     expect(error.retryable).toBe(false)
     expect(error.title).toBe('Ollama read only part of the request')
     expect(error.message).toBe(
-      'Its context length is too small (it read 2,050 of about 10,000 tokens). Nothing was changed, since an answer to part of the request would be wrong.',
+      'Its context length is too small (it read 2,050 of about 9,000 tokens). Nothing was changed, since an answer to part of the request would be wrong.',
     )
     expect(error.steps[0]).toBe('Raise Ollama’s context length to 16k, then try again:')
     expect(error.steps.join('\n')).toContain('Environment="OLLAMA_CONTEXT_LENGTH=16384"')
@@ -659,9 +660,9 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
   it.each([
     [0.65, false],
     [0.55, true],
-  ])('takes a count of %f × the request size at 4 characters per token as cut: %s', async (share, cut) => {
+  ])('takes a count of %f × the request’s estimated tokens as cut: %s', async (share, cut) => {
     const { llm } = client(
-      { [OLLAMA]: counting((length) => ({ prompt_tokens: Math.round((share * length) / 4) })) },
+      { [OLLAMA]: counting((body) => ({ prompt_tokens: Math.round(share * estimateTokens(body)) })) },
       ollama,
     )
     const result = llm.callTools(long)
@@ -746,7 +747,7 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     expect(otherError.info.action).toBe('Raise the model’s context length to 16k')
   })
 
-  // About 20,000 tokens, as an Ask request on a long draft (17,700 measured with 208 shots).
+  // About 18,000 tokens, as an Ask request on a long draft (17,700 measured with 208 shots).
   const longer = {
     ...long,
     messages: [{ role: 'user' as const, content: 'Make the chorus brighter. '.repeat(3000) }],
@@ -757,7 +758,7 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
       client({ [OLLAMA]: ollamaServer(16384).handler() }, ollama).llm.callTools(longer),
     )
     expect(error.message).toBe(
-      'Its context length is too small (it read 8,194 of about 20,000 tokens). Nothing was changed, since an answer to part of the request would be wrong.',
+      'Its context length is too small (it read 8,194 of about 18,000 tokens). Nothing was changed, since an answer to part of the request would be wrong.',
     )
     expect(error.steps).toEqual([
       'Raise Ollama’s context length to 32k, then try again:',
@@ -769,11 +770,31 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     expect(error.info.action).toBe('Raise Ollama’s context length to 32k')
   })
 
+  // Requests as Qwen 2.5 counted them (Ollama's prompt_tokens): an Ask on the sample project, after a long draft and
+  // with its clips doubled and tripled, one with Japanese lyrics, and a director plan request.
+  it.each([
+    ['Ask, sample project', 37664, 2019, 0, 10755],
+    ['Ask after a draft', 53582, 3216, 0, 15687],
+    ['Ask, clips doubled', 54448, 3736, 0, 16487],
+    ['Ask, clips tripled', 71204, 5425, 0, 22191],
+    ['Ask, Japanese lyrics', 37245, 2019, 405, 10928],
+    ['director plan', 13863, 182, 0, 3331],
+  ])(
+    'estimates the %s request (%i characters, %i digits, %i outside ASCII) at Qwen’s %i tokens or up to 2% over',
+    (_, chars, digits, wide, counted) => {
+      const text = 'a'.repeat(chars - digits - wide) + '7'.repeat(digits) + 'é'.repeat(wide)
+      const estimate = estimateTokens(text)
+      expect(estimate).toBeGreaterThanOrEqual(counted)
+      expect(estimate).toBeLessThanOrEqual(counted * 1.02)
+    },
+  )
+
   it.each([
     [0, 16384],
-    [13300, 16384],
-    [13400, 32768],
-    [28000, 65536],
+    [14600, 16384],
+    [14700, 32768],
+    [30200, 32768],
+    [30300, 65536],
     [200000, 131072],
   ])('takes a request estimated at %i tokens to need a context of %i', (tokens, context) => {
     expect(contextFor(tokens)).toBe(context)
@@ -807,7 +828,7 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
       expect(error.retryable).toBe(false)
       expect(error.title).toBe('Ollama can read only part of this request')
       expect(error.message).toBe(
-        'Its context length is 4,096 tokens and this request is about 10,000, so Ollama would drop its start. Nothing was sent or changed.',
+        'Its context length is 4,096 tokens and this request is about 9,000, so Ollama would drop its start. Nothing was sent or changed.',
       )
       expect(error.steps[0]).toBe('Raise Ollama’s context length to 16k, then try again:')
       expect(error.info.action).toBe('Raise Ollama’s context length to 16k')
@@ -819,10 +840,31 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
       const server = fitting(16384, { loaded: true })
       const error = await failure(client({ [OLLAMA]: server.handler() }, ollama).llm.callTools(longer))
       expect(error.message).toBe(
-        'Its context length is 16,384 tokens and this request is about 20,000, so Ollama would drop its start. Nothing was sent or changed.',
+        'Its context length is 16,384 tokens and this request is about 18,000, so Ollama would drop its start. Nothing was sent or changed.',
       )
       expect(error.steps[0]).toBe('Raise Ollama’s context length to 32k, then try again:')
       expect(error.info.action).toBe('Raise Ollama’s context length to 32k')
+      expect(server.chatBodies).toHaveLength(0)
+    })
+
+    it('refuses an Ask request after a long draft that 4 characters per token would put under 16k', async () => {
+      // About 55,000 characters, 6.8% of them digits, like the "clips doubled" request above that Qwen counted at 16,487
+      // tokens: a long draft's shots bring their times and ids. 4 characters per token, even raised 15%, put such a
+      // request under 16k, and Ollama cut the live one.
+      const shots = Array.from({ length: 500 }, (_, i) =>
+        JSON.stringify({
+          id: `c${i}`,
+          label: 'Chorus, clip',
+          mood: 'euphoric, peak, neon night drive',
+          start: Number((i * 1.37).toFixed(2)),
+        }),
+      )
+      const draft = { ...long, messages: [{ role: 'user' as const, content: `[${shots.join(',')}]` }] }
+      expect((JSON.stringify(draft).length / 4) * 1.15).toBeLessThan(16384)
+      expect(estimateTokens(JSON.stringify(draft))).toBeGreaterThan(16384)
+      const server = fitting(16384, { loaded: true })
+      const error = await failure(client({ [OLLAMA]: server.handler() }, ollama).llm.callTools(draft))
+      expect(error.title).toBe('Ollama can read only part of this request')
       expect(server.chatBodies).toHaveLength(0)
     })
 
@@ -846,14 +888,14 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     })
 
     it.each([
-      [0.85, 1],
-      [0.9, 0],
+      [0.94, 1],
+      [0.97, 0],
     ])(
-      'with an estimate %f × the context, sends the request %i times: the estimate is raised 15% for Qwen’s tokenizer',
+      'with an estimate %f × the context, sends the request %i times: a request may run 5% over its estimate',
       async (share, sent) => {
         const probe = fitting(65536, { loaded: true })
         await client({ [OLLAMA]: probe.handler() }, ollama).llm.callTools(long)
-        const estimate = JSON.stringify(probe.chatBodies[0]).length / 4
+        const estimate = estimateTokens(JSON.stringify(probe.chatBodies[0]))
         const server = fitting(Math.round(estimate / share), { loaded: true })
         await client({ [OLLAMA]: server.handler() }, ollama)
           .llm.callTools(long)

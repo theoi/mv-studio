@@ -59,7 +59,9 @@ error says so and points to the setting.
   without its instructions. It reads only 4,096 tokens by default with less than 24 GB of graphics memory, and an Ask
   request is 11,000 to 16,000 tokens on the sample project (17,700 after a 208-shot draft). Its `usage.prompt_tokens`
   then counts only what it kept, so `chat()` stops with a `prompt-cut` error when that count is under 60% of the
-  request's size at 4 characters per token (Qwen 2.5 reads about 3.4), for requests of 1,000 tokens or more. The
+  request's estimated tokens, for requests of 1,000 tokens or more. The estimate (`estimateTokens()`) counts as Qwen
+  2.5 does: about 4.4 characters per token for words and JSON, 1.35 tokens per digit (Qwen reads each digit as a
+  token, and a long draft puts thousands of them in an Ask request) and one per character outside ASCII. The
   error's steps (`contextLengthSteps()`) raise the context to 16k (`LOCAL_CONTEXT_TOKENS`), or to the smallest of
   32k, 64k and 128k that holds the request with room for the answer (`contextFor()`), so a user already at 16k isn't
   told to set 16k again. Ask shows them without a repair round, and the director falls back to the
@@ -70,11 +72,11 @@ error says so and points to the setting.
   has loaded (`/api/ps`, `context_length`), because on a slow computer the model can write about a cut prompt for
   longer than the answer time limit, and the answer's count never arrives. When the model isn't loaded, `chat()`
   loads it first (`/api/generate` with only the model), which the request would do anyway; `onLoadingModel` lets
-  Ask and the director say "Loading the model" meanwhile. A request whose estimate, raised 15% for Qwen's tokenizer
-  (`ESTIMATE_SHORTFALL`), is over the context gets the same `prompt-cut` error without being sent: at 16k, a
-  17,700-token request after a 208-shot draft is refused, and the sample's 10,800 is sent. (With Llama 3's tokenizer
-  the raised estimate errs high, so a request just under the context can be refused with the advice to raise it.)
-  When Ollama doesn't say (an older version without
+  Ask and the director say "Loading the model" meanwhile. A request whose estimate, raised 5% (`ESTIMATE_MARGIN`),
+  is over the context gets the same `prompt-cut` error without being sent: at 16k, an Ask request after a 185- or
+  208-shot draft (16,800 and 17,700 tokens) is refused, and the sample's 10,800 is sent. (Llama 3 groups digits in
+  threes, so for it the estimate errs high, and a request just under the context can be refused with the advice to
+  raise it.) When Ollama doesn't say (an older version without
   `/api/ps` or `context_length`, or a failed read), the request is sent and checked from the answer as above.
 - When a server rejects `temperature`, `max_tokens` or `reasoning_effort` with a 400, the client retries once without
   it (or with `max_completion_tokens` when the error asks for it).

@@ -154,15 +154,30 @@ export const LOCAL_CONTEXT_TOKENS = 16384
 const CONTEXT_SIZES = [LOCAL_CONTEXT_TOKENS, 32768, 65536, 131072] as const
 
 /**
- * Requests are estimated at 4 characters per token, which errs low on these JSON-heavy requests: Qwen 2.5 reads about
- * 3.5, so its count runs up to 15% higher. (Llama 3's larger vocabulary reads about 4, so for it the raised estimate
- * errs high.)
+ * A request's tokens as Qwen 2.5 counts them, from its JSON: about 4.4 characters per token for words and JSON, 1.35
+ * tokens per digit (Qwen reads each digit as a token of its own, and numbers bring their points and commas), and a
+ * token for each character outside ASCII (lyrics in other scripts, typographic quotes). On the requests measured
+ * (llm.contract.test.ts) it is 0.4 to 1.1% over Qwen's count; a flat 4 characters per token was 4% over on director
+ * requests and 17 to 20% under on Ask requests after a long draft, whose shots bring thousands of digits. Llama 3 groups
+ * digits in threes, so for it this errs high.
  */
-export const ESTIMATE_SHORTFALL = 1.15
+export function estimateTokens(text: string): number {
+  let digits = 0
+  let wide = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c >= 48 && c <= 57) digits++
+    else if (c > 127) wide++
+  }
+  return (text.length - digits - wide) / 4.4 + digits * 1.35 + wide
+}
+
+/** How far over its estimate a request may run, for requests unlike those estimateTokens() was measured on. */
+export const ESTIMATE_MARGIN = 1.05
 
 /** The smallest of CONTEXT_SIZES that holds a request estimated at `tokens` with room for the answer. */
 export function contextFor(tokens = 0): number {
-  const needed = tokens * ESTIMATE_SHORTFALL + 1024
+  const needed = tokens * ESTIMATE_MARGIN + 1024
   return CONTEXT_SIZES.find((n) => n >= needed) ?? 131072
 }
 
