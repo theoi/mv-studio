@@ -445,12 +445,20 @@ describe('pace and brightness words in the idea', () => {
       { pace: 1, light: 1, words: ['fast', 'bright'] },
     ],
     ['fast video, slow chorus', { chorus: { pace: -1, light: 0, words: ['slow'] } }, fast],
-    // A list ends at its own noun, even with a section named after it.
+    // A list ends at its own noun, even with a section named after it, but not at a noun describing the next word.
     [
       'dark, grainy footage, fast chorus',
       { chorus: { pace: 1, light: 0, words: ['fast'] } },
       { pace: 0, light: -1, words: ['dark'] },
     ],
+    [
+      'dark and grainy footage, fast chorus',
+      { chorus: { pace: 1, light: 0, words: ['fast'] } },
+      { pace: 0, light: -1, words: ['dark'] },
+    ],
+    ['bright, feel good chorus', { chorus: { pace: 0, light: 1, words: ['bright'] } }, none],
+    ['slow, video game verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
+    ['dark, camera shake verses', { verse: { pace: 0, light: -1, words: ['dark'] } }, none],
     // A part after "but" with words of its own is about its section, not an exception.
     ['fast cuts but keep the bridge slow', { bridge: { pace: -1, light: 0, words: ['slow'] } }, fast],
   ])('reads “%s”', (idea, roles, all) => {
@@ -476,6 +484,22 @@ describe('pace and brightness words in the idea', () => {
     ['fast everywhere, leave the bridge alone', {}, { bridge: none }],
     ['fast cuts and keep the outro as it is', {}, { outro: none }],
     ['fast all the way through, the intro untouched', {}, { intro: none }],
+    ['fast everywhere, keep the verses as they are', {}, { verse: none }],
+    ['fast everywhere, keep the bridge the same', {}, { bridge: none }],
+    ['fast everywhere, let the bridge be', {}, { bridge: none }],
+    // Leaving alone reaches back to the sections named just before it, but not past one with words of its own.
+    [
+      'fast everywhere, slow verses and the bridge untouched',
+      { verse: { pace: -1, light: 0, words: ['slow'] } },
+      { bridge: none },
+    ],
+    ['fast everywhere, keep the intro and outro untouched', {}, { intro: none, outro: none }],
+    ['fast everywhere, leave the verses and the bridge alone', {}, { verse: none, bridge: none }],
+    [
+      'fast everywhere, keep the intro, the verses and the outro as they are',
+      {},
+      { intro: none, verse: none, outro: none },
+    ],
     // The part after a section left out goes to the whole video, unless it starts with "which" or the like.
     ['Apart from the bridge, fast cuts', {}, { bridge: none }],
     [
