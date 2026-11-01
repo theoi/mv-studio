@@ -59,8 +59,9 @@ error says so and points to the setting.
   with a `prompt-cut` error when that count is under 60% of the request's size at 4 characters per token (Qwen 2.5
   reads about 3.4), for requests of 1,000 tokens or more. The error's steps (`contextLengthSteps()`) raise the
   context to 16k (`LOCAL_CONTEXT_TOKENS`). Ask shows them without a repair round, and the director falls back to the
-  built-in planner with the first step in its note. OpenAI and OpenRouter are not checked: they reject a request
-  that is too long.
+  built-in planner with the first step in its note. Only servers the user runs are checked: this computer
+  (`isLocalEndpoint()`) or Ollama's or LM Studio's port. Cloud APIs (OpenAI, OpenRouter, or any https API under
+  Other, such as Groq or Mistral) reject a request that is too long, and their users can't change a server setting.
 - When a server rejects `temperature`, `max_tokens` or `reasoning_effort` with a 400, the client retries once without
   it (or with `max_completion_tokens` when the error asks for it).
 - With exactly one tool, a named tool choice is sent as `required`, because llama.cpp's server ignores the object

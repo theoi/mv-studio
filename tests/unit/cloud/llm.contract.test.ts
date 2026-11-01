@@ -619,6 +619,20 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
       models: ['qwen2.5:7b'],
       contextTokens,
     }).reply({ tool_calls: [editCall] })
+  /** Answers with the tool call and the usage made from the length of the request body. */
+  const counting =
+    (usage: (length: number) => unknown): MockHandler =>
+    async (request) => {
+      const reported = usage((await request.text()).length)
+      return json(
+        {
+          choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [editCall] } }],
+          ...(reported ? { usage: reported } : {}),
+        },
+        200,
+        { 'access-control-allow-origin': '*' },
+      )
+    }
 
   it('stops at an answer to a prompt Ollama cut short, and says how to raise its context length', async () => {
     const server = ollamaServer(4096)
@@ -640,18 +654,58 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
   })
 
-  it('leaves hosted providers alone: they reject a request that is too long instead of cutting it', async () => {
-    const server = new MockLlmServer({
-      flavor: 'openai',
-      apiKey: KEY,
-      models: ['gpt-test'],
-      contextTokens: 4096,
-    }).reply({ tool_calls: [editCall] })
+  it.each([
+    [0.65, false],
+    [0.55, true],
+  ])('takes a count of %f × the request size at 4 characters per token as cut: %s', async (share, cut) => {
     const { llm } = client(
-      { [OPENAI]: server.handler() },
-      { baseUrl: `${OPENAI}/v1`, apiKey: KEY, model: 'gpt-test', preset: 'openai' },
+      { [OLLAMA]: counting((length) => ({ prompt_tokens: Math.round((share * length) / 4) })) },
+      ollama,
     )
-    expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
+    const result = llm.callTools(long)
+    if (cut) expect((await failure(result)).kind).toBe('prompt-cut')
+    else expect((await result).calls[0]?.name).toBe('set_opacity')
+  })
+
+  it.each([
+    ['OpenAI', { baseUrl: `${OPENAI}/v1`, apiKey: KEY, model: 'gpt-test', preset: 'openai' as const }],
+    [
+      'OpenRouter',
+      {
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: KEY,
+        model: 'openai/gpt-test',
+        preset: 'openrouter' as const,
+      },
+    ],
+    [
+      'a cloud API under Other',
+      {
+        baseUrl: 'https://api.groq.com/openai/v1',
+        apiKey: KEY,
+        model: 'llama-test',
+        preset: 'custom' as const,
+      },
+    ],
+  ])(
+    'leaves %s alone: a cloud API rejects a request that is too long, and its users cannot change it',
+    async (_, endpoint) => {
+      const host = new URL(endpoint.baseUrl).origin
+      const { llm } = client({ [host]: counting(() => ({ prompt_tokens: 100 })) }, endpoint)
+      expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
+    },
+  )
+
+  it('checks Ollama at its port on another machine, which the user runs', async () => {
+    const box = 'https://studio-box.lan:11434'
+    const error = await failure(
+      client(
+        { [box]: counting(() => ({ prompt_tokens: 100 })) },
+        { baseUrl: `${box}/v1`, model: 'm', preset: 'custom' },
+      ).llm.callTools(long),
+    )
+    expect(error.kind).toBe('prompt-cut')
+    expect(error.title).toBe('Ollama read only part of the request')
   })
 
   it('names LM Studio and other servers, each with its own step', async () => {
@@ -685,21 +739,8 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
   })
 
   it('trusts answers without a token count, and short requests', async () => {
-    const answer =
-      (usage?: unknown): MockHandler =>
-      () =>
-        Promise.resolve(
-          json(
-            {
-              choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [editCall] } }],
-              ...(usage ? { usage } : {}),
-            },
-            200,
-            { 'access-control-allow-origin': '*' },
-          ),
-        )
     for (const usage of [undefined, { prompt_tokens: 0, completion_tokens: 0 }]) {
-      const { llm } = client({ [OLLAMA]: answer(usage) }, ollama)
+      const { llm } = client({ [OLLAMA]: counting(() => usage) }, ollama)
       expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
     }
     const short = { ...long, messages: [{ role: 'user' as const, content: 'Make the chorus brighter.' }] }

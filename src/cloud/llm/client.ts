@@ -16,6 +16,7 @@ import { extractJson, stripReasoning } from './json.ts'
 import {
   contextLengthSteps,
   guessLocalRunner,
+  isLocalEndpoint,
   isLoopbackHost,
   llmPreset,
   llmTimeoutSeconds,
@@ -101,6 +102,7 @@ const MODES: StructuredMode[] = ['tools', 'json-object', 'json-schema', 'prompt'
  * 60% of it means a cut, not a different tokenizer.
  */
 const PROMPT_CUT = { charsPerToken: 4, ratio: 0.6, minTokens: 1000 } as const
+
 const capabilityCache = new Map<string, StructuredMode>()
 
 /** Forgets which structured-output mode each endpoint supports (for tests and after settings change). */
@@ -254,13 +256,14 @@ export class OpenAICompatibleClient {
     payload: Record<string, unknown>,
     response: Record<string, unknown>,
   ): CloudError | undefined {
-    // Hosted providers reject a request that is too long instead of cutting it.
-    if (this.isHosted()) return undefined
+    // Only servers the user runs can be given a longer context, and cloud APIs reject a request that is too long.
+    const runner = guessLocalRunner(this.baseUrl, this.endpoint.preset)
+    if (runner === 'other' && !isLocalEndpoint({ preset: this.endpoint.preset, baseUrl: this.baseUrl }))
+      return undefined
     const read = (response.usage as { prompt_tokens?: unknown } | undefined)?.prompt_tokens
     if (typeof read !== 'number' || !(read > 0)) return undefined
     const sent = JSON.stringify(payload).length / PROMPT_CUT.charsPerToken
     if (sent < PROMPT_CUT.minTokens || read >= sent * PROMPT_CUT.ratio) return undefined
-    const runner = guessLocalRunner(this.baseUrl, this.endpoint.preset)
     const name = runner === 'ollama' ? 'Ollama' : runner === 'lmstudio' ? 'LM Studio' : 'The model'
     const count = (n: number) => n.toLocaleString('en-US')
     return this.error('prompt-cut', {
@@ -275,10 +278,6 @@ export class OpenAICompatibleClient {
 
   private isOpenAi(): boolean {
     return this.endpoint.preset === 'openai' || /^https:\/\/api\.openai\.com\//.test(this.baseUrl)
-  }
-
-  private isHosted(): boolean {
-    return this.endpoint.preset === 'openai' || this.endpoint.preset === 'openrouter'
   }
 
   /**
@@ -528,10 +527,11 @@ export class OpenAICompatibleClient {
       }
     }
     // A hosted provider's base URL comes with its preset, and its CORS is not the user's to change.
+    const hosted = this.endpoint.preset === 'openai' || this.endpoint.preset === 'openrouter'
     return this.error('network', {
       title: `Couldn't reach ${this.providerName()}`,
       message: `The request to ${base.host} did not get through.`,
-      steps: this.isHosted()
+      steps: hosted
         ? ['Check your internet connection.', 'Allow the endpoint in any ad or content blocker.']
         : [
             'Check your internet connection and the base URL.',
