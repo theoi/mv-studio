@@ -38,16 +38,20 @@ under it when the configured local model is small (under 7B). The same hint can 
 - **Local:** use an instruct model of 7B or more with tool calling, for example `qwen2.5:7b` in Ollama or
   `qwen2.5-7b-instruct` in LM Studio, and `qwen2.5:14b` or larger when memory allows. Prefer models with a
   license that allows commercial use (Qwen2.5 7B and 14B are Apache 2.0; Qwen2.5 3B is research-only).
-- **What testing showed** (llama.cpp on a CPU-only machine, Q4_K_M, through the real client): Qwen2.5-3B got
-  about half of the edit requests right and sometimes kept generating until it was cut off. Qwen2.5-7B made the
-  right edit where 3B had failed, but without a GPU it took about 4 minutes for the first request and wrote about
-  2.5 tokens per second. A Mac with Apple Silicon, a GPU, or a cloud model gives a much better experience.
+- **What testing showed** (CPU-only machine, Q4_K_M). Through the client with llama.cpp: Qwen2.5-3B got about half
+  of the edit requests right and sometimes kept generating until it was cut off; Qwen2.5-7B made the right edits but
+  took about 4 minutes for the first. Through the app with Ollama 0.40.13 and `qwen2.5:7b`: at Ollama's default
+  4,096-token context, Ask's requests (11,000 to 18,000 tokens) were cut without an error. With a 16k context, the
+  director's AI plan arrived in 6 to 10 minutes, and of five plain-language edits on the sample project two were
+  right, two were valid edits but not what was asked, and one failed (the model named a property that doesn't
+  exist). A Mac with Apple Silicon, a GPU, or a cloud model gives a much better experience.
 
 **Answer time limit.** Each answer is limited to `llmTimeoutSeconds(settings.llm)`: 90 s for cloud endpoints and
 300 s for local ones, because the first local request also loads the model and a 7B model on a CPU without a GPU
-needs minutes for a correct answer (Cancel stays visible meanwhile). Users can change it from 20 to 600 s
-(`LlmSettings.timeoutSeconds`, Settings › AI and cloud › "Answer time limit"). When it runs out, the `timeout`
-error says so and points to the setting.
+needs minutes for a correct answer (Cancel stays visible meanwhile). Users can choose 30 s to 10 minutes
+(`LlmSettings.timeoutSeconds`, Settings › AI and cloud › "Answer time limit", `TIME_LIMITS` in SettingsDialog.tsx);
+`llmTimeoutSeconds()` clamps stored values to 20–600 s. When it runs out, the `timeout` error says so and points to
+the setting.
 
 ## Notes
 
