@@ -79,6 +79,24 @@ export function planFrame(project: Project, time: Seconds): LayerPlan[] {
   return layers
 }
 
+/**
+ * The times at which planFrame's layers can change: clip edges and where their transitions end or begin. Between two
+ * of them, every time gets the same layers, apart from a transition's progress. Keep it in step with planFrame.
+ */
+export function planEdges(project: Project): Seconds[] {
+  const edges = new Set<Seconds>()
+  for (const clip of Object.values(project.clips)) {
+    if (!clip.enabled || !isVisual(clip)) continue
+    const end = clip.start + clip.duration
+    edges.add(clip.start).add(end)
+    if (clip.type === 'adjustment') continue
+    if (clip.transitionIn && clip.transitionIn.duration > 0)
+      edges.add(clip.start + clip.transitionIn.duration)
+    if (clip.transitionOut && clip.transitionOut.duration > 0) edges.add(end - clip.transitionOut.duration)
+  }
+  return [...edges].sort((a, b) => a - b)
+}
+
 /** Size in canvas pixels of a source with natural size (w, h) fitted into the canvas. */
 export function fitSize(
   fit: MediaFit,
