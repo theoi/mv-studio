@@ -78,14 +78,17 @@ jobs:
         run: printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/80-retries
       - name: Install Chromium for Playwright
         if: steps.scope.outputs.run == 'true'
-        # apt-get update can hang silently on a stalled mirror. `timeout` ends a stuck attempt so the next one retries: it
-        # signals its whole process group, and sudo passes the signal on to apt-get, so no apt-get is left holding the lock.
+        # apt-get update can hang silently on a stalled mirror. `timeout` ends a stuck attempt so the next one retries.
         timeout-minutes: 15
         run: |
           for attempt in 1 2 3; do
             if [ "$attempt" -gt 1 ]; then
+              # Playwright runs `sudo -- sh -c "apt-get update && apt-get install …"`. The timeout's signal reaches that
+              # sh but not the apt-get it started, which runs on as root holding apt's lock, so stop it here. Then finish
+              # anything a cut-off install left half configured.
+              sudo pkill -x apt-get || true
               sleep $(((attempt - 1) * 20))
-              # An attempt cut off during the install can leave dpkg half done.
+              sudo pkill -KILL -x apt-get || true
               sudo timeout -k 10 120 dpkg --configure -a || true
             fi
             timeout -k 10 240 npx playwright install --with-deps chromium && exit 0
@@ -97,7 +100,9 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             if [ "$attempt" -gt 1 ]; then
+              sudo pkill -x apt-get || true
               sleep $(((attempt - 1) * 20))
+              sudo pkill -KILL -x apt-get || true
               sudo timeout -k 10 120 dpkg --configure -a || true
             fi
             sudo timeout -k 10 120 apt-get update &&
