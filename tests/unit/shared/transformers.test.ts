@@ -1,18 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { registerModelFiles, sharedFetch } from '../../../src/shared/transformers.ts'
+import { pinRevision, registerModelFiles, sharedFetch } from '../../../src/shared/transformers.ts'
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe('sharedFetch', () => {
-  it('checks a registered file against its checksum', async () => {
+  it('checks a registered file against its checksum, also where Transformers.js asks for it at main', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))),
     )
-    const url = 'https://huggingface.co/x/y/resolve/0123456789abcdef0123456789abcdef01234567/config.json'
-    registerModelFiles([{ url, sha256: '00'.repeat(32) }])
-    await expect(sharedFetch(url)).rejects.toThrow(/Checksum mismatch/)
-    const other = 'https://huggingface.co/x/y/resolve/0123456789abcdef0123456789abcdef01234567/other.json'
-    expect((await sharedFetch(other)).status).toBe(200)
+    const revision = '0123456789abcdef0123456789abcdef01234567'
+    const base = `https://huggingface.co/x/y/resolve/${revision}/`
+    pinRevision('x/y', revision)
+    registerModelFiles([{ url: `${base}config.json`, sha256: '00'.repeat(32) }])
+    await expect(sharedFetch(`${base}config.json`)).rejects.toThrow(/Checksum mismatch/)
+    await expect(sharedFetch('https://huggingface.co/x/y/resolve/main/config.json')).rejects.toThrow(
+      /Checksum mismatch/,
+    )
+    expect((await sharedFetch(`${base}other.json`)).status).toBe(200)
   })
 })

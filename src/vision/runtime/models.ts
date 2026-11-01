@@ -135,6 +135,11 @@ function hfFile(repo: string, path: string): ModelFile {
   }
 }
 
+/** Each Transformers.js model's repo and revision, for `pinRevision` in the worker that runs these models. */
+export function transformersRevisions(): [repo: string, revision: string][] {
+  return Object.entries(HF_PINS).map(([repo, pin]) => [repo, pin.revision])
+}
+
 /** Every pinned file Transformers.js may load, for `registerModelFiles` in the worker that runs these models. */
 export function transformersFiles(): ModelFile[] {
   return Object.entries(HF_PINS).flatMap(([repo, pin]) =>

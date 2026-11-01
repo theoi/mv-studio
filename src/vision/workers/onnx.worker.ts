@@ -3,20 +3,32 @@ import type * as Transformers from '@huggingface/transformers'
 import type { EmbeddingModel } from '../backends.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
-import { loadTransformers, registerModelFiles, withModelProgress } from '../../shared/transformers.ts'
-import { hfRepo, hfRevision, transformersFiles, VISION_MODELS } from '../runtime/models.ts'
+import {
+  loadTransformers,
+  pinRevision,
+  registerModelFiles,
+  withModelProgress,
+} from '../../shared/transformers.ts'
+import {
+  hfRepo,
+  hfRevision,
+  transformersFiles,
+  transformersRevisions,
+  VISION_MODELS,
+} from '../runtime/models.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../../shared/worker.ts'
 import { detectCapabilities } from '../../shared/capabilities.ts'
 import { preferredDevice, type ModelDescriptor } from '../../shared/models.ts'
 import type { Mask } from '../types.ts'
 
 type T = typeof Transformers
-
-registerModelFiles(transformersFiles())
 type Device = { device: 'webgpu' | 'wasm'; dtype: 'fp32' | 'fp16' | 'q8' }
 
 const WASM: Device = { device: 'wasm', dtype: 'q8' }
 let gpuDevice: Promise<Device | null> | null = null
+
+for (const [repo, revision] of transformersRevisions()) pinRevision(repo, revision)
+registerModelFiles(transformersFiles())
 
 function webgpuDevice(): Promise<Device | null> {
   gpuDevice ??= detectCapabilities().then((caps): Device | null =>
