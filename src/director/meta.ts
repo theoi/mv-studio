@@ -2,7 +2,7 @@
  * The `meta.director` tag on clips a director draft made. Kept free of other director imports so plugins (looks)
  * can recognize director clips without pulling in the planner.
  */
-import type { Clip } from '../model/types.ts'
+import type { Clip, Id } from '../model/types.ts'
 import type { GenerateSource } from './plan.ts'
 
 export const DIRECTOR_META_KEY = 'director'
@@ -21,6 +21,8 @@ export interface DirectorClipMeta {
   lyricLineId?: string
   /** Title cards shown at once each get a row (track) of their own: this card's, from 0 at the top (absent for 0). */
   titleRow?: number
+  /** Title cards: the song whose title or artist they show, so a later draft takes a name corrected on one only for it. */
+  songId?: Id
   /** Set on placeholders for AI shots that have not been generated yet. */
   pending?: { task: GenerateSource['task']; prompt: string; modelId: string; duration?: number }
 }

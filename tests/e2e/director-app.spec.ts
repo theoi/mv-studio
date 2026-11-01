@@ -967,23 +967,25 @@ test('a tagged song names the project, and the title card shows its title and ar
   })
   await page.getByRole('button', { name: 'Draft video' }).click()
   await expect(page.getByRole('button', { name: 'Undo draft' })).toBeVisible({ timeout: 30_000 })
-  const titles = await page.evaluate(() => {
-    const project = window.mvStudio.app.project.editor.getProject()
-    const clips = Object.values(project.clips) as {
-      id: string
-      trackId: string
-      type: string
-      text?: string
-      meta?: { director?: { role?: string } }
-    }[]
-    return clips
-      .filter((c) => c.type === 'text' && c.meta?.director?.role === 'title')
-      .map((c) => ({
-        id: c.id,
-        text: c.text,
-        track: (project.tracks as { id: string; name: string }[]).find((t) => t.id === c.trackId)?.name,
-      }))
-  })
+  const titleCards = () =>
+    page.evaluate(() => {
+      const project = window.mvStudio.app.project.editor.getProject()
+      const clips = Object.values(project.clips) as {
+        id: string
+        trackId: string
+        type: string
+        text?: string
+        meta?: { director?: { role?: string } }
+      }[]
+      return clips
+        .filter((c) => c.type === 'text' && c.meta?.director?.role === 'title')
+        .map((c) => ({
+          id: c.id,
+          text: c.text,
+          track: (project.tracks as { id: string; name: string }[]).find((t) => t.id === c.trackId)?.name,
+        }))
+    })
+  const titles = await titleCards()
   expect(titles.map((t) => t.text)).toEqual(['Neon Skyline', 'The Night Shift'])
   // The title and the artist show at the same time, so each has a row of its own: both can be seen and clicked.
   expect(titles.map((t) => t.track)).toEqual(['Titles', 'Titles 2'])
@@ -1007,6 +1009,24 @@ test('a tagged song names the project, and the title card shows its title and ar
   })
   expect(tracks.filter((t) => t.clips === 0)).toEqual([])
   expect(tracks.map((t) => t.name).slice(-2)).toEqual(['Video 1', 'Song'])
+
+  // The user corrects the title on its card in the inspector: another version keeps the correction.
+  await page.locator(`[data-clip-id="${titles[0]!.id}"]`).click()
+  await page.getByRole('textbox', { name: 'Text content' }).fill('Neon Skyline (Night Mix)')
+  await page.evaluate(() => {
+    window.location.hash = '#/editor?tab=assist&assist=director'
+  })
+  await page.getByRole('button', { name: 'Try another version' }).click()
+  await expect
+    .poll(async () => (await titleCards()).some((t) => titles.some((before) => before.id === t.id)), {
+      timeout: 30_000,
+    })
+    .toBe(false)
+  // Laid out again for its new length, so it may break over two lines.
+  expect((await titleCards()).map((t) => [t.track, t.text?.replace(/\s+/g, ' ')])).toEqual([
+    ['Titles', 'Neon Skyline (Night Mix)'],
+    ['Titles 2', 'The Night Shift'],
+  ])
 })
 
 /** A mono 16-bit WAV of `seconds` of kicks every 0.5 s (120 BPM) over a low chord, long enough for several Beat This! windows. */
