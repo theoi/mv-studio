@@ -39,7 +39,7 @@ import { Dialog } from '../../ds/Dialog.tsx'
 import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select } from '../../ds/Fields.tsx'
 import { formatTime, plural } from '../../format.ts'
-import { downloadAgain, useExports, type ExportRow } from '../../state/exports.ts'
+import { downloadAgain, useExports } from '../../state/exports.ts'
 import { startFootageAnalysis } from '../../state/footage.ts'
 import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
 import { sectionName, sectionsOf, sectionTint, timelineDuration, useProject } from '../../state/project.ts'
@@ -57,6 +57,7 @@ import {
   outputSummary,
   outputTitle,
   remainingCandidates,
+  rowStates,
   shotTime,
   shotsOf,
   sizeLabel,
@@ -579,45 +580,6 @@ function OutputRow({
       </span>
     </div>
   )
-}
-
-interface RowState {
-  fraction: number
-  status: string
-}
-
-/** Each file's share of the job is its share of the frames; files render in order. */
-function rowStates(job: JobSnapshot | undefined, rows: ExportRow[], files: Record<string, File>): RowState[] {
-  const total = rows.reduce((sum, r) => sum + r.frames, 0) || 1
-  const f = job?.status === 'succeeded' ? 1 : (job?.progress.fraction ?? 0)
-  let before = 0
-  return rows.map((r) => {
-    const start = before / total
-    const share = r.frames / total
-    before += r.frames
-    const own = Math.min(1, Math.max(0, (f - start) / share))
-    if (files[r.id]) return { fraction: 1, status: 'Saved' }
-    if (!job) return { fraction: 0, status: 'Waiting' }
-    if (job.status === 'succeeded') return { fraction: 1, status: 'Saved' }
-    if (job.status === 'cancelled') return { fraction: own, status: 'Cancelled' }
-    if (job.status === 'failed') {
-      const current = f >= start && f < start + share
-      return {
-        fraction: own,
-        status: current ? (job.error?.message ?? 'Failed') : own >= 1 ? 'Not saved' : 'Not exported',
-      }
-    }
-    if (own <= 0) return { fraction: 0, status: 'Waiting' }
-    if (own >= 1) return { fraction: 1, status: 'Rendered' }
-    const pct = `${Math.round(own * 100)}%`
-    const eta = job.progress.etaSeconds
-    if (eta === undefined) return { fraction: own, status: pct }
-    const left = (eta * (start + share - f)) / Math.max(1e-6, 1 - f)
-    return {
-      fraction: own,
-      status: `${pct} · ${left < 50 ? 'less than a minute left' : `about ${Math.max(1, Math.round(left / 60))} min left`}`,
-    }
-  })
 }
 
 function ExportingView({ onClose }: { onClose: () => void }) {

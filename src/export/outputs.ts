@@ -24,7 +24,7 @@ import { createSolidClip, createTrack, newId } from '../model/factory.ts'
 import { projectDuration } from '../model/queries.ts'
 import type { AspectPreset, Project, Seconds } from '../model/types.ts'
 import { jobs, type JobContext, type JobHandle } from '../shared/jobs.ts'
-import { rememberPace, type ExportPaceStore } from './estimate.ts'
+import { rememberPace, type ExportPaceStore, type OutputEstimate } from './estimate.ts'
 import { convertToFormat, type ClipFraming, type FormatConversion, type FormatOptions } from './formats.ts'
 import {
   barTimes,
@@ -399,9 +399,15 @@ export interface ExportOutputsOptions extends PlanOptions, Pick<ExportOptions, '
   onOutput?: (result: OutputResult) => void
   /** Where each finished output's pace is kept for later estimates (default: this browser's localStorage). */
   pace?: ExportPaceStore
+  /** What was worked out before the export of each output's time, by spec id. */
+  estimates?: Readonly<Record<string, OutputEstimate>>
 }
 
-/** Renders the outputs one after another as one job's work. Progress covers all of them, weighted by frames. */
+/**
+ * Renders the outputs one after another as one job's work. Progress covers all of them, weighted by frames. The time
+ * left is the output rendering's own (from its trial's expected time, then its pace) plus the estimates of the
+ * outputs after it; without either, none shows.
+ */
 export async function exportOutputs(
   project: Project,
   specs: readonly OutputSpec[],
@@ -411,24 +417,34 @@ export async function exportOutputs(
   const planned = specs.map((spec) => planOutput(project, spec, options))
   const names = uniqueNames(planned)
   const total = planned.reduce((sum, p) => sum + p.frames, 0)
-  const started = performance.now()
+  const estimate = (p: PlannedOutput) => options.estimates?.[p.spec.id]
   const results: OutputResult[] = []
   let done = 0
   for (const [i, p] of planned.entries()) {
     const share = p.frames / total
     const offset = done / total
     const label = planned.length > 1 ? `${i + 1} of ${planned.length}: ` : ''
+    const waiting = planned.slice(i + 1).map((next) => estimate(next)?.seconds)
+    const later = waiting.every((s): s is number => s !== undefined)
+      ? waiting.reduce((sum, s) => sum + s, 0)
+      : undefined
     const sub: JobContext = {
       signal: ctx.signal,
       throwIfCancelled: () => ctx.throwIfCancelled(),
       progress: (update) => {
         const fraction = Math.min(1, offset + share * (update.fraction ?? 0))
-        const elapsed = (performance.now() - started) / 1000
+        // Before its frames this output has its whole estimate left, and while it finishes the file, nothing.
+        const own =
+          update.stage === 'render'
+            ? update.etaSeconds
+            : update.stage === 'finalize'
+              ? 0
+              : estimate(p)?.seconds
         ctx.progress({
           ...update,
           fraction,
           message: `${label}${update.message ?? ''}`,
-          ...(fraction > 0.02 ? { etaSeconds: Math.round((elapsed * (1 - fraction)) / fraction) } : {}),
+          etaSeconds: own === undefined || later === undefined ? undefined : Math.round(own + later),
         })
       },
     }
@@ -437,6 +453,7 @@ export async function exportOutputs(
       media: options.media,
       registry: options.registry,
       ...p.exportOptions,
+      expected: estimate(p)?.expected,
       fileName: names[i],
       // Keep the files this job already made; the first output also keeps the previous export.
       keepExports: i === 0 ? 1 : false,

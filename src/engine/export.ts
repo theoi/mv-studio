@@ -19,6 +19,7 @@ import {
   type ExportProbe,
   type ProbeJob,
 } from './encode.ts'
+import type { ExpectedTime } from './exportTime.ts'
 import { startRenderWorker, type RenderWorker } from './renderHost.ts'
 import type { ExportResult, ExportSettings, MediaFileSource, PluginRegistry } from './types.ts'
 
@@ -118,6 +119,8 @@ export interface ExportOptions {
     | 'mix'
     | 'none'
     | ((mix: (range: { start: Seconds; end: Seconds }) => Promise<AudioBuffer>) => Promise<AudioBuffer>)
+  /** What a trial before the export expects of its frames, so the time left holds from the first frames. */
+  expected?: ExpectedTime
 }
 
 /** The frames an export renders: their size, rate, range and count, checked, and the video bitrate. */
@@ -184,6 +187,7 @@ export async function exportProject(
     audio,
     frameTimes: frameTimes && Array.from({ length: frameCount }, (_, i) => frameTimes(i / fps)),
     path: `${dir}/${options.fileName ?? exportFileName(project.name)}`,
+    expected: options.expected,
   }
   try {
     const result = options.registry

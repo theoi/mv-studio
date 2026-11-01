@@ -95,6 +95,11 @@ export function aboutMinutes(seconds: number): string {
   return seconds < 60 ? 'Under a minute' : `About ${Math.ceil(seconds / 60)} min`
 }
 
+/** The time left in a running job: "About 6 min left". */
+export function timeLeft(seconds: number): string {
+  return seconds < 50 ? 'Less than a minute left' : `About ${Math.round(seconds / 60)} min left`
+}
+
 /** Storage sizes as people read them: "83 MB", "1.2 GB". */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
