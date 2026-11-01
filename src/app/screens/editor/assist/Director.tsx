@@ -2,6 +2,8 @@ import { useId, useState, type ReactNode, type RefObject } from 'react'
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
+  ChevronRight,
   Clapperboard,
   Clock,
   Cpu,
@@ -15,20 +17,21 @@ import {
   Undo2,
 } from 'lucide-react'
 import { isLocalEndpoint } from '../../../../cloud/llm/presets.ts'
-import { formatEstimate } from '../../../../cloud/pricing.ts'
+import { formatEstimate, formatUsd } from '../../../../cloud/pricing.ts'
 import type {
   DirectorRequest,
   DirectorState,
   GeneratedUnit,
   PlanCost,
   PlanDescription,
+  ShotStatus,
 } from '../../../../director/index.ts'
 import { NO_AI_SHOTS } from '../../../../director/notes.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Dialog } from '../../../ds/Dialog.tsx'
-import { Badge } from '../../../ds/Feedback.tsx'
+import { Badge, Spinner } from '../../../ds/Feedback.tsx'
 import { Segmented, TextArea } from '../../../ds/Fields.tsx'
-import { plural } from '../../../format.ts'
+import { capitalize, plural } from '../../../format.ts'
 import { llmLabel, useCloud } from '../../../state/cloud.ts'
 import {
   applyDraft,
@@ -68,7 +71,20 @@ export function DirectorBadge() {
   return null
 }
 
-const capitalized = (word: string) => word.charAt(0).toUpperCase() + word.slice(1)
+/**
+ * A button label that ends in its price ("Generate 12 clips · about $3.38", with the button's `pricedButton` class).
+ * In a panel too narrow for one line the price goes on a line of its own, so it always shows in full.
+ */
+function PricedLabel({ label }: { label: string }) {
+  const at = label.lastIndexOf(' · ')
+  if (at < 0) return label
+  return (
+    <>
+      <span className={styles.nowrap}>{label.slice(0, at)}</span>
+      <span className={styles.priceSep}> ·</span> <span className={styles.price}>{label.slice(at + 3)}</span>
+    </>
+  )
+}
 
 /** Ends a sentence that came from elsewhere (an error message) so the next one doesn't run into it. */
 function sentence(text: string): string {
@@ -187,7 +203,7 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
           ))}
         </ul>
         <p className={styles.muted}>
-          Estimates from fal.ai’s prices on {paid.pricesCheckedOn}. {capitalized(unit)}s already made are kept
+          Estimates from fal.ai’s prices on {paid.pricesCheckedOn}. {capitalize(unit)}s already made are kept
           if you cancel.
         </p>
       </div>
@@ -398,11 +414,12 @@ function ReadyView({ state, actionRef, onRedraft }: { state: StateOf<'ready'> } 
             variant="primary"
             block
             icon={cost ? <Sparkles /> : <Clapperboard />}
+            className={styles.pricedButton}
             onClick={spend.start}
             // Focus lands here after a Cancel; screen readers then read the note that says what was kept.
             aria-describedby={state.stopped ? stoppedId : undefined}
           >
-            {state.actionLabel}
+            <PricedLabel label={state.actionLabel} />
           </Button>
           {cost && (
             <Button
@@ -436,19 +453,130 @@ function ReadyView({ state, actionRef, onRedraft }: { state: StateOf<'ready'> } 
   )
 }
 
+const SHOT_STATE_TEXT: Record<ShotStatus['state'], string> = {
+  waiting: 'Waiting',
+  sending: 'Sending',
+  queued: 'In line',
+  generating: 'Generating',
+  downloading: 'Downloading',
+  done: 'Done',
+  failed: 'Failed',
+  stopped: 'Stopped',
+}
+
+function shotStatusText(s: ShotStatus): string {
+  if (s.state === 'queued' && s.ahead !== undefined)
+    return s.ahead === 0 ? 'Next in line' : `In line · ${s.ahead} ahead`
+  if (s.state === 'generating') return `Generating · ${Math.round((s.fraction ?? 0) * 100)}%`
+  return SHOT_STATE_TEXT[s.state]
+}
+
+const UNDERWAY: ReadonlySet<ShotStatus['state']> = new Set(['sending', 'queued', 'generating', 'downloading'])
+
+/**
+ * Each shot underway (its place in fal.ai's line, or its progress; at most one per request in flight), then one row
+ * for all that failed, which opens to say why. The card above counts the rest: a row for every shot would push
+ * Cancel out of a 720 px window.
+ */
+function ShotList({ shots, unit }: { shots: ShotStatus[]; unit: GeneratedUnit }) {
+  const underway = shots.filter((s) => UNDERWAY.has(s.state))
+  const failed = shots.filter((s) => s.state === 'failed')
+  if (!underway.length && !failed.length) return null
+  return (
+    <div className={styles.shots}>
+      {underway.length > 0 && (
+        <ul className={styles.shotList} aria-label={`${capitalize(unit)}s underway`}>
+          {underway.map((s) => (
+            <li key={s.shotId} className={styles.shotRow}>
+              <span className={styles.shotMark}>
+                <Spinner size={11} />
+              </span>
+              <span className={styles.shotLabel}>{s.label}</span>{' '}
+              <span className={`${styles.shotState} tnum`}>{shotStatusText(s)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {failed.length > 0 && <FailedShots failed={failed} />}
+    </div>
+  )
+}
+
+/**
+ * The failed shots' row: a button that shows why they failed, each reason once with the shots it stopped, so the
+ * reasons reach keyboard, touch and screen-reader users too.
+ */
+function FailedShots({ failed }: { failed: ShotStatus[] }) {
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  const byReason = new Map<string, string[]>()
+  for (const s of failed) {
+    const reason = s.reason ?? 'No reason given'
+    const labels = byReason.get(reason)
+    if (labels) labels.push(s.label)
+    else byReason.set(reason, [s.label])
+  }
+  return (
+    <>
+      <button
+        type="button"
+        className={`${styles.shotRow} ${styles.shotFailed} ${styles.shotToggle}`}
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(!open)}
+      >
+        <span className={styles.shotMark}>
+          <AlertTriangle />
+        </span>
+        <span className={styles.failText}>
+          {/* The no-break space keeps the "·" off the start of a wrapped line. */}
+          <span className={`${styles.shotState} tnum`}>{failed.length} failed</span>
+          {'\u00a0· retry when the run ends'}
+        </span>
+        <span className={`${styles.shotMark} ${styles.shotChevron}`}>
+          {open ? <ChevronDown /> : <ChevronRight />}
+        </span>
+      </button>
+      {open && (
+        <ul id={id} className={styles.failReasons}>
+          {[...byReason].map(([reason, labels]) => (
+            <li key={reason}>
+              {reason}
+              <span className={styles.muted}>{labels.join(', ')}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  )
+}
+
+/**
+ * "Spent about $0.51 of an estimated $3.38": what fal.ai has billed in this run, against its estimate. One line in
+ * the narrowest panel, so Cancel stays in view at 1280×720.
+ */
+function SpentSoFar({ spentUsd, usd }: { spentUsd: number; usd: number }) {
+  const estimate = formatUsd(usd)
+  return (
+    <p className={`${styles.muted} tnum`}>
+      Spent {spentUsd > 0 ? formatEstimate({ usd: spentUsd }) : formatUsd(0)} of{' '}
+      <span className={styles.nowrap}>
+        {estimate.startsWith('under') ? estimate : `an estimated ${estimate}`}
+      </span>
+    </p>
+  )
+}
+
 function GeneratingView({ state, onCancel }: { state: StateOf<'generating'>; onCancel: () => void }) {
   const job = useJobs().find((j) => j.id === state.jobId)
   const notice = useDirector((s) => s.cancelNotice)
-  const { unit, failed, stopping } = state
+  const { unit, stopping } = state
   return (
     <ToolView
       title="Director"
-      subtitle={
-        stopping
-          ? 'Stopping…'
-          : `Generating ${unit} ${Math.min(state.done + 1, state.total)} of ${state.total}`
-      }
+      subtitle={stopping ? 'Stopping…' : `Generating the AI ${unit}s`}
       footer={<CancelButton job={job} disabled={Boolean(stopping)} onCancel={onCancel} />}
+      pinFooter
     >
       <RunCard
         job={job}
@@ -459,19 +587,14 @@ function GeneratingView({ state, onCancel }: { state: StateOf<'generating'>; onC
             : undefined
         }
       />
-      {failed > 0 && (
-        <div className={styles.callout}>
-          <AlertTriangle />
-          <div>
-            {plural(failed, unit)} couldn’t be generated. The others go on, and you can retry{' '}
-            {failed === 1 ? 'it' : 'them'} when they’re done.
-          </div>
-        </div>
-      )}
-      {/* Once the Cancel is taken, the card says what is kept. */}
+      <div>
+        <SpentSoFar spentUsd={state.spentUsd} usd={state.usd} />
+        {/* Once the Cancel is taken, the card says what is kept. */}
+        {!stopping && <ShotList shots={state.shots} unit={unit} />}
+      </div>
       {!stopping && (
         <p className={styles.muted}>
-          {notice} {capitalized(unit)}s already made are kept.
+          {notice} {capitalize(unit)}s already made are kept.
         </p>
       )}
     </ToolView>
@@ -502,6 +625,7 @@ function DoneView({ state, actionRef, onRedraft }: { state: StateOf<'applied'> }
   const retryCost = paidCost(state.cost)
   const retryLabel = `Retry ${plural(state.failedShots, `failed ${state.unit}`)}${retryCost ? ` · ${formatEstimate(retryCost)}` : ''}`
   const spend = useSpend(state.cost, state.confirmRequired, retryLabel, state.unit)
+  const reasonsId = useId()
   const submit = () => {
     if (!refine.trim()) return
     const prompt = [state.request.prompt, refine.trim()].filter(Boolean).join('. ')
@@ -542,16 +666,25 @@ function DoneView({ state, actionRef, onRedraft }: { state: StateOf<'applied'> }
       </div>
       <Notes warnings={state.warnings} request={state.request} onRedraft={onRedraft} />
       {state.failedShots > 0 && (
-        <div className={styles.rowActions}>
-          <Button
-            size="sm"
-            variant="subtle"
-            icon={<RotateCcw />}
-            onClick={spend.start}
-            title={state.failedReason}
-          >
-            {retryLabel}
-          </Button>
+        <div>
+          <div className={styles.rowActions}>
+            <Button
+              size="sm"
+              variant="subtle"
+              icon={<RotateCcw />}
+              onClick={spend.start}
+              aria-describedby={state.failedReasons ? reasonsId : undefined}
+            >
+              {retryLabel}
+            </Button>
+          </div>
+          {state.failedReasons && (
+            <ul id={reasonsId} className={styles.failReasons}>
+              {state.failedReasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
       <HiddenTracks ids={state.hiddenTracks} />

@@ -7,6 +7,7 @@ import {
   planLocally,
   requiresConfirmation,
   shotsToGenerate,
+  type ShotStatus,
 } from '../../../src/director/index.ts'
 import { CloudError } from '../../../src/cloud/errors.ts'
 import { FalProvider } from '../../../src/cloud/fal/provider.ts'
@@ -253,9 +254,9 @@ describe('generatePlanShots', () => {
       concurrency: 1,
       now: () => clock,
     })
-    expect(events[0]?.message).toBe('Generating shot 1 of 3')
+    expect(events[0]?.message).toBe('3 shots\u00a0· 0 done')
     // Before the first image is made, its typical 3 s would say far too little: no estimate yet.
-    const first = events.findIndex((e) => e.message === 'Generating shot 2 of 3')
+    const first = events.findIndex((e) => e.message === '3 shots\u00a0· 1 done')
     expect(first).toBeGreaterThan(0)
     expect(events.slice(0, first).filter((e) => e.etaSeconds !== undefined)).toEqual([])
     // Then 2 images left at 20 s each, and 1 at 20 s.
@@ -289,9 +290,9 @@ describe('generatePlanShots', () => {
     })
     const eta = (message: string) => events.filter((e) => e.message === message).at(-1)?.etaSeconds
     // After 200 s and 10 s, the middle of the two: 105 s for each of the 3 left.
-    expect(eta('Generating shot 3 of 5')).toBe(3 * 105)
+    expect(eta('5 shots\u00a0· 2 done')).toBe(3 * 105)
     // After 200, 10 and 10 s: 10 s for each of the 2 left, where the mean (about 73 s) would say 147 s.
-    expect(eta('Generating shot 4 of 5')).toBe(2 * 10)
+    expect(eta('5 shots\u00a0· 3 done')).toBe(2 * 10)
   })
 
   it('times the clips left by the run’s own pace once a clip is made', async () => {
@@ -320,9 +321,9 @@ describe('generatePlanShots', () => {
     // Each count's estimate once its clip has reported progress.
     const eta = (message: string) => events.filter((e) => e.message === message).at(-1)?.etaSeconds
     // Before any clip is made: the first clip's 40 s, then 2 clips at their typical 90 s.
-    expect(eta('Generating clip 1 of 3')).toBe(40 + 2 * typical)
+    expect(eta('3 clips\u00a0· 0 done')).toBe(40 + 2 * typical)
     // After one took 30 s: the second clip's 40 s left (more than the 30 s pace), then 1 clip at 30 s.
-    expect(eta('Generating clip 2 of 3')).toBe(40 + 30)
+    expect(eta('3 clips\u00a0· 1 done')).toBe(40 + 30)
   })
 
   it('moves the bar while each clip is made, counts clips as they finish, and says how long is left', async () => {
@@ -357,14 +358,14 @@ describe('generatePlanShots', () => {
     expect(events.at(-1)).toEqual({
       stage: 'generate',
       fraction: expect.closeTo(1 / 3, 5) as number,
-      message: 'Generating clip 1 of 3',
+      message: '3 clips\u00a0· 0 done',
       etaSeconds: 85,
     })
     expect(counts).toEqual([])
     release[0]!()
     await until(() => counts.length === 1)
     expect(counts).toEqual([{ done: 1, failed: 0, total: 3 }])
-    expect(events.at(-1)?.message).toBe('Generating clip 2 of 3')
+    expect(events.at(-1)?.message).toBe('3 clips\u00a0· 1 done')
     await until(() => release.length === 3)
     release[1]!()
     release[2]!()
@@ -373,6 +374,94 @@ describe('generatePlanShots', () => {
     const fractions = events.map((e) => e.fraction ?? 0)
     expect(fractions.at(-1)).toBe(1)
     expect(fractions.every((f, i) => i === 0 || f >= (fractions[i - 1] as number))).toBe(true)
+  })
+
+  it('reports each shot’s status: its place in fal.ai’s line, its progress, then done or failed', async () => {
+    const { project, plan } = await aiPlan('video', 3)
+    const release: (() => void)[] = []
+    const provider = fakeProvider({
+      gate: (i, ctx) => {
+        if (i > 0) return Promise.resolve()
+        ctx.progress({ stage: 'submit', fraction: 0.04, message: 'Sending the request to fal.ai' })
+        ctx.progress({ stage: 'queue', fraction: 0.06, message: 'Waiting', queuePosition: 2 })
+        ctx.progress({ stage: 'queue', fraction: 0.06, message: 'Waiting', queuePosition: 0 })
+        ctx.progress({ stage: 'generate', fraction: 0.504, etaSeconds: 40, message: 'Generating' })
+        return new Promise<void>((resolve) =>
+          release.push(() => {
+            ctx.progress({ stage: 'download', fraction: 0.9 })
+            resolve()
+          }),
+        )
+      },
+      failOn: (i) => (i === 1 ? contentPolicy() : undefined),
+    })
+    const seen: ShotStatus[][] = []
+    const events: JobProgress[] = []
+    const run = generatePlanShots({
+      plan,
+      provider,
+      store: memoryStore(),
+      project,
+      ctx: { ...testCtx(), progress: (p) => events.push(p) },
+      concurrency: 1,
+      onShots: (shots) => seen.push(shots),
+    })
+    await until(() => release.length === 1)
+    expect(seen[0]?.map((s) => s.label)).toEqual(shotsToGenerate(plan).map((s) => s.label))
+    expect(seen.map((s) => s[0])).toEqual([
+      expect.objectContaining({ state: 'waiting' }),
+      expect.objectContaining({ state: 'sending' }),
+      expect.objectContaining({ state: 'queued', ahead: 2 }),
+      expect.objectContaining({ state: 'queued', ahead: 0 }),
+      expect.objectContaining({ state: 'generating', fraction: 0.5 }),
+    ])
+    expect(
+      seen
+        .at(-1)
+        ?.slice(1)
+        .map((s) => s.state),
+    ).toEqual(['waiting', 'waiting'])
+    release[0]!()
+    await run
+    expect(seen.map((s) => s[0]?.state)).toContain('downloading')
+    expect(seen.at(-1)?.map(({ state, reason }) => ({ state, reason }))).toEqual([
+      { state: 'done', reason: undefined },
+      { state: 'failed', reason: 'fal.ai said: Prompt was blocked' },
+      { state: 'done', reason: undefined },
+    ])
+    expect(events.at(-1)?.message).toBe('3 clips\u00a0· 2 done\u00a0· 1 failed')
+  })
+
+  it('marks the shots a Cancel stops, and keeps the one downloading its paid result', async () => {
+    const { project, plan } = await aiPlan('video', 3)
+    const release: (() => void)[] = []
+    const provider = fakeProvider({
+      gate: (i, ctx) => {
+        ctx.progress(
+          i === 0
+            ? { stage: 'download', fraction: 0.92, message: 'Downloading the video' }
+            : { stage: 'queue', fraction: 0.06, message: 'Waiting', queuePosition: 1 },
+        )
+        return new Promise<void>((resolve) => release.push(resolve))
+      },
+    })
+    const controller = new AbortController()
+    const seen: ShotStatus[][] = []
+    const outcome = generatePlanShots({
+      plan,
+      provider,
+      store: memoryStore(),
+      project,
+      ctx: testCtx(controller.signal),
+      onShots: (shots) => seen.push(shots),
+    }).catch((e: unknown) => e)
+    await until(() => release.length === 2)
+    expect(seen.at(-1)?.map((s) => s.state)).toEqual(['downloading', 'queued', 'waiting'])
+    controller.abort()
+    expect(seen.at(-1)?.map((s) => s.state)).toEqual(['downloading', 'stopped', 'stopped'])
+    release[0]!()
+    expect(await outcome).toBeInstanceOf(JobError)
+    expect(seen.at(-1)?.map((s) => s.state)).toEqual(['done', 'stopped', 'stopped'])
   })
 
   it('keeps clips fal.ai finished when Cancel lands during their download, and asks for no more', async () => {

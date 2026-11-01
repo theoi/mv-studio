@@ -379,8 +379,13 @@
  * the fade keeps opacity 0.
  */
 @container toolview (max-height: 480px) {
-  .viewFooter {
+  .viewFooter:not(.pinnedFooter) {
     position: static;
+  }
+
+  /* A pinned footer already marks where the body goes on below it. */
+  .viewScroll:has(> .pinnedFooter)::after {
+    display: none;
   }
 
   .viewScroll::after {
@@ -980,6 +985,140 @@ button.footerAlt[data-variant='ghost']:hover:not(:disabled) {
 /* Director: the free option under the paid button in the footer. */
 .footerAlt {
   margin-top: 4px;
+}
+
+/* A label that ends in its price wraps before the price instead of cutting it off (the panel can be 272 px wide). */
+button.pricedButton {
+  height: auto;
+  min-height: var(--control-md);
+  padding-block: 5px;
+  line-height: 16px;
+  white-space: normal;
+  text-align: center;
+}
+
+.nowrap,
+.price {
+  white-space: nowrap;
+}
+
+/*
+ * "Generate 32 shots · about $0.80" needs a panel about 282 px wide; below 288 px the price takes its own line
+ * instead of wrapping after a lone "·". The "·" is hidden as .sr-only hides, so the button's name stays the label.
+ */
+@container toolview (width < 288px) {
+  .priceSep {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .price {
+    display: block;
+  }
+}
+
+/* Director › generating: the AI shots underway, one line each, then one row for those that failed. */
+.shots {
+  margin-top: 2px;
+}
+
+.shotList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shotRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 2px 0;
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  text-wrap: pretty;
+}
+
+.shotMark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: var(--lh-sm);
+}
+
+.shotMark svg {
+  width: 13px;
+  height: 13px;
+}
+
+.shotLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shotState {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.shotFailed {
+  color: var(--text-2);
+}
+
+/* The failed row is a button that opens the reasons below it; it keeps the look of a row. */
+button.shotToggle {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+button.shotToggle:hover {
+  background: var(--bg-hover);
+}
+
+.failText {
+  flex: 1;
+  min-width: 0;
+}
+
+.shotFailed .shotChevron {
+  color: var(--text-3);
+}
+
+/* Why AI shots failed, each reason once with the shots it stopped (muted). */
+.failReasons {
+  margin: 2px 0 0 calc(14px + var(--space-2));
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+.failReasons li + li {
+  margin-top: 4px;
+}
+
+.failReasons .muted {
+  display: block;
+}
+
+.shotFailed .shotMark,
+.shotFailed .shotState {
+  color: var(--danger-text);
+  font-size: inherit;
 }
 
 /* Ask: a change waiting for Apply, and a failed request. */

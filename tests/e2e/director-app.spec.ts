@@ -330,6 +330,52 @@ test('shows the price of AI shots and asks before spending anything', async ({ p
   expect(fal).toEqual([])
 })
 
+test('Generate shows its whole price in the narrowest inspector, on a line of its own', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page
+    .context()
+    .route(/https:\/\/(queue\.)?fal\.run\/.*/, (route) =>
+      route.fulfill({ status: 500, headers: CORS, body: '{}' }),
+    )
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  // Drag the inspector to its narrowest.
+  const splitter = (await page.getByRole('separator', { name: 'Resize inspector' }).boundingBox())!
+  await page.mouse.move(splitter.x + splitter.width / 2, splitter.y + splitter.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(splitter.x + 200, splitter.y + splitter.height / 2, { steps: 5 })
+  await page.mouse.up()
+  await expect.poll(async () => (await page.locator('[data-guide="right"]').boundingBox())?.width).toBe(272)
+
+  await page.getByRole('radio', { name: 'Mix' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  const generate = page.getByRole('button', { name: /^Generate \d+ shots · about \$\d+\.\d\d$/ })
+  await expect(generate).toBeVisible({ timeout: 30_000 })
+  const fit = await generate.evaluate((button) => {
+    const label = button.lastElementChild as HTMLElement
+    const separator = [...label.querySelectorAll('span')].find((s) => s.textContent?.trim() === '·')
+    // Where the label's text is laid out, the price at its end included, whether or not it is clipped.
+    const text = document.createRange()
+    text.selectNodeContents(label)
+    const last = [...text.getClientRects()].at(-1)!
+    const b = button.getBoundingClientRect()
+    return {
+      clipped: label.scrollWidth > label.clientWidth || label.scrollHeight > label.clientHeight,
+      inside: last.left >= b.left && last.right <= b.right && last.top >= b.top && last.bottom <= b.bottom,
+      lines: Math.round(
+        label.getBoundingClientRect().height / parseFloat(getComputedStyle(label).lineHeight),
+      ),
+      separatorShown: !separator || separator.getBoundingClientRect().width > 1,
+    }
+  })
+  expect(fit).toMatchObject({ clipped: false, inside: true })
+  // Too long for one line here, so the price goes onto its own, and the first line doesn't end in a lone "·".
+  expect(fit).toMatchObject({ lines: 2, separatorShown: false })
+  await generate.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('director-cost-narrow.png') })
+})
+
 test('a retry after failed AI shots shows its price and asks again; Back returns to the plan', async ({
   page,
 }, testInfo) => {
@@ -399,11 +445,17 @@ test('AI shot prompts carry the picture the idea describes, not what it asks of 
 /**
  * fal.ai's queue for video clips (or images, with `images`), in the shapes fal.ai documents: each request is in
  * progress for one poll, then done with a video. Submits numbered in `failing` (from 1) answer HTTP 500; the `held`
- * ones stay in progress until `release()`.
+ * ones stay in progress and the `queued` one waits in line with 2 ahead until `release()`.
  */
 async function mockFalVideo(
   page: Page,
-  o: { failing?: number[]; held?: number | number[]; heldDownload?: number; images?: boolean } = {},
+  o: {
+    failing?: number[]
+    held?: number | number[]
+    queued?: number
+    heldDownload?: number
+    images?: boolean
+  } = {},
 ) {
   const clip = readFileSync(path.join(FIXTURE_DIR, 'clip.mp4'))
   const still = readFileSync(path.join(FIXTURE_DIR, 'image.png'))
@@ -447,6 +499,8 @@ async function mockFalVideo(
       return json(route, 202, { status: 'CANCELLATION_REQUESTED' })
     }
     if (parts[at + 2] === 'status') {
+      if (id === `req-${o.queued}` && !released)
+        return json(route, 200, { status: 'IN_QUEUE', queue_position: 2 })
       const n = polls.get(id) ?? 0
       polls.set(id, n + 1)
       const held = heldIds.includes(id) && !released
@@ -527,12 +581,19 @@ test('drafts with AI video clips: priced per clip, each clip’s progress shows,
   const count = await draftVideoClips(page, testInfo)
 
   // Every clip but the held one is done or failed: the held clip's own progress moves the bar past that count.
-  await expect(page.getByText(`Generating clip ${count} of ${count}`).first()).toBeVisible({
-    timeout: 60_000,
-  })
-  await expect(
-    page.getByText('1 clip couldn’t be generated. The others go on, and you can retry it when they’re done.'),
-  ).toBeVisible()
+  await expect(page.getByText(new RegExp(`^${count} clips\\s· ${count - 2} done\\s· 1 failed$`))).toBeVisible(
+    {
+      timeout: 60_000,
+    },
+  )
+  // The failed clip gets a row while the others go on; it opens to show fal.ai's reason and the clip it stopped.
+  const failedRow = page.getByRole('button', { name: /^1 failed\s· retry when the run ends$/ })
+  await expect(failedRow).toHaveAttribute('aria-expanded', 'false')
+  await failedRow.click()
+  await expect(failedRow).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('listitem').filter({ hasText: 'fal.ai said' })).toHaveText(
+    /^fal\.ai said: Internal server error\S.* · clip \d+$/,
+  )
   await expect(page.getByText(/^(About \d+ min|Less than a minute) left$/)).toBeVisible()
   const pct = Number(
     (
@@ -552,7 +613,11 @@ test('drafts with AI video clips: priced per clip, each clip’s progress shows,
     page.getByText('1 clip couldn’t be generated. Retry it below; a dark placeholder marks its place.'),
   ).toBeVisible()
   await expect(page.getByText(/not generated yet/)).toHaveCount(0)
-  await expect(retry).toHaveAttribute('title', 'fal.ai said: Internal server error')
+  // The reason shows under Retry, and screen readers hear it with the button.
+  await expect(page.getByRole('listitem').filter({ hasText: 'fal.ai said' })).toHaveText(
+    'fal.ai said: Internal server error',
+  )
+  await expect(retry).toHaveAccessibleDescription('fal.ai said: Internal server error')
   const first = await directorClips(page)
   expect(first.videos).toBeGreaterThanOrEqual(count - 1)
   expect(first.pending).toBeGreaterThan(0)
@@ -586,7 +651,7 @@ test('AI images say how long is left once the first ones are made', async ({ pag
     .getByRole('button', { name: /^Generate \d+ shots · / })
     .click()
   await expect.poll(() => fal.downloads, { timeout: 30_000 }).toEqual(['req-1', 'req-2'])
-  await expect(page.getByText(/^Generating shot 3 of \d+$/).first()).toBeVisible()
+  await expect(page.getByText(/^\d+ shots\s· 2 done$/).first()).toBeVisible()
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await expect(assist.getByText(/^(About \d+ min|Less than a minute) left$/)).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('director-images-eta.png') })
@@ -595,13 +660,94 @@ test('AI images say how long is left once the first ones are made', async ({ pag
   expect(fal.cancels.sort()).toEqual(['req-3', 'req-4'])
 })
 
+test('while AI clips generate, each one underway shows its place in fal.ai’s line or its progress, with the spend so far', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  // The first request stays in progress and the second waits in fal.ai's line until released.
+  const fal = await mockFalVideo(page, { held: 1, queued: 2 })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  const count = await draftVideoClips(page)
+  const underway = page.getByRole('list', { name: 'Clips underway' }).getByRole('listitem')
+  await expect(underway).toHaveText(
+    [/^\S.* · clip \d+ Generating · \d+%$/, /^\S.* · clip \d+ In line · 2 ahead$/],
+    {
+      timeout: 30_000,
+    },
+  )
+  await expect(page.getByText(/^Spent \$0\.00 of an estimated \$\d+\.\d\d$/)).toBeVisible()
+  // The rows leave all of Cancel in view in a 720 px window, without scrolling the panel.
+  const cancel = (await page.getByRole('button', { name: 'Cancel' }).boundingBox())!
+  const panel = (await page.locator('[data-guide="right"]').boundingBox())!
+  expect(cancel.y + cancel.height).toBeLessThanOrEqual(panel.y + panel.height)
+  await page.screenshot({ path: testInfo.outputPath('director-video-shots.png') })
+
+  fal.release()
+  // As clips are made, finished rows leave the list and the spend grows.
+  await expect(page.getByText(/^Spent about \$\d+\.\d\d of an estimated \$\d+\.\d\d$/)).toBeVisible({
+    timeout: 30_000,
+  })
+  await expect(underway.filter({ hasText: 'In line' })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('director-video-spent.png') })
+  await expect(placed(page)).toBeVisible({ timeout: 60_000 })
+  expect(fal.submits).toHaveLength(count)
+})
+
+test('failed clips share one row that opens to show why, and Cancel stays in view', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  // The first five requests fail and the sixth is made (and billed); the seventh stays in progress and the eighth
+  // waits in line until released.
+  const fal = await mockFalVideo(page, { failing: [1, 2, 3, 4, 5], held: 7, queued: 8 })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  const count = await draftVideoClips(page)
+  const underway = page.getByRole('list', { name: 'Clips underway' }).getByRole('listitem')
+  await expect(underway).toHaveText([/ Generating · \d+%$/, / In line · 2 ahead$/], { timeout: 30_000 })
+  // The card counts what is finished, as the top bar counts the run, with the spend so far under it.
+  await expect(page.getByText(new RegExp(`^${count} clips\\s· 1 done\\s· 5 failed$`))).toBeVisible()
+  await expect(page.getByText(/^Spent about \$\d+\.\d\d of an estimated \$\d+\.\d\d$/)).toBeVisible()
+  const failed = page.getByRole('button', { name: /^5 failed\s· retry when the run ends$/ })
+  const cancel = page.getByRole('button', { name: 'Cancel' })
+  const cancelInView = async () => {
+    const button = (await cancel.boundingBox())!
+    const panel = (await page.locator('[data-guide="right"]').boundingBox())!
+    expect(button.y + button.height).toBeLessThanOrEqual(panel.y + panel.height)
+  }
+  await cancelInView()
+  await page.screenshot({ path: testInfo.outputPath('director-video-failed-rows.png') })
+  // The five share one reason: it shows once, with the clips it stopped.
+  await failed.click()
+  const reasons = page.getByRole('listitem').filter({ hasText: 'fal.ai said' })
+  await expect(reasons).toHaveText(
+    /^fal\.ai said: Internal server error(\S.* · clip \d+, ){4}\S.* · clip \d+$/,
+  )
+  // The reasons start where the row's words do, after its icon, as they do under Retry.
+  const words = (await failed.locator('[class*="failText"]').boundingBox())!
+  expect(Math.abs((await reasons.boundingBox())!.x - words.x)).toBeLessThan(1)
+  await cancelInView()
+  await page.screenshot({ path: testInfo.outputPath('director-video-failed-reasons.png') })
+  // In the narrowest inspector the lines wrap more, and Cancel stays pinned in view.
+  const splitter = (await page.getByRole('separator', { name: 'Resize inspector' }).boundingBox())!
+  await page.mouse.move(splitter.x + splitter.width / 2, splitter.y + splitter.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(splitter.x + 200, splitter.y + splitter.height / 2, { steps: 5 })
+  await page.mouse.up()
+  await expect.poll(async () => (await page.locator('[data-guide="right"]').boundingBox())?.width).toBe(272)
+  await cancelInView()
+  await page.screenshot({ path: testInfo.outputPath('director-video-failed-rows-narrow.png') })
+  await cancel.click()
+  await expect(page.getByText(/^Generation stopped\./)).toBeVisible()
+  fal.release()
+})
+
 test('cancelling AI video clips stops the one underway at fal.ai, keeps the clips already made, and leaves focus on Generate', async ({
   page,
 }) => {
   const fal = await mockFalVideo(page, { held: 3 })
   await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
   const count = await draftVideoClips(page)
-  await expect(page.getByText(`Generating clip ${count} of ${count}`).first()).toBeVisible({
+  await expect(page.getByText(new RegExp(`^${count} clips\\s· ${count - 1} done$`))).toBeVisible({
     timeout: 60_000,
   })
   await page.getByRole('button', { name: 'Cancel' }).focus()

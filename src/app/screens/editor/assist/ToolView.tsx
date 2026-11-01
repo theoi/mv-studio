@@ -9,17 +9,23 @@ import { openAssist } from '../../../state/ui.ts'
 import { etaText, jobLine, pct } from './jobState.ts'
 import styles from './Assist.module.css'
 
-/** The frame of every Assist tool: back to all tools, title, scrolling body and a pinned footer for the action. */
+/**
+ * The frame of every Assist tool: back to all tools, title, scrolling body and a pinned footer for the action. In a
+ * short panel the footer ends the scroll instead, unless `pinFooter` keeps it in view (a Cancel while a paid run goes
+ * on).
+ */
 export function ToolView({
   title,
   subtitle,
   children,
   footer,
+  pinFooter = false,
 }: {
   title: string
   subtitle?: string
   children: ReactNode
   footer?: ReactNode
+  pinFooter?: boolean
 }) {
   return (
     <div className={styles.view}>
@@ -35,7 +41,10 @@ export function ToolView({
       <div className={`${styles.viewScroll} scroll`}>
         <div className={styles.viewBody}>{children}</div>
         {footer && (
-          <div className={styles.viewFooter} data-tool-footer>
+          <div
+            className={pinFooter ? `${styles.viewFooter} ${styles.pinnedFooter}` : styles.viewFooter}
+            data-tool-footer
+          >
             {footer}
           </div>
         )}
