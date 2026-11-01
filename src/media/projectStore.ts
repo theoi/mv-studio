@@ -125,6 +125,8 @@ export class IdbProjectStore implements ProjectStore {
 
   constructor(media: OpfsMediaStore = mediaStore) {
     this.media = media
+    // Thumbnails read from the database are Blobs it holds, which can't be written again once the browser clears it.
+    onDatabaseClosed(() => this.thumbnails.clear())
   }
 
   async list(): Promise<ProjectSummary[]> {

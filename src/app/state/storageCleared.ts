@@ -3,7 +3,7 @@
  * nearly full and storage isn't persistent: every kept project and all media go at once, while the open project stays
  * in memory.
  */
-import type { Asset, Project } from '../../model/index.ts'
+import type { Asset, Id, Project, SavedHistory } from '../../model/index.ts'
 import { plural } from '../format.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
 
@@ -71,12 +71,22 @@ export function storageClearedMessage(loss: StorageLoss): string | null {
     : loss.project === 'not-kept'
       ? `${others === 1 ? 'Your project' : `Your ${others} projects`} in this browser ${others === 1 ? 'was' : 'were'} cleared.`
       : `${others === 1 ? 'Your other project' : `Your ${others} other projects`} in this browser ${others === 1 ? 'was' : 'were'} cleared too.`
-  const remake = list([
-    files > 0 && `import the ${files === 1 ? 'file' : 'files'} again`,
-    clips + images > 0 &&
-      `generate the ${list([clips > 0 && (clips === 1 ? 'clip' : 'clips'), images > 0 && (images === 1 ? 'image' : 'images')])} again`,
+  const generated = list([
+    clips > 0 && (clips === 1 ? 'clip' : 'clips'),
+    images > 0 && (images === 1 ? 'image' : 'images'),
   ])
-  const todo = remake ? `Free some disk space, then ${remake}.` : 'Free some disk space before you go on.'
+  const imported = files === 1 ? 'file' : 'files'
+  const remake = !lostCount
+    ? ''
+    : !generated
+      ? `import the ${imported} again`
+      : !files
+        ? `generate the ${generated} again`
+        : `import the ${imported} and generate the ${generated} again,`
+  // The clips that showed them still point at the media that went, so new ones have to take their place.
+  const todo = remake
+    ? `Free some disk space, then ${remake} and put ${lostCount === 1 ? 'it' : 'them'} back in the timeline.`
+    : 'Free some disk space before you go on.'
   return [
     'The browser cleared MV Studio’s storage, as it does when the disk is nearly full.',
     project,
@@ -85,4 +95,42 @@ export function storageClearedMessage(loss: StorageLoss): string | null {
   ]
     .filter(Boolean)
     .join(' ')
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Runs `run`, which uses the database, trying again for a few seconds: opening it fails while the browser is still
+ * deleting it.
+ */
+export async function whenReopened<T>(run: () => Promise<T>, wait = sleep): Promise<T> {
+  for (let ms = 50; ; ms *= 2) {
+    try {
+      return await run()
+    } catch (error) {
+      if (ms > 1600) throw error
+      await wait(ms)
+    }
+  }
+}
+
+/**
+ * Writes the open project again once the browser cleared its record, trying again as `whenReopened` does. Each try
+ * writes the project as `open` gives it then, with its own undo history, so an edit autosave wrote meanwhile is never
+ * written over by an older copy; once another project is open, it stops. Says whether it wrote the project.
+ */
+export async function writeAgain(
+  id: Id,
+  open: () => { project: Project; history?: SavedHistory },
+  write: (project: Project, history?: SavedHistory) => Promise<void>,
+  wait = sleep,
+): Promise<boolean> {
+  let wrote = false
+  await whenReopened(async () => {
+    const { project, history } = open()
+    if (project.id !== id) return
+    await write(project, history)
+    wrote = true
+  }, wait)
+  return wrote
 }

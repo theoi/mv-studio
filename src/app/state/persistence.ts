@@ -27,7 +27,13 @@ import { isSampleAsset, sampleFile } from '../mock/sampleMedia.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { usePrefs } from './prefs.ts'
 import { clampToLastFrame, dispatch, editor, loadEmptyProject } from './project.ts'
-import { lostMedia, storageClearedMessage, type StorageLoss } from './storageCleared.ts'
+import {
+  lostMedia,
+  storageClearedMessage,
+  whenReopened,
+  writeAgain,
+  type StorageLoss,
+} from './storageCleared.ts'
 import { thumbnailBlob } from './thumbs.ts'
 import { get, set, toast, useUi } from './ui.ts'
 
@@ -257,15 +263,21 @@ function onAutosave(state: AutosaveState) {
  * here. Writes it again, so a reload keeps its edits, asks again for storage the browser keeps, and says what was lost.
  */
 async function onStorageCleared(): Promise<void> {
+  // Their thumbnails went with the rest, so the next save makes one (or none) instead of keeping a cleared one.
+  covers.clear()
   const project = editor.getProject()
   const others = [...storedIds].filter((id) => id !== project.id)
   let saved: StorageLoss['project'] = 'not-kept'
   if (usePersistence.getState().tracked) {
     try {
-      await whenReopened(() => writeProject(project, false, editor.savedHistory()))
+      const wrote = await writeAgain(
+        project.id,
+        () => ({ project: editor.getProject(), history: editor.savedHistory() }),
+        (open, history) => writeProject(open, false, history),
+      )
       // A save that met the closed database failed; the next one opens it again.
       if (autosave?.getState().status === 'error') await autosave.flush()
-      saved = autosave?.getState().status === 'error' ? 'not-saved' : 'saved'
+      saved = !wrote ? 'not-kept' : autosave?.getState().status === 'error' ? 'not-saved' : 'saved'
     } catch (error) {
       saved = 'not-saved'
       // Its record is gone, so it is kept as an edited project would be: Not saved, and saving again writes it.
@@ -282,25 +294,14 @@ async function onStorageCleared(): Promise<void> {
     ),
     lostMedia(project, (asset) => mediaStore.has(asset)),
   ])
+  // Another project opened meanwhile: the note can't speak for the one that was open.
+  const same = editor.getProject().id === project.id
   const message = storageClearedMessage({
-    project: saved,
-    ...lost,
+    ...(same ? { project: saved, ...lost } : { project: 'not-kept', files: 0, clips: 0, images: 0 }),
     others: others.filter((id) => !kept.has(id)).length,
   })
   if (message) toast(message, undefined, { key: 'storage-cleared', sticky: true })
   await refreshRecents().catch(() => undefined)
-}
-
-/** Runs `run`, which uses the database, trying again for a few seconds: opening it fails while the browser is still deleting it. */
-async function whenReopened<T>(run: () => Promise<T>): Promise<T> {
-  for (let wait = 50; ; wait *= 2) {
-    try {
-      return await run()
-    } catch (error) {
-      if (wait > 1600) throw error
-      await new Promise((resolve) => setTimeout(resolve, wait))
-    }
-  }
 }
 
 function timing(seconds: number) {
