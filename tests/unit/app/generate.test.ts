@@ -9,9 +9,9 @@ import { PAID_RESULT_GRACE_MS } from '../../../src/cloud/media.ts'
 import { jobs, JobError, type JobContext } from '../../../src/shared/jobs.ts'
 import type * as cloudState from '../../../src/app/state/cloud.ts'
 import { cloudSettings, spendLedger } from '../../../src/app/state/cloud.ts'
+import { gapAt } from '../../../src/app/state/clipDrag.ts'
 import {
   animateImage,
-  gapAt,
   generateForm,
   generateInGap,
   generateOutcome,
@@ -487,9 +487,9 @@ describe('Animate with AI', () => {
 describe('the lane menu', () => {
   const spot = (trackId: string, time: number) => laneItemsAt(buildDemoProject(), { trackId, time })
 
-  it('offers Generate a shot here on an empty stretch of a video or overlay track only, after Paste here', () => {
+  it('offers Generate a shot here on an empty stretch of a video or overlay track only, last', () => {
     const labels = (trackId: string, time: number) => spot(trackId, time).map((i) => i.label)
-    expect(labels(TRACK_IDS.overlay, 30)).toEqual(['Paste here', 'Generate a shot here'])
+    expect(labels(TRACK_IDS.overlay, 30)).toEqual(['Paste here', 'Close gap', 'Generate a shot here'])
     expect(labels(TRACK_IDS.overlay, 70)).toEqual(['Paste here'])
     expect(labels(TRACK_IDS.lyrics, 2)).toEqual(['Paste here'])
     expect(labels(TRACK_IDS.song, 30)).toEqual(['Paste here'])

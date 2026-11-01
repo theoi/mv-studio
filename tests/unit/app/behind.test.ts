@@ -21,6 +21,8 @@ import {
   type PersonMaskRecord,
   type Suitability,
   useBehind,
+  withCutoutTrims,
+  withCutouts,
 } from '../../../src/app/state/behind.ts'
 import { PERSON_TRACK_VERSION } from '../../../src/vision/segmentation/personTrack.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
@@ -433,6 +435,63 @@ describe('cutout commands', () => {
     expect(withRecord(null)).toBeUndefined()
     expect(withRecord({ trackVersion: PERSON_TRACK_VERSION - 1 })).toBeUndefined()
     expect(withRecord({ trackVersion: PERSON_TRACK_VERSION, peopleSkipped: true })).toBeUndefined()
+  })
+})
+
+describe('cutouts of a clip a drop trims', () => {
+  const round = (t: number) => Math.round(t * 1000) / 1000
+  /** The singer's first clip with a cutout whose start and end are moved `by` seconds from the clip's. */
+  function cutOut(by: { start: number; end: number } = { start: 0, end: 0 }) {
+    const host = clipsOf(editor.getProject(), 'm-singer')[0] as Extract<Clip, { type: 'video' }>
+    editor.dispatch(cutoutCommands(editor.getProject(), [host.id]).commands)
+    const cutout = cutoutsOf(editor.getProject(), host.id)[0]!
+    if (by.start || by.end) {
+      const start = host.start + by.start
+      const duration = host.duration + by.end - by.start
+      editor.dispatch({ type: 'clip.trim', clipId: cutout.id, start, duration })
+    }
+    return { host, cutout: editor.getProject().clips[cutout.id] as Extract<Clip, { type: 'video' }> }
+  }
+  /** Moves a clip `by` seconds and trims it to `start`..`end` seconds into where it lands, as a swap or a gap fill does. */
+  function drop(clipId: string, by: number, start: number, end: number) {
+    const p = editor.getProject()
+    const at = p.clips[clipId]!.start + by
+    const moves = withCutouts(p, [{ clipId, start: at }])
+    const trims = withCutoutTrims(p, moves, [
+      { type: 'clip.trim', clipId, start: at + start, duration: end - start },
+    ])
+    editor.dispatch([{ type: 'clip.move', moves }, ...trims])
+    return trims
+  }
+  const placed = (id: string) => {
+    const c = editor.getProject().clips[id] as Extract<Clip, { type: 'video' }>
+    return [c.start, c.start + c.duration, c.sourceStart].map(round)
+  }
+
+  it('trim a cutout with its clip, so it keeps showing the same frames', () => {
+    const { host, cutout } = cutOut()
+    drop(host.id, 1, 0.05, host.duration - 0.04)
+    expect(placed(host.id)).toEqual(
+      [host.start + 1.05, host.start + host.duration + 0.96, host.sourceStart + 0.05 * host.playbackRate].map(
+        round,
+      ),
+    )
+    expect(placed(cutout.id)).toEqual(placed(host.id))
+    editor.undo()
+    expect(placed(cutout.id)).toEqual([host.start, host.start + host.duration, host.sourceStart].map(round))
+  })
+
+  it('cut a shorter cutout back only where it would stick out, and leave one on a locked track', () => {
+    const { host, cutout } = cutOut({ start: 0.5, end: -0.02 })
+    const end = host.start + host.duration
+    drop(host.id, 1, 0, host.duration - 0.08)
+    expect(placed(cutout.id)).toEqual([host.start + 1.5, end + 0.92, cutout.sourceStart].map(round))
+    editor.undo()
+
+    const subject = editor.getProject().tracks[0]!
+    editor.dispatch({ type: 'track.update', trackId: subject.id, patch: { locked: true } })
+    expect(drop(host.id, 1, 0, host.duration - 0.08).map((t) => t.clipId)).toEqual([host.id])
+    expect(placed(cutout.id)).toEqual([host.start + 0.5, end - 0.02, cutout.sourceStart].map(round))
   })
 })
 

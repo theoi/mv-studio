@@ -91,9 +91,12 @@ import {
   isLyricClip,
   isSelectableClip,
   paste,
+  rippleDeleteSelection,
   selectTimelineClips,
   timelineSelectionIds,
 } from '../../../state/clipboard.ts'
+import { withCutoutTrims, withCutouts } from '../../../state/behind.ts'
+import { closeGap, gapBefore, gapLength, type Gap } from '../../../state/ripple.ts'
 import {
   bpmOf,
   dispatch,
@@ -132,6 +135,7 @@ import {
   dropLibraryItem,
   isLibraryDrag,
   libraryDropHint,
+  undoAction,
 } from '../../../state/library.ts'
 import { exportSectionTeaser } from '../../../state/exports.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
@@ -149,13 +153,16 @@ import {
   BUTT_PX,
   blockedAt,
   dropShift,
-  insertPlan,
+  gapFit,
   isLyricsTrack,
+  rearrangePlan,
   refusalLabel,
   refusalToast,
   refuseTrack,
+  swapPlan,
   type DropRefusal,
   type StayingSpan,
+  type SwapPlan,
 } from '../../../state/clipDrag.ts'
 import { registerReveal } from '../../../state/reveal.ts'
 import {
@@ -1077,6 +1084,8 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
   const [canPaste, setCanPaste] = useState(false)
   const [cut, setCut] = useState<{ clipId: string; time: number } | null>(null)
   const [transitions, setTransitions] = useState<TransitionSpot[]>([])
+  const [gap, setGap] = useState<Gap | null>(null)
+  const [trackLocked, setTrackLocked] = useState(false)
   const menuTime = useRef(clip.start)
   const { width, isMedia, inW, outW, showLabel } = zoomedLook(clip, pps)
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
@@ -1100,6 +1109,8 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
           setCanPaste(hasClipboard())
           setCut(cutNear(editor.getProject(), clip, menuTime.current))
           setTransitions(transitionsAtClip(editor.getProject(), clip.id))
+          setGap(gapBefore(editor.getProject(), clip.id))
+          setTrackLocked(!!editor.getProject().tracks.find((t) => t.id === clip.trackId)?.locked)
         }}
       >
         <ContextMenuTrigger asChild>
@@ -1206,8 +1217,24 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
           <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
           <ContextMenuItem onSelect={() => openAssist('match')}>Find matching footage…</ContextMenuItem>
           <ContextMenuSeparator />
+          {gap && (
+            <ContextMenuItem
+              disabled={trackLocked}
+              description={
+                trackLocked
+                  ? 'The track is locked'
+                  : `${gapLength(gap)} before this clip · it and the later clips move left`
+              }
+              onSelect={() => closeGap(gap)}
+            >
+              Close gap before
+            </ContextMenuItem>
+          )}
           <ContextMenuItem danger shortcut="Delete" onSelect={deleteSelection}>
             Delete
+          </ContextMenuItem>
+          <ContextMenuItem danger shortcut="Shift Delete" onSelect={rippleDeleteSelection}>
+            Delete and close gap
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -1559,12 +1586,17 @@ export function Timeline() {
     label: string
     /** The box of the clip that can't drop, which carries the label. */
     labelAt: number
-    /** A second line under the label. */
-    hint?: string
+    /** Lines under the label. */
+    hints?: string[]
+    /**
+     * Set when the labelled box starts in the right half of the lanes: the label then ends this many pixels inside the
+     * box's right edge, where the lanes end, so it stays in view.
+     */
+    labelEnd?: number
     boxes: { top: number; height: number; start: number; duration: number }[]
   } | null>(null)
-  // Where the pointer is during an insert drag, for the "Insert" pill beside it.
-  const [insertPill, setInsertPill] = useState<{ x: number; y: number } | null>(null)
+  // Where the pointer is during an insert or swap drag, for the "Insert" or "Swap" pill beside it.
+  const [insertPill, setInsertPill] = useState<{ x: number; y: number; label: string } | null>(null)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
@@ -1897,15 +1929,33 @@ export function Timeline() {
       /** Moves a press outside the grabbed clip's row (a look clip takes clicks past its lane) into that row. */
       let grabDy = 0
       let refused: DropRefusal | null = null
-      // Mod held during the drag inserts: the clips go in at the drop point and push the later clips right.
+      // Mod held during the drag inserts: the clips leave their places, which close up, and go in at the drop point,
+      // pushing the later clips right.
       let modHeld = false
       let inserting = false
-      let pill = false
+      let pill = ''
       /** Clips an insert pushed during this drag, which go back when a later pointer position no longer pushes them. */
       const pushed = new Set<string>()
+      /**
+       * The kind of undo step the drag is building ('move', 'move:trim', 'insert', 'swap:<clip id>'). Each kind is its
+       * own step with its own label, and a trim or a swap changes clips a move leaves alone, so a new kind starts over.
+       */
+      let step = ''
+      const begin = (next: string) => {
+        if (next === step) return
+        if (!refused) editor.cancelGesture(key)
+        pushed.clear()
+        step = next
+      }
+      /** What the drop did beyond moving the clips, said when it lands. */
+      let dropNote: { message: string; undo?: string } | null = null
+      const showPill = (label: string, x: number, y: number) => {
+        pill = label
+        setInsertPill({ x, y, label })
+      }
       const hidePill = () => {
         if (!pill) return
-        pill = false
+        pill = ''
         setInsertPill(null)
       }
       const target = e.currentTarget as HTMLElement
@@ -1957,32 +2007,76 @@ export function Timeline() {
             end: c.start + c.duration,
             others: othersOn(trackFor(c).id),
           }))
-          if (modHeld !== inserting) {
-            // Moving and inserting are different undo steps: start over, so the step's label says which it is.
-            if (!refused) editor.cancelGesture(key)
-            pushed.clear()
-            inserting = modHeld
-          }
-          const plan = refusal || !inserting ? null : insertPlan(spans, r.t - clip.start, lo)
+          inserting = modHeld
+          const plan =
+            refusal || !inserting
+              ? null
+              : rearrangePlan(
+                  grabbedFirst.map((c) => ({
+                    start: c.start,
+                    end: c.start + c.duration,
+                    from: c.trackId,
+                    to: trackFor(c).id,
+                  })),
+                  othersOn,
+                  r.t - clip.start,
+                  lo,
+                )
           const place =
             refusal || inserting ? null : dropShift(spans, r.t - clip.start, dt, BUTT_PX / scale, lo, hi)
-          if (!place && !plan) {
+          // A single clip with no room where it was dropped: it fills the empty stretch under the pointer when it fits
+          // there, else swaps places with the clip under the pointer.
+          const single = !refusal && !inserting && !place && grabbedFirst.length === 1 ? spans[0] : undefined
+          const toTrack = trackFor(self)
+          const sameTrack = toTrack.id === self.trackId
+          const at = (ev.clientX - (contentRef.current?.getBoundingClientRect().left ?? 0) - HEADER_W) / scale
+          let fit = single ? gapFit(single, at, r.t - clip.start, lo, hi) : null
+          // Back where it started is no drop: the refusal says why.
+          if (fit && sameTrack && Math.abs(fit.shift) < 0.001 && fit.duration === undefined) fit = null
+          let swap: SwapPlan | null = null
+          let unswappable = false
+          if (single && !fit) {
+            const s = swapPlan(single, at, othersOn(toTrack.id), sameTrack)
+            const other = s && s !== 'length' ? p.clips[s.id] : undefined
+            const ownTrack = p.tracks.find((t) => t.id === self.trackId)
+            if (s && s !== 'length' && other && ownTrack && !refuseTrack(p, other, ownTrack, movingIds))
+              swap = s
+            else unswappable = s === 'length'
+          }
+          if (!place && !plan && !fit && !swap) {
             // The clips go back to where they started until the pointer finds a place they can drop.
             if (!refused) editor.cancelGesture(key)
             pushed.clear()
+            step = ''
             hidePill()
-            refused = refusal ?? { reason: 'room' }
+            refused = refusal ?? (unswappable ? { reason: 'room', length: true } : { reason: 'room' })
             setSnapLine(null)
             const shift = Math.min(hi, Math.max(lo, dt))
             if (!refusal) refusedAt = blockedAt(spans, shift)
+            const insert = `Hold ${keyName('Mod')} while dragging to insert`
+            const boxes = grabbedFirst.map((c) => {
+              const row = rows[rowOf(c) + offset] as TrackRow
+              return { top: row.top, height: row.height, start: c.start + shift, duration: c.duration }
+            })
+            const labelAt = Math.max(0, refusedAt)
+            const box = boxes[labelAt]
+            const lanes = scrollRef.current
+            const from = (lanes?.scrollLeft ?? 0) / scale
+            const to = from + ((lanes?.clientWidth ?? 0) - HEADER_W) / scale
             setRefusedDrop({
               label: refusalLabel(refused),
-              hint: !refusal && !inserting ? `Hold ${keyName('Mod')} while dragging to insert` : undefined,
-              labelAt: Math.max(0, refusedAt),
-              boxes: grabbedFirst.map((c) => {
-                const row = rows[rowOf(c) + offset] as TrackRow
-                return { top: row.top, height: row.height, start: c.start + shift, duration: c.duration }
-              }),
+              hints:
+                refusal || inserting
+                  ? undefined
+                  : unswappable
+                    ? ['Swaps only with a neighbor or a clip of the same length', insert]
+                    : [insert],
+              labelAt,
+              labelEnd:
+                lanes && box && box.start > (from + to) / 2
+                  ? Math.max(0, (box.start + box.duration - to) * scale)
+                  : undefined,
+              boxes,
             })
             return
           }
@@ -1990,44 +2084,92 @@ export function Timeline() {
             refused = null
             setRefusedDrop(null)
           }
+          const pillX = ev.clientX - (contentRef.current?.getBoundingClientRect().left ?? 0)
           if (plan) {
+            begin('insert')
+            dropNote = null
             setSnapLine(plan.at)
-            pill = true
-            setInsertPill({ x: ev.clientX - (contentRef.current?.getBoundingClientRect().left ?? 0), y })
+            showPill('Insert', pillX, y)
             const moves: { clipId: string; start: number; trackId?: string }[] = moving.map((c) => ({
               clipId: c.id,
               start: c.start + plan.shift,
               trackId: trackFor(c).id,
             }))
-            const next = new Map(plan.pushes.map((m) => [m.id, m.start]))
+            const next = new Map(plan.moves.map((m) => [m.id, m.start]))
             for (const id of pushed)
               if (!next.has(id)) moves.push({ clipId: id, start: p.clips[id]?.start ?? 0 })
             for (const [id, start] of next) {
               moves.push({ clipId: id, start })
               pushed.add(id)
             }
-            dispatch({ type: 'clip.move', moves }, { coalesceKey: key, label: 'Insert clip' })
+            dispatch(
+              { type: 'clip.move', moves: withCutouts(p, moves) },
+              { coalesceKey: key, label: 'Insert clip' },
+            )
+            return
+          }
+          if (swap) {
+            const other = p.clips[swap.id] as Clip
+            begin(`swap:${other.id}`)
+            dropNote = {
+              message: `Swapped ${viewOf(p, self).name} and ${viewOf(p, other).name}`,
+              undo: 'Swap clips',
+            }
+            setSnapLine(null)
+            showPill('Swap', pillX, y)
+            const moves = withCutouts(p, [
+              { clipId: self.id, start: swap.clip.start, trackId: toTrack.id },
+              { clipId: other.id, start: swap.other.start, trackId: self.trackId },
+            ])
+            // Same-length clips trade lengths too, so the cuts stay put; after the move, so a trim keeps the in-point.
+            const trims = (
+              [
+                [self, swap.clip],
+                [other, swap.other],
+              ] as const
+            )
+              .filter(([c, span]) => Math.abs(span.end - span.start - c.duration) > 0.001)
+              .map(([c, span]) => ({
+                type: 'clip.trim' as const,
+                clipId: c.id,
+                start: span.start,
+                duration: span.end - span.start,
+              }))
+            dispatch([{ type: 'clip.move', moves }, ...withCutoutTrims(p, moves, trims)], {
+              coalesceKey: key,
+              label: 'Swap clips',
+            })
             return
           }
           hidePill()
-          if (!place) return
+          const shift = place?.shift ?? fit?.shift
+          if (shift === undefined) return
+          const trimTo = place ? undefined : fit?.duration
+          begin(trimTo === undefined ? 'move' : 'move:trim')
+          const cut = trimTo === undefined ? 0 : self.duration - trimTo
+          dropNote =
+            cut >= 0.005
+              ? {
+                  message: `Trimmed ${cut.toFixed(2)} s off ${viewOf(p, self).name} to fit the gap`,
+                  undo: 'Move clip',
+                }
+              : null
           setSnapLine(
-            place.edge ??
-              (r.snapped !== null && Math.abs(r.snapped - (clip.start + place.shift)) < 0.001
-                ? r.snapped
-                : null),
+            place?.edge ??
+              (r.snapped !== null && Math.abs(r.snapped - (clip.start + shift)) < 0.001 ? r.snapped : null),
           )
-          dispatch(
-            {
-              type: 'clip.move',
-              moves: moving.map((c) => ({
-                clipId: c.id,
-                start: c.start + place.shift,
-                trackId: trackFor(c).id,
-              })),
-            },
-            { coalesceKey: key },
+          const moves = withCutouts(
+            p,
+            moving.map((c) => ({ clipId: c.id, start: c.start + shift, trackId: trackFor(c).id })),
           )
+          const trims =
+            trimTo === undefined
+              ? []
+              : [{ type: 'clip.trim' as const, clipId: self.id, start: self.start + shift, duration: trimTo }]
+          dispatch([{ type: 'clip.move', moves }, ...withCutoutTrims(p, moves, trims)], {
+            coalesceKey: key,
+            label: 'Move clip',
+          })
         } else if (mode === 'start') {
           const r = snapTime(clip.start + dt, scale, grid, edges, sectionEdges)
           const start = Math.min(clip.end - 0.25, Math.max(min, r.t))
@@ -2060,7 +2202,11 @@ export function Timeline() {
       }
       const up = () => {
         if (refused) toast(refusalToast(p, refused))
-        else editor.endGesture()
+        else {
+          editor.endGesture()
+          if (moved && dropNote)
+            toast(dropNote.message, dropNote.undo ? undoAction(dropNote.undo) : undefined)
+        }
         finish()
         if (!moved && group) select({ type: 'clip', id: clip.id })
         // The chips didn't follow the drag, so say why they stayed.
@@ -2806,10 +2952,22 @@ export function Timeline() {
               }}
             >
               {i === refusedDrop.labelAt && (
-                <span className={styles.refusedLabel} style={{ left: HEADER_W + 3 }}>
+                <span
+                  className={styles.refusedLabel}
+                  data-end={refusedDrop.labelEnd === undefined ? undefined : ''}
+                  style={
+                    refusedDrop.labelEnd === undefined
+                      ? { left: HEADER_W + 3 }
+                      : { right: refusedDrop.labelEnd }
+                  }
+                >
                   <span className={styles.refusedText}>
                     <span>{refusedDrop.label}</span>
-                    {refusedDrop.hint && <span className={styles.refusedHint}>{refusedDrop.hint}</span>}
+                    {refusedDrop.hints?.map((hint) => (
+                      <span key={hint} className={styles.refusedHint}>
+                        {hint}
+                      </span>
+                    ))}
                   </span>
                 </span>
               )}
@@ -2820,7 +2978,7 @@ export function Timeline() {
               className={styles.insertPill}
               style={{ transform: `translate(${insertPill.x + 14}px, ${insertPill.y - 30}px)` }}
             >
-              Insert
+              {insertPill.label}
             </div>
           )}
           <div ref={marqueeRef} className={styles.marquee} hidden aria-hidden />
