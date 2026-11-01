@@ -51,10 +51,17 @@ test('a clip drags to another track of its kind, butts up against a near neighbo
   await openEditor(page)
   // Snapping off, so a drag moves a clip by exactly the pointer's distance.
   await page.keyboard.press('n')
-  // Room on the Overlay track beside the Video clip used here: Spectrum bars starts at 1:09 instead of 1:04.
-  await page.evaluate(() =>
-    window.mvStudio.app.project.dispatch({ type: 'clip.move', moves: [{ clipId: 'o-spec1', start: 69 }] }),
-  )
+  // Room on the Overlay track beside the Video clip used here: Spectrum bars starts at 1:09 instead of 1:04. Neon grid,
+  // after that clip, ends at 1:09.5 instead of 1:10, half a second short of the next clip.
+  await page.evaluate(() => {
+    const { editor, dispatch } = window.mvStudio.app.project
+    const clips = Object.values(editor.getProject().clips) as { id: string; trackId: string; start: number }[]
+    const neon = clips.find((c) => c.trackId === 't-video' && Math.abs(c.start - 68) < 0.01)!
+    dispatch([
+      { type: 'clip.move', moves: [{ clipId: 'o-spec1', start: 69 }] },
+      { type: 'clip.trim', clipId: neon.id, start: 68, duration: 1.5 },
+    ])
+  })
   const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
   const id: string = await page.evaluate(
     () =>
@@ -77,16 +84,17 @@ test('a clip drags to another track of its kind, butts up against a near neighbo
   expect(before).toEqual({ trackId: 't-video', start: 66, end: 68 })
   const startLabel = await undoLabel(page)
 
-  // No room: 1 s right along the Video track overlaps the next clip. Moving out and back in still gives one toast.
+  // No room: 2.75 s right along the Video track lets go in the half second after Neon grid. Moving out and back in
+  // still gives one toast.
   await page.mouse.move(from.x, from.y)
   await page.mouse.down()
-  await page.mouse.move(from.x + pps, from.y, { steps: 8 })
+  await page.mouse.move(from.x + 2.75 * pps, from.y, { steps: 8 })
   await expect(page.getByText('No room', { exact: true })).toBeVisible()
   await expect(content).toHaveAttribute('data-refused', '')
   await expect(singer).toHaveCSS('cursor', 'not-allowed')
   await page.mouse.move(from.x + 1, from.y, { steps: 4 })
   await expect(page.getByText('No room', { exact: true })).toBeHidden()
-  await page.mouse.move(from.x + pps, from.y, { steps: 4 })
+  await page.mouse.move(from.x + 2.75 * pps, from.y, { steps: 4 })
   await page.mouse.up()
   const noRoom = page.getByText('No room there. Drop it on an empty stretch or another track.')
   await expect(noRoom).toHaveCount(1)
@@ -279,11 +287,18 @@ test('a refusal label stays in view at the left of the lanes, inside its outline
   await page.mouse.up()
 })
 
-test('Mod pressed during a clip drag inserts the clip, pushing the later clips on its track right; releasing Mod goes back to a move', async ({
+test('Mod pressed during a clip drag rearranges: the clip leaves its place, which closes up, and goes in at the drop point; releasing Mod goes back to a move', async ({
   page,
 }) => {
   await openEditor(page)
   await page.keyboard.press('n')
+  // Neon grid (1:08 to 1:10) ends at 1:09.5 instead, half a second short of the next clip: too little room there.
+  await page.evaluate(() => {
+    const { editor, dispatch } = window.mvStudio.app.project
+    const clips = Object.values(editor.getProject().clips) as { id: string; trackId: string; start: number }[]
+    const neon = clips.find((c) => c.trackId === 't-video' && Math.abs(c.start - 68) < 0.01)!
+    dispatch({ type: 'clip.trim', clipId: neon.id, start: 68, duration: 1.5 })
+  })
   const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
   /** The Video track's clips by id, with their starts rounded to the millisecond. */
   const video = () =>
@@ -302,19 +317,20 @@ test('Mod pressed during a clip drag inserts the clip, pushing the later clips o
     )
   const before = await video()
   const id = Object.keys(before).find((k) => before[k] === 66)!
-  const later = Object.keys(before).filter((k) => before[k]! >= 68)
-  expect(later.length).toBeGreaterThan(1)
-  const inserted = { ...before, [id]: 68, ...Object.fromEntries(later.map((k) => [k, before[k]! + 2])) }
+  const neon = Object.keys(before).find((k) => before[k] === 68)!
+  expect(Object.keys(before).filter((k) => before[k]! > 68).length).toBeGreaterThan(1)
+  // The two swap places, and the clips after them stay where they were: no gap, and the track keeps its length.
+  const inserted = { ...before, [id]: 68, [neon]: 66 }
   const singer = page.getByRole('button', { name: 'Singer close-up, 1:06.0 to 1:08.0' })
   const content = page.locator('[data-timeline-scroller] > div')
   const insertPill = page.getByText('Insert', { exact: true })
   const startLabel = await undoLabel(page)
   const from = await center(singer)
 
-  // 2.5 s right lands inside Neon grid (1:08 to 1:10): no room, and the pill says how to insert.
+  // 2.75 s right lets go in the half second after Neon grid: no room, and the pill says how to insert.
   await page.mouse.move(from.x, from.y)
   await page.mouse.down()
-  await page.mouse.move(from.x + 2.5 * pps, from.y, { steps: 10 })
+  await page.mouse.move(from.x + 2.75 * pps, from.y, { steps: 10 })
   await expect(page.getByText('No room', { exact: true })).toBeVisible()
   await expect(page.getByText(/^Hold (Ctrl|⌘) while dragging to insert$/)).toBeVisible()
   // The reason crosses the lane's top edge and the hint hangs below it, clear of the clip names in the lane above.
@@ -328,8 +344,8 @@ test('Mod pressed during a clip drag inserts the clip, pushing the later clips o
   expect(reason.y + reason.height).toBeGreaterThan(outline.y)
   expect(hint.y).toBeGreaterThanOrEqual(outline.y)
 
-  // Mod during the drag: the clip goes in before Neon grid (the nearer edge), and every later Video clip moves right
-  // by its 2 s.
+  // Mod during the drag: Neon grid moves left into the clip's place, and the clip goes in before the next clip (the
+  // nearer edge of the clip now under the drop point), where that clip was.
   await page.keyboard.down(mod)
   await expect(insertPill).toBeVisible()
   await expect(page.getByText('No room', { exact: true })).toBeHidden()
@@ -368,4 +384,107 @@ test('Mod pressed during a clip drag inserts the clip, pushing the later clips o
   await page.mouse.up()
   expect(await video()).toEqual(before)
   expect(await undoLabel(page)).toBe(startLabel)
+})
+
+test('a clip let go over a gap it fits fills it exactly, and one let go on its neighbor or a clip of its length swaps places with it', async ({
+  page,
+}) => {
+  await openEditor(page)
+  await page.keyboard.press('n')
+  const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
+  // Letting go 0.8 s off is more than a butt-up's few pixels, so only the gap under the pointer can place the clip.
+  expect(0.8 * pps).toBeGreaterThan(8)
+  /** The Video track's 2 s clips from 1:04 to 1:14, by start: 66 is Singer close-up and 68 is Neon grid. */
+  const ids: Record<number, string> = await page.evaluate(() =>
+    Object.fromEntries(
+      (
+        Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+          id: string
+          trackId: string
+          start: number
+        }[]
+      )
+        .filter((c) => c.trackId === 't-video' && c.start > 63.9 && c.start < 72.1)
+        .map((c) => [Math.round(c.start), c.id]),
+    ),
+  )
+  const clip = (t: number) => page.locator(`[data-clip-id="${ids[t]}"]`)
+  const at = (t: number) => placed(page, ids[t]!)
+  const span = (start: number, end: number) => ({ trackId: 't-video', start, end })
+  const toastWith = (message: string) =>
+    page.locator('[data-toast]').filter({ has: page.getByText(message, { exact: true }) })
+  const noRoom = page.getByText('No room', { exact: true })
+  /** Drags the clip that started at `t` by `by` seconds along its track from its middle, running `during` before the drop. */
+  const drag = async (t: number, by: number, during?: () => Promise<void>) => {
+    const from = await center(clip(t))
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x + by * pps, from.y, { steps: 10 })
+    await during?.()
+    await page.mouse.up()
+  }
+  const startLabel = await undoLabel(page)
+
+  // Onto its neighbor: the pill says Swap and the neighbor shows in its place; the drop is one undo step, with a toast.
+  await drag(66, 2, async () => {
+    await expect(page.getByText('Swap', { exact: true })).toBeVisible()
+    await expect.poll(() => at(68)).toEqual(span(66, 68))
+  })
+  expect(await at(66)).toEqual(span(68, 70))
+  expect(await undoLabel(page)).toBe('Swap clips')
+  await expect(toastWith('Swapped Singer close-up and Neon grid')).toBeVisible()
+  await page.keyboard.press(`${mod}+z`)
+  expect([await at(66), await at(68)]).toEqual([span(66, 68), span(68, 70)])
+  expect(await undoLabel(page)).toBe(startLabel)
+
+  // Onto a clip of the same length further on: they swap, and Neon grid between them stays.
+  await drag(66, 4)
+  expect([await at(66), await at(68), await at(70)]).toEqual([span(70, 72), span(68, 70), span(66, 68)])
+  await page.keyboard.press(`${mod}+z`)
+
+  // Into the gap Singer close-up leaves, let go 0.8 s late, overlapping Neon grid: it fills the gap exactly.
+  await clip(66).click()
+  await page.keyboard.press('Delete')
+  await drag(70, -3.2, async () => {
+    await expect.poll(() => at(70)).toEqual(span(66, 68))
+    await expect(noRoom).toBeHidden()
+  })
+  expect(await at(70)).toEqual(span(66, 68))
+  expect(await undoLabel(page)).toBe('Move clip')
+  await page.keyboard.press(`${mod}+z`)
+
+  // A few hundredths of a second too long for the gap: it is trimmed to fill it, and the toast says by how much.
+  await page.evaluate(
+    (id) =>
+      window.mvStudio.app.project.dispatch({ type: 'clip.trim', clipId: id, start: 64, duration: 2.04 }),
+    ids[64],
+  )
+  await drag(70, -3.2)
+  expect(await at(70)).toEqual(span(66.04, 68))
+  await expect(toastWith('Trimmed 0.04 s off its end to fit the gap')).toBeVisible()
+  await page.keyboard.press(`${mod}+z`)
+  expect(await at(70)).toEqual(span(70, 72))
+
+  // Neon grid half a second shorter: the clip two along can't swap with it, and the hint and the toast say why.
+  await page.evaluate(
+    (id) => window.mvStudio.app.project.dispatch({ type: 'clip.trim', clipId: id, start: 68, duration: 1.5 }),
+    ids[68],
+  )
+  await drag(72, -4, async () => {
+    await expect(noRoom).toBeVisible()
+    await expect(
+      page.getByText(
+        /^Swaps only with a neighbor or a clip of the same length · Hold (Ctrl|⌘) while dragging to insert$/,
+      ),
+    ).toBeVisible()
+  })
+  await expect(
+    page.getByText('No room there. A clip swaps places only with its neighbor or a clip of the same length.'),
+  ).toBeVisible()
+  expect(await at(72)).toEqual(span(72, 74))
+
+  // Its neighbor swaps with it whatever their lengths, in the space they share: the half-second gap stays between them.
+  await drag(70, -2)
+  expect([await at(70), await at(68)]).toEqual([span(68, 70), span(70.5, 72)])
+  expect(await undoLabel(page)).toBe('Swap clips')
 })

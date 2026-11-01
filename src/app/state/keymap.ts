@@ -5,6 +5,7 @@ import {
   duplicateSelection,
   hasClipboard,
   paste,
+  rippleDeleteSelection,
   selectAll,
 } from './clipboard.ts'
 import { focusedWithRing } from './focusRing.ts'
@@ -278,6 +279,13 @@ export const SHORTCUTS = [
     run: () => void duplicateSelection(),
   },
   { id: 'delete', label: 'Delete', group: 'Timeline', keys: ['Delete', 'Backspace'], run: deleteSelection },
+  {
+    id: 'rippleDelete',
+    label: 'Delete and close gap',
+    group: 'Timeline',
+    keys: ['Shift Delete', 'Shift Backspace'],
+    run: rippleDeleteSelection,
+  },
   { id: 'selectAll', label: 'Select all on the track', group: 'Timeline', keys: ['Mod A'], run: selectAll },
   { id: 'text', label: 'Add text', group: 'Timeline', keys: ['T'], run: addTextAtPlayhead },
   {

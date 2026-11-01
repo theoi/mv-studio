@@ -24,6 +24,7 @@ import {
   FilePlus2,
   Film,
   Flag,
+  FoldHorizontal,
   FolderClock,
   FolderOpen,
   Gauge,
@@ -90,6 +91,7 @@ import {
   duplicateSelection,
   hasClipboard,
   paste,
+  rippleDeleteSelection,
   selectAll,
 } from '../../state/clipboard.ts'
 import { exportSectionTeaser, exportWithOutput } from '../../state/exports.ts'
@@ -121,6 +123,7 @@ import {
   undo,
 } from '../../state/project.ts'
 import { changeAspect } from '../../state/reframe.ts'
+import { closeGap, gapForPalette, gapLength } from '../../state/ripple.ts'
 import { cutClipsToSection, sectionClipIds } from '../../state/sections.ts'
 import {
   analyzeAgain,
@@ -713,6 +716,36 @@ export const actions: Action[] = [
     keywords: 'remove clip',
     run: () => void deleteSelection(),
     unavailable: needsClips,
+  },
+  {
+    id: 'rippleDelete',
+    group: 'Edit',
+    label: 'Delete and close gap',
+    icon: <Trash2 />,
+    shortcut: 'rippleDelete',
+    keywords: 'ripple remove clip later clips move left',
+    run: () => void rippleDeleteSelection(),
+    unavailable: needsClips,
+  },
+  {
+    id: 'closeGap',
+    group: 'Edit',
+    label: 'Close gap',
+    icon: <FoldHorizontal />,
+    keywords: 'ripple remove empty space before clip later clips move left',
+    run: () => {
+      const gap = gapForPalette(project(), get().selection, get().playhead)
+      if (gap) closeGap(gap)
+    },
+    unavailable: () =>
+      gapForPalette(project(), get().selection, get().playhead)
+        ? undefined
+        : 'No gap at the playhead or before the selected clip',
+    detail: () => {
+      const gap = gapForPalette(project(), get().selection, get().playhead)
+      const track = gap && project().tracks.find((t) => t.id === gap.trackId)
+      return gap && track ? `${track.name} · ${gapLength(gap)}` : undefined
+    },
   },
   {
     id: 'selectAll',

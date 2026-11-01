@@ -160,6 +160,19 @@ export const UI_ACTIONS: readonly UiAction[] = [
   { area: 'Timeline', name: 'Cut', palette: 'cut', search: ['cut'] },
   { area: 'Timeline', name: 'Paste', palette: 'paste', search: ['paste', 'paste here'] },
   { area: 'Timeline', name: 'Delete', palette: 'delete', search: ['delete', 'remove clip'] },
+  {
+    area: 'Timeline',
+    name: 'Delete and close gap',
+    palette: 'rippleDelete',
+    search: ['ripple delete', 'delete and close gap'],
+  },
+  {
+    area: 'Timeline',
+    name: 'Close gap before',
+    palette: 'closeGap',
+    search: ['close gap before clip', 'remove empty space'],
+  },
+  { area: 'Timeline', name: 'Close gap', palette: 'closeGap', search: ['close gap', 'close the gap'] },
   { area: 'Timeline', name: 'Select all on the track', palette: 'selectAll', search: ['select all'] },
   {
     area: 'Timeline',

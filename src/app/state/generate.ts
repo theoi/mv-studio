@@ -7,7 +7,6 @@ import type { GenerationRequest, GenerationTask } from '../../cloud/types.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import {
   applyCommand,
-  clipsOnTrack,
   type Asset,
   type EditCommand,
   type ImageClip,
@@ -15,6 +14,7 @@ import {
 } from '../../model/index.ts'
 import { jobs, type JobContext, type JobProgress } from '../../shared/jobs.ts'
 import { formatTime, plural } from '../format.ts'
+import { gapAt } from './clipDrag.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
 import { assetPlacement } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
@@ -416,23 +416,6 @@ export function animateImage(clip: ImageClip): void {
     target: { start: clip.start, where: `at ${formatTime(clip.start)}, over the image` },
   })
   openAssist('generate')
-}
-
-/** The empty stretch of a track around `time`, or null when a clip is there. */
-export function gapAt(
-  project: Project,
-  trackId: string,
-  time: number,
-): { start: number; end: number } | null {
-  let start = 0
-  let end = Infinity
-  for (const clip of clipsOnTrack(project, trackId)) {
-    const clipEnd = clip.start + clip.duration
-    if (clip.start <= time && time < clipEnd) return null
-    if (clipEnd <= time) start = Math.max(start, clipEnd)
-    else end = Math.min(end, clip.start)
-  }
-  return { start, end }
 }
 
 /** Where a shot right-clicked at `time` starts: the gap's start when near it, else the nearest beat in the gap. */

@@ -186,8 +186,81 @@ test('the clip menu splits, copies, pastes, duplicates and deletes', async ({ pa
   await expect(page.getByRole('button', { name: 'Singer close-up, 1:07.0 to 1:08.0' })).toHaveCount(3)
 
   await first.click({ button: 'right' })
-  await menuItem(/^Delete/).click()
+  await menuItem(/^Delete(?! and close gap)/).click()
   await expect(first).toBeHidden()
+})
+
+test('Shift Delete and the clip and lane menus close gaps, moving the later clips left as one undo step; Delete says what it removed, with Undo', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  await page.evaluate(() => window.mvStudio.app.ui.set({ review: false }))
+  /** The Video track's clips by id, with their starts rounded to the millisecond. */
+  const starts = async () =>
+    Object.fromEntries(
+      (await clipsOn(page, ['t-video'])).map((c) => [c.id, Math.round(c.start * 1000) / 1000]),
+    )
+  const before = await starts()
+  const singerId = Object.keys(before).find((k) => before[k] === 66)!
+  const nextId = Object.keys(before).find((k) => before[k] === 68)!
+  const later = Object.keys(before).filter((k) => before[k]! >= 68)
+  expect(later.length).toBeGreaterThan(1)
+  const gapLeft = Object.fromEntries(Object.entries(before).filter(([k]) => k !== singerId))
+  const closed = { ...gapLeft, ...Object.fromEntries(later.map((k) => [k, before[k]! - 2])) }
+  const singer = page.locator(`[data-clip-id="${singerId}"]`)
+  const next = page.locator(`[data-clip-id="${nextId}"]`)
+  const toastWith = (message: string) =>
+    page.locator('[data-toast]').filter({ has: page.getByText(message, { exact: true }) })
+  const undoLabel = () => page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())
+  const menuItem = (name: RegExp) => page.getByRole('menu').getByRole('menuitem', { name })
+
+  // Shift Delete: the later Video clips move left by the clip's 2 s, and the toast's Undo puts them back.
+  await singer.click()
+  await page.keyboard.press('Shift+Delete')
+  await expect.poll(starts).toEqual(closed)
+  expect(await undoLabel()).toBe('Delete clip and close the gap')
+  await toastWith('Deleted 1 clip and closed the gap').getByRole('button', { name: 'Undo' }).click()
+  await expect.poll(starts).toEqual(before)
+
+  // The clip menu's Delete and close gap does the same, as one undo step.
+  await singer.click({ button: 'right' })
+  await menuItem(/^Delete and close gap/).click()
+  await expect.poll(starts).toEqual(closed)
+  await page.keyboard.press(`${mod}+z`)
+  await expect.poll(starts).toEqual(before)
+
+  // Delete leaves the gap, and says what it removed, with Undo.
+  await singer.click()
+  await page.keyboard.press('Delete')
+  await expect.poll(starts).toEqual(gapLeft)
+  await expect(toastWith('Deleted 1 clip').getByRole('button', { name: 'Undo' })).toBeVisible()
+
+  // The clip after the gap closes it from its menu, which says how long the gap is.
+  await next.click({ button: 'right' })
+  const closeBefore = menuItem(/^Close gap before/)
+  await expect(closeBefore).toContainText('2.0 s before this clip')
+  await closeBefore.click()
+  await expect.poll(starts).toEqual(closed)
+  expect(await undoLabel()).toBe('Close gap')
+  await expect(toastWith('Closed the 2.0 s gap on Video')).toBeVisible()
+  await page.keyboard.press(`${mod}+z`)
+  await expect.poll(starts).toEqual(gapLeft)
+
+  // A right-click on the empty stretch offers Close gap there.
+  const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
+  const box = (await next.boundingBox())!
+  await page.mouse.click(box.x - pps, box.y + box.height / 2, { button: 'right' })
+  const closeHere = menuItem(/^Close gap/)
+  await expect(closeHere).toContainText('2.0 s · the later clips move left')
+  await closeHere.click()
+  await expect.poll(starts).toEqual(closed)
+  expect(await undoLabel()).toBe('Close gap')
+
+  // With the gap closed, the clip's menu has nothing to close before it.
+  await next.click({ button: 'right' })
+  await expect(menuItem(/^Delete and close gap/)).toBeVisible()
+  await expect(menuItem(/^Close gap before/)).toHaveCount(0)
+  await page.keyboard.press('Escape')
 })
 
 test('a marquee and Mod A select clips, and dragging and trimming move them, smoothly', async ({ page }) => {

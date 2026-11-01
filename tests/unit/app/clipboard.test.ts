@@ -17,11 +17,13 @@ import {
   paste,
   pasteAt,
   pasteHereOutcome,
+  rippleDeleteSelection,
   selectAll,
   selectTimelineClips,
   timelineSelectionIds,
 } from '../../../src/app/state/clipboard.ts'
 import { editor, splitAtPlayhead } from '../../../src/app/state/project.ts'
+import { closeGap, gapBefore, gapForPalette, gapToClose } from '../../../src/app/state/ripple.ts'
 import { get, selectClips, selectedClipIds, set } from '../../../src/app/state/ui.ts'
 
 beforeAll(() => {
@@ -323,6 +325,7 @@ describe('lyric lines among several clips', () => {
     expect(project().clips[word.id]).toBeUndefined()
     expect(project().clips[s.line.id]).toBeDefined()
     expect(editor.undoLabel()).toBe('Delete lyric line')
+    expect(get().toasts.at(-1)?.message).toBe('Deleted 1 lyric line')
     expect(get().selection).toEqual({ type: 'none' })
     editor.undo()
     expect(lineIds()).toEqual(['l1', 'l2'])
@@ -382,5 +385,102 @@ describe('lyric lines among several clips', () => {
     expect(timelineSelectionIds(project(), get().selection)).toEqual([line2.id])
     selectTimelineClips(project(), [s.a.id, line2.id])
     expect(selectedClipIds(get().selection)).toEqual([s.a.id, line2.id])
+  })
+})
+
+describe('ripple delete and Close gap', () => {
+  const lastToast = () => get().toasts.at(-1)
+
+  it('Delete leaves the gap and says what it deleted, with an Undo that undoes it', () => {
+    selectClips([s.b.id])
+    deleteSelection()
+    expect(onTrack(s.footage.id)).toEqual([
+      [0, 4],
+      [8, 3],
+      [14, 4],
+    ])
+    expect(lastToast()?.message).toBe('Deleted 1 clip')
+    lastToast()?.action?.run()
+    expect(onTrack(s.footage.id)).toHaveLength(4)
+  })
+
+  it('Delete and close gap moves the later clips on the track left by the deleted clips, keeping other gaps, as one undo step', () => {
+    selectClips([s.b.id])
+    expect(rippleDeleteSelection()).toBe(true)
+    expect(onTrack(s.footage.id)).toEqual([
+      [0, 4],
+      [4, 3],
+      [10, 4],
+    ])
+    expect(editor.undoLabel()).toBe('Delete clip and close the gap')
+    expect(lastToast()?.message).toBe('Deleted 1 clip and closed the gap')
+    // The Lyrics track and the locked track stay as they were.
+    expect(onTrack(s.p.tracks[0]!.id)).toEqual([[0, 4]])
+    expect(onTrack(s.locked.id)).toEqual([[0, 3]])
+    lastToast()?.action?.run()
+    expect(onTrack(s.footage.id)).toEqual([
+      [0, 4],
+      [4, 4],
+      [8, 3],
+      [14, 4],
+    ])
+  })
+
+  it('closes up behind several deleted clips, each later clip by the length of those before it', () => {
+    selectClips([s.a.id, s.c.id])
+    rippleDeleteSelection()
+    expect(onTrack(s.footage.id)).toEqual([
+      [0, 4],
+      [7, 4],
+    ])
+    expect(editor.undoLabel()).toBe('Delete 2 clips and close the gap')
+  })
+
+  it('deletes the last clip like Delete, with nothing to close', () => {
+    selectClips([s.d.id])
+    rippleDeleteSelection()
+    expect(editor.undoLabel()).toBe('Delete clip')
+    expect(lastToast()?.message).toBe('Deleted 1 clip')
+  })
+
+  it('Close gap moves the later clips on the track left by the gap’s length', () => {
+    const gap = gapToClose(project(), s.footage.id, 12)
+    expect(gap).toEqual({ trackId: s.footage.id, start: 11, end: 14 })
+    expect(closeGap(gap!)).toBe(true)
+    expect(onTrack(s.footage.id)).toEqual([
+      [0, 4],
+      [4, 4],
+      [8, 3],
+      [11, 4],
+    ])
+    expect(editor.undoLabel()).toBe('Close gap')
+    expect(lastToast()?.message).toBe('Closed the 3.0 s gap on Footage')
+  })
+
+  it('finds no gap to close after the last clip, inside a clip or on the Lyrics track', () => {
+    expect(gapToClose(project(), s.footage.id, 20)).toBeNull()
+    expect(gapToClose(project(), s.footage.id, 5)).toBeNull()
+    expect(gapToClose(project(), s.p.tracks[0]!.id, 6)).toBeNull()
+  })
+
+  it('finds the gap before a clip, and the palette’s gap: before the selected clip, else at the playhead', () => {
+    expect(gapBefore(project(), s.d.id)).toEqual({ trackId: s.footage.id, start: 11, end: 14 })
+    expect(gapBefore(project(), s.b.id)).toBeNull()
+    expect(gapForPalette(project(), { type: 'clip', id: s.d.id }, 0)).toMatchObject({ start: 11 })
+    expect(gapForPalette(project(), { type: 'none' }, 12)).toMatchObject({ trackId: s.footage.id, start: 11 })
+    expect(gapForPalette(project(), { type: 'none' }, 2)).toBeNull()
+  })
+
+  it('closes nothing on a locked track', () => {
+    const p = project()
+    const late = createImageClip({ trackId: s.locked.id, assetId: 'i', start: 6, duration: 2 })
+    editor.load({ ...p, clips: { ...p.clips, [late.id]: late } })
+    const gap = gapToClose(project(), s.locked.id, 4)
+    expect(gap).toEqual({ trackId: s.locked.id, start: 3, end: 6 })
+    expect(closeGap(gap!)).toBe(false)
+    expect(onTrack(s.locked.id)).toEqual([
+      [0, 3],
+      [6, 2],
+    ])
   })
 })

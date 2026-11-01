@@ -12,11 +12,15 @@ import {
 } from '../../../src/model/index.ts'
 import {
   blockedAt,
+  closeUp,
   dropShift,
+  gapFit,
   insertPlan,
+  rearrangePlan,
   refusalLabel,
   refusalToast,
   refuseTrack,
+  swapPlan,
   type MovingSpan,
 } from '../../../src/app/state/clipDrag.ts'
 
@@ -58,6 +62,103 @@ describe('dropShift', () => {
 
   it('stays within the timeline', () => {
     expect(dropShift([at(1, 2)], -3, -3, 0.1, -1, 100)).toEqual({ shift: -1, edge: null })
+  })
+})
+
+describe('gapFit', () => {
+  // A 7.3 s gap from 13.1 to 20.4 between two clips, and a clip dragged from 40 s.
+  const gap: [number, number][] = [
+    [5, 13.1],
+    [20.4, 30],
+  ]
+
+  it('drops a clip that fits the gap under the pointer exactly at its edges, wherever in the gap it was let go', () => {
+    const clip = at(40, 47.3, gap)
+    // Let go 0.4 s late: it overlaps the next clip, but the pointer is over the gap.
+    const fit = gapFit(clip, 16, 13.5 - 40, -40, 100)
+    expect(fit?.shift).toBeCloseTo(13.1 - 40, 9)
+    expect(fit?.duration).toBeUndefined()
+    // Float rounding of the edges still fits.
+    expect(gapFit(at(40, 47.3004, gap), 16, -27, -40, 100)?.duration).toBeUndefined()
+  })
+
+  it('keeps a shorter clip where it was let go, moved just inside the gap', () => {
+    const clip = at(40, 42, gap)
+    expect(gapFit(clip, 15, 15 - 40, -40, 100)).toEqual({ shift: 15 - 40 })
+    expect(gapFit(clip, 19, 19.5 - 40, -40, 100)?.shift).toBeCloseTo(18.4 - 40, 9)
+  })
+
+  it('trims a clip a few frames longer than the gap to fill it, and refuses one longer than that', () => {
+    const fit = gapFit(at(40, 47.36, gap), 16, -27, -40, 100)
+    expect(fit?.shift).toBeCloseTo(13.1 - 40, 9)
+    expect(fit?.duration).toBeCloseTo(7.3, 9)
+    expect(gapFit(at(40, 47.5, gap), 16, -27, -40, 100)).toBeNull()
+  })
+
+  it('has nothing to fill when the pointer is over a clip, and stays within the timeline', () => {
+    expect(gapFit(at(40, 42, gap), 25, -15, -40, 100)).toBeNull()
+    // The gap from the timeline's start to the first clip: let go before the start, it lands at 0.
+    expect(gapFit(at(40, 42, gap), 2, -41, -40, 100)).toEqual({ shift: -40 })
+  })
+})
+
+describe('swapPlan', () => {
+  // Clips at 0..2, 2..4, 4..8 and 10..12 on the track.
+  const track = [
+    { id: 'a', start: 0, end: 2 },
+    { id: 'b', start: 2, end: 4 },
+    { id: 'c', start: 4, end: 8 },
+    { id: 'd', start: 10, end: 12 },
+  ]
+  const without = (id: string) => track.filter((o) => o.id !== id)
+
+  it('swaps a clip with its same-length neighbor, each taking the other’s place', () => {
+    expect(swapPlan({ start: 0, end: 2 }, 3, without('a'), true)).toEqual({
+      id: 'b',
+      clip: { start: 2, end: 4 },
+      other: { start: 0, end: 2 },
+    })
+  })
+
+  it('swaps clips of the same length that are not neighbors, or on another track, leaving the clips between', () => {
+    expect(swapPlan({ start: 0, end: 2 }, 11, without('a'), true)).toEqual({
+      id: 'd',
+      clip: { start: 10, end: 12 },
+      other: { start: 0, end: 2 },
+    })
+    expect(swapPlan({ start: 50, end: 52 }, 11, track, false)).toMatchObject({
+      id: 'd',
+      other: { start: 50, end: 52 },
+    })
+  })
+
+  it('counts lengths a few frames apart as the same: each takes the other’s length too, so the cuts stay', () => {
+    expect(swapPlan({ start: 20, end: 22.04 }, 11, track, false)).toEqual({
+      id: 'd',
+      clip: { start: 10, end: 12 },
+      other: { start: 20, end: 22.04 },
+    })
+  })
+
+  it('swaps neighbors of different lengths in the space they share, keeping the gap between them', () => {
+    // b (2 s) onto c (4 s) after it: c starts where b did and b ends where c did.
+    expect(swapPlan({ start: 2, end: 4 }, 6, without('b'), true)).toEqual({
+      id: 'c',
+      clip: { start: 6, end: 8 },
+      other: { start: 2, end: 6 },
+    })
+    // d (2 s) back onto c (4 s) before it, across the gap from 8 to 10.
+    expect(swapPlan({ start: 10, end: 12 }, 5, without('d'), true)).toEqual({
+      id: 'c',
+      clip: { start: 4, end: 6 },
+      other: { start: 8, end: 12 },
+    })
+  })
+
+  it('refuses a clip of another length that is not a neighbor, or on another track; nothing to swap over a gap', () => {
+    expect(swapPlan({ start: 0, end: 2 }, 5, without('a'), true)).toBe('length')
+    expect(swapPlan({ start: 50, end: 54.5 }, 11, track, false)).toBe('length')
+    expect(swapPlan({ start: 0, end: 2 }, 9, without('a'), true)).toBeNull()
   })
 })
 
@@ -149,6 +250,9 @@ describe('refuseTrack', () => {
     expect(refusalToast(p, { reason: 'room' })).toBe(
       'No room there. Drop it on an empty stretch or another track.',
     )
+    expect(refusalToast(p, { reason: 'room', length: true })).toBe(
+      'No room there. A clip swaps places only with its neighbor or a clip of the same length.',
+    )
   })
 
   it('labels a kind refusal with what the track takes', () => {
@@ -213,5 +317,76 @@ describe('refuseTrack', () => {
       expect(refuseTrack(p, neon, empty)).toBeNull()
       expect(refuseTrack(p, shot, look, new Set([neon.id, shot.id]))).toBeNull()
     })
+  })
+})
+
+describe('rearrangePlan', () => {
+  const on = (id: string, start: number, end: number) => ({ id, start, end })
+  // A track of four 2 s clips, a..d, and another track holding x at 0..3 and y at 5..6.
+  const track = [on('a', 0, 2), on('b', 2, 4), on('c', 4, 6), on('d', 6, 8)]
+  const other = [on('x', 0, 3), on('y', 5, 6)]
+  const staying =
+    (...leaving: string[]) =>
+    (trackId: string) =>
+      trackId === 't' ? track.filter((o) => !leaving.includes(o.id)) : other
+
+  it('moves a clip later along its track with no gap behind it: the clips it passes move left, the track keeps its length', () => {
+    // a dropped where c ends on the closed-up track (b 0..2, c 2..4, d 4..6).
+    expect(rearrangePlan([{ start: 0, end: 2, from: 't', to: 't' }], staying('a'), 4, 0)).toEqual({
+      shift: 4,
+      at: 4,
+      moves: [
+        { id: 'b', start: 0 },
+        { id: 'c', start: 2 },
+      ],
+    })
+  })
+
+  it('moves a clip earlier along its track: the clips it passes move right, the ones after where it was stay', () => {
+    expect(rearrangePlan([{ start: 6, end: 8, from: 't', to: 't' }], staying('d'), -4, -6)).toEqual({
+      shift: -4,
+      at: 2,
+      moves: [
+        { id: 'b', start: 4 },
+        { id: 'c', start: 6 },
+      ],
+    })
+  })
+
+  it('closes up the track a clip leaves and pushes the later clips on the track it goes to', () => {
+    expect(rearrangePlan([{ start: 0, end: 2, from: 't', to: 'u' }], staying('a'), 3, 0)).toEqual({
+      shift: 3,
+      at: 3,
+      moves: [
+        { id: 'b', start: 0 },
+        { id: 'c', start: 2 },
+        { id: 'd', start: 4 },
+        { id: 'y', start: 7 },
+      ],
+    })
+  })
+
+  it('leaves everything as it was when the clip is dropped where it was', () => {
+    expect(rearrangePlan([{ start: 2, end: 4, from: 't', to: 't' }], staying('b'), 0, -2)?.moves).toEqual([])
+  })
+})
+
+describe('closeUp', () => {
+  it('moves each staying clip left by the leaving clips that ended before it, keeping gaps that were there', () => {
+    const staying = [
+      { id: 'a', start: 0, end: 2 },
+      { id: 'c', start: 5, end: 6 },
+      { id: 'e', start: 9, end: 10 },
+    ]
+    expect(
+      closeUp(staying, [
+        { start: 2, end: 4 },
+        { start: 6, end: 8 },
+      ]).map((o) => [o.id, o.start]),
+    ).toEqual([
+      ['a', 0],
+      ['c', 3],
+      ['e', 5],
+    ])
   })
 })

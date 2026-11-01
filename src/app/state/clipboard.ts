@@ -13,9 +13,11 @@ import {
   type Track,
 } from '../../model/index.ts'
 import { plural } from '../format.ts'
+import { undoAction } from './library.ts'
 import { removeLyricLinesCommands } from './lyrics.ts'
 import { dispatch, editor, isLookClip } from './project.ts'
 import { revealClips } from './reveal.ts'
+import { closeUpMoves } from './ripple.ts'
 import { removeTransition } from './transitions.ts'
 import { get, select, selectClips, selectedClipIds, toast, type Selection } from './ui.ts'
 
@@ -102,9 +104,9 @@ function copy(p: Project, clips: Clip[]): void {
 
 /**
  * Removes the clips as one undo step. Lyric chips take their lines out of the lyrics too (removeLyricLinesCommands),
- * so no line is left without its clip.
+ * so no line is left without its clip. With `closeGaps`, their tracks close up behind them (ripple.ts).
  */
-function remove(p: Project, clips: Clip[], verb: 'Cut' | 'Delete'): boolean {
+function remove(p: Project, clips: Clip[], verb: 'Cut' | 'Delete', closeGaps = false): boolean {
   const lineIds = [
     ...new Set(clips.flatMap((c) => (c.type === 'text' && c.lyricLineId ? [c.lyricLineId] : []))),
   ]
@@ -116,9 +118,16 @@ function remove(p: Project, clips: Clip[], verb: 'Cut' | 'Delete'): boolean {
     else commands.push(cmd)
   }
   commands.push({ type: 'clip.remove', clipIds: [...ids] })
-  const ok = dispatch(commands, { label: `${verb} ${clipsNamed(clips)}` })
-  if (ok) selectClips([])
-  return ok
+  const moves = closeGaps ? closeUpMoves(p, clips).filter((m) => !ids.has(m.clipId)) : []
+  if (moves.length) commands.push({ type: 'clip.move', moves })
+  const closed = moves.length ? ' and close the gap' : ''
+  const label = `${verb} ${clipsNamed(clips)}${closed}`
+  const ok = dispatch(commands, { label })
+  if (!ok) return false
+  selectClips([])
+  if (verb === 'Delete')
+    toast(`Deleted ${clipsCounted(clips)}${moves.length ? ' and closed the gap' : ''}`, undoAction(label))
+  return true
 }
 
 /** Copies the selected clips; false when no clip is selected. */
@@ -153,7 +162,11 @@ export function deleteSelection(): boolean {
   if (selection.type === 'lyric') {
     const commands = removeLyricLinesCommands(p, [selection.id])
     if (!commands.length) return false
-    if (dispatch(commands, { label: 'Delete lyric line' })) selectClips([])
+    const label = 'Delete lyric line'
+    if (dispatch(commands, { label })) {
+      selectClips([])
+      toast('Deleted 1 lyric line', undoAction(label))
+    }
     return true
   }
   const clips = selectedClips(p)
@@ -161,6 +174,19 @@ export function deleteSelection(): boolean {
   remove(p, clips, 'Delete')
   return true
 }
+
+/**
+ * Removes the selected clips and closes the gaps they leave: the later clips on their tracks move left (Shift Delete).
+ * A selected lyric line or transition is deleted as by Delete; lyric lines stay with the vocals.
+ */
+export function rippleDeleteSelection(): boolean {
+  const p = editor.getProject()
+  const clips = selectedClips(p)
+  if (!clips.length) return deleteSelection()
+  remove(p, clips, 'Delete', true)
+  return true
+}
+
 /** Pastes the clipboard with its first clip at the playhead, keeping the clips' spacing and tracks. */
 export function paste(): void {
   if (!clipboard?.clips.length) {
