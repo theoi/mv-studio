@@ -63,6 +63,9 @@ function Activity() {
   const name = first.stopping ? `Stopping: ${first.title}` : first.title
   const seconds = jobSecondsLeft(first)
   const left = seconds === undefined ? undefined : timeLeft(seconds)
+  // Only an export's short label leaves room for its time left at 1280 px; other jobs' titles would be cut to a few
+  // letters, so their time stays in the tooltip, the name and Assist.
+  const shownLeft = first.kind === JOB_KINDS.export ? seconds : undefined
   const more = running.length - 1
   return (
     <Tooltip
@@ -87,11 +90,11 @@ function Activity() {
           <ProgressRing value={fraction} size={16} label={label} />
         )}
         <span className={styles.activityTitle}>{jobChipLabel(first)}</span>
-        {(fraction !== undefined || seconds !== undefined) && (
+        {(fraction !== undefined || shownLeft !== undefined) && (
           <span className={`${styles.activityPct} tnum`}>
             {[
               fraction !== undefined && `${Math.round(fraction * 100)}%`,
-              seconds !== undefined && shortTimeLeft(seconds),
+              shownLeft !== undefined && shortTimeLeft(shownLeft),
             ]
               .filter(Boolean)
               .join(' · ')}
