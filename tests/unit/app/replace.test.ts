@@ -94,6 +94,31 @@ describe('Replace with…', () => {
     expect(project().clips[CLOSE_UP]?.name).toBe('Hook shot')
   })
 
+  it('renames a clip named after its old file with the extension, as auto-cut names its clips, even with an effect', () => {
+    const file = (id: string, name: string): Asset => ({
+      id,
+      kind: 'video',
+      name,
+      mimeType: 'video/webm',
+      byteSize: 1,
+      storageKey: id,
+      duration: 10,
+      origin: { type: 'import' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+    })
+    editor.dispatch([
+      { type: 'asset.add', asset: file('waves', 'clip01_16x9_waves.webm') },
+      { type: 'asset.add', asset: file('bee', 'clip04_16x9_bee-lavender.webm') },
+    ])
+    replaceClipMedia(CLOSE_UP, 'waves')
+    editor.dispatch({ type: 'clip.set', clipId: CLOSE_UP, path: ['name'], value: 'clip01_16x9_waves.webm' })
+    const glow = (start.clips[CLOSE_UP] as Extract<Clip, { type: 'video' }>).effects
+    expect(glow).toHaveLength(1)
+    replaceClipMedia(CLOSE_UP, 'bee')
+    const after = project().clips[CLOSE_UP]!
+    expect(viewOf(project(), after).name).toBe('clip04_16x9_bee-lavender.webm')
+    expect(after).toMatchObject({ assetId: 'bee', effects: glow })
+  })
   it('says when the new footage is shorter than the clip, so its last frame holds', () => {
     const clip = start.clips[CLOSE_UP]!
     editor.dispatch({ type: 'clip.trim', clipId: CLOSE_UP, start: clip.start, duration: 12 })

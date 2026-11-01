@@ -132,7 +132,7 @@ export function CommandPalette() {
   const [moved, setMoved] = useState(false)
   const page = pages.at(-1) ?? (start ? { id: start } : undefined)
   const close = () => {
-    set({ paletteOpen: false, palettePage: null })
+    set({ paletteOpen: false, palettePage: null, insertAt: null })
     setSearch('')
     setPages([])
     setMoved(false)
@@ -148,7 +148,7 @@ export function CommandPalette() {
   }
   const back = () => {
     if (pages.length) setPages((list) => list.slice(0, -1))
-    else set({ palettePage: null })
+    else set({ palettePage: null, insertAt: null })
     setSearch('')
     setMoved(true)
   }

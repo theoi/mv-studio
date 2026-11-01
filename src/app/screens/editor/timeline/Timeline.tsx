@@ -196,7 +196,15 @@ import {
   trackMoveRange,
   type TrackToggle,
 } from '../../../state/tracks.ts'
-import { dropMedia, isMediaDrag, mediaDropHint, type MediaDropHint } from '../../../state/mediaDrag.ts'
+import {
+  dropMedia,
+  HIDDEN_TRACK_NOTE,
+  insertSpot,
+  isMediaDrag,
+  mediaDropHint,
+  type MediaDropHint,
+  type MediaDropSpan,
+} from '../../../state/mediaDrag.ts'
 import { MAX_PPS, MIN_PPS, registerFit, registerZoom, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { energySampler } from './energy.ts'
@@ -218,7 +226,7 @@ const DROP_LABELS = {
  * instead). On a ghost narrower than the label (its width is about the label's), the label sits above the ghost, so it
  * covers no neighbor.
  */
-function DropLabel({ hint, pps }: { hint: Exclude<MediaDropHint, { locked: true }>; pps: number }) {
+function DropLabel({ hint, pps }: { hint: MediaDropSpan; pps: number }) {
   const key = (['replace', 'trimmed'] as const).find((k) => k in hint)
   if (!key) return null
   const [text, width] = DROP_LABELS[key]
@@ -226,6 +234,60 @@ function DropLabel({ hint, pps }: { hint: Exclude<MediaDropHint, { locked: true 
     <span className={styles.dropLabel} data-above={(hint.end - hint.start) * pps < width || undefined}>
       {text}
     </span>
+  )
+}
+
+/**
+ * The note beside a media drop, on the hovered track: where an insert goes in, that it is trimmed to whole bars, and how
+ * far the later clips move, or after the last clip how long after the song the video then ends; or the other or new
+ * track the media goes on; and that Alt replaces the shot under the pointer instead.
+ */
+function mediaDropNote(hint: MediaDropSpan): { trackId: string; at: number; text: string } | null {
+  const replace = hint.canReplace && `Hold ${keyName('Alt')} to replace`
+  const { insert } = hint
+  if (insert) {
+    const parts = [
+      `Insert at ${formatTime(insert.at, true)}`,
+      insert.bars && `trimmed to ${plural(insert.bars, 'bar')} to stay on the beat`,
+      insert.moved > 0 && `later clips move ${(hint.end - hint.start).toFixed(1)} s`,
+      insert.moved === 0 &&
+        insert.pastSong !== undefined &&
+        `the video ends ${insert.pastSong.toFixed(1)} s after the song`,
+      replace,
+    ]
+    return { trackId: hint.trackId, at: insert.at, text: parts.filter(Boolean).join(' · ') }
+  }
+  const spot = hint.canReplace ?? hint.elsewhere
+  if (!spot) return null
+  const parts = [hint.elsewhere && `Goes on ${hint.elsewhere.name}`, replace]
+  return { trackId: spot.trackId, at: spot.at, text: parts.filter(Boolean).join(' · ') }
+}
+
+/**
+ * A drop note at `left` px in its lane, beside that point (`beside`: past the drop's edge) or at it. One that would run
+ * past the right edge of the lanes in view ends just before the point instead, so it can be read before the drop: an
+ * append lands at the song's end, which is at that edge at Fit.
+ */
+function DropNote({ left, beside, children }: { left: number; beside?: boolean; children: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    const lane = el?.parentElement
+    const scroller = el?.closest<HTMLElement>('[data-timeline-scroller]')
+    if (!el || !lane || !scroller) return
+    const place = () => {
+      const at = lane.getBoundingClientRect().left + left
+      const right = scroller.getBoundingClientRect().left + scroller.clientWidth
+      el.toggleAttribute('data-end', at + 8 + el.offsetWidth > right)
+    }
+    place()
+    scroller.addEventListener('scroll', place, { passive: true })
+    return () => scroller.removeEventListener('scroll', place)
+  }, [left, children])
+  return (
+    <div ref={ref} className={styles.dropNote} style={{ left }} data-beside={beside || undefined}>
+      {children}
+    </div>
   )
 }
 
@@ -1145,7 +1207,9 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
   const [transitions, setTransitions] = useState<TransitionSpot[]>([])
   const [gap, setGap] = useState<Gap | null>(null)
   const [trackLocked, setTrackLocked] = useState(false)
+  const [trackHidden, setTrackHidden] = useState(false)
   const [replaceable, setReplaceable] = useState(false)
+  const [insertAt, setInsertAt] = useState<{ at: number; cut: boolean } | null>(null)
   const menuTime = useRef(clip.start)
   const { width, isMedia, inW, outW, showLabel } = zoomedLook(clip, pps)
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
@@ -1170,8 +1234,11 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
           setCut(cutNear(editor.getProject(), clip, menuTime.current))
           setTransitions(transitionsAtClip(editor.getProject(), clip.id))
           setGap(gapBefore(editor.getProject(), clip.id))
-          setTrackLocked(!!editor.getProject().tracks.find((t) => t.id === clip.trackId)?.locked)
+          const track = editor.getProject().tracks.find((t) => t.id === clip.trackId)
+          setTrackLocked(!!track?.locked)
+          setTrackHidden(!!track?.hidden)
           setReplaceable(isReplaceable(editor.getProject().clips[clip.id]))
+          setInsertAt(insertSpot(editor.getProject(), clip.trackId, menuTime.current))
         }}
       >
         <ContextMenuTrigger asChild>
@@ -1285,6 +1352,27 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
               }}
             >
               Replace with…
+            </ContextMenuItem>
+          )}
+          {replaceable && insertAt && (
+            <ContextMenuItem
+              disabled={trackLocked || trackHidden}
+              description={
+                trackLocked
+                  ? 'The track is locked'
+                  : trackHidden
+                    ? 'The track is hidden'
+                    : `At ${insertAt.cut ? 'the cut at ' : ''}${formatTime(insertAt.at, true)} · the later clips move right`
+              }
+              onSelect={() =>
+                set({
+                  paletteOpen: true,
+                  palettePage: 'insertMedia',
+                  insertAt: { trackId: clip.trackId, time: insertAt.at },
+                })
+              }
+            >
+              Insert media…
             </ContextMenuItem>
           )}
           <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
@@ -1675,6 +1763,7 @@ export function Timeline() {
   // Where the playhead was before a click on a section moved it, so a double-click to rename can put it back.
   const beforeSectionClick = useRef<{ id: string; playhead: number; at: number } | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
+  const dropNote = dropHint && 'start' in dropHint ? mediaDropNote(dropHint) : null
 
   const tool = useUi((s) => s.tool)
   const empty = !hasSong(project)
@@ -2850,12 +2939,14 @@ export function Timeline() {
                             time: dropTime(track.id, time),
                             pointer: time,
                             alt: e.altKey,
+                            mod: e.ctrlKey || e.metaKey,
                           })
                         : libraryDropHint(track.id, time)
                       // Media lands where it is dropped here, so the editor's "Drop to import" overlay stays away.
                       if (media) e.stopPropagation()
-                      // A locked track takes no drop: without preventDefault the browser shows "not allowed".
-                      if (next && 'locked' in next) e.dataTransfer.dropEffect = 'none'
+                      // A locked track takes no drop, nor a hidden one an insert: without preventDefault the browser
+                      // shows "not allowed".
+                      if (next && !('start' in next)) e.dataTransfer.dropEffect = 'none'
                       else {
                         e.preventDefault()
                         e.dataTransfer.dropEffect = 'copy'
@@ -2876,6 +2967,7 @@ export function Timeline() {
                           time: dropTime(track.id, time),
                           pointer: time,
                           alt: e.altKey,
+                          mod: e.ctrlKey || e.metaKey,
                         })
                         return
                       }
@@ -2887,46 +2979,44 @@ export function Timeline() {
                     }}
                   >
                     {dropHint?.trackId === track.id &&
-                      ('locked' in dropHint ? (
-                        <div className={styles.dropNote} style={{ left: dropHint.at * pps }}>
-                          Track is locked
-                        </div>
+                      (!('start' in dropHint) ? (
+                        <DropNote left={dropHint.at * pps}>
+                          {'locked' in dropHint ? 'Track is locked' : HIDDEN_TRACK_NOTE}
+                        </DropNote>
                       ) : (
-                        <div
-                          className={
-                            dropHint.end > dropHint.start
-                              ? [styles.dropClip, 'replace' in dropHint && styles.dropReplace]
-                                  .filter(Boolean)
-                                  .join(' ')
-                              : styles.dropCut
-                          }
-                          style={{
-                            left: dropHint.start * pps,
-                            width:
+                        <>
+                          <div
+                            className={
                               dropHint.end > dropHint.start
-                                ? (dropHint.end - dropHint.start) * pps
-                                : undefined,
-                          }}
-                        >
-                          <DropLabel hint={dropHint} pps={pps} />
-                        </div>
+                                ? [styles.dropClip, 'replace' in dropHint && styles.dropReplace]
+                                    .filter(Boolean)
+                                    .join(' ')
+                                : styles.dropCut
+                            }
+                            style={{
+                              left: dropHint.start * pps,
+                              width:
+                                dropHint.end > dropHint.start
+                                  ? (dropHint.end - dropHint.start) * pps
+                                  : undefined,
+                            }}
+                          >
+                            <DropLabel hint={dropHint} pps={pps} />
+                          </div>
+                          {dropHint.insert && (
+                            <div
+                              className={styles.dropInsert}
+                              style={{ left: dropHint.insert.at * pps }}
+                              data-drop-insert
+                            />
+                          )}
+                        </>
                       ))}
-                    {dropHint &&
-                      'start' in dropHint &&
-                      (dropHint.canReplace ?? dropHint.elsewhere)?.trackId === track.id && (
-                        <div
-                          className={styles.dropNote}
-                          style={{ left: (dropHint.canReplace?.at ?? dropHint.elsewhere?.at ?? 0) * pps }}
-                          data-beside
-                        >
-                          {[
-                            dropHint.elsewhere && `Goes on ${dropHint.elsewhere.name}`,
-                            dropHint.canReplace && `Hold ${keyName('Alt')} to replace`,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </div>
-                      )}
+                    {dropNote?.trackId === track.id && (
+                      <DropNote left={dropNote.at * pps} beside>
+                        {dropNote.text}
+                      </DropNote>
+                    )}
                     {kind === 'lyrics' &&
                       !empty &&
                       !lines.length &&

@@ -313,10 +313,12 @@ export interface Placement {
   trackId?: string
   /** The longest the clip may be, to fit a gap. */
   maxDuration?: number
+  /** On `trackId` even where clips are: an insert moves them out of the way in the same step. */
+  onTrack?: boolean
 }
 
 /** Tracks kept for lyric lines: the sample's, a template's Lyrics track, and any track that holds lyric lines. */
-function isLyricTrack(project: Project, trackId: string): boolean {
+export function isLyricTrack(project: Project, trackId: string): boolean {
   return (
     trackId === TRACK_IDS.lyrics ||
     templateState(project)?.tracks.lyrics === trackId ||
@@ -360,6 +362,18 @@ export function addAssetAtPlayhead(assetId: string): void {
   )
 }
 
+/** How long assetPlacement makes a clip of `asset`. */
+export function placementDuration(project: Project, asset: Asset, at: Placement = {}): number {
+  const sourceStart = asset.kind === 'image' ? 0 : Math.max(0, at.sourceStart ?? 0)
+  const available = asset.kind === 'image' ? Infinity : Math.max(0.5, (asset.duration ?? 4) - sourceStart)
+  const imageDuration = barsToSeconds(prefs().imageBars, bpmOf(project))
+  return Math.min(
+    available,
+    at.duration ?? (asset.kind === 'image' ? imageDuration : available),
+    at.maxDuration ?? Infinity,
+  )
+}
+
 /**
  * The commands that put an asset (already in the project, or added by the same dispatch) on the first free track of
  * its kind, footage tracks first, adding a track if none is free.
@@ -373,19 +387,13 @@ export function assetPlacement(
   const start = at.start ?? get().playhead
   const kind = asset.kind === 'audio' ? 'audio' : 'visual'
   const sourceStart = asset.kind === 'image' ? 0 : Math.max(0, at.sourceStart ?? 0)
-  const available = asset.kind === 'image' ? Infinity : Math.max(0.5, (asset.duration ?? 4) - sourceStart)
-  const imageDuration = barsToSeconds(prefs().imageBars, bpmOf(project))
-  const duration = Math.min(
-    available,
-    at.duration ?? (asset.kind === 'image' ? imageDuration : available),
-    at.maxDuration ?? Infinity,
-  )
+  const duration = placementDuration(project, asset, at)
   const candidates = project.tracks
     .filter((t) => t.kind === kind && !t.locked && !isLyricTrack(project, t.id))
     .sort((a, b) => Number(isFootageTrack(project, b)) - Number(isFootageTrack(project, a)))
   const commands: EditCommand[] = []
   const free = (t: Track) => !busyAt(project, t.id, start, start + duration)
-  let track = candidates.find((t) => t.id === at.trackId && free(t)) ?? candidates.find(free)
+  let track = candidates.find((t) => t.id === at.trackId && (at.onTrack || free(t))) ?? candidates.find(free)
   if (!track) {
     track = createTrack(kind, numberedName(project.tracks, kind === 'audio' ? 'Audio' : 'Video'))
     const footage = project.tracks.findIndex((t) => isFootageTrack(project, t))

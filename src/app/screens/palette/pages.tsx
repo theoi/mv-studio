@@ -49,6 +49,7 @@ import {
   undoAction,
   visualItems,
 } from '../../state/library.ts'
+import { insertSpot, insertTarget, placeCard, type MediaDropPoint } from '../../state/mediaDrag.ts'
 import { prefs, setPref } from '../../state/prefs.ts'
 import { PREVIEW_ZOOMS, zoomLabel } from '../../state/previewControls.ts'
 import {
@@ -234,8 +235,8 @@ function mediaItems(remove: boolean): PageItem[] {
   })
 }
 
-/** The library's videos and images the selected clip can show instead, the one it shows checked. */
-function replacementItems(clip: Clip): PageItem[] {
+/** The library's videos and images, each with its length (or that it is an image), `current` checked. */
+function pictureItems(run: (asset: Asset) => void, current?: string): PageItem[] {
   const p = project()
   return replacementAssets(p).map((asset) => {
     const name = asset.name.replace(/\.[^.]+$/, '')
@@ -245,7 +246,7 @@ function replacementItems(clip: Clip): PageItem[] {
       icon: asset.origin.type === 'generated' ? <Sparkles /> : MEDIA_ICONS[asset.kind],
       thumb: asset,
       keywords: [name, asset.kind, asset.origin.type],
-      current: 'assetId' in clip && clip.assetId === asset.id,
+      current: asset.id === current,
       detail: isBlankClip(p.analysis.visual[asset.id])
         ? 'Shows nothing'
         : asset.kind === 'image'
@@ -253,9 +254,26 @@ function replacementItems(clip: Clip): PageItem[] {
           : asset.duration
             ? formatTime(asset.duration)
             : undefined,
-      run: () => replaceClipMedia(clip.id, asset.id),
+      run: () => run(asset),
     }
   })
+}
+
+/** The library's videos and images the selected clip can show instead, the one it shows checked. */
+const replacementItems = (clip: Clip): PageItem[] =>
+  pictureItems((asset) => replaceClipMedia(clip.id, asset.id), 'assetId' in clip ? clip.assetId : undefined)
+
+/**
+ * Where Insert media puts a video or image: where the clip menu's Insert media… asked, else at the playhead, and the
+ * list's heading saying where.
+ */
+function insertPage(): { point: MediaDropPoint; heading: string } | null {
+  const { insertAt, playhead } = get()
+  const p = project()
+  const point = insertTarget(p, insertAt?.time ?? playhead, insertAt?.trackId)
+  if (!point) return null
+  const spot = insertSpot(p, point.trackId, point.pointer)
+  return { point, heading: `Insert at ${spot.cut ? 'the cut at ' : ''}${formatTime(spot.at, true)}` }
 }
 
 const VOLUMES = [0, 0.25, 0.5, 0.75, 1]
@@ -380,6 +398,16 @@ export const PAGES: Record<PageState['id'], PageDef> = {
     placeholder: 'Search media',
     empty: noMatch('media'),
     groups: () => [{ heading: `Add at ${formatTime(get().playhead, true)}`, items: mediaItems(false) }],
+  },
+  insertMedia: {
+    placeholder: 'Search media',
+    empty: noMatch('media'),
+    groups: () => {
+      const page = insertPage()
+      return page
+        ? [{ heading: page.heading, items: pictureItems((asset) => placeCard(asset, page.point)) }]
+        : []
+    },
   },
   removeMedia: {
     placeholder: 'Search media',

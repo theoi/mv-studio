@@ -102,8 +102,8 @@ function withFootage(
 /**
  * Has a video clip or image show another video or image from the library, as one undo step. It keeps its id, place,
  * length, track, effects, transform, keyframes, reactions and transitions, and is selected. A name that was the old
- * file's becomes the new file's. Its cutouts for text behind the subject show the old footage, so they go with it,
- * except one on a locked track.
+ * file's, with or without its extension (auto-cut names clips with it), becomes the new file's. Its cutouts for text
+ * behind the subject show the old footage, so they go with it, except one on a locked track.
  */
 export function replaceClipMedia(clipId: Id, assetId: Id): boolean {
   const project = editor.getProject()
@@ -118,7 +118,13 @@ export function replaceClipMedia(clipId: Id, assetId: Id): boolean {
   const oldName = viewOf(project, clip).name
   const old = project.assets[clip.assetId]
   const name =
-    clip.name === undefined ? undefined : old && clip.name === baseName(old.name) ? newName : clip.name
+    clip.name === undefined || !old
+      ? clip.name
+      : clip.name === old.name
+        ? asset.name
+        : clip.name === baseName(old.name)
+          ? newName
+          : clip.name
   const { next, camera } = withFootage(project, clip, asset, name)
   const locked = new Set(project.tracks.filter((t) => t.locked).map((t) => t.id))
   const cutouts = cutoutsOf(project, clip.id).filter((c) => !locked.has(c.trackId))

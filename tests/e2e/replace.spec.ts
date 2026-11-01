@@ -115,7 +115,8 @@ test('a Library › Media card replaces the selected clip from its menu, or when
   await page.keyboard.press(`${mod}+z`)
   expect(await shown(page)).toEqual(before)
 
-  // Dragged over the clip, the card says Alt replaces it; with Alt the ghost is the clip, labelled Replace.
+  // Dragged over the clip, the card goes in by insert and says Alt replaces it; with Alt the ghost is the clip, labelled
+  // Replace.
   const city = page.getByRole('tabpanel', { name: 'Media' }).getByLabel(/^Night city, video/)
   const box = (await clip.boundingBox())!
   await city.hover()
@@ -123,8 +124,9 @@ test('a Library › Media card replaces the selected clip from its menu, or when
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 8 })
   // The drag starts during the first move, so the pointer moves once more over the clip.
   await page.mouse.move(box.x + box.width / 2 - 1, box.y + box.height / 2)
-  // Night city goes on a new track there, since Overlay has Spectrum bars.
-  await expect(page.getByText(/^Goes on a new track · Hold (Alt|⌥) to replace$/)).toBeVisible()
+  await expect(
+    page.getByText(/^Insert at 1:06\.0 · later clips move 14\.2 s · Hold (Alt|⌥) to replace$/),
+  ).toBeVisible()
   await expect(page.getByText('Replace', { exact: true })).toBeHidden()
   await page.keyboard.down('Alt')
   await page.mouse.move(box.x + box.width / 2 + 2, box.y + box.height / 2, { steps: 2 })
