@@ -110,6 +110,46 @@ test('Volume sets the preview level, which is remembered after a reload', async 
   await expect(page.getByRole('slider', { name: 'Volume' })).toHaveAttribute('aria-valuenow', '35')
 })
 
+test('the editor makes its audio context ahead of Play, so the click only resumes it', async ({ page }) => {
+  // Counts the AudioContexts made during a click: making the page's first one takes tens of milliseconds.
+  await page.addInitScript(() => {
+    const w = window as unknown as { contextsInClick: number }
+    w.contextsInClick = 0
+    let clicking = false
+    window.addEventListener('click', () => (clicking = true), { capture: true })
+    window.addEventListener('click', () => (clicking = false))
+    const Original = window.AudioContext
+    window.AudioContext = class extends Original {
+      constructor(options?: AudioContextOptions) {
+        super(options)
+        if (clicking) w.contextsInClick++
+      }
+    }
+  })
+  await openEditor(page, '#/editor?t=21')
+  // Longer than the editor waits for an idle moment to make it (3 s at most).
+  await page.waitForTimeout(3500)
+  const context = () =>
+    page.evaluate(() => {
+      const clock = window.mvStudio.app.stagePreview().clock as unknown as { ctx?: AudioContext }
+      return clock.ctx?.state ?? 'none'
+    })
+  // Browsers start a context made outside a click suspended; the e2e profile turns that policy off.
+  await page.evaluate(() =>
+    (window.mvStudio.app.stagePreview().clock as unknown as { ctx?: AudioContext }).ctx?.suspend(),
+  )
+  expect(await context()).toBe('suspended')
+  await page.getByRole('button', { name: 'Play', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => window.mvStudio.app.stagePreview().clock.state as string))
+    .toBe('playing')
+  expect(await context()).toBe('running')
+  expect(await page.evaluate(() => (window as unknown as { contextsInClick: number }).contextsInClick)).toBe(
+    0,
+  )
+})
+
 test('F and the button show the preview full screen, where Space plays; F and Esc leave it', async ({
   page,
 }) => {
