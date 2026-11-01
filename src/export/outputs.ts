@@ -25,7 +25,7 @@ import { projectDuration } from '../model/queries.ts'
 import type { AspectPreset, Project, Seconds } from '../model/types.ts'
 import { jobs, type JobContext, type JobHandle } from '../shared/jobs.ts'
 import { rememberPace, type ExportPaceStore } from './estimate.ts'
-import { convertToFormat, type ClipFraming, type FormatOptions } from './formats.ts'
+import { convertToFormat, type ClipFraming, type FormatConversion, type FormatOptions } from './formats.ts'
 import {
   barTimes,
   fitTeaserRange,
@@ -82,8 +82,8 @@ export function newOutput(project: Project, kind: OutputKind, patch: Partial<Out
 }
 
 /**
- * The dialog's starting list: the full video and the other main orientation are selected; square, portrait, a
- * chorus teaser and a Canvas loop are offered under "Add another".
+ * The dialog's starting list: the full video and the other main orientation are listed; square, portrait, a chorus
+ * teaser and a Canvas loop are offered under "Add another".
  */
 export function suggestedOutputs(project: Project): { selected: OutputSpec[]; more: OutputSpec[] } {
   const own = project.settings.aspect
@@ -215,16 +215,21 @@ function loopAudio(range: TimeRange, crossfade: Seconds): NonNullable<ExportOpti
   }
 }
 
-/** Everything needed to preview and render an output. Pure; cheap enough to call while the dialog changes. */
+/**
+ * Everything needed to preview and render an output. Pure; cheap enough to call while the dialog changes: the
+ * project laid out for the output's format (`project`, `framing`, `unanalysed`) is worked out when first read.
+ */
 export function planOutput(project: Project, spec: OutputSpec, options: PlanOptions = {}): PlannedOutput {
-  const conversion = convertToFormat(project, spec.aspect, {
-    reframe: spec.reframe,
-    overrides: framingOverrides(project, spec.aspect),
-    measure: options.measure,
-  })
+  let conversion: FormatConversion | undefined
+  const convert = () =>
+    (conversion ??= convertToFormat(project, spec.aspect, {
+      reframe: spec.reframe,
+      overrides: framingOverrides(project, spec.aspect),
+      measure: options.measure,
+    }))
   const size = exportSize(spec.aspect, spec.resolution)
   let range: TimeRange = { start: 0, end: projectDuration(project) }
-  let rendered = conversion.project
+  let rendered: Project | undefined
   let teaser: TeaserPick | undefined
   let loop: PlannedOutput['loop']
   const exportOptions: PlannedOutput['exportOptions'] = {}
@@ -239,7 +244,6 @@ export function planOutput(project: Project, spec: OutputSpec, options: PlanOpti
         : (auto ?? undefined)
     const r = spec.range ? fitTeaserRange(project, spec.range, window) : (teaser ?? range)
     range = { start: r.start, end: r.end }
-    rendered = withTeaserFades(rendered, range)
   } else if (spec.kind === 'loop') {
     const r = spec.range ?? loopRange(project) ?? range
     range = { start: r.start, end: r.end }
@@ -272,13 +276,20 @@ export function planOutput(project: Project, spec: OutputSpec, options: PlanOpti
   exportOptions.fileName = fileName
   return {
     spec,
-    project: rendered,
+    get project() {
+      rendered ??= spec.kind === 'teaser' ? withTeaserFades(convert().project, range) : convert().project
+      return rendered
+    },
     settings,
     range,
     duration,
     frames: Math.max(1, Math.round(duration * spec.fps)),
-    framing: conversion.clips,
-    unanalysed: conversion.unanalysed,
+    get framing() {
+      return convert().clips
+    },
+    get unanalysed() {
+      return convert().unanalysed
+    },
     estimatedBytes: Math.round(((videoBitrate + (audio ? AUDIO_BITRATE : 0)) * duration) / 8),
     fileName,
     exportOptions,

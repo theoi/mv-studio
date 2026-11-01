@@ -112,10 +112,48 @@ function enqueue<T>(work: () => Promise<T>): Promise<T> {
   return result
 }
 
-function requestStill(key: string, project: Project, time: Seconds, width: number, height: number): void {
+/** How long a still waits for a frame drawn elsewhere before drawing its own. */
+const SEED_TIMEOUT_MS = 2000
+
+/** Resolves once the frame being prepared has been painted, so the work that follows does not hold it up. */
+function afterPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
+}
+
+/** A frame drawn elsewhere, scaled to the still's size. */
+async function stillFrom(frame: Promise<ImageBitmap>, width: number, height: number): Promise<Blob> {
+  const bitmap = await frame
+  const canvas = new OffscreenCanvas(width, height)
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0, width, height)
+  bitmap.close()
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 })
+}
+
+function requestStill(
+  key: string,
+  project: Project | (() => Project),
+  time: Seconds,
+  width: number,
+  height: number,
+  seed?: () => Promise<ImageBitmap> | undefined,
+): void {
   if (urls.has(key) || pending.has(key)) return
   pending.add(key)
-  void enqueue(() => renderStill(project, time, width, height))
+  const render = () =>
+    enqueue(async () => {
+      await afterPaint()
+      return renderStill(typeof project === 'function' ? project() : project, time, width, height)
+    })
+  const frame = seed?.()
+  const seeded =
+    frame &&
+    Promise.race([
+      stillFrom(frame, width, height),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('No seed frame')), SEED_TIMEOUT_MS),
+      ),
+    ])
+  void (seeded ? seeded.catch(render) : render())
     .then(
       (blob) => store(key, URL.createObjectURL(blob)),
       (error: unknown) => console.error('Still render failed', error),
@@ -125,19 +163,22 @@ function requestStill(key: string, project: Project, time: Seconds, width: numbe
 
 /**
  * The project's frame at `time` as an image URL, rendered at `height` pixels and the given aspect ratio. Undefined
- * until it is ready; pass a null key to skip rendering.
+ * until it is ready; pass a null key to skip rendering. `project` may be a function, called only when the frame is
+ * drawn. `seed` gives the same frame already drawn elsewhere (the editor's preview at the playhead), which is used
+ * instead when it can be read.
  */
 export function useStill(
   key: string | null,
-  project: Project,
+  project: Project | (() => Project),
   time: Seconds,
   ratio: number,
   height = 360,
+  seed?: () => Promise<ImageBitmap> | undefined,
 ): string | undefined {
   const url = useSyncExternalStore(subscribe, () => (key ? urls.get(key) : undefined))
   useEffect(() => {
-    if (key) requestStill(key, project, time, Math.max(2, Math.round(height * ratio)), height)
-  }, [key, project, time, ratio, height])
+    if (key) requestStill(key, project, time, Math.max(2, Math.round(height * ratio)), height, seed)
+  }, [key, project, time, ratio, height, seed])
   return url
 }
 
