@@ -536,28 +536,53 @@ test('the Start cards are named by their title and description, not by their pre
     await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
 })
 
-test('the lyrics box grows with pasted lyrics until the button would leave the window, then scrolls inside', async ({
+test('the lyrics box takes the height the other steps leave, so the setup button ends at the bottom of the window', async ({
   page,
 }) => {
   const lyrics = Array.from({ length: 33 }, (_, i) => `Line ${i + 1} of the song`).join('\n')
   const fit = async () => {
     const box = page.getByRole('textbox', { name: 'Lyrics' })
-    const lines = await box.evaluate(
-      (el: HTMLTextAreaElement) => (el.clientHeight - 16) / parseFloat(getComputedStyle(el).lineHeight),
+    const { lines, scrolls } = await box.evaluate((el: HTMLTextAreaElement) => ({
+      lines: (el.clientHeight - 16) / parseFloat(getComputedStyle(el).lineHeight),
+      scrolls: el.scrollHeight > el.clientHeight,
+    }))
+    const button = page.getByRole('button', { name: 'Time my lyrics' })
+    const bottom = (await button.boundingBox())!
+    // The footer holds the page's bottom margin (24 px), so a full box leaves no more room than that under it.
+    const room = await button.evaluate(
+      (el) => window.innerHeight - el.parentElement!.getBoundingClientRect().bottom,
     )
-    const button = (await page.getByRole('button', { name: 'Time my lyrics' }).boundingBox())!
-    return { lines, buttonInView: button.y + button.height <= page.viewportSize()!.height }
+    return { lines, scrolls, room, buttonInView: bottom.y + bottom.height <= page.viewportSize()!.height }
   }
-  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.setViewportSize({ width: 1280, height: 720 })
   await startKind(page, /^Lyric video/)
-  await page.getByRole('button', { name: 'Use a sample song' }).click()
   await page.getByRole('textbox', { name: 'Lyrics' }).fill(lyrics)
+  // Before a song is chosen, its drop zone takes about 130 px more than the song card will.
+  const dropZone = await fit()
+  expect(dropZone.lines).toBeGreaterThanOrEqual(4)
+  expect(dropZone.scrolls).toBe(true)
+  expect(dropZone.buttonInView).toBe(true)
+  expect(dropZone.room).toBeLessThan(24)
+
+  // Too short for four lines: the box keeps them and the page scrolls to the button.
+  await page.setViewportSize({ width: 1280, height: 560 })
+  const short = await fit()
+  expect(short.lines).toBeGreaterThan(3.9)
+  expect(short.buttonInView).toBe(false)
+  await page.getByRole('button', { name: 'Time my lyrics' }).scrollIntoViewIfNeeded()
+  expect((await fit()).buttonInView).toBe(true)
+
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.setViewportSize({ width: 1920, height: 1080 })
   const big = await fit()
   expect(big.lines).toBeGreaterThan(24)
+  expect(big.scrolls).toBe(true)
   expect(big.buttonInView).toBe(true)
+  expect(big.room).toBeLessThan(24)
 
   await page.setViewportSize({ width: 1280, height: 720 })
   const small = await fit()
   expect(small.lines).toBeGreaterThan(8)
   expect(small.buttonInView).toBe(true)
+  expect(small.room).toBeLessThan(24)
 })

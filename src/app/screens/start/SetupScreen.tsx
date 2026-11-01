@@ -406,7 +406,7 @@ export function SetupScreen() {
           )}
         </div>
 
-        <div className={styles.step}>
+        <div className={[styles.step, kind === 'lyric' && styles.stepFit].filter(Boolean).join(' ')}>
           <div className={styles.stepLabel}>
             <span className={styles.stepNum}>2</span>
             {kind === 'lyric' && 'Lyrics'}
