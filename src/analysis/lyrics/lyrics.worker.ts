@@ -1,7 +1,7 @@
 import { modelCache } from '../../shared/models.ts'
 import { withModelProgress } from '../../shared/transformers.ts'
 import { exposeWorker } from '../../shared/worker.ts'
-import { WHISPER_MODELS, whisperFileUrls } from '../models.ts'
+import { MODEL_TITLES, WHISPER_MODELS, whisperFileUrls } from '../models.ts'
 import { whisperLoadProgress } from './loadProgress.ts'
 import { createCtcModel } from './session.ts'
 import { createWhisperTranscriber } from './whisperModel.ts'
@@ -24,8 +24,10 @@ exposeWorker(
       const cached = (await Promise.all(whisperFileUrls(spec).map((url) => modelCache.has(url)))).every(
         Boolean,
       )
-      const transcriber = await withModelProgress(whisperLoadProgress(spec, cached, ctx.progress), () =>
-        createWhisperTranscriber(spec, 'wasm'),
+      const transcriber = await withModelProgress(
+        whisperLoadProgress(spec, cached, ctx.progress),
+        () => createWhisperTranscriber(spec, 'wasm'),
+        MODEL_TITLES.transcriber,
       )
       return { transcriber, device: 'wasm', dispose: transcriber.dispose }
     },

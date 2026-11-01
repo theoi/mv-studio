@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { wasmThreadCount } from '../../../src/shared/capabilities.ts'
-import { JobError } from '../../../src/shared/jobs.ts'
+import { JobError, type JobProgress } from '../../../src/shared/jobs.ts'
 import { configureOnnxEnv, downloadingModel, fetchModelFile } from '../../../src/shared/models.ts'
 
 function streamResponse(chunks: Uint8Array[], headers: Record<string, string> = {}) {
@@ -27,7 +27,7 @@ describe('fetchModelFile', () => {
       { onProgress: (p) => fractions.push(p.fraction) },
     )
     expect(buf.byteLength).toBe(100)
-    expect(fractions).toEqual([0.3, 1])
+    expect(fractions).toEqual([0, 0.3, 1])
     expect(fetchMock).toHaveBeenCalledWith(
       'https://huggingface.co/x/resolve/main/model.onnx',
       expect.objectContaining({ mode: 'cors', credentials: 'omit' }),
@@ -61,6 +61,149 @@ describe('fetchModelFile', () => {
       (e: unknown) => e,
     )) as JobError
     expect(missing.retryable).toBe(false)
+  })
+})
+
+/** A fetch that never answers, and fails as the browser's does when its request is aborted. */
+function silentFetch() {
+  return vi.fn(
+    (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      }),
+  )
+}
+
+/**
+ * A fetch whose response bytes arrive when the test sends them; its body fails as the browser's does when aborted.
+ * With `answerLater`, the response itself comes only when the test calls `answer()`.
+ */
+function tricklingFetch(options: { answerLater?: boolean } = {}) {
+  let body: ReadableStreamDefaultController<Uint8Array> | undefined
+  let answer = (): void => undefined
+  const fetchMock = vi.fn(
+    (_url: string, init?: RequestInit) =>
+      new Promise<Response>((resolve) => {
+        answer = () => {
+          const stream = new ReadableStream<Uint8Array>({ start: (c) => void (body = c) })
+          init?.signal?.addEventListener('abort', () =>
+            body?.error(new DOMException('Aborted', 'AbortError')),
+          )
+          resolve(new Response(stream, { status: 200 }))
+        }
+        if (!options.answerLater) answer()
+      }),
+  )
+  return {
+    fetchMock,
+    answer: () => answer(),
+    send: (bytes: number) => body?.enqueue(new Uint8Array(bytes)),
+    end: () => body?.close(),
+  }
+}
+
+/** `fetchModelFile`'s outcome so far: 'waiting', 'loaded' or the error it threw. */
+function watch(load: Promise<ArrayBuffer>) {
+  const seen: { outcome: unknown } = { outcome: 'waiting' }
+  const settled = load.then(
+    () => (seen.outcome = 'loaded'),
+    (e: unknown) => (seen.outcome = e),
+  )
+  return { seen, settled }
+}
+
+describe('a model download that gets no bytes', () => {
+  const url = 'https://huggingface.co/x/resolve/abc/model.onnx'
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('reports its download stage as the request starts, before the server answers', async () => {
+    vi.stubGlobal('fetch', silentFetch())
+    const reports: JobProgress[] = []
+    const cancel = new AbortController()
+    const { settled } = watch(
+      fetchModelFile(
+        { url, bytes: 95_000_000 },
+        { signal: cancel.signal, onProgress: (p) => reports.push(p) },
+      ),
+    )
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(reports).toEqual([{ stage: 'download', fraction: 0, bytesLoaded: 0, bytesTotal: 95_000_000 }])
+    cancel.abort()
+    await settled
+  })
+
+  it('gives up after 30 s without a response, as a retryable network error naming the model', async () => {
+    const fetchMock = silentFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { seen, settled } = watch(fetchModelFile({ url }, { title: 'Lyrics aligner' }))
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(seen.outcome).toBe('waiting')
+    await vi.advanceTimersByTimeAsync(1_000)
+    await settled
+    const error = seen.outcome as JobError
+    expect(error).toBeInstanceOf(JobError)
+    expect([error.code, error.retryable]).toEqual(['network', true])
+    expect(error.message).toBe(
+      'The download of the lyrics aligner isn’t arriving. Check your connection, then try again.',
+    )
+    // The request itself is aborted, so the browser drops it instead of waiting on.
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps waiting while bytes come in, and gives up 30 s after the last', async () => {
+    const server = tricklingFetch()
+    vi.stubGlobal('fetch', server.fetchMock)
+    const { seen, settled } = watch(fetchModelFile({ url }))
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(25_000)
+      server.send(10)
+    }
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(seen.outcome).toBe('waiting')
+    await vi.advanceTimersByTimeAsync(1_000)
+    await settled
+    expect(seen.outcome).toBeInstanceOf(JobError)
+    expect((seen.outcome as JobError).message).toBe(
+      'The model download isn’t arriving. Check your connection, then try again.',
+    )
+  })
+
+  it('gives the body 30 s for its first bytes once the server answers', async () => {
+    const server = tricklingFetch({ answerLater: true })
+    vi.stubGlobal('fetch', server.fetchMock)
+    const { seen, settled } = watch(fetchModelFile({ url }))
+    await vi.advanceTimersByTimeAsync(25_000)
+    server.answer()
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(seen.outcome).toBe('waiting')
+    await vi.advanceTimersByTimeAsync(1_000)
+    await settled
+    expect((seen.outcome as JobError).code).toBe('network')
+  })
+
+  it('stops watching once the file is in', async () => {
+    const server = tricklingFetch()
+    vi.stubGlobal('fetch', server.fetchMock)
+    const { seen, settled } = watch(fetchModelFile({ url }))
+    await vi.advanceTimersByTimeAsync(1_000)
+    server.send(10)
+    server.end()
+    await settled
+    expect(seen.outcome).toBe('loaded')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('is cancelled, not a download that is not arriving, when its job is cancelled while waiting', async () => {
+    vi.stubGlobal('fetch', silentFetch())
+    const cancel = new AbortController()
+    const { seen, settled } = watch(fetchModelFile({ url }, { signal: cancel.signal }))
+    await vi.advanceTimersByTimeAsync(10_000)
+    cancel.abort()
+    await settled
+    expect((seen.outcome as JobError).code).toBe('cancelled')
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 
