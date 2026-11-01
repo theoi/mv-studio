@@ -423,6 +423,23 @@ describe('a seek that a paused frame stopped waiting for, once it ends', () => {
     preview.dispose()
   })
 
+  it('draws the paused frame again once the frame in flight is drawn, at full resolution rather than as a drag step', async () => {
+    let finish = () => {}
+    compositor.render.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve
+      }),
+    )
+    compositor.render.mockResolvedValue(undefined)
+    const preview = open()
+    lateFrame()?.()
+    finish()
+    await preview.rendered()
+    // A drag step would draw a reduced frame, then settle with a third at full resolution.
+    expect(compositor.render).toHaveBeenCalledTimes(2)
+    preview.dispose()
+  })
+
   it('draws nothing more while playing, whose frames do not wait for seeks', async () => {
     compositor.render.mockResolvedValue(undefined)
     const preview = open()

@@ -425,7 +425,9 @@ export class VideoElementFrameProvider implements FrameProvider {
 
   /**
    * Sends a paused element to `t` for seek(). Once the seek ends, a frame drawn without it is drawn again
-   * (onLateFrame); a seek that has not ended after `patience` ms is sent again, waiting twice as long.
+   * (onLateFrame). A seek that has not ended after `patience` ms is sent again, waiting twice as long, while its clip
+   * is in the latest frame or kept ready for a transition (prewarm()); otherwise it is dropped, as sending it again
+   * would decode for a frame nobody sees, competing with the seeks of those on screen.
    */
   private startSeek(slot: VideoSlot, t: Seconds, patience: number, retrying?: PendingSeek): PendingSeek {
     const { video } = slot
@@ -449,7 +451,8 @@ export class VideoElementFrameProvider implements FrameProvider {
     video.currentTime = t
     void pending.ended.then((event) => {
       if (slot.pending !== pending) return
-      if (event === 'timeout' && video.paused && headingTo(video, pending, t)) {
+      const wanted = this.active.has(slot.clipKey) || this.prewarmed.has(`${slot.clipKey}:${slot.assetId}`)
+      if (event === 'timeout' && wanted && video.paused && headingTo(video, pending, t)) {
         this.startSeek(slot, t, patience * 2, pending)
         return
       }

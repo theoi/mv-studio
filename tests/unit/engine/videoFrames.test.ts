@@ -545,6 +545,28 @@ describe('a paused frame’s seek that outlasts the frame’s wait for it (5 s)'
     expect(video.seeking).toBe(false)
     expect(onLateFrame).toHaveBeenCalledTimes(1)
   })
+
+  it('does not send a dropped seek again once its clip has left the frame', async () => {
+    const { video, provider, onLateFrame } = slowSeeks(100, 2)
+    await draw(provider, 4)
+    provider.beginFrame(['elsewhere'])
+    provider.endFrame()
+    await vi.advanceTimersByTimeAsync(70_000)
+    provider.dispose()
+    expect(video.sets).toHaveLength(1)
+    expect(onLateFrame).not.toHaveBeenCalled()
+  })
+
+  it('keeps sending a dropped seek again for a clip kept ready for a transition near the playhead', async () => {
+    const { video, provider, start } = slowSeeks(100, 2)
+    provider.beginFrame([])
+    provider.endFrame()
+    provider.prewarm([{ asset, sourceTime: 4, key: 'next' }])
+    await vi.advanceTimersByTimeAsync(70_000)
+    provider.dispose()
+    expect(video.sets.map((s) => ago(start, s.at))).toEqual([0, 20, 60])
+    expect(video.seeking).toBe(false)
+  })
 })
 
 /** A paused preview's frame provider that makes a new element each time; `created` lists them in order. */

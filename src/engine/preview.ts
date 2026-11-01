@@ -418,6 +418,8 @@ export class PreviewController {
    * right after one can draw smaller than needed; the drag's settle frame measures again.
    */
   private lastStillEnd = -Infinity
+  /** The next still draws a frame again after a late seek (drawLateFrame), so it is no drag step. */
+  private lateStill = false
   private fullStills: number[] = []
   /** Set while a scrub on the main-thread renderer waits to settle at full resolution. */
   private settleTimer: ReturnType<typeof setTimeout> | undefined
@@ -841,6 +843,10 @@ export class PreviewController {
       this.startScrub()
       return
     }
+    if (this.lateStill) {
+      this.lateStill = false
+      this.lastStillEnd = -Infinity
+    }
     // On the main-thread renderer a still right after the last one is a drag step too, and the drag settles only after
     // a pause: a full-size frame between two steps would hold up the next one.
     if (this.renderer?.inWorker === false && performance.now() - this.lastStillEnd < SCRUB_GAP_MS) {
@@ -866,12 +872,9 @@ export class PreviewController {
    */
   private drawLateFrame(): void {
     if (this.disposed || this.clock.state === 'playing') return
-    if (this.inFlight) {
-      this.stillPending = true
-      return
-    }
-    this.lastStillEnd = -Infinity
-    this.requestStill()
+    this.lateStill = true
+    if (this.inFlight) this.stillPending = true
+    else this.requestStill()
   }
 
   /** Stills arrive faster than they are drawn: a scrub, judged from its own stills (the level carries over). */
