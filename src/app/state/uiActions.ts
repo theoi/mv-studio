@@ -357,7 +357,7 @@ export const UI_ACTIONS: readonly UiAction[] = [
     area: 'Export',
     name: 'Vertical',
     palette: 'exportVertical',
-    search: ['export vertical', 'vertical version'],
+    search: ['export vertical', 'vertical version', 'tiktok', 'vertical video for reels', 'youtube shorts'],
   },
   { area: 'Export', name: 'Chorus teaser', palette: 'exportTeaser', search: ['chorus teaser', 'teaser'] },
   {

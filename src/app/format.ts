@@ -108,3 +108,10 @@ export function formatParam(spec: Extract<ParamSpec, { type: 'number' }>, n: num
 export function undoAction(label: string): string {
   return /^[A-Z][a-z]/.test(label) && !/^\S+:/.test(label) ? label[0]!.toLowerCase() + label.slice(1) : label
 }
+
+/** The note for a search that finds nothing, such as "No matching action. Try fewer words.". */
+export function noMatch(what: string): (search: string) => string {
+  // Fewer words can't help a search of one word.
+  return (search) =>
+    `No matching ${what}. ${search.trim().split(/\s+/).length > 1 ? 'Try fewer words.' : 'Try another word.'}`
+}

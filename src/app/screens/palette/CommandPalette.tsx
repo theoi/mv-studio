@@ -5,6 +5,7 @@ import { Check, Search, Sparkles } from 'lucide-react'
 import type { Asset } from '../../../model/index.ts'
 import { useReturnFocus } from '../../ds/focus.ts'
 import { Kbd } from '../../ds/Kbd.tsx'
+import { noMatch } from '../../format.ts'
 import { ask } from '../../state/ask.ts'
 import { keysOf } from '../../state/keymap.ts'
 import { ASK_SCORE, isSentence, paletteScore } from '../../state/paletteScore.ts'
@@ -213,7 +214,7 @@ export function CommandPalette() {
             </div>
             <Command.List className={styles.list}>
               <Command.Empty className={styles.empty}>
-                {def ? def.empty : 'No matching action. Try fewer words.'}
+                {(def ? def.empty : noMatch('action'))(search)}
               </Command.Empty>
               {page &&
                 def?.groups(page).map(

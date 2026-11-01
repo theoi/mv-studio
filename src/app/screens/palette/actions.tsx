@@ -376,6 +376,8 @@ function aspect(value: AspectPreset, label: string, icon: ReactNode, keywords: s
     keywords: `aspect ratio ${keywords}`,
     run: () => changeAspect(value),
     unavailable: () => (project().settings.aspect === value ? 'Current aspect ratio' : undefined),
+    // Not a version beside the current one, which Export a vertical version… makes.
+    detail: () => `Changes the project to ${value}`,
   }
 }
 
@@ -1256,8 +1258,13 @@ export const actions: Action[] = [
     group: 'Export',
     label: 'Export a vertical version…',
     icon: <Smartphone />,
+    aliases: ['tiktok', 'reels', 'shorts', 'youtube shorts'],
     keywords: '9:16 shorts reels tiktok',
     run: () => exportWithOutput('vertical'),
+    detail: () => {
+      const { aspect } = project().settings
+      return aspect === '9:16' ? undefined : `Keeps the project ${aspect}`
+    },
   },
   {
     id: 'exportTeaser',
