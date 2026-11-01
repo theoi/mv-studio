@@ -105,6 +105,25 @@ describe('auto-cut plan', () => {
     ])
   })
 
+  it('counts the clips and the images it used without analysis apart', async () => {
+    const still = (id: string) => ({ id, image: true, indexed: false })
+    const mixed = makeProject({
+      clips: [
+        ...CLIPS.slice(0, 2),
+        { ...CLIPS[2]!, indexed: false },
+        { ...CLIPS[3]!, indexed: false },
+        still('a'),
+      ],
+    })
+    expect((await plan(mixed)).warnings).toContain(
+      '2 clips and 1 image aren’t analyzed yet, so they were only used for variety.',
+    )
+    const stills = makeProject({ clips: [...CLIPS.slice(0, 2), still('a'), still('b')] })
+    expect((await plan(stills)).warnings).toContain(
+      '2 images aren’t analyzed yet, so they were only used for variety.',
+    )
+  })
+
   it('uses only the chosen clips, and refuses without a song or clips', async () => {
     const { shots } = await plan(makeProject(), { assetIds: ['ocean', 'misc'] })
     expect(new Set(shots.map((s) => s.assetId))).toEqual(new Set(['ocean', 'misc']))

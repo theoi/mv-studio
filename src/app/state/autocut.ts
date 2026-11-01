@@ -11,7 +11,13 @@ import type {
 import { isBlankClip, readClipTags, readSubjectTrack } from '../../vision/analysisData.ts'
 import { shortFileName } from '../../shared/text.ts'
 import { plural } from '../format.ts'
-import { analyzeFootageAndWait, showingDownloads, useFootage, visionService } from './footage.ts'
+import {
+  analyzeFootageAndWait,
+  checkClipsForBlank,
+  showingDownloads,
+  useFootage,
+  visionService,
+} from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { visionDownloadBytes } from './models.ts'
 import { editor, sectionAt, sectionsOf } from './project.ts'
@@ -281,6 +287,7 @@ export function autoCutOptions(
 
 const STAGE_MESSAGES: Record<string, string> = {
   bars: BARS_NOTES.finding,
+  checking: 'Checking your clips…',
   planning: 'Finding the cuts in the song',
   matching: 'Choosing a clip for each shot',
 }
@@ -290,6 +297,8 @@ const analyzingMessage = (done: number, total: number) =>
 
 /** Share of the job's progress spent finding bars, when they are not found yet. */
 const BARS_SHARE = 0.4
+/** Share of the rest of the job's progress spent waiting for the clips' blank check, when it is still running. */
+const CHECK_SHARE = 0.1
 
 /*
  * Time left in a cut, measured on a 4-core computer without a capable GPU on 12 phone and camera clips (1080p to 4K,
@@ -432,12 +441,32 @@ export function startAutoCut(
         .filter((a) => !wanted || wanted.has(a.id))
         .map((a) => a.id)
       const analyze = analyzeFirst && matched && waiting.length > 0
+      // Without the analysis, the fast blank check still finds the clips that show nothing, so the cut can leave them
+      // out. It runs while the bars are found.
+      let checkFraction = 0
+      let reportCheck: ((fraction: number) => void) | undefined
+      const checked = analyze
+        ? undefined
+        : checkClipsForBlank({
+            ...(options.assetIds ? { assetIds: options.assetIds } : {}),
+            signal: ctx.signal,
+            progress: (f) => {
+              checkFraction = f
+              reportCheck?.(f)
+            },
+          })
+      let checking = !!checked
+      checked?.then(
+        () => (checking = false),
+        () => (checking = false),
+      )
       // The analyzing stage takes the first half of the bar. Cuts phrase on bars, so a song whose bars are still being
       // found waits for them next; the cut takes the rest.
       const analyzed = analyze ? 0.5 : 0
       const findBars = barsState().status !== 'ready'
       const share = findBars ? BARS_SHARE * (1 - analyzed) : 0
-      const scale = (f: number) => analyzed + share + f * (1 - analyzed - share)
+      let from = analyzed + share
+      const scale = (f: number) => from + f * (1 - from)
       const song = project.songAssetId ? project.assets[project.songAssetId] : undefined
       const barsSeconds = findBars ? BARS_SECONDS_PER_SECOND * (song?.duration ?? 0) : 0
       // Only a cut that waits says how long. With the clips analyzed and the bars found, it is done at once.
@@ -489,6 +518,24 @@ export function startAutoCut(
           })
         },
       })
+      // A check with nothing left to do settles within a few microtasks: only one still running gets a word.
+      if (checking)
+        await Promise.race([checked?.catch(() => undefined), new Promise((r) => setTimeout(r, 0))])
+      if (checking) {
+        const start = from
+        from += CHECK_SHARE * (1 - from)
+        reportCheck = (f) =>
+          ctx.progress({
+            fraction: start + f * (from - start),
+            stage: 'checking',
+            message: STAGE_MESSAGES.checking,
+            etaSeconds: undefined,
+          })
+        reportCheck(checkFraction)
+      }
+      // A check that fails leaves its clips in the cut, as before the check.
+      await checked?.catch(() => ctx.throwIfCancelled())
+      reportCheck = undefined
       ctx.progress({
         fraction: scale(0),
         stage: 'planning',

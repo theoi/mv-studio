@@ -18,6 +18,7 @@ import {
 } from '../../shared/jobs.ts'
 import {
   buildVisualAnalysis,
+  hasBlankVerdict,
   readClipIndex,
   readClipTags,
   readSubjectTrack,
@@ -28,6 +29,7 @@ import { visionError } from '../errors.ts'
 import { withDownloadLines, type ModelDownload } from '../runtime/downloads.ts'
 import { createAssetFrameSource } from '../runtime/assetSource.ts'
 import type { FrameSource } from '../runtime/frames.ts'
+import { BLANK_CHECK_FRAMES } from '../matching/indexer.ts'
 import { describeClips, tagWords } from '../matching/tags.ts'
 import { createImageFrameSource } from '../runtime/imageSource.ts'
 import type { VisionService } from '../service.ts'
@@ -103,13 +105,23 @@ export interface FootageService {
   search(text: string, options?: FootageQueryOptions): Promise<FootageResult[]>
   suggestForLine(lineId: Id, options?: FootageQueryOptions): Promise<FootageResult[]>
   suggestForSection(sectionId: Id, options?: FootageQueryOptions): Promise<FootageResult[]>
+  /**
+   * Runs the fast blank check on these clips and stills (default: all of them) where footage analysis can't yet say
+   * whether they show anything, and resolves when each is checked, so a draft or a cut can leave out the ones that show
+   * nothing. It needs no model, so it also runs where background analysis is off. A clip it can't decode stays
+   * unchecked. `progress` gets the share of them checked so far.
+   */
+  checkBlank(
+    assetIds?: readonly Id[],
+    options?: { signal?: AbortSignal; progress?: (fraction: number) => void },
+  ): Promise<void>
   readonly indexing: FootageIndexer
 }
 
 export interface FootageServiceDeps {
   editor: Pick<ProjectEditor, 'getProject' | 'dispatch' | 'subscribe'>
   vision: Pick<VisionService, 'indexClip' | 'matcher' | 'subjects'> &
-    Partial<Pick<VisionService, 'watchDownloads'>>
+    Partial<Pick<VisionService, 'watchDownloads' | 'peakLuma'>>
   media: MediaFileSource
   jobs?: Pick<JobRunner, 'run'>
   /** Frames to analyze for an asset (default: the export decoder for clips, the image itself for stills). */
@@ -139,6 +151,81 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
   const indexOf = (project: Project, id: Id): ClipVisionIndex | null => {
     const index = readClipIndex(project.analysis.visual[id])
     return index && index.model === vision.matcher.model ? index : null
+  }
+
+  const write = (
+    asset: Asset,
+    src: FrameSource,
+    parts: Omit<VisualAnalysisParts, 'assetId' | 'sourceSize'>,
+  ) => {
+    const project = editor.getProject()
+    if (!project.assets[asset.id]) return
+    const analysis = buildVisualAnalysis(
+      { assetId: asset.id, sourceSize: { width: src.width, height: src.height }, ...parts },
+      project.analysis.visual[asset.id],
+    )
+    editor.dispatch({ type: 'analysis.setVisual', analysis }, { history: 'skip' })
+  }
+
+  // ---------------------------------------------------------------------------------------------------------
+  // Fast blank check
+
+  const blankChecks = new Map<Id, Promise<void>>()
+  const failedBlank = new Set<Id>()
+  const needsBlankCheck = (project: Project, asset: Asset): asset is Asset & { kind: 'video' | 'image' } =>
+    !!vision.peakLuma &&
+    analyzable(asset) &&
+    !failedBlank.has(asset.id) &&
+    !hasBlankVerdict(project.analysis.visual[asset.id])
+
+  /** The clip's check, shared by everyone waiting for it (the background pass, a draft, a cut). */
+  const checkOne = (asset: Asset & { kind: 'video' | 'image' }): Promise<void> => {
+    const running = blankChecks.get(asset.id)
+    if (running) return running
+    const check = (async () => {
+      let src: (FrameSource & { dispose?(): void }) | undefined
+      try {
+        src = await frameSource(asset)
+        const frames = asset.kind === 'image' ? 1 : BLANK_CHECK_FRAMES
+        const peakLuma = await vision.peakLuma!(src, { frames })
+        write(asset, src, { duration: src.duration, blankCheck: { peakLuma, frames } })
+      } catch {
+        failedBlank.add(asset.id)
+      } finally {
+        src?.dispose?.()
+        blankChecks.delete(asset.id)
+      }
+    })()
+    blankChecks.set(asset.id, check)
+    return check
+  }
+
+  const untilChecked = (check: Promise<void>, signal?: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      const stop = () => reject(new JobError('cancelled', 'The task was cancelled.'))
+      if (signal?.aborted) return stop()
+      signal?.addEventListener('abort', stop, { once: true })
+      void check.then(() => {
+        signal?.removeEventListener('abort', stop)
+        resolve()
+      })
+    })
+
+  const checkBlank: FootageService['checkBlank'] = async (assetIds, options = {}) => {
+    const wanted = assetIds && new Set(assetIds)
+    const project = editor.getProject()
+    const todo = Object.values(project.assets)
+      .filter((a) => !wanted || wanted.has(a.id))
+      .filter((a) => needsBlankCheck(project, a))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+    // One at a time, as the background pass does, so the two share each check instead of decoding a clip twice.
+    for (const [i, asset] of todo.entries()) {
+      options.progress?.(i / todo.length)
+      // The background pass or another caller may have checked it meanwhile, or the user removed it.
+      const now = editor.getProject()
+      if (now.assets[asset.id] && needsBlankCheck(now, asset))
+        await untilChecked(checkOne(asset), options.signal)
+    }
   }
 
   // ---------------------------------------------------------------------------------------------------------
@@ -177,7 +264,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
 
   const pending = (project: Project) =>
     Object.values(project.assets)
-      .filter((a) => stepsFor(project, a).length > 0)
+      .filter((a) => stepsFor(project, a).length > 0 || needsBlankCheck(project, a))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
 
   const emit = () => {
@@ -255,19 +342,6 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
             else (step === 'matching' ? failedMatching : failedSubjects).set(asset.id, e.message)
           }
         }
-        const write = (
-          asset: Asset,
-          src: FrameSource,
-          parts: Omit<VisualAnalysisParts, 'assetId' | 'sourceSize'>,
-        ) => {
-          const project = editor.getProject()
-          if (!project.assets[asset.id]) return
-          const analysis = buildVisualAnalysis(
-            { assetId: asset.id, sourceSize: { width: src.width, height: src.height }, ...parts },
-            project.analysis.visual[asset.id],
-          )
-          editor.dispatch({ type: 'analysis.setVisual', analysis }, { history: 'skip' })
-        }
         const runStep = async (
           asset: Asset,
           src: FrameSource | undefined,
@@ -315,6 +389,19 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
         }
         for (;;) {
           ctx.throwIfCancelled()
+          // Every clip gets the fast blank check before any is analyzed further: it takes a second or two a clip, and
+          // the library's badge, drafts and cuts need nothing more to leave out a clip that shows nothing.
+          const now = editor.getProject()
+          const unchecked = pending(now).find((a): a is Asset & { kind: 'video' | 'image' } =>
+            needsBlankCheck(now, a),
+          )
+          if (unchecked) {
+            total = done + pending(now).length
+            report()
+            emit()
+            await checkOne(unchecked)
+            continue
+          }
           const todo = pending(editor.getProject())
           const asset = todo[0]
           if (!asset) break
@@ -382,6 +469,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
           failedMatching.clear()
           failedSubjects.clear()
           failedTags.clear()
+          failedBlank.clear()
           paused = false
           error = undefined
         } else if (change.commands.some((c) => c.type === 'asset.add')) {
@@ -469,6 +557,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
 
   return {
     indexing,
+    checkBlank,
     async search(text, options = {}) {
       const q = text.trim()
       return q ? rank({ text: q }, options) : []

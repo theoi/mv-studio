@@ -3,6 +3,7 @@ import {
   blankAssets,
   blankClipsNote,
   buildVisualAnalysis,
+  hasBlankVerdict,
   isBlankClip,
   projectLibrary,
   readClipIndex,
@@ -144,6 +145,25 @@ describe('visual analysis data', () => {
     expect(isBlankClip(stored(analyzed('older')))).toBe(false)
     expect(isBlankClip(undefined)).toBe(false)
     expect(readClipIndex(stored(analyzed('clear', 0)))?.motion.peakLuma).toBe(0)
+    expect(hasBlankVerdict(stored(analyzed('older')))).toBe(false)
+    expect(hasBlankVerdict(stored(analyzed('night', 60)))).toBe(true)
+
+    // The fast blank check flags a clip before the matching index exists; the index, which sees more frames, wins.
+    const checked = (assetId: string, peakLuma: number, previous?: ReturnType<typeof analyzed>) =>
+      buildVisualAnalysis(
+        {
+          assetId,
+          duration: 30,
+          sourceSize: { width: 1920, height: 1080 },
+          blankCheck: { peakLuma, frames: 8 },
+        },
+        previous,
+      )
+    expect(isBlankClip(stored(checked('clear', 3)))).toBe(true)
+    expect(hasBlankVerdict(stored(checked('clear', 3)))).toBe(true)
+    expect(isBlankClip(stored(checked('night', 60)))).toBe(false)
+    expect(isBlankClip(stored(checked('flash', 3, analyzed('flash', 200))))).toBe(false)
+    expect(isBlankClip(stored(checked('older', 3, analyzed('older'))))).toBe(true)
 
     const asset = (id: string, createdAt: string, extra: Partial<Asset> = {}): Asset => ({
       id,

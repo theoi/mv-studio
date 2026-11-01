@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { ProjectEditor } from '../../../../src/model/editor.ts'
 import type { Asset, Project } from '../../../../src/model/types.ts'
 import { JobError, JobRunner } from '../../../../src/shared/jobs.ts'
-import { readClipIndex, readClipTags, readSubjectTrack } from '../../../../src/vision/analysisData.ts'
+import {
+  hasBlankVerdict,
+  isBlankClip,
+  readClipIndex,
+  readClipTags,
+  readSubjectTrack,
+} from '../../../../src/vision/analysisData.ts'
 import {
   createFootageService,
   FOOTAGE_INDEX_JOB,
@@ -52,11 +58,13 @@ function subjectTrack(source: FrameSource): SubjectTrack {
 
 /**
  * A vision stand-in whose indexing waits until the test releases each clip (`release(id)`). Subject tracking
- * finishes at once unless `gateSubjects` is set; then it waits for `release(\`${id}:subjects\`)`.
+ * finishes at once unless `gateSubjects` is set; then it waits for `release(\`${id}:subjects\`)`. With
+ * `peakLuma`, the fast blank check reads a clip's brightest luma from it (throwing fails the clip's check), and with
+ * `gateBlank` it waits for `release(\`${id}:blank\`)`.
  */
 function setup(
   project: Project = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) }),
-  options: { gateSubjects?: boolean } = {},
+  options: { gateSubjects?: boolean; peakLuma?: (id: string) => number; gateBlank?: boolean } = {},
 ) {
   const editor = new ProjectEditor(project)
   const jobs = new JobRunner()
@@ -84,6 +92,12 @@ function setup(
     if (options.gateSubjects) await gate(`${source.mediaId}:subjects`, o)
     return subjectTrack(source)
   })
+  const peakLuma = vi.fn(async (source: FrameSource, o: { frames?: number } = {}) => {
+    started.push(`${source.mediaId}:blank`)
+    if (options.gateBlank) await gate(`${source.mediaId}:blank`, {})
+    void o
+    return options.peakLuma!(source.mediaId)
+  })
   let downloads: ((d: ModelDownload) => void) | undefined
   const watchDownloads = (listener: (d: ModelDownload) => void) => {
     downloads = listener
@@ -93,7 +107,13 @@ function setup(
   }
   const service = createFootageService({
     editor,
-    vision: { matcher, indexClip, subjects, watchDownloads } as never,
+    vision: {
+      matcher,
+      indexClip,
+      subjects,
+      watchDownloads,
+      ...(options.peakLuma ? { peakLuma } : {}),
+    } as never,
     media: { getFile: async () => new Blob() },
     jobs,
     frameSource: async (asset) => ({
@@ -122,7 +142,20 @@ function setup(
       readClipIndex(editor.getProject().analysis.visual[id]),
     )
   const download = (d: ModelDownload) => downloads?.(d)
-  return { editor, jobs, service, started, disposed, release, tick, indexed, indexClip, subjects, download }
+  return {
+    editor,
+    jobs,
+    service,
+    started,
+    disposed,
+    release,
+    tick,
+    indexed,
+    indexClip,
+    subjects,
+    peakLuma,
+    download,
+  }
 }
 
 describe('background footage analysis', () => {
@@ -316,6 +349,88 @@ describe('background footage analysis', () => {
     await tick()
     expect(service.indexing.getState().status).toBe('idle')
     expect(indexed()).toEqual([])
+  })
+})
+
+describe('fast blank check', () => {
+  const crowdIsBlack = (id: string) => (id === 'crowd' ? 3 : 120)
+  const blank = (editor: ProjectEditor) =>
+    Object.keys(editor.getProject().analysis.visual).filter((id) =>
+      isBlankClip(editor.getProject().analysis.visual[id]),
+    )
+
+  it('checks every clip before analyzing any further, so a clip that shows nothing is flagged at once', async () => {
+    const { editor, service, started, release, tick, peakLuma, indexed } = setup(undefined, {
+      peakLuma: crowdIsBlack,
+    })
+    service.indexing.start()
+    for (let i = 0; i < 10; i++) await tick()
+    // The first clip's analysis is still running (its matching never finishes until released).
+    expect(started).toEqual(['city:blank', 'ocean:blank', 'crowd:blank', 'misc:blank', 'city'])
+    expect(blank(editor)).toEqual(['crowd'])
+    expect(service.indexing.getState()).toMatchObject({ status: 'indexing', total: 4 })
+    expect(editor.canUndo()).toBe(false)
+    for (const id of ['city', 'ocean', 'crowd', 'misc']) await release(id)
+    expect(indexed()).toHaveLength(4)
+    expect(peakLuma).toHaveBeenCalledTimes(4)
+    expect(peakLuma.mock.calls.map(([, o]) => o?.frames)).toEqual([8, 8, 8, 8])
+  })
+
+  it('checks on request where background analysis is off, once per clip, and shares a check already running', async () => {
+    const { editor, service, peakLuma, release, started, tick } = setup(undefined, {
+      peakLuma: crowdIsBlack,
+      gateBlank: true,
+    })
+    const progress: number[] = []
+    const all = service.checkBlank(undefined, { progress: (f) => progress.push(f) })
+    const crowd = service.checkBlank(['crowd'])
+    let crowdDone = false
+    void crowd.then(() => (crowdDone = true))
+    await release('city:blank')
+    await release('ocean:blank')
+    expect(crowdDone).toBe(false)
+    await release('crowd:blank')
+    await tick()
+    expect(crowdDone).toBe(true)
+    expect(blank(editor)).toEqual(['crowd'])
+    await release('misc:blank')
+    await all
+    expect(progress).toEqual([0, 0.25, 0.5, 0.75])
+    expect(started).toEqual(['city:blank', 'crowd:blank', 'ocean:blank', 'misc:blank'])
+    await service.checkBlank()
+    expect(peakLuma).toHaveBeenCalledTimes(4)
+    expect(service.indexing.getState().status).toBe('idle')
+  })
+
+  it('leaves a clip it cannot decode unchecked, checks stills from one frame, and stops waiting when cancelled', async () => {
+    const project = makeProject({
+      clips: [
+        { id: 'city', duration: 10, indexed: false },
+        { id: 'broken', duration: 10, indexed: false },
+        { id: 'still', image: true, indexed: false },
+      ],
+    })
+    const { editor, service, peakLuma } = setup(project, {
+      peakLuma: (id) => {
+        if (id === 'broken') throw new JobError('decode', 'Broken file')
+        return 0
+      },
+    })
+    await service.checkBlank()
+    const visual = editor.getProject().analysis.visual
+    expect(blank(editor)).toEqual(['city', 'still'])
+    expect(hasBlankVerdict(visual.broken)).toBe(false)
+    expect(peakLuma.mock.calls.map(([s, o]) => [s.mediaId, o?.frames])).toEqual([
+      ['city', 8],
+      ['broken', 8],
+      ['still', 1],
+    ])
+    const stop = new AbortController()
+    stop.abort()
+    editor.dispatch({ type: 'asset.add', asset: videoAsset('late') }, { history: 'skip' })
+    await expect(service.checkBlank(undefined, { signal: stop.signal })).rejects.toMatchObject({
+      code: 'cancelled',
+    })
   })
 })
 

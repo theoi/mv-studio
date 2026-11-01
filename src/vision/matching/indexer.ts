@@ -123,6 +123,41 @@ export async function indexClip(
   }
 }
 
+/** Frames the fast blank check samples from a clip: enough that a clip with content is rarely black at all of them. */
+export const BLANK_CHECK_FRAMES = 8
+
+/**
+ * The brightest luma in `frames` frames spread evenly over the clip (away from its first and last frame, which are
+ * often black), at the size the matching index decodes. One frame for a still. A clip that shows nothing is black in
+ * every one, so this flags it in a second or two, long before the matching index is built.
+ */
+export async function samplePeakLuma(
+  deps: Pick<ClipIndexDeps, 'toGray'>,
+  source: FrameSource,
+  options: { frames?: number; signal?: AbortSignal } = {},
+): Promise<number> {
+  const n = source.duration > 0 ? (options.frames ?? BLANK_CHECK_FRAMES) : 1
+  const times = Array.from({ length: n }, (_, i) => (source.duration * (i + 0.5)) / n)
+  const shortSide = Math.min(source.width, source.height)
+  const maxSide = Math.ceil(
+    (Math.max(source.width, source.height) * Math.min(shortSide, EMBED_SHORT_SIDE)) / shortSide,
+  )
+  let max = 0
+  try {
+    for await (const { bitmap } of iterateFrames(source, times, {
+      maxSide,
+      ...(options.signal ? { signal: options.signal } : {}),
+    })) {
+      max = Math.max(max, peak(deps.toGray(bitmap, { width: bitmap.width, height: bitmap.height })))
+      bitmap.close()
+    }
+  } catch (err) {
+    throw visionError(err, 'decode')
+  }
+  if (options.signal?.aborted) throw new JobError('cancelled', 'The task was cancelled.')
+  return max
+}
+
 function peak(gray: GrayImage): number {
   let max = 0
   for (const v of gray.data) if (v > max) max = v

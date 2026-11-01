@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { Page } from '@playwright/test'
 import { FIXTURE_DIR } from './global-setup.ts'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
@@ -114,4 +115,138 @@ test('a clip that shows nothing is badged, left out of the cut unless ticked in 
   await page.keyboard.press('Escape')
   if (await palette.isVisible()) await page.keyboard.press('Escape')
   await expect(palette).toBeHidden()
+})
+
+const LEFT_OUT = 'Left out “clear.webm” because every frame of it is black or see-through.'
+
+/** Names of the media a director draft placed, or the Auto-cut track's clips. */
+function usedNames(page: Page, by: 'director' | 'autocut') {
+  return page.evaluate((by) => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const track = project.tracks.find((t: { name: string }) => t.name === 'Auto-cut')
+    const clips = Object.values(project.clips) as {
+      assetId?: string
+      trackId: string
+      meta?: { director?: unknown }
+    }[]
+    const names = clips.flatMap((c) =>
+      c.assetId && (by === 'director' ? c.meta?.director : track && c.trackId === track.id)
+        ? [project.assets[c.assetId]?.name]
+        : [],
+    )
+    return [...new Set(names)].sort()
+  }, by)
+}
+
+/** Assist › Auto-cut: More options › Clip order › Story order, then Cut to the beat. */
+async function cutInStoryOrder(page: Page) {
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await assist.getByRole('button', { name: 'More options' }).click()
+  await assist.getByRole('combobox', { name: 'Clip order' }).click()
+  await page.getByRole('option', { name: /Story order/ }).click()
+  await assist.getByRole('button', { name: 'Cut to the beat' }).click()
+}
+
+/** The AI music video setup with the sample song and these clips, imported one after the other. */
+async function setUpAiVideo(page: Page, clipFiles: string[]) {
+  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('textbox', { name: 'Describe your video' }).fill('neon night drive')
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  const clips = page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')
+  for (const [i, name] of clipFiles.entries()) {
+    await page.getByLabel('Clip files').setInputFiles(fixture(name))
+    await expect(clips).toHaveCount(i + 1, { timeout: 30_000 })
+  }
+}
+
+test('with footage analysis stuck on the first clip, a clip that shows nothing is badged at once and drafts and cuts leave it out', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem('mv-studio.background-analysis', 'on')
+    // Matching never finishes, so footage analysis stays on the first clip imported for the whole test.
+    const onnx = {
+      embedImages: ({ bitmaps }: { bitmaps: ImageBitmap[] }) => {
+        for (const b of bitmaps) b.close()
+        return new Promise(() => undefined)
+      },
+      async embedTexts({ texts }: { texts: string[] }) {
+        return { dim: 2, data: new Float32Array(texts.flatMap(() => [0.6, 0.8])) }
+      },
+    }
+    window.mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => onnx,
+      segmentation: () => {
+        throw new Error('unused')
+      },
+    })
+  })
+  await setUpAiVideo(page, ['clip1080.mp4', 'clip.mp4', 'clear.webm'])
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(page.getByText(/^Placed \d+ (shots|scenes)/)).toBeVisible({ timeout: 60_000 })
+  await expect(assist.getByText(LEFT_OUT)).toBeVisible()
+  expect(await usedNames(page, 'director')).toEqual(['clip.mp4', 'clip1080.mp4'])
+
+  await expect(
+    page.getByRole('button', { name: 'clear, video, shows nothing' }).getByText('Shows nothing'),
+  ).toBeVisible()
+  // Footage analysis hasn't matched a single clip: the badge comes from the fast check alone.
+  const matched = () =>
+    page.evaluate(() =>
+      Object.values(window.mvStudio.app.project.editor.getProject().analysis.visual).filter(
+        (v) => (v as { data: { embedding?: unknown } }).data.embedding,
+      ),
+    )
+  expect(await matched()).toHaveLength(0)
+
+  // Story order walks through every clip in import order, the clip that shows nothing too unless it is left out.
+  await assist.getByRole('button', { name: 'All tools' }).click()
+  await assist.getByRole('button', { name: /^Auto-cut/ }).click()
+  await cutInStoryOrder(page)
+  await expect(assist.getByText(LEFT_OUT)).toBeVisible({ timeout: 60_000 })
+  expect(await usedNames(page, 'autocut')).toEqual(['clip.mp4', 'clip1080.mp4'])
+  expect(await matched()).toHaveLength(0)
+})
+
+test('with background analysis off, a draft checks the clips first and leaves out the one that shows nothing', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await setUpAiVideo(page, ['clip.mp4', 'clear.webm'])
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(page.getByText(/^Placed \d+ (shots|scenes)/)).toBeVisible({ timeout: 60_000 })
+  await expect(assist.getByText(LEFT_OUT)).toBeVisible()
+  expect(await usedNames(page, 'director')).toEqual(['clip.mp4'])
+  await expect(
+    page.getByRole('button', { name: 'clear, video, shows nothing' }).getByText('Shows nothing'),
+  ).toBeVisible()
+})
+
+test('with background analysis off, a cut in story order checks the clips first and leaves out the one that shows nothing', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?kind=footage&tab=assist&assist=autocut'
+  })
+  await waitForPreview(page)
+  await page.getByLabel('Import media files').setInputFiles(fixture('clear.webm'))
+  await expect(page.getByRole('button', { name: /^clear, video/ })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole('button', { name: 'clear, video, shows nothing' })).toHaveCount(0)
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await cutInStoryOrder(page)
+  await expect(assist.getByText(LEFT_OUT)).toBeVisible({ timeout: 60_000 })
+  const used = await usedNames(page, 'autocut')
+  expect(used.length).toBeGreaterThan(0)
+  expect(used).not.toContain('clear.webm')
+  await expect(
+    page.getByRole('button', { name: 'clear, video, shows nothing' }).getByText('Shows nothing'),
+  ).toBeVisible()
 })
