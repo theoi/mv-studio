@@ -6,7 +6,7 @@ MV Studio turns a song into a finished music video in your browser. Make a lyric
 
 > **Saving.** Projects save automatically in your browser. To keep a copy of your own, click the project name at the top left and choose **Download project file**. For what the automatic and AI features can get wrong, see [Known limits](#known-limits).
 
-<!-- Screenshot placeholder: the editor with a lyric video open (media library, preview, inspector, timeline). -->
+![The editor with a lyric video open: text styles on the left, the preview with a karaoke line, the Inspector for that line, and the timeline with the lyrics track](docs/screenshots/editor.jpg)
 
 ## What you can make
 
@@ -19,7 +19,7 @@ MV Studio turns a song into a finished music video in your browser. Make a lyric
 
 The Start screen has a starting point for each kind, plus a blank project and **Open project file**. Every automatic or AI result becomes normal project content (clips, keyframes, text and effects) that you can change by hand. Nothing is locked in.
 
-<!-- Screenshot placeholder: one frame of each kind of video, side by side. -->
+![One frame of each kind: a lyric video, a visualizer, beat-cut footage and an AI music video](docs/screenshots/kinds.jpg)
 
 ## Local-first and private
 
@@ -76,7 +76,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 - Save frame: a full-size PNG of the current frame, from the preview's right-click menu or the command palette.
 - Live VJ mode: trigger clips, effects and looks from the keyboard or a MIDI controller during playback, quantized to the beat or bar if you like. The performance is recorded as editable timeline content. The default MIDI mapping is in **Settings › VJ and MIDI**.
 
-<!-- Screenshot placeholder: the Assist panel with the director, and VJ mode. -->
+<img src="docs/screenshots/director.jpg" alt="Assist › Director after a draft: what it placed and the plan for each section, with Undo draft and Play the draft" width="49%"> <img src="docs/screenshots/vj.jpg" alt="VJ mode: pads for clips, effects and looks under the preview" width="49%">
 
 ## Browser support
 
@@ -150,16 +150,40 @@ Developer notes on the providers, error states and model choice are in [src/clou
 
 ## Known limits
 
+### Song analysis and lyrics
+
 - Automatic lyric transcription of sung vocals is a draft and needs correcting. For precise word timing, paste the lyrics and separate the stems.
 - On a 4-core computer without a capable GPU, stem separation (and so precise lyric timing) takes about 1.2 to 1.7 times the song's length, depending on the computer (3.5 to 9 minutes for a 3 to 5 minute song). It is a little faster once the song's analysis has finished, so right after importing a song it takes longest. It needs about 3.5 GB of memory on top of what the browser already uses, which the studio shows as about 4 GB of free memory; the whole browser uses about 4 to 5 GB while it runs (1 GB = 1,000,000,000 bytes). The studio shows an estimate before you start; after your first separation, it is based on how fast your computer was. A capable GPU is expected to make it faster, but that hasn't been measured yet.
-- Word timing can drift in dense, layered vocals and may need touching up by hand.
-- The tempo is sometimes found at half or twice the speed you feel (in testing, in about one in six songs). Half and Double next to the tempo, in Assist › Song analysis, fix it in one click.
+- Word timing can drift in dense, layered vocals and may need touching up by hand. It can also drift where lead and backing vocals sing different words at the same time, and a song's very first or last line can land a few seconds off. The lyrics check flags many of these lines; drag them into place.
+- If the pasted lyrics leave out sung lines, nearby listed lines can still be pulled into that singing. The app marks lines near singing it can tell is missing ("singing nearby isn't in the lyrics"), but it does not always detect it. For best results, paste every sung line.
+- The tempo is sometimes found at half or twice the speed you feel (in testing, in about one in six songs). About one song in 25, the tempo switches to half or double speed once the bar analysis finishes (about a minute after import). Half and Double next to the tempo, in Assist › Song analysis, fix it in one click.
+- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. With pasted lyrics, chorus marks are tight: on some songs a chorus starts up to 3 s late or ends up to 3 s early. No chorus is lost or added, and lyrics still find more of the chorus than audio alone. You can rename a section by double-clicking it on the timeline, or in **Inspector › Section**.
+
+### Subject cutout and 3D camera
+
 - Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable (in a test on clips it had not seen, for 10 of 14 such shots).
+- Cutout can miss people who are only partly in frame, mostly hidden (spray, crowds), seen from behind, or lying down; it then says there is no one to cut out. It works best when one person is clearly visible.
+- On a few clips, the quick check and the full cutout analysis disagree: a clip first rated good can be rated marginal once the cutout runs, or one of them may not find a person the other found.
 - Subject cutout can still take a large animal close to the camera for a person: in testing, 1 of 27 shots with no one in them was offered for text behind the subject. In a shot that also has a person, an animal can be cut out with them.
-- Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename a section by double-clicking it on the timeline, or in **Inspector › Section**.
-- 3D camera moves on stills can bend or stretch edges around the subject, or make the background ripple behind things close to the camera, such as trees or posts. This is most visible on large moves, but it can happen without changing Strength too: in a test on photos the studio had not seen, the background rippled behind a row of trees and lamp posts on 1 of 15.
+- 3D camera moves on stills can bend or stretch edges around the subject. On photos with thin foreground objects in front of a background (tree rows, lamp posts), some camera moves can make the background ripple, even at the default strength (in a test on photos the studio had not seen, on 1 of 15). Lower the Strength or try another Motion.
+
+### Speed on a computer without a graphics card
+
+Measured on a 4-core computer without a graphics card, where Chrome draws the preview and decodes video in software. A graphics card and hardware video decoding are expected to be faster, but that hasn't been measured, nor have Windows and macOS.
+
+- On computers without a graphics card, the preview and VJ mode play below 60 fps, especially at large window sizes and with several layered HD videos. The app lowers preview quality automatically to keep up. Exports are not affected.
+- In projects with several layered HD videos, jumping, stepping or scrubbing can take 0.1-0.2 s to show the new frame, and up to about half a second at 2560x1440 on a computer without a graphics card. In projects with many 4K clips, jumping back to a 4K clip you haven't viewed recently takes about a third of a second, because the app frees memory so long edits and exports don't run out.
+- At very large window sizes on a computer without a graphics card, slider drags and keyframe edits can take a fraction of a second to show in the preview.
+- Zooming a timeline with hundreds of clips with the mouse wheel can drop slightly below 60 fps.
+
+### AI services and local models
+
 - AI images and video clips need your fal.ai key and cost money per use. The richer director and plain-language edits need an LLM endpoint, in the cloud or on your computer.
-- Not planned: AI video or image generation on your computer, accounts or cloud project storage, phone and tablet layouts, publishing directly to video platforms, and bundled licensed music or stock footage.
+- Local models through Ollama need a larger context than Ollama's default: set its context length to 16k, or 32k after a long director draft (about 1.5 GB more memory with qwen2.5:7b). The app says when a request doesn't fit and which length to set. On computers without a graphics card a 7B model is slow (on a 2-core test machine, 6 to 10 minutes for a director plan and 1 to 9 minutes for an edit) and gets some edits wrong (2 of 5 right in the last test); the director uses its built-in planner if the model's plan doesn't arrive within the answer time limit.
+
+### Not planned
+
+AI video or image generation on your computer, accounts or cloud project storage, phone and tablet layouts, publishing directly to video platforms, and bundled licensed music or stock footage.
 
 ## Troubleshooting
 
@@ -170,6 +194,8 @@ Developer notes on the providers, error states and model choice are in [src/clou
 **A model download fails or stalls.** The browser downloads models from huggingface.co, storage.googleapis.com and cdn.jsdelivr.net. A firewall, proxy or content blocker may block them. Allow those hosts and try again. Finished downloads are cached and won't download again.
 
 **Export says the browser can't encode H.264 at this size.** Choose a lower resolution. Use Google Chrome or Microsoft Edge: some Chromium builds ship without the H.264 encoder.
+
+**The tab crashed during an export.** The browser closes a tab that runs out of memory (Chrome shows "Aw, Snap!"), which is most likely at high resolutions and with many 4K clips. Your project is kept. When you open the studio again, it says that the last export didn't finish. Choose a lower resolution, close other tabs, and try again.
 
 **The preview stutters.** Turn on hardware acceleration (see [Performance](#performance)) and close other heavy tabs. The preview lowers its resolution on its own when needed. The [benchmark page](https://theoi.github.io/mv-studio/?bench=1) shows what your computer manages.
 
