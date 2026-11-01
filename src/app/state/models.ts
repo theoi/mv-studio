@@ -15,6 +15,8 @@ export interface LocalModel {
   title: string
   desc: string
   urls: string[]
+  /** Where a file in `urls` was cached before its URL was pinned; the copy moves to its URL when next used. */
+  formerUrls?: Record<string, string[]>
   bytes: number
 }
 
@@ -25,8 +27,14 @@ function local(id: string, title: string, desc: string, ...models: ModelDescript
     title,
     desc,
     urls: files.map((f) => f.url),
+    formerUrls: Object.fromEntries(files.flatMap((f) => (f.formerUrls ? [[f.url, f.formerUrls]] : []))),
     bytes: files.reduce((s, f) => s + (f.bytes ?? 0), 0),
   }
+}
+
+async function isCached(model: LocalModel, url: string): Promise<boolean> {
+  for (const u of [url, ...(model.formerUrls?.[url] ?? [])]) if (await modelCache.has(u)) return true
+  return false
 }
 
 const whisper = WHISPER_MODELS.small
@@ -71,7 +79,7 @@ export async function refreshModels(): Promise<void> {
   const [entries, usage] = await Promise.all([
     Promise.all(
       LOCAL_MODELS.map(async (m) => {
-        const has = await Promise.all(m.urls.map((u) => modelCache.has(u)))
+        const has = await Promise.all(m.urls.map((u) => isCached(m, u)))
         const download: ModelDownload = has.every(Boolean) ? 'all' : has.some(Boolean) ? 'some' : 'none'
         return [m.id, download] as const
       }),
@@ -85,7 +93,8 @@ export async function refreshModels(): Promise<void> {
 export async function removeModel(id: string): Promise<void> {
   const model = LOCAL_MODELS.find((m) => m.id === id)
   if (!model) return
-  await Promise.all(model.urls.map((url) => modelCache.remove(url)))
+  const urls = [...model.urls, ...Object.values(model.formerUrls ?? {}).flat()]
+  await Promise.all(urls.map((url) => modelCache.remove(url)))
   await refreshModels()
 }
 

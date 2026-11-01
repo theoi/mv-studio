@@ -9,7 +9,7 @@ import type * as Transformers from '@huggingface/transformers'
 import ortMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url'
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url'
 import { JobError, type JobProgress } from './jobs.ts'
-import { configureOnnxEnv, fetchModelFile } from './models.ts'
+import { configureOnnxEnv, fetchModelFile, type ModelFile } from './models.ts'
 
 /** Progress of one file a model loads: `file` names it, `cached` when it was read from the model cache. */
 export type ModelFileProgress = JobProgress & { file: string; cached: boolean }
@@ -64,6 +64,14 @@ function pinnedUrl(url: string): string {
   return revision ? url.replace('/resolve/main/', `/resolve/${revision}/`) : url
 }
 
+/** Files Transformers.js may request that this realm knows more about (checksum, former cache keys), by URL. */
+const knownFiles = new Map<string, ModelFile>()
+
+/** Makes `sharedFetch` verify these files and reuse copies cached under their former URLs. */
+export function registerModelFiles(files: Iterable<ModelFile>): void {
+  for (const file of files) knownFiles.set(file.url, file)
+}
+
 /**
  * `fetch` for Transformers.js that goes through the shared model loader, at pinned revisions (`pinRevision`). Its
  * optional-file probing relies on real HTTP statuses, so loader errors that carry one become responses with that
@@ -72,7 +80,8 @@ function pinnedUrl(url: string): string {
 export async function sharedFetch(input: string | URL): Promise<Response> {
   const url = pinnedUrl(String(input))
   try {
-    const buf = await fetchModelFile({ url }, { onProgress: downloadProgress(url.split('/').pop() ?? url) })
+    const file = knownFiles.get(url) ?? { url }
+    const buf = await fetchModelFile(file, { onProgress: downloadProgress(url.split('/').pop() ?? url) })
     return new Response(buf, { status: 200, headers: { 'content-length': String(buf.byteLength) } })
   } catch (err) {
     const status = err instanceof JobError ? /\((\d{3})\)/.exec(err.message)?.[1] : undefined

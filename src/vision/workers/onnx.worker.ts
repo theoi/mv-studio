@@ -3,11 +3,22 @@ import type * as Transformers from '@huggingface/transformers'
 import type { EmbeddingModel } from '../backends.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { visionError } from '../errors.ts'
-import { loadTransformers, withModelProgress } from '../../shared/transformers.ts'
-import { hfRepo, VISION_MODELS } from '../runtime/models.ts'
+import {
+  loadTransformers,
+  pinRevision,
+  registerModelFiles,
+  withModelProgress,
+} from '../../shared/transformers.ts'
+import {
+  hfRepo,
+  hfRevision,
+  transformersFiles,
+  transformersRevisions,
+  VISION_MODELS,
+} from '../runtime/models.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../../shared/worker.ts'
 import { detectCapabilities } from '../../shared/capabilities.ts'
-import { preferredDevice } from '../../shared/models.ts'
+import { preferredDevice, type ModelDescriptor } from '../../shared/models.ts'
 import type { Mask } from '../types.ts'
 
 type T = typeof Transformers
@@ -15,6 +26,9 @@ type Device = { device: 'webgpu' | 'wasm'; dtype: 'fp32' | 'fp16' | 'q8' }
 
 const WASM: Device = { device: 'wasm', dtype: 'q8' }
 let gpuDevice: Promise<Device | null> | null = null
+
+for (const [repo, revision] of transformersRevisions()) pinRevision(repo, revision)
+registerModelFiles(transformersFiles())
 
 function webgpuDevice(): Promise<Device | null> {
   gpuDevice ??= detectCapabilities().then((caps): Device | null =>
@@ -85,7 +99,7 @@ interface ImageModel {
 const imageModels = new Map<string, Promise<ImageModel>>()
 function imageModel(
   key: string,
-  repo: string,
+  descriptor: ModelDescriptor,
   cls: 'auto' | 'clipVision' | 'siglipVision',
 ): Promise<ImageModel> {
   let p = imageModels.get(key)
@@ -98,9 +112,10 @@ function imageModel(
           : cls === 'siglipVision'
             ? Tx.SiglipVisionModel
             : Tx.AutoModel
+      const [repo, revision] = [hfRepo(descriptor), hfRevision(descriptor)]
       const [processor, loaded] = await Promise.all([
-        Tx.AutoProcessor.from_pretrained(repo),
-        load(key, (d) => Model.from_pretrained(repo, { device: d.device, dtype: d.dtype })),
+        Tx.AutoProcessor.from_pretrained(repo, { revision }),
+        load(key, (d) => Model.from_pretrained(repo, { revision, device: d.device, dtype: d.dtype })),
       ])
       return { processor, model: loaded.model, device: loaded.device }
     })().catch((err: unknown) => {
@@ -122,11 +137,13 @@ function textModel(key: EmbeddingModel): Promise<TextModel> {
   if (!p) {
     p = (async () => {
       const Tx = await loadTransformers()
-      const repo = EMBEDDING_REPOS[key]
+      const [repo, revision] = [hfRepo(EMBEDDING_MODELS[key]), hfRevision(EMBEDDING_MODELS[key])]
       const Model = key === 'clipB32' ? Tx.CLIPTextModelWithProjection : Tx.SiglipTextModel
       const [tokenizer, loaded] = await Promise.all([
-        Tx.AutoTokenizer.from_pretrained(repo),
-        load(`${key}:text`, (d) => Model.from_pretrained(repo, { device: d.device, dtype: d.dtype })),
+        Tx.AutoTokenizer.from_pretrained(repo, { revision }),
+        load(`${key}:text`, (d) =>
+          Model.from_pretrained(repo, { revision, device: d.device, dtype: d.dtype }),
+        ),
       ])
       return { tokenizer, model: loaded.model }
     })().catch((err: unknown) => {
@@ -138,9 +155,9 @@ function textModel(key: EmbeddingModel): Promise<TextModel> {
   return p
 }
 
-const EMBEDDING_REPOS: Record<EmbeddingModel, string> = {
-  clipB32: hfRepo(VISION_MODELS.clipB32),
-  siglipB16: hfRepo(VISION_MODELS.siglipB16),
+const EMBEDDING_MODELS: Record<EmbeddingModel, ModelDescriptor> = {
+  clipB32: VISION_MODELS.clipB32,
+  siglipB16: VISION_MODELS.siglipB16,
 }
 
 function setSize(processor: Transformers.Processor, size: Record<string, number>): void {
@@ -175,7 +192,7 @@ const api = {
         if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
         const Tx = await loadTransformers()
         const m = await withModelProgress(ctx.progress, () =>
-          imageModel('depth', hfRepo(VISION_MODELS.depthAnythingSmall), 'auto'),
+          imageModel('depth', VISION_MODELS.depthAnythingSmall, 'auto'),
         )
         // DPT resizes so the short side matches and keeps aspect (multiple of 14).
         setSize(m.processor, { height: input.shortSide, width: input.shortSide })
@@ -204,7 +221,7 @@ const api = {
         if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
         const Tx = await loadTransformers()
         const m = await withModelProgress(ctx.progress, () =>
-          imageModel('modnet', hfRepo(VISION_MODELS.modnet), 'auto'),
+          imageModel('modnet', VISION_MODELS.modnet, 'auto'),
         )
         setSize(m.processor, { shortest_edge: input.shortSide })
         const inputs = await m.processor(rawImage(Tx, bitmap))
@@ -238,7 +255,7 @@ const api = {
         const m = await withModelProgress(ctx.progress, () =>
           imageModel(
             `${input.model}:vision`,
-            EMBEDDING_REPOS[input.model],
+            EMBEDDING_MODELS[input.model],
             isClip ? 'clipVision' : 'siglipVision',
           ),
         )
