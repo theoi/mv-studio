@@ -63,9 +63,11 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   every mood. A part with "not", "don't", "no", "avoid", "too" and the like is left out, and opposite words for one
   section cancel out: a missed word leaves the draft as it would be, a misread one would turn it the wrong way. A
   part that starts with "except" and the like, or is negated, and names sections leaves those sections out of the
-  whole-video words of its sentence: "fast everywhere except the bridge" and "fast cuts, but not in the verses"
-  leave the bridge and the verses as the song gives them. The part after it is about that section only when it
-  starts with "which", "where" or the like ("except the bridge, which should be slow").
+  whole-video words of its sentence, as does a part after "but" that only names sections: "fast everywhere except
+  the bridge", "everything fast but the chorus" and "fast cuts, but not in the verses" leave those sections as the
+  song gives them. In a sentence with no whole-video words of its own, it reaches the whole idea ("Fast cuts. Don't
+  touch the bridge."). The part after it is about that section only when it starts with "which", "where" or the
+  like ("except the bridge, which should be slow").
 - **Phrasing inside a section** (`phrasedCutTimes`): bars clearly louder than the rest of their section cut twice as
   often, clearly quieter bars half as often, and the last bar before a faster section speeds up into it.
 - **Lyric timing**: a line shows up to 0.3 s before it is sung and holds up to 1 s after (longer for long lines,

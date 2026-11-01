@@ -430,6 +430,7 @@ describe('pace and brightness words in the idea', () => {
     // A list of descriptions stays open for its section, even through a word the lists don't know.
     ['slow, dreamy verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
     ['slow and dreamy verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
+    ['slow, dreamy, hazy verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
     [
       'slow, dreamy verses and a fast, punchy chorus',
       {
@@ -444,6 +445,8 @@ describe('pace and brightness words in the idea', () => {
       { pace: 1, light: 1, words: ['fast', 'bright'] },
     ],
     ['fast video, slow chorus', { chorus: { pace: -1, light: 0, words: ['slow'] } }, fast],
+    // A part after "but" with words of its own is about its section, not an exception.
+    ['fast cuts but keep the bridge slow', { bridge: { pace: -1, light: 0, words: ['slow'] } }, fast],
   ])('reads “%s”', (idea, roles, all) => {
     const asks = ideaAsks(idea)
     expect(Object.fromEntries(asks.roles)).toEqual(roles)
@@ -459,6 +462,10 @@ describe('pace and brightness words in the idea', () => {
     ['fast cuts, but not in the verses', {}, { verse: none }],
     ['fast cuts but not during the bridge', {}, { bridge: none }],
     ['fast everywhere except the bridge and the outro', {}, { bridge: none, outro: none }],
+    // "but" naming only sections means "except".
+    ['fast everywhere but the bridge', {}, { bridge: none }],
+    ['everything fast but the chorus', {}, { chorus: none }],
+    ['fast cuts, but the bridge is different', {}, { bridge: none }],
     // The part after a section left out goes to the whole video, unless it starts with "which" or the like.
     ['Apart from the bridge, fast cuts', {}, { bridge: none }],
     [
@@ -478,6 +485,10 @@ describe('pace and brightness words in the idea', () => {
       verse: none,
     })
     expect(Object.fromEntries(ideaAsks('fast cuts and dark colours, except the bridge').excepted)).toEqual({
+      bridge: none,
+    })
+    // A sentence with no whole-video words of its own excepts from the whole idea.
+    expect(Object.fromEntries(ideaAsks('Fast cuts. Don’t touch the bridge.').excepted)).toEqual({
       bridge: none,
     })
     const asks = ideaAsks('A dark video. Fast everywhere except the bridge.')

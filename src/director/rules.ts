@@ -170,6 +170,10 @@ interface Part {
   words: string[]
   /** Which sentence of the idea the part is in, from 0. */
   sentence: number
+  /** It follows "but", which can mean "except": "everything fast but the chorus". */
+  afterBut?: boolean
+  /** An adjective list waiting for its section has kept it open at a comma or "and". */
+  list?: boolean
 }
 
 /**
@@ -190,19 +194,23 @@ function ideaParts(tokens: string[]): Part[] {
     const part = open().words
     if (word === '.') {
       sentence++
-      return close()
+      close()
+      open().afterBut = false
+      return
     }
-    if (BREAKS.has(word)) return close()
+    if (BREAKS.has(word)) {
+      close()
+      if (word === 'but') open().afterBut = true
+      return
+    }
     if (word === ',' || word === 'and') {
       let next = i + 1
       while (LINKING.has(tokens[next] ?? '')) next++
       const listing =
-        part.some(describes) && part.every((w) => describes(w) || LINKING.has(w) || DETERMINERS.has(w))
-      if (
-        !(describes(part[part.length - 1]) && describes(tokens[next])) &&
-        !(listing && listGoesOn(tokens, next))
-      )
-        close()
+        open().list ||
+        (part.some(describes) && part.every((w) => describes(w) || LINKING.has(w) || DETERMINERS.has(w)))
+      if (listing && listGoesOn(tokens, next)) open().list = true
+      else if (!(describes(part[part.length - 1]) && describes(tokens[next]))) close()
       return
     }
     if (EXCLUDERS.has(word)) close()
@@ -246,13 +254,14 @@ function tally(votes: Vote[]): IdeaAsk | undefined {
  * leaves the draft as it would be, a misread one turns it the wrong way. A part that starts with "except" or "apart
  * from", or is negated, and names sections leaves those sections out of the whole-video words of its sentence
  * ("fast everywhere except the bridge", "fast cuts, but not in the verses"), as does a part naming only sections
- * right after it ("except the bridge and the outro").
+ * after "but" ("everything fast but the chorus") or right after such a part ("except the bridge and the outro"). In
+ * a sentence with no whole-video words of its own, it reaches the whole idea ("Fast cuts. Don't touch the bridge.").
  */
 export function ideaAsks(prompt: string): IdeaAsks {
   const votes = new Map<string | undefined, Vote[]>()
   const leftOut: { role: string; sentence: number }[] = []
   let previous: { role?: string; carries: boolean; excluding: boolean; sentence: number } | undefined
-  for (const { words, sentence } of ideaParts(ideaTokens(prompt))) {
+  for (const { words, sentence, afterBut } of ideaParts(ideaTokens(prompt))) {
     const named = words.flatMap((w, i) => {
       const role = roleWord(w)
       return role ? [{ i, role }] : []
@@ -263,7 +272,7 @@ export function ideaAsks(prompt: string): IdeaAsks {
       named.length > 0 &&
       (EXCLUDERS.has(words[0] ?? '') ||
         negated ||
-        (!!previous?.excluding && previous.sentence === sentence && !described))
+        (!described && (!!afterBut || (!!previous?.excluding && previous.sentence === sentence))))
     if (excluding) leftOut.push(...named.map(({ role }) => ({ role, sentence })))
     if (described && !negated) {
       const carried =
@@ -299,8 +308,10 @@ export function ideaAsks(prompt: string): IdeaAsks {
     if (role && ask) roles.set(role, ask)
   }
   const excepted = new Map<string, IdeaAsk>()
+  const reaches = (l: { sentence: number }, v: Vote) =>
+    l.sentence === v.sentence || !whole.some((w) => w.sentence === l.sentence)
   for (const role of new Set(leftOut.map((l) => l.role))) {
-    const kept = whole.filter((v) => !leftOut.some((l) => l.role === role && l.sentence === v.sentence))
+    const kept = whole.filter((v) => !leftOut.some((l) => l.role === role && reaches(l, v)))
     if (kept.length < whole.length) excepted.set(role, tally(kept) ?? noAsk())
   }
   return { all, roles, excepted }
