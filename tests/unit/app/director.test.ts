@@ -85,16 +85,21 @@ describe('clips imported after a draft', () => {
       .toasts.filter((t) => t.key === 'director:new-clips')
       .map((t) => t.message)
 
+  /** The draft's snapshot of the clips in the open project now. */
+  const atDraft = () => {
+    const project = editor.getProject()
+    return { projectId: project.id, ids: Object.keys(project.assets) }
+  }
+
   beforeEach(() => {
     vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => undefined })
     loadDemoProject()
     setUi({ toasts: [], rightTab: 'inspector' })
-    useDirector.setState({ state: { status: 'idle' }, clipsAtDraft: [] })
+    useDirector.setState({ state: { status: 'idle' }, clipsAtDraft: undefined })
   })
 
   it('lists the clips and images imported since the draft, not generated shots, masks or audio', () => {
-    const atDraft = Object.keys(editor.getProject().assets)
-    useDirector.setState({ state: applied(true), clipsAtDraft: atDraft })
+    useDirector.setState({ state: applied(true), clipsAtDraft: atDraft() })
     editor.dispatch([
       { type: 'asset.add', asset: asset('new-clip', 'video') },
       { type: 'asset.add', asset: asset('new-still', 'image') },
@@ -104,20 +109,23 @@ describe('clips imported after a draft', () => {
     ])
     const added = clipsSinceDraft(editor.getProject(), useDirector.getState())
     expect(added.map((a) => a.id).sort()).toEqual(['new-clip', 'new-still'])
-    expect(clipsNoun(added)).toBe('2 files')
+    expect(clipsNoun(added)).toBe('1 clip and 1 image')
+    expect(clipsNoun([...added, asset('another', 'video')])).toBe('2 clips and 1 image')
     expect(clipsNoun(added.filter((a) => a.kind === 'image'))).toBe('1 image')
     expect(clipsNoun(added.filter((a) => a.kind === 'video'))).toBe('1 clip')
   })
 
   it('lists none before a draft is applied, or for a draft of AI shots only', () => {
     editor.dispatch({ type: 'asset.add', asset: asset('new-clip', 'video') })
-    expect(clipsSinceDraft(editor.getProject(), { state: { status: 'idle' }, clipsAtDraft: [] })).toEqual([])
-    expect(clipsSinceDraft(editor.getProject(), { state: applied(false), clipsAtDraft: [] })).toEqual([])
+    const before = { projectId: editor.getProject().id, ids: [] }
+    expect(clipsSinceDraft(editor.getProject(), { state: { status: 'idle' }, clipsAtDraft: before })).toEqual(
+      [],
+    )
+    expect(clipsSinceDraft(editor.getProject(), { state: applied(false), clipsAtDraft: before })).toEqual([])
   })
 
   it('offers to draft again once per import, in one notice that newer imports update', () => {
-    const atDraft = Object.keys(editor.getProject().assets)
-    useDirector.setState({ state: applied(true), clipsAtDraft: atDraft })
+    useDirector.setState({ state: applied(true), clipsAtDraft: atDraft() })
     editor.dispatch({ type: 'asset.add', asset: asset('first', 'video') })
     expect(offers()).toEqual(['1 clip added after the draft. Draft again to use it?'])
     expect(getUi().toasts.find((t) => t.key === 'director:new-clips')?.action?.label).toBe('Draft again')
@@ -130,12 +138,24 @@ describe('clips imported after a draft', () => {
   })
 
   it('leaves the offer to the Director panel while it is open', () => {
-    useDirector.setState({ state: applied(true), clipsAtDraft: Object.keys(editor.getProject().assets) })
+    useDirector.setState({ state: applied(true), clipsAtDraft: atDraft() })
     setUi({ rightTab: 'assist', assistView: 'director' })
     editor.dispatch({ type: 'asset.add', asset: asset('first', 'video') })
     expect(offers()).toEqual([])
     setUi({ rightTab: 'inspector' })
     editor.dispatch({ type: 'asset.add', asset: asset('second', 'image') })
-    expect(offers()).toEqual(['2 files added after the draft. Draft again to use them?'])
+    expect(offers()).toEqual(['1 clip and 1 image added after the draft. Draft again to use them?'])
+  })
+
+  it('offers nothing in another project, and takes the offer back when one opens', () => {
+    useDirector.setState({ state: applied(true), clipsAtDraft: atDraft() })
+    editor.dispatch({ type: 'asset.add', asset: asset('first', 'video') })
+    expect(offers()).toHaveLength(1)
+    // Its Draft again would draft the other project with this one's request.
+    editor.load(createProject({ name: 'Beat cut', fps: 30 }))
+    expect(offers()).toEqual([])
+    editor.dispatch({ type: 'asset.add', asset: asset('theirs', 'image') })
+    expect(clipsSinceDraft(editor.getProject(), useDirector.getState())).toEqual([])
+    expect(offers()).toEqual([])
   })
 })

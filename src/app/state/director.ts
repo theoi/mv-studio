@@ -21,7 +21,7 @@ import { JOB_KINDS } from './jobs.ts'
 import { plural } from '../format.ts'
 import { editor } from './project.ts'
 import { ensureBars } from './songAnalysis.ts'
-import { get as getUi, set as setUi, toast, type Kind } from './ui.ts'
+import { dismissToast, get as getUi, set as setUi, toast, type Kind } from './ui.ts'
 
 /*
  * Assist › Director: one DirectorSession for the app. The director code loads on first use. A draft that costs
@@ -47,8 +47,8 @@ interface DirectorUi {
   applying: boolean
   /** The last planning job, so its finished progress stays on screen while a free draft is applied. */
   planJobId?: string
-  /** The user's clips and images when the last draft was planned (see clipsSinceDraft()). */
-  clipsAtDraft: Id[]
+  /** The project the last draft was planned in, and the user's clips and images in it then (see clipsSinceDraft()). */
+  clipsAtDraft?: { projectId: Id; ids: Id[] }
 }
 
 export const useDirector = create<DirectorUi>(() => ({
@@ -59,7 +59,6 @@ export const useDirector = create<DirectorUi>(() => ({
   aiShots: 'images',
   cancelNotice: '',
   applying: false,
-  clipsAtDraft: [],
 }))
 
 /** Set while a draft started from the panel is planned: one that costs nothing is applied right away. */
@@ -198,24 +197,36 @@ function userClips(project: Project): Asset[] {
   )
 }
 
-/** Clips and images imported after the applied draft was planned, when the draft takes the user's media. */
+/**
+ * Clips and images imported after the applied draft was planned, when the draft takes the user's media. None in
+ * another project: the director's result stays on screen when one opens, but its request is the other project's.
+ */
 export function clipsSinceDraft(project: Project, ui: Pick<DirectorUi, 'state' | 'clipsAtDraft'>): Asset[] {
-  if (ui.state.status !== 'applied' || !ui.state.request.useMedia) return []
-  const before = new Set(ui.clipsAtDraft)
+  const at = ui.clipsAtDraft
+  if (ui.state.status !== 'applied' || !ui.state.request.useMedia || at?.projectId !== project.id) return []
+  const before = new Set(at.ids)
   return userClips(project).filter((a) => !before.has(a.id))
 }
 
-/** "2 clips", "1 image", "3 files" for a mix. */
+function clipsNow(): DirectorUi['clipsAtDraft'] {
+  const project = editor.getProject()
+  return { projectId: project.id, ids: userClips(project).map((a) => a.id) }
+}
+
+/** "2 clips", "1 image", "2 clips and 1 image". */
 export function clipsNoun(assets: Asset[]): string {
-  const kinds = new Set(assets.map((a) => a.kind))
-  return plural(assets.length, kinds.size > 1 ? 'file' : kinds.has('image') ? 'image' : 'clip')
+  const clips = assets.filter((a) => a.kind === 'video').length
+  const images = assets.length - clips
+  return [clips ? plural(clips, 'clip') : '', images ? plural(images, 'image') : '']
+    .filter(Boolean)
+    .join(' and ')
 }
 
 /** Plans a draft; one that costs nothing goes on the timeline right away. */
 export async function draftVideo(request: DirectorRequest): Promise<void> {
   const s = await directorSession()
   autoApply = true
-  useDirector.setState({ clipsAtDraft: userClips(editor.getProject()).map((a) => a.id) })
+  useDirector.setState({ clipsAtDraft: clipsNow() })
   await applyIfFree(await s.plan(request))
 }
 
@@ -223,7 +234,7 @@ export async function draftVideo(request: DirectorRequest): Promise<void> {
 export async function tryAnotherVersion(): Promise<void> {
   const s = await directorSession()
   autoApply = true
-  useDirector.setState({ clipsAtDraft: userClips(editor.getProject()).map((a) => a.id) })
+  useDirector.setState({ clipsAtDraft: clipsNow() })
   await applyIfFree(await s.tryAnother())
 }
 
@@ -232,12 +243,16 @@ let clipsOffered = 0
 /**
  * Clips imported after a draft that uses the user's media aren't in it: offers to draft again, once per new batch. A
  * new import replaces the offer instead of stacking another one, and while the Director panel is open its own callout
- * makes the offer.
+ * makes the offer. The offer goes when nothing is left to add, as when another project opens.
  */
 function offerNewClips(project: Project): void {
   const ui = useDirector.getState()
   const { state } = ui
   const added = clipsSinceDraft(project, ui)
+  if (!added.length) {
+    const offer = getUi().toasts.find((t) => t.key === NEW_CLIPS)
+    if (offer) dismissToast(offer.id)
+  }
   if (state.status !== 'applied' || added.length <= clipsOffered) {
     clipsOffered = Math.min(clipsOffered, added.length)
     return
@@ -249,9 +264,11 @@ function offerNewClips(project: Project): void {
   toast(
     `${clipsNoun(added)} added after the draft. Draft again to use ${added.length === 1 ? 'it' : 'them'}?`,
     { label: 'Draft again', run: () => void draftVideo(request) },
-    { key: 'director:new-clips' },
+    { key: NEW_CLIPS },
   )
 }
+
+const NEW_CLIPS = 'director:new-clips'
 
 editor.subscribe(offerNewClips)
 

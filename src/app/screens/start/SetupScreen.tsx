@@ -467,23 +467,13 @@ export function SetupScreen() {
           )}
           {kind === 'footage' && <Clips dragging={dragging} onChoose={() => clipInput.current?.click()} />}
           {kind === 'ai' && (
-            <>
-              <TextArea
-                placeholder="Describe the video, for example: a dreamy night drive through a neon city, ending at sunrise"
-                rows={3}
-                aria-label="Describe your video"
-                value={idea}
-                onChange={(e) => setSetup({ idea: e.target.value })}
-              />
-              <div className={styles.note}>
-                <Info />
-                <span>
-                  {falKey
-                    ? 'With fal.ai connected, the draft adds AI shots. You see the price before anything is generated.'
-                    : 'Drafts work on this device with your media. Connect fal.ai in Settings to generate new shots; the cost is shown before anything is generated.'}
-                </span>
-              </div>
-            </>
+            <TextArea
+              placeholder="Describe the video, for example: a dreamy night drive through a neon city, ending at sunrise"
+              rows={3}
+              aria-label="Describe your video"
+              value={idea}
+              onChange={(e) => setSetup({ idea: e.target.value })}
+            />
           )}
         </div>
 
@@ -494,6 +484,14 @@ export function SetupScreen() {
               <span className={styles.optional}>Optional</span>
             </div>
             <Clips dragging={dragging} onChoose={() => clipInput.current?.click()} />
+            <div className={styles.note}>
+              <Info />
+              <span>
+                {falKey
+                  ? 'With fal.ai connected, the draft adds AI shots. You see the price before anything is generated.'
+                  : 'Drafts work on this device with your clips. Connect fal.ai in Settings to generate new shots; the cost is shown before anything is generated.'}
+              </span>
+            </div>
           </div>
         )}
 

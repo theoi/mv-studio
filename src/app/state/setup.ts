@@ -172,7 +172,18 @@ export async function addFootage(files: File[]): Promise<void> {
   })
   if (!visual.length) return
   update((s) => ({ adding: s.adding + visual.length }))
-  const { assets, failed } = await storeFiles(visual)
+  let stored: Awaited<ReturnType<typeof storeFiles>>
+  try {
+    stored = await storeFiles(visual)
+  } catch {
+    // Only the storage code failing to load gets here; a file that can't be stored is in `failed`.
+    update((s) => ({
+      adding: Math.max(0, s.adding - visual.length),
+      footageError: 'The files couldn’t be added. Check your connection and try again.',
+    }))
+    return
+  }
+  const { assets, failed } = stored
   update((s) => ({
     adding: Math.max(0, s.adding - visual.length),
     footage: [...s.footage, ...assets.filter((a) => !s.footage.some((f) => f.id === a.id))],

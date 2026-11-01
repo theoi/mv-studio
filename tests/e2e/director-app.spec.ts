@@ -173,6 +173,12 @@ test('an AI video drafts with the clips given on the setup screen, and offers to
   await expect(page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')).toHaveCount(1, {
     timeout: 30_000,
   })
+  // The note on what a draft uses sits under the clips step, above the button that starts the draft.
+  const clipList = (await page.getByRole('list', { name: 'Your clips' }).boundingBox())!
+  const note = (await page.getByText(/^Drafts work on this device with your clips\./).boundingBox())!
+  const draftButton = (await page.getByRole('button', { name: 'Draft my video' }).boundingBox())!
+  expect(note.y).toBeGreaterThanOrEqual(clipList.y + clipList.height)
+  expect(note.y + note.height).toBeLessThanOrEqual(draftButton.y)
   await page.screenshot({ path: testInfo.outputPath('setup-ai-clips.png'), fullPage: true })
   await page.getByRole('button', { name: 'Draft my video' }).click()
   await expect(placed(page)).toBeVisible({ timeout: 30_000 })
