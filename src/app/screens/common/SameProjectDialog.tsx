@@ -33,8 +33,8 @@ export function SameProjectDialog() {
       {question && (
         <div className={styles.sameProject}>
           <p>
-            This file holds a project you already have here. Open the one here, or keep the file’s version
-            too, as “{question.copyName}”.
+            {question.fileName} holds a project you already have here. Open the one here, or keep the file’s
+            version too, as “{question.copyName}”.
           </p>
           <dl className={styles.sameProjectVersions}>
             <div>
@@ -45,7 +45,7 @@ export function SameProjectDialog() {
               </dd>
             </div>
             <div>
-              <dt>In {question.fileName}</dt>
+              <dt>In the file</dt>
               <dd>
                 {editedAgo(question.fileAt)}
                 {newer === 'file' && ' · newer'}

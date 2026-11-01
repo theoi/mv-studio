@@ -168,6 +168,7 @@
   padding: var(--space-4) var(--space-5);
   color: var(--text-2);
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .sameProjectVersions {
@@ -181,11 +182,7 @@
 }
 
 .sameProjectVersions dt {
-  max-width: 220px;
-  overflow: hidden;
   color: var(--text-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .sameProjectVersions dd {
