@@ -20,6 +20,9 @@ export function storageKeyFor(assetId: string, name: string): string {
   return `${MEDIA_ROOT}/${assetId}/${safeFileName(name)}`
 }
 
+/** The folder holding an asset's media file (`media/<asset id>`). */
+const assetFolder = (asset: Asset) => asset.storageKey.split('/').slice(0, 2).join('/')
+
 export class OpfsMediaStore implements MediaStore {
   async importFile(file: File, ctx?: JobContext): Promise<Asset> {
     const kind = detectKind(file)
@@ -90,7 +93,21 @@ export class OpfsMediaStore implements MediaStore {
   }
 
   async remove(asset: Asset): Promise<void> {
-    await removeOpfsEntry(asset.storageKey.split('/').slice(0, 2).join('/')).catch(() => undefined)
+    await removeOpfsEntry(assetFolder(asset)).catch(() => undefined)
+  }
+
+  /**
+   * A small file made from an asset's media, such as a thumbnail, kept in the asset's folder so it goes when the media
+   * is removed. Null when there is none.
+   */
+  async readDerived(asset: Asset, name: string): Promise<File | null> {
+    return readOpfsFile(`${assetFolder(asset)}/derived/${name}`).catch(() => null)
+  }
+
+  /** Keeps a file made from the asset's media (see readDerived), unless its media is gone. */
+  async writeDerived(asset: Asset, name: string, data: Blob): Promise<void> {
+    if (!(await opfsFileExists(asset.storageKey))) return
+    await writeOpfsFile(`${assetFolder(asset)}/derived/${name}`, data)
   }
 
   async usage(): Promise<{ usedBytes: number; quotaBytes: number; persisted: boolean }> {

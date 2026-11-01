@@ -7,7 +7,8 @@ import { openVideoFrames } from './videoFrames.ts'
 /**
  * Small frames of videos at a source time, for per-clip thumbnails such as timeline clips. Each video keeps one
  * decoder (in a worker, see `openVideoFrames`) that seeks for every frame, a few videos decode at once, the newest request goes first, and requests
- * released before their turn are skipped, so dragging a clip's in-point decodes only where the drag stops.
+ * released before their turn are skipped, so dragging a clip's in-point decodes only where the drag stops. Frames kept
+ * in an optional cache show without decoding.
  */
 export interface FrameThumbnails {
   /** JPEG object URL of `asset` at `sourceTime`; undefined until it is made, when it cannot be decoded, or for non-video assets. */
@@ -35,8 +36,18 @@ export interface FrameThumbnailOptions {
   maxEntries?: number
   /** Opens a decoder for a video file. Default: `openVideoFrames`. */
   open?: (asset: Asset, file: Blob) => Promise<OpenedSource>
-  /** Turns a decoded frame into an image URL of the given size. Default: an object URL of `coverJpeg()`. */
-  draw?: (frame: ImageBitmap, width: number, height: number) => string | Promise<string>
+  /** Turns a decoded frame into an image of the given size: a JPEG, shown as an object URL, or a URL. Default: `coverJpeg()`. */
+  draw?: (frame: ImageBitmap, width: number, height: number) => Blob | string | Promise<Blob | string>
+  /** Keeps frames between page loads: a frame found there shows without opening its video, and each JPEG made goes there. */
+  cache?: FrameCache
+  /** Videos open only once this resolves (e.g. after the preview's first frame). Frames found in `cache` don't wait. */
+  ready?: () => Promise<void>
+}
+
+/** Frames kept between page loads. `name` tells an asset's frames apart by size and source time. */
+export interface FrameCache {
+  get(asset: Asset, name: string): Promise<Blob | null>
+  put(asset: Asset, name: string, jpeg: Blob): void
 }
 
 interface Holder {
@@ -77,10 +88,6 @@ export function coverJpeg(frame: ImageBitmap, width: number, height: number, qua
   return canvas.convertToBlob({ type: 'image/jpeg', quality })
 }
 
-async function drawCover(frame: ImageBitmap, width: number, height: number): Promise<string> {
-  return URL.createObjectURL(await coverJpeg(frame, width, height))
-}
-
 const revoke = (url: string | null | undefined) => {
   if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
 }
@@ -99,12 +106,17 @@ export function createFrameThumbnails(
     options.open ??
     ((asset: Asset, file: Blob) =>
       openVideoFrames(file, asset.id, asset.frameRate ? { frameRate: asset.frameRate } : {}))
-  const draw = options.draw ?? drawCover
+  const draw = options.draw ?? coverJpeg
+  const cache = options.cache
+  const ready = options.ready ?? (() => Promise.resolve())
 
   const holders = new Map<string, Holder>()
   /** Made frames in least-recently-requested order; null when the frame could not be decoded. */
   const made = new Map<string, string | null>()
   const inFlight = new Set<string>()
+  /** Frames being looked up in the cache, and frames it doesn't have, which are decoded. */
+  const looking = new Set<string>()
+  const uncached = new Set<string>()
   const failed = new Set<string>()
   const decoders = new Map<string, Decoder>()
   const listeners = new Set<() => void>()
@@ -117,6 +129,7 @@ export function createFrameThumbnails(
     const index = Math.round(Math.min(Math.max(0, t), end) / step)
     return { key: `${asset.id}@${index}`, time: index * step }
   }
+  const nameOf = (time: number) => `frame-${width}x${height}-${Math.round(time * 1000)}`
 
   const touch = (key: string) => {
     const value = made.get(key)
@@ -132,6 +145,8 @@ export function createFrameThumbnails(
       if (holders.has(key)) continue
       revoke(made.get(key))
       made.delete(key)
+      // Kept in the cache by now, so it is looked up there when it is wanted again.
+      uncached.delete(key)
     }
   }
 
@@ -157,7 +172,9 @@ export function createFrameThumbnails(
       close(oldest[0])
     }
     const decoder: Decoder = {
-      source: media.getFile(asset).then((file) => open(asset, file)),
+      source: ready()
+        .then(() => media.getFile(asset))
+        .then((file) => open(asset, file)),
       busy: false,
       lastUsed: 0,
     }
@@ -179,7 +196,12 @@ export function createFrameThumbnails(
         const maxSide = coverSide(source, width, height)
         const bitmap = await source.frameAt(time, maxSide !== undefined ? { maxSide } : {})
         try {
-          url = await draw(bitmap, width, height)
+          const image = await draw(bitmap, width, height)
+          if (typeof image === 'string') url = image
+          else {
+            url = URL.createObjectURL(image)
+            cache?.put(asset, nameOf(time), image)
+          }
         } finally {
           bitmap.close()
         }
@@ -200,10 +222,33 @@ export function createFrameThumbnails(
     })()
   }
 
+  const lookUp = (key: string, holder: Holder, from: FrameCache) => {
+    looking.add(key)
+    void from
+      .get(holder.asset, nameOf(holder.time))
+      .catch(() => null)
+      .then((jpeg) => {
+        looking.delete(key)
+        if (disposed) return
+        if (!jpeg) uncached.add(key)
+        else if (!made.has(key)) {
+          made.set(key, URL.createObjectURL(jpeg))
+          evict()
+          for (const listener of listeners) listener()
+        }
+        pump()
+      })
+  }
+
   const pump = () => {
     if (disposed) return
-    const waiting = [...holders]
-      .filter(([key, h]) => !made.has(key) && !inFlight.has(key) && !failed.has(h.asset.id))
+    const wanted = [...holders].filter(
+      ([key, h]) => !made.has(key) && !inFlight.has(key) && !failed.has(h.asset.id),
+    )
+    if (cache)
+      for (const [key, h] of wanted) if (!looking.has(key) && !uncached.has(key)) lookUp(key, h, cache)
+    const waiting = wanted
+      .filter(([key]) => !cache || uncached.has(key))
       .sort((a, b) => b[1].asked - a[1].asked)
     const started = new Set<string>()
     // Open videos go first, so clips of a few videos interleaved on the timeline do not reopen one for every frame.

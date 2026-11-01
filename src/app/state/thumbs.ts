@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { Asset } from '../../model/index.ts'
+import { mediaStore } from '../../media/mediaStore.ts'
 import { coverJpeg, coverSide, createFrameThumbnails, openVideoFrames } from '../../vision/index.ts'
 import { sceneThumb } from '../mock/art.ts'
 import { sceneOf } from '../mock/demoProject.ts'
@@ -9,6 +10,37 @@ import { appMedia } from './media.ts'
 
 const WIDTH = 320
 const HEIGHT = 180
+const CARD = `card-${WIDTH}x${HEIGHT}`
+
+/**
+ * Thumbnails kept beside their media in browser storage, so a reload shows them without decoding the video again; they
+ * go when the media is removed. The number in the name changes when thumbnails are drawn differently.
+ */
+const kept = {
+  get: (asset: Asset, name: string): Promise<Blob | null> =>
+    mediaStore.readDerived(asset, `thumb1-${name}.jpg`),
+  put: (asset: Asset, name: string, jpeg: Blob): void => {
+    void mediaStore.writeDerived(asset, `thumb1-${name}.jpg`, jpeg).catch(() => undefined)
+  },
+}
+
+let previewShown: Promise<void> = Promise.resolve()
+
+/**
+ * Holds thumbnail decoding until `shown` resolves (the editor's preview showing a project's first frame): decoding
+ * video for thumbnails meanwhile delays that frame. Kept thumbnails don't wait.
+ */
+export function decodeThumbnailsAfter(shown: Promise<void>): void {
+  previewShown = shown
+}
+
+async function previewFirst(): Promise<void> {
+  // A newer hold (another project shown meanwhile) replaces the one waited for.
+  for (let hold = previewShown; ; hold = previewShown) {
+    await hold
+    if (hold === previewShown) return
+  }
+}
 /** Thumbnails made at once, so importing many clips does not open a video decoder for each of them together. */
 const AT_ONCE = 2
 /** Object URLs of made thumbnails by asset id; null while one is waiting or being made, or when it cannot be. */
@@ -49,9 +81,14 @@ async function frameOf(asset: Asset, file: Blob): Promise<ImageBitmap> {
 
 async function makeThumb(asset: Asset): Promise<Blob | null> {
   if (asset.kind !== 'image' && asset.kind !== 'video') return null
+  const stored = await kept.get(asset, CARD)
+  if (stored) return stored
+  await previewFirst()
   const frame = await frameOf(asset, await appMedia.getFile(asset))
   try {
-    return await coverJpeg(frame, WIDTH, HEIGHT, 0.84)
+    const jpeg = await coverJpeg(frame, WIDTH, HEIGHT, 0.84)
+    kept.put(asset, CARD, jpeg)
+    return jpeg
   } finally {
     frame.close()
   }
@@ -100,7 +137,7 @@ export function useThumbnail(asset: Asset | undefined): string | undefined {
   return made ?? undefined
 }
 
-const frames = createFrameThumbnails(appMedia)
+const frames = createFrameThumbnails(appMedia, { cache: kept, ready: previewFirst })
 
 /**
  * A 160×90 frame of a clip's video at `sourceTime` (usually the clip's in-point, `clip.sourceStart`), e.g. for a

@@ -8,6 +8,7 @@ import { prefs, usePrefs } from '../../state/prefs.ts'
 import { loopRange } from '../../state/previewControls.ts'
 import { editor } from '../../state/project.ts'
 import { audioErrorText, forgetStemPlaybackErrors, noteStemPlaybackError } from '../../state/stems.ts'
+import { decodeThumbnailsAfter } from '../../state/thumbs.ts'
 import { get, set, toast, useUi, type Selection } from '../../state/ui.ts'
 
 /** Assets whose audio failure was already shown, so a preview that fails again on them stays quiet. */
@@ -64,7 +65,22 @@ export function connectPreview(
     reportedAudio.add(key)
     toast(audioErrorText(editor.getProject(), error))
   })
+  // Thumbnails decode once this preview shows a project's first frame, so they don't hold it up.
+  let shownId: string | null = null
+  let releaseThumbnails = () => {}
+  const holdThumbnails = () => {
+    releaseThumbnails()
+    let resolve = () => {}
+    decodeThumbnailsAfter(new Promise<void>((done) => (resolve = done)))
+    const off = preview.onFrame(() => releaseThumbnails())
+    releaseThumbnails = () => {
+      off()
+      resolve()
+    }
+  }
   const showProject = (project: Project) => {
+    if (project.id !== shownId) holdThumbnails()
+    shownId = project.id
     shown = project
     preview.setProject(project)
     forgetStemPlaybackErrors(project, preview.clock.scheduledClips)
@@ -120,6 +136,7 @@ export function connectPreview(
     preview,
     dispose() {
       for (const u of unsubscribe) u()
+      releaseThumbnails()
       prepareSampleVideos(null)
       if (current === preview) {
         current = null
