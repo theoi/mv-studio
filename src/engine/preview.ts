@@ -421,6 +421,11 @@ export class PreviewController {
   private snapshot: PreviewSnapshot = { state: 'stopped', time: 0, duration: 0, quality: 'auto', scale: 1 }
   private readonly listeners = new Set<() => void>()
   private readonly frameListeners = new Set<(time: Seconds) => void>()
+  /**
+   * Seeks so far, loop changes that move the playhead included: while playing, a frame drawn for the time before one is
+   * not reported to frame listeners.
+   */
+  private seeks = 0
   private readonly frameLog: { at: number; ms: number }[] = []
   private dropped = 0
   private loop: { start: Seconds; end: Seconds } | null = null
@@ -584,6 +589,7 @@ export class PreviewController {
   }
 
   seek(time: Seconds): void {
+    this.seeks++
     this.clock.seek(time)
   }
 
@@ -596,6 +602,15 @@ export class PreviewController {
 
   setLoop(range: { start: Seconds; end: Seconds } | null): void {
     this.loop = range
+    const t = this.clock.currentTime()
+    // While playing, a range the playhead is outside of moves it to the range's start (see the clock), as a seek does.
+    if (
+      this.clock.state === 'playing' &&
+      range &&
+      range.end > range.start &&
+      (t < range.start || t >= range.end)
+    )
+      this.seeks++
     this.clock.setLoop(range)
   }
 
@@ -691,7 +706,11 @@ export class PreviewController {
 
   getSnapshot = (): PreviewSnapshot => this.snapshot
 
-  /** Called after each rendered frame with its timeline time. */
+  /**
+   * Called after each rendered frame with its timeline time. While playing, a frame asked for before the latest seek is
+   * not reported: it shows where the playhead was, and the frame of the new position follows. While paused every frame
+   * is reported, a scrub's included.
+   */
   onFrame(listener: (time: Seconds) => void): () => void {
     this.frameListeners.add(listener)
     return () => this.frameListeners.delete(listener)
@@ -870,6 +889,7 @@ export class PreviewController {
     const renderer = this.renderer
     const kind: FrameKind = !still ? 'playback' : this.scrubbing ? 'scrub' : 'still'
     const basis = this.autoBasis
+    const seeks = this.seeks
     // The worker's time arrives after the frame: one for another project or frame size no longer counts.
     const onDrawn =
       still && scale === 1
@@ -892,7 +912,8 @@ export class PreviewController {
           if (still && !this.scrubbing && this.clock.state !== 'playing') this.prewarmTransitions(time)
           while (this.frameLog.length > 0 && now - (this.frameLog[0] as { at: number }).at > 1000)
             this.frameLog.shift()
-          for (const listener of this.frameListeners) listener(time)
+          if (seeks === this.seeks || this.clock.state !== 'playing')
+            for (const listener of this.frameListeners) listener(time)
         },
         (error: unknown) => {
           if (this.disposed) return
