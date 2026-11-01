@@ -1,5 +1,14 @@
 import { useMemo, useRef, useState } from 'react'
-import { AudioWaveform, Image as ImageIcon, Music2, Plus, Sparkles, Trash2, Upload } from 'lucide-react'
+import {
+  AudioWaveform,
+  Image as ImageIcon,
+  Music2,
+  Plus,
+  Replace,
+  Sparkles,
+  Trash2,
+  Upload,
+} from 'lucide-react'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../../ds/Feedback.tsx'
 import { SearchInput } from '../../../ds/Fields.tsx'
@@ -34,7 +43,9 @@ import {
   songAnalysis,
   timelineDuration,
   useProject,
+  viewOf,
 } from '../../../state/project.ts'
+import { replaceClipMedia, replaceTarget } from '../../../state/replace.ts'
 import { analyzeAgain, SONG_STATE_TEXT } from '../../../state/songAnalysis.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
 import { focusedWithRing } from '../../../state/focusRing.ts'
@@ -84,7 +95,10 @@ const ANALYZING_NAMES = { analyzing: ', analyzing', waiting: ', waiting to be an
 function MediaMenu({ asset, onRemove }: { asset: Asset; onRemove: () => void }) {
   const project = useProject()
   const playhead = useUi((s) => s.playhead)
+  const selection = useUi((s) => s.selection)
   const removal = mediaRemoval(project, asset.id)
+  const target = replaceTarget(project, selection)
+  const picture = asset.kind === 'video' || asset.kind === 'image'
   return (
     <>
       <ContextMenuItem
@@ -94,6 +108,22 @@ function MediaMenu({ asset, onRemove }: { asset: Asset; onRemove: () => void }) 
       >
         Add at playhead
       </ContextMenuItem>
+      {picture && (
+        <ContextMenuItem
+          icon={<Replace />}
+          disabled={'why' in target || target.clip.assetId === asset.id}
+          description={
+            'why' in target
+              ? target.why
+              : target.clip.assetId === asset.id
+                ? 'It already shows this'
+                : `“${viewOf(project, target.clip).name}” at ${formatTime(target.clip.start, true)}`
+          }
+          onSelect={() => 'clip' in target && replaceClipMedia(target.clip.id, asset.id)}
+        >
+          Replace the selected clip
+        </ContextMenuItem>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem
         icon={<Trash2 />}

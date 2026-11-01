@@ -5,6 +5,7 @@ import type { VisualClip } from '../../../../model/index.ts'
 import { JobError } from '../../../../shared/jobs.ts'
 import type { CameraPreset } from '../../../../vision/index.ts'
 import { CAMERA_EFFECT_ID } from '../../../../vision/render/cameraEffect.ts'
+import { Button } from '../../../ds/Button.tsx'
 import { FieldRow, Section, Select, Slider } from '../../../ds/Fields.tsx'
 import {
   MOTION_PRESETS,
@@ -85,7 +86,10 @@ function presetLabel(preset: CameraPreset): string {
   return option?.label ?? preset
 }
 
-/** Inspector › Motion for a still: pick, change or remove its 3D camera move and set its strength. */
+/**
+ * Inspector › Motion for a still: pick, change or remove its 3D camera move and set its strength, or give a flat move
+ * depth.
+ */
 export function CameraSection({ clip }: { clip: VisualClip }) {
   const { job, phase } = useJob(JOB_KINDS.camera)
   const refocus = useRef(false)
@@ -98,7 +102,14 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
   const asked = !!job && !!requests[job.id]?.includes(clip.id)
   const adding = asked && busy ? job : undefined
   const failure = asked && phase === 'failed' ? job?.error?.message : undefined
-  const download = useDepthDownload(!move && !busy)
+  const download = useDepthDownload((!move || move.flat) && !busy)
+  const downloadNote = download ? ` (${formatBytes(download)} download, once)` : ''
+  const refocusSelect = (el: HTMLElement | null) => {
+    // After Cancel the section is back as before and its Cancel button is gone: focus the select.
+    if (!el || !refocus.current) return
+    refocus.current = false
+    el.parentElement?.querySelector<HTMLElement>('[role="combobox"]')?.focus()
+  }
   // While the move is being added, the select shows the motion that was chosen.
   const shown = move?.preset ?? (adding ? presets[adding.id] : undefined)
   const motion = shown && motionOf(shown)
@@ -117,6 +128,18 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
       else startCameraMoves([clip.id], preset, chosenIntensity())
     }
   }
+  const addDepth = move?.flat && (
+    <div className={styles.padded}>
+      <Button
+        size="sm"
+        variant="ghost"
+        className={`${styles.forwardAction} ${styles.noteAction}`}
+        onClick={() => startCameraMoves([clip.id], move.preset, move.intensity)}
+      >
+        Add depth
+      </Button>
+    </div>
+  )
   const intensity = move ? Math.round(move.intensity * 100) : 0
   // Advice only: a strength above the still's safe amounts is kept, with a note on what it may do.
   const risks = move && !adding && safe ? cameraRisks(safe, intensity) : []
@@ -163,27 +186,30 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
       ) : busy ? (
         <p className={styles.note}>Wait for the other 3D camera move to finish.</p>
       ) : failure ? (
-        <p className={styles.note} role="alert">
-          <span className={styles.noteDanger}>
-            <AlertTriangle aria-hidden />
-            {failure}
-          </span>
-          Your project is unchanged. Choose a move again to retry.
+        <>
+          <p className={styles.note} role="alert">
+            <span className={styles.noteDanger}>
+              <AlertTriangle aria-hidden />
+              {failure}
+            </span>
+            Your project is unchanged.{' '}
+            {move?.flat ? 'Choose Add depth to try again.' : 'Choose a move again to retry.'}
+          </p>
+          {addDepth}
+        </>
+      ) : !move ? (
+        <p className={styles.note} ref={refocusSelect}>
+          {CAMERA_DESCRIPTION}
+          {downloadNote}.
         </p>
       ) : (
-        !move && (
-          <p
-            className={styles.note}
-            ref={(el) => {
-              // After Cancel the section is back as before and its Cancel button is gone: focus the select.
-              if (!el || !refocus.current) return
-              refocus.current = false
-              el.parentElement?.querySelector<HTMLElement>('[role="combobox"]')?.focus()
-            }}
-          >
-            {CAMERA_DESCRIPTION}
-            {download ? ` (${formatBytes(download)} download, once)` : ''}.
-          </p>
+        move.flat && (
+          <>
+            <p className={styles.note} ref={refocusSelect}>
+              The move is flat: this image has no depth yet{downloadNote}.
+            </p>
+            {addDepth}
+          </>
         )
       )}
     </Section>

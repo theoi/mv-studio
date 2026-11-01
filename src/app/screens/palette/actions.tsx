@@ -57,6 +57,7 @@ import {
   Redo2,
   RefreshCw,
   Repeat,
+  Replace,
   RotateCcw,
   Save,
   Scissors,
@@ -125,6 +126,7 @@ import {
 } from '../../state/project.ts'
 import { changeAspect } from '../../state/reframe.ts'
 import { closeGap, gapForPalette, gapLength } from '../../state/ripple.ts'
+import { replacementAssets, replaceTarget } from '../../state/replace.ts'
 import { cutClipsToSection, sectionClipIds } from '../../state/sections.ts'
 import {
   analyzeAgain,
@@ -150,6 +152,7 @@ import {
   selectedClipIds,
   set,
   toast,
+  type PageId,
   type SettingsPage,
   type UiState,
 } from '../../state/ui.ts'
@@ -157,22 +160,6 @@ import { enterVj } from '../../state/vj.ts'
 import { fitTimeline, zoomBy } from '../../state/zoom.ts'
 import { clipProperties, reactionTarget } from '../editor/inspector/animatable.ts'
 import { generateShotAt, generateSpotAt } from '../editor/timeline/laneMenu.ts'
-
-/** Actions that open a list of choices inside the palette. */
-export type PageId =
-  | 'looks'
-  | 'history'
-  | 'addMedia'
-  | 'removeMedia'
-  | 'textStyle'
-  | 'kinetic'
-  | 'visualizer'
-  | 'effect'
-  | 'transition'
-  | 'volume'
-  | 'previewZoom'
-  | 'keyframe'
-  | 'react'
 
 export const GROUPS = [
   'Suggested',
@@ -788,6 +775,26 @@ export const actions: Action[] = [
       const moves =
         clip.type === 'video' || clip.type === 'image' || (clip.type === 'text' && !clip.lyricLineId)
       return moves ? undefined : 'Select a video, image or text clip'
+    },
+  },
+  {
+    id: 'replaceMedia',
+    group: 'Clip',
+    label: 'Replace with…',
+    icon: <Replace />,
+    aliases: ['replace clip', 'replace selected clip', 'replace footage'],
+    keywords: 'swap change footage shot clip video image media library',
+    page: 'replaceMedia',
+    unavailable: () => {
+      const target = replaceTarget(project(), get().selection)
+      if ('why' in target) return target.why
+      return replacementAssets(project()).some((a) => a.id !== target.clip.assetId)
+        ? undefined
+        : 'Import other media first'
+    },
+    detail: () => {
+      const target = replaceTarget(project(), get().selection)
+      return 'clip' in target ? viewOf(project(), target.clip).name : undefined
     },
   },
   {

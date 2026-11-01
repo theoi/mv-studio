@@ -240,20 +240,25 @@ export function undoCameraMoves(result: CameraMovesResult | undefined): boolean 
   return editor.undo()
 }
 
-/** The 3D camera move on a clip: where it is in the effects list and its preset and strength. */
+/**
+ * The 3D camera move on a clip: where it is in the effects list, its preset and strength, and whether it is flat (it has
+ * no depth image, as after Replace with… gave the clip another image).
+ */
 export function cameraMoveOf(
   clip: Clip,
-): { index: number; preset: CameraPreset; intensity: number } | undefined {
+): { index: number; preset: CameraPreset; intensity: number; flat: boolean } | undefined {
   if (!('effects' in clip)) return undefined
   const index = clip.effects.findIndex((e) => e.effectId === CAMERA_EFFECT_ID)
   const fx = clip.effects[index]
   if (!fx) return undefined
   const preset = fx.params.preset?.value
   const intensity = fx.params.intensity?.value
+  const depth = fx.params.depth?.value
   return {
     index,
     preset: typeof preset === 'string' ? (preset as CameraPreset) : DEFAULT_CAMERA_PRESET,
     intensity: typeof intensity === 'number' ? intensity : DEFAULT_CAMERA_INTENSITY,
+    flat: typeof depth !== 'string' || !depth,
   }
 }
 
@@ -284,7 +289,8 @@ export function safeAmountsOf(key: string, clipId: Id, preset: CameraPreset): Pr
 export function useSafeAmounts(clip: Clip): SafeAmounts | null {
   const move = cameraMoveOf(clip)
   const depth = move && 'effects' in clip ? clip.effects[move.index]?.params.depth?.value : undefined
-  const key = move && typeof depth === 'string' ? `${depth}:${move.preset}` : null
+  // A flat move has no depth image to predict from.
+  const key = move && !move.flat && typeof depth === 'string' ? `${depth}:${move.preset}` : null
   const preset = move?.preset
   const [known, setKnown] = useState<{ key: string; value: SafeAmounts | null } | null>(null)
   useEffect(() => {

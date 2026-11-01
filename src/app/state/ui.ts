@@ -17,6 +17,22 @@ export type Selection =
   /** A clip's transition in (at its start) or out (at its end); `id` is the clip. */
   | { type: 'transition'; id: string; edge: 'in' | 'out' }
 export type RightTab = 'inspector' | 'assist'
+/** The command palette's lists of choices (screens/palette/pages.tsx). */
+export type PageId =
+  | 'looks'
+  | 'history'
+  | 'addMedia'
+  | 'removeMedia'
+  | 'replaceMedia'
+  | 'textStyle'
+  | 'kinetic'
+  | 'visualizer'
+  | 'effect'
+  | 'transition'
+  | 'volume'
+  | 'previewZoom'
+  | 'keyframe'
+  | 'react'
 export type AssistView =
   | 'home'
   | 'director'
@@ -60,6 +76,8 @@ export interface UiState {
   settingsPage: SettingsPage
   exportPhase: ExportPhase
   paletteOpen: boolean
+  /** The list the palette opens on instead of its actions, as from the clip menu's Replace with…. */
+  palettePage: PageId | null
   /** The top bar shows the project name as a field to rename it. */
   renaming: boolean
   lyricsMode: LyricsMode
@@ -112,6 +130,7 @@ export const initialUi: UiState = {
   settingsPage: 'ai',
   exportPhase: 'setup',
   paletteOpen: false,
+  palettePage: null,
   renaming: false,
   lyricsMode: 'paste',
   guideStep: null,
@@ -254,6 +273,7 @@ export function editorPreset(kind: Kind): Partial<UiState> {
     selection: { type: 'none' },
     dialog: null,
     paletteOpen: false,
+    palettePage: null,
     playhead: 0,
     playing: false,
   }
