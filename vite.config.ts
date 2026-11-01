@@ -39,5 +39,8 @@ export default defineConfig({
   test: {
     include: ['tests/unit/**/*.test.ts', 'src/**/*.test.ts'],
     environment: 'node',
+    // Model and DSP tests are pure computation that runs several times slower on a loaded 2-4 core runner, where
+    // the 5 s default failed them; a real hang still fails at 15 s.
+    testTimeout: 15_000,
   },
 })
