@@ -14,6 +14,9 @@ import { get, set, toast, useUi, type Selection } from '../../state/ui.ts'
 /** Assets whose audio failure was already shown, so a preview that fails again on them stays quiet. */
 const reportedAudio = new Set<string>()
 
+/** The longest thumbnails wait for the preview's first frame before they decode anyway. */
+const THUMBNAIL_HOLD_MS = 3000
+
 let current: PreviewController | null = null
 // The project the preview was last given, so the same one is not drawn twice.
 let shown: Project | null = null
@@ -65,16 +68,23 @@ export function connectPreview(
     reportedAudio.add(key)
     toast(audioErrorText(editor.getProject(), error))
   })
-  // Thumbnails decode once this preview shows a project's first frame, so they don't hold it up.
+  // Thumbnails decode once this preview shows a project's first frame, so they don't hold it up, but no longer than
+  // THUMBNAIL_HOLD_MS or past an error: a preview that never draws must not leave every thumbnail empty.
   let shownId: string | null = null
   let releaseThumbnails = () => {}
   const holdThumbnails = () => {
     releaseThumbnails()
     let resolve = () => {}
     decodeThumbnailsAfter(new Promise<void>((done) => (resolve = done)))
-    const off = preview.onFrame(() => releaseThumbnails())
+    const offFrame = preview.onFrame(() => releaseThumbnails())
+    const offError = preview.subscribe(() => {
+      if (preview.getSnapshot().error) releaseThumbnails()
+    })
+    const timer = setTimeout(() => releaseThumbnails(), THUMBNAIL_HOLD_MS)
     releaseThumbnails = () => {
-      off()
+      offFrame()
+      offError()
+      clearTimeout(timer)
       resolve()
     }
   }

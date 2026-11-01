@@ -165,9 +165,13 @@ interface ThumbLog {
   firstFrame?: number
 }
 
-test('a reload shows the thumbnails kept beside the media without decoding the video, and decoding waits for the preview’s first frame', async ({
-  page,
-}) => {
+const KEPT = ['@thumb1-card-320x180.jpg', '@thumb1-frame-160x90-0.jpg']
+
+/**
+ * A kept project with a song and frames.mp4 on the timeline, once its card and its clip show their frames (12 and 0,
+ * as `frames()` reads them) and those are kept.
+ */
+async function framesProject(page: Page) {
   await openBlank(page)
   const chooser = page.waitForEvent('filechooser')
   await page.keyboard.press(`${mod}+i`)
@@ -187,9 +191,27 @@ test('a reload shows the thumbnails kept beside the media without decoding the v
     return { projectId: project.id as string, assetId: assets.find((a) => a.kind === 'video')!.id }
   })
   // Beside the media file, so the folder holds only files.
-  const kept = ['@thumb1-card-320x180.jpg', '@thumb1-frame-160x90-0.jpg', 'frames.mp4']
-  await expect.poll(() => assetFolder(page, assetId)).toEqual(kept)
+  await expect.poll(() => assetFolder(page, assetId)).toEqual([...KEPT, 'frames.mp4'])
   await page.waitForFunction((id) => location.hash.includes(`project=${id}`), projectId)
+  return { frames, projectId, assetId }
+}
+
+/** Deletes an asset's kept thumbnails, as in a browser that has not shown its project yet. */
+function forgetThumbnails(page: Page, assetId: string) {
+  return page.evaluate(
+    async ({ id, names }) => {
+      const root = await navigator.storage.getDirectory()
+      const folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
+      for (const name of names) await folder.removeEntry(name)
+    },
+    { id: assetId, names: KEPT },
+  )
+}
+
+test('a reload shows the thumbnails kept beside the media without decoding the video, and decoding waits for the preview’s first frame', async ({
+  page,
+}) => {
+  const { frames, projectId, assetId } = await framesProject(page)
 
   await page.addInitScript(() => {
     const log: ThumbLog = { decoder: [] }
@@ -218,21 +240,36 @@ test('a reload shows the thumbnails kept beside the media without decoding the v
   expect((await thumbLog()).decoder).toEqual([])
 
   // Not kept (a project file opened in another browser): made again, after the preview's first frame, and kept.
-  await page.evaluate(async (id) => {
-    const root = await navigator.storage.getDirectory()
-    const folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
-    for (const name of ['@thumb1-card-320x180.jpg', '@thumb1-frame-160x90-0.jpg'])
-      await folder.removeEntry(name)
-  }, assetId)
+  await forgetThumbnails(page, assetId)
   await page.reload()
   await waitForPreview(page)
   await expect.poll(frames, { timeout: 15_000 }).toEqual([12, 0])
   const log = await thumbLog()
   expect(log.decoder).toHaveLength(1)
   expect(log.decoder[0]).toBeGreaterThan(log.firstFrame!)
-  await expect.poll(() => assetFolder(page, assetId)).toEqual(kept)
+  await expect.poll(() => assetFolder(page, assetId)).toEqual([...KEPT, 'frames.mp4'])
 
   // They go with the media.
   await page.evaluate((id) => window.mvStudio.app.persistence.deleteProject(id), projectId)
   await expect.poll(() => assetFolder(page, assetId)).toBeNull()
+})
+
+test('thumbnails still appear when the preview never shows its first frame', async ({ page }) => {
+  test.skip(process.env.E2E_PREVIEW_WORKER === '0', 'The preview is stalled by stopping its render worker')
+  const { frames, assetId } = await framesProject(page)
+  await forgetThumbnails(page, assetId)
+  // Every preview render worker stops as it starts, like one the browser stops, so the stage stays on "Preparing the
+  // preview" (until the preview gives up on the worker after 15 s).
+  await page.addInitScript(() => {
+    const Base = window.Worker
+    window.Worker = class extends Base {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        if (options?.name === 'preview') this.terminate()
+      }
+    }
+  })
+  await page.reload()
+  await expect.poll(frames, { timeout: 10_000 }).toEqual([12, 0])
+  await expect(page.getByRole('img', { name: 'Video preview' })).toHaveAttribute('aria-busy', 'true')
 })
