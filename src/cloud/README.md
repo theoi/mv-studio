@@ -57,13 +57,33 @@ error says so and points to the setting.
   show them as a nested list (`nestSteps()` in `errors.ts`).
 - Ollama cuts a prompt longer than its context length without an error: it keeps the end, and the model answers
   without its instructions. It reads only 4,096 tokens by default with less than 24 GB of graphics memory, and an Ask
-  request is 11,000 to 16,000 tokens. Its `usage.prompt_tokens` then counts only what it kept, so `chat()` stops
-  with a `prompt-cut` error when that count is under 60% of the request's size at 4 characters per token (Qwen 2.5
-  reads about 3.4), for requests of 1,000 tokens or more. The error's steps (`contextLengthSteps()`) raise the
-  context to 16k (`LOCAL_CONTEXT_TOKENS`). Ask shows them without a repair round, and the director falls back to the
+  request is 11,000 to 16,000 tokens on the sample project (17,700 after a 208-shot draft). Its `usage.prompt_tokens`
+  then counts only what it kept, so `chat()` stops with a `prompt-cut` error when that count is under 60% of the
+  request's estimated tokens, for requests of 1,000 tokens or more. The estimate (`estimateTokens()`) counts as Qwen
+  2.5 does: about 4.4 characters per token for words and JSON, 1.35 tokens per digit (Qwen reads each digit as a
+  token, and a long draft puts thousands of them in an Ask request) and one or more per character outside ASCII
+  (Hangul, Georgian, Armenian and the Indic scripts take more than one). On the requests measured it came out 0.94 to
+  1.02 of Qwen's count, the lowest a shot list made of short phrases. The
+  error's steps (`contextLengthSteps()`) raise the context to 16k (`LOCAL_CONTEXT_TOKENS`), or to the smallest of
+  32k, 64k and 128k that holds the request with room for the answer (`contextFor()`), so a user already at 16k isn't
+  told to set 16k again. Ask shows them without a repair round, and the director falls back to the
   built-in planner with a note to raise the context length. Only servers the user runs are checked: this computer
   (`isLocalEndpoint()`) or Ollama's or LM Studio's port. Cloud APIs (OpenAI, OpenRouter, or any https API under
   Other, such as Groq or Mistral) reject a request that is too long, and their users can't change a server setting.
+- With the Ollama preset, a request of 2,048 tokens or more is first checked against the context of the model Ollama
+  has loaded (`/api/ps`, `context_length`), because on a slow computer the model can write about a cut prompt for
+  longer than the answer time limit, and the answer's count never arrives. When the model isn't loaded, `chat()`
+  loads it first (`/api/generate` with only the model), which the request would do anyway; `onLoadingModel` lets
+  Ask and the director say "Loading the model" meanwhile. A load that runs out the answer time limit ends with the
+  usual `timeout` error instead of sending the request, so the user doesn't wait twice. A request whose estimate,
+  raised 8% (`ESTIMATE_MARGIN`), is over the context gets the same `prompt-cut` error without being sent, and the
+  size it names is never below the context: at 16k, an Ask request after a 185- or 208-shot draft (16,800
+  and 17,700 tokens) is refused, and the sample's 10,800 is sent. (Llama 3 groups digits in threes, so for it the
+  estimate errs high, and a request just under the context can be refused with the advice to raise it.) When Ollama
+  doesn't say (an older version without `/api/ps` or `context_length`, or a failed read), the request is sent and
+  checked from the answer as above. `/api/ps` gives the context the model was loaded with: when another client
+  loaded it with its own `num_ctx` (the Ollama app's chat, or a script), Ollama may reload it at its default context
+  for this request, so the check can be wrong either way; the check from the answer still applies.
 - When a server rejects `temperature`, `max_tokens` or `reasoning_effort` with a 400, the client retries once without
   it (or with `max_completion_tokens` when the error asks for it).
 - With exactly one tool, a named tool choice is sent as `required`, because llama.cpp's server ignores the object

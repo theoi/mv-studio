@@ -20,6 +20,11 @@ type Answer = { tool: string; args: Record<string, unknown>; promptTokens?: numb
 
 /** Answers each chat request with the next tool call in `answers`; returns the request bodies seen. */
 async function model(page: Page, answers: Answer[]) {
+  // Ollama's own API (the context check before a long request) answers as an Ollama without it, so an Ollama running
+  // on this computer stays out of the test.
+  await page
+    .context()
+    .route('http://localhost:11434/api/**', (route) => route.fulfill({ status: 404, headers: CORS }))
   const bodies: string[] = []
   await page.context().route(CHAT, (route: Route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
