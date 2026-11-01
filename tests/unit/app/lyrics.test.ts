@@ -241,7 +241,7 @@ describe('startLyrics', () => {
       .filter((s) => s.label === 'chorus')
       .map((s) => [s.start, s.end])
 
-  it('keeps the long unlisted singing with the timed lyrics, in their undo step, and finds the chorus with it', async () => {
+  it('keeps the long unlisted singing with the timed lyrics and finds the chorus with it, both in their undo step', async () => {
     load()
     answers.push({
       doc: once(),
@@ -268,8 +268,17 @@ describe('startLyrics', () => {
     await startLyrics({ kind: 'time', text: 'lyrics' })
     expect(editor.getProject().lyrics).not.toHaveProperty('unlisted')
     expect(choruses()).toEqual([[20, 40]])
+    expect(editor.undoLabel()).toBe('Time lyrics')
     editor.undo()
     expect(editor.getProject().lyrics).toEqual(first)
+    expect(choruses()).toEqual([
+      [20, 40],
+      [60, 80],
+      [100, 120],
+    ])
+    editor.redo()
+    expect(editor.getProject().lyrics).not.toHaveProperty('unlisted')
+    expect(choruses()).toEqual([[20, 40]])
   })
 
   it('keeps no unlisted singing with a draft', async () => {
