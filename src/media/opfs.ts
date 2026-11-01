@@ -55,6 +55,16 @@ export async function opfsFileExists(path: string): Promise<boolean> {
   }
 }
 
+/** A folder, or null when it doesn't exist. */
+export async function opfsDirectory(path: string): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const { dir, name } = await dirFor(path, false)
+    return await dir.getDirectoryHandle(name)
+  } catch {
+    return null
+  }
+}
+
 export async function removeOpfsEntry(path: string): Promise<void> {
   const { dir, name } = await dirFor(path, false)
   await dir.removeEntry(name, { recursive: true })

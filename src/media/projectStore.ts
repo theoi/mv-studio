@@ -48,6 +48,22 @@ function openDb(): Promise<IDBDatabase> {
   return dbPromise
 }
 
+/**
+ * Held shared by a project file's open from when it reuses media already stored until its project is saved, and
+ * exclusive by the sweep of unused media, in every tab: the sweep would see that media as used by no kept project.
+ */
+const MEDIA_LOCK = 'mv-studio.media'
+
+function withMediaLock<T>(mode: LockMode, run: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
+  return locks ? locks.request(MEDIA_LOCK, { mode }, run) : run()
+}
+
+/** The media folders a project uses. Throws for a record that isn't a readable project. */
+function storageFolders(project: Project): string[] {
+  return Object.values(project.assets).map((a) => storageFolder(a.storageKey))
+}
+
 export class IdbProjectStore implements ProjectStore {
   private readonly media: OpfsMediaStore
   /** Each project's stored thumbnail as last read or written, so a save can keep it without reading first. */
@@ -133,19 +149,37 @@ export class IdbProjectStore implements ProjectStore {
 
   /**
    * Deletes stored media that no kept project, nor `alsoKeep`, uses once it is `minAgeMs` old: what an open of a
-   * project file wrote before its tab closed, a song left on the setup screen, media removed from a project. When a
-   * kept project can't be read, it throws and deletes nothing.
+   * project file wrote before its tab closed, a song left on the setup screen, media removed from a project. Returns
+   * null, deleting nothing, while a project file opens in any tab (see MEDIA_LOCK) or without Web Locks. When a kept
+   * project can't be read, it throws and deletes nothing.
    */
   async removeUnusedMedia(
     alsoKeep: Project[],
     options: { minAgeMs: number; now?: number },
-  ): Promise<{ folders: number; bytes: number }> {
-    const db = await openDb()
-    const kept = (await request(db.transaction(PROJECTS).objectStore(PROJECTS).getAll())) as Project[]
-    const inUse = new Set(
-      [...kept, ...alsoKeep].flatMap((p) => Object.values(p.assets).map((a) => storageFolder(a.storageKey))),
-    )
-    return this.media.removeUnused(inUse, options)
+  ): Promise<{ folders: number; bytes: number } | null> {
+    const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
+    if (!locks) return null
+    return locks.request(MEDIA_LOCK, { mode: 'exclusive', ifAvailable: true }, async (lock) => {
+      if (!lock) return null
+      const inUse = new Set(alsoKeep.flatMap(storageFolders))
+      // One record at a time: the records hold whole analyses, and this runs on every start.
+      const db = await openDb()
+      await new Promise<void>((resolve, reject) => {
+        const cursor = db.transaction(PROJECTS).objectStore(PROJECTS).openCursor()
+        cursor.onerror = () => reject(cursor.error)
+        cursor.onsuccess = () => {
+          const at = cursor.result
+          if (!at) return resolve()
+          try {
+            for (const folder of storageFolders(at.value as Project)) inUse.add(folder)
+          } catch (error) {
+            return reject(error)
+          }
+          at.continue()
+        }
+      })
+      return this.media.removeUnused(inUse, options)
+    })
   }
 
   /**
@@ -205,35 +239,38 @@ export class IdbProjectStore implements ProjectStore {
         etaSeconds: secondsLeft(started, fraction),
       })
     }
-    const restored: Asset[] = []
-    let saved = false
-    try {
-      for (const [i, asset] of assets.entries()) {
-        report(i, 0)
-        const data = byName.get(asset.storageKey)
-        if (!data)
-          throw new JobError('invalid-input', `The project file is missing media for "${asset.name}"`)
-        if (!(await this.media.has(asset, data.size))) {
-          restored.push(asset)
-          await this.media.restore(asset, data, (written) => report(i, written))
+    // Media already stored is used as it is, and no kept project uses it until the save at the end.
+    return withMediaLock('shared', async () => {
+      const restored: Asset[] = []
+      let saved = false
+      try {
+        for (const [i, asset] of assets.entries()) {
+          report(i, 0)
+          const data = byName.get(asset.storageKey)
+          if (!data)
+            throw new JobError('invalid-input', `The project file is missing media for "${asset.name}"`)
+          if (!(await this.media.has(asset, data.size))) {
+            restored.push(asset)
+            await this.media.restore(asset, data, (written) => report(i, written))
+          }
+          before += data.size
         }
-        before += data.size
+        const existing = await this.list()
+        if (existing.some((s) => s.id === project.id))
+          project = { ...project, id: newId(), name: `${project.name} (imported)` }
+        ctx?.throwIfCancelled()
+        await this.save(project)
+        saved = true
+        // A Cancel while it saved (the card still offers one at 100%) must not leave the project kept.
+        ctx?.throwIfCancelled()
+      } catch (error) {
+        // No project refers to the media this open wrote, so a cancel or failure would leave it taking up storage.
+        if (saved) await this.remove(project.id).catch(() => undefined)
+        await Promise.all(restored.map((a) => this.media.remove(a)))
+        throw error
       }
-      const existing = await this.list()
-      if (existing.some((s) => s.id === project.id))
-        project = { ...project, id: newId(), name: `${project.name} (imported)` }
-      ctx?.throwIfCancelled()
-      await this.save(project)
-      saved = true
-      // A Cancel while it saved (the card still offers one at 100%) must not leave the project kept.
-      ctx?.throwIfCancelled()
-    } catch (error) {
-      // No project refers to the media this open wrote, so a cancel or failure would leave it taking up storage.
-      if (saved) await this.remove(project.id).catch(() => undefined)
-      await Promise.all(restored.map((a) => this.media.remove(a)))
-      throw error
-    }
-    return project
+      return project
+    })
   }
 }
 

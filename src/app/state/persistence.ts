@@ -560,6 +560,23 @@ const TAB_LOCK = 'mv-studio.open-tab'
 /** How old media no project uses must be before it is deleted, so a file not yet saved into a project is left alone. */
 const UNUSED_MEDIA_AGE_MS = 24 * 60 * 60 * 1000
 let holdingTabLock = false
+/**
+ * When this build first ran in this browser. Tabs of an older build don't hold TAB_LOCK, so the startup sweep waits until
+ * tabs open back then have most likely been closed.
+ */
+const SWEEP_SINCE_KEY = 'mv-studio.media-sweep-since'
+const OLDER_TABS_GONE_MS = 3 * 24 * 60 * 60 * 1000
+
+function olderTabsGone(now = Date.now()): boolean {
+  try {
+    const since = Number(localStorage.getItem(SWEEP_SINCE_KEY))
+    if (since > 0) return now - since >= OLDER_TABS_GONE_MS
+    localStorage.setItem(SWEEP_SINCE_KEY, String(now))
+  } catch {
+    // Without localStorage there is no telling, so it never sweeps.
+  }
+  return false
+}
 
 /**
  * Deletes stored media that no kept project nor the open one uses, once it is `minAgeMs` old (see
@@ -573,7 +590,7 @@ export async function removeUnusedMedia(minAgeMs = UNUSED_MEDIA_AGE_MS): Promise
   try {
     const { held = [] } = await navigator.locks.query()
     if (held.filter((l) => l.name === TAB_LOCK).length > 1) return null
-    return (await store.removeUnusedMedia([editor.getProject()], { minAgeMs })).folders
+    return (await store.removeUnusedMedia([editor.getProject()], { minAgeMs }))?.folders ?? null
   } catch {
     return null
   }
@@ -583,7 +600,12 @@ function holdTabLock(): void {
   void navigator.locks
     ?.request(TAB_LOCK, { mode: 'shared' }, () => {
       holdingTabLock = true
-      requestIdleCallback(() => void removeUnusedMedia(), { timeout: 10_000 })
+      requestIdleCallback(
+        () => {
+          if (olderTabsGone()) void removeUnusedMedia()
+        },
+        { timeout: 10_000 },
+      )
       return new Promise<never>(() => undefined)
     })
     .catch(() => undefined)

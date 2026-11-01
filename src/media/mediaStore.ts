@@ -2,7 +2,7 @@
 import { newId } from '../model/factory.ts'
 import type { Asset, AssetKind, AssetOrigin } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
-import { opfsFileExists, readOpfsFile, removeOpfsEntry, writeOpfsFile } from './opfs.ts'
+import { opfsDirectory, opfsFileExists, readOpfsFile, removeOpfsEntry, writeOpfsFile } from './opfs.ts'
 import { detectKind, probeMedia } from './probe.ts'
 import type { MediaStore } from './types.ts'
 
@@ -110,9 +110,9 @@ export class OpfsMediaStore implements MediaStore {
     inUse: ReadonlySet<string>,
     options: { minAgeMs: number; now?: number },
   ): Promise<{ folders: number; bytes: number }> {
-    const root = await navigator.storage.getDirectory()
-    const media = await root.getDirectoryHandle(MEDIA_ROOT).catch(() => null)
+    const media = await opfsDirectory(MEDIA_ROOT)
     if (!media) return { folders: 0, bytes: 0 }
+    // The DOM types give folder entries as plain FileSystemHandles, without file or folder methods.
     return removeUnusedFolders(media as unknown as MediaFolder, inUse, options)
   }
 
