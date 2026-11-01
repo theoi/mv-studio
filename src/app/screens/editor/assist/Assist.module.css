@@ -373,35 +373,56 @@
   background: var(--bg-panel);
 }
 
-/*
- * Pinned, the footer would leave a 720 px window about 180 px for the body: there it ends the scroll instead, and a
- * fade at the bottom says more is below until the end is in view. With nothing to scroll the timeline is inactive and
- * the fade keeps opacity 0.
- */
+.bodyCost {
+  display: none;
+}
+
+.costLine.bodyCost {
+  margin: var(--space-3) 0 0;
+  text-align: left;
+}
+
+/* A short panel (a 720 px window) gets a compact footer, so the main action can stay pinned under the body. */
 @container toolview (max-height: 480px) {
-  .viewFooter:not(.pinnedFooter) {
-    position: static;
+  .viewFooter {
+    padding: var(--space-2) var(--space-4) var(--space-3);
   }
 
-  /* A pinned footer already marks where the body goes on below it. */
-  .viewScroll:has(> .pinnedFooter)::after {
+  .viewFooter .costLine {
+    margin-top: var(--space-1);
+  }
+
+  /* The Director's price footer keeps only its buttons there; who charges the price shows under the plan instead. */
+  .footerCost {
     display: none;
   }
 
-  .viewScroll::after {
-    content: '';
-    position: sticky;
-    bottom: 0;
-    flex: none;
-    height: 32px;
-    margin-top: -32px;
-    background: linear-gradient(to bottom, transparent, var(--bg-panel));
-    pointer-events: none;
-    opacity: 0;
-    animation: moreBelow linear both;
-    animation-timeline: scroll(nearest block);
-    animation-range: calc(100% - 24px) 100%;
+  .bodyCost {
+    display: block;
   }
+}
+
+/*
+ * A footer too tall to pin there (see ToolView) ends the scroll instead, and a fade at the bottom says more is below
+ * until the end is in view. With nothing to scroll the timeline is inactive and the fade keeps opacity 0.
+ */
+.viewScroll[data-footer-scrolls] > .viewFooter {
+  position: static;
+}
+
+.viewScroll[data-footer-scrolls]::after {
+  content: '';
+  position: sticky;
+  bottom: 0;
+  flex: none;
+  height: 32px;
+  margin-top: -32px;
+  background: linear-gradient(to bottom, transparent, var(--bg-panel));
+  pointer-events: none;
+  opacity: 0;
+  animation: moreBelow linear both;
+  animation-timeline: scroll(nearest block);
+  animation-range: calc(100% - 24px) 100%;
 }
 
 @keyframes moreBelow {

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { ArrowLeft, Check, X } from 'lucide-react'
 import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { jobs } from '../../../../shared/jobs.ts'
@@ -10,9 +10,53 @@ import { etaText, jobLine, pct } from './jobState.ts'
 import styles from './Assist.module.css'
 
 /**
+ * The most of the scrolling area a pinned footer may take in a short view; a taller one ends the scroll instead. At
+ * 1280×720 every tool's footer stays pinned, unless a note above its button makes it taller.
+ */
+const MAX_PINNED_SHARE = 1 / 3
+/** A view at least this tall keeps any footer pinned (the compact footer's container query uses it too). */
+const SHORT_VIEW = 480
+
+/** Marks the scroller (`data-footer-scrolls`) when its footer is too tall to stay pinned, unless it is `pinned`. */
+function markFooterScrolls(area: HTMLElement | null, bar: HTMLElement | null, pinned: boolean) {
+  const view = area?.parentElement
+  area?.toggleAttribute(
+    'data-footer-scrolls',
+    !pinned &&
+      !!bar &&
+      !!view &&
+      view.clientHeight <= SHORT_VIEW &&
+      bar.offsetHeight > area.clientHeight * MAX_PINNED_SHARE,
+  )
+}
+
+/**
+ * Lets a tall footer end the scroll instead of staying pinned: pinned, it would leave a short panel little room for
+ * the body, so there the body comes first and a fade says more is below. `pinned` keeps the footer in view whatever
+ * its height. Set on the element during layout, not through state: a tool that moves focus into its new footer after a
+ * render (useKeepFocus) must scroll with the footer already in its place.
+ */
+function useFooterScrolls(
+  scroll: RefObject<HTMLElement | null>,
+  footer: RefObject<HTMLElement | null>,
+  pinned: boolean,
+  hasFooter: boolean,
+) {
+  // Every render: what the footer holds changes with the tool's state.
+  useLayoutEffect(() => markFooterScrolls(scroll.current, footer.current, pinned))
+  useLayoutEffect(() => {
+    if (!hasFooter) return
+    const observer = new ResizeObserver(() => markFooterScrolls(scroll.current, footer.current, pinned))
+    if (scroll.current) observer.observe(scroll.current)
+    if (footer.current) observer.observe(footer.current)
+    return () => observer.disconnect()
+  }, [scroll, footer, pinned, hasFooter])
+}
+
+/**
  * The frame of every Assist tool: back to all tools, title, scrolling body and a pinned footer for the action. In a
- * short panel the footer ends the scroll instead, unless `pinFooter` keeps it in view (a Cancel while a paid run goes
- * on).
+ * short panel a tall footer ends the scroll instead, unless `pinFooter` keeps it in view (a Cancel while a paid run
+ * goes on).
  */
 export function ToolView({
   title,
@@ -27,6 +71,9 @@ export function ToolView({
   footer?: ReactNode
   pinFooter?: boolean
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const footerRef = useRef<HTMLDivElement>(null)
+  useFooterScrolls(scrollRef, footerRef, pinFooter, Boolean(footer))
   return (
     <div className={styles.view}>
       <div className={styles.viewHeader}>
@@ -38,13 +85,10 @@ export function ToolView({
           {subtitle && <div className={styles.viewSub}>{subtitle}</div>}
         </div>
       </div>
-      <div className={`${styles.viewScroll} scroll`}>
+      <div ref={scrollRef} className={`${styles.viewScroll} scroll`}>
         <div className={styles.viewBody}>{children}</div>
         {footer && (
-          <div
-            className={pinFooter ? `${styles.viewFooter} ${styles.pinnedFooter}` : styles.viewFooter}
-            data-tool-footer
-          >
+          <div ref={footerRef} className={styles.viewFooter} data-tool-footer>
             {footer}
           </div>
         )}
