@@ -352,6 +352,7 @@ describe('looks', () => {
 
 describe('pace and brightness words in the idea', () => {
   const none = { pace: 0, light: 0, words: [] }
+  const fast = { pace: 1, light: 0, words: ['fast'] }
   it.each([
     ['fast and bright in the chorus', { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } }, none],
     [
@@ -426,10 +427,62 @@ describe('pace and brightness words in the idea', () => {
     ['fast in the chorus but not in the verses', { chorus: { pace: 1, light: 0, words: ['fast'] } }, none],
     // "but" starts a new part, so the negation after it leaves the words before it alone.
     ['a fast chorus but not too bright', { chorus: { pace: 1, light: 0, words: ['fast'] } }, none],
+    // A list of descriptions stays open for its section, even through a word the lists don't know.
+    ['slow, dreamy verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
+    ['slow and dreamy verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
+    [
+      'slow, dreamy verses and a fast, punchy chorus',
+      {
+        verse: { pace: -1, light: 0, words: ['slow'] },
+        chorus: { pace: 1, light: 0, words: ['fast', 'punchy'] },
+      },
+      none,
+    ],
+    [
+      'fast and bright, verses slow',
+      { verse: { pace: -1, light: 0, words: ['slow'] } },
+      { pace: 1, light: 1, words: ['fast', 'bright'] },
+    ],
+    ['fast video, slow chorus', { chorus: { pace: -1, light: 0, words: ['slow'] } }, fast],
   ])('reads “%s”', (idea, roles, all) => {
     const asks = ideaAsks(idea)
     expect(Object.fromEntries(asks.roles)).toEqual(roles)
     expect(asks.all).toEqual(all)
+    expect(asks.excepted).toEqual(new Map())
+  })
+
+  it.each([
+    ['everything fast apart from the bridge', {}, { bridge: none }],
+    ['fast cuts other than in the bridge', {}, { bridge: none }],
+    ['fast everywhere except the bridge', {}, { bridge: none }],
+    ['fast all the way through, aside from the intro', {}, { intro: none }],
+    ['fast cuts, but not in the verses', {}, { verse: none }],
+    ['fast cuts but not during the bridge', {}, { bridge: none }],
+    ['fast everywhere except the bridge and the outro', {}, { bridge: none, outro: none }],
+    // The part after a section left out goes to the whole video, unless it starts with "which" or the like.
+    ['Apart from the bridge, fast cuts', {}, { bridge: none }],
+    [
+      'fast everywhere except the bridge, which should be slow',
+      { bridge: { pace: -1, light: 0, words: ['slow'] } },
+      { bridge: none },
+    ],
+  ])('leaves the sections “%s” excepts out of the whole video’s words', (idea, roles, excepted) => {
+    const asks = ideaAsks(idea)
+    expect(asks.all).toEqual(fast)
+    expect(Object.fromEntries(asks.roles)).toEqual(roles)
+    expect(Object.fromEntries(asks.excepted)).toEqual(excepted)
+  })
+
+  it('leaves a section out of only the whole-video words of the sentences that except it', () => {
+    expect(Object.fromEntries(ideaAsks('bright throughout, except for the verses').excepted)).toEqual({
+      verse: none,
+    })
+    expect(Object.fromEntries(ideaAsks('fast cuts and dark colours, except the bridge').excepted)).toEqual({
+      bridge: none,
+    })
+    const asks = ideaAsks('A dark video. Fast everywhere except the bridge.')
+    expect(asks.all).toEqual({ pace: 1, light: -1, words: ['dark', 'fast'] })
+    expect(Object.fromEntries(asks.excepted)).toEqual({ bridge: { pace: 0, light: -1, words: ['dark'] } })
   })
 
   /** An AI video of the user's clips whose first chorus is a guess no louder than the verse, as on many songs. */
@@ -498,5 +551,37 @@ describe('pace and brightness words in the idea', () => {
       expect(PACES.indexOf(s.pace)).toBe(Math.max(0, PACES.indexOf(before.pace) - 1))
       expect(s.mood).toBe(`dark, ${before.mood}`)
     }
+  })
+
+  it('gives a section its own pace in place of the whole video’s, and an excepted section none of it', async () => {
+    const plain = await guessedChorus('neon city')
+    const paces = (p: { p: { sections: { id: string; pace: string }[] } }) =>
+      Object.fromEntries(p.p.sections.map((s) => [s.id, s.pace]))
+    /** The plain draft's paces moved by the given steps (every other section by `rest`). */
+    const moved = (rest: number, steps: Record<string, number>) =>
+      Object.fromEntries(
+        plain.p.sections.map((s) => {
+          const i = PACES.indexOf(s.pace) + (steps[s.id] ?? rest)
+          return [s.id, PACES[Math.max(0, Math.min(PACES.length - 1, i))]]
+        }),
+      )
+    expect(paces(await guessedChorus('fast video, slow chorus'))).toEqual(
+      moved(1, { 's-chorus1': -1, 's-chorus2': -1 }),
+    )
+    expect(paces(await guessedChorus('fast video, very fast chorus'))).toEqual(
+      moved(1, { 's-chorus1': 2, 's-chorus2': 2 }),
+    )
+    expect(paces(await guessedChorus('fast in the chorus, slow elsewhere'))).toEqual(
+      moved(-1, { 's-chorus1': 1, 's-chorus2': 1 }),
+    )
+    expect(paces(await guessedChorus('everything fast apart from the bridge'))).toEqual(
+      moved(1, { 's-bridge': 0 }),
+    )
+    expect(paces(await guessedChorus('fast everywhere except the bridge, which should be slow'))).toEqual(
+      moved(1, { 's-bridge': -1 }),
+    )
+    const bright = await guessedChorus('bright throughout, except for the verses')
+    expect(bright.section('s-verse').mood).toBe(plain.section('s-verse').mood)
+    expect(bright.section('s-intro').mood).toBe(`bright, ${plain.section('s-intro').mood}`)
   })
 })

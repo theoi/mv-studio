@@ -44,6 +44,11 @@ export interface IdeaAsks {
   all: IdeaAsk
   /** By section role (normalizedLabel): "fast and bright in the chorus" asks it of the chorus. */
   roles: Map<string, IdeaAsk>
+  /**
+   * What a section the idea leaves out takes of `all` instead ("fast everywhere except the bridge": nothing): `all`
+   * without the words of the sentences that left it out.
+   */
+  excepted: Map<string, IdeaAsk>
 }
 
 const ROLE_WORDS: [RegExp, string][] = [
@@ -112,7 +117,11 @@ const NEGATORS = new Set([
   'shouldnt',
 ])
 /** Words that start a new thought: "fast verses but a slow bridge". */
-const BREAKS = new Set(['but', 'then', 'while', 'except', 'whereas', 'yet'])
+const BREAKS = new Set(['but', 'then', 'while', 'whereas', 'yet'])
+/** Words that start a part leaving sections out: "fast everywhere except the bridge" ("apart from" is one word here). */
+const EXCLUDERS = new Set(['except', 'excluding', 'apart-from', 'aside-from', 'other-than'])
+/** After a section left out, a part starting with these is about that section: "except the bridge, which is slow". */
+const RELATIVES = new Set(['which', 'where', 'when', 'that', 'there'])
 /** "in the chorus" ends its part of the sentence: what follows is about something else. */
 const PREPOSITIONS = new Set(['in', 'during', 'for', 'on', 'through', 'throughout', 'at'])
 const DETERMINERS = new Set(['the', 'a', 'an', 'each', 'every', 'all', 'its', 'both'])
@@ -130,6 +139,8 @@ function ideaTokens(prompt: string): string[] {
     .replace(/[’‘`]/g, "'")
     .replace(/\bpre[\s-]+chorus/g, 'pre-chorus')
     .replace(/\bbuild[\s-]+up/g, 'build-up')
+    .replace(/\b(apart|aside)\s+from\b/g, '$1-from')
+    .replace(/\bother\s+than\b/g, 'other-than')
     .replace(/&/g, ' and ')
     .replace(/[.;:!?()\n]/g, ' . ')
     .replace(/,/g, ' , ')
@@ -139,38 +150,80 @@ function ideaTokens(prompt: string): string[] {
 }
 
 /**
- * Splits the words into parts that each say one thing: at sentence ends, at "but"/"then", at "and" or a comma unless
- * they join two descriptions ("fast and bright", "a fast, punchy chorus"), and after a section named with "in the" or
- * "for every".
+ * Whether the words from `from` on lead to a section through words the lists may not know, as "dreamy verses" does
+ * after "slow,": an adjective list still waiting for its noun.
  */
-function ideaParts(tokens: string[]): string[][] {
-  const parts: string[][] = [[]]
+function listGoesOn(tokens: string[], from: number): boolean {
+  let adjectives = 0
+  for (let i = from; i < tokens.length && adjectives <= 3; i++) {
+    const word = tokens[i] as string
+    if (roleWord(word)) return adjectives > 0
+    if (word === ',' || word === 'and' || LINKING.has(word)) continue
+    if (word === '.' || BREAKS.has(word) || EXCLUDERS.has(word) || negates(word)) return false
+    if (PREPOSITIONS.has(word) || DETERMINERS.has(word)) return false
+    adjectives++
+  }
+  return false
+}
+
+interface Part {
+  words: string[]
+  /** Which sentence of the idea the part is in, from 0. */
+  sentence: number
+}
+
+/**
+ * Splits the words into parts that each say one thing: at sentence ends, at "but"/"then", before "except"/"apart
+ * from" (which stay as the part's first word), at "and" or a comma unless they join two descriptions ("fast and
+ * bright", "a fast, punchy chorus") or a list of them still waiting for its section ("slow, dreamy verses"), and after
+ * a section named with "in the" or "for every".
+ */
+function ideaParts(tokens: string[]): Part[] {
+  let sentence = 0
+  const parts: Part[] = [{ words: [], sentence }]
+  const open = () => parts[parts.length - 1] as Part
   const close = () => {
-    if (parts[parts.length - 1]?.length) parts.push([])
+    if (open().words.length) parts.push({ words: [], sentence })
+    else open().sentence = sentence
   }
   tokens.forEach((word, i) => {
-    const part = parts[parts.length - 1] as string[]
-    if (word === '.' || BREAKS.has(word)) return close()
+    const part = open().words
+    if (word === '.') {
+      sentence++
+      return close()
+    }
+    if (BREAKS.has(word)) return close()
     if (word === ',' || word === 'and') {
       let next = i + 1
       while (LINKING.has(tokens[next] ?? '')) next++
-      if (!(describes(part[part.length - 1]) && describes(tokens[next]))) close()
+      const listing =
+        part.some(describes) && part.every((w) => describes(w) || LINKING.has(w) || DETERMINERS.has(w))
+      if (
+        !(describes(part[part.length - 1]) && describes(tokens[next])) &&
+        !(listing && listGoesOn(tokens, next))
+      )
+        close()
       return
     }
-    part.push(word)
-    const before = part[part.length - 2] ?? ''
+    if (EXCLUDERS.has(word)) close()
+    open().words.push(word)
+    const words = open().words
+    const before = words[words.length - 2] ?? ''
     const named =
-      PREPOSITIONS.has(before) || (DETERMINERS.has(before) && PREPOSITIONS.has(part[part.length - 3] ?? ''))
+      PREPOSITIONS.has(before) || (DETERMINERS.has(before) && PREPOSITIONS.has(words[words.length - 3] ?? ''))
     if (roleWord(word) && named) close()
   })
-  return parts.filter((p) => p.length)
+  return parts.filter((p) => p.words.length)
 }
 
 interface Vote {
   word: string
   pace: number
   light: number
+  sentence: number
 }
+
+const noAsk = (): IdeaAsk => ({ pace: 0, light: 0, words: [] })
 
 /** One section's (or the whole video's) words; opposite words cancel out rather than one of them winning. */
 function tally(votes: Vote[]): IdeaAsk | undefined {
@@ -190,20 +243,33 @@ function tally(votes: Vote[]): IdeaAsk | undefined {
  * (see ideaParts()). In each, a word goes to the section named nearest to it ("slow verses", "keep the chorus fast"),
  * or to the section the part before named when this part names none ("in the chorus, fast and bright"), else to the
  * whole video. A part with "not", "don't", "no", "avoid", "too" and the like is left out entirely: a missed word only
- * leaves the draft as it would be, a misread one turns it the wrong way.
+ * leaves the draft as it would be, a misread one turns it the wrong way. A part that starts with "except" or "apart
+ * from", or is negated, and names sections leaves those sections out of the whole-video words of its sentence
+ * ("fast everywhere except the bridge", "fast cuts, but not in the verses"), as does a part naming only sections
+ * right after it ("except the bridge and the outro").
  */
 export function ideaAsks(prompt: string): IdeaAsks {
   const votes = new Map<string | undefined, Vote[]>()
-  let previous: { role?: string; described: boolean; negated: boolean } | undefined
-  for (const words of ideaParts(ideaTokens(prompt))) {
+  const leftOut: { role: string; sentence: number }[] = []
+  let previous: { role?: string; carries: boolean; excluding: boolean; sentence: number } | undefined
+  for (const { words, sentence } of ideaParts(ideaTokens(prompt))) {
     const named = words.flatMap((w, i) => {
       const role = roleWord(w)
       return role ? [{ i, role }] : []
     })
     const negated = words.some(negates)
     const described = words.some(describes)
+    const excluding =
+      named.length > 0 &&
+      (EXCLUDERS.has(words[0] ?? '') ||
+        negated ||
+        (!!previous?.excluding && previous.sentence === sentence && !described))
+    if (excluding) leftOut.push(...named.map(({ role }) => ({ role, sentence })))
     if (described && !negated) {
-      const carried = !named.length && previous?.role && !previous.described && !previous.negated
+      const carried =
+        !named.length &&
+        previous?.role &&
+        (previous.carries || (previous.excluding && RELATIVES.has(words[0] ?? '')))
       words.forEach((word, i) => {
         if (!describes(word)) return
         // The nearest section named; on a tie the one after the word ("slow verse fast chorus").
@@ -214,19 +280,30 @@ export function ideaAsks(prompt: string): IdeaAsks {
         const role = near?.role ?? (carried ? previous?.role : undefined)
         const strength = STRONGER.has(words[i - 1] ?? '') ? 2 : 1
         const list = votes.get(role) ?? []
-        list.push({ word, pace: paceOf(word) * strength, light: lightOf(word) })
+        list.push({ word, pace: paceOf(word) * strength, light: lightOf(word), sentence })
         votes.set(role, list)
       })
     }
-    previous = { role: named[named.length - 1]?.role, described, negated }
+    previous = {
+      role: named[named.length - 1]?.role,
+      carries: !excluding && !described && !negated,
+      excluding,
+      sentence,
+    }
   }
-  const all = tally(votes.get(undefined) ?? []) ?? { pace: 0, light: 0, words: [] }
+  const whole = votes.get(undefined) ?? []
+  const all = tally(whole) ?? noAsk()
   const roles = new Map<string, IdeaAsk>()
   for (const [role, list] of votes) {
     const ask = role ? tally(list) : undefined
     if (role && ask) roles.set(role, ask)
   }
-  return { all, roles }
+  const excepted = new Map<string, IdeaAsk>()
+  for (const role of new Set(leftOut.map((l) => l.role))) {
+    const kept = whole.filter((v) => !leftOut.some((l) => l.role === role && l.sentence === v.sentence))
+    if (kept.length < whole.length) excepted.set(role, tally(kept) ?? noAsk())
+  }
+  return { all, roles, excepted }
 }
 
 export function normalizedLabel(label: string): string {
@@ -499,8 +576,10 @@ export function defaultSectionBrief(
   const { mood: songMood, tags } = moodFor(section)
   const asks = ideaAsks(input.prompt)
   // As the section is named, not its role: the user's chorus is the one the song map shows, sure or not.
-  const own = asks.roles.get(normalizedLabel(section.label))
-  const light = asks.all.words.filter((w) => BRIGHTER.has(w) || DARKER.has(w))
+  const role = normalizedLabel(section.label)
+  const own = asks.roles.get(role)
+  const whole = asks.excepted.get(role) ?? asks.all
+  const light = whole.words.filter((w) => BRIGHTER.has(w) || DARKER.has(w))
   const mood = own?.words.length
     ? [...(own.light ? [] : light), ...own.words].join(', ')
     : [...light, songMood].join(', ')
@@ -511,7 +590,7 @@ export function defaultSectionBrief(
       : ownPace < 0
         ? Math.min(section.energy, 0.35)
         : section.energy
-  const steps = Math.max(-2, Math.min(2, asks.all.pace + ownPace))
+  const steps = ownPace || whole.pace
   const pace = paceFor(input.kind, section, bpm, generated, input.pace)
   const catalog = input.catalog
   const label = roleOf(section)
