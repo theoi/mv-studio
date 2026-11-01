@@ -30,6 +30,114 @@ export function promptWords(prompt: string): string[] {
   return [...words, ...pairs, ...words.slice(2).map((w, i) => `${words[i]} ${words[i + 1]} ${w}`)]
 }
 
+/** What an idea asks for in plain words, for the whole video or for one kind of section. */
+export interface IdeaAsk {
+  /** Steps faster (positive) or slower (negative), up to 2 ("very fast"). */
+  pace: number
+  /** 1 brighter, -1 darker. */
+  light: number
+  /** The idea's own words for it, as written ("fast", "bright"). */
+  words: string[]
+}
+
+export interface IdeaAsks {
+  all: IdeaAsk
+  /** By section role (normalizedLabel): "fast and bright in the chorus" asks it of the chorus. */
+  roles: Map<string, IdeaAsk>
+}
+
+const ROLE_WORDS: [RegExp, string][] = [
+  [/^pre-choruse?s?$/, 'pre-chorus'],
+  [/^(choruse?s?|hooks?|refrains?|drops?)$/, 'chorus'],
+  [/^verses?$/, 'verse'],
+  [/^(bridges?|breakdowns?)$/, 'bridge'],
+  [/^intros?$/, 'intro'],
+  [/^(outros?|ending)$/, 'outro'],
+]
+const FASTER = new Set([
+  'fast',
+  'faster',
+  'quick',
+  'quicker',
+  'rapid',
+  'snappy',
+  'punchy',
+  'energetic',
+  'upbeat',
+  'intense',
+  'frantic',
+  'hectic',
+  'high-energy',
+])
+const SLOWER = new Set([
+  'slow',
+  'slower',
+  'calm',
+  'calmer',
+  'chill',
+  'relaxed',
+  'gentle',
+  'mellow',
+  'laid-back',
+])
+const BRIGHTER = new Set(['bright', 'brighter', 'sunny', 'colorful', 'colourful', 'vivid', 'vibrant'])
+const DARKER = new Set(['dark', 'darker', 'moody', 'gloomy'])
+const STRONGER = new Set(['very', 'really', 'super', 'extra', 'much'])
+const NOT = new Set(['not', 'no', 'never', 'less', 'without'])
+/** Words that start a new thought: "fast verses but a slow bridge". */
+const BREAKS = new Set(['but', 'then', 'while', 'except'])
+
+const roleWord = (word: string) => ROLE_WORDS.find(([pattern]) => pattern.test(word))?.[1]
+
+/**
+ * Pace and brightness words in an idea, without a language model. Each word goes to the section named nearest to it
+ * in the same part of the sentence ("fast and bright in the chorus", "slow verses and fast choruses"), or to the whole
+ * video when that part names none. A word just after "not" or "less" is left out.
+ */
+export function ideaAsks(prompt: string): IdeaAsks {
+  const all: IdeaAsk = { pace: 0, light: 0, words: [] }
+  const roles = new Map<string, IdeaAsk>()
+  const clauses = prompt
+    .toLowerCase()
+    .replace(/\bpre[\s-]+chorus/g, 'pre-chorus')
+    .split(/[.,;:!?()\n]+/)
+  for (const clause of clauses) {
+    const parts: string[][] = [[]]
+    for (const word of clause.replace(/[^a-z0-9'\s-]/g, ' ').split(/\s+/)) {
+      if (!word) continue
+      if (BREAKS.has(word)) parts.push([])
+      else parts[parts.length - 1]?.push(word)
+    }
+    for (const words of parts) {
+      const named = words.flatMap((w, i) => {
+        const role = roleWord(w)
+        return role ? [{ i, role }] : []
+      })
+      words.forEach((word, i) => {
+        const pace = FASTER.has(word) ? 1 : SLOWER.has(word) ? -1 : 0
+        const light = BRIGHTER.has(word) ? 1 : DARKER.has(word) ? -1 : 0
+        if (!pace && !light) return
+        const before = words.slice(Math.max(0, i - 2), i)
+        if (before.some((w) => NOT.has(w))) return
+        // The nearest section named; on a tie the one after the word ("slow verses and fast choruses").
+        const near = named.reduce<{ i: number; role: string } | undefined>(
+          (best, n) => (!best || Math.abs(n.i - i) <= Math.abs(best.i - i) ? n : best),
+          undefined,
+        )
+        let ask = all
+        if (near) {
+          ask = roles.get(near.role) ?? { pace: 0, light: 0, words: [] }
+          roles.set(near.role, ask)
+        }
+        if (pace) ask.pace = pace * (before.some((w) => STRONGER.has(w)) ? 2 : 1)
+        if (light) ask.light = light
+        if (!ask.words.includes(word)) ask.words.push(word)
+      })
+    }
+  }
+  return { all, roles }
+}
+
 export function normalizedLabel(label: string): string {
   const l = label.toLowerCase()
   if (/chorus|hook|refrain|drop/.test(l)) return 'chorus'
@@ -297,12 +405,25 @@ export function defaultSectionBrief(
   bpm: number,
   generated: boolean,
 ): BriefSection {
-  const { mood, tags } = moodFor(section)
-  const intensity = section.energy
+  const { mood: songMood, tags } = moodFor(section)
+  const asks = ideaAsks(input.prompt)
+  // As the section is named, not its role: the user's chorus is the one the song map shows, sure or not.
+  const own = asks.roles.get(normalizedLabel(section.label))
+  const light = asks.all.words.filter((w) => BRIGHTER.has(w) || DARKER.has(w))
+  const mood = own?.words.length ? own.words.join(', ') : [...light, songMood].join(', ')
+  const ownPace = own?.pace ?? 0
+  const intensity =
+    ownPace > 0
+      ? Math.max(section.energy, 0.75)
+      : ownPace < 0
+        ? Math.min(section.energy, 0.35)
+        : section.energy
+  const steps = Math.max(-2, Math.min(2, asks.all.pace + ownPace))
+  const pace = paceFor(input.kind, section, bpm, generated, input.pace)
   const catalog = input.catalog
   const label = roleOf(section)
   const effects: string[] = []
-  if (isPeak(section)) {
+  if (isPeak(section) || (own?.light ?? 0) > 0) {
     const glow =
       catalog.effects.find((e) => e.id === 'glow') ?? bestByTags(catalog.effects, ['peak', 'energetic'])
     if (glow) effects.push(glow.id)
@@ -311,7 +432,7 @@ export function defaultSectionBrief(
     sectionId: section.id,
     mood,
     intensity,
-    pace: paceFor(input.kind, section, bpm, generated, input.pace),
+    pace: steps >= 0 ? faster(pace, steps) : slower(pace, -steps),
     effects,
     reactive: intensity >= 0.6 ? Math.min(1, 0.3 + intensity * 0.6) : 0,
     mediaQuery: [input.prompt, mood].filter(Boolean).join(', '),

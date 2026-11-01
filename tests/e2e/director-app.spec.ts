@@ -106,6 +106,33 @@ test('drafts a lyric video on this device, lists the plan, and undoes it', async
   })
 })
 
+test('a project reopened without its kind in the link drafts as the kind it was made as', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  // An AI video without fal.ai says so; a lyric video without lyrics would ask for them instead.
+  const noAi = page.getByText('This draft uses your media or visuals.', { exact: false })
+  const addLyrics = page.getByText('Add lyrics in Assist › Lyrics', { exact: false })
+  await expect(noAi).toBeVisible()
+  const id = await page.evaluate(() => window.mvStudio.app.project.editor.getProject().id as string)
+  // A bookmark or the typed address opens the kept project without the kind.
+  await page.evaluate((project) => {
+    window.location.hash = `#/editor?project=${project}&tab=assist&assist=director`
+  }, id)
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect.poll(() => page.evaluate(() => window.mvStudio.app.ui.get().kind)).toBe('lyric')
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  await expect(noAi).toBeVisible()
+  await expect(addLyrics).toHaveCount(0)
+})
+
 test('drafts from the setup screen with the idea typed there', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
@@ -121,9 +148,9 @@ test('drafts from the setup screen with the idea typed there', async ({ page }) 
   await expect(page.getByText('Your own tracks are kept below the draft, hidden.')).toBeHidden()
   expect(first.hiddenTracks).toBe(0)
 
-  // The built-in planner only takes the mood from Refine, so it offers another version instead.
+  // The built-in planner only takes the look, mood and pace from Refine, so it offers another version instead.
   await expect(
-    page.getByText('The built-in planner takes the look and mood from your words.', { exact: false }),
+    page.getByText('The built-in planner takes the look, mood and pace from your words', { exact: false }),
   ).toBeVisible()
   await page.getByRole('button', { name: 'Try another version' }).focus()
   await page.keyboard.press('Enter')

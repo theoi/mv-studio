@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { directorRequest, draftProgress } from '../../../src/app/state/director.ts'
+import { directorRequest, draftProgress, videoKindFor } from '../../../src/app/state/director.ts'
 import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
+import { createProject } from '../../../src/model/factory.ts'
+import { createFromTemplate } from '../../../src/plugins/templates.ts'
 import type { JobSnapshot } from '../../../src/shared/jobs.ts'
 
 const job = (
@@ -39,5 +41,17 @@ describe('directorRequest', () => {
     expect(directorRequest('', 'mix', 'video').generate?.mode).toBe('video')
     expect(directorRequest('', 'mix').generate?.mode).toBe('images')
     expect(directorRequest('', 'mine', 'video').generate).toBeUndefined()
+  })
+})
+
+describe('videoKindFor', () => {
+  it('drafts the kind the project was made as, whatever kind the link gave the editor', () => {
+    expect(videoKindFor('lyric', createFromTemplate('ai'))).toBe('ai')
+    expect(videoKindFor('lyric', createFromTemplate('footage'))).toBe('beat-cut')
+    expect(videoKindFor('ai', createFromTemplate('lyric'))).toBe('lyric')
+  })
+
+  it('takes the editor’s kind for a project made without a starter template', () => {
+    expect(videoKindFor('visualizer', createProject({ name: 'Imported' }))).toBe('visualizer')
   })
 })

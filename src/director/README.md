@@ -49,6 +49,12 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   from the audio alone (`SongSection.confidence` below 0.6) on a section no louder than the rest of the song is
   treated as a verse (`roleOf`): no chorus pace, particles, emphasis or behind-subject lines staked on a guess. The
   LLM brief marks such labels `labelGuessed`.
+- **Pace and brightness words in the idea** (`ideaAsks`), without an LLM: "fast", "punchy", "slow", "calm" and the
+  like move a section's pace a step ("very fast" two), and "bright", "vivid", "dark" or "moody" go into its mood (a
+  section called bright also gets a glow). A word applies to the section named nearest to it in the same part of the sentence
+  ("fast and bright in the chorus", "slow verses and fast choruses"), as the song map labels it (a guessed chorus
+  too), and then the section's mood is the user's words. Without a section named, pace words shift the whole video
+  and brightness words lead every section's mood. "not" or "less" just before a word drops it.
 - **Phrasing inside a section** (`phrasedCutTimes`): bars clearly louder than the rest of their section cut twice as
   often, clearly quieter bars half as often, and the last bar before a faster section speeds up into it.
 - **Lyric timing**: a line shows up to 0.3 s before it is sung and holds up to 1 s after (longer for long lines,

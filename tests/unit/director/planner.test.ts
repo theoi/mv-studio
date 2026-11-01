@@ -11,7 +11,9 @@ import {
   type EditPlan,
   type LookPreset,
   type PlanShot,
+  PACES,
 } from '../../../src/director/index.ts'
+import { ideaAsks } from '../../../src/director/rules.ts'
 import { CLIPS, fakeMatcher, makeProject as visionProject } from '../vision/autocut/fixtures.ts'
 import {
   BEATS,
@@ -345,5 +347,86 @@ describe('looks', () => {
     }
     const title = p.texts.find((t) => t.role === 'title')!
     expect(title.style.letterSpacing).toBeLessThan(0.5)
+  })
+})
+
+describe('pace and brightness words in the idea', () => {
+  const none = { pace: 0, light: 0, words: [] }
+  it.each([
+    ['fast and bright in the chorus', { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } }, none],
+    [
+      'slow verses and fast choruses',
+      { verse: { pace: -1, light: 0, words: ['slow'] }, chorus: { pace: 1, light: 0, words: ['fast'] } },
+      none,
+    ],
+    [
+      'slow verse fast chorus',
+      { verse: { pace: -1, light: 0, words: ['slow'] }, chorus: { pace: 1, light: 0, words: ['fast'] } },
+      none,
+    ],
+    [
+      'punchy in the pre chorus but calm in the bridge',
+      {
+        'pre-chorus': { pace: 1, light: 0, words: ['punchy'] },
+        bridge: { pace: -1, light: 0, words: ['calm'] },
+      },
+      none,
+    ],
+    ['Very fast in the drop', { chorus: { pace: 2, light: 0, words: ['fast'] } }, none],
+    ['A dark, very slow video', {}, { pace: -2, light: -1, words: ['dark', 'slow'] }],
+    ['Not too fast in the chorus, less dark', {}, none],
+    ['a dreamy night drive through a neon city, ending at sunrise', {}, none],
+  ])('reads “%s”', (idea, roles, all) => {
+    const asks = ideaAsks(idea)
+    expect(Object.fromEntries(asks.roles)).toEqual(roles)
+    expect(asks.all).toEqual(all)
+  })
+
+  /** An AI video of the user's clips whose first chorus is a guess no louder than the verse, as on many songs. */
+  async function guessedChorus(prompt: string) {
+    const project = makeProject()
+    project.analysis.audio.song!.sections = SECTIONS.map((s) => ({
+      ...s,
+      confidence: 0.4,
+      ...(s.id === 's-chorus1' ? { energy: 0.45 } : {}),
+    }))
+    const input = await buildPlannerInput(project, { kind: 'ai', seed: 7, prompt })
+    const p = await planLocally(input)
+    const section = (id: string) => p.sections.find((s) => s.id === id)!
+    const shots = (id: string) => main(p).filter((s) => s.sectionId === id)
+    const brief = (id: string) => ruleBrief(input).sections.find((s) => s.sectionId === id)!
+    return { p, section, shots, brief }
+  }
+
+  it('makes the chorus the idea calls fast and bright faster and brighter, guessed or not', async () => {
+    const plain = await guessedChorus('neon city')
+    const asked = await guessedChorus('neon city, fast and bright in the chorus')
+    expect(plain.section('s-chorus1').mood).toBe('steady, grounded')
+    expect(asked.section('s-chorus1').mood).toBe('fast, bright')
+    expect(PACES.indexOf(asked.section('s-chorus1').pace)).toBe(
+      PACES.indexOf(plain.section('s-chorus1').pace) + 1,
+    )
+    expect(meanLength(asked.shots('s-chorus1'))).toBeLessThan(meanLength(plain.shots('s-chorus1')))
+    // It reacts to the music as a loud section does.
+    expect(plain.brief('s-chorus1').reactive).toBe(0)
+    expect(asked.brief('s-chorus1').intensity).toBe(0.75)
+    expect(asked.brief('s-chorus1').reactive).toBeGreaterThan(0)
+    const glows = (shots: PlanShot[]) => shots.filter((s) => s.effects?.some((e) => e.effectId === 'glow'))
+    expect(glows(plain.shots('s-chorus1'))).toEqual([])
+    expect(glows(asked.shots('s-chorus1')).length).toBeGreaterThan(0)
+    // The rest of the song is as before.
+    for (const id of ['s-intro', 's-verse', 's-bridge', 's-outro'])
+      expect(asked.section(id)).toEqual(plain.section(id))
+  })
+
+  it('slows every section a step for a slow idea and leads every mood with “dark”', async () => {
+    const plain = await guessedChorus('neon city')
+    const asked = await guessedChorus('a slow, dark neon city')
+    expect(asked.p.sections).toHaveLength(SECTIONS.length)
+    for (const s of asked.p.sections) {
+      const before = plain.section(s.id)
+      expect(PACES.indexOf(s.pace)).toBe(Math.max(0, PACES.indexOf(before.pace) - 1))
+      expect(s.mood).toBe(`dark, ${before.mood}`)
+    }
   })
 })
