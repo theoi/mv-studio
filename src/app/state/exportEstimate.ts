@@ -4,6 +4,12 @@
  * outputs or what the project draws change, the dialog closes or an export starts, and none starts while an export
  * runs; Export never waits for one. Results are kept per drawn project and output, so reopening the dialog shows
  * them at once, and while an output is timed again its last estimate stays on screen.
+ *
+ * A trial times this device only while nothing else keeps it busy. On a 4-core machine without a GPU, a trial that ran
+ * while footage analysis worked gave 1.7 times what one on a quiet page gave, and one started a second after a reload
+ * 1.3 times. So a trial waits until the page has settled and no other job runs, for a limited time. One that ran
+ * under load anyway is shown but not kept: the output is timed again as soon as the app is quiet, also after the
+ * dialog was closed and reopened.
  */
 import { useEffect, useEffectEvent, useSyncExternalStore } from 'react'
 import {
@@ -15,18 +21,37 @@ import {
   type PlannedOutput,
 } from '../../export/index.ts'
 import type { Project } from '../../model/index.ts'
+import { jobs } from '../../shared/jobs.ts'
 import { JOB_KINDS, runningJobs, useJobs } from './jobs.ts'
 import { appMedia } from './media.ts'
 
 /** Lets quick changes to the outputs settle, and the dialog's stills render first, before a trial starts. */
 const TRIAL_DELAY_MS = 400
+/**
+ * How long after the page loads a trial waits. A trial a second after a reload timed frames 1.3 times slower than
+ * one 46 s after, with nothing else running; one 7 s after the first load did not.
+ */
+export const SETTLE_MS = 10_000
+/**
+ * How long an output's first trial waits for other jobs to finish before it runs anyway (and is timed again later),
+ * so the dialog shows a figure while a long job, such as stems, runs.
+ */
+export const QUIET_WAIT_MS = 20_000
 
-/** Trial estimates by `trialKey`; null where no trial could run (the render worker cannot draw). */
-const trials = new Map<string, Required<OutputEstimate> | null>()
+/** A trial's estimate (null where no trial could run), and whether nothing else was busy while it ran. */
+interface Trial {
+  estimate: Required<OutputEstimate> | null
+  settled: boolean
+}
+
+/** Trials by `trialKey`. */
+const trials = new Map<string, Trial>()
 /** The latest trial estimate of each output of a project by `latestKey`, whatever the project drew then. */
 const latest = new Map<string, Required<OutputEstimate> | null>()
 const listeners = new Set<() => void>()
 let version = 0
+/** A first trial is waiting for other jobs to finish. */
+let waitingForJobs = false
 
 function changed(): void {
   version++
@@ -36,6 +61,12 @@ function changed(): void {
 function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
+}
+
+function setWaitingForJobs(waiting: boolean): void {
+  if (waiting === waitingForJobs) return
+  waitingForJobs = waiting
+  changed()
 }
 
 const drawnKeys = new WeakMap<Project, string>()
@@ -74,23 +105,122 @@ function latestKey(project: Project, planned: PlannedOutput): string {
 
 /** The trial estimates made so far, by output: for tests and for checking estimates against real exports. */
 export function trialEstimates(): Record<string, number | null> {
-  return Object.fromEntries([...trials].map(([key, trial]) => [key, trial && trial.seconds]))
+  return Object.fromEntries(
+    [...trials].map(([key, trial]) => [key, trial.estimate && trial.estimate.seconds]),
+  )
 }
 
-async function runTrials(project: Project, outputs: PlannedOutput[], signal: AbortSignal): Promise<void> {
-  for (const planned of outputs) {
-    const key = trialKey(project, planned)
-    let estimate: Required<OutputEstimate> | null = null
-    try {
-      estimate = await estimateOutput(planned, { signal, media: appMedia })
-    } catch (error) {
-      if (signal.aborted) return
-      console.warn('Couldn’t time a trial of the export', error)
+/** Outputs whose trial ran while something else kept the device busy, so they will be timed again: for tests. */
+export function unsettledTrials(): string[] {
+  return [...trials].filter(([, trial]) => !trial.settled).map(([key]) => key)
+}
+
+/** What trials depend on besides the output; unit tests pass their own. */
+export interface TrialEnvironment {
+  /** Milliseconds since the page loaded. */
+  pageAge(): number
+  /** Whether a job other than an export is running or waiting to run. */
+  busy(): boolean
+  /** Calls `listener` when jobs start, progress or end. Returns stop. */
+  watchJobs(listener: () => void): () => void
+  estimate(planned: PlannedOutput, signal: AbortSignal): Promise<Required<OutputEstimate> | null>
+}
+
+const appEnvironment: TrialEnvironment = {
+  pageAge: () => performance.now(),
+  busy: () => runningJobs(jobs.list()).some((j) => j.kind !== JOB_KINDS.export),
+  watchJobs: (listener) => jobs.subscribe(() => listener()),
+  estimate: (planned, signal) => estimateOutput(planned, { signal, media: appMedia }),
+}
+
+/**
+ * Resolves once the page has settled and no other job runs, after `maxMs` at most, or when `signal` aborts.
+ * `onJobs` says whether it is waiting for other jobs.
+ */
+function waitForQuiet(
+  env: TrialEnvironment,
+  signal: AbortSignal,
+  maxMs: number,
+  onJobs: (waiting: boolean) => void,
+): Promise<void> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let limit: ReturnType<typeof setTimeout> | undefined
+    let stop = () => {}
+    const done = () => {
+      clearTimeout(timer)
+      clearTimeout(limit)
+      stop()
+      signal.removeEventListener('abort', done)
+      onJobs(false)
+      resolve()
     }
+    const check = () => {
+      if (signal.aborted) return done()
+      const busy = env.busy()
+      const young = SETTLE_MS - env.pageAge()
+      if (!busy && young <= 0) return done()
+      onJobs(busy)
+      clearTimeout(timer)
+      if (young > 0) timer = setTimeout(check, young)
+    }
+    stop = env.watchJobs(check)
+    if (Number.isFinite(maxMs)) limit = setTimeout(done, maxMs)
+    signal.addEventListener('abort', done)
+    check()
+  })
+}
+
+async function timeOutput(
+  project: Project,
+  planned: PlannedOutput,
+  signal: AbortSignal,
+  env: TrialEnvironment,
+): Promise<void> {
+  let underLoad = env.pageAge() < SETTLE_MS || env.busy()
+  const stop = env.watchJobs(() => {
+    if (env.busy()) underLoad = true
+  })
+  let estimate: Required<OutputEstimate> | null = null
+  try {
+    estimate = await env.estimate(planned, signal)
+  } catch (error) {
     if (signal.aborted) return
-    trials.set(key, estimate)
-    latest.set(latestKey(project, planned), estimate)
-    changed()
+    console.warn('Couldn’t time a trial of the export', error)
+  } finally {
+    stop()
+  }
+  if (signal.aborted) return
+  // Where no trial can run (the render worker cannot draw) or it failed, timing it again would not help.
+  trials.set(trialKey(project, planned), { estimate, settled: !underLoad || estimate === null })
+  latest.set(latestKey(project, planned), estimate)
+  changed()
+}
+
+/**
+ * Times each output that has no settled trial: first those with none, each waiting a limited time for the app to be
+ * quiet, then again those timed under load, each once the app is quiet. Returns when all are settled or `signal`
+ * aborts.
+ */
+export async function runTrials(
+  project: Project,
+  outputs: PlannedOutput[],
+  signal: AbortSignal,
+  env: TrialEnvironment = appEnvironment,
+): Promise<void> {
+  const settled = (p: PlannedOutput) => trials.get(trialKey(project, p))?.settled === true
+  while (!signal.aborted) {
+    const todo = outputs.filter((p) => !settled(p))
+    if (!todo.length) return
+    const first = todo.filter((p) => !trials.has(trialKey(project, p)))
+    for (const planned of first.length ? first : todo) {
+      const untimed = !trials.has(trialKey(project, planned))
+      await waitForQuiet(env, signal, untimed ? QUIET_WAIT_MS : Infinity, (waiting) =>
+        setWaitingForJobs(untimed && waiting),
+      )
+      if (signal.aborted) return
+      await timeOutput(project, planned, signal, env)
+    }
   }
 }
 
@@ -99,28 +229,35 @@ async function runTrials(project: Project, outputs: PlannedOutput[], signal: Abo
  * being worked out. A remembered pace of an earlier export counts at once.
  */
 export function outputEstimate(project: Project, planned: PlannedOutput): OutputEstimate | null {
-  const key = trialKey(project, planned)
-  const current = trials.has(key)
-  const trial = current ? trials.get(key) : latest.get(latestKey(project, planned))
-  const known = knownEstimate(trial, current, rememberedEstimate(project.id, planned))
+  const trial = trials.get(trialKey(project, planned))
+  const current = trial !== undefined
+  const estimate = trial ? trial.estimate : latest.get(latestKey(project, planned))
+  const known = knownEstimate(estimate, current, rememberedEstimate(project.id, planned))
   if (known) return known
   // Without a trial the export would run on the main thread too; only the rough frame-rate guess is left, and it can
   // be far too low for the export's time left to start from.
-  return trial === null ? { seconds: estimateRenderSeconds(planned) } : null
+  return estimate === null ? { seconds: estimateRenderSeconds(planned) } : null
 }
 
-/**
- * Seconds the checked outputs take to export on this device, or null while that is still being worked out. Trials
- * run while `open` (the dialog shows its outputs).
- */
-export function useExportEstimate(project: Project, outputs: PlannedOutput[], open: boolean): number | null {
+/** What the export dialog shows of the time the checked outputs take. */
+export interface ExportEstimate {
+  /** Seconds on this device, or null while that is still being worked out. */
+  seconds: number | null
+  /** No figure yet because a trial waits for other jobs to finish. */
+  waitingForJobs: boolean
+  /** Every checked output has had a trial, settled or not. */
+  timed: boolean
+}
+
+/** The time the checked outputs take to export on this device. Trials run while `open` (the dialog shows its outputs). */
+export function useExportEstimate(project: Project, outputs: PlannedOutput[], open: boolean): ExportEstimate {
   useSyncExternalStore(subscribe, () => version)
   const exporting = runningJobs(useJobs()).some((j) => j.kind === JOB_KINDS.export)
   // A new project object or new plans of the same outputs restart nothing unless what they draw changed.
   const keys = outputs.map((p) => trialKey(project, p)).join('\n')
   const startTrials = useEffectEvent((signal: AbortSignal) => {
-    const todo = outputs.filter((p) => !trials.has(trialKey(project, p)))
-    if (todo.length) void runTrials(project, todo, signal)
+    if (outputs.some((p) => !trials.get(trialKey(project, p))?.settled))
+      void runTrials(project, outputs, signal)
   })
   useEffect(() => {
     if (!open || exporting || !keys) return
@@ -131,11 +268,15 @@ export function useExportEstimate(project: Project, outputs: PlannedOutput[], op
       controller.abort()
     }
   }, [keys, open, exporting])
-  let total = 0
+  const timed = outputs.every((p) => trials.has(trialKey(project, p)))
+  let total: number | null = 0
   for (const planned of outputs) {
     const estimate = outputEstimate(project, planned)
-    if (!estimate) return null
+    if (!estimate) {
+      total = null
+      break
+    }
     total += estimate.seconds
   }
-  return total
+  return { seconds: total, waitingForJobs: total === null && waitingForJobs, timed }
 }
