@@ -58,7 +58,7 @@ function ToastItem({ toast: t }: { toast: Toast }) {
         sync()
       }}
     >
-      <span>{t.message}</span>
+      <span className={styles.toastMessage}>{t.message}</span>
       {t.show && (
         <button
           className={styles.toastAction}
