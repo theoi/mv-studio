@@ -213,9 +213,55 @@ function filesOf(input: HTMLInputElement): File[] {
   return files
 }
 
+/** The clips step: a drop zone and the clips added so far. */
+function Clips({ dragging, onChoose }: { dragging: boolean; onChoose: () => void }) {
+  const { footage, adding, footageError } = useSetup()
+  return (
+    <>
+      <div
+        className={[styles.drop, styles.dropSmall, dragging && styles.dropActive].filter(Boolean).join(' ')}
+      >
+        <Film className={styles.dropInline} />
+        <span>Drop video clips and images, or</span>
+        <Button variant="secondary" size="sm" onClick={onChoose}>
+          Choose files
+        </Button>
+      </div>
+      {(footage.length > 0 || adding > 0) && (
+        <ul className={styles.clipList} aria-label="Your clips">
+          {footage.map((a) => (
+            <li key={a.id} className={styles.clipChip}>
+              {a.kind === 'image' ? <ImageIcon /> : <Film />}
+              <span className={styles.clipName} title={a.name}>
+                {a.name}
+              </span>
+              <IconButton size="xs" label={`Remove ${a.name}`} onClick={() => removeFootage(a.id)}>
+                <X />
+              </IconButton>
+            </li>
+          ))}
+          {adding > 0 && (
+            <li className={styles.clipChip} role="status">
+              <Spinner size={12} /> Adding {plural(adding, 'file')}…
+            </li>
+          )}
+        </ul>
+      )}
+      {footageError && (
+        <p className={styles.setupError} role="alert">
+          {footageError}
+        </p>
+      )}
+    </>
+  )
+}
+
+/** Kinds whose setup takes clips. */
+const takesClips = (kind: Kind) => kind === 'footage' || kind === 'ai'
+
 export function SetupScreen() {
   const kind = useUi((s) => s.kind)
-  const { song, songError, footage, adding, footageError, lyrics, idea, visualizerStyle } = useSetup()
+  const { song, songError, footage, adding, lyrics, idea, visualizerStyle } = useSetup()
   const falKey = useCloud().falKey
   const songInput = useRef<HTMLInputElement>(null)
   const clipInput = useRef<HTMLInputElement>(null)
@@ -259,7 +305,7 @@ export function SetupScreen() {
     const audio = files.find(isAudioFile)
     const others = files.filter((f) => !isAudioFile(f))
     if (audio) void chooseSong(audio)
-    if (kind === 'footage' && others.length) void addFootage(others)
+    if (takesClips(kind) && others.length) void addFootage(others)
     else if (!audio && others[0]) void chooseSong(others[0])
   }
   const open = async (withSong: boolean) => {
@@ -420,66 +466,35 @@ export function SetupScreen() {
               })}
             </div>
           )}
-          {kind === 'footage' && (
-            <>
-              <div
-                className={[styles.drop, styles.dropSmall, dragging && styles.dropActive]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                <Film className={styles.dropInline} />
-                <span>Drop video clips and images, or</span>
-                <Button variant="secondary" size="sm" onClick={() => clipInput.current?.click()}>
-                  Choose files
-                </Button>
-              </div>
-              {(footage.length > 0 || adding > 0) && (
-                <ul className={styles.clipList} aria-label="Your clips">
-                  {footage.map((a) => (
-                    <li key={a.id} className={styles.clipChip}>
-                      {a.kind === 'image' ? <ImageIcon /> : <Film />}
-                      <span className={styles.clipName} title={a.name}>
-                        {a.name}
-                      </span>
-                      <IconButton size="xs" label={`Remove ${a.name}`} onClick={() => removeFootage(a.id)}>
-                        <X />
-                      </IconButton>
-                    </li>
-                  ))}
-                  {adding > 0 && (
-                    <li className={styles.clipChip} role="status">
-                      <Spinner size={12} /> Adding {plural(adding, 'file')}…
-                    </li>
-                  )}
-                </ul>
-              )}
-              {footageError && (
-                <p className={styles.setupError} role="alert">
-                  {footageError}
-                </p>
-              )}
-            </>
-          )}
+          {kind === 'footage' && <Clips dragging={dragging} onChoose={() => clipInput.current?.click()} />}
           {kind === 'ai' && (
-            <>
-              <TextArea
-                placeholder="Describe the video, for example: a dreamy night drive through a neon city, ending at sunrise"
-                rows={3}
-                aria-label="Describe your video"
-                value={idea}
-                onChange={(e) => setSetup({ idea: e.target.value })}
-              />
-              <div className={styles.note}>
-                <Info />
-                <span>
-                  {falKey
-                    ? 'With fal.ai connected, the draft adds AI shots. You see the price before anything is generated.'
-                    : 'Drafts work on this device with your media. Connect fal.ai in Settings to generate new shots; the cost is shown before anything is generated.'}
-                </span>
-              </div>
-            </>
+            <TextArea
+              placeholder="Describe the video, for example: a dreamy night drive through a neon city, ending at sunrise"
+              rows={3}
+              aria-label="Describe your video"
+              value={idea}
+              onChange={(e) => setSetup({ idea: e.target.value })}
+            />
           )}
         </div>
+
+        {kind === 'ai' && (
+          <div className={styles.step}>
+            <div className={styles.stepLabel}>
+              <span className={styles.stepNum}>3</span> Your clips
+              <span className={styles.optional}>Optional</span>
+            </div>
+            <Clips dragging={dragging} onChoose={() => clipInput.current?.click()} />
+            <div className={styles.note}>
+              <Info />
+              <span>
+                {falKey
+                  ? 'With fal.ai connected, the draft adds AI shots. You see the price before anything is generated.'
+                  : 'Drafts work on this device with your clips. Connect fal.ai in Settings to generate new shots; the cost is shown before anything is generated.'}
+              </span>
+            </div>
+          </div>
+        )}
 
         <div className={styles.setupFooter}>
           <Button
@@ -487,7 +502,10 @@ export function SetupScreen() {
             size="lg"
             iconEnd={action === 'draft' ? <Sparkles /> : <ArrowRight />}
             disabled={
-              song?.status !== 'ready' || opening || (action === 'cut' && song.analysis === 'running')
+              song?.status !== 'ready' ||
+              opening ||
+              (action === 'cut' && song.analysis === 'running') ||
+              (takesClips(kind) && adding > 0)
             }
             onClick={() => void open(true)}
           >

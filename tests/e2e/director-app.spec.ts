@@ -165,6 +165,54 @@ test('drafts from the setup screen with the idea typed there', async ({ page }) 
   await expect(page.getByRole('button', { name: 'Play the draft' })).toBeFocused()
 })
 
+test('an AI video drafts with the clips given on the setup screen, and offers to draft again with clips imported later', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('textbox', { name: 'Describe your video' }).fill('neon night drive')
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.getByLabel('Clip files').setInputFiles([path.join(FIXTURE_DIR, 'clip.mp4')])
+  await expect(page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')).toHaveCount(1, {
+    timeout: 30_000,
+  })
+  // The note on what a draft uses sits under the clips step, above the button that starts the draft.
+  const clipList = (await page.getByRole('list', { name: 'Your clips' }).boundingBox())!
+  const note = (await page.getByText(/^Drafts work on this device with your clips\./).boundingBox())!
+  const draftButton = (await page.getByRole('button', { name: 'Draft my video' }).boundingBox())!
+  expect(note.y).toBeGreaterThanOrEqual(clipList.y + clipList.height)
+  expect(note.y + note.height).toBeLessThanOrEqual(draftButton.y)
+  await page.screenshot({ path: testInfo.outputPath('setup-ai-clips.png'), fullPage: true })
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  /** The media the draft's shots show. */
+  const used = () =>
+    page.evaluate(() => {
+      const project = window.mvStudio.app.project.editor.getProject()
+      const clips = Object.values(project.clips) as { assetId?: string; meta?: { director?: unknown } }[]
+      const names = clips.flatMap((c) =>
+        c.meta?.director && c.assetId ? [project.assets[c.assetId]?.name] : [],
+      )
+      return [...new Set(names)].sort()
+    })
+  expect(await used()).toEqual(['clip.mp4'])
+
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const offer = assist.getByText('1 image added after this draft. Draft again to use it.')
+  await expect(offer).toBeHidden()
+  await page.getByLabel('Import media files').setInputFiles(path.join(FIXTURE_DIR, 'image.png'))
+  await expect(offer).toBeVisible({ timeout: 30_000 })
+  // The open panel makes the offer, so no notice repeats it.
+  await expect(page.getByText('1 image added after the draft. Draft again to use it?')).toBeHidden()
+  await page.screenshot({ path: testInfo.outputPath('director-new-clips.png') })
+  await assist.getByRole('button', { name: 'Draft again', exact: true }).click()
+  await expect.poll(used, { timeout: 30_000 }).toEqual(['clip.mp4', 'image.png'])
+  await expect(placed(page)).toBeVisible()
+  await expect(offer).toBeHidden()
+})
+
 test('a draft from the setup screen goes on the template’s tracks, with one look and no empty tracks', async ({
   page,
 }) => {
