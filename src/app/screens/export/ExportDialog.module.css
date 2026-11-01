@@ -460,11 +460,14 @@
 .jobTop {
   display: flex;
   justify-content: space-between;
+  gap: var(--space-4);
   margin-bottom: 8px;
 }
 
 .jobName {
+  flex-shrink: 0;
   font-weight: var(--weight-medium);
+  white-space: nowrap;
 }
 
 .exportingFoot {

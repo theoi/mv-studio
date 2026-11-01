@@ -18,12 +18,13 @@ import {
   exportSize,
   type ExportOptions,
 } from '../engine/export.ts'
-import type { ExportSettings } from '../engine/types.ts'
+import type { ExportSettings, MediaFileSource } from '../engine/types.ts'
+import { mediaStore } from '../media/mediaStore.ts'
 import { applyCommand, type EditCommand } from '../model/commands.ts'
 import { createSolidClip, createTrack, newId } from '../model/factory.ts'
 import { projectDuration } from '../model/queries.ts'
-import type { AspectPreset, Project, Seconds } from '../model/types.ts'
-import { jobs, type JobContext, type JobHandle } from '../shared/jobs.ts'
+import type { AspectPreset, Asset, Project, Seconds } from '../model/types.ts'
+import { JobError, jobs, type JobContext, type JobHandle } from '../shared/jobs.ts'
 import { rememberPace, type ExportPaceStore, type OutputEstimate } from './estimate.ts'
 import { convertToFormat, type ClipFraming, type FormatConversion, type FormatOptions } from './formats.ts'
 import {
@@ -477,6 +478,70 @@ export async function exportOutputs(
   return results
 }
 
+/** The media an export draws or plays: every asset its clips and tracks name, as their media, in effects or in styles. */
+export function exportedAssets(project: Project): Asset[] {
+  const ids = new Set<string>()
+  const visit = (value: unknown): void => {
+    if (typeof value === 'string') {
+      if (Object.hasOwn(project.assets, value)) ids.add(value)
+    } else if (value && typeof value === 'object') for (const v of Object.values(value)) visit(v)
+  }
+  visit(project.clips)
+  visit(project.tracks)
+  return [...ids].flatMap((id) => project.assets[id] ?? [])
+}
+
+/** Up to three of the assets' names, or two and how many more. */
+function assetNames(assets: readonly Asset[]): string {
+  const names = assets.map((a) => `“${a.name}”`)
+  const shown = names.length > 3 ? [...names.slice(0, 2), `${names.length - 2} more`] : names
+  return shown.length < 2 ? (shown[0] ?? '') : `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}`
+}
+
+/**
+ * The error for an export whose media can no longer be read, or null while all of it can. The browser clears the site's
+ * storage when the disk is nearly full, and an export then draws blank frames and silence, or fails on a file it can't
+ * find with an error that only says so.
+ */
+export async function mediaGone(project: Project, media: MediaFileSource): Promise<JobError | null> {
+  const assets = exportedAssets(project)
+  const stored = await Promise.all(
+    assets.map((a) =>
+      media.getFile(a).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  )
+  const gone = assets.filter((_, i) => !stored[i])
+  if (!gone.length) return null
+  const files = gone.length === 1 ? 'media file' : 'media files'
+  // When only some went, their names (the library still lists them) say which to bring back.
+  const what =
+    gone.length === assets.length
+      ? `this project’s ${files}`
+      : `${assetNames(gone)}, ${gone.length} of the ${assets.length} media files this export uses`
+  const generated = gone.filter((a) => a.origin.type === 'generated').length
+  const remake = !generated ? 'Import' : generated === gone.length ? 'Generate' : 'Import or generate'
+  // The clips that showed them still point at the media that went, so new ones have to take their place.
+  const it = gone.length === 1 ? 'it' : 'them'
+  return new JobError(
+    'storage-quota',
+    `The browser cleared ${what}, as it does when the disk is nearly full. ${remake} ${it} again and put ${it} back in the timeline.`,
+  )
+}
+
+/** Why an export failed: that its media are gone (`mediaGone`), or else its own error. */
+export async function exportFailure(
+  error: unknown,
+  project: Project,
+  media: MediaFileSource,
+): Promise<unknown> {
+  if (error instanceof JobError && error.code === 'cancelled') return error
+  const gone = await mediaGone(project, media)
+  return gone ? new JobError(gone.code, gone.message, { cause: error }) : error
+}
+
 /** Starts the export job for the outputs. */
 export function startExport(
   project: Project,
@@ -486,6 +551,14 @@ export function startExport(
   return jobs.run({
     kind: 'export.outputs',
     title: specs.length === 1 ? 'Exporting video' : `Exporting ${specs.length} videos`,
-    run: (ctx) => exportOutputs(project, specs, ctx, options),
+    run: async (ctx) => {
+      const media = options.media ?? mediaStore
+      // Without them it would make a file of blank frames and silence.
+      const gone = await mediaGone(project, media)
+      if (gone) throw gone
+      return exportOutputs(project, specs, ctx, options).catch(async (error: unknown) => {
+        throw await exportFailure(error, project, media)
+      })
+    },
   })
 }
