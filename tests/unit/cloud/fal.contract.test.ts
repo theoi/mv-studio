@@ -276,6 +276,37 @@ describe('fal.ai adapter against a mock fal queue', () => {
     expect(error.kind).toBe('content-policy')
   })
 
+  it('says a request past the model’s typical time is taking longer than usual, with no time left', async () => {
+    const server = new MockFalServer()
+    const net = browserFetch(server.servers())
+    // Each look at the clock moves it a second, so the request runs past flux schnell's typical 3 s.
+    let clock = 0
+    const provider = new FalProvider({
+      getKey: () => FAL_TEST_KEY,
+      fetch: net.fetch,
+      pollIntervalMs: 1,
+      now: () => (clock += 1000),
+    })
+    const url = server.file('out.jpg', new Blob(['jpeg-bytes'], { type: 'image/jpeg' }))
+    server.script('fal-ai/flux/schnell', {
+      statuses: ['IN_PROGRESS', 'IN_PROGRESS', 'IN_PROGRESS', 'IN_PROGRESS', 'COMPLETED'],
+      result: { images: [{ url, width: 1024, height: 1024, content_type: 'image/jpeg' }] },
+    })
+    const { ctx, progress } = context()
+    await provider.generate(
+      { task: 'text-to-image', modelId: 'fal-ai/flux/schnell', prompt: 'x', aspect: '1:1' },
+      ctx,
+    )
+    const generating = progress.filter((p) => p.stage === 'generate')
+    expect(generating[0]?.message).toBe('Generating, usually a few seconds')
+    expect(generating[0]?.etaSeconds).toBeGreaterThan(0)
+    expect(generating.at(-1)).toMatchObject({
+      message: 'Generating, taking longer than usual',
+      etaSeconds: undefined,
+    })
+    expect(generating.filter((p) => p.etaSeconds === 0)).toEqual([])
+  })
+
   it('cancels at fal.ai when the job is cancelled while generating', async () => {
     const { server, provider, net } = setup()
     server.script('fal-ai/flux/schnell', { statuses: ['IN_PROGRESS'] })
