@@ -591,6 +591,7 @@ export async function importProjectFile(file: File): Promise<void> {
     if (choice === 'open') {
       // Reopening the project being edited would reload it and lose its undo history and selection.
       if (editor.getProject().id !== kept.id || get().screen !== 'editor') await openProject(kept.id)
+      else toast(`“${kept.name}” is already open`)
       return
     }
     if (isRunning(JOB_KINDS.projectImport)) return

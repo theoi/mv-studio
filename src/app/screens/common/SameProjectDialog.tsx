@@ -1,6 +1,6 @@
 import { Button } from '../../ds/Button.tsx'
 import { Dialog } from '../../ds/Dialog.tsx'
-import { editedAgo } from '../../format.ts'
+import { editedTimes } from '../../format.ts'
 import { chooseSameProject, usePersistence } from '../../state/persistence.ts'
 import styles from './Common.module.css'
 
@@ -10,6 +10,7 @@ export function SameProjectDialog() {
   const newer =
     question &&
     (question.fileAt > question.keptAt ? 'file' : question.fileAt < question.keptAt ? 'kept' : null)
+  const [keptAt, fileAt] = question ? editedTimes(question.keptAt, question.fileAt) : []
   return (
     <Dialog
       open={question !== null}
@@ -33,21 +34,21 @@ export function SameProjectDialog() {
       {question && (
         <div className={styles.sameProject}>
           <p>
-            {question.fileName} holds a project you already have here. Open the one here, or keep the file’s
+            “{question.fileName}” holds a project you already have here. Open the one here, or keep the file’s
             version too, as “{question.copyName}”.
           </p>
           <dl className={styles.sameProjectVersions}>
             <div>
               <dt>Here</dt>
               <dd>
-                {editedAgo(question.keptAt)}
+                {keptAt}
                 {newer === 'kept' && ' · newer'}
               </dd>
             </div>
             <div>
               <dt>In the file</dt>
               <dd>
-                {editedAgo(question.fileAt)}
+                {fileAt}
                 {newer === 'file' && ' · newer'}
                 {newer === null && ' · same version'}
               </dd>

@@ -632,8 +632,11 @@ test('opening a project file of a project already here asks whether to open that
   const openButton = page.getByRole('button', { name: 'Open project file' })
   await openProjectFileIn(page, file)
   await expect(ask).toContainText('keep the file’s version too, as “Portable (2)”')
-  await expect(ask.getByRole('definition').first()).toHaveText('Edited just now · newer')
-  await expect(ask).toContainText('Portable.mvstudio holds a project you already have here.')
+  // Both were edited "just now", so the times are clock times.
+  await expect(ask.getByRole('definition').first()).toHaveText(
+    /^Edited \d{1,2}:\d{2}(:\d{2})? [AP]M · newer$/,
+  )
+  await expect(ask).toContainText('“Portable.mvstudio” holds a project you already have here.')
   await expect(ask.getByRole('term').nth(1)).toHaveText('In the file')
   await page.keyboard.press('Escape')
   await expect(ask).toBeHidden()
@@ -646,6 +649,11 @@ test('opening a project file of a project already here asks whether to open that
   await expect(page.getByRole('button', { name: 'Project: Portable' })).toBeVisible()
   expect(await snapshot(page)).toEqual({ ...before, clips: before.clips + 1 })
   expect(await keptCount(page)).toBe(1)
+  // Asked again while editing it, the one here is already open.
+  await openFromMenu(page, 'Portable', file)
+  await ask.getByRole('button', { name: 'Open the one here' }).click()
+  await expect(page.getByText('“Portable” is already open')).toBeVisible()
+  expect(await snapshot(page)).toEqual({ ...before, clips: before.clips + 1 })
 
   // Keep a copy: nothing is restored while the question is up, then only the file missing here.
   await page.evaluate(async () => {

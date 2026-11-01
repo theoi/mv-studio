@@ -75,6 +75,30 @@ export function editedAgo(iso: string, now = Date.now()): string {
   return `Edited ${date}`
 }
 
+/**
+ * When two versions of a project were last changed, told apart: as editedAgo() says, unless that reads the same for
+ * both ("Edited just now"), then as clock times: "Edited 2:59 PM", with the date when it isn't today and the seconds
+ * when the minute is the same too.
+ */
+export function editedTimes(a: string, b: string, now = Date.now()): [string, string] {
+  const ago: [string, string] = [editedAgo(a, now), editedAgo(b, now)]
+  if (ago[0] !== ago[1] || a === b) return ago
+  const today = new Date(now)
+  const clock = (iso: string, seconds: boolean) => {
+    const d = new Date(iso)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const time = `${d.getHours() % 12 || 12}:${pad(d.getMinutes())}${seconds ? `:${pad(d.getSeconds())}` : ''} ${d.getHours() < 12 ? 'AM' : 'PM'}`
+    if (d.toDateString() === today.toDateString()) return `Edited ${time}`
+    const date = d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      ...(d.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' }),
+    })
+    return `Edited ${date}, ${time}`
+  }
+  const minutes: [string, string] = [clock(a, false), clock(b, false)]
+  return minutes[0] !== minutes[1] ? minutes : [clock(a, true), clock(b, true)]
+}
 /** A wait shown before it starts, in minutes rounded up so it never reads shorter than estimated: "About 6 min". */
 export function aboutMinutes(seconds: number): string {
   return seconds < 60 ? 'Under a minute' : `About ${Math.ceil(seconds / 60)} min`

@@ -128,3 +128,15 @@ it('opens nothing and says so when the kept projects cannot be read', async () =
   expect(usePersistence.getState().sameProject).toBeNull()
   expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Couldn’t open Portable\.mvstudio: /))
 })
+
+it('says the project is already open when the one here is the one being edited', async () => {
+  const open = keep('Portable')
+  editor.load(open)
+  store.incoming = open
+  const opening = importProjectFile(projectFile)
+  await vi.waitFor(() => expect(usePersistence.getState().sameProject).not.toBeNull())
+  chooseSameProject('open')
+  await opening
+  expect(toast).toHaveBeenCalledWith('“Portable” is already open')
+  expect(store.opened).toEqual([])
+})
