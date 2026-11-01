@@ -38,6 +38,7 @@ export function beatThisModel(
     const ort = await loadOrt()
     const files = await loadModelFiles(BEAT_THIS_MODEL, {
       signal: options.signal,
+      title: MODEL_TITLES.beats,
       onProgress: (p) =>
         options.onProgress?.({
           ...p,

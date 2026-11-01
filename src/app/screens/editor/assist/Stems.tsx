@@ -18,7 +18,7 @@ import {
   toggleStem,
   useUnplayableStem,
 } from '../../../state/stems.ts'
-import { pct, useJob } from './jobState.ts'
+import { pct, useFocusOnFailure, useJob } from './jobState.ts'
 import { CancelButton, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -70,6 +70,7 @@ export function StemsView() {
     }
   }, [project.songAssetId, ready, phase])
   const download = estimate?.downloadBytes ?? 0
+  const tryAgain = useFocusOnFailure(phase)
 
   if (phase === 'running') {
     // The progress card says what is happening; the subtitle names the song, as Song analysis does.
@@ -104,7 +105,13 @@ export function StemsView() {
         title="Stems"
         subtitle="Separation stopped"
         footer={
-          <Button variant="primary" block icon={<RotateCcw />} onClick={() => void startStems()}>
+          <Button
+            ref={tryAgain}
+            variant="primary"
+            block
+            icon={<RotateCcw />}
+            onClick={() => void startStems()}
+          >
             Try again
           </Button>
         }

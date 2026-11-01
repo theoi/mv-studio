@@ -38,6 +38,8 @@ export interface ModelLoadOptions {
   onProgress?: (progress: JobProgress & { file?: string }) => void
   /** Skip the cache read (still writes). */
   forceDownload?: boolean
+  /** The model's title in Settings › This device, for naming it in errors ("Lyrics aligner"). */
+  title?: string
 }
 
 export type ModelDevice = 'webgpu' | 'wasm'
@@ -107,7 +109,24 @@ async function movedFormerCopy(cache: Cache, file: ModelFile): Promise<ArrayBuff
   return undefined
 }
 
-/** Downloads (or reads from cache) one file with streaming progress. */
+/**
+ * How long a download waits for a response, and then for each next chunk, before it counts as not arriving. A request
+ * can get no response at all (a stalled proxy or CDN), and the browser then waits for many minutes without an error.
+ */
+const STALL_SECONDS = 30
+
+/** The error for a download that stopped arriving: a network error, so the job's Try again applies. */
+function notArriving(file: ModelFile, title: string | undefined): JobError {
+  const download = title ? `The download of ${theModel(title)}` : 'The model download'
+  return new JobError('network', `${download} isn’t arriving. Check your connection, then try again.`, {
+    details: { url: file.url, seconds: STALL_SECONDS },
+  })
+}
+
+/**
+ * Downloads (or reads from cache) one file with streaming progress. The download stage is reported as the request
+ * starts, before any bytes, and a download that gets no bytes for `STALL_SECONDS` is aborted (`notArriving`).
+ */
 export async function fetchModelFile(
   file: ModelFile,
   options: ModelLoadOptions & { fileKey?: string } = {},
@@ -129,41 +148,68 @@ export async function fetchModelFile(
     }
   }
 
-  let response: Response
-  try {
-    response = await fetch(file.url, { mode: 'cors', credentials: 'omit', signal })
-  } catch (error) {
-    if (signal?.aborted) throw new JobError('cancelled', 'Cancelled', { cause: error })
-    throw new JobError('network', `Could not download model file ${file.url}`, { cause: error })
-  }
-  if (!response.ok) {
-    throw new JobError('model-load', `Model download failed (${response.status}) for ${file.url}`, {
-      retryable: response.status >= 500 || response.status === 429,
-    })
+  onProgress?.({ stage: 'download', fraction: 0, bytesLoaded: 0, bytesTotal: file.bytes, file: fileKey })
+  const stall = new AbortController()
+  // Counted in one-second ticks rather than by the clock, so time the worker spends blocked (starting another
+  // model's session, say) does not count as waiting: after a block, a repeating timer fires once, not once a second.
+  let quiet = 0
+  const ticks = setInterval(() => {
+    if (++quiet >= STALL_SECONDS) stall.abort()
+  }, 1000)
+  const failed = (error: unknown) => {
+    if (signal?.aborted) return new JobError('cancelled', 'Cancelled', { cause: error })
+    if (stall.signal.aborted) return notArriving(file, options.title)
+    return new JobError('network', `Couldn’t download model file ${file.url}`, { cause: error })
   }
 
-  const total = Number(response.headers.get('content-length')) || file.bytes
   const chunks: Uint8Array[] = []
   let loaded = 0
-  const reader = response.body?.getReader()
-  if (reader) {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      chunks.push(value)
-      loaded += value.byteLength
-      onProgress?.({
-        stage: 'download',
-        bytesLoaded: loaded,
-        bytesTotal: total,
-        fraction: total ? Math.min(1, loaded / total) : undefined,
-        file: fileKey,
+  try {
+    let response: Response
+    try {
+      response = await fetch(file.url, {
+        mode: 'cors',
+        credentials: 'omit',
+        signal: signal ? AbortSignal.any([signal, stall.signal]) : stall.signal,
+      })
+    } catch (error) {
+      throw failed(error)
+    }
+    quiet = 0
+    if (!response.ok) {
+      throw new JobError('model-load', `Model download failed (${response.status}) for ${file.url}`, {
+        retryable: response.status >= 500 || response.status === 429,
       })
     }
-  } else {
-    const buf = new Uint8Array(await response.arrayBuffer())
-    chunks.push(buf)
-    loaded = buf.byteLength
+
+    const total = Number(response.headers.get('content-length')) || file.bytes
+    try {
+      const reader = response.body?.getReader()
+      if (reader) {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          quiet = 0
+          chunks.push(value)
+          loaded += value.byteLength
+          onProgress?.({
+            stage: 'download',
+            bytesLoaded: loaded,
+            bytesTotal: total,
+            fraction: total ? Math.min(1, loaded / total) : undefined,
+            file: fileKey,
+          })
+        }
+      } else {
+        const buf = new Uint8Array(await response.arrayBuffer())
+        chunks.push(buf)
+        loaded = buf.byteLength
+      }
+    } catch (error) {
+      throw failed(error)
+    }
+  } finally {
+    clearInterval(ticks)
   }
   const out = new Uint8Array(loaded)
   let offset = 0

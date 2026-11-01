@@ -21,6 +21,7 @@ export async function createDemucsModel(options: {
   const ort = await loadOrt()
   const files = await loadModelFiles(DEMUCS_MODEL, {
     signal: options.signal,
+    title: MODEL_TITLES.stems,
     onProgress: (p) =>
       options.onProgress?.({
         ...p,

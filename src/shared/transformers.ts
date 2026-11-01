@@ -22,18 +22,26 @@ export type ModelFileProgress = JobProgress & { file: string; cached: boolean; u
  * is enough; calls set it while they may trigger downloads.
  */
 let progressSink: ((p: ModelFileProgress) => void) | null = null
+/** The title of the model the current call loads, which names its download in errors (see `withModelProgress`). */
+let modelTitle: string | undefined
 
-/** Reports model downloads started while `run` runs (by Transformers.js or `downloadProgress`) to `onProgress`. */
+/**
+ * Reports model downloads started while `run` runs (by Transformers.js or `downloadProgress`) to `onProgress`.
+ * `title`, the model's title in Settings › This device, names a download of it that isn't arriving.
+ */
 export async function withModelProgress<T>(
   onProgress: ((p: ModelFileProgress) => void) | undefined,
   run: () => Promise<T>,
+  title?: string,
 ): Promise<T> {
-  const previous = progressSink
+  const previous = { sink: progressSink, title: modelTitle }
   progressSink = onProgress ?? null
+  modelTitle = title
   try {
     return await run()
   } finally {
-    progressSink = previous
+    progressSink = previous.sink
+    modelTitle = previous.title
   }
 }
 
@@ -88,6 +96,7 @@ export async function sharedFetch(input: string | URL): Promise<Response> {
   try {
     const buf = await fetchModelFile(known ?? { url }, {
       onProgress: downloadProgress(url.split('/').pop() ?? url, url),
+      title: modelTitle,
     })
     return new Response(buf, { status: 200, headers: { 'content-length': String(buf.byteLength) } })
   } catch (err) {

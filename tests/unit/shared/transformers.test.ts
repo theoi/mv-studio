@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { pinRevision, registerModelFiles, sharedFetch } from '../../../src/shared/transformers.ts'
+import {
+  pinRevision,
+  registerModelFiles,
+  sharedFetch,
+  withModelProgress,
+} from '../../../src/shared/transformers.ts'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -32,6 +37,34 @@ describe('sharedFetch', () => {
     await expect(sharedFetch(`${base}onnx/model.onnx`)).rejects.toMatchObject({
       code: 'model-load',
       retryable: true,
+    })
+  })
+})
+
+describe('a model download through sharedFetch that gets no bytes', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('names the model the call loads', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+          }),
+      ),
+    )
+    const load = withModelProgress(
+      undefined,
+      () => sharedFetch('https://huggingface.co/x/w/resolve/main/onnx/encoder_model.onnx'),
+      'Lyrics transcriber',
+    ).catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(await load).toMatchObject({
+      code: 'network',
+      message:
+        'The download of the lyrics transcriber isn’t arriving. Check your connection, then try again.',
     })
   })
 })

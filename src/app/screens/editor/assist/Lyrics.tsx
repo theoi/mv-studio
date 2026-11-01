@@ -26,7 +26,7 @@ import {
   useProject,
 } from '../../../state/project.ts'
 import { get, select, set, useUi, type LyricsMode } from '../../../state/ui.ts'
-import { dismiss, pct, useJob } from './jobState.ts'
+import { dismiss, pct, useFocusOnFailure, useJob } from './jobState.ts'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -210,6 +210,7 @@ export function LyricsView() {
       return t !== undefined && choruses.some((s) => t >= s.start && t < s.end)
     }) ?? withClip[0]
   const timed = lines.some((l) => l.start !== undefined)
+  const tryAgain = useFocusOnFailure(phase)
 
   if (phase === 'running') {
     return (
@@ -238,6 +239,7 @@ export function LyricsView() {
               Edit lyrics
             </Button>
             <Button
+              ref={tryAgain}
               variant="primary"
               icon={<RotateCcw />}
               className={styles.grow}
