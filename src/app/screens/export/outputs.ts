@@ -17,7 +17,13 @@ import type { AspectPreset, ImageClip, Project, VideoClip } from '../../../model
 import { JobError, jobs } from '../../../shared/jobs.ts'
 import { readSubjectTrack } from '../../../vision/analysisData.ts'
 import { formatTime } from '../../format.ts'
-import { downloadFile, showExport, useExports, type ExportPreset } from '../../state/exports.ts'
+import {
+  downloadFile,
+  markExportRunning,
+  showExport,
+  useExports,
+  type ExportPreset,
+} from '../../state/exports.ts'
 import { JOB_KINDS, runningJobs } from '../../state/jobs.ts'
 import { appMedia } from '../../state/media.ts'
 import { dispatch, editor } from '../../state/project.ts'
@@ -199,6 +205,7 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
       frames: p.frames,
     })),
   )
+  markExportRunning(Math.max(...planned.map((p) => p.settings.height)), handle.promise)
   handle.promise.then(
     (results) => {
       toast(

@@ -3,6 +3,7 @@ import { Suspense, useEffect } from 'react'
 import { TooltipProvider } from './ds/Tooltip.tsx'
 import { Editor, SettingsDialog, SetupScreen, VjMode } from './lazy.ts'
 import { preloadDeferred } from './preload.ts'
+import { reportStoppedExport } from './state/exports.ts'
 import { initHashSync } from './state/hash.ts'
 import { initPersistence, usePersistence } from './state/persistence.ts'
 import { closeWithToast, set, useUi } from './state/ui.ts'
@@ -24,6 +25,7 @@ export function App() {
   useEffect(initHashSync, [])
   useEffect(preloadWhenIdle, [])
   useEffect(initUpdateCheck, [])
+  useEffect(() => void reportStoppedExport(), [])
   useGlobalShortcuts()
   const screen = useUi((s) => s.screen)
   const review = useUi((s) => s.review)
