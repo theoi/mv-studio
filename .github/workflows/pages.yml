@@ -51,10 +51,29 @@ jobs:
         # apt-get update can hang silently on a stalled mirror. `timeout` ends a stuck attempt so the next one retries: it
         # signals its whole process group, and sudo passes the signal on to apt-get, so no apt-get is left holding the lock.
         timeout-minutes: 15
-        run: for attempt in 1 2 3; do timeout -k 10 240 npx playwright install --with-deps chromium && exit 0; sleep $((attempt * 20)); done; exit 1
+        run: |
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              sleep $(((attempt - 1) * 20))
+              # An attempt cut off during the install can leave dpkg half done.
+              sudo timeout -k 10 120 dpkg --configure -a || true
+            fi
+            timeout -k 10 240 npx playwright install --with-deps chromium && exit 0
+          done
+          exit 1
       - name: Install ffmpeg (Playwright global setup generates the media fixtures)
         timeout-minutes: 15
-        run: for attempt in 1 2 3; do sudo timeout -k 10 120 apt-get update && sudo timeout -k 10 480 apt-get install -y --no-install-recommends ffmpeg && exit 0; sleep $((attempt * 20)); done; exit 1
+        run: |
+          for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              sleep $(((attempt - 1) * 20))
+              sudo timeout -k 10 120 dpkg --configure -a || true
+            fi
+            sudo timeout -k 10 120 apt-get update &&
+              sudo timeout -k 10 480 apt-get install -y --no-install-recommends ffmpeg &&
+              exit 0
+          done
+          exit 1
       - name: Smoke test against the deployed site
         env:
           E2E_BASE_URL: https://theoi.github.io/mv-studio/
