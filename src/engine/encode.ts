@@ -273,6 +273,8 @@ export interface ProbeWindow {
   /** Time for the rest of the window, and the compositor renders they took. */
   ms: number
   renders: number
+  /** Each of those frames' times. */
+  frameMs: number[]
 }
 
 export interface ExportProbe {
@@ -311,7 +313,7 @@ export async function measureExport(
     const windows: ProbeWindow[] = []
     let n = 0
     for (const frames of job.windows) {
-      const window: ProbeWindow = { first: frames[0] ?? 0, firstMs: 0, ms: 0, renders: 0 }
+      const window: ProbeWindow = { first: frames[0] ?? 0, firstMs: 0, ms: 0, renders: 0, frameMs: [] }
       for (const [k, i] of frames.entries()) {
         throwIfCancelled()
         const t0 = performance.now()
@@ -323,6 +325,7 @@ export async function measureExport(
         else {
           window.ms += ms
           window.renders += drawer.renders(i)
+          window.frameMs.push(ms)
         }
       }
       windows.push(window)

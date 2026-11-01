@@ -16,6 +16,7 @@ import {
   createAudioClip,
   createImageClip,
   createProject,
+  createVideoClip,
   createSolidClip,
   createTrack,
   type Asset,
@@ -105,6 +106,7 @@ function trial(msPerRender: number[], seekMs = 0, firsts = msPerRender.map((_, i
       firstMs: ms + seekMs,
       ms: 3 * ms,
       renders: 3,
+      frameMs: [ms, ms, ms],
     })),
   }
 }
@@ -241,6 +243,79 @@ describe('the estimate from a trial', () => {
       ),
     )
     expect(cold).toBeCloseTo(warm, 1)
+  })
+})
+describe('trial runs, timed frame by frame', () => {
+  it("count a run's frames at their median, so one slow frame of a few doesn't set its look's pace", () => {
+    const planned = plan(plain())
+    const firsts = trialRuns(planned).map((r) => r[0]!)
+    const even = trial(
+      firsts.map(() => 20),
+      0,
+      firsts,
+    )
+    const hiccup = structuredClone(even)
+    hiccup.windows[1] = { ...hiccup.windows[1]!, ms: 100, frameMs: [20, 20, 60] }
+    expect(estimateFromTrial(planned, hiccup)).toBeCloseTo(estimateFromTrial(planned, even), 6)
+  })
+
+  it('give a short output an estimate within 0.67 to 1.5 times its export (recorded on a 4-core machine without a GPU)', () => {
+    // An 8 s video at 1080p: a song, a 1080p clip for its first half and a photo for the rest.
+    const asset = (id: string, kind: Asset['kind'], mimeType: string, extra: Partial<Asset>): Asset => ({
+      id,
+      kind,
+      name: id,
+      mimeType,
+      byteSize: 1,
+      storageKey: `media/${id}`,
+      origin: { type: 'import' },
+      createdAt: new Date(0).toISOString(),
+      ...extra,
+    })
+    const d = 8.020657596371882
+    const project = createProject({ name: 'Simple' })
+    const song = asset('song', 'audio', 'audio/mpeg', { duration: d, sampleRate: 44100, channels: 2 })
+    const clip = asset('clip', 'video', 'video/mp4', {
+      width: 1920,
+      height: 1080,
+      duration: 4,
+      frameRate: 30,
+    })
+    const photo = asset('photo', 'image', 'image/png', { width: 640, height: 360 })
+    for (const a of [song, clip, photo]) project.assets[a.id] = a
+    project.songAssetId = song.id
+    const visual = project.tracks.find((t) => t.kind === 'visual')!
+    const audio = project.tracks.find((t) => t.kind === 'audio')!
+    for (const c of [
+      createAudioClip({ trackId: audio.id, assetId: song.id, start: 0, duration: d }),
+      createVideoClip({ trackId: visual.id, assetId: clip.id, start: 0, duration: d / 2 }),
+      createImageClip({ trackId: visual.id, assetId: photo.id, start: d / 2, duration: d / 2 }),
+    ])
+      project.clips[c.id] = c
+    const planned = plan(project, { resolution: '1080p' })
+    // Each run's frames in ms, its first (which seeks) first; the export took 17.6 s.
+    const recorded: [number, number[]][] = [
+      [24, [327, 104, 129, 135]],
+      [58, [198, 84, 97, 191]],
+      [120, [221, 51, 51, 45]],
+      [179, [49, 60, 70, 56]],
+      [217, [52, 56, 53, 56]],
+    ]
+    expect(trialRuns(planned).map((r) => r[0])).toEqual(recorded.map(([first]) => first))
+    const probe: ExportProbe = {
+      setupMs: 10,
+      flushMs: 36,
+      windows: recorded.map(([first, [firstMs, ...rest]]) => ({
+        first,
+        firstMs: firstMs!,
+        ms: rest.reduce((a, b) => a + b, 0),
+        renders: rest.length,
+        frameMs: rest,
+      })),
+    }
+    const ratio = 17.6 / estimateFromTrial(planned, probe)
+    expect(ratio).toBeGreaterThanOrEqual(0.67)
+    expect(ratio).toBeLessThanOrEqual(1.5)
   })
 })
 describe('the remembered pace of an earlier export', () => {
