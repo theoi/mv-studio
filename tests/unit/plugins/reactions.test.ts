@@ -202,7 +202,7 @@ describe('choosing what to listen to', () => {
       'the low end (sub bass), where the kick sits',
     )
   })
-  it('offers Follow the instruments once the other instruments stem is separated, or while a target uses it', () => {
+  it('offers Follow instruments once the other instruments stem is separated, or while a target uses it', () => {
     const offered = (p: Project, active?: ReactionId) =>
       availableReactions(p, undefined, active).map((a) => a.reaction.id)
     const s = scene('stems')
@@ -416,6 +416,40 @@ describe('applying and removing', () => {
     editor.redo()
     await Promise.resolve()
     expect(describeReaction(editor.getProject(), kick)).toMatchObject({ listensTo: 'Sub bass' })
+  })
+
+  it('leaves a reaction still on the mix alone when undo or redo changes another clip', async () => {
+    // A kick reaction on the mix in a project that already has its stems, as saved before reactions followed them.
+    const s = scene('mix')
+    const before = new ProjectEditor(s.p)
+    const kick: ReactionTarget = { clipId: s.gen.id, param: 'height' }
+    applyReaction(before, [kick], 'kick')
+    before.dispatch(
+      {
+        type: 'analysis.setStems',
+        assetId: PREVIEW_SONG_ID,
+        stems: { drums: 'drums-stem' },
+        stemFeatures: { drums: stemFeatures('drums') },
+      },
+      { history: 'skip' },
+    )
+    const editor = new ProjectEditor(before.getProject())
+    followStems(editor)
+    expect(describeReaction(editor.getProject(), kick)).toMatchObject({
+      listensTo: 'Sub bass',
+      canUpgrade: true,
+    })
+
+    editor.dispatch({ type: 'clip.set', clipId: s.img.id, path: ['opacity', 'value'], value: 0.5 })
+    editor.undo()
+    await Promise.resolve()
+    editor.redo()
+    await Promise.resolve()
+    expect(describeReaction(editor.getProject(), kick)).toMatchObject({
+      listensTo: 'Sub bass',
+      canUpgrade: true,
+    })
+    expect(editor.history().undo).toHaveLength(1)
   })
 })
 

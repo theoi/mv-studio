@@ -8,7 +8,7 @@
 import { pluginRegistry } from '../engine/registry.ts'
 import type { ParamSpec, PluginRegistry } from '../engine/types.ts'
 import type { EditCommand, PropertyPath } from '../model/commands.ts'
-import type { ProjectEditor } from '../model/editor.ts'
+import type { EditChange, ProjectEditor } from '../model/editor.ts'
 import { BARS_NOTES, hasFoundBars } from '../model/queries.ts'
 import type {
   Animatable,
@@ -122,7 +122,7 @@ export const REACTIONS: Reaction[] = [
   },
   {
     id: 'instruments',
-    name: 'Follow the instruments',
+    name: 'Follow instruments',
     label: 'Instruments',
     description: 'Rises and falls with the guitars, keys and synths.',
     listen: [{ feature: 'loudness', stem: 'other' }],
@@ -722,14 +722,16 @@ export function describeReaction(
   }
 }
 
-/** Every target in the project that can react, for project-wide passes. */
+/** Every target in the project that can react, or only on the clips `clipIds` names, for project-wide passes. */
 export function reactionTargetsOf(
   project: Project,
   registry: PluginRegistry = pluginRegistry,
+  clipIds?: Iterable<Id>,
 ): ReactionTarget[] {
   const out: ReactionTarget[] = []
   const properties: ReactiveClipProperty[] = ['scale', 'opacity', 'rotation', 'x', 'y']
-  for (const clip of Object.values(project.clips)) {
+  const clips = clipIds ? [...clipIds].flatMap((id) => project.clips[id] ?? []) : Object.values(project.clips)
+  for (const clip of clips) {
     if (clip.type === 'audio') continue
     for (const property of properties) out.push({ clipId: clip.id, property })
     for (const key of Object.keys(('adjustments' in clip && clip.adjustments) || {}))
@@ -746,12 +748,16 @@ export function reactionTargetsOf(
 
 /**
  * Commands that move reactions to a better source that became available, such as the drums stem for "Pulse with
- * kick" after stem separation, keeping each reaction's amount. `followStems()` dispatches them when stems arrive.
+ * kick" after stem separation, keeping each reaction's amount: in the whole project, or only on the clips `clipIds`
+ * names. `followStems()` dispatches them when stems arrive.
  */
-export function upgradeReactionCommands(project: Project, options: ReactionOptions = {}): EditCommand[] {
+export function upgradeReactionCommands(
+  project: Project,
+  options: ReactionOptions & { clipIds?: Iterable<Id> } = {},
+): EditCommand[] {
   const registry = options.registry ?? pluginRegistry
   const commands: EditCommand[] = []
-  for (const target of reactionTargetsOf(project, registry)) {
+  for (const target of reactionTargetsOf(project, registry, options.clipIds)) {
     const active = describeReaction(project, target, options)
     if (active?.kind !== 'reaction' || !active.canUpgrade) continue
     commands.push(...reactionCommands(project, [target], active.reaction.id, active.amount, options))
@@ -760,21 +766,41 @@ export function upgradeReactionCommands(project: Project, options: ReactionOptio
 }
 
 /**
+ * The clips an undo or redo changed, or null when it replaced the whole clip table (every clip) or touched none.
+ */
+function clipsChanged(change: EditChange): Set<Id> | null {
+  const ids = new Set<Id>()
+  for (const p of change.patches) {
+    if (p.path[0] !== 'clips') continue
+    const id = p.path[1]
+    if (typeof id !== 'string') return null
+    ids.add(id)
+  }
+  return ids
+}
+
+/**
  * Moves reactions picked before stem separation to their stem once the song's stems arrive (`analysis.setStems`),
  * without an undo step: like the stems, they follow the analysis rather than an edit. Undoing or redoing an edit made
- * before the stems brings back its mix mapping, so that moves them again. Returns the unsubscribe.
+ * before the stems brings back its mix mapping, so that moves the reactions on the clips it changed again; others
+ * left on the mix (on a track locked when the stems arrived, say) wait for the react panel. Returns the unsubscribe.
  */
 export function followStems(editor: ProjectEditor, options: ReactionOptions = {}): () => void {
   return editor.subscribe((project, change) => {
-    const arrived = change.commands.some((c) => c.type === 'analysis.setStems')
-    const restored =
-      (change.source === 'undo' || change.source === 'redo') &&
-      !!songAnalysis(project)?.stemFeatures &&
-      change.patches.some((p) => p.path[0] === 'clips')
-    if (!arrived && !restored) return
+    let clipIds: Set<Id> | undefined
+    if (!change.commands.some((c) => c.type === 'analysis.setStems')) {
+      if (change.source !== 'undo' && change.source !== 'redo') return
+      if (!songAnalysis(project)?.stemFeatures) return
+      const changed = clipsChanged(change)
+      if (changed?.size === 0) return
+      clipIds = changed ?? undefined
+    }
     // After the change that triggered it has reached every listener.
     queueMicrotask(() => {
-      const commands = upgradeReactionCommands(editor.getProject(), options)
+      const commands = upgradeReactionCommands(editor.getProject(), {
+        ...options,
+        ...(clipIds && { clipIds }),
+      })
       if (commands.length) editor.dispatch(commands, { history: 'skip' })
     })
   })

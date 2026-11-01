@@ -72,7 +72,7 @@ test('a reaction picked before stem separation moves to its stem once the stems 
   await picker.click()
   // The full mix has no stand-in for the other instruments, so that reaction waits for the stems.
   await expect(page.getByRole('option', { name: /^Pulse with kick/ })).toBeVisible()
-  await expect(page.getByRole('option', { name: /^Follow the instruments/ })).toHaveCount(0)
+  await expect(page.getByRole('option', { name: /^Follow instruments/ })).toHaveCount(0)
   await page.getByRole('option', { name: /^Pulse with kick/ }).click()
   await expect(
     panel.getByText(
@@ -105,11 +105,11 @@ test('a reaction picked before stem separation moves to its stem once the stems 
   await page.screenshot({ path: testInfo.outputPath('react-panel-stems.png') })
 
   await picker.click()
-  await expect(page.getByRole('option', { name: /^Follow the instruments/ })).toContainText(
+  await expect(page.getByRole('option', { name: /^Follow instruments/ })).toContainText(
     'Rises and falls with the guitars, keys and synths. Listens to: the other instruments stem.',
   )
   await page.screenshot({ path: testInfo.outputPath('react-picker-stems.png') })
-  await page.getByRole('option', { name: /^Follow the instruments/ }).click()
+  await page.getByRole('option', { name: /^Follow instruments/ }).click()
   await expect(panel.getByText('Listens to: the other instruments stem.', { exact: true })).toBeVisible()
   expect(await lookModulation(page)).toMatchObject([
     { source: { kind: 'loudness', stem: 'other' }, amount: 0.4 },
@@ -138,6 +138,23 @@ test('a reaction picked before stem separation moves to its stem once the stems 
   await expect(panel.getByText('Listens to: the drums stem.', { exact: true })).toBeVisible()
   expect(await lookModulation(page)).toMatchObject([{ source: { kind: 'band', stem: 'drums' }, amount: 0.4 }])
   expect(await undoLabel()).toBe('React to music: Pulse with kick')
+
+  // Follow instruments in a project whose song has no stems (another song swapped in, say) waits for them.
+  await picker.click()
+  await page.getByRole('option', { name: /^Follow instruments/ }).click()
+  await page.evaluate(() => {
+    const editor = window.mvStudio.app.project.editor
+    const unseparated: Project = structuredClone(editor.getProject())
+    delete unseparated.analysis.audio[unseparated.songAssetId!]!.stemFeatures
+    editor.load(unseparated)
+  })
+  await expect(
+    panel.getByText(
+      'Listens to: the other instruments stem. It starts moving once stems are separated in Assist › Stems.',
+      { exact: true },
+    ),
+  ).toBeVisible()
+  await expect(picker).toHaveText('Follow instruments')
 })
 
 /** A color adjustment of the sample's first chorus clip. */

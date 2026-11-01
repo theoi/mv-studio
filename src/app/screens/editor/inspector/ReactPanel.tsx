@@ -71,7 +71,8 @@ export function ReactPanel({ target }: { target: ReactionTarget }) {
           chosen && !chosen.ready ? waitsFor : '',
         ].filter(Boolean)
       : []
-  // Still on the mix although its stem is separated, e.g. in a project saved before reactions followed the stems.
+  // Not on the best source the song has now: still on the mix although its stem is separated (a project saved before
+  // reactions followed the stems, a track locked when they arrived), or on a stem a newly swapped-in song lacks.
   const upgrade = active?.kind === 'reaction' && active.canUpgrade ? chosen : undefined
   return (
     <>
@@ -96,7 +97,12 @@ export function ReactPanel({ target }: { target: ReactionTarget }) {
       {hints.length > 0 && <p className={styles.note}>{hints.join(' ')}</p>}
       {upgrade && (
         <div className={styles.padded}>
-          <Button size="sm" variant="ghost" onClick={() => apply(upgrade.reaction.id)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={styles.noteAction}
+            onClick={() => apply(upgrade.reaction.id)}
+          >
             Listen to {upgrade.listening}
           </Button>
         </div>
