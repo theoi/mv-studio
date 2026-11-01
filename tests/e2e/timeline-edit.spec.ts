@@ -218,7 +218,7 @@ test('Shift Delete and the clip and lane menus close gaps, moving the later clip
   await singer.click()
   await page.keyboard.press('Shift+Delete')
   await expect.poll(starts).toEqual(closed)
-  expect(await undoLabel()).toBe('Delete clip and close the gap')
+  expect(await undoLabel()).toBe('Delete Singer close-up and close the gap')
   await toastWith('Deleted 1 clip and closed the gap').getByRole('button', { name: 'Undo' }).click()
   await expect.poll(starts).toEqual(before)
 
@@ -247,6 +247,8 @@ test('Shift Delete and the clip and lane menus close gaps, moving the later clip
       locked,
     )
   await lock(true)
+  // The lock is the last step now, so the toast's Undo would undo it, not the delete: the toast goes.
+  await expect(toastWith('Deleted 1 clip')).toHaveCount(0)
   await next.click({ button: 'right' })
   await expect(menuItem(/^Close gap before/)).toBeDisabled()
   await expect(menuItem(/^Close gap before/)).toContainText('The track is locked')

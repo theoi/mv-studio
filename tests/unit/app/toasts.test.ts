@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { dismissToast, get, set, setSnap, toast } from '../../../src/app/state/ui.ts'
+import { dismissToast, get, set, setSnap, toast, withdrawUndo } from '../../../src/app/state/ui.ts'
 
 beforeAll(() => {
   // Toasts time out through window.setTimeout.
@@ -39,6 +39,17 @@ describe('toasts', () => {
     expect(messages()).toEqual([offer])
     dismissToast(get().toasts[0]!.id)
     expect(messages()).toEqual([])
+  })
+
+  it('takes back the Undo of the toasts already shown, keeping a toast with Show and its Show', () => {
+    toast('Deleted 1 clip', { label: 'Undo', run: noop })
+    toast('Auto-cut: 12 cuts', { label: 'Undo', run: noop }, { show: noop })
+    toast('Snapping off')
+    withdrawUndo()
+    expect(get().toasts.map((t) => [t.message, t.action?.label, Boolean(t.show)])).toEqual([
+      ['Auto-cut: 12 cuts', undefined, true],
+      ['Snapping off', undefined, false],
+    ])
   })
 })
 

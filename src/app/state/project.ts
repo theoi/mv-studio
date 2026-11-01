@@ -23,14 +23,11 @@ import { followStems } from '../../plugins/reactions.ts'
 import { plural } from '../format.ts'
 import { TRACK_IDS, buildDemoProject } from '../mock/demoProject.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
-import { get, select, set, toast, withdrawUndo } from './ui.ts'
+import { get, select, set, toast } from './ui.ts'
 
 /** The app's single editor. The design preview starts it with the demo project. */
 export const editor = new ProjectEditor(buildDemoProject())
 followStems(editor)
-editor.subscribe((_, change) => {
-  if (change.source !== 'derived') withdrawUndo()
-})
 
 export function useProject(): Project {
   return useSyncExternalStore(editor.subscribe, editor.getProject)

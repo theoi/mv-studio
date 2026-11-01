@@ -152,7 +152,6 @@ import {
   selectedClipIds,
   set,
   setSnap,
-  toast,
   type PageId,
   type SettingsPage,
   type SnapKey,

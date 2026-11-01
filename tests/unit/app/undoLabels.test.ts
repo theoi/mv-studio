@@ -8,7 +8,7 @@ import {
   type Project,
 } from '../../../src/model/index.ts'
 import { dispatch, editor, splitAtPlayhead, undo } from '../../../src/app/state/project.ts'
-import { get, set, toast } from '../../../src/app/state/ui.ts'
+import { get, set, toast, withdrawUndoOnChange } from '../../../src/app/state/ui.ts'
 
 beforeAll(() => {
   // Toasts time out through window.setTimeout.
@@ -97,6 +97,8 @@ describe('undo labels of clip edits', () => {
 })
 
 describe('a toast’s Undo', () => {
+  // The Toaster follows the app's editor this way.
+  beforeAll(() => withdrawUndoOnChange(editor))
   const noop = () => {}
   const shown = () => get().toasts.map((t) => ({ message: t.message, undo: !!t.action, show: !!t.show }))
 

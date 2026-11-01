@@ -420,7 +420,7 @@ describe('ripple delete and Close gap', () => {
       [4, 3],
       [10, 4],
     ])
-    expect(editor.undoLabel()).toBe('Delete clip and close the gap')
+    expect(editor.undoLabel()).toBe('Delete i and close the gap')
     expect(lastToast()?.message).toBe('Deleted 1 clip and closed the gap')
     // The Lyrics track and the locked track stay as they were.
     expect(onTrack(s.p.tracks[0]!.id)).toEqual([[0, 4]])
@@ -447,7 +447,7 @@ describe('ripple delete and Close gap', () => {
   it('deletes the last clip like Delete, with nothing to close', () => {
     selectClips([s.d.id])
     rippleDeleteSelection()
-    expect(editor.undoLabel()).toBe('Delete clip')
+    expect(editor.undoLabel()).toBe('Delete v')
     expect(lastToast()?.message).toBe('Deleted 1 clip')
   })
 
@@ -543,7 +543,7 @@ describe('ripple delete and Close gap', () => {
     selectClips([s.c.id])
     deleteSelection()
     expect([has(s.c.id), has(ofC.id), has(lockedOfC.id), start(ofD.id)]).toEqual([false, false, true, 14])
-    expect(editor.undoLabel()).toBe('Delete clip')
+    expect(editor.undoLabel()).toBe('Delete v')
     expect(lastToast()?.message).toBe('Deleted 1 clip')
     editor.undo()
     expect([has(s.c.id), has(ofC.id)]).toEqual([true, true])
@@ -554,7 +554,7 @@ describe('ripple delete and Close gap', () => {
     selectClips([s.c.id])
     rippleDeleteSelection()
     expect([has(s.c.id), has(ofC.id), start(s.d.id), start(ofD.id)]).toEqual([false, false, 11, 11])
-    expect(editor.undoLabel()).toBe('Delete clip and close the gap')
+    expect(editor.undoLabel()).toBe('Delete v and close the gap')
     editor.undo()
     expect([has(ofC.id), start(s.d.id), start(ofD.id)]).toEqual([true, 14, 14])
   })
@@ -577,7 +577,7 @@ describe('ripple delete and Close gap', () => {
       [14, 4],
       [20, 2],
     ])
-    expect(editor.undoLabel()).toBe('Delete clip')
+    expect(editor.undoLabel()).toBe('Delete v')
     expect(gapToClose(project(), subject.id, 19)).toBeNull()
     expect(gapBefore(project(), image.id)).toBeNull()
   })

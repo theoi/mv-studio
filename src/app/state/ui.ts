@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { ProjectEditor } from '../../model/index.ts'
 import { prefs, setPref } from './prefs.ts'
 
 /*
@@ -274,6 +275,13 @@ export function withdrawUndo() {
   set((s) => ({
     toasts: s.toasts.flatMap((t) => (!stale.includes(t) ? [t] : t.show ? [{ ...t, action: undefined }] : [])),
   }))
+}
+
+/** Withdraws toasts' Undo on each edit, undo, redo or load of `editor`, not on background writes. Returns the unsubscribe. */
+export function withdrawUndoOnChange(editor: Pick<ProjectEditor, 'subscribe'>): () => void {
+  return editor.subscribe((_, change) => {
+    if (change.source !== 'derived') withdrawUndo()
+  })
 }
 
 export function dismissToast(id: number) {
