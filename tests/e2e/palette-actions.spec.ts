@@ -148,6 +148,49 @@ test('Add a keyframe… and React to music… list the selected clip’s propert
   await expect(input).toHaveAttribute('placeholder', /^Search actions/)
 })
 
+test('picking the current reaction again, or a reaction on a locked track, adds no undo step', async ({
+  page,
+}) => {
+  await openEditor(page)
+  const { dialog, input, open } = palette(page)
+  await selectClip(page, 'video')
+  const undoSteps = () => page.evaluate(() => window.mvStudio.app.project.editor.history().undo)
+  const clipState = () =>
+    page.evaluate(() => {
+      const { app } = window.mvStudio
+      const project: Project = app.project.editor.getProject()
+      return JSON.stringify(project.clips[app.ui.get().selection.id])
+    })
+  const pick = async (reaction: string) => {
+    await open()
+    await input.fill('react to music')
+    await page.keyboard.press('Enter')
+    await input.fill('scale')
+    await page.keyboard.press('Enter')
+    await dialog.getByRole('option', { name: new RegExp(`^${reaction}`) }).click()
+    await expect(dialog).toBeHidden()
+  }
+
+  const before = await clipState()
+  await pick('Pulse with kick')
+  const pulse = await clipState()
+  expect(pulse).not.toBe(before)
+  const steps = await undoSteps()
+  await pick('Pulse with kick')
+  expect(await undoSteps()).toEqual(steps)
+
+  await open()
+  await input.fill('lock track')
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeHidden()
+  const locked = await undoSteps()
+  await pick('Flash on beat')
+  await expect(page.getByText('That track is locked. Unlock it to edit.')).toBeVisible()
+  await expect(page.getByText('Scale: Flash on beat')).toHaveCount(0)
+  expect(await undoSteps()).toEqual(locked)
+  expect(await clipState()).toBe(pulse)
+})
+
 test('the palette renames the project, switches the aspect ratio, drafts lyrics and opens Export with a loop for Canvas', async ({
   page,
 }) => {

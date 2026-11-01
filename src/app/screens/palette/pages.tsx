@@ -219,12 +219,19 @@ function reactItems(): PageItem[] {
   })
 }
 
+/**
+ * The reaction commands skip clips on locked tracks, and dispatching none adds no undo step: a toast with Undo then
+ * would undo an earlier edit.
+ */
+const LOCKED = 'That track is locked. Unlock it to edit.'
+
 function reactionItems(property: ClipProperty): PageItem[] {
   const clip = selectedClip()
   const target = clip && reactionTarget(clip, property.path)
   if (!clip || !target) return []
   const p = project()
   const active = describeReaction(p, target)
+  const reacting = active?.kind === 'reaction' ? active : undefined
   const stop: PageItem[] = active
     ? [
         {
@@ -232,27 +239,35 @@ function reactionItems(property: ClipProperty): PageItem[] {
           label: 'Stop reacting',
           icon: <CircleOff />,
           keywords: ['Stop reacting', 'none off'],
-          run: () =>
-            dispatch(removeReactionCommands(project(), [target]), { label: 'Stop reacting to music' }),
+          run: () => {
+            const commands = removeReactionCommands(project(), [target])
+            if (!commands.length) return void toast(LOCKED)
+            dispatch(commands, { label: 'Stop reacting to music' })
+          },
         },
       ]
     : []
   return [
     ...stop,
-    ...availableReactions(p, clip).map((c) => ({
-      value: c.reaction.id,
-      label: c.reaction.name,
-      icon: <AudioWaveform />,
-      keywords: [c.reaction.name, c.reaction.description, c.listensTo],
-      current: active?.kind === 'reaction' && active.reaction.id === c.reaction.id,
-      detail: c.listensTo,
-      run: () => {
-        const label = `React to music: ${c.reaction.name}`
-        const amount = active?.kind === 'reaction' ? active.amount : undefined
-        if (dispatch(reactionCommands(project(), [target], c.reaction.id, amount), { label }))
-          toast(`${property.name}: ${c.reaction.name}`, undoAction(label))
-      },
-    })),
+    ...availableReactions(p, clip, reacting?.reaction.id).map((c) => {
+      const current = reacting?.reaction.id === c.reaction.id
+      return {
+        value: c.reaction.id,
+        label: c.reaction.name,
+        icon: <AudioWaveform />,
+        keywords: [c.reaction.name, c.reaction.description, c.listensTo],
+        current,
+        detail: c.listensTo,
+        run: () => {
+          // Picking the current reaction again only moves it to a better source, like the panel's "Listen to …".
+          if (current && !reacting?.canUpgrade) return
+          const commands = reactionCommands(project(), [target], c.reaction.id, reacting?.amount)
+          if (!commands.length) return void toast(LOCKED)
+          const label = `React to music: ${c.reaction.name}`
+          if (dispatch(commands, { label })) toast(`${property.name}: ${c.reaction.name}`, undoAction(label))
+        },
+      }
+    }),
   ]
 }
 

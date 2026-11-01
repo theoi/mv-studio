@@ -16,6 +16,7 @@ import {
 } from '../../../state/lyricChecks.ts'
 import { estimateLyrics, lastLyricsRequest, lyricsCost, startLyrics } from '../../../state/lyrics.ts'
 import {
+  editor,
   hasSong,
   lyricLines,
   sectionKind,
@@ -23,7 +24,7 @@ import {
   songAnalysis,
   useProject,
 } from '../../../state/project.ts'
-import { select, set, useUi, type LyricsMode } from '../../../state/ui.ts'
+import { get, select, set, useUi, type LyricsMode } from '../../../state/ui.ts'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -144,6 +145,16 @@ function LyricsResult({ onPaste }: { onPaste: () => void }) {
   )
 }
 
+function lyricsShown(): boolean {
+  const s = get()
+  return (
+    s.screen === 'editor' &&
+    s.rightTab === 'assist' &&
+    s.assistView === 'lyrics' &&
+    hasSong(editor.getProject())
+  )
+}
+
 export function LyricsView() {
   const project = useProject()
   const lines = lyricLines(project)
@@ -152,8 +163,14 @@ export function LyricsView() {
   const separating = useJob(JOB_KINDS.stems).phase === 'running'
   const mode = useUi((s) => s.lyricsMode)
   const setMode = (lyricsMode: LyricsMode) => set({ lyricsMode })
-  // Each visit starts on Paste unless the palette asked for Draft on the way in.
-  useEffect(() => () => set({ lyricsMode: 'paste' }), [])
+  // Each visit starts on Paste unless the palette asked for Draft on the way in. Reset only once the view has closed:
+  // StrictMode's trial unmount in development leaves it open, and resetting then lost the palette's Draft.
+  useEffect(
+    () => () => {
+      if (!lyricsShown()) set({ lyricsMode: 'paste' })
+    },
+    [],
+  )
   const [text, setText] = useState(() => lines.map((l) => l.text).join('\n'))
   const textRef = useRef<HTMLTextAreaElement>(null)
   const pasteInstead = () => {
