@@ -3,7 +3,7 @@ import type { AdjustmentClip, Project, VisualClip } from '../../../../model/inde
 import { currentLook, lookIdOf, lookRegistry, ORIGINAL_LOOK } from '../../../../plugins/looks.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { AnimateButtons, FieldRow, Section, Slider } from '../../../ds/Fields.tsx'
-import { formatTime } from '../../../format.ts'
+import { formatSpan } from '../../../format.ts'
 import { revealLooks } from '../../../state/library.ts'
 import { isLookClip, useProject } from '../../../state/project.ts'
 import { useAnimatable } from './animatable.ts'
@@ -17,9 +17,7 @@ function lookSpan(project: Project, clip: VisualClip): string {
   for (const c of Object.values(project.clips))
     if (c.id !== clip.id) end = Math.max(end, c.start + c.duration)
   const clipEnd = clip.start + clip.duration
-  return clip.start <= 0.05 && clipEnd >= end - 0.05
-    ? 'On every clip'
-    : `${formatTime(clip.start)} to ${formatTime(clipEnd)}`
+  return clip.start <= 0.05 && clipEnd >= end - 0.05 ? 'On every clip' : formatSpan(clip.start, clip.duration)
 }
 
 /** The look's intensity is the opacity of its layer, so it can be keyframed and react to the music. */
