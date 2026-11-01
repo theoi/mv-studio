@@ -33,7 +33,7 @@ test('a model download that gets no response shows its line at once and, after 3
 
   const failure = assist.getByRole('alert')
   await expect(failure).toContainText(
-    'The download of the lyrics aligner isn’t arriving. Check your connection, then try again.',
+    'The download of the lyrics aligner isn’t arriving. Check your connection and try again.',
     { timeout: 60_000 },
   )
   expect(Date.now() - shown).toBeGreaterThan(25_000)

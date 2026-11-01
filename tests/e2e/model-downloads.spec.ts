@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { Page } from '@playwright/test'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
 const DEPTH_LINE = 'Downloading the depth estimator (27 MB, once)'
@@ -88,6 +89,67 @@ test('a 3D camera move names the depth estimator it could not download when Hugg
   await assist.getByRole('button', { name: /^Apply to \d+ images$/ }).click()
   await expect(assist.getByRole('alert')).toContainText('Couldn’t download the depth estimator')
 })
+
+/** Opens Assist › Lyrics with the song as its own vocals stem, so timing and drafting go straight to their models. */
+async function openLyricsWithVocals(page: Page) {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?tab=assist&assist=lyrics&t=73.6'
+  })
+  await waitForPreview(page)
+  await page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    const songId = editor.getProject().songAssetId
+    editor.dispatch(
+      { type: 'analysis.setStems', assetId: songId, stems: { vocals: songId }, stemFeatures: {} },
+      { history: 'skip' },
+    )
+  })
+  return page.getByRole('tabpanel', { name: 'Assist' })
+}
+
+test('timing lyrics names the lyrics aligner it couldn’t download, without the file’s URL', async ({
+  page,
+  context,
+}) => {
+  const assist = await openLyricsWithVocals(page)
+  await context.route('https://huggingface.co/**', (route) => route.abort())
+  await assist.getByRole('textbox', { name: 'Lyrics' }).fill('Neon lights are calling')
+  await assist.getByRole('button', { name: 'Time words to the vocals' }).click()
+  const failure = assist.getByRole('alert')
+  await expect(failure).toContainText(
+    'Couldn’t download the lyrics aligner. Check your connection and try again.',
+  )
+  await expect(failure).not.toContainText('https://')
+
+  await context.unroute('https://huggingface.co/**')
+  await context.route('https://huggingface.co/**', (route) => route.fulfill({ status: 503, body: '' }))
+  await assist.getByRole('button', { name: 'Try again' }).click()
+  await expect(failure).toContainText(
+    'Couldn’t download the lyrics aligner. The server is having trouble. Try again in a few minutes.',
+  )
+  await expect(failure).not.toContainText('https://')
+})
+
+// A 403 is what a network that blocks Hugging Face answers, and Transformers.js reads it as a missing file.
+for (const [status, hint] of [
+  [503, 'The server is having trouble. Try again in a few minutes.'],
+  [403, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
+] as const) {
+  test(`drafting lyrics names the lyrics transcriber when Hugging Face answers ${status}`, async ({
+    page,
+    context,
+  }) => {
+    const assist = await openLyricsWithVocals(page)
+    await context.route('https://huggingface.co/**', (route) => route.fulfill({ status, body: '' }))
+    await assist.getByRole('radio', { name: 'Draft from vocals' }).click()
+    await assist.getByRole('button', { name: 'Draft lyrics from the vocals' }).click()
+    const failure = assist.getByRole('alert')
+    await expect(failure).toContainText(`Couldn’t download the lyrics transcriber. ${hint}`)
+    await expect(failure).not.toContainText('https://')
+  })
+}
 
 test('the footage tagger downloads its image and text weights as one line the first time either is used', async ({
   page,
