@@ -5,6 +5,7 @@ import { Editor, SettingsDialog, SetupScreen, VjMode } from './lazy.ts'
 import { preloadDeferred } from './preload.ts'
 import { initHashSync } from './state/hash.ts'
 import { initPersistence, usePersistence } from './state/persistence.ts'
+import { reportStoppedExport } from './state/stoppedExport.ts'
 import { closeWithToast, set, useUi } from './state/ui.ts'
 import { initUpdateCheck } from './state/update.ts'
 import { StartScreen } from './screens/start/StartScreen.tsx'
@@ -24,6 +25,7 @@ export function App() {
   useEffect(initHashSync, [])
   useEffect(preloadWhenIdle, [])
   useEffect(initUpdateCheck, [])
+  useEffect(() => void reportStoppedExport(), [])
   useGlobalShortcuts()
   const screen = useUi((s) => s.screen)
   const review = useUi((s) => s.review)
