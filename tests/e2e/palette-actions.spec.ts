@@ -278,3 +278,36 @@ test('Ask Assist shows the Enter key only while it is the highlighted row, since
   await expect(selected).toHaveText(/^Ask Assist/)
   await expect(askKey).toBeVisible()
 })
+
+test('Go to a section… finds a section by name: “go to the chorus” lists the choruses with their starts, and a pick moves the playhead there', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=73')
+  const { dialog, input, selected, open } = palette(page)
+  const playhead = () => page.evaluate(() => window.mvStudio.app.ui.get().playhead as number)
+
+  await open()
+  await input.fill('go to the chorus')
+  await expect(selected).toHaveText(/^Go to a section…/)
+  await page.keyboard.press('Enter')
+  await expect(input).toHaveAttribute('placeholder', 'Search sections')
+  await expect(input).toHaveValue('chorus')
+  await expect(dialog.getByRole('option')).toHaveText([
+    /^Chorus 1.*1:04$/,
+    /^Chorus 2.*2:08$/,
+    /^Chorus 3.*3:04$/,
+    /^Pre-chorus.*0:48$/,
+  ])
+  await dialog.getByRole('option', { name: /^Chorus 2/ }).click()
+  await expect(dialog).toBeHidden()
+  expect(await playhead()).toBe(128)
+
+  await open()
+  await input.fill('jump to verse 2')
+  await page.keyboard.press('Enter')
+  await expect(input).toHaveValue('verse 2')
+  await expect(selected).toHaveText(/^Verse 2.*1:36$/)
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeHidden()
+  expect(await playhead()).toBe(96)
+})

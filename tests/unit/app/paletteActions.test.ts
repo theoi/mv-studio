@@ -5,8 +5,10 @@ import {
   actionScore,
   paletteResults,
 } from '../../../src/app/screens/palette/actions.tsx'
+import { PAGES } from '../../../src/app/screens/palette/pages.tsx'
 import { SHORTCUTS } from '../../../src/app/state/keymap.ts'
-import { editor } from '../../../src/app/state/project.ts'
+import { editor, sectionLabels } from '../../../src/app/state/project.ts'
+import { get, select, set } from '../../../src/app/state/ui.ts'
 import { settingsForAspect } from '../../../src/model/index.ts'
 import { ASK_SCORE, isSentence } from '../../../src/app/state/paletteScore.ts'
 import { SHORTCUTS_NOT_IN_PALETTE, UI_ACTIONS } from '../../../src/app/state/uiActions.ts'
@@ -186,5 +188,105 @@ describe('command palette coverage', () => {
         .filter((a) => a.group === 'Library')
         .map((a) => a.id),
     ).toEqual(['effect'])
+  })
+  it('finds Go to a section… first for a section the search names, and opens its page on that name', () => {
+    const goTo = actionsById.get('goToSection')!
+    for (const [search, page] of [
+      ['go to the chorus', 'chorus'],
+      ['jump to verse 2', 'verse 2'],
+      ['go to the Pre-chorus?', 'Pre-chorus'],
+    ] as const) {
+      expect(paletteResults(search)[0]?.id, search).toBe('goToSection')
+      expect(goTo.pageSearch?.(search), search).toBe(page)
+    }
+  })
+
+  it('lists the song’s sections by name and start, numbering a repeated name, and goes to the one picked', () => {
+    const items = () => PAGES.sections.groups({ id: 'sections' }).flatMap((g) => g.items)
+    expect(items().map((i) => `${i.label} ${i.detail}`)).toEqual([
+      'Intro 0:00',
+      'Verse 1 0:16',
+      'Pre-chorus 0:48',
+      'Chorus 1 1:04',
+      'Verse 2 1:36',
+      'Chorus 2 2:08',
+      'Bridge 2:40',
+      'Chorus 3 3:04',
+      'Outro 3:16',
+    ])
+    const before = get()
+    try {
+      select({ type: 'clip', id: Object.keys(editor.getProject().clips)[0]! })
+      const pick = (label: string) =>
+        items()
+          .find((i) => i.label === label)
+          ?.run?.()
+      pick('Chorus 2')
+      expect(get().playhead).toBe(128)
+      expect(get().selection.type).toBe('clip')
+      expect(items().find((i) => i.current)?.label).toBe('Chorus 2')
+
+      select({ type: 'section', id: 's-intro' })
+      pick('Verse 2')
+      expect(get().playhead).toBe(96)
+      expect(get().selection).toEqual({ type: 'section', id: 's-v2' })
+    } finally {
+      set({ playhead: before.playhead, selection: before.selection })
+    }
+  })
+  it('leaves another action first for a section the user named after its words: an outro named “End” is not Go to the end', () => {
+    const assetId = editor.getProject().songAssetId!
+    editor.dispatch({
+      type: 'analysis.updateSection',
+      assetId,
+      sectionId: 's-outro',
+      patch: { label: 'End' },
+    })
+    try {
+      expect(paletteResults('end')[0]?.id).toBe('end')
+      expect(paletteResults('go to end')[0]?.id).toBe('end')
+      expect(paletteResults('go to the chorus')[0]?.id).toBe('goToSection')
+      const page = PAGES.sections.groups({ id: 'sections' }).flatMap((g) => g.items)
+      expect(page.map((i) => i.label)).toContain('End')
+    } finally {
+      editor.undo()
+    }
+  })
+
+  it('numbers a repeated section name past the numbers other sections already have', () => {
+    const assetId = editor.getProject().songAssetId!
+    editor.dispatch(
+      ['s-v1', 's-bridge'].map((sectionId) => ({
+        type: 'analysis.updateSection' as const,
+        assetId,
+        sectionId,
+        patch: { label: 'Verse' },
+      })),
+    )
+    try {
+      expect(sectionLabels(editor.getProject()).filter((l) => l.startsWith('Verse'))).toEqual([
+        'Verse 1',
+        'Verse 2',
+        'Verse 3',
+      ])
+    } finally {
+      editor.undo()
+    }
+  })
+
+  it('finds a section named while the search stays the same', () => {
+    expect(paletteResults('finale')).toEqual([])
+    const assetId = editor.getProject().songAssetId!
+    editor.dispatch({
+      type: 'analysis.updateSection',
+      assetId,
+      sectionId: 's-outro',
+      patch: { label: 'Finale' },
+    })
+    try {
+      expect(paletteResults('finale')[0]?.id).toBe('goToSection')
+    } finally {
+      editor.undo()
+    }
   })
 })

@@ -200,6 +200,12 @@ export const UI_ACTIONS: readonly UiAction[] = [
   },
   {
     area: 'Timeline',
+    name: 'Song map section',
+    palette: 'goToSection',
+    search: ['go to the chorus', 'jump to verse 2', 'song part'],
+  },
+  {
+    area: 'Timeline',
     name: 'Go to its start',
     palette: 'sectionStart',
     search: ['go to section start', 'start of section'],
