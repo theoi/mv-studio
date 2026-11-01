@@ -154,6 +154,19 @@
   height: 16px;
 }
 
+.lastFile {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+}
+
+.lastNote {
+  padding: 0 var(--space-2) var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
 .plus {
   width: 15px;
   height: 15px;

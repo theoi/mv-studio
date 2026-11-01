@@ -112,6 +112,14 @@ export function timeLeft(seconds: number): string {
   return seconds < 50 ? 'Less than a minute left' : `About ${Math.round(seconds / 60)} min left`
 }
 
+/**
+ * The same time left in fewer words, where space is short (the activity indicator): "5 min left", and "almost done" in
+ * the last minute.
+ */
+export function shortTimeLeft(seconds: number): string {
+  return seconds < 50 ? 'almost done' : `${Math.round(seconds / 60)} min left`
+}
+
 /** Storage sizes as people read them: "83 MB", "1.2 GB". */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`

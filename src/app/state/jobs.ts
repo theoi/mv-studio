@@ -24,8 +24,12 @@ export function jobLabel(job: JobSnapshot): string {
   return job.stopping ? 'Stopping…' : job.title
 }
 
-/** jobLabel() up to the details a title gives after " · " (a price estimate), for the top bar's narrow chip. */
+/**
+ * jobLabel() up to the details a title gives after " · " (a price estimate), for the top bar's narrow chip. An export
+ * is "Exporting" whatever it makes, so its percentage and time left fit beside it in a 1280 px window.
+ */
 export function jobChipLabel(job: JobSnapshot): string {
+  if (job.kind === JOB_KINDS.export && !job.stopping) return 'Exporting'
   const label = jobLabel(job)
   const details = label.indexOf(' · ')
   return details < 0 ? label : label.slice(0, details)
@@ -37,6 +41,11 @@ export function jobChipLabel(job: JobSnapshot): string {
  */
 export function jobFraction(job: JobSnapshot): number | undefined {
   return job.stopping ? undefined : job.progress.fraction
+}
+
+/** The seconds a job has left, while it can tell and isn't stopping. */
+export function jobSecondsLeft(job: JobSnapshot): number | undefined {
+  return job.stopping ? undefined : job.progress.etaSeconds
 }
 
 export function isRunning(kind: string): boolean {
