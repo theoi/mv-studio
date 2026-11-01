@@ -173,10 +173,10 @@ test('Re-time line listens to the vocals once, then re-times the line as one und
   await expect(inspector.getByText('Listening to the vocals… 30%')).toBeVisible()
   await page.evaluate(() =>
     (window as unknown as { finishListening: (fail: string) => void }).finishListening(
-      'The timing model could not be downloaded',
+      'The timing model couldn’t be downloaded',
     ),
   )
-  await expect(inspector.getByRole('alert')).toContainText('The timing model could not be downloaded')
+  await expect(inspector.getByRole('alert')).toContainText('The timing model couldn’t be downloaded')
   await expect(inspector.getByRole('alert')).toContainText('Your lyrics are unchanged.')
   await shot(page, 'retime-failed')
   expect((await selected(page)).line.start).toBe(before.line.start)

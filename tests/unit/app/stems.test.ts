@@ -137,7 +137,7 @@ describe('audioErrorText', () => {
     withStems()
     const project = editor.getProject()
     const failure = (code: 'out-of-memory' | 'decode', assetId: string) =>
-      new JobError(code, `The audio of "${assetId}.ogg" failed.`, { details: { assetId } })
+      new JobError(code, `The audio of “${assetId}.ogg” failed.`, { details: { assetId } })
     expect(audioErrorText(project, failure('out-of-memory', 'stem-vocals'))).toBe(
       'There is not enough memory to play the vocals separately. Playing the full song instead.',
     )
@@ -148,7 +148,7 @@ describe('audioErrorText', () => {
       'The drums stem couldn’t be decoded. Playing the full song instead.',
     )
     expect(audioErrorText(project, failure('decode', 'a-song'))).toBe(
-      'The audio of "a-song.ogg" failed. Playing the full song instead.',
+      'The audio of “a-song.ogg” failed. Playing the full song instead.',
     )
   })
 })

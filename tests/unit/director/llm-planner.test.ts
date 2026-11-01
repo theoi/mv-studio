@@ -192,13 +192,13 @@ describe('LLM planner', () => {
     const offline = new CloudError({
       kind: 'local-server',
       provider: 'llm',
-      title: "Can't reach Ollama",
+      title: 'Can’t reach Ollama',
       message: 'Failed to fetch',
     })
     const plan = await createDirectorPlanner({ client: () => toolClient(offline) })(await input(), testCtx())
     expect(plan.planner).toBe('local')
     expect(plan.warnings[0]).toBe(
-      "Your AI model couldn’t help (Can't reach Ollama), so the built-in planner made this draft.",
+      'Your AI model couldn’t help (Can’t reach Ollama), so the built-in planner made this draft.',
     )
     expect(plan.shots.length).toBeGreaterThan(0)
   })

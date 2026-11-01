@@ -389,7 +389,7 @@ describe('AskSession', () => {
           new CloudError({
             kind: 'local-server',
             provider: 'llm',
-            title: "Can't reach Ollama",
+            title: 'Can’t reach Ollama',
             message: 'Failed to fetch',
             steps: ['Start Ollama.'],
           }),
@@ -398,7 +398,7 @@ describe('AskSession', () => {
     const { ask } = session(client, await draft())
     const state = await ask.ask('bigger')
     if (state.status !== 'error') throw new Error(state.status)
-    expect(state.title).toBe("Can't reach Ollama")
+    expect(state.title).toBe('Can’t reach Ollama')
     expect(state.steps).toEqual(['Start Ollama.'])
   })
 })

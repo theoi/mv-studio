@@ -115,7 +115,7 @@ test('a long toast keeps its Dismiss button full size', async ({ page }) => {
   await page.evaluate(() => {
     const ui = window.mvStudio.app.ui
     ui.toast(
-      'Imported 14 files: 9 clips or images, 3 LUTs, 2 songs. “a-very-long-file-name-from-the-camera-roll-final-v3.mov” could not be read because this browser does not support its codec.',
+      'Imported 14 files: 9 clips or images, 3 LUTs, 2 songs. “a-very-long-file-name-from-the-camera-roll-final-v3.mov” couldn’t be read because this browser does not support its codec.',
       { label: 'Show', run: () => {} },
     )
     for (const t of ui.get().toasts) ui.holdToast(t.id)

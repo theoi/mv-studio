@@ -560,7 +560,7 @@ test('Assist › Song analysis says the bars are not found yet after the refinem
         shared.jobs.run({
           kind: 'analysis.downbeats',
           title: 'Finding bars and refining beats',
-          run: () => Promise.reject(new shared.JobError('network', 'The model could not be downloaded.')),
+          run: () => Promise.reject(new shared.JobError('network', 'The model couldn’t be downloaded.')),
         }),
       release: async () => true,
     })
@@ -579,7 +579,7 @@ test('Assist › Song analysis says the bars are not found yet after the refinem
   })
   await expect(barsRow).toContainText('Not found yet')
   await expect(panel.getByText('Bars not found yet. Analyze again to look for them.')).toBeVisible()
-  await expect(page.getByText(/^Bars not found yet\. The model could not be downloaded\./)).toBeVisible()
+  await expect(page.getByText(/^Bars not found yet\. The model couldn’t be downloaded\./)).toBeVisible()
   await shot(page, 'analysis-bars-not-found')
 })
 
