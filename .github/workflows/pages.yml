@@ -40,13 +40,19 @@ jobs:
     name: Live smoke test
     needs: deploy
     runs-on: ubuntu-latest
+    # An apt-get that hangs on a stalled mirror would otherwise hold the job for six hours.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/node-deps
+      - name: Let apt retry failed downloads
+        run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/80-retries
       - name: Install Chromium for Playwright
+        timeout-minutes: 12
         run: for attempt in 1 2 3; do npx playwright install --with-deps chromium && exit 0; sleep $((attempt * 20)); done; exit 1
       - name: Install ffmpeg (Playwright global setup generates the media fixtures)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        timeout-minutes: 12
+        run: for attempt in 1 2 3; do sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg && exit 0; sleep $((attempt * 20)); done; exit 1
       - name: Smoke test against the deployed site
         env:
           E2E_BASE_URL: https://theoi.github.io/mv-studio/
