@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { applyMat, fitSize, layerMatrix, layerUniforms, planFrame } from '../../../src/engine/layout.ts'
+import {
+  applyMat,
+  fitSize,
+  layerMatrix,
+  layerUniforms,
+  planEdges,
+  planFrame,
+} from '../../../src/engine/layout.ts'
 import { anim, createProject, createSolidClip, createTrack } from '../../../src/model/factory.ts'
 import type { Project, SolidClip, Track } from '../../../src/model/types.ts'
 
@@ -88,6 +95,47 @@ describe('planFrame', () => {
   })
 })
 
+describe('planEdges', () => {
+  it('gives every time between two of its edges the layers of the rest of that stretch', () => {
+    const { project, top, bottom } = setup()
+    const a = solid(project, bottom, 0, 4.3)
+    const b = solid(project, bottom, 4.3, 3.1, {
+      transitionIn: { kind: 'crossfade', duration: 0.7, easing: 'linear' },
+      transitionOut: { kind: 'crossfade', duration: 0.45, easing: 'linear' },
+    })
+    solid(project, top, 1.15, 2.2, { transitionIn: { kind: 'zoom-blur', duration: 0.5, easing: 'linear' } })
+    const { color: _color, ...rest } = createSolidClip({
+      trackId: top.id,
+      color: '#000000',
+      start: 5.05,
+      duration: 1.3,
+    })
+    const adjustment = { ...rest, type: 'adjustment' as const }
+    project.clips[adjustment.id] = adjustment
+    solid(project, top, 2, 6, { enabled: false })
+    expect(ids(project, 4.6)).toEqual([`${a.id}>${b.id}`])
+    const edges = planEdges(project)
+    const shape = (time: number) =>
+      planFrame(project, time).map((l) =>
+        l.kind === 'transition' ? `${l.transition.kind}:${l.from?.id}>${l.to?.id}` : `${l.kind}:${l.clip.id}`,
+      )
+    const stretches = new Map<number, string>()
+    let checked = 0
+    for (let i = 0; i < 9 * 120; i++) {
+      const time = i / 120
+      if (edges.some((e) => Math.abs(e - time) < 1e-6)) continue
+      const stretch = edges.filter((e) => e <= time).length
+      const layers = shape(time).join(' ')
+      expect(layers, `at ${time} s`).toBe(stretches.get(stretch) ?? layers)
+      stretches.set(stretch, layers)
+      checked++
+    }
+    expect(checked).toBeGreaterThan(1000)
+    // Every stretch was seen, and they draw 8 different sets of layers.
+    expect(stretches.size).toBe(edges.length)
+    expect(new Set(stretches.values()).size).toBe(8)
+  })
+})
 describe('fitSize', () => {
   it('fits, covers or stretches a source into the canvas', () => {
     expect(fitSize('contain', 640, 360, 1080, 1920)).toEqual([1080, 607.5])

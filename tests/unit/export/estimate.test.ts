@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ExportProbe } from '../../../src/engine/encode.ts'
+import type * as Layout from '../../../src/engine/layout.ts'
 import {
   estimateFromTrial,
   newOutput,
@@ -21,6 +22,18 @@ import {
   type Project,
   type SolidClip,
 } from '../../../src/model/index.ts'
+
+const plans = vi.hoisted(() => ({ count: 0 }))
+vi.mock('../../../src/engine/layout.ts', async (importOriginal) => {
+  const layout = await importOriginal<typeof Layout>()
+  return {
+    ...layout,
+    planFrame: (...args: Parameters<typeof layout.planFrame>) => {
+      plans.count++
+      return layout.planFrame(...args)
+    },
+  }
+})
 
 const measure = (text: string, font: string) => text.length * Number(/([\d.]+)px/.exec(font)?.[1]) * 0.5
 
@@ -305,6 +318,15 @@ describe('transitions', () => {
     )
     // 8 transitions of 18 frames at 30 ms more each.
     expect(slow - without).toBeGreaterThanOrEqual((8 * 18 * 30) / 1000)
+  })
+
+  it('are worked out from one plan of the frame per stretch between cuts, not one per frame', () => {
+    const planned = plan(cuts('zoom-blur'))
+    plans.count = 0
+    expect(trialRuns(planned).some((run) => inTransition(run[1]!))).toBe(true)
+    // 1800 frames. 9 clips back to back with 8 transitions make 18 edges: a plan per stretch, and one per frame on an edge.
+    expect(plans.count).toBeGreaterThan(0)
+    expect(plans.count).toBeLessThanOrEqual(2 * 18)
   })
 
   it('count in the busyness a remembered pace is checked against', () => {
