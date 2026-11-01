@@ -8,6 +8,7 @@ import { JobError } from '../../shared/jobs.ts'
 import { downloadProgress } from '../../shared/transformers.ts'
 import { visionError } from '../errors.ts'
 import { MEDIAPIPE_WASM_BASE } from './models.ts'
+import { blockTelemetry } from './telemetry.ts'
 // ---------------------------------------------------------------------------------------------------------------
 // MediaPipe
 
@@ -37,8 +38,10 @@ export async function mediapipeModel(model: ModelDescriptor): Promise<Uint8Array
  * Creates a MediaPipe task from the ES-module WASM build (works in module workers).
  * MediaPipe clears `self.ModuleFactory` after creating each task, and re-importing the
  * loader is a cached no-op, so the factory is restored before every creation.
+ * Every task logs its usage to Google through this context's `fetch` (see telemetry.ts), so that is blocked first.
  */
 export async function createMediaPipeTask<T>(create: (fileset: WasmFileset) => Promise<T>): Promise<T> {
+  blockTelemetry()
   const { fileset, factory } = await loadMediaPipeRuntime()
   const g = globalThis as { ModuleFactory?: unknown }
   g.ModuleFactory ??= factory
