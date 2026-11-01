@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
-import type { Asset, Clip, EditCommand, Id, JsonObject, Project, Track } from '../../model/index.ts'
+import type {
+  Asset,
+  Clip,
+  EditChange,
+  EditCommand,
+  Id,
+  JsonObject,
+  Project,
+  Track,
+} from '../../model/index.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
@@ -116,7 +125,9 @@ export const useBehind = create<{
   results: Record<string, CutoutResult>
   /** What each cutout job was asked for, so progress and failures show next to those clips. */
   requests: Record<string, CutoutRequest>
-}>(() => ({ checks: {}, results: {}, requests: {} }))
+  /** The person masks made offline that the running re-make makes again (`remakeOfflineMasks`). */
+  remaking: Id[]
+}>(() => ({ checks: {}, results: {}, requests: {}, remaking: [] }))
 
 function setCheck(assetId: Id, check: Suitability) {
   useBehind.setState((s) => ({ checks: { ...s.checks, [assetId]: check } }))
@@ -150,8 +161,8 @@ const fromReport = (r: SuitabilityReport): Extract<Suitability, { status: 'check
 const QUICK_PARTS = 'The cutout takes a closer look and may still turn it down.'
 const QUICK_PARTS_BRIEF = 'Works in parts of this shot, may change on a closer look'
 
-const PEOPLE_SKIPPED =
-  'Couldn’t check for people, so the cutout may include animals or objects. It checks again when you’re back online.'
+const NOT_CHECKED_FOR_PEOPLE = 'Couldn’t check for people, so the cutout may include animals or objects.'
+const PEOPLE_SKIPPED = `${NOT_CHECKED_FOR_PEOPLE} It checks again when you’re back online.`
 
 const REASONS: Record<SuitabilityReason, string> = {
   // The person segmenter finds nobody both in empty shots and in wide shots of small people, so this must not claim
@@ -172,9 +183,13 @@ const MARGINAL_REASONS: Partial<Record<SuitabilityReason, string>> = {
 
 /**
  * What the inspector and Assist say about a shot: a short status and, when it matters, why (`brief`: a shorter why
- * for a row in a list).
+ * for a row in a list). `checkingPeople`: its cutout's mask is being made again with the person detector right now,
+ * so the note does not promise a check later.
  */
-export function suitabilityText(s: Suitability): {
+export function suitabilityText(
+  s: Suitability,
+  checkingPeople = false,
+): {
   status: string
   why?: string
   brief?: string
@@ -185,9 +200,10 @@ export function suitabilityText(s: Suitability): {
       const text = checkedText(s)
       // Without the detector an animal can pass for the person, so an offered shot says the check was partial.
       if (!s.peopleSkipped || !text.ok) return text
+      const skipped = checkingPeople ? NOT_CHECKED_FOR_PEOPLE : PEOPLE_SKIPPED
       return {
         ...text,
-        why: text.why ? `${text.why} ${PEOPLE_SKIPPED}` : PEOPLE_SKIPPED,
+        why: text.why ? `${text.why} ${skipped}` : skipped,
         brief: 'Not checked for people',
       }
     }
@@ -351,15 +367,24 @@ export function personMaskRecord(
   return { trackVersion: r.trackVersion, ...(r.peopleSkipped === true ? { peopleSkipped: true } : {}) }
 }
 
+/** The records of `project` with those of some masks set (null removes one). */
+function withRecords(
+  project: Pick<Project, 'extensions'>,
+  changes: ReadonlyMap<Id, PersonMaskRecord | null>,
+): JsonObject {
+  const records = { ...maskRecords(project) }
+  for (const [id, r] of changes)
+    if (r) records[id] = { trackVersion: r.trackVersion, ...(r.peopleSkipped ? { peopleSkipped: true } : {}) }
+    else delete records[id]
+  return records
+}
+
 /** The command that sets the records of some masks (null removes one), keeping the others in `project`. */
 function recordsCommand(
   project: Pick<Project, 'extensions'>,
   changes: ReadonlyMap<Id, PersonMaskRecord | null>,
 ) {
-  const records = { ...maskRecords(project) }
-  for (const [id, r] of changes)
-    if (r) records[id] = { trackVersion: r.trackVersion, ...(r.peopleSkipped ? { peopleSkipped: true } : {}) }
-    else delete records[id]
+  const records = withRecords(project, changes)
   const value = Object.keys(records).length ? records : null
   return { type: 'project.setExtension', key: MASK_RECORDS, value } satisfies EditCommand
 }
@@ -378,7 +403,7 @@ function personMasks(project: Pick<Project, 'assets'>, assetId?: Id): Asset[] {
 /**
  * The person mask video a new cutout of an imported asset can use as it is: made by the current person track, with
  * the people looked for. A cutout applied to footage whose mask was made offline or by an older version gets a new
- * mask; the cutouts already using the old one keep it (except a mask made offline, see `remakeOfflineMasks`).
+ * mask; the cutouts already using the old one keep it, except a mask made offline (`replacementOf`).
  */
 export function findPersonMask(
   project: Pick<Project, 'assets' | 'extensions'>,
@@ -392,6 +417,28 @@ export function findPersonMask(
 
 const matteMask = (clip: Clip): Id | undefined => ('matte' in clip ? clip.matte?.maskAssetId : undefined)
 
+/** Background writes leave clips on locked tracks as they are, since the editor refuses to change them. */
+const editable = (project: Project, clip: Clip) => !project.tracks.find((t) => t.id === clip.trackId)?.locked
+
+/**
+ * The mask a cutout on the person mask `id` uses instead, when `id` was made without the person detector: a mask of
+ * the same footage made with it, once there is one (`findPersonMask`).
+ */
+function replacementOf(project: Pick<Project, 'assets' | 'extensions'>, id: Id): Asset | undefined {
+  if (!personMaskRecord(project, id)?.peopleSkipped) return undefined
+  const footage = project.assets[id]?.origin.parentAssetId
+  return footage ? findPersonMask(project, footage) : undefined
+}
+
+/** Person masks made without the person detector that cutouts on the timeline use, with nothing to replace them. */
+function offlineMasksInUse(project: Project): Asset[] {
+  const used = new Set(Object.values(project.clips).map(matteMask))
+  return personMasks(project).filter(
+    (m) =>
+      used.has(m.id) && !!personMaskRecord(project, m.id)?.peopleSkipped && !replacementOf(project, m.id),
+  )
+}
+
 /** Whether a footage clip has a cutout whose person mask was made without the person detector. */
 function cutOutWithoutPeople(project: Project, clipId: Id): boolean {
   return cutoutsOf(project, clipId).some((c) => {
@@ -402,16 +449,29 @@ function cutOutWithoutPeople(project: Project, clipId: Id): boolean {
 
 /**
  * The note for a clip whose cutout uses a person mask made without the person detector, whatever the check says
- * meanwhile: the cutout may include animals or objects until its mask is made again.
+ * meanwhile: the cutout may include animals or objects until its mask is made again. `checkingPeople`: as in
+ * `suitabilityText`.
  */
-export function cutoutNote(project: Project, clipId: Id): string | undefined {
-  return cutOutWithoutPeople(project, clipId) ? PEOPLE_SKIPPED : undefined
+export function cutoutNote(project: Project, clipId: Id, checkingPeople = false): string | undefined {
+  if (!cutOutWithoutPeople(project, clipId)) return undefined
+  return checkingPeople ? NOT_CHECKED_FOR_PEOPLE : PEOPLE_SKIPPED
 }
 
+/** Whether a footage clip has a cutout whose mask is one of `remaking` (`useBehind`), being made again now. */
+export function cutoutRemaking(project: Project, clipId: Id, remaking: readonly Id[]): boolean {
+  return cutoutsOf(project, clipId).some((c) => remaking.includes(matteMask(c) ?? ''))
+}
+
+const repointCommands = (project: Project, oldId: Id, newId: Id): EditCommand[] =>
+  Object.values(project.clips)
+    .filter((c) => matteMask(c) === oldId && editable(project, c))
+    .map((c) => ({ type: 'clip.set', clipId: c.id, path: ['matte', 'maskAssetId'], value: newId }))
+
 /**
- * Commands that put `mask` in place of the person mask `oldId`: every clip whose matte uses the old mask (in
- * `project`, the current state) uses the new one, and the old mask and its record go. `record` is the new mask's,
- * when the project does not have the new mask yet.
+ * Commands that put `mask` in place of the person mask `oldId` in every clip whose matte uses the old mask (in
+ * `project`, the current state). `record` is the new mask's, when the project does not have the new mask yet. The
+ * old mask stays, since an undo can bring back a cutout that used it: that cutout then gets the new mask too
+ * (`settleCommands`), and the old mask goes when the project is next opened.
  */
 export function replaceMaskCommands(
   project: Project,
@@ -421,13 +481,55 @@ export function replaceMaskCommands(
 ): EditCommand[] {
   const commands: EditCommand[] = []
   if (!project.assets[mask.id]) commands.push({ type: 'asset.add', asset: mask })
-  for (const c of Object.values(project.clips))
-    if (matteMask(c) === oldId)
+  commands.push(...repointCommands(project, oldId, mask.id))
+  if (record) commands.push(recordsCommand(project, new Map([[mask.id, record]])))
+  return commands
+}
+
+/**
+ * Records of the person masks in this session's project, by mask id. The records are one extension value, so an undo
+ * or redo puts all of them back as they were at that step, dropping those of masks made since in the background.
+ * History lasts a session, so these give back the records of masks still in the project.
+ */
+const knownRecords = new Map<Id, PersonMaskRecord>()
+
+/**
+ * Background repairs after a change: records an undo or redo dropped come back for masks still in the project, and
+ * a cutout on a mask made without the person detector (brought back by an undo, say) gets a mask of the same footage
+ * made with it. `tidy`, when no undo or redo step can bring anything back (a project just opened): masks made
+ * offline that are replaced and unused go, as do the records of masks no longer in the project.
+ */
+function settleCommands(
+  project: Project,
+  known: ReadonlyMap<Id, PersonMaskRecord>,
+  tidy: boolean,
+): EditCommand[] {
+  const masks = personMasks(project)
+  const changes = new Map<Id, PersonMaskRecord | null>()
+  for (const m of masks) {
+    const record = known.get(m.id)
+    if (record && !personMaskRecord(project, m.id)) changes.set(m.id, record)
+  }
+  const view = { assets: project.assets, extensions: { [MASK_RECORDS]: withRecords(project, changes) } }
+  const commands: EditCommand[] = []
+  const used = new Set<Id>()
+  for (const c of Object.values(project.clips)) {
+    const id = matteMask(c)
+    if (!id) continue
+    const mask = editable(project, c) ? replacementOf(view, id) : undefined
+    if (mask)
       commands.push({ type: 'clip.set', clipId: c.id, path: ['matte', 'maskAssetId'], value: mask.id })
-  commands.push({ type: 'asset.remove', assetId: oldId })
-  commands.push(
-    recordsCommand(project, new Map([[oldId, null], ...(record ? [[mask.id, record] as const] : [])])),
-  )
+    else used.add(id)
+  }
+  if (tidy) {
+    for (const m of masks)
+      if (!used.has(m.id) && replacementOf(view, m.id)) {
+        commands.push({ type: 'asset.remove', assetId: m.id })
+        changes.set(m.id, null)
+      }
+    for (const id of Object.keys(maskRecords(project))) if (!project.assets[id]) changes.set(id, null)
+  }
+  if (changes.size) commands.push(recordsCommand(project, changes))
   return commands
 }
 
@@ -661,6 +763,11 @@ export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefin
  */
 export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> | undefined {
   if (isRunning(JOB_KINDS.cutout)) return undefined
+  // Two person tracks of the same footage at once could each make a mask. The re-make runs again after the cutout.
+  const stopped = remake
+  stopped?.cancel()
+  /** Set when the cutout found the person detector missing, so a re-make now would only find that again. */
+  let detectorMissing = false
   let jobId = ''
   const handle = jobs.run({
     kind: JOB_KINDS.cutout,
@@ -699,6 +806,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
               signal: ctx.signal,
               onProgress: (p) => step(0.9 * (p.fraction ?? 0)),
             })
+            if (person.suitability.peopleSkipped) detectorMissing = true
             const check = fromReport(person.suitability)
             setCheck(asset.id, check)
             const name = asset.name.replace(/\.[^.]+$/, '')
@@ -769,10 +877,9 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
   jobId = handle.id
   useBehind.setState((s) => ({ requests: { ...s.requests, [jobId]: { clips: clipIds, object: false } } }))
   // The person detector may be available by now, for the masks made without it.
-  handle.promise.then(
-    () => remakeOfflineMasks(),
-    () => undefined,
-  )
+  void Promise.allSettled([handle.promise, stopped?.promise]).then(() => {
+    if (!detectorMissing) remakeOfflineMasks()
+  })
   return handle
 }
 
@@ -791,11 +898,15 @@ async function storePersonMask(
   })
 }
 
+/** The running re-make of the masks made offline, which a cutout stops. */
+let remake: JobHandle<void> | undefined
+
 /**
- * Makes the person masks that were made without the person detector again, now with it, and points their cutouts at
- * the new masks, so a cutout made offline ends up as one made online. A mask is left as it is while the detector still
- * cannot be downloaded. Runs when the browser comes back online, when a project opens and after a cutout. Not an undo
- * step, like other results of background work: the cutout itself was the user's edit.
+ * Makes the person masks that were made without the person detector and that cutouts use again, now with it, and
+ * points their cutouts at the new masks, so a cutout made offline ends up as one made online. A mask is left as it is
+ * while the detector still cannot be downloaded. Runs when the browser comes back online, when a project opens, after
+ * a cutout, and after an undo or redo brings back a cutout on such a mask. Not an undo step, like other results of
+ * background work: the cutout itself was the user's edit.
  */
 export function remakeOfflineMasks(): JobHandle<void> | undefined {
   // Runs even with background analysis off (`backgroundAnalysisOn`): that setting is about analysis nobody asked for,
@@ -803,11 +914,13 @@ export function remakeOfflineMasks(): JobHandle<void> | undefined {
   if (typeof navigator === 'undefined' || !navigator.onLine) return undefined
   if (isRunning(JOB_KINDS.cutout) || isRunning(JOB_KINDS.cutoutRemake)) return undefined
   const project = editor.getProject()
-  const offline = personMasks(project).filter((m) => personMaskRecord(project, m.id)?.peopleSkipped)
+  const offline = offlineMasksInUse(project)
   if (!offline.length) return undefined
-  return jobs.run({
+  const ids = offline.map((m) => m.id)
+  const n = Object.values(project.clips).filter((c) => ids.includes(matteMask(c) ?? '')).length
+  const handle = jobs.run({
     kind: JOB_KINDS.cutoutRemake,
-    title: 'Cutting out the person again',
+    title: n === 1 ? 'Checking the cutout for people' : `Checking ${n} cutouts for people`,
     run: async (ctx) => {
       const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
       for (const [i, old] of offline.entries()) {
@@ -817,7 +930,7 @@ export function remakeOfflineMasks(): JobHandle<void> | undefined {
         let mask = findPersonMask(now, asset.id)
         let record: PersonMaskRecord | undefined
         if (!mask) {
-          const message = `Cutting out the person again · ${asset.name}`
+          const message = `Checking for people · ${asset.name}`
           const step = (f: number) => ctx.progress({ fraction: (i + f) / offline.length, message })
           step(0)
           const source = v.createAssetFrameSource(asset, appMedia)
@@ -835,12 +948,20 @@ export function remakeOfflineMasks(): JobHandle<void> | undefined {
           }
         }
         ctx.throwIfCancelled()
-        const current = editor.getProject()
-        if (current.assets[old.id])
-          dispatch(replaceMaskCommands(current, old.id, mask, record), { history: 'skip' })
+        // Also when the cutout went meanwhile: an undo or redo can bring it back on the old mask.
+        dispatch(replaceMaskCommands(editor.getProject(), old.id, mask, record), { history: 'skip' })
       }
     },
   })
+  remake = handle
+  useBehind.setState({ remaking: ids })
+  const end = () => {
+    if (remake !== handle) return
+    remake = undefined
+    useBehind.setState({ remaking: [] })
+  }
+  handle.promise.then(end, end)
+  return handle
 }
 
 if (typeof window !== 'undefined')
@@ -848,9 +969,41 @@ if (typeof window !== 'undefined')
     retryPeopleSkipped()
     remakeOfflineMasks()
   })
-editor.subscribe((_project, change) => {
-  if (change.source === 'load') remakeOfflineMasks()
+
+/** Masks made offline that cutouts used after the last change, to tell when an undo or redo brings one back. */
+let offlineInUse = new Set<Id>()
+let changes: Set<EditChange['source']> | undefined
+
+editor.subscribe((project, change) => {
+  if (change.source === 'load') knownRecords.clear()
+  for (const id of Object.keys(maskRecords(project))) {
+    const record = personMaskRecord(project, id)
+    if (record) knownRecords.set(id, record)
+  }
+  if (!changes) {
+    changes = new Set()
+    // Once the change has reached every listener, so none of them gets the repair before the change.
+    queueMicrotask(afterChanges)
+  }
+  changes.add(change.source)
 })
+
+function afterChanges() {
+  const sources = changes ?? new Set()
+  changes = undefined
+  let project = editor.getProject()
+  if (!personMasks(project).length && !project.extensions?.[MASK_RECORDS]) {
+    offlineInUse = new Set()
+    return
+  }
+  const history = editor.history()
+  const commands = settleCommands(project, knownRecords, !history.undo.length && !history.redo.length)
+  if (commands.length && dispatch(commands, { history: 'skip' })) project = editor.getProject()
+  const inUse = new Set(offlineMasksInUse(project).map((m) => m.id))
+  const back = [...inUse].some((id) => !offlineInUse.has(id))
+  offlineInUse = inUse
+  if (sources.has('load') || (back && (sources.has('undo') || sources.has('redo')))) remakeOfflineMasks()
+}
 
 export function bringToFront(clipIds: string[]): boolean {
   const project = editor.getProject()

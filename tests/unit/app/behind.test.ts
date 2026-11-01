@@ -1,13 +1,18 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Asset, Clip, Project } from '../../../src/model/index.ts'
 import {
   assetSuitability,
+  bringToFront,
   canTryCutout,
   cutoutCommands,
+  cutoutNote,
+  cutoutsOf,
   findPersonMask,
   footageRows,
   personMaskRecord,
+  putBehind,
   refusalText,
+  remakeOfflineMasks,
   replaceMaskCommands,
   retryPeopleSkipped,
   suitabilityOf,
@@ -432,7 +437,7 @@ describe('cutout commands', () => {
 })
 
 describe('a cutout made without the person detector', () => {
-  /** An imported clip cut out with a mask made offline, after a cutout of the sample singer (an earlier undo step). */
+  /** An imported clip cut out with a mask made offline, an undo step after the one that added the clip. */
   function cutOutOffline() {
     const { asset, clip } = importFootage()
     const offline = personMask(asset.id)
@@ -449,6 +454,30 @@ describe('a cutout made without the person detector', () => {
   }
   const remade: Asset = { ...personMask('a-interview'), id: 'mask-again', storageKey: 'opfs/mask-again' }
 
+  /** What the re-make dispatches once the mask is made again with the person detector. */
+  const remake = (offline: Asset) =>
+    editor.dispatch(
+      replaceMaskCommands(editor.getProject(), offline.id, remade, { trackVersion: PERSON_TRACK_VERSION }),
+      { history: 'skip' },
+    )
+  /** Lets the repairs that follow a change run. */
+  const settled = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+  const masksOf = (project: Project, ...hosts: Clip[]) =>
+    hosts.flatMap((h) =>
+      cutoutsOf(project, h.id).map((c) => (c as Extract<Clip, { type: 'video' }>).matte?.maskAssetId),
+    )
+  /** A second clip of the footage, cut out with the mask made offline, as two more undo steps. */
+  function addSecondCutout(asset: Asset, clip: Clip, offline: Asset): Clip {
+    const second = {
+      ...structuredClone(editor.getProject().clips[clip.id]!),
+      id: 'c-interview-2',
+      start: 3,
+    } as Clip
+    editor.dispatch({ type: 'clip.add', clip: second })
+    editor.dispatch(cutoutCommands(editor.getProject(), [second.id], new Map([[asset.id, offline]])).commands)
+    return second
+  }
+
   it('keeps saying no one was looked for after a check with the detector, until its mask is made again', () => {
     const { asset, clip, offline } = cutOutOffline()
     const checks: Record<string, Suitability> = {
@@ -457,50 +486,140 @@ describe('a cutout made without the person detector', () => {
     const note = (project: Project) => suitabilityText(suitabilityOf(project, project.clips[clip.id], checks))
     expect(note(editor.getProject())).toMatchObject({ brief: 'Not checked for people', ok: true })
 
-    editor.dispatch(
-      replaceMaskCommands(editor.getProject(), offline.id, remade, { trackVersion: PERSON_TRACK_VERSION }),
-      { history: 'skip' },
-    )
+    // While the mask is made again, the note says no one was looked for, but no longer that a check comes later.
+    const project = editor.getProject()
+    const checking = suitabilityText(suitabilityOf(project, project.clips[clip.id], checks), true)
+    expect(checking.why).toBe('Couldn’t check for people, so the cutout may include animals or objects.')
+    expect(cutoutNote(project, clip.id, true)).toBe(checking.why)
+
+    remake(offline)
     expect(note(editor.getProject())).toEqual({ status: 'Person found', ok: true })
   })
 
-  it('gets the new mask in every cutout that used it, without an undo step of its own', () => {
+  it('gets the new mask in every cutout that used it, without an undo step of its own', async () => {
     const { asset, clip, offline } = cutOutOffline()
-    const before = editor.getProject()
-    const second = { ...structuredClone(before.clips[clip.id]!), id: 'c-interview-2', start: 3 } as Clip
-    editor.dispatch({ type: 'clip.add', clip: second })
-    editor.dispatch(cutoutCommands(editor.getProject(), [second.id], new Map([[asset.id, offline]])).commands)
-    const masksOf = (project: Project) =>
-      Object.values(project.clips)
-        .filter((c) => c.meta?.behindSubjectOf)
-        .map((c) => (c as Extract<Clip, { type: 'video' }>).matte?.maskAssetId)
-    expect(masksOf(editor.getProject()).filter((m) => m === offline.id)).toHaveLength(2)
+    const second = addSecondCutout(asset, clip, offline)
+    expect(masksOf(editor.getProject(), clip, second)).toEqual([offline.id, offline.id])
     const undo = editor.history().undo.length
 
-    editor.dispatch(
-      replaceMaskCommands(editor.getProject(), offline.id, remade, { trackVersion: PERSON_TRACK_VERSION }),
-      { history: 'skip' },
-    )
+    remake(offline)
+    await settled()
     const after = editor.getProject()
-    expect(masksOf(after).filter((m) => m === offline.id)).toEqual([])
-    expect(masksOf(after).filter((m) => m === remade.id)).toHaveLength(2)
-    expect(after.assets[offline.id]).toBeUndefined()
-    expect(personMaskRecord(after, offline.id)).toBeUndefined()
+    expect(masksOf(after, clip, second)).toEqual([remade.id, remade.id])
     expect(findPersonMask(after, asset.id)).toEqual(remade)
     expect(editor.history().undo.length).toBe(undo)
+    // An undo can still bring back a cutout on the old mask, so it stays until the project is opened again.
+    expect(after.assets[offline.id]).toEqual(offline)
+  })
 
-    // Undoing the cutouts removes them; redoing brings them back as they were made, with the offline mask.
+  it('gives a cutout that an undo brings back after its mask was made again the new mask', async () => {
+    const { clip, offline } = cutOutOffline()
+    expect(bringToFront([clip.id])).toBe(true)
+    remake(offline)
     editor.undo()
+    await settled()
+    const project = editor.getProject()
+    expect(masksOf(project, clip)).toEqual([remade.id])
+    expect(project.assets[remade.id]).toEqual(remade)
+    expect(cutoutNote(project, clip.id)).toBeUndefined()
+  })
+
+  it('gives a cutout that reused the mask made offline the new mask when it is undone and redone', async () => {
+    const { asset, clip, offline } = cutOutOffline()
+    const second = addSecondCutout(asset, clip, offline)
+    remake(offline)
     editor.undo()
-    editor.undo()
-    expect(masksOf(editor.getProject()).filter((m) => m === remade.id)).toEqual([])
+    await settled()
+    expect(cutoutsOf(editor.getProject(), second.id)).toEqual([])
     editor.redo()
-    const redone = editor.getProject()
-    const mask = masksOf(redone).find(
-      (m) => m !== undefined && redone.assets[m]?.origin.parentAssetId === asset.id,
-    )
-    expect(mask).toBe(offline.id)
-    expect(redone.assets[offline.id]).toEqual(offline)
-    expect(personMaskRecord(redone, offline.id)).toMatchObject({ peopleSkipped: true })
+    await settled()
+    const project = editor.getProject()
+    expect(masksOf(project, clip, second)).toEqual([remade.id, remade.id])
+    expect(project.assets[remade.id]).toEqual(remade)
+  })
+
+  it('keeps the record of the new mask when the cutout is undone, and redoes the cutout with the new mask', async () => {
+    const { asset, clip, offline } = cutOutOffline()
+    remake(offline)
+    editor.undo()
+    await settled()
+    let project = editor.getProject()
+    expect(cutoutsOf(project, clip.id)).toEqual([])
+    expect(personMaskRecord(project, remade.id)).toEqual({ trackVersion: PERSON_TRACK_VERSION })
+    expect(findPersonMask(project, asset.id)).toEqual(remade)
+
+    editor.redo()
+    await settled()
+    project = editor.getProject()
+    expect(masksOf(project, clip)).toEqual([remade.id])
+    expect(personMaskRecord(project, offline.id)).toEqual({
+      trackVersion: PERSON_TRACK_VERSION,
+      peopleSkipped: true,
+    })
+  })
+
+  it('drops the mask made offline when the project opens again, once it is replaced and no cutout uses it', async () => {
+    const { clip, offline } = cutOutOffline()
+    remake(offline)
+    editor.load(structuredClone(editor.getProject()))
+    await settled()
+    const project = editor.getProject()
+    expect(project.assets[offline.id]).toBeUndefined()
+    expect(personMaskRecord(project, offline.id)).toBeUndefined()
+    expect(project.assets[remade.id]).toEqual(remade)
+    expect(masksOf(project, clip)).toEqual([remade.id])
+  })
+
+  it('leaves a cutout on a locked track on the mask made offline until the track is unlocked', async () => {
+    const { clip, offline } = cutOutOffline()
+    const subject = editor.getProject().tracks.find((t) => t.name === 'Subject')!
+    editor.dispatch({ type: 'track.update', trackId: subject.id, patch: { locked: true } })
+    remake(offline)
+    editor.load(structuredClone(editor.getProject()))
+    await settled()
+    expect(masksOf(editor.getProject(), clip)).toEqual([offline.id])
+    expect(editor.getProject().assets[offline.id]).toEqual(offline)
+    expect(cutoutNote(editor.getProject(), clip.id)).toMatch(/^Couldn’t check for people/)
+
+    editor.dispatch({ type: 'track.update', trackId: subject.id, patch: { locked: false } })
+    await settled()
+    expect(masksOf(editor.getProject(), clip)).toEqual([remade.id])
+  })
+
+  it('makes the masks made offline again only while cutouts use them, titled by the cutouts it checks', async () => {
+    vi.stubGlobal('navigator', { onLine: true })
+    try {
+      const { asset, clip, offline } = cutOutOffline()
+      expect(bringToFront([clip.id])).toBe(true)
+      expect(remakeOfflineMasks()).toBeUndefined()
+
+      addSecondCutout(asset, clip, offline)
+      editor.dispatch(cutoutCommands(editor.getProject(), [clip.id], new Map([[asset.id, offline]])).commands)
+      const job = remakeOfflineMasks()
+      expect(job?.title).toBe('Checking 2 cutouts for people')
+      expect(useBehind.getState().remaking).toEqual([offline.id])
+      job!.cancel()
+      await expect(job!.promise).rejects.toMatchObject({ code: 'cancelled' })
+      expect(useBehind.getState().remaking).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('stops a running re-make when a cutout starts, since it runs again after the cutout', async () => {
+    vi.stubGlobal('navigator', { onLine: true })
+    let job: ReturnType<typeof remakeOfflineMasks>
+    let cutout: ReturnType<typeof putBehind>
+    try {
+      cutOutOffline()
+      job = remakeOfflineMasks()
+      cutout = putBehind([clipsOf(editor.getProject(), 'm-singer')[0]!.id])
+    } finally {
+      // Offline again, so the re-make after the cutout does not start.
+      vi.unstubAllGlobals()
+    }
+    expect(job).toBeDefined()
+    await expect(job!.promise).rejects.toMatchObject({ code: 'cancelled' })
+    await expect(cutout!.promise).resolves.toMatchObject({ count: 1 })
   })
 })
