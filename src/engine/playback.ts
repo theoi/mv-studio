@@ -265,12 +265,12 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     await resumed
     if (request !== this.playRequest) return
     this.refresh()
-    const duration = this.duration
-    if (this.loop && (this.position < this.loop.start || this.position >= this.loop.end))
-      this.position = this.loop.start
-    // End and a step past the end stop on the last frame, just before the end: Play there starts from the top too,
-    // instead of playing that last moment and stopping.
-    else if (duration > 0 && this.position >= duration - LAST_FRAME_LEAD - 1e-3) this.position = 0
+    // Play covers the loop, or else the whole project, and starts from its start when outside it or on its last
+    // frame. End and a step past the end stop on the last frame, just before the end, and playing only that last
+    // moment would stop (or wrap) at once.
+    const [start, end] = this.loop ? [this.loop.start, this.loop.end] : [0, this.duration]
+    if (end > 0 && (this.position < start || this.position >= end - LAST_FRAME_LEAD - 1e-3))
+      this.position = start
     this.playState = 'playing'
     this.reschedule(this.position)
     this.ticker = setInterval(() => this.tick(), TICK_MS)

@@ -165,6 +165,18 @@ test('a link past the end, End, stepping forward and a scrub past the end all st
   await expect.poll(playhead).toBeLessThan(5)
   await expect.poll(playhead).toBeGreaterThan(0)
   await page.keyboard.press('Space')
+
+  // With Loop on over the last section, Play there repeats the section instead.
+  await page.keyboard.press('End')
+  await expect.poll(playhead).toBeCloseTo(end - 0.01, 6)
+  const loop = page.getByRole('button', { name: 'Loop playback' })
+  await page.keyboard.press(`${mod}+l`)
+  await expect(loop).toHaveAccessibleName('Loop playback · Outro')
+  await page.keyboard.press('Space')
+  await expect.poll(playhead).toBeLessThan(end - 1)
+  expect(await playhead()).toBeGreaterThan(end - 10)
+  await expect(loop).toHaveAccessibleName('Loop playback · Outro')
+  await page.keyboard.press('Space')
 })
 
 test('playing to the end, and going to a marker on the end, show the video’s last frame', async ({
