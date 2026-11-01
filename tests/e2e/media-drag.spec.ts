@@ -154,7 +154,7 @@ test('a media card is one Tab stop; Space adds it only when it was reached with 
   await expect(play).toBeVisible()
 })
 
-test('a card dragged where its track has no room says it goes on a new track, and lands on one', async ({
+test('a card dragged onto a shot goes in at the nearer cut by insert, on its own track rather than a new one', async ({
   page,
 }) => {
   await openEmptyEditor(page)
@@ -165,16 +165,18 @@ test('a card dragged where its track has no room says it goes on a new track, an
   await expect(lane.getByRole('button', { name: /^clip, / })).toHaveCount(1)
   const box = (await lane.boundingBox())!
 
-  // The clip already fills 0 to 4 s on Video 1, and there is no other video track.
+  // The clip already fills 0 to 4 s on Video 1; near its start, the card goes in before it.
   await card.hover()
   await page.mouse.down()
   await page.mouse.move(box.x + 20, box.y + box.height / 2, { steps: 4 })
   await page.mouse.move(box.x + 24, box.y + box.height / 2, { steps: 2 })
-  await expect(lane.getByText(/^Goes on a new track · Hold (Alt|⌥) to replace$/)).toBeVisible()
+  await expect(
+    lane.getByText(/^Insert at 0:00\.0 · later clips move 4\.0 s · Hold (Alt|⌥) to replace$/),
+  ).toBeVisible()
   await page.mouse.up()
-  // The new track is numbered after Video 1.
-  await expect(laneOf(page, 'Video 2').getByRole('button', { name: /^clip, / })).toHaveCount(1)
-  await expect(lane.getByRole('button', { name: /^clip, / })).toHaveCount(1)
+  await expect(lane.getByRole('button', { name: /^clip, 0:00\.0 to 0:04\.0/ })).toHaveCount(1)
+  await expect(lane.getByRole('button', { name: /^clip, 0:04\.0 to 0:08\.0/ })).toHaveCount(1)
+  await expect(laneOf(page, 'Video 2')).toHaveCount(0)
 })
 
 test('a dropped media card snaps like a moved clip: to beats and section ends with snapping on, to the cursor with snapping off or without a beat grid', async ({
