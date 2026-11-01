@@ -46,6 +46,8 @@ export interface Toast {
   show?: () => void
   /** A new toast with the same key takes this one's place instead of stacking under it. */
   key?: string
+  /** Stays until it is dismissed or its action runs. */
+  sticky?: boolean
 }
 
 export interface UiState {
@@ -151,23 +153,30 @@ useUi.subscribe((s, prev) => {
 })
 
 const TOAST_MS = 5200
+
+/** The toasts that stay when another comes: sticky ones, and the two most recent of the others. */
+function room(toasts: Toast[]): Toast[] {
+  const others = toasts.filter((t) => !t.sticky)
+  const dropped = new Set(others.slice(0, Math.max(0, others.length - 2)))
+  return toasts.filter((t) => !dropped.has(t))
+}
 let toastId = 1
 const toastTimers = new Map<number, number>()
 
 export function toast(
   message: string,
   action?: Toast['action'],
-  options: { show?: () => void; key?: string } = {},
+  options: { show?: () => void; key?: string; sticky?: boolean } = {},
 ) {
-  const { show, key } = options
+  const { show, key, sticky } = options
   const same = key === undefined ? undefined : get().toasts.find((t) => t.key === key)
   if (same) {
-    set((s) => ({ toasts: s.toasts.map((t) => (t === same ? { ...t, message, action, show } : t)) }))
+    set((s) => ({ toasts: s.toasts.map((t) => (t === same ? { ...t, message, action, show, sticky } : t)) }))
     releaseToast(same.id)
     return
   }
   const id = toastId++
-  set((s) => ({ toasts: [...s.toasts.slice(-2), { id, message, action, show, key }] }))
+  set((s) => ({ toasts: [...room(s.toasts), { id, message, action, show, key, sticky }] }))
   releaseToast(id)
 }
 
@@ -200,7 +209,7 @@ export function holdToast(id: number) {
 /** Gives a toast its full time again, counted from now. */
 export function releaseToast(id: number) {
   holdToast(id)
-  if (get().toasts.some((t) => t.id === id))
+  if (get().toasts.some((t) => t.id === id && !t.sticky))
     toastTimers.set(
       id,
       window.setTimeout(() => dismissToast(id), TOAST_MS),

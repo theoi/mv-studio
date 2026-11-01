@@ -21,6 +21,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/node-deps
       - run: npm run build
+      # Tabs still running the live build keep loading its workers and screens after this deploy. The script never
+      # fails the deploy; these are a backstop.
+      - run: node scripts/keep-previous-assets.ts https://theoi.github.io/mv-studio/ dist
+        continue-on-error: true
+        timeout-minutes: 5
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
