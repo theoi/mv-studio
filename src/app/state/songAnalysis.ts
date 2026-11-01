@@ -13,7 +13,7 @@ import {
   type Project,
   type Seconds,
 } from '../../model/index.ts'
-import { JobError, type JobHandle } from '../../shared/jobs.ts'
+import { JobError, type JobHandle, type JobProgress } from '../../shared/jobs.ts'
 import { formatBpm, formatTime, plural } from '../format.ts'
 import { backgroundAnalysisOn } from './footage.ts'
 import { isRunning, JOB_KINDS } from './jobs.ts'
@@ -433,12 +433,13 @@ function startRun(
 /**
  * Waits until the song has bars, for a job the user started that needs them (auto-cut, the director): resolves at
  * once when they are found, follows the refinement step when it is running, and starts it otherwise (also where
- * background analysis is off, because the user asked). `progress` gets the step's fraction (0..1). Cancelling
+ * background analysis is off, because the user asked). `progress` gets the step's fraction (0..1) and, once it knows,
+ * the seconds it still needs. Cancelling
  * `signal` stops waiting and cancels a step this call started. Resolves whether the song has bars; without them,
  * plan on beats and say so.
  */
 export async function ensureBars(
-  options: { signal?: AbortSignal; progress?: (fraction: number) => void } = {},
+  options: { signal?: AbortSignal; progress?: (fraction: number, etaSeconds?: number) => void } = {},
 ): Promise<boolean> {
   const project = editor.getProject()
   const songId = project.songAssetId
@@ -453,8 +454,9 @@ export async function ensureBars(
   void run.job.then((job) => {
     if (!job || done) return
     if (progress) {
-      cleanups.push(job.subscribe((s) => progress(s.progress.fraction ?? 0)))
-      progress(job.snapshot().progress.fraction ?? 0)
+      const report = (p: JobProgress) => progress(p.fraction ?? 0, p.etaSeconds)
+      cleanups.push(job.subscribe((s) => report(s.progress)))
+      report(job.snapshot().progress)
     }
     if (ours && signal) {
       const cancel = () => job.cancel()
