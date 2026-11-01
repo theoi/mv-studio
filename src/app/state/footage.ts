@@ -104,6 +104,17 @@ export function footageService(): Promise<FootageService> {
 }
 
 /**
+ * What footage analysis says while it downloads a model, in place of how many clips are done: "Downloading the
+ * footage tagger (154 MB, once)… 40%. Your clips are analyzed next."
+ */
+export function footageDownloadNote(indexing: IndexingState | null): string | undefined {
+  const download = indexing?.status === 'indexing' ? indexing.download : undefined
+  if (!download) return undefined
+  const next = indexing?.done ? 'The rest of your clips are analyzed next.' : 'Your clips are analyzed next.'
+  return `${download.message}… ${Math.round(download.fraction * 100)}%. ${next}`
+}
+
+/**
  * Whether analysis that downloads models may run without being asked for (footage indexing, beat refinement). Off in
  * automated browsers (end-to-end tests, the live smoke test) unless a test opts in.
  */

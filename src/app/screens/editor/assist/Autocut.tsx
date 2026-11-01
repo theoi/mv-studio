@@ -30,7 +30,12 @@ import {
   undoAutoCut,
   useAutoCut,
 } from '../../../state/autocut.ts'
-import { analyzeFootageNow, cancelFootageAnalysis, useFootage } from '../../../state/footage.ts'
+import {
+  analyzeFootageNow,
+  cancelFootageAnalysis,
+  footageDownloadNote,
+  useFootage,
+} from '../../../state/footage.ts'
 import { openImport } from '../../../state/importer.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, sectionName, useProject } from '../../../state/project.ts'
@@ -217,7 +222,8 @@ export function AutocutView() {
   const note = !clipCount
     ? 'Import video clips or images first. Auto-cut cuts them to the song.'
     : showAnalyzing
-      ? `Analyzing your footage… ${indexing?.done ?? 0} of ${indexing?.total ?? clipCount} clips. Cut again when it’s done to match the mood.`
+      ? (footageDownloadNote(indexing) ??
+        `Analyzing your footage… ${indexing?.done ?? 0} of ${indexing?.total ?? clipCount} clips. Cut again when it’s done to match the mood.`)
       : willAnalyze
         ? `${which} analyzed yet, so this cut picks ${unanalyzed === 1 ? 'it' : 'them'} for variety and starts the analysis. Cut again when it’s done to match the mood.`
         : undefined

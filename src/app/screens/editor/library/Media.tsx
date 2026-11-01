@@ -16,6 +16,7 @@ import type { Asset, Project } from '../../../../model/index.ts'
 import type { FootageResult } from '../../../../vision/index.ts'
 import {
   clipTags,
+  footageDownloadNote,
   suggestionRowRef,
   useClipAnalyzing,
   useFootage,
@@ -380,6 +381,7 @@ export function MediaTab() {
   const q = query.trim()
   const results = useFootageResults('search', q || null)
   const analyzing = useFootage((s) => s.indexing?.status === 'indexing')
+  const downloadNote = useFootage((s) => footageDownloadNote(s.indexing))
   const items = useMemo(() => {
     const lower = q.toLowerCase()
     const shown = (m: LibraryItem) =>
@@ -453,7 +455,11 @@ export function MediaTab() {
             ))}
           </div>
         ) : analyzing ? (
-          <EmptyState compact title="Analyzing your footage…" description="Results appear as clips finish." />
+          <EmptyState
+            compact
+            title="Analyzing your footage…"
+            description={downloadNote ?? 'Results appear as clips finish.'}
+          />
         ) : !q ? (
           <EmptyState
             compact

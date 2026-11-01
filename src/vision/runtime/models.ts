@@ -268,6 +268,15 @@ export const VISION_MODEL_PARTS: Record<VisionModel, readonly ModelDescriptor[]>
 export const visionModelBytes = (model: VisionModel) =>
   VISION_MODEL_PARTS[model].reduce((sum, m) => sum + modelBytes(m), 0)
 
+/** Whether `url` is one of a named model's files, its weights for every device included. */
+export function isVisionModelFile(model: VisionModel, url: string): boolean {
+  return VISION_MODEL_PARTS[model].some((m) =>
+    m.homepage.startsWith(`${HF}/`)
+      ? url.startsWith(`${HF}/${hfRepo(m)}/resolve/`)
+      : Object.values(m.files).some((f) => f.url === url),
+  )
+}
+
 /** Hugging Face repo id of a Transformers.js model descriptor. */
 export function hfRepo(model: ModelDescriptor): string {
   return model.homepage.slice(HF.length + 1)

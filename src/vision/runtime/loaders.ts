@@ -32,7 +32,7 @@ function loadMediaPipeRuntime(): Promise<{ fileset: WasmFileset; factory: unknow
 export async function mediapipeModel(model: ModelDescriptor, name: VisionModel): Promise<Uint8Array> {
   const file = model.files.model
   if (!file) throw new JobError('internal', `${model.name} has no model file`)
-  const progress = downloadProgress(file.url.slice(file.url.lastIndexOf('/') + 1))
+  const progress = downloadProgress(file.url.slice(file.url.lastIndexOf('/') + 1), file.url)
   try {
     return new Uint8Array(await fetchModelFile(file, { onProgress: progress }))
   } catch (err) {

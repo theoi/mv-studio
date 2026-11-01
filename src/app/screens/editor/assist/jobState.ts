@@ -60,6 +60,16 @@ export function dismiss(job?: JobSnapshot) {
 
 export const pct = (job?: JobSnapshot) => Math.round((job?.progress.fraction ?? 0) * 100)
 
+/**
+ * How far the model download a job shows as its line has got, in percent, rather than the job: undefined while the
+ * job shows no download.
+ */
+export function downloadPct(job?: JobSnapshot): number | undefined {
+  const p = job?.progress
+  if (p?.stage !== 'download' || !p.bytesTotal) return undefined
+  return Math.round(Math.min(1, (p.bytesLoaded ?? 0) / p.bytesTotal) * 100)
+}
+
 export function etaText(job?: JobSnapshot): string | undefined {
   const s = job?.progress.etaSeconds
   if (s === undefined) return undefined

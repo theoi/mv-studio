@@ -3,7 +3,12 @@ import type * as Transformers from '@huggingface/transformers'
 import type { EmbeddingModel } from '../backends.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { downloadFailed, startFailed, visionError } from '../errors.ts'
-import { loadTransformers, pinRevision, registerModelFiles } from '../../shared/transformers.ts'
+import {
+  downloadProgress,
+  loadTransformers,
+  pinRevision,
+  registerModelFiles,
+} from '../../shared/transformers.ts'
 import { loadingModel } from '../runtime/loading.ts'
 import {
   hfRepo,
@@ -15,7 +20,7 @@ import {
 } from '../runtime/models.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../../shared/worker.ts'
 import { detectCapabilities } from '../../shared/capabilities.ts'
-import { preferredDevice, type ModelDescriptor } from '../../shared/models.ts'
+import { fetchModelFile, modelCache, preferredDevice, type ModelDescriptor } from '../../shared/models.ts'
 import type { Mask } from '../types.ts'
 
 type T = typeof Transformers
@@ -51,6 +56,11 @@ async function load<M>(
     }
   }
   return { model: await create(WASM), device: WASM }
+}
+
+/** The weights `load(key)` loads: the device's, or WASM's once WebGPU failed for it. */
+async function dtypeOf(key: string): Promise<Device['dtype']> {
+  return gpuFailed.has(key) ? WASM.dtype : ((await webgpuDevice())?.dtype ?? WASM.dtype)
 }
 
 function assertFinite(data: ArrayLike<number>, what: string): void {
@@ -107,11 +117,13 @@ function imageModel(
   descriptor: ModelDescriptor,
   cls: 'auto' | 'clipVision' | 'siglipVision',
   name: VisionModel,
+  before?: () => Promise<void>,
 ): Promise<ImageModel> {
   let p = imageModels.get(key)
   if (!p) {
     p = (async () => {
       const Tx = await loadTransformers()
+      await before?.()
       const Model =
         cls === 'clipVision'
           ? Tx.CLIPVisionModelWithProjection
@@ -143,6 +155,7 @@ function textModel(key: EmbeddingModel): Promise<TextModel> {
   if (!p) {
     p = (async () => {
       const Tx = await loadTransformers()
+      await fetchEmbeddingWeights(key, `${key}:text`)
       const [repo, revision] = [hfRepo(EMBEDDING_MODELS[key]), hfRevision(EMBEDDING_MODELS[key])]
       const Model = key === 'clipB32' ? Tx.CLIPTextModelWithProjection : Tx.SiglipTextModel
       const [tokenizer, loaded] = await Promise.all([
@@ -164,6 +177,25 @@ function textModel(key: EmbeddingModel): Promise<TextModel> {
 const EMBEDDING_MODELS: Record<EmbeddingModel, ModelDescriptor> = {
   clipB32: VISION_MODELS.clipB32,
   siglipB16: VISION_MODELS.siglipB16,
+}
+
+const WEIGHTS_SUFFIX: Record<Device['dtype'], string> = { q8: '_quantized', fp16: '_fp16', fp32: '' }
+
+/**
+ * Downloads both halves of an embedding model's weights for the device `load(key)` uses, so the model's first
+ * download is one line: footage analysis loads the image half, and matching the text half, often in a later job.
+ */
+async function fetchEmbeddingWeights(model: EmbeddingModel, key: string): Promise<void> {
+  const repo = `https://huggingface.co/${hfRepo(EMBEDDING_MODELS[model])}/resolve/`
+  const halves = new RegExp(`/onnx/(vision|text)_model${WEIGHTS_SUFFIX[await dtypeOf(key)]}\\.onnx$`)
+  const files = transformersFiles().filter((f) => f.url.startsWith(repo) && halves.test(f.url))
+  await Promise.all(
+    files.map(async (f) => {
+      if (await modelCache.has(f.url).catch(() => false)) return
+      const name = f.url.slice(f.url.lastIndexOf('/') + 1)
+      await fetchModelFile(f, { onProgress: downloadProgress(name, f.url) })
+    }),
+  )
 }
 
 function setSize(processor: Transformers.Processor, size: Record<string, number>): void {
@@ -258,12 +290,14 @@ const api = {
         if (!input.bitmaps.length) return { dim: 0, data: new Float32Array(0) }
         const Tx = await loadTransformers()
         const isClip = input.model === 'clipB32'
+        const key = `${input.model}:vision`
         const m = await loadingModel('tagger', ctx.progress, () =>
           imageModel(
-            `${input.model}:vision`,
+            key,
             EMBEDDING_MODELS[input.model],
             isClip ? 'clipVision' : 'siglipVision',
             'tagger',
+            () => fetchEmbeddingWeights(input.model, key),
           ),
         )
         const inputs = await m.processor(input.bitmaps.map((b) => rawImage(Tx, b)))

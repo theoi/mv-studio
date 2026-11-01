@@ -6,7 +6,7 @@ import { Button, IconButton } from '../../../ds/Button.tsx'
 import { ProgressBar, Spinner } from '../../../ds/Feedback.tsx'
 import { jobFraction } from '../../../state/jobs.ts'
 import { openAssist } from '../../../state/ui.ts'
-import { etaText, pct } from './jobState.ts'
+import { downloadPct, etaText, pct } from './jobState.ts'
 import styles from './Assist.module.css'
 
 /** The frame of every Assist tool: back to all tools, title, scrolling body and a pinned footer for the action. */
@@ -93,7 +93,8 @@ export function Steps({ steps, active }: { steps: string[]; active: number }) {
 /**
  * A job's step and progress. `placeholder` names the first step until the job reports one (`label` names the bar).
  * `note` goes on the line under the bar while there is no time left to show there. After a Cancel, until the job
- * ends, the step says "Stopping…" and a spinner takes the percentage's place, as in the top bar.
+ * ends, the step says "Stopping…" and a spinner takes the percentage's place, as in the top bar. While the step is a
+ * model downloading, its percentage is the download's, and the bar stays the job's.
  */
 export function RunCard({
   job,
@@ -114,7 +115,7 @@ export function RunCard({
         {job && jobFraction(job) === undefined ? (
           <Spinner size={12} />
         ) : (
-          <span className={`${styles.jobPct} tnum`}>{pct(job)}%</span>
+          <span className={`${styles.jobPct} tnum`}>{downloadPct(job) ?? pct(job)}%</span>
         )}
       </div>
       <ProgressBar value={job?.progress.fraction ?? 0} label={label} />

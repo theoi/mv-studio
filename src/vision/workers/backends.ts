@@ -5,7 +5,7 @@ import {
   type Transferred,
   type WorkerApi,
 } from '../../shared/worker.ts'
-import { isModelDownload, type ModelDownload } from '../runtime/downloads.ts'
+import { routeDownloads, type ModelDownload } from '../runtime/downloads.ts'
 import type { OnnxWorkerApi } from './onnx.worker.ts'
 import type { SegmentationWorkerApi } from './segmentation.worker.ts'
 
@@ -24,7 +24,7 @@ type Methods<Api extends WorkerApi> = {
  * be read, or the browser stopping it) is replaced on the next call; calls pending at that moment reject with
  * `worker-crashed` or `out-of-memory`. State the dead worker held (loaded models, unfinished tracks) is lost, so
  * running jobs fail and the user's retry starts fresh. Model downloads a call starts go to `downloads` instead of
- * the call's progress.
+ * the call's progress (`routeDownloads`).
  */
 function lazyWorker<Api extends WorkerApi>(
   create: () => Worker,
@@ -35,10 +35,12 @@ function lazyWorker<Api extends WorkerApi>(
     get(_target, method) {
       if (typeof method !== 'string' || method === 'then') return undefined
       return (args: unknown, options?: CallOptions) =>
-        worker.call(method as keyof Api & string, args as never, {
-          ...options,
-          onProgress: (p) => (isModelDownload(p) ? downloads(p) : options?.onProgress?.(p)),
-        })
+        routeDownloads(
+          (onProgress) =>
+            worker.call(method as keyof Api & string, args as never, { ...options, onProgress }),
+          options?.onProgress,
+          downloads,
+        )
     },
   })
   return { client, terminate: () => worker.terminate() }

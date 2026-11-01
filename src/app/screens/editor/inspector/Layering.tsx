@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import { Check, Crosshair, MousePointerClick } from 'lucide-react'
 import type { VisualClip } from '../../../../model/index.ts'
+import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { FieldRow, Section, Switch } from '../../../ds/Fields.tsx'
-import { formatTime } from '../../../format.ts'
+import { formatTime, sentence } from '../../../format.ts'
 import {
   bringToFront,
   canTryCutout,
@@ -26,7 +27,7 @@ import { backgroundAnalysisOn } from '../../../state/footage.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
 import { toast } from '../../../state/ui.ts'
-import { pct, useJob } from '../assist/jobState.ts'
+import { downloadPct, pct, useJob } from '../assist/jobState.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import styles from '../Inspector.module.css'
 
@@ -64,6 +65,12 @@ function useBehindState(clip: MediaClip) {
     failure: asked && phase === 'failed' ? job?.error?.message : undefined,
     objectFailure: !!request?.object,
   }
+}
+
+/** "Cutting out… 40%", or "Downloading… 40%" while the job downloads a model. */
+function progressBadge(doing: string, job: JobSnapshot): string {
+  const download = downloadPct(job)
+  return download === undefined ? `${doing}… ${pct(job)}%` : `Downloading… ${download}%`
 }
 
 /** Starts the cutout and says so when it lands, with Undo. */
@@ -169,9 +176,9 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
           ariaLabel="Put text and effects behind the subject"
         />
         {cutting ? (
-          <Badge tone="accent">Cutting out… {pct(cutting)}%</Badge>
+          <Badge tone="accent">{progressBadge('Cutting out', cutting)}</Badge>
         ) : checkingPeople ? (
-          <Badge tone="accent">Checking… {pct(checkingPeople)}%</Badge>
+          <Badge tone="accent">{progressBadge('Checking', checkingPeople)}</Badge>
         ) : behind ? (
           <Badge tone="success" icon={<Check />}>
             {object ? 'Object picked' : 'Person found'}
@@ -182,7 +189,7 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
       </FieldRow>
       {failure ? (
         <p className={styles.note} role="alert">
-          {failure} Your project is unchanged.{' '}
+          {sentence(failure)} Your project is unchanged.{' '}
           {objectFailure ? 'Pick the object again to retry.' : 'Turn it on again to retry.'}
         </p>
       ) : behind && object && host ? (
