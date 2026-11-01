@@ -185,3 +185,35 @@ test('an export that ended, a reload on purpose, or an export in another tab is 
   expect(await stoppedCount(next)).toBe(0)
   await expect(next.getByRole('dialog', { name: 'Export' }).getByRole('alert')).toBeHidden()
 })
+
+test('an export of several files that stopped says how many were saved, so they aren’t exported again', async ({
+  page,
+}) => {
+  test.setTimeout(240_000)
+  await openEditor(page)
+  await keepAs(page, 'Neon Skyline', 'Night drive')
+  await page.keyboard.press(`${mod}+e`)
+  const dialog = page.getByRole('dialog', { name: 'Export' })
+  await dialog.getByLabel('Include Full video').uncheck()
+  const vertical = dialog.getByLabel('Include Vertical')
+  if (await vertical.isChecked()) await vertical.uncheck()
+  await dialog.getByRole('button', { name: /Loop for Canvas/ }).click()
+  await dialog.getByRole('radio', { name: '720p' }).click()
+  await dialog.getByRole('button', { name: /Square.*reframed/ }).click()
+  await dialog.getByRole('radio', { name: '720p' }).click()
+  const download = page.waitForEvent('download', { timeout: 200_000 })
+  await dialog.getByRole('button', { name: 'Export 2 files' }).click()
+  // The loop renders first and downloads as soon as it is done; the tab dies while the square renders.
+  await download
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem('mv-studio.export-running') ?? '{}').files?.saved),
+    )
+    .toBe(1)
+  const url = relative(page)
+  const next = await crash(page)
+  await openApp(next, url)
+  await expect(next.getByRole('dialog', { name: 'Export' }).getByRole('alert')).toHaveText(
+    'The last export didn’t finish. 1 of 2 files was saved to Downloads. The browser may have run out of memory. Close other tabs and try again.',
+  )
+})
