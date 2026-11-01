@@ -273,7 +273,7 @@ test('a model server that is not running says it could not connect', async ({ pa
   await page.context().route(CHAT, (route) => route.abort('connectionrefused'))
   await openAsk(page)
   await send(page, 'make the chorus more intense')
-  await expect(page.getByText("Couldn't connect to Ollama on this computer", { exact: true })).toBeVisible()
+  await expect(page.getByText('Couldn’t connect to Ollama on this computer', { exact: true })).toBeVisible()
   await expect(page.getByText(/^No answer from http:\/\/localhost:11434\/v1\./)).toBeVisible()
 })
 

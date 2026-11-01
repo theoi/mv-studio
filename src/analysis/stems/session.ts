@@ -38,7 +38,7 @@ export async function createDemucsModel(options: {
   } catch (error) {
     throw (
       stemsOutOfMemory(error) ??
-      new JobError('model-load', `Could not start ${theModel(MODEL_TITLES.stems)}`, { cause: error })
+      new JobError('model-load', `Couldn’t start ${theModel(MODEL_TITLES.stems)}`, { cause: error })
     )
   }
   const [mixName, specName] = session.inputNames as [string, string]

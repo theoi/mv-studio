@@ -248,7 +248,7 @@ export function createWorkerClient<Api extends WorkerApi>(
         return
       }
       if (msg?.kind === 'unreadable') {
-        die(new JobError('internal', 'The worker could not read a message'))
+        die(new JobError('internal', 'The worker couldn’t read a message'))
         return
       }
       const p = msg && conn.pending.get(msg.id)
@@ -267,7 +267,7 @@ export function createWorkerClient<Api extends WorkerApi>(
       die(workerDied((event as Partial<ErrorEvent>).message ?? ''))
     }
     function onMessageError() {
-      die(new JobError('internal', 'A message from the worker could not be read'))
+      die(new JobError('internal', 'A message from the worker couldn’t be read'))
     }
     function close() {
       closed = true

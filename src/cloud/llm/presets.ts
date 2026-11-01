@@ -138,7 +138,7 @@ export function localSetupSteps(runner: 'ollama' | 'lmstudio' | 'other', origin 
   }
   return [
     'Make sure the server is running and the base URL ends with /v1.',
-    `Allow requests from ${origin} in the server's CORS settings.`,
+    `Allow requests from ${origin} in the server’s CORS settings.`,
     lna,
     'Choose Test connection again.',
   ]

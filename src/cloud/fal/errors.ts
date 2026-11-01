@@ -59,7 +59,7 @@ export function falKeyFormatError(): CloudError {
   return new CloudError({
     kind: 'bad-key',
     provider: 'fal',
-    title: "That doesn't look like a fal.ai key",
+    title: 'That doesn’t look like a fal.ai key',
     message: 'fal.ai keys have two parts separated by a colon: the key id, then the secret.',
     steps: ['Copy the whole key from fal.ai › Dashboard › Keys, including the part after the colon.'],
     helpUrl: FAL_KEYS_URL,
@@ -78,7 +78,7 @@ export function mapFalError(
     return new CloudError({
       kind: 'network',
       provider: 'fal',
-      title: offline ? "You're offline" : "Couldn't reach fal.ai",
+      title: offline ? 'You’re offline' : 'Couldn’t reach fal.ai',
       message: offline
         ? 'Generation needs an internet connection.'
         : 'The request to fal.ai did not get through. This is usually a connection problem or a browser extension blocking fal.ai.',
@@ -128,7 +128,7 @@ export function mapFalError(
         kind: 'bad-key',
         provider: 'fal',
         status,
-        title: "This key can't use that model",
+        title: 'This key can’t use that model',
         message: text || 'fal.ai refused the request for this key.',
         steps: ['Check the key’s permissions on fal.ai, or pick a different model.'],
         helpUrl: FAL_KEYS_URL,
@@ -141,7 +141,7 @@ export function mapFalError(
         provider: 'fal',
         status,
         title: 'That model is not available on fal.ai',
-        message: 'fal.ai could not find this model. It may have been renamed or retired.',
+        message: 'fal.ai couldn’t find this model. It may have been renamed or retired.',
         steps: ['Pick another model and try again.'],
         cause: error,
       })
@@ -162,7 +162,7 @@ export function mapFalError(
         kind: 'invalid-request',
         provider: 'fal',
         status,
-        title: 'fal.ai could not use these settings',
+        title: 'fal.ai couldn’t use these settings',
         message: text || 'fal.ai rejected the request settings.',
         steps: ['Try a different length, size or model.'],
         cause: error,

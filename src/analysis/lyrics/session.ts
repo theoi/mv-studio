@@ -26,7 +26,7 @@ export async function createCtcModel(
       graphOptimizationLevel: 'all',
     })
   } catch (error) {
-    throw new JobError('model-load', `Could not start ${theModel(MODEL_TITLES.aligner)}`, { cause: error })
+    throw new JobError('model-load', `Couldn’t start ${theModel(MODEL_TITLES.aligner)}`, { cause: error })
   }
   const inputName = session.inputNames[0] as string
   const model: CtcModel = {

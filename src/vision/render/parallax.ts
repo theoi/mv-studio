@@ -299,7 +299,7 @@ function createResources(gl: WebGL2RenderingContext): GlResources {
   const vao = gl.createVertexArray()
   const imageTex = createTexture(gl)
   const depthTex = createTexture(gl)
-  if (!vao) throw new JobError('unsupported', 'Could not create WebGL resources.')
+  if (!vao) throw new JobError('unsupported', 'Couldn’t create WebGL resources.')
   const u = PARALLAX_UNIFORMS
   const loc = (name: string) => gl.getUniformLocation(program, name)
   const locations: GlResources['locations'] = {
@@ -318,7 +318,7 @@ function createResources(gl: WebGL2RenderingContext): GlResources {
 
 function createTexture(gl: WebGL2RenderingContext): WebGLTexture {
   const tex = gl.createTexture()
-  if (!tex) throw new JobError('unsupported', 'Could not create a WebGL texture.')
+  if (!tex) throw new JobError('unsupported', 'Couldn’t create a WebGL texture.')
   gl.bindTexture(gl.TEXTURE_2D, tex)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
@@ -331,7 +331,7 @@ function linkProgram(gl: WebGL2RenderingContext, vertex: string, fragment: strin
   const program = gl.createProgram()
   const vs = compileShader(gl, gl.VERTEX_SHADER, vertex)
   const fs = compileShader(gl, gl.FRAGMENT_SHADER, fragment)
-  if (!program) throw new JobError('unsupported', 'Could not create a WebGL program.')
+  if (!program) throw new JobError('unsupported', 'Couldn’t create a WebGL program.')
   gl.attachShader(program, vs)
   gl.attachShader(program, fs)
   gl.linkProgram(program)
@@ -347,7 +347,7 @@ function linkProgram(gl: WebGL2RenderingContext, vertex: string, fragment: strin
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type)
-  if (!shader) throw new JobError('unsupported', 'Could not create a WebGL shader.')
+  if (!shader) throw new JobError('unsupported', 'Couldn’t create a WebGL shader.')
   gl.shaderSource(shader, source)
   gl.compileShader(shader)
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS) && !gl.isContextLost()) {

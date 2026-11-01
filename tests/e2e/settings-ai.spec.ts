@@ -127,7 +127,7 @@ test('says how to let this site reach LM Studio when it does not answer, and sav
   await llm.getByRole('radio', { name: 'LM Studio' }).click()
   await llm.getByRole('button', { name: 'Test connection' }).click()
   const alert = llm.getByRole('alert')
-  await expect(alert).toContainText('Couldn’t connect to LM Studio on this computer'.replace('’', "'"))
+  await expect(alert).toContainText('Couldn’t connect to LM Studio on this computer')
   await expect(alert).toContainText('turn on "Enable CORS"')
   expect(seen).toEqual(['GET http://localhost:1234/v1/models'])
   expect((await saved(page)).llm ?? null).toBeNull()
@@ -145,7 +145,7 @@ test('lists the ways to allow this site in Ollama under the step they belong to'
   await llm.getByRole('radio', { name: 'Ollama' }).click()
   await llm.getByRole('button', { name: 'Test connection' }).click()
   const alert = llm.getByRole('alert')
-  await expect(alert).toContainText("Couldn't connect to Ollama on this computer")
+  await expect(alert).toContainText('Couldn’t connect to Ollama on this computer')
   const allow = alert.locator('li', { hasText: /^Allow this site: set OLLAMA_ORIGINS/ })
   await expect(allow.locator('li')).toHaveText([/^macOS: /, /^Windows: /, /^Linux: /])
   await alert.scrollIntoViewIfNeeded()
@@ -194,7 +194,7 @@ test('checks a fal.ai key for free before saving it, and removes it', async ({ p
 
   await key.fill('not-a-key')
   await fal.getByRole('button', { name: 'Connect' }).click()
-  await expect(fal.getByRole('alert')).toContainText('That doesn’t look like a fal.ai key'.replace('’', "'"))
+  await expect(fal.getByRole('alert')).toContainText('That doesn’t look like a fal.ai key')
   expect(seen).toEqual([])
 
   await key.fill('key-id:wrong-secret')

@@ -270,7 +270,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
         kind: 'model-not-found',
         provider: 'fal',
         title: 'Unknown model',
-        message: `${request.modelId} is not a ${request.task} model in MV Studio's list.`,
+        message: `${request.modelId} is not a ${request.task} model in MV Studio’s list.`,
         steps: ['Pick a model from the list.'],
       })
     }
@@ -387,8 +387,8 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
           kind: 'server',
           provider: 'fal',
           status: response.status,
-          title: "Couldn't download the result",
-          message: `fal.ai's file host returned ${response.status}.`,
+          title: 'Couldn’t download the result',
+          message: `fal.ai’s file host returned ${response.status}.`,
           steps: ['Try again.'],
         })
       }

@@ -147,7 +147,7 @@ export async function applyTappedTempo(bpm: number): Promise<void> {
     })
   } catch (error) {
     if (!(error instanceof JobError)) throw error
-    if (error.code !== 'cancelled') toast(`Could not follow that tempo. ${error.message}`)
+    if (error.code !== 'cancelled') toast(`Couldn’t follow that tempo. ${error.message}`)
   }
 }
 

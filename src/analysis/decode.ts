@@ -15,6 +15,6 @@ export async function decodeAudioFile(data: Blob | ArrayBuffer, sampleRate = 441
     )
     return { sampleRate: buffer.sampleRate, channels }
   } catch (error) {
-    throw new JobError('decode', 'This audio file could not be decoded', { cause: error })
+    throw new JobError('decode', 'This audio file couldn’t be decoded', { cause: error })
   }
 }
