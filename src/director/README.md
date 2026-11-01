@@ -51,10 +51,15 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   LLM brief marks such labels `labelGuessed`.
 - **Pace and brightness words in the idea** (`ideaAsks`), without an LLM: "fast", "punchy", "slow", "calm" and the
   like move a section's pace a step ("very fast" two), and "bright", "vivid", "dark" or "moody" go into its mood (a
-  section called bright also gets a glow). A word applies to the section named nearest to it in the same part of the sentence
-  ("fast and bright in the chorus", "slow verses and fast choruses"), as the song map labels it (a guessed chorus
-  too), and then the section's mood is the user's words. Without a section named, pace words shift the whole video
-  and brightness words lead every section's mood. "not" or "less" just before a word drops it.
+  section called bright also gets a glow). The idea is read in parts that each say one thing: they end at a full
+  stop, "but" or "then", at "and" or a comma unless it joins two descriptions ("fast and bright", "a fast, punchy
+  chorus"), and after a section named with "in the" or "for every" ("fast in the chorus and slow in the verses"). In
+  a part, a word applies to the section named nearest to it ("keep the chorus fast and the verses slow"), else to the
+  one the part before named ("in the chorus, fast and bright"), else to the whole video. Sections go by the song
+  map's labels (a guessed chorus too); a section's mood becomes the user's words, after any brightness word asked of
+  the whole video. Without a section, pace words shift every section and brightness words lead every mood. A part
+  with "not", "don't", "no", "avoid", "too" and the like is left out, and opposite words for one section cancel out:
+  a missed word leaves the draft as it would be, a misread one would turn it the wrong way.
 - **Phrasing inside a section** (`phrasedCutTimes`): bars clearly louder than the rest of their section cut twice as
   often, clearly quieter bars half as often, and the last bar before a faster section speeds up into it.
 - **Lyric timing**: a line shows up to 0.3 s before it is sung and holds up to 1 s after (longer for long lines,

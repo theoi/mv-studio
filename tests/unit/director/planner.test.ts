@@ -376,6 +376,56 @@ describe('pace and brightness words in the idea', () => {
     ['A dark, very slow video', {}, { pace: -2, light: -1, words: ['dark', 'slow'] }],
     ['Not too fast in the chorus, less dark', {}, none],
     ['a dreamy night drive through a neon city, ending at sunrise', {}, none],
+    // Each section named after "in the" ends its part, and "and" between parts starts the next one.
+    [
+      'fast in the chorus and slow in the verses',
+      { chorus: { pace: 1, light: 0, words: ['fast'] }, verse: { pace: -1, light: 0, words: ['slow'] } },
+      none,
+    ],
+    [
+      'bright in the chorus and dark in the bridge',
+      { chorus: { pace: 0, light: 1, words: ['bright'] }, bridge: { pace: 0, light: -1, words: ['dark'] } },
+      none,
+    ],
+    [
+      'keep the chorus fast and the verses slow',
+      { chorus: { pace: 1, light: 0, words: ['fast'] }, verse: { pace: -1, light: 0, words: ['slow'] } },
+      none,
+    ],
+    [
+      'fast in the chorus with slower cuts in the verses',
+      { chorus: { pace: 1, light: 0, words: ['fast'] }, verse: { pace: -1, light: 0, words: ['slower'] } },
+      none,
+    ],
+    ['In the chorus, fast and bright', { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } }, none],
+    [
+      'fast and very bright in the chorus',
+      { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } },
+      none,
+    ],
+    // A comma or "and" between two descriptions keeps them together.
+    ['a fast, bright chorus', { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } }, none],
+    ['fast, punchy cuts in the chorus', { chorus: { pace: 1, light: 0, words: ['fast', 'punchy'] } }, none],
+    [
+      'a slow build to a fast drop',
+      {
+        'pre-chorus': { pace: -1, light: 0, words: ['slow'] },
+        chorus: { pace: 1, light: 0, words: ['fast'] },
+      },
+      none,
+    ],
+    ['a fast-paced video', {}, { pace: 1, light: 0, words: ['fast-paced'] }],
+    // Negated, or contradicting itself: left out rather than turned around.
+    ["don't make it too fast", {}, none],
+    ['don’t make the chorus fast', {}, none],
+    ['nothing too fast', {}, none],
+    ['avoid anything slow', {}, none],
+    ['not so very fast', {}, none],
+    ['the verses are too slow', {}, none],
+    ['fast and slow in the chorus', {}, none],
+    ['fast in the chorus but not in the verses', { chorus: { pace: 1, light: 0, words: ['fast'] } }, none],
+    // "but" starts a new part, so the negation after it leaves the words before it alone.
+    ['a fast chorus but not too bright', { chorus: { pace: 1, light: 0, words: ['fast'] } }, none],
   ])('reads “%s”', (idea, roles, all) => {
     const asks = ideaAsks(idea)
     expect(Object.fromEntries(asks.roles)).toEqual(roles)
@@ -417,6 +467,14 @@ describe('pace and brightness words in the idea', () => {
     // The rest of the song is as before.
     for (const id of ['s-intro', 's-verse', 's-bridge', 's-outro'])
       expect(asked.section(id)).toEqual(plain.section(id))
+  })
+
+  it('keeps the whole video’s brightness in front of a section’s own words without one', async () => {
+    const { section } = await guessedChorus('a dark video, fast chorus')
+    expect(section('s-chorus1').mood).toBe('dark, fast')
+    expect(section('s-verse').mood).toBe('dark, steady, grounded')
+    const bright = await guessedChorus('a dark video, bright chorus')
+    expect(bright.section('s-chorus1').mood).toBe('bright')
   })
 
   it('leaves the pre-chorus out of what the idea asks of the chorus', async () => {

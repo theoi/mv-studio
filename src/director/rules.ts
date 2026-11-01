@@ -47,7 +47,7 @@ export interface IdeaAsks {
 }
 
 const ROLE_WORDS: [RegExp, string][] = [
-  [/^pre-choruse?s?$/, 'pre-chorus'],
+  [/^(pre-choruse?s?|builds?|build-ups?|buildups?)$/, 'pre-chorus'],
   [/^(choruse?s?|hooks?|refrains?|drops?)$/, 'chorus'],
   [/^verses?$/, 'verse'],
   [/^(bridges?|breakdowns?)$/, 'bridge'],
@@ -57,6 +57,7 @@ const ROLE_WORDS: [RegExp, string][] = [
 const FASTER = new Set([
   'fast',
   'faster',
+  'fast-paced',
   'quick',
   'quicker',
   'rapid',
@@ -64,6 +65,8 @@ const FASTER = new Set([
   'punchy',
   'energetic',
   'upbeat',
+  'uptempo',
+  'up-tempo',
   'intense',
   'frantic',
   'hectic',
@@ -72,6 +75,7 @@ const FASTER = new Set([
 const SLOWER = new Set([
   'slow',
   'slower',
+  'slow-paced',
   'calm',
   'calmer',
   'chill',
@@ -83,57 +87,144 @@ const SLOWER = new Set([
 const BRIGHTER = new Set(['bright', 'brighter', 'sunny', 'colorful', 'colourful', 'vivid', 'vibrant'])
 const DARKER = new Set(['dark', 'darker', 'moody', 'gloomy'])
 const STRONGER = new Set(['very', 'really', 'super', 'extra', 'much'])
-const NOT = new Set(['not', 'no', 'never', 'less', 'without'])
+/** Words between two descriptions that still join them: "fast and very bright", "dark and so slow". */
+const LINKING = new Set([...STRONGER, 'so', 'more'])
+/** "too" too: "the verses are too slow" asks for the opposite, which is safer missed than guessed. */
+const NEGATORS = new Set([
+  'not',
+  'no',
+  'nor',
+  'never',
+  'without',
+  'less',
+  'nothing',
+  'none',
+  'avoid',
+  'avoiding',
+  'instead',
+  'rather',
+  'too',
+  'dont',
+  'doesnt',
+  'isnt',
+  'wont',
+  'cant',
+  'shouldnt',
+])
 /** Words that start a new thought: "fast verses but a slow bridge". */
-const BREAKS = new Set(['but', 'then', 'while', 'except'])
+const BREAKS = new Set(['but', 'then', 'while', 'except', 'whereas', 'yet'])
+/** "in the chorus" ends its part of the sentence: what follows is about something else. */
+const PREPOSITIONS = new Set(['in', 'during', 'for', 'on', 'through', 'throughout', 'at'])
+const DETERMINERS = new Set(['the', 'a', 'an', 'each', 'every', 'all', 'its', 'both'])
 
 const roleWord = (word: string) => ROLE_WORDS.find(([pattern]) => pattern.test(word))?.[1]
+const paceOf = (word: string) => (FASTER.has(word) ? 1 : SLOWER.has(word) ? -1 : 0)
+const lightOf = (word: string) => (BRIGHTER.has(word) ? 1 : DARKER.has(word) ? -1 : 0)
+const describes = (word: string | undefined) => !!word && (!!paceOf(word) || !!lightOf(word))
+const negates = (word: string) => NEGATORS.has(word) || word.endsWith("n't")
+
+/** The prompt as words, with sentence ends as "." and commas as ",". */
+function ideaTokens(prompt: string): string[] {
+  return prompt
+    .toLowerCase()
+    .replace(/[’‘`]/g, "'")
+    .replace(/\bpre[\s-]+chorus/g, 'pre-chorus')
+    .replace(/\bbuild[\s-]+up/g, 'build-up')
+    .replace(/&/g, ' and ')
+    .replace(/[.;:!?()\n]/g, ' . ')
+    .replace(/,/g, ' , ')
+    .replace(/[^a-z0-9'.,\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+}
 
 /**
- * Pace and brightness words in an idea, without a language model. Each word goes to the section named nearest to it
- * in the same part of the sentence ("fast and bright in the chorus", "slow verses and fast choruses"), or to the whole
- * video when that part names none. A word just after "not" or "less" is left out.
+ * Splits the words into parts that each say one thing: at sentence ends, at "but"/"then", at "and" or a comma unless
+ * they join two descriptions ("fast and bright", "a fast, punchy chorus"), and after a section named with "in the" or
+ * "for every".
+ */
+function ideaParts(tokens: string[]): string[][] {
+  const parts: string[][] = [[]]
+  const close = () => {
+    if (parts[parts.length - 1]?.length) parts.push([])
+  }
+  tokens.forEach((word, i) => {
+    const part = parts[parts.length - 1] as string[]
+    if (word === '.' || BREAKS.has(word)) return close()
+    if (word === ',' || word === 'and') {
+      let next = i + 1
+      while (LINKING.has(tokens[next] ?? '')) next++
+      if (!(describes(part[part.length - 1]) && describes(tokens[next]))) close()
+      return
+    }
+    part.push(word)
+    const before = part[part.length - 2] ?? ''
+    const named =
+      PREPOSITIONS.has(before) || (DETERMINERS.has(before) && PREPOSITIONS.has(part[part.length - 3] ?? ''))
+    if (roleWord(word) && named) close()
+  })
+  return parts.filter((p) => p.length)
+}
+
+interface Vote {
+  word: string
+  pace: number
+  light: number
+}
+
+/** One section's (or the whole video's) words; opposite words cancel out rather than one of them winning. */
+function tally(votes: Vote[]): IdeaAsk | undefined {
+  const mixed = (key: 'pace' | 'light') => votes.some((v) => v[key] > 0) && votes.some((v) => v[key] < 0)
+  const kept = votes.filter((v) => !(v.pace && mixed('pace')) && !(v.light && mixed('light')))
+  if (!kept.length) return undefined
+  const pace = kept.reduce((p, v) => (Math.abs(v.pace) > Math.abs(p) ? v.pace : p), 0)
+  return {
+    pace,
+    light: kept.find((v) => v.light)?.light ?? 0,
+    words: [...new Set(kept.map((v) => v.word))],
+  }
+}
+
+/**
+ * Pace and brightness words in an idea, without a language model. The idea is read in parts that each say one thing
+ * (see ideaParts()). In each, a word goes to the section named nearest to it ("slow verses", "keep the chorus fast"),
+ * or to the section the part before named when this part names none ("in the chorus, fast and bright"), else to the
+ * whole video. A part with "not", "don't", "no", "avoid", "too" and the like is left out entirely: a missed word only
+ * leaves the draft as it would be, a misread one turns it the wrong way.
  */
 export function ideaAsks(prompt: string): IdeaAsks {
-  const all: IdeaAsk = { pace: 0, light: 0, words: [] }
-  const roles = new Map<string, IdeaAsk>()
-  const clauses = prompt
-    .toLowerCase()
-    .replace(/\bpre[\s-]+chorus/g, 'pre-chorus')
-    .split(/[.,;:!?()\n]+/)
-  for (const clause of clauses) {
-    const parts: string[][] = [[]]
-    for (const word of clause.replace(/[^a-z0-9'\s-]/g, ' ').split(/\s+/)) {
-      if (!word) continue
-      if (BREAKS.has(word)) parts.push([])
-      else parts[parts.length - 1]?.push(word)
-    }
-    for (const words of parts) {
-      const named = words.flatMap((w, i) => {
-        const role = roleWord(w)
-        return role ? [{ i, role }] : []
-      })
+  const votes = new Map<string | undefined, Vote[]>()
+  let previous: { role?: string; described: boolean; negated: boolean } | undefined
+  for (const words of ideaParts(ideaTokens(prompt))) {
+    const named = words.flatMap((w, i) => {
+      const role = roleWord(w)
+      return role ? [{ i, role }] : []
+    })
+    const negated = words.some(negates)
+    const described = words.some(describes)
+    if (described && !negated) {
+      const carried = !named.length && previous?.role && !previous.described && !previous.negated
       words.forEach((word, i) => {
-        const pace = FASTER.has(word) ? 1 : SLOWER.has(word) ? -1 : 0
-        const light = BRIGHTER.has(word) ? 1 : DARKER.has(word) ? -1 : 0
-        if (!pace && !light) return
-        const before = words.slice(Math.max(0, i - 2), i)
-        if (before.some((w) => NOT.has(w))) return
-        // The nearest section named; on a tie the one after the word ("slow verses and fast choruses").
+        if (!describes(word)) return
+        // The nearest section named; on a tie the one after the word ("slow verse fast chorus").
         const near = named.reduce<{ i: number; role: string } | undefined>(
           (best, n) => (!best || Math.abs(n.i - i) <= Math.abs(best.i - i) ? n : best),
           undefined,
         )
-        let ask = all
-        if (near) {
-          ask = roles.get(near.role) ?? { pace: 0, light: 0, words: [] }
-          roles.set(near.role, ask)
-        }
-        if (pace) ask.pace = pace * (before.some((w) => STRONGER.has(w)) ? 2 : 1)
-        if (light) ask.light = light
-        if (!ask.words.includes(word)) ask.words.push(word)
+        const role = near?.role ?? (carried ? previous?.role : undefined)
+        const strength = STRONGER.has(words[i - 1] ?? '') ? 2 : 1
+        const list = votes.get(role) ?? []
+        list.push({ word, pace: paceOf(word) * strength, light: lightOf(word) })
+        votes.set(role, list)
       })
     }
+    previous = { role: named[named.length - 1]?.role, described, negated }
+  }
+  const all = tally(votes.get(undefined) ?? []) ?? { pace: 0, light: 0, words: [] }
+  const roles = new Map<string, IdeaAsk>()
+  for (const [role, list] of votes) {
+    const ask = role ? tally(list) : undefined
+    if (role && ask) roles.set(role, ask)
   }
   return { all, roles }
 }
@@ -410,7 +501,9 @@ export function defaultSectionBrief(
   // As the section is named, not its role: the user's chorus is the one the song map shows, sure or not.
   const own = asks.roles.get(normalizedLabel(section.label))
   const light = asks.all.words.filter((w) => BRIGHTER.has(w) || DARKER.has(w))
-  const mood = own?.words.length ? own.words.join(', ') : [...light, songMood].join(', ')
+  const mood = own?.words.length
+    ? [...(own.light ? [] : light), ...own.words].join(', ')
+    : [...light, songMood].join(', ')
   const ownPace = own?.pace ?? 0
   const intensity =
     ownPace > 0
