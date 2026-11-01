@@ -111,7 +111,7 @@ export interface FootageService {
    * whether they show anything, and resolves when each is checked, so a draft or a cut can leave out the ones that show
    * nothing. It needs no model, so it also runs where background analysis is off. A clip it can't decode stays
    * unchecked. A check that hangs (no answer within 25 s) ends the wait, leaving the clips after it unchecked; the next
-   * call checks them again. `progress` gets the share of them checked so far.
+   * call checks them again, and the clip that hung once more at most. `progress` gets the share of them checked so far.
    */
   checkBlank(
     assetIds?: readonly Id[],
@@ -130,10 +130,14 @@ export interface FootageServiceDeps {
   frameSource?: (asset: Asset) => Promise<FrameSource & { dispose?(): void }>
   /** How long a clip's blank check may run before those waiting for it go on without it (default 25 s). */
   blankCheckStallMs?: number
+  /** Media known to show something, which the fast blank check leaves out (the app's built-in sample). */
+  showsSomething?: (asset: Asset) => boolean
 }
 
 /** A 20 s 4K clip takes about 2 s; a check still running after this has hung (a decoder that never answers). */
 const BLANK_CHECK_STALL_MS = 25_000
+/** Checks of a clip that may hang before it stays unchecked until the project is opened again: one retry. */
+const BLANK_CHECK_TRIES = 2
 
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x))
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
@@ -174,43 +178,62 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
   const stallMs = deps.blankCheckStallMs ?? BLANK_CHECK_STALL_MS
   const blankChecks = new Map<Id, Promise<boolean>>()
   const failedBlank = new Set<Id>()
-  /** Clips whose check hung: the background pass leaves them, and a draft or a cut tries them again. */
-  const stalledBlank = new Set<Id>()
+  /**
+   * How many times each clip's check hung. The background pass leaves such a clip; a draft or a cut tries it again
+   * once, then it stays unchecked.
+   */
+  const stalledBlank = new Map<Id, number>()
   const needsBlankCheck = (
     project: Project,
     asset: Asset,
     retryStalled = false,
-  ): asset is Asset & { kind: 'video' | 'image' } =>
-    !!vision.peakLuma &&
-    analyzableMedia(asset) &&
-    !failedBlank.has(asset.id) &&
-    (retryStalled || !stalledBlank.has(asset.id)) &&
-    !hasBlankVerdict(project.analysis.visual[asset.id])
+  ): asset is Asset & { kind: 'video' | 'image' } => {
+    const stalls = stalledBlank.get(asset.id) ?? 0
+    return (
+      !!vision.peakLuma &&
+      analyzableMedia(asset) &&
+      !deps.showsSomething?.(asset) &&
+      !failedBlank.has(asset.id) &&
+      (stalls === 0 || (retryStalled && stalls < BLANK_CHECK_TRIES)) &&
+      !hasBlankVerdict(project.analysis.visual[asset.id])
+    )
+  }
 
   /**
    * The clip's check, shared by everyone waiting for it (the background pass, a draft, a cut). Resolves false when it
-   * hasn't settled after `stallMs`: everyone waiting goes on without it, and the next request starts a fresh one.
+   * hasn't settled after `stallMs`: everyone waiting goes on without it, its frames are let go, and the next request
+   * may start a fresh one.
    */
   const checkOne = (asset: Asset & { kind: 'video' | 'image' }): Promise<boolean> => {
     const running = blankChecks.get(asset.id)
     if (running) return running
-    stalledBlank.delete(asset.id)
+    let src: (FrameSource & { dispose?(): void }) | undefined
+    let stalled = false
+    let disposed = false
+    const dispose = () => {
+      if (!src || disposed) return
+      disposed = true
+      src.dispose?.()
+    }
     const work = (async () => {
-      let src: (FrameSource & { dispose?(): void }) | undefined
       try {
         src = await frameSource(asset)
+        if (stalled) return
         const frames = asset.kind === 'image' ? 1 : BLANK_CHECK_FRAMES
         const peakLuma = await vision.peakLuma!(src, { frames })
         write(asset, src, { duration: src.duration, blankCheck: { peakLuma, frames } })
       } catch {
-        failedBlank.add(asset.id)
+        // Letting go of the frames of a check that hung can fail it; that says nothing about the clip.
+        if (!stalled) failedBlank.add(asset.id)
       } finally {
-        src?.dispose?.()
+        dispose()
       }
     })()
     const check = new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
-        stalledBlank.add(asset.id)
+        stalled = true
+        dispose()
+        stalledBlank.set(asset.id, (stalledBlank.get(asset.id) ?? 0) + 1)
         resolve(false)
       }, stallMs)
       void work.then(() => {

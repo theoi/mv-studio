@@ -95,7 +95,8 @@ export function showingDownloads<T>(
 
 export function footageService(): Promise<FootageService> {
   loading ??= Promise.all([import('../../vision/index.ts'), visionService()]).then(([v, vision]) => {
-    const service = v.createFootageService({ editor, vision, media: appMedia })
+    // The sample's clips are drawn, never blank: checking them would only hold up the first draft people try.
+    const service = v.createFootageService({ editor, vision, media: appMedia, showsSomething: isSampleAsset })
     service.indexing.subscribe((indexing) => useFootage.setState({ indexing }))
     useFootage.setState({ service, indexing: service.indexing.getState(), strongMatch: v.STRONG_MATCH })
     return service
@@ -159,7 +160,7 @@ export function checkClipsForBlank(
   options: { assetIds?: readonly Id[]; signal?: AbortSignal; progress?: (fraction: number) => void } = {},
 ): Promise<void> | undefined {
   const { assetIds, ...rest } = options
-  if (!hasUncheckedMedia(editor.getProject(), assetIds)) return undefined
+  if (!hasUncheckedMedia(editor.getProject(), assetIds, isSampleAsset)) return undefined
   return footageService().then((service) => service.checkBlank(assetIds, rest))
 }
 

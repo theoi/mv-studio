@@ -171,6 +171,7 @@ describe('visual analysis data', () => {
       analysis: { audio: {}, visual: { clip: checked('clip'), still: checked('still') } },
     }
     expect(hasUncheckedMedia(both)).toBe(false)
+    expect(hasUncheckedMedia(withClip, undefined, (a) => a.id === 'still')).toBe(false)
   })
 
   it('finds the clips that show nothing from the brightest pixel analysis measured, not from older analyses', () => {

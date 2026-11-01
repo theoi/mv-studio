@@ -226,12 +226,22 @@ export function analyzableMedia(asset: Asset): asset is Asset & { kind: 'video' 
   return asset.kind === 'image'
 }
 
-/** Whether any of these clips and stills (default: all of them) has no blank verdict yet (`hasBlankVerdict`). */
-export function hasUncheckedMedia(project: Project, assetIds?: readonly Id[]): boolean {
+/**
+ * Whether any of these clips and stills (default: all of them) has no blank verdict yet (`hasBlankVerdict`), leaving
+ * out those known to show something (`showsSomething`, such as the app's built-in sample).
+ */
+export function hasUncheckedMedia(
+  project: Project,
+  assetIds?: readonly Id[],
+  showsSomething?: (asset: Asset) => boolean,
+): boolean {
   const wanted = assetIds && new Set(assetIds)
   return Object.values(project.assets).some(
     (a) =>
-      (!wanted || wanted.has(a.id)) && analyzableMedia(a) && !hasBlankVerdict(project.analysis.visual[a.id]),
+      (!wanted || wanted.has(a.id)) &&
+      analyzableMedia(a) &&
+      !showsSomething?.(a) &&
+      !hasBlankVerdict(project.analysis.visual[a.id]),
   )
 }
 

@@ -69,6 +69,7 @@ function setup(
     peakLuma?: (id: string) => number | Promise<number>
     gateBlank?: boolean
     blankCheckStallMs?: number
+    showsSomething?: (id: string) => boolean
   } = {},
 ) {
   const editor = new ProjectEditor(project)
@@ -131,6 +132,7 @@ function setup(
       dispose: () => void disposed.push(asset.id),
     }),
     ...(options.blankCheckStallMs ? { blankCheckStallMs: options.blankCheckStallMs } : {}),
+    ...(options.showsSomething ? { showsSomething: (a: Asset) => options.showsSomething!(a.id) } : {}),
   })
   const tick = () => new Promise((r) => setTimeout(r, 0))
   const release = async (id: string, error?: unknown) => {
@@ -408,6 +410,18 @@ describe('fast blank check', () => {
     expect(service.indexing.getState().status).toBe('idle')
   })
 
+  it('leaves out media known to show something, in the background and on request', async () => {
+    const { service, peakLuma, release, tick } = setup(undefined, {
+      peakLuma: crowdIsBlack,
+      showsSomething: (id) => id === 'ocean',
+    })
+    await service.checkBlank()
+    service.indexing.start()
+    await tick()
+    for (const id of ['city', 'ocean', 'crowd', 'misc']) await release(id)
+    expect(peakLuma.mock.calls.map(([s]) => s.mediaId)).toEqual(['city', 'crowd', 'misc'])
+  })
+
   it('leaves a clip it cannot decode unchecked, checks stills from one frame, and stops waiting when cancelled', async () => {
     const project = makeProject({
       clips: [
@@ -442,6 +456,31 @@ describe('fast blank check', () => {
 
 describe('a blank check that hangs', () => {
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('lets go of its frames, tries the clip once more at most, then goes on without it every time', async () => {
+    const { editor, service, peakLuma, disposed, tick } = setup(undefined, {
+      peakLuma: (id) => (id === 'ocean' ? new Promise<number>(() => undefined) : 120),
+      blankCheckStallMs: 30,
+    })
+    const tries = () => peakLuma.mock.calls.filter(([s]) => s.mediaId === 'ocean').length
+    const checked = () =>
+      Object.keys(editor.getProject().analysis.visual).filter((id) =>
+        hasBlankVerdict(editor.getProject().analysis.visual[id]),
+      )
+    await service.checkBlank()
+    expect([tries(), disposed.filter((id) => id === 'ocean').length]).toEqual([1, 1])
+    await service.checkBlank()
+    expect([tries(), disposed.filter((id) => id === 'ocean').length]).toEqual([2, 2])
+    expect(checked()).toEqual(['city'])
+    const started = performance.now()
+    await service.checkBlank()
+    expect(performance.now() - started).toBeLessThan(25)
+    expect(tries()).toBe(2)
+    expect(checked().sort()).toEqual(['city', 'crowd', 'misc'])
+    service.indexing.start()
+    await tick()
+    expect(tries()).toBe(2)
+  })
 
   it('stops the wait, leaving the clips after it unchecked, and the next request checks them afresh', async () => {
     let hang = true
