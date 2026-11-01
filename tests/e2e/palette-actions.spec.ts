@@ -48,6 +48,18 @@ test('the palette’s track, section and volume actions name what they act on, a
   await page.keyboard.press('Escape')
 
   const track = await selectClip(page, 'video')
+  // Add an effect… names the clip it goes on: a video clip without a name of its own by its media's.
+  const media = await page.evaluate(() => {
+    const { app } = window.mvStudio
+    const project: Project = app.project.editor.getProject()
+    const clip = project.clips[app.ui.get().selection.id]!
+    return clip.type === 'video' && !clip.name ? project.assets[clip.assetId]!.name : undefined
+  })
+  expect(media).toBeTruthy()
+  await open()
+  await input.fill('add an effect')
+  await expect(selected).toHaveText(`Add an effect…${media}`)
+  await page.keyboard.press('Escape')
   await open()
   await input.fill('hide track')
   await expect(selected).toHaveText(new RegExp(`^Hide track\\s*${track}$`))
@@ -131,7 +143,7 @@ test('Add a keyframe… and React to music… list the selected clip’s propert
   await input.fill('scale')
   await page.keyboard.press('Enter')
   await expect(input).toHaveAttribute('placeholder', 'Search reactions')
-  await expect(dialog.getByText('What Scale reacts to')).toBeVisible()
+  await expect(dialog.getByText('What scale reacts to')).toBeVisible()
   // Backspace in the empty search goes back a list, and Esc too.
   await page.keyboard.press('Backspace')
   await expect(input).toHaveAttribute('placeholder', 'Search properties')

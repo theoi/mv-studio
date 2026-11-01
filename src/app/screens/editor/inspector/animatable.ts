@@ -125,7 +125,7 @@ export function valueAtCommands(
 const QUICK_REACTION = 'kick'
 
 /** A setting's name for the middle of a sentence ("Amount" to "amount"), keeping acronyms ("LUT strength"). */
-const lowerFirst = (name: string) =>
+export const lowerFirst = (name: string) =>
   /^[A-Z][a-z]/.test(name) ? name.charAt(0).toLowerCase() + name.slice(1) : name
 
 /**
