@@ -75,7 +75,7 @@ describe('the note after the browser cleared the site’s storage', () => {
 })
 
 describe('the media the browser cleared from a project', () => {
-  it('counts imported files and recordings, and generated clips and images, but not media made from them', async () => {
+  it('counts imported files, recordings and LUTs, and generated clips and images, but not media made from them', async () => {
     const project = createProject({ name: 'cleared' })
     const assets = [
       asset('song', { type: 'import' }, 'audio'),
@@ -86,6 +86,7 @@ describe('the media the browser cleared from a project', () => {
       asset('still', { type: 'generated', provider: 'fal-ai/flux' }, 'image'),
       asset('vocals', { type: 'stem', parentAssetId: 'song' }, 'audio'),
       asset('mask', { type: 'derived', parentAssetId: 'clip' }, 'image'),
+      asset('grade', { type: 'derived', provider: 'lut' }, 'image'),
       // Sample media is made, not stored.
       asset('city', { type: 'import' }, 'video', 'mock:city'),
     ]
@@ -96,8 +97,8 @@ describe('the media the browser cleared from a project', () => {
       if (a.id === 'take') throw new DOMException('gone', 'NotFoundError')
       return a.id === 'kept'
     }
-    expect(await lostMedia(project, has)).toEqual({ files: 3, clips: 1, images: 1 })
-    expect(asked.sort()).toEqual(['clip', 'kept', 'shot', 'song', 'still', 'take'])
+    expect(await lostMedia(project, has)).toEqual({ files: 4, clips: 1, images: 1 })
+    expect(asked.sort()).toEqual(['clip', 'grade', 'kept', 'shot', 'song', 'still', 'take'])
   })
 })
 

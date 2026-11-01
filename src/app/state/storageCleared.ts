@@ -6,6 +6,7 @@
 import type { Asset, Id, Project, SavedHistory } from '../../model/index.ts'
 import { plural } from '../format.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
+import { isLutAsset } from '../../plugins/lut.ts'
 
 export interface StorageLoss {
   /** The open project: written again, failed to be written again, or not one worth keeping. */
@@ -21,14 +22,15 @@ export interface StorageLoss {
 
 /**
  * The project's media that are gone, by what bringing them back takes: import the file again, or generate it again.
- * Stems, masks and other media made from them are left out, since they are made again from what they came from.
+ * Stems, masks and other media made from them are left out, since they are made again from what they came from. LUTs
+ * are made from an imported file too, but only importing it again brings them back.
  */
 export async function lostMedia(
   project: Project,
   has: (asset: Asset) => Promise<boolean>,
 ): Promise<Pick<StorageLoss, 'files' | 'clips' | 'images'>> {
   const assets = Object.values(project.assets).filter(
-    (a) => !isSampleAsset(a) && a.origin.type !== 'stem' && a.origin.type !== 'derived',
+    (a) => !isSampleAsset(a) && (isLutAsset(a) || (a.origin.type !== 'stem' && a.origin.type !== 'derived')),
   )
   const present = await Promise.all(assets.map((a) => has(a).catch(() => false)))
   const gone = assets.filter((_, i) => !present[i])

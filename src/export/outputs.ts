@@ -491,6 +491,13 @@ export function exportedAssets(project: Project): Asset[] {
   return [...ids].flatMap((id) => project.assets[id] ?? [])
 }
 
+/** Up to three of the assets' names, or two and how many more. */
+function assetNames(assets: readonly Asset[]): string {
+  const names = assets.map((a) => `“${a.name}”`)
+  const shown = names.length > 3 ? [...names.slice(0, 2), `${names.length - 2} more`] : names
+  return shown.length < 2 ? (shown[0] ?? '') : `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}`
+}
+
 /**
  * The error for an export whose media can no longer be read, or null while all of it can. The browser clears the site's
  * storage when the disk is nearly full, and an export then draws blank frames and silence, or fails on a file it can't
@@ -506,13 +513,21 @@ export async function mediaGone(project: Project, media: MediaFileSource): Promi
       ),
     ),
   )
-  const gone = stored.filter((s) => !s).length
-  if (!gone) return null
+  const gone = assets.filter((_, i) => !stored[i])
+  if (!gone.length) return null
+  const files = gone.length === 1 ? 'media file' : 'media files'
+  // When only some went, their names (the library still lists them) say which to bring back.
+  const what =
+    gone.length === assets.length
+      ? `this project’s ${files}`
+      : `${assetNames(gone)}, ${gone.length} of the ${assets.length} media files this export uses`
+  const generated = gone.filter((a) => a.origin.type === 'generated').length
+  const remake = !generated ? 'Import' : generated === gone.length ? 'Generate' : 'Import or generate'
+  // The clips that showed them still point at the media that went, so new ones have to take their place.
+  const it = gone.length === 1 ? 'it' : 'them'
   return new JobError(
     'storage-quota',
-    gone === assets.length
-      ? 'The browser cleared this project’s media, as it does when the disk is nearly full.'
-      : `The browser cleared ${gone} of the ${assets.length} media files this export uses, as it does when the disk is nearly full.`,
+    `The browser cleared ${what}, as it does when the disk is nearly full. ${remake} ${it} again and put ${it} back in the timeline.`,
   )
 }
 

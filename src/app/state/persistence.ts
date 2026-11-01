@@ -268,6 +268,7 @@ async function onStorageCleared(): Promise<void> {
   const project = editor.getProject()
   const others = [...storedIds].filter((id) => id !== project.id)
   let saved: StorageLoss['project'] = 'not-kept'
+  let switchedAway = false
   if (usePersistence.getState().tracked) {
     try {
       const wrote = await writeAgain(
@@ -277,6 +278,7 @@ async function onStorageCleared(): Promise<void> {
       )
       // A save that met the closed database failed; the next one opens it again.
       if (autosave?.getState().status === 'error') await autosave.flush()
+      switchedAway = !wrote
       saved = !wrote ? 'not-kept' : autosave?.getState().status === 'error' ? 'not-saved' : 'saved'
     } catch (error) {
       saved = 'not-saved'
@@ -298,7 +300,8 @@ async function onStorageCleared(): Promise<void> {
   const same = editor.getProject().id === project.id
   const message = storageClearedMessage({
     ...(same ? { project: saved, ...lost } : { project: 'not-kept', files: 0, clips: 0, images: 0 }),
-    others: others.filter((id) => !kept.has(id)).length,
+    // Switched away from before it was written again, it went with the rest.
+    others: others.filter((id) => !kept.has(id)).length + (switchedAway && !kept.has(project.id) ? 1 : 0),
   })
   if (message) toast(message, undefined, { key: 'storage-cleared', sticky: true })
   await refreshRecents().catch(() => undefined)

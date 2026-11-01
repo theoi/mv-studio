@@ -62,7 +62,25 @@ function media(gone: string[]) {
   }
 }
 
-const ALL_GONE = 'The browser cleared this project’s media, as it does when the disk is nearly full.'
+/** A project that shows `count` clips, each of its own asset, the first `generated` of them generated. */
+function shots(count: number, generated = 0): Project {
+  const p = createProject({ name: 'shots' })
+  const visual = p.tracks.find((t) => t.kind === 'visual')!
+  for (let i = 0; i < count; i++) {
+    const a: Asset = { ...asset(`shot${i + 1}`), origin: { type: i < generated ? 'generated' : 'import' } }
+    p.assets[a.id] = a
+    const clip = createVideoClip({ trackId: visual.id, assetId: a.id, start: i, duration: 1 })
+    p.clips[clip.id] = clip
+  }
+  return p
+}
+
+async function goneMessage(p: Project, gone: string[]): Promise<string | undefined> {
+  return (await mediaGone(p, media(gone)))?.message
+}
+
+const ALL_GONE =
+  'The browser cleared this project’s media files, as it does when the disk is nearly full. Import them again and put them back in the timeline.'
 const notFound = new DOMException(
   'A requested file or directory could not be found at the time an operation was processed.',
   'NotFoundError',
@@ -77,7 +95,7 @@ describe('the media an export uses', () => {
     ).toEqual(['clip', 'grade', 'song'])
   })
 
-  it('are gone when the browser cleared them: all of them, or how many of them', async () => {
+  it('are gone when the browser cleared them: all of them, or which of them', async () => {
     expect(await mediaGone(project(), media(['unused']))).toBeNull()
     expect(await mediaGone(project(), media(['song', 'clip', 'grade', 'unused']))).toMatchObject({
       code: 'storage-quota',
@@ -86,8 +104,29 @@ describe('the media an export uses', () => {
     expect(await mediaGone(project(), media(['grade']))).toMatchObject({
       code: 'storage-quota',
       message:
-        'The browser cleared 1 of the 3 media files this export uses, as it does when the disk is nearly full.',
+        'The browser cleared “grade.mp4”, 1 of the 3 media files this export uses, as it does when the disk is nearly full. Import it again and put it back in the timeline.',
     })
+  })
+
+  it('are named when only some are gone, up to three, then two and how many more', async () => {
+    expect(await goneMessage(shots(6), ['shot1', 'shot2', 'shot3'])).toBe(
+      'The browser cleared “shot1.mp4”, “shot2.mp4” and “shot3.mp4”, 3 of the 6 media files this export uses, as it does when the disk is nearly full. Import them again and put them back in the timeline.',
+    )
+    expect(await goneMessage(shots(6), ['shot2', 'shot3', 'shot4', 'shot5'])).toBe(
+      'The browser cleared “shot2.mp4”, “shot3.mp4” and 2 more, 4 of the 6 media files this export uses, as it does when the disk is nearly full. Import them again and put them back in the timeline.',
+    )
+  })
+
+  it('say to generate again the generated clips that are gone, and to import again a single file', async () => {
+    expect(await goneMessage(shots(2, 2), ['shot1', 'shot2'])).toBe(
+      'The browser cleared this project’s media files, as it does when the disk is nearly full. Generate them again and put them back in the timeline.',
+    )
+    expect(await goneMessage(shots(3, 1), ['shot1', 'shot2'])).toBe(
+      'The browser cleared “shot1.mp4” and “shot2.mp4”, 2 of the 3 media files this export uses, as it does when the disk is nearly full. Import or generate them again and put them back in the timeline.',
+    )
+    expect(await goneMessage(shots(1), ['shot1'])).toBe(
+      'The browser cleared this project’s media file, as it does when the disk is nearly full. Import it again and put it back in the timeline.',
+    )
   })
 })
 
@@ -98,7 +137,7 @@ describe('an export whose media are gone', () => {
     await expect(job.promise).rejects.toMatchObject({
       code: 'storage-quota',
       message:
-        'The browser cleared 2 of the 3 media files this export uses, as it does when the disk is nearly full.',
+        'The browser cleared “clip.mp4” and “song.mp4”, 2 of the 3 media files this export uses, as it does when the disk is nearly full. Import them again and put them back in the timeline.',
     })
     expect(exportProject).not.toHaveBeenCalled()
   })

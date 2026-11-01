@@ -899,9 +899,22 @@ test('when the browser clears the site’s storage during an export, the export 
     origin: new URL(page.url()).origin,
     storageTypes: 'indexeddb,file_systems,cache_storage',
   })
-  const cause = 'The browser cleared this project’s media, as it does when the disk is nearly full.'
+  const cause =
+    'The browser cleared this project’s media file, as it does when the disk is nearly full. Import it again and put it back in the timeline.'
   await expect(page.getByText(`Export failed: ${cause}`)).toBeVisible({ timeout: 60_000 })
   await expect(dialog.getByText(cause, { exact: true })).toBeVisible()
+  // The reason wraps beside the output's name, which stays on one line, with space between them.
+  const name = dialog.getByText('Full video', { exact: true })
+  const nameLines = await name.evaluate((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size
+  })
+  expect(nameLines).toBe(1)
+  const space = await name.evaluate(
+    (el) => el.nextElementSibling!.getBoundingClientRect().left - el.getBoundingClientRect().right,
+  )
+  expect(space).toBeGreaterThanOrEqual(8)
   const note = page.getByText('The browser cleared MV Studio’s storage', { exact: false })
   await expect(note).toHaveText(
     'The browser cleared MV Studio’s storage, as it does when the disk is nearly full. This project’s edits are kept, but its 2 media files are gone. Your other project in this browser was cleared too. Free some disk space, then import the files again and put them back in the timeline.',
@@ -1031,6 +1044,38 @@ test('an edit saved while the database reopens after the browser cleared it is n
   await page.reload()
   await page.waitForFunction(() => window.mvStudio?.ready === true)
   await expect(page.getByRole('button', { name: 'Project: Edited meanwhile' })).toBeVisible()
+})
+
+test('a project switched away from while the database reopens after the browser cleared it counts as cleared', async ({
+  page,
+}) => {
+  await openBlank(page)
+  await importFiles(page, ['image.png'])
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  await expect(saved(page)).toBeVisible()
+  // The first try to write the project again fails as the database reopens, and meanwhile another project opens.
+  await page.evaluate(() => {
+    const { app, media, model } = window.mvStudio
+    const proto = Object.getPrototypeOf(media.projectStore) as { save: (...args: unknown[]) => Promise<void> }
+    const save = proto.save
+    let armed = true
+    proto.save = async function (this: unknown, ...args: unknown[]) {
+      if (!armed) return save.apply(this, args)
+      armed = false
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      app.project.editor.load(model.createProject({ name: 'Another' }))
+      throw new DOMException('The connection was closed.', 'AbortError')
+    }
+  })
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Storage.clearDataForOrigin', {
+    origin: new URL(page.url()).origin,
+    storageTypes: 'indexeddb,file_systems,cache_storage',
+  })
+  await expect(page.getByText('The browser cleared MV Studio’s storage', { exact: false })).toHaveText(
+    'The browser cleared MV Studio’s storage, as it does when the disk is nearly full. Your project in this browser was cleared. Free some disk space before you go on.',
+  )
+  expect(await keptCount(page)).toBe(0)
 })
 
 test('a sample project saved again after the browser clears its storage keeps a thumbnail, with no note when nothing was lost', async ({
