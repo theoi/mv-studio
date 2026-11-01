@@ -111,14 +111,14 @@ export interface FootageService {
    * Runs the fast blank check on these clips and stills (default: all of them) where footage analysis can't yet say
    * whether they show anything, and resolves when each is checked, so a draft or a cut can leave out the ones that show
    * nothing. It needs no model, so it also runs where background analysis is off. A clip it can't decode stays
-   * unchecked. It resolves within 25 s whatever happens: the clips not checked by then stay unchecked for this call (a
-   * check already running carries on and is kept), and the next call checks them. A check that hangs (no answer within
-   * 25 s) is checked once more at most. `progress` gets the share of them checked so far.
+   * unchecked. It resolves within 25 s whatever happens, with the clips and stills it didn't check in time: not reached
+   * by then (a check already running carries on and is kept), or hung. The next call checks them; one that hung (no
+   * answer within 25 s) once more at most. `progress` gets the share of them checked so far.
    */
   checkBlank(
     assetIds?: readonly Id[],
     options?: { signal?: AbortSignal; progress?: (fraction: number) => void },
-  ): Promise<void>
+  ): Promise<Id[]>
   readonly indexing: FootageIndexer
 }
 
@@ -270,7 +270,16 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       .filter((a) => !wanted || wanted.has(a.id))
       .filter((a) => needsBlankCheck(project, a, true))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
-    if (!todo.length) return
+    // Not the clips it couldn't decode: those can't be checked at all.
+    const notChecked = () => {
+      const now = editor.getProject()
+      return todo
+        .filter(
+          (a) => now.assets[a.id] && !failedBlank.has(a.id) && !hasBlankVerdict(now.analysis.visual[a.id]),
+        )
+        .map((a) => a.id)
+    }
+    if (!todo.length) return []
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeUp = new Promise<false>((resolve) => {
       timer = setTimeout(() => resolve(false), BLANK_CHECK_WAIT_MS)
@@ -283,11 +292,12 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
         const now = editor.getProject()
         if (!now.assets[asset.id] || !needsBlankCheck(now, asset, true)) continue
         // A check that hangs, or many slow ones, would hold the draft or the cut: it goes on with the rest unchecked.
-        if (!(await Promise.race([untilChecked(checkOne(asset), options.signal), timeUp]))) return
+        if (!(await Promise.race([untilChecked(checkOne(asset), options.signal), timeUp]))) break
       }
     } finally {
       clearTimeout(timer)
     }
+    return notChecked()
   }
 
   // ---------------------------------------------------------------------------------------------------------

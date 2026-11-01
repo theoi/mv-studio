@@ -442,7 +442,8 @@ describe('fast blank check', () => {
         return 0
       },
     })
-    await service.checkBlank()
+    // One it can't decode isn't waiting for a check, so it isn't reported as not checked yet.
+    expect(await service.checkBlank()).toEqual([])
     const visual = editor.getProject().analysis.visual
     expect(blank(editor)).toEqual(['city', 'still'])
     expect(hasBlankVerdict(visual.broken)).toBe(false)
@@ -535,6 +536,8 @@ describe('a blank check that hangs', () => {
       expect(await settlesWithin(wait, 24_999)).toBe(false)
       expect(await settlesWithin(wait, 1)).toBe(true)
       expect(checked()).toEqual(['city', 'ocean'])
+      // It says which it didn't check, so a draft or a cut can leave them out.
+      expect(await wait).toEqual(['crowd', 'misc'])
       // The third clip's check carries on and is kept; the fourth is left for the next request.
       await vi.advanceTimersByTimeAsync(5_000)
       expect(checked()).toEqual(['city', 'ocean', 'crowd'])
@@ -555,7 +558,7 @@ describe('a blank check that hangs', () => {
         hasBlankVerdict(editor.getProject().analysis.visual[id]),
       )
     const started = performance.now()
-    await service.checkBlank()
+    expect(await service.checkBlank()).toEqual(['ocean', 'crowd', 'misc'])
     expect(performance.now() - started).toBeLessThan(1000)
     expect(checked()).toEqual(['city'])
     expect(peakLuma.mock.calls.map(([s]) => s.mediaId)).toEqual(['city', 'ocean'])

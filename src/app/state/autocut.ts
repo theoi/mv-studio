@@ -177,14 +177,15 @@ const ANALYSIS_STOPPED: Partial<Record<JobErrorCode, { why: string; next?: (redo
  * The note of a cut (or, with `draft`, a Director draft) for clips it used without matching, when footage analysis
  * says why they have no index: it stopped with an error, was cancelled, or couldn’t read them. Undefined while they
  * are only waiting for analysis. A draft doesn't start the analysis, so when it won't run on its own
- * (`draft.analysisRuns`: background analysis is off and the user never asked for it) and none of the draft's clips is
- * analyzed, the note says how to analyze them rather than promising that analysis finishes.
+ * (`draft.analysisRuns`: background analysis is off and the user never asked for it), the note says how to analyze
+ * the draft's clips rather than leaving them waiting for an analysis that never comes. `draft.media` names them when
+ * some are analyzed ("2 clips and 1 image"; default "N clips").
  */
 export function unanalyzedWarning(
   assetIds: readonly Id[],
   all: boolean,
   indexing: IndexingState | null,
-  draft?: { analysisRuns: boolean },
+  draft?: { analysisRuns: boolean; media?: string },
 ): string | undefined {
   const redo: Redo = draft ? 'draft' : 'cut'
   const n = assetIds.length
@@ -210,9 +211,10 @@ export function unanalyzedWarning(
     return `“${shortFileName(first.name)}” couldn’t be analyzed, so it was picked for variety.`
   if (failed.length === n)
     return `${all ? 'Your clips' : plural(n, 'clip')} couldn’t be analyzed, so they were picked for variety.`
-  if (draft && all && !draft.analysisRuns && indexing?.status !== 'indexing')
-    return 'Your clips aren’t analyzed yet, so they were picked for variety. Analyze your footage in Match footage, then draft again to match the mood.'
-  return undefined
+  if (!draft || draft.analysisRuns || indexing?.status === 'indexing') return undefined
+  const analyze = 'Analyze your footage in Match footage, then draft again to match the mood.'
+  if (all) return `Your clips aren’t analyzed yet, so they were picked for variety. ${analyze}`
+  return `${draft.media || plural(n, 'clip')} ${n === 1 ? 'isn’t' : 'aren’t'} analyzed yet, so ${n === 1 ? 'it was' : 'they were'} only used for variety. ${analyze}`
 }
 
 /** Bytes the footage tagger still has to download on this device to match clips (once), 0 when it is cached. */
@@ -552,7 +554,7 @@ export function startAutoCut(
         reportCheck(checkFraction)
       }
       // A check that fails leaves its clips in the cut, as before the check.
-      await checked?.catch(() => ctx.throwIfCancelled())
+      const unchecked = await checked?.catch(() => ctx.throwIfCancelled())
       reportCheck = undefined
       ctx.progress({
         fraction: scale(0),
@@ -566,6 +568,7 @@ export function startAutoCut(
           editor,
           matcher: vision.matcher,
           unanalyzedWarning: (ids, all) => unanalyzedWarning(ids, all, useFootage.getState().indexing),
+          ...(unchecked?.length ? { unchecked } : {}),
         },
         { ...options, seed },
         {

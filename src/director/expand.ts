@@ -165,6 +165,7 @@ function resolveVisual(wanted: CreativeBrief['visual'], input: PlannerInput, war
   const media = input.useMedia ? input.media : []
   const blank = input.useMedia && blankClipsNote(input.blank ?? [])
   if (blank) warnings.push(blank)
+  if (input.useMedia && input.unchecked) warnings.push(input.unchecked)
   const hasVideo = media.some((m) => m.kind === 'video')
   const hasImage = media.some((m) => m.kind === 'image')
   const hasGenerators = input.catalog.generators.length > 0

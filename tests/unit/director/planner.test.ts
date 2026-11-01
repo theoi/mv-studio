@@ -158,6 +158,16 @@ describe('local planner', () => {
     expect(own.warnings.join(' ')).not.toMatch(/Left out/)
   })
 
+  it('says nothing about clips the blank check didn’t reach in a draft that doesn’t use the media', async () => {
+    const project = makeProject()
+    const note = (useMedia: boolean) =>
+      buildPlannerInput(project, { kind: 'beat-cut', seed: 7, useMedia, unchecked: ['video4'] })
+        .then(planLocally)
+        .then((p) => p.warnings.filter((w) => /checked yet/.test(w)))
+    expect(await note(true)).toHaveLength(1)
+    expect(await note(false)).toEqual([])
+  })
+
   it('places every timed lyric line with karaoke highlighting', async () => {
     const p = await plan('lyric')
     const lyricTexts = p.texts.filter((t) => t.role === 'lyric')

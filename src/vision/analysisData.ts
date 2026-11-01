@@ -281,6 +281,48 @@ export function blankClipsUsedNote(names: readonly string[]): string | undefined
   return `Used ${names.length} clips because you chose them, but every frame of them is black or see-through: ${quotedFileNames(names)}.`
 }
 
+/** Checked clips and images enough to draft or cut from without the unchecked ones: at least this many. */
+const ENOUGH_CHECKED = 3
+
+const mediaCount = (media: readonly { kind: 'video' | 'image' }[]) => {
+  const clips = media.filter((m) => m.kind === 'video').length
+  const images = media.length - clips
+  const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+  return [clips ? count(clips, 'clip') : '', images ? count(images, 'image') : '']
+    .filter(Boolean)
+    .join(' and ')
+}
+
+/**
+ * Leaves out the clips and images the fast blank check didn't reach in time (`unchecked`, from
+ * `FootageService.checkBlank`), which may show nothing, when the checked ones are enough to choose from: at least
+ * `ENOUGH_CHECKED` of them and at least as many as the unchecked. Otherwise, or when the user chose them (`keep`),
+ * they are used. Either way the note says so and how to redo the result once they are checked (`rerun`: "Draft
+ * again"). Media checked since `unchecked` was reported counts as checked.
+ */
+export function withoutUnchecked<T extends { assetId: Id; kind: 'video' | 'image'; name: string }>(
+  project: Project,
+  pool: readonly T[],
+  unchecked: readonly Id[],
+  options: { rerun: string; keep?: boolean },
+): { pool: T[]; note?: string } {
+  const left = new Set(unchecked.filter((id) => !hasBlankVerdict(project.analysis.visual[id])))
+  const risky = pool.filter((m) => left.has(m.assetId))
+  if (!risky.length) return { pool: [...pool] }
+  const one = risky.length === 1
+  const checked = pool.length - risky.length
+  if (!options.keep && checked >= Math.max(ENOUGH_CHECKED, risky.length))
+    return {
+      pool: pool.filter((m) => !left.has(m.assetId)),
+      note: one
+        ? `Left out ${quotedFileNames(risky.map((m) => m.name))}, which wasn’t checked yet, in case it shows nothing. ${options.rerun} to use it.`
+        : `Left out ${mediaCount(risky)} that weren’t checked yet, in case they show nothing. ${options.rerun} to use them.`,
+    }
+  return {
+    pool: [...pool],
+    note: `${mediaCount(risky)} ${one ? 'wasn’t' : 'weren’t'} checked yet, so ${one ? 'it' : 'some'} may show nothing. ${options.rerun} to check ${one ? 'it' : 'them'}.`,
+  }
+}
 /**
  * Words describing a clip, from footage analysis: what's in it, its mood and motion ("crowd", "lights",
  * "energetic", "fast"), stored as `VisualAnalysis.data.tags`. Null until the clip is analyzed; an empty list when
