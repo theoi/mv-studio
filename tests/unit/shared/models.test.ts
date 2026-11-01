@@ -64,6 +64,62 @@ describe('fetchModelFile', () => {
   })
 })
 
+/** An in-memory stand-in for the browser's Cache Storage, returning what each URL holds. */
+function memoryCaches(): Map<string, ArrayBuffer> {
+  const store = new Map<string, ArrayBuffer>()
+  const cache = {
+    async match(url: string) {
+      const b = store.get(url)
+      return b ? new Response(b.slice(0)) : undefined
+    },
+    async put(url: string, response: Response) {
+      store.set(url, await response.arrayBuffer())
+    },
+    async delete(url: string) {
+      return store.delete(url)
+    },
+  }
+  vi.stubGlobal('caches', { open: async () => cache })
+  return store
+}
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer)
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+describe('fetchModelFile with a file cached under a former URL', () => {
+  const latest = 'https://example.com/models/latest/m.tflite'
+  const pinned = 'https://example.com/models/1/m.tflite'
+  const bytes = new Uint8Array([5, 6, 7, 8])
+
+  it('moves a copy with the same checksum to the pinned URL, without downloading', async () => {
+    const store = memoryCaches()
+    store.set(latest, bytes.slice().buffer)
+    const fetchMock = vi.fn(async () => streamResponse([new Uint8Array([9])]))
+    vi.stubGlobal('fetch', fetchMock)
+    const stages: string[] = []
+    const buf = await fetchModelFile(
+      { url: pinned, sha256: await sha256(bytes), formerUrls: [latest] },
+      { onProgress: (p) => stages.push(p.stage ?? '') },
+    )
+    expect([...new Uint8Array(buf)]).toEqual([...bytes])
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(stages).toEqual(['cached'])
+    expect([...store.keys()]).toEqual([pinned])
+  })
+
+  it('downloads the file when the former copy has other bytes', async () => {
+    const store = memoryCaches()
+    store.set(latest, new Uint8Array([1, 2]).buffer)
+    const fetchMock = vi.fn(async () => streamResponse([bytes]))
+    vi.stubGlobal('fetch', fetchMock)
+    const buf = await fetchModelFile({ url: pinned, sha256: await sha256(bytes), formerUrls: [latest] })
+    expect([...new Uint8Array(buf)]).toEqual([...bytes])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect([...new Uint8Array(store.get(pinned)!)]).toEqual([...bytes])
+  })
+})
 describe('thread policy', () => {
   it('uses one thread without isolation and leaves a core free, capped at 8, when isolated', () => {
     expect(wasmThreadCount(false, 16)).toBe(1)

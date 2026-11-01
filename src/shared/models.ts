@@ -15,6 +15,11 @@ export interface ModelFile {
   sha256?: string
   /** Expected size, used for progress when the server omits Content-Length. */
   bytes?: number
+  /**
+   * URLs this file was cached under before (e.g. before its URL was pinned to a revision). A copy cached there whose
+   * bytes match `sha256` moves to `url` instead of downloading again.
+   */
+  formerUrls?: string[]
 }
 
 export interface ModelDescriptor {
@@ -58,6 +63,34 @@ async function sha256Hex(data: ArrayBuffer): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+async function writeCache(cache: Cache, url: string, buffer: ArrayBuffer): Promise<boolean> {
+  try {
+    await cache.put(
+      url,
+      new Response(buffer.slice(0), { headers: { 'content-type': 'application/octet-stream' } }),
+    )
+    return true
+  } catch (error) {
+    // A full cache must not fail the load; the model just downloads again next time.
+    console.warn('Model cache write failed', error)
+    return false
+  }
+}
+
+/** A copy of `file` cached under one of its former URLs, moved to its URL. Only bytes with its checksum count. */
+async function movedFormerCopy(cache: Cache, file: ModelFile): Promise<ArrayBuffer | undefined> {
+  if (!file.sha256) return undefined
+  for (const url of file.formerUrls ?? []) {
+    const hit = await cache.match(url)
+    if (!hit) continue
+    const buf = await hit.arrayBuffer()
+    if ((await sha256Hex(buf)) !== file.sha256.toLowerCase()) continue
+    if (await writeCache(cache, file.url, buf)) await cache.delete(url)
+    return buf
+  }
+  return undefined
+}
+
 /** Downloads (or reads from cache) one file with streaming progress. */
 export async function fetchModelFile(
   file: ModelFile,
@@ -67,8 +100,8 @@ export async function fetchModelFile(
   const cache = await openCache()
   if (cache && !options.forceDownload) {
     const hit = await cache.match(file.url)
-    if (hit) {
-      const buf = await hit.arrayBuffer()
+    const buf = hit ? await hit.arrayBuffer() : await movedFormerCopy(cache, file)
+    if (buf) {
       onProgress?.({
         stage: 'cached',
         fraction: 1,
@@ -131,17 +164,7 @@ export async function fetchModelFile(
         details: { expected: file.sha256, actual },
       })
   }
-  if (cache) {
-    try {
-      await cache.put(
-        file.url,
-        new Response(buffer.slice(0), { headers: { 'content-type': 'application/octet-stream' } }),
-      )
-    } catch (error) {
-      // A full cache must not fail the load; the model just downloads again next time.
-      console.warn('Model cache write failed', error)
-    }
-  }
+  if (cache) await writeCache(cache, file.url, buffer)
   return buffer
 }
 
