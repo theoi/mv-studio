@@ -143,6 +143,31 @@ describe('closing a preview', () => {
   })
 })
 
+describe('reporting drawn frames', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('does not report a frame asked for before a seek, only the frames of the new position', async () => {
+    let finish = () => {}
+    compositor.render.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve
+      }),
+    )
+    compositor.render.mockResolvedValue(undefined)
+    const preview = open()
+    const times: number[] = []
+    preview.onFrame((time) => times.push(time))
+    preview.seek(30)
+    finish()
+    await preview.rendered()
+    expect(times).not.toContain(0)
+    expect(times).toContain(30)
+    preview.dispose()
+  })
+})
+
 describe('scrubbing on the render worker', () => {
   beforeEach(() => {
     worker.gpuFreeAt = 0
