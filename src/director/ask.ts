@@ -187,10 +187,9 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
   const request = o.previous?.pendingCall ? o.previous.request : o.request
   const maxRepairs = o.maxRepairs ?? 2
   for (let attempt = 0; ; attempt++) {
-    o.ctx.progress({
-      stage: 'llm',
-      message: attempt === 0 ? 'Thinking' : `Fixing the edit (attempt ${attempt + 1} of ${maxRepairs + 1})`,
-    })
+    const message =
+      attempt === 0 ? 'Thinking' : `Fixing the edit (attempt ${attempt + 1} of ${maxRepairs + 1})`
+    o.ctx.progress({ stage: 'llm', message })
     const result = await o.client.callTools({
       messages,
       tools: ASK_TOOLS,
@@ -198,6 +197,8 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
       temperature: 0.2,
       maxTokens: 3000,
       signal: o.ctx.signal,
+      onLoadingModel: (loading) =>
+        o.ctx.progress({ stage: 'llm', message: loading ? 'Loading the model' : message }),
     })
     o.ctx.throwIfCancelled()
     messages = [...messages, result.assistant]

@@ -31,7 +31,7 @@ function scriptedClient(...replies: Reply[]): LlmToolClient & { requests: ToolCa
   return {
     requests,
     async callTools(request) {
-      requests.push(structuredClone({ ...request, signal: undefined }))
+      requests.push(structuredClone({ ...request, signal: undefined, onLoadingModel: undefined }))
       const reply = replies.shift()
       if (!reply) throw new Error('no scripted reply left')
       if ('text' in reply) {
@@ -528,6 +528,31 @@ describe('AskSession feedback and review', () => {
     })
     expect((await ask.ask('bigger')).status).toBe('applied')
     expect(seen).toEqual(['Thinking', 'Fixing the edit (attempt 2 of 3)'])
+  })
+
+  it('says the model is loading while Ollama loads it, then goes back to Thinking', async () => {
+    const project = await draft()
+    const inner = scriptedClient(bigger)
+    const seen: string[] = []
+    const note = () => {
+      const state = ask.getState()
+      if (state.status === 'thinking') seen.push(state.message)
+    }
+    const ask: AskSession = new AskSession({
+      editor: new ProjectEditor(project),
+      jobs: new JobRunner(),
+      client: () => ({
+        callTools: (request) => {
+          request.onLoadingModel?.(true)
+          note()
+          request.onLoadingModel?.(false)
+          note()
+          return inner.callTools(request)
+        },
+      }),
+    })
+    expect((await ask.ask('bigger')).status).toBe('applied')
+    expect(seen).toEqual(['Loading the model', 'Thinking'])
   })
 
   it('waits for Apply on large edits and says why', async () => {

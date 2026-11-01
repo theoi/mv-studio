@@ -64,6 +64,13 @@ error says so and points to the setting.
   built-in planner with a note to raise the context length. Only servers the user runs are checked: this computer
   (`isLocalEndpoint()`) or Ollama's or LM Studio's port. Cloud APIs (OpenAI, OpenRouter, or any https API under
   Other, such as Groq or Mistral) reject a request that is too long, and their users can't change a server setting.
+- With the Ollama preset, a request of 2,048 tokens or more is first checked against the context of the model Ollama
+  has loaded (`/api/ps`, `context_length`), because on a slow computer the model can write about a cut prompt for
+  longer than the answer time limit, and the answer's count never arrives. When the model isn't loaded, `chat()`
+  loads it first (`/api/generate` with only the model), which the request would do anyway; `onLoadingModel` lets
+  Ask and the director say "Loading the model" meanwhile. A request whose estimate is over the context by more than
+  10% gets the same `prompt-cut` error without being sent. When Ollama doesn't say (an older version without
+  `/api/ps` or `context_length`, or a failed read), the request is sent and checked from the answer as above.
 - When a server rejects `temperature`, `max_tokens` or `reasoning_effort` with a 400, the client retries once without
   it (or with `max_completion_tokens` when the error asks for it).
 - With exactly one tool, a named tool choice is sent as `required`, because llama.cpp's server ignores the object

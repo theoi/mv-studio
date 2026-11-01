@@ -14,8 +14,8 @@ import {
   modelSizeBillions,
   pickDefaultModel,
 } from '../../../src/cloud/llm/presets.ts'
-import { browserFetch, json, PAGE_ORIGIN, type MockHandler } from './mocks/browser.ts'
-import { MockLlmServer } from './mocks/llm-server.ts'
+import { browserFetch, json, PAGE_ORIGIN, type BrowserFetch, type MockHandler } from './mocks/browser.ts'
+import { MockLlmServer, type MockLlmOptions } from './mocks/llm-server.ts'
 
 const OPENAI = 'https://api.openai.com'
 const OLLAMA = 'http://localhost:11434'
@@ -753,5 +753,130 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     const short = { ...long, messages: [{ role: 'user' as const, content: 'Make the chorus brighter.' }] }
     const { llm } = client({ [OLLAMA]: ollamaServer(64).handler() }, ollama)
     expect((await llm.callTools(short)).calls[0]?.name).toBe('set_opacity')
+  })
+  describe('before sending, against the model Ollama has loaded', () => {
+    const fitting = (contextTokens: number, ollamaApi?: NonNullable<MockLlmOptions['ollamaApi']>) =>
+      new MockLlmServer({
+        flavor: 'ollama',
+        allowedOrigins: [PAGE_ORIGIN],
+        models: ['qwen2.5:7b'],
+        contextTokens,
+        ...(ollamaApi ? { ollamaApi } : {}),
+      }).reply({ tool_calls: [editCall] })
+    const paths = (net: BrowserFetch) => net.requests.map((r) => `${r.method} ${new URL(r.url).pathname}`)
+
+    it('refuses a request far over the loaded model’s context without sending it', async () => {
+      const server = fitting(4096, { loaded: true })
+      const { llm, net } = client({ [OLLAMA]: server.handler() }, ollama)
+      const error = await failure(llm.callTools(long))
+      expect(error.kind).toBe('prompt-cut')
+      expect(error.retryable).toBe(false)
+      expect(error.title).toBe('Ollama can read only part of this request')
+      expect(error.message).toBe(
+        'Its context length is 4,096 tokens and this request is about 10,000, so Ollama would drop its start. Nothing was sent or changed.',
+      )
+      expect(error.steps[0]).toBe('Raise Ollama’s context length to 16k, then try again:')
+      expect(error.info.action).toBe('Raise Ollama’s context length to 16k')
+      expect(paths(net)).toEqual(['GET /api/ps'])
+      expect(server.chatBodies).toHaveLength(0)
+    })
+
+    it('finds a model chosen without its tag under :latest', async () => {
+      const server = new MockLlmServer({
+        flavor: 'ollama',
+        allowedOrigins: [PAGE_ORIGIN],
+        models: ['qwen2.5:latest'],
+        contextTokens: 4096,
+        ollamaApi: { loaded: true },
+      })
+      const { llm } = client({ [OLLAMA]: server.handler() }, { ...ollama, model: 'qwen2.5' })
+      expect((await failure(llm.callTools(long))).title).toBe('Ollama can read only part of this request')
+    })
+
+    it('sends a request that fits the loaded model’s context', async () => {
+      const server = fitting(16384, { loaded: true })
+      const { llm, net } = client({ [OLLAMA]: server.handler() }, ollama)
+      expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
+      expect(paths(net)).toEqual(['GET /api/ps', 'POST /v1/chat/completions'])
+    })
+
+    it.each([
+      [1.05, 1],
+      [1.15, 0],
+    ])(
+      'with an estimate %f × the context, sends the request %i times: only clearly over is refused',
+      async (share, sent) => {
+        const probe = fitting(65536, { loaded: true })
+        await client({ [OLLAMA]: probe.handler() }, ollama).llm.callTools(long)
+        const estimate = JSON.stringify(probe.chatBodies[0]).length / 4
+        const server = fitting(Math.round(estimate / share), { loaded: true })
+        await client({ [OLLAMA]: server.handler() }, ollama)
+          .llm.callTools(long)
+          .catch(() => undefined)
+        expect(server.chatBodies).toHaveLength(sent)
+      },
+    )
+
+    it('loads the model first when Ollama hasn’t, saying so, then refuses a request over its context', async () => {
+      const server = fitting(4096, { loaded: false })
+      const { llm, net } = client({ [OLLAMA]: server.handler() }, ollama)
+      const loading: boolean[] = []
+      const error = await failure(llm.callTools({ ...long, onLoadingModel: (l) => loading.push(l) }))
+      expect(error.kind).toBe('prompt-cut')
+      expect(loading).toEqual([true, false])
+      expect(server.loadBodies).toEqual([{ model: 'qwen2.5:7b', stream: false }])
+      expect(paths(net)).toEqual(['GET /api/ps', 'POST /api/generate', 'GET /api/ps'])
+      expect(server.chatBodies).toHaveLength(0)
+    })
+
+    it('loads the model first, then sends a request that fits', async () => {
+      const server = fitting(16384, { loaded: false })
+      const { llm, net } = client({ [OLLAMA]: server.handler() }, ollama)
+      expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
+      expect(paths(net)).toEqual([
+        'GET /api/ps',
+        'POST /api/generate',
+        'GET /api/ps',
+        'POST /v1/chat/completions',
+      ])
+    })
+
+    it.each([
+      ['an Ollama without /api/ps', undefined],
+      ['an Ollama that leaves out the context length', { loaded: true, contextLength: false }],
+      ['a model that fails to load', { loaded: false, loadFails: true }],
+    ])('sends the request to %s, and still stops at the cut answer', async (_, api) => {
+      const server = fitting(4096, api)
+      const error = await failure(client({ [OLLAMA]: server.handler() }, ollama).llm.callTools(long))
+      expect(error.title).toBe('Ollama read only part of the request')
+      expect(server.chatBodies).toHaveLength(1)
+    })
+
+    it('checks only with the Ollama preset, and only long requests', async () => {
+      const other = fitting(4096, { loaded: true })
+      const asOther = client({ [OLLAMA]: other.handler() }, { ...ollama, preset: 'custom' })
+      await asOther.llm.callTools(long).catch(() => undefined)
+      expect(paths(asOther.net)).toEqual(['POST /v1/chat/completions'])
+      const short = { ...long, messages: [{ role: 'user' as const, content: 'Make the chorus brighter.' }] }
+      const brief = client({ [OLLAMA]: fitting(4096, { loaded: true }).handler() }, ollama)
+      expect((await brief.llm.callTools(short)).calls[0]?.name).toBe('set_opacity')
+      expect(paths(brief.net)).toEqual(['POST /v1/chat/completions'])
+    })
+
+    it('stops loading the model at Cancel', async () => {
+      const server = fitting(16384, { loaded: false, loadGate: new Promise<void>(() => {}) })
+      const controller = new AbortController()
+      const { llm } = client({ [OLLAMA]: server.handler() }, ollama)
+      const loading = llm.callTools({
+        ...long,
+        signal: controller.signal,
+        onLoadingModel: (l) => {
+          if (l) setTimeout(() => controller.abort(), 0)
+        },
+      })
+      expect((await failure(loading)).kind).toBe('cancelled')
+      expect(server.loadBodies).toHaveLength(1)
+      expect(server.chatBodies).toHaveLength(0)
+    })
   })
 })

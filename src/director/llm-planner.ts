@@ -271,11 +271,8 @@ async function askForBrief(
   const rules = ruleBrief(input)
   const messages = briefMessages(input, payload)
   for (let attempt = 0; attempt < 2; attempt++) {
-    ctx.progress({
-      stage: 'llm',
-      fraction: attempt === 0 ? 0.4 : 0.6,
-      message: attempt === 0 ? 'Asking your AI model for ideas' : 'Asking again',
-    })
+    const message = attempt === 0 ? 'Asking your AI model for ideas' : 'Asking again'
+    ctx.progress({ stage: 'llm', fraction: attempt === 0 ? 0.4 : 0.6, message })
     const result = await client.callTools({
       messages,
       tools: [BRIEF_TOOL_DEFINITION],
@@ -283,6 +280,8 @@ async function askForBrief(
       temperature: 0.7,
       maxTokens: 4000,
       signal: ctx.signal,
+      onLoadingModel: (loading) =>
+        ctx.progress({ stage: 'llm', message: loading ? 'Loading your AI model' : message }),
     })
     ctx.throwIfCancelled()
     const call = result.calls.find((c) => c.name === BRIEF_TOOL)

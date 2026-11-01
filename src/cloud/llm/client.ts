@@ -52,6 +52,8 @@ export interface ToolCallRequest {
   temperature?: number
   maxTokens?: number
   signal?: AbortSignal
+  /** Called with true while the model is loaded into Ollama before a long request is sent, then with false. */
+  onLoadingModel?: (loading: boolean) => void
 }
 
 export interface ParsedToolCall {
@@ -103,6 +105,13 @@ const MODES: StructuredMode[] = ['tools', 'json-object', 'json-schema', 'prompt'
  * 60% of it means a cut, not a different tokenizer.
  */
 const PROMPT_CUT = { charsPerToken: 4, ratio: 0.6, minTokens: 1000 } as const
+
+/**
+ * A request is checked against the context of the model Ollama has loaded only from this many tokens (Ollama's
+ * smallest default context), and refused only when its estimate, which errs low (see PROMPT_CUT), is over the
+ * context by the margin. /api/ps answers at once; after a few seconds the request is sent unchecked.
+ */
+const OLLAMA_FIT = { minTokens: 2048, margin: 1.1, psTimeoutMs: 5000 } as const
 
 const capabilityCache = new Map<string, StructuredMode>()
 
@@ -229,9 +238,15 @@ export class OpenAICompatibleClient {
   }
 
   /** One raw chat completion call. Adapts or drops sampling parameters the model rejects. */
-  async chat(body: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  async chat(
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+    onLoadingModel?: (loading: boolean) => void,
+  ): Promise<Record<string, unknown>> {
     const model = this.requireModel()
     let payload: Record<string, unknown> = { model, ...adaptForModel(body, model, this.isOpenAi()) }
+    const tooLong = await this.tooLongForOllama(payload, model, signal, onLoadingModel)
+    if (tooLong) throw tooLong
     for (let attempt = 0; ; attempt++) {
       let response: Record<string, unknown>
       try {
@@ -249,6 +264,93 @@ export class OpenAICompatibleClient {
       const cut = this.promptCut(payload, response)
       if (cut) throw cut
       return response
+    }
+  }
+
+  /**
+   * Refuses a request clearly longer than the context of the model Ollama has loaded, before sending it. Ollama
+   * would cut it, and on a slow computer the model can write about the cut prompt for longer than the answer time
+   * limit, so promptCut() never sees the answer. The model is loaded first when it isn't (the request would load
+   * it anyway). Whenever Ollama doesn't say (a failed read, an older Ollama without /api/ps or its context_length),
+   * the request is sent as before.
+   */
+  private async tooLongForOllama(
+    payload: Record<string, unknown>,
+    model: string,
+    signal: AbortSignal | undefined,
+    onLoadingModel: ((loading: boolean) => void) | undefined,
+  ): Promise<CloudError | undefined> {
+    if (this.endpoint.preset !== 'ollama') return undefined
+    const tokens = JSON.stringify(payload).length / PROMPT_CUT.charsPerToken
+    if (tokens < OLLAMA_FIT.minTokens) return undefined
+    let context = await this.ollamaContext(model, signal)
+    if (context === null) {
+      onLoadingModel?.(true)
+      try {
+        const loaded = await this.ollamaNative(
+          '/api/generate',
+          { model, stream: false },
+          signal,
+          this.timeoutMs,
+        )
+        context = loaded ? await this.ollamaContext(model, signal) : undefined
+      } finally {
+        onLoadingModel?.(false)
+      }
+    }
+    if (typeof context !== 'number' || tokens <= context * OLLAMA_FIT.margin) return undefined
+    const count = (n: number) => n.toLocaleString('en-US')
+    return this.error('prompt-cut', {
+      title: 'Ollama can read only part of this request',
+      message:
+        `Its context length is ${count(context)} tokens and this request is about ${count(Math.round(tokens / 1000) * 1000)}, ` +
+        'so Ollama would drop its start. Nothing was sent or changed.',
+      steps: contextLengthSteps('ollama', model),
+      action: raiseContextLength('ollama'),
+    })
+  }
+
+  /**
+   * The context length of `model` as Ollama has it loaded (/api/ps): null when Ollama lists its loaded models and this
+   * one isn't among them, undefined when it can't be told.
+   */
+  private async ollamaContext(
+    model: string,
+    signal: AbortSignal | undefined,
+  ): Promise<number | null | undefined> {
+    const json = (await this.ollamaNative('/api/ps', undefined, signal, OLLAMA_FIT.psTimeoutMs)) as
+      { models?: unknown } | undefined
+    if (!Array.isArray(json?.models)) return undefined
+    const names = new Set([model, model.includes(':') ? model : `${model}:latest`])
+    const entry = (json.models as { name?: unknown; model?: unknown; context_length?: unknown }[]).find(
+      (m) => names.has(String(m?.name)) || names.has(String(m?.model)),
+    )
+    if (!entry) return null
+    return typeof entry.context_length === 'number' && entry.context_length > 0
+      ? entry.context_length
+      : undefined
+  }
+
+  /** A call to Ollama's own API next to /v1; undefined when it fails in any way. */
+  private async ollamaNative(
+    path: string,
+    body: Record<string, unknown> | undefined,
+    signal: AbortSignal | undefined,
+    timeoutMs: number,
+  ): Promise<unknown> {
+    const timeout = AbortSignal.timeout(timeoutMs)
+    try {
+      const response = await this.doFetch(`${this.baseUrl.replace(/\/v1$/, '')}${path}`, {
+        method: body ? 'POST' : 'GET',
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        credentials: 'omit',
+      })
+      return response.ok ? await response.json() : undefined
+    } catch {
+      // A Cancel shows as soon as the request itself is sent.
+      return undefined
     }
   }
 
@@ -331,14 +433,14 @@ export class OpenAICompatibleClient {
       }
       let response: Record<string, unknown>
       try {
-        response = await this.chat(body, request.signal)
+        response = await this.chat(body, request.signal, request.onLoadingModel)
       } catch (error) {
         if (
           error instanceof CloudError &&
           error.kind === 'unsupported' &&
           /tool_choice/i.test(error.message)
         ) {
-          response = await this.chat({ ...body, tool_choice: 'auto' }, request.signal)
+          response = await this.chat({ ...body, tool_choice: 'auto' }, request.signal, request.onLoadingModel)
         } else {
           throw error
         }
@@ -365,7 +467,7 @@ export class OpenAICompatibleClient {
         json_schema: { name: 'response', schema: envelopeSchema(request.tools, choice), strict: false },
       }
     }
-    const response = await this.chat(body, request.signal)
+    const response = await this.chat(body, request.signal, request.onLoadingModel)
     const message = firstMessage(response)
     const content = typeof message.content === 'string' ? message.content : ''
     const json = extractJson(content)
