@@ -271,16 +271,20 @@ test('recent projects can be duplicated, renamed and deleted from the start scre
 
   await recent.getByRole('button', { name: 'More actions for Neon Skyline' }).click()
   await page.getByRole('menuitem', { name: 'Duplicate' }).click()
-  await expect(card(/^Neon Skyline \(copy\)/)).toBeVisible()
+  await expect(card(/^Neon Skyline \(2\)/)).toBeVisible()
+  // A copy of a copy takes the next number, so no two tiles (or their exports) share a name.
+  await recent.getByRole('button', { name: 'More actions for Neon Skyline (2)' }).click()
+  await page.getByRole('menuitem', { name: 'Duplicate' }).click()
+  await expect(card(/^Neon Skyline \(3\)/)).toBeVisible()
 
-  await recent.getByRole('button', { name: 'More actions for Neon Skyline (copy)' }).click()
+  await recent.getByRole('button', { name: 'More actions for Neon Skyline (3)' }).click()
   await page.getByRole('menuitem', { name: 'Rename' }).click()
   const field = recent.getByRole('textbox', { name: 'Project name' })
   await expect(field).toBeFocused()
   await field.fill('Tour cut')
   await field.press('Enter')
   await expect(card(/^Tour cut/)).toBeVisible()
-  await expect(card(/^Neon Skyline \(copy\)/)).toHaveCount(0)
+  await expect(card(/^Neon Skyline \(3\)/)).toHaveCount(0)
 
   await recent.getByRole('button', { name: 'More actions for Tour cut' }).click()
   await page.getByRole('menuitem', { name: 'Delete…' }).click()
@@ -288,10 +292,10 @@ test('recent projects can be duplicated, renamed and deleted from the start scre
   await confirm.getByRole('button', { name: 'Delete project' }).click()
   await expect(confirm).toBeHidden()
   await expect(card(/^Tour cut/)).toHaveCount(0)
-  expect(await keptCount(page)).toBe(1)
+  expect(await keptCount(page)).toBe(2)
 
   // The original kept its media: it opens and plays its own frames.
-  await card(/^Neon Skyline(?! \(copy\))/).click()
+  await card(/^Neon Skyline(?! \()/).click()
   await waitForPreview(page)
   await expect(page.getByRole('button', { name: 'Project: Neon Skyline' })).toBeVisible()
 })
