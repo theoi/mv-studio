@@ -219,6 +219,22 @@ export function hasBlankVerdict(analysis: VisualAnalysis | undefined): boolean {
   return peakLumaOf(analysis) !== undefined
 }
 
+/** Media footage analysis reads: clips and stills the user imported or generated (a clip once its size is known). */
+export function analyzableMedia(asset: Asset): asset is Asset & { kind: 'video' | 'image' } {
+  if (asset.origin.type !== 'import' && asset.origin.type !== 'generated') return false
+  if (asset.kind === 'video') return !!(asset.duration && asset.width && asset.height)
+  return asset.kind === 'image'
+}
+
+/** Whether any of these clips and stills (default: all of them) has no blank verdict yet (`hasBlankVerdict`). */
+export function hasUncheckedMedia(project: Project, assetIds?: readonly Id[]): boolean {
+  const wanted = assetIds && new Set(assetIds)
+  return Object.values(project.assets).some(
+    (a) =>
+      (!wanted || wanted.has(a.id)) && analyzableMedia(a) && !hasBlankVerdict(project.analysis.visual[a.id]),
+  )
+}
+
 /** The clips and images in the project that show nothing (`isBlankClip`), in import order. */
 export function blankAssets(project: Project): Asset[] {
   return Object.values(project.assets)

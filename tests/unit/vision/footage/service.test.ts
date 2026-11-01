@@ -64,7 +64,12 @@ function subjectTrack(source: FrameSource): SubjectTrack {
  */
 function setup(
   project: Project = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) }),
-  options: { gateSubjects?: boolean; peakLuma?: (id: string) => number; gateBlank?: boolean } = {},
+  options: {
+    gateSubjects?: boolean
+    peakLuma?: (id: string) => number | Promise<number>
+    gateBlank?: boolean
+    blankCheckStallMs?: number
+  } = {},
 ) {
   const editor = new ProjectEditor(project)
   const jobs = new JobRunner()
@@ -125,6 +130,7 @@ function setup(
       frameAt: () => Promise.reject(new Error('not used')),
       dispose: () => void disposed.push(asset.id),
     }),
+    ...(options.blankCheckStallMs ? { blankCheckStallMs: options.blankCheckStallMs } : {}),
   })
   const tick = () => new Promise((r) => setTimeout(r, 0))
   const release = async (id: string, error?: unknown) => {
@@ -431,6 +437,40 @@ describe('fast blank check', () => {
     await expect(service.checkBlank(undefined, { signal: stop.signal })).rejects.toMatchObject({
       code: 'cancelled',
     })
+  })
+})
+
+describe('a blank check that hangs', () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('stops the wait, leaving the clips after it unchecked, and the next request checks them afresh', async () => {
+    let hang = true
+    const { editor, service, peakLuma, release, indexed } = setup(undefined, {
+      // The second clip's decoder never answers the first time it is asked.
+      peakLuma: (id) => (id === 'ocean' && hang ? new Promise<number>(() => undefined) : 120),
+      blankCheckStallMs: 40,
+    })
+    const checked = () =>
+      Object.keys(editor.getProject().analysis.visual).filter((id) =>
+        hasBlankVerdict(editor.getProject().analysis.visual[id]),
+      )
+    const started = performance.now()
+    await service.checkBlank()
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(checked()).toEqual(['city'])
+    expect(peakLuma.mock.calls.map(([s]) => s.mediaId)).toEqual(['city', 'ocean'])
+
+    // Background analysis leaves the clip whose check hung and goes on with the others.
+    service.indexing.start()
+    await sleep(20)
+    expect(checked().sort()).toEqual(['city', 'crowd', 'misc'])
+    for (const id of ['city', 'ocean', 'crowd', 'misc']) await release(id)
+    expect(indexed()).toHaveLength(4)
+
+    hang = false
+    await service.checkBlank(['ocean'])
+    expect(peakLuma.mock.calls.filter(([s]) => s.mediaId === 'ocean')).toHaveLength(2)
+    expect(checked()).toContain('ocean')
   })
 })
 

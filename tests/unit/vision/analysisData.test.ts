@@ -4,6 +4,7 @@ import {
   blankClipsNote,
   buildVisualAnalysis,
   hasBlankVerdict,
+  hasUncheckedMedia,
   isBlankClip,
   projectLibrary,
   readClipIndex,
@@ -127,6 +128,49 @@ describe('visual analysis data', () => {
     })
     const library = projectLibrary({ analysis: { audio: {}, visual: { a, b } } })
     expect(library.map((l) => l.mediaId)).toEqual(['a'])
+  })
+
+  it('says whether any clip or still has yet to be checked for showing nothing', () => {
+    const media = (id: string, kind: Asset['kind'], extra: Partial<Asset> = {}): Asset => ({
+      id,
+      kind,
+      name: id,
+      mimeType: 'video/mp4',
+      byteSize: 1,
+      storageKey: id,
+      duration: 5,
+      width: 640,
+      height: 360,
+      origin: { type: 'import' },
+      createdAt: new Date(0).toISOString(),
+      ...extra,
+    })
+    const checked = (assetId: string) =>
+      buildVisualAnalysis({
+        assetId,
+        duration: 5,
+        sourceSize: { width: 640, height: 360 },
+        blankCheck: { peakLuma: 90, frames: 8 },
+      })
+    const project = {
+      ...createProject({ name: 'Unchecked', now: new Date(0) }),
+      assets: {
+        clip: media('clip', 'video'),
+        still: media('still', 'image'),
+        song: media('song', 'audio'),
+        stem: media('stem', 'video', { origin: { type: 'stem' } }),
+      },
+    }
+    expect(hasUncheckedMedia(project)).toBe(true)
+    expect(hasUncheckedMedia(project, ['song', 'stem'])).toBe(false)
+    const withClip = { ...project, analysis: { audio: {}, visual: { clip: checked('clip') } } }
+    expect(hasUncheckedMedia(withClip, ['clip'])).toBe(false)
+    expect(hasUncheckedMedia(withClip)).toBe(true)
+    const both = {
+      ...project,
+      analysis: { audio: {}, visual: { clip: checked('clip'), still: checked('still') } },
+    }
+    expect(hasUncheckedMedia(both)).toBe(false)
   })
 
   it('finds the clips that show nothing from the brightest pixel analysis measured, not from older analyses', () => {

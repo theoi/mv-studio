@@ -14,7 +14,7 @@ import type {
   VisionService,
   VisionServiceOptions,
 } from '../../vision/index.ts'
-import { readClipTags } from '../../vision/analysisData.ts'
+import { hasUncheckedMedia, readClipTags } from '../../vision/analysisData.ts'
 import { mediaById } from '../mock/media.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
 import { appMedia } from './media.ts'
@@ -153,14 +153,14 @@ export function analyzeFootageNow(): void {
 /**
  * Waits for the fast blank check of these clips and stills (default: all) that footage analysis hasn't looked at yet,
  * so a draft or a cut can leave out the ones that show nothing before analysis reaches them. It downloads no model,
- * so it also runs where background analysis is off.
+ * so it also runs where background analysis is off. Undefined when every one of them has been looked at.
  */
-export async function checkClipsForBlank(
+export function checkClipsForBlank(
   options: { assetIds?: readonly Id[]; signal?: AbortSignal; progress?: (fraction: number) => void } = {},
-): Promise<void> {
+): Promise<void> | undefined {
   const { assetIds, ...rest } = options
-  const service = await footageService()
-  await service.checkBlank(assetIds, rest)
+  if (!hasUncheckedMedia(editor.getProject(), assetIds)) return undefined
+  return footageService().then((service) => service.checkBlank(assetIds, rest))
 }
 
 const hasOwnFootage = (project: Project) =>

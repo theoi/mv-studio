@@ -299,6 +299,8 @@ const analyzingMessage = (done: number, total: number) =>
 const BARS_SHARE = 0.4
 /** Share of the rest of the job's progress spent waiting for the clips' blank check, when it is still running. */
 const CHECK_SHARE = 0.1
+/** A blank check that ends this soon after the bars isn't worth a word. */
+const CHECK_QUIET_MS = 300
 
 /*
  * Time left in a cut, measured on a 4-core computer without a capable GPU on 12 phone and camera clips (1080p to 4K,
@@ -518,9 +520,11 @@ export function startAutoCut(
           })
         },
       })
-      // A check with nothing left to do settles within a few microtasks: only one still running gets a word.
       if (checking)
-        await Promise.race([checked?.catch(() => undefined), new Promise((r) => setTimeout(r, 0))])
+        await Promise.race([
+          checked?.catch(() => undefined),
+          new Promise((r) => setTimeout(r, CHECK_QUIET_MS)),
+        ])
       if (checking) {
         const start = from
         from += CHECK_SHARE * (1 - from)
