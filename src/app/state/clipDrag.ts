@@ -105,7 +105,7 @@ export function refusalToast(p: Project, r: DropRefusal): string {
     return 'No room there. A clip swaps places only with its neighbor or a clip of the same length.'
   if (r.reason === 'room') return 'No room there. Drop it on an empty stretch or another track.'
   if (r.reason === 'locked') return 'That track is locked. Unlock it to drop clips there.'
-  return `${kindName(p, r.clip)} clips can't go on the ${r.track.name} track.`
+  return `${kindName(p, r.clip)} clips can’t go on the ${r.track.name} track.`
 }
 
 export interface Span {

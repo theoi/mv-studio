@@ -372,7 +372,7 @@ export async function startGenerate(at?: number): Promise<void> {
         ctx.throwIfCancelled()
         // Placed against the project as it is now, where it was meant to go when the user pressed Generate.
         const placement = placementCommands(editor.getProject(), assets, start, target ?? undefined)
-        if (!dispatch(placement, { label })) throw new Error('The result could not be added to the project.')
+        if (!dispatch(placement, { label })) throw new Error('The result couldn’t be added to the project.')
         placed = placement.flatMap((c) => (c.type === 'clip.add' ? [c.clip.id] : []))
         // The next run goes to the playhead again, unless another place was picked meanwhile.
         if (target && form.target === target) setGenerateForm({ target: null })

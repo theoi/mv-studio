@@ -559,7 +559,7 @@ export class WebGLCompositor implements Compositor {
         request.then(
           (frame) => sources.set(key, frame),
           (error: unknown) => {
-            console.warn(`Frame for ${key} could not be decoded`, error)
+            console.warn(`Frame for ${key} couldn’t be decoded`, error)
             sources.set(key, null)
           },
         ),
@@ -632,7 +632,7 @@ export class WebGLCompositor implements Compositor {
         .then((blob) => createImageBitmap(blob, { premultiplyAlpha: 'premultiply' }))
         .then((bitmap): FrameRef => ({ source: bitmap, width: bitmap.width, height: bitmap.height }))
         .catch((error: unknown) => {
-          console.warn(`Image ${url} could not be loaded`, error)
+          console.warn(`Image ${url} couldn’t be loaded`, error)
           return null
         })
       this.urlImages.set(url, image)
@@ -1132,7 +1132,7 @@ export class WebGLCompositor implements Compositor {
       else if (def.kind === 'generator' && def.fragmentShader)
         program = createProgram(this.gl, FULLSCREEN_VS, generatorShader(def.params, def.fragmentShader))
     } catch (error) {
-      console.error(`Plugin "${def.id}" failed to compile and is skipped`, error)
+      console.error(`Plugin “${def.id}” failed to compile and is skipped`, error)
     }
     gpu.plugins.set(def, program)
     return program
@@ -1148,7 +1148,7 @@ export class WebGLCompositor implements Compositor {
         effectShader(def.params, pass.fragmentShader, pass.inputs ?? []),
       )
     } catch (error) {
-      console.error(`Plugin "${def.id}" pass "${pass.id}" failed to compile and is skipped`, error)
+      console.error(`Plugin “${def.id}” pass “${pass.id}” failed to compile and is skipped`, error)
     }
     gpu.plugins.set(pass, program)
     return program

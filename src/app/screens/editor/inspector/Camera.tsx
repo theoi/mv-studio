@@ -63,7 +63,7 @@ export function CameraSuggestion({ clip }: { clip: VisualClip }) {
           },
           (err: unknown) => {
             if (!(err instanceof JobError && err.code === 'cancelled'))
-              toast('The 3D camera move could not be added. Try again from Assist › 3D camera.')
+              toast('The 3D camera move couldn’t be added. Try again from Assist › 3D camera.')
           },
         )
       }}

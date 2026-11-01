@@ -284,7 +284,7 @@ test('a stem that cannot be decoded fails the mix with a decode error instead of
   })
   expect(r.plainPeak).toBeGreaterThan(0.8)
   expect(r.error).toMatchObject({ name: 'JobError', code: 'decode', cached: 'decode' })
-  expect(r.error?.message).toContain('The stems could not be loaded for the export')
+  expect(r.error?.message).toContain('The stems couldn’t be loaded for the export')
 })
 
 test('playback keeps the mix while stems decode, then switches without a jump; a bad stem plays the mix and reports why', async ({

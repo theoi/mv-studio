@@ -74,10 +74,10 @@ test('lyrics are timed as one job and land on the Lyrics track as one undo step'
   await expect(page.getByRole('progressbar', { name: 'Lyrics progress' })).toBeVisible()
   await page.evaluate(() =>
     (window as unknown as { finishLyrics: (fail: string) => void }).finishLyrics(
-      'The timing model could not be downloaded',
+      'The timing model couldn’t be downloaded',
     ),
   )
-  await expect(page.getByRole('alert')).toContainText('The timing model could not be downloaded')
+  await expect(page.getByRole('alert')).toContainText('The timing model couldn’t be downloaded')
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Lyric: Neon lights are calling' })).toBeVisible()
 

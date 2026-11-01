@@ -78,7 +78,7 @@ export const ASK_TOOLS: ToolDefinition[] = [
   {
     name: REPLY_TOOL,
     description:
-      "Answer without editing, e.g. to explain why something can't be done or to answer a question.",
+      'Answer without editing, e.g. to explain why something can’t be done or to answer a question.',
     parameters: jsonSchema(replyArgsSchema),
   },
 ]
@@ -265,7 +265,7 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
     if (attempt >= maxRepairs) {
       throw new JobError(
         'provider',
-        "Your AI model couldn't turn that into a valid edit. Try rephrasing it.",
+        'Your AI model couldn’t turn that into a valid edit. Try rephrasing it.',
         {
           details: { ask: 'invalid-edit', problem },
         },
@@ -509,7 +509,7 @@ export class AskSession {
     const details = err.details as { ask?: string } | undefined
     if (details?.ask === 'invalid-edit') {
       return {
-        title: "Couldn't make that edit",
+        title: 'Couldn’t make that edit',
         message: err.message,
         steps: [
           'Try rephrasing it, or name the clips, the song section or the time.',
@@ -521,7 +521,7 @@ export class AskSession {
       }
     }
     return {
-      title: cloud?.title ?? "That didn't work",
+      title: cloud?.title ?? 'That didn’t work',
       message: err.message,
       steps: cloud?.steps ?? [],
       error: err.toJSON(),
@@ -563,7 +563,7 @@ export class AskSession {
       this.set({
         status: 'error',
         request: view.request,
-        title: "That edit couldn't be applied",
+        title: 'That edit couldn’t be applied',
         message: err.message,
         steps: [],
         error: err.toJSON(),

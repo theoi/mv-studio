@@ -137,7 +137,7 @@ describe('audioErrorText', () => {
     withStems()
     const project = editor.getProject()
     const failure = (code: 'out-of-memory' | 'decode', assetId: string) =>
-      new JobError(code, `The audio of "${assetId}.ogg" failed.`, { details: { assetId } })
+      new JobError(code, `The audio of “${assetId}.ogg” failed.`, { details: { assetId } })
     expect(audioErrorText(project, failure('out-of-memory', 'stem-vocals'))).toBe(
       'There is not enough memory to play the vocals separately. Playing the full song instead.',
     )
@@ -145,10 +145,10 @@ describe('audioErrorText', () => {
       'There is not enough memory to play the other stem separately. Playing the full song instead.',
     )
     expect(audioErrorText(project, failure('decode', 'stem-drums'))).toBe(
-      'The drums stem could not be decoded. Playing the full song instead.',
+      'The drums stem couldn’t be decoded. Playing the full song instead.',
     )
     expect(audioErrorText(project, failure('decode', 'a-song'))).toBe(
-      'The audio of "a-song.ogg" failed. Playing the full song instead.',
+      'The audio of “a-song.ogg” failed. Playing the full song instead.',
     )
   })
 })
@@ -191,7 +191,7 @@ describe('stem mute and solo commands', () => {
 
 describe('a stem the preview cannot play', () => {
   const failure = (code: 'out-of-memory' | 'decode', assetId: string) =>
-    new JobError(code, 'A stem could not be decoded.', { details: { assetId } })
+    new JobError(code, 'A stem couldn’t be decoded.', { details: { assetId } })
   const project = () => editor.getProject()
 
   it('says the full song plays while the stem should be heard, until no stem is heard', () => {
@@ -237,14 +237,14 @@ describe('a stem the preview cannot play', () => {
     expect(stemBadge({ solo: ['vocals'], muted: [] }, { name: 'vocals', failure: 'decode' })).toEqual({
       text: 'Full song plays',
       tone: 'warning',
-      full: 'Stems: full song plays · vocals solo. The vocals stem could not be decoded, so the preview plays the full song.',
+      full: 'Stems: full song plays · vocals solo. The vocals stem couldn’t be decoded, so the preview plays the full song.',
     })
     expect(stemBadge({ solo: [], muted: ['drums'] }, { name: 'vocals', failure: 'decode' })).toMatchObject({
       text: 'Full song plays',
       tone: 'warning',
     })
     expect(stemFallbackNote({ name: 'vocals', failure: 'decode' })).toBe(
-      'The vocals stem could not be decoded, so the preview plays the full song. The export tries the stem again.',
+      'The vocals stem couldn’t be decoded, so the preview plays the full song. The export tries the stem again.',
     )
     expect(stemFallbackNote({ name: 'other', failure: 'out-of-memory' })).toBe(
       'There is not enough memory to play the other stem separately, so the preview plays the full song. The export tries the stem again.',

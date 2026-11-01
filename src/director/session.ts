@@ -734,7 +734,7 @@ export class DirectorSession {
         cloud?.title ??
         (err instanceof DirectorError
           ? 'The director needs something first'
-          : "The director couldn't finish"),
+          : 'The director couldn’t finish'),
       message: err.message,
       steps: cloud?.steps ?? [],
     })

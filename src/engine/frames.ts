@@ -42,7 +42,7 @@ class ImageCache {
         // WebGL ignores UNPACK_PREMULTIPLY_ALPHA for ImageBitmaps, so premultiply when decoding.
         .then((blob) => createImageBitmap(blob, { premultiplyAlpha: 'premultiply' }))
         .catch((error: unknown) => {
-          console.warn(`Image "${asset.name}" could not be decoded`, error)
+          console.warn(`Image “${asset.name}” couldn’t be decoded`, error)
           return null
         })
       this.images.set(asset.id, bitmap)

@@ -93,7 +93,7 @@ export const isAudioFile = (f: File) => f.type.startsWith('audio/') || (!f.type 
 export const isVisualFile = (f: File) =>
   f.type.startsWith('video/') || f.type.startsWith('image/') || (!f.type && VISUAL_NAME.test(f.name))
 
-const UNREADABLE = 'Could not read this media file.'
+const UNREADABLE = 'Couldn’t read this media file.'
 
 function notAdded(name: string, reason: string | undefined): string {
   return reason?.startsWith(UNREADABLE)

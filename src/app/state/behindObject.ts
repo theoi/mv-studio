@@ -220,7 +220,7 @@ export function cutOutObject(
         if (!dispatch(commands, { label: OBJECT_CUTOUT_LABEL }))
           throw new JobError(
             'invalid-input',
-            'The cutout could not be added. Unlock the Subject track and try again.',
+            'The cutout couldn’t be added. Unlock the Subject track and try again.',
           )
         const result: CutoutResult = { count: 1, skipped: 0, label: OBJECT_CUTOUT_LABEL, object: pick }
         useBehind.setState((s) => ({ results: { ...s.results, [jobId]: result } }))

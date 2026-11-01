@@ -88,7 +88,7 @@ describe('a tab open over a deploy', () => {
   it('waits for its time after a task that failed for another reason', async () => {
     await runJob()
     deployed = later
-    await runJob(new shared.JobError('decode', 'The audio could not be decoded'))
+    await runJob(new shared.JobError('decode', 'The audio couldn’t be decoded'))
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(updateToast()).toBeUndefined()
   })

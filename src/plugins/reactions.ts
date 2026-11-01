@@ -238,7 +238,7 @@ export function chooseListen(project: Project, r: Reaction): Listen {
     r.listen.find((l) => hasData(l, analysis)) ??
     r.listen.find((l) => !('stem' in l && l.stem)) ??
     r.listen[0]
-  if (!listen) throw new Error(`Reaction "${r.id}" listens to nothing`)
+  if (!listen) throw new Error(`Reaction “${r.id}” listens to nothing`)
   return listen
 }
 
@@ -547,7 +547,7 @@ export function reactionCommands(
   options: ReactionOptions = {},
 ): EditCommand[] {
   const r = reaction(reactionId)
-  if (!r) throw new Error(`Unknown reaction "${reactionId}"`)
+  if (!r) throw new Error(`Unknown reaction “${reactionId}”`)
   const registry = options.registry ?? pluginRegistry
   const commands: EditCommand[] = []
   for (const target of targets) {

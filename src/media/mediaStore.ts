@@ -102,7 +102,7 @@ export class OpfsMediaStore implements MediaStore {
     } catch (error) {
       throw new JobError(
         'invalid-input',
-        `The media file for "${asset.name}" is missing from browser storage`,
+        `The media file for “${asset.name}” is missing from browser storage`,
         { cause: error },
       )
     }

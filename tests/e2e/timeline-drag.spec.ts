@@ -150,7 +150,7 @@ test('a clip drags to another track of its kind, butts up against a near neighbo
   await page.mouse.move(from.x, lyricsY, { steps: 12 })
   await expect(page.getByText('Lyric lines only', { exact: true })).toBeVisible()
   await page.mouse.up()
-  await expect(page.getByText("Video clips can't go on the Lyrics track.")).toBeVisible()
+  await expect(page.getByText('Video clips can’t go on the Lyrics track.')).toBeVisible()
   expect(await placed(page, id)).toEqual(before)
   expect(await undoLabel(page)).toBe(locked)
 })
@@ -195,7 +195,7 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   await page.mouse.move(from.x, lookY, { steps: 12 })
   await expect(page.getByText('Looks only', { exact: true })).toBeVisible()
   await page.mouse.up()
-  await expect(page.getByText("Video clips can't go on the Look track.")).toHaveCount(1)
+  await expect(page.getByText('Video clips can’t go on the Look track.')).toHaveCount(1)
   expect(await placed(page, id)).toEqual(before)
 
   // The look onto the Overlay track, which holds other clips, and onto the empty track.
@@ -204,13 +204,13 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   await page.mouse.move(from.x, overlayY, { steps: 8 })
   await expect(page.getByText('No looks here', { exact: true })).toBeVisible()
   await page.mouse.up()
-  await expect(page.getByText("Look clips can't go on the Overlay track.")).toHaveCount(1)
+  await expect(page.getByText('Look clips can’t go on the Overlay track.')).toHaveCount(1)
   await page.mouse.move(from.x, lookY)
   await page.mouse.down()
   await page.mouse.move(from.x, emptyY, { steps: 12 })
   await expect(page.getByText('No looks here', { exact: true })).toBeVisible()
   await page.mouse.up()
-  await expect(page.getByText("Look clips can't go on the Empty track.")).toHaveCount(1)
+  await expect(page.getByText('Look clips can’t go on the Empty track.')).toHaveCount(1)
   expect(await placed(page, 'c-look')).toEqual(lookBefore)
   expect(await undoLabel(page)).toBe(startLabel)
 
@@ -234,7 +234,7 @@ test('looks stay on the look lane, a group drag labels the clip that cannot drop
   await expect(label).toBeHidden()
   await expect(content).not.toHaveAttribute('data-refused')
   await page.mouse.up()
-  await expect(page.getByText("Visual clips can't go on the Look track.")).toHaveCount(0)
+  await expect(page.getByText('Visual clips can’t go on the Look track.')).toHaveCount(0)
   expect(await placed(page, id)).toEqual(before)
   expect(await placed(page, 'o-spec1')).toEqual({ trackId: 't-overlay', start: 69, end: 101 })
 

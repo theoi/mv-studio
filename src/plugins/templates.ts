@@ -180,7 +180,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
   {
     kind: 'footage',
     name: 'Beat-cut footage',
-    description: "Your clips, cut to the beat and the song's sections.",
+    description: 'Your clips, cut to the beat and the song’s sections.',
     lookId: 'cinematic',
     textStyleId: 'title',
     tracks: ['Titles', 'Look', 'Video', 'Song'],
@@ -203,7 +203,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
 
 export function starterTemplate(kind: VideoKind): StarterTemplate {
   const template = STARTER_TEMPLATES.find((t) => t.kind === kind)
-  if (!template) throw new Error(`Unknown video kind "${kind}"`)
+  if (!template) throw new Error(`Unknown video kind “${kind}”`)
   return template
 }
 

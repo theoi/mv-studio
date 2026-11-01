@@ -5,7 +5,7 @@ import { checkForUpdate } from './state/update.ts'
 /** Code for a screen or dialog that did not arrive (offline, or a deploy replaced the file). */
 export class LoadError extends Error {
   constructor(cause: unknown) {
-    super('The code for this part of the app could not be loaded', { cause })
+    super('The code for this part of the app couldn’t be loaded', { cause })
     this.name = 'LoadError'
   }
 }

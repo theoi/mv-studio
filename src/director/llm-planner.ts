@@ -314,13 +314,13 @@ export function createDirectorPlanner(options: LlmPlannerOptions) {
     try {
       const brief = await askForBrief(client, input, ctx)
       if (brief) return await expandBrief(brief, input, { planner: 'llm', model: options.model?.() })
-      reason = "Your AI model's answer couldn't be used, so the built-in planner made this draft."
+      reason = 'Your AI model’s answer couldn’t be used, so the built-in planner made this draft.'
     } catch (error) {
       const err = JobError.from(error)
       if (err.code === 'cancelled' || ctx.signal.aborted) throw err
       if (err.details && typeof err.details === 'object' && 'director' in err.details) throw err
       const cloud = cloudErrorInfo(err)
-      reason = `Your AI model couldn't help (${cloud?.title ?? err.message}), so the built-in planner made this draft.`
+      reason = `Your AI model couldn’t help (${cloud?.title ?? err.message}), so the built-in planner made this draft.`
       if (cloud?.action) reason += ` ${cloud.action}, then draft again.`
     }
     const plan = await expandBrief(ruleBrief(input), input, { planner: 'local' })

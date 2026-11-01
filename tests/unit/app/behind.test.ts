@@ -148,14 +148,14 @@ describe('suitability', () => {
       checks: {
         'a-offline': { ...withDetector, peopleSkipped: true },
         'a-online': withDetector,
-        'a-failed': { status: 'failed', message: 'The clip could not be read.' },
+        'a-failed': { status: 'failed', message: 'The clip couldn’t be read.' },
       },
     })
     retryPeopleSkipped()
     expect(useBehind.getState().checks).toEqual({
       'a-offline': { status: 'unchecked' },
       'a-online': withDetector,
-      'a-failed': { status: 'failed', message: 'The clip could not be read.' },
+      'a-failed': { status: 'failed', message: 'The clip couldn’t be read.' },
     })
     useBehind.setState({ checks: {} })
   })
@@ -212,8 +212,8 @@ describe('suitability', () => {
   })
 
   it('says why a failed check failed and that only video clips have people', () => {
-    expect(suitabilityText({ status: 'failed', message: 'The clip could not be read.' })).toMatchObject({
-      why: 'The clip could not be read.',
+    expect(suitabilityText({ status: 'failed', message: 'The clip couldn’t be read.' })).toMatchObject({
+      why: 'The clip couldn’t be read.',
       ok: false,
     })
     const project = editor.getProject()

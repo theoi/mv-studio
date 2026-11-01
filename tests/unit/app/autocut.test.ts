@@ -177,7 +177,7 @@ it('counts the clips still to analyze among the clips a cut uses', () => {
   const pool = autoCutAssets(project).map((a) => a.id)
   expect(analysisBacklog(project, null).waiting).toBe(pool.length)
   expect(analysisBacklog(project, null, pool.slice(0, 2)).waiting).toBe(2)
-  const failed = [{ assetId: pool[0]!, name: 'a.mp4', message: 'Could not read this media file.' }]
+  const failed = [{ assetId: pool[0]!, name: 'a.mp4', message: 'Couldn’t read this media file.' }]
   const indexing: IndexingState = { status: 'idle', total: 0, done: 0, failed }
   expect(analysisBacklog(project, indexing, pool.slice(0, 2))).toEqual({ waiting: 1, unreadable: failed })
 })
@@ -240,8 +240,8 @@ it('says why clips were cut without matching when footage analysis stopped, was 
     'Footage analysis couldn’t start, so your clip was picked for variety. Try again in Match footage, then cut again to match the mood.',
   )
   const failed = [
-    { assetId: 'a', name: 'beach.mp4', message: 'Could not read this media file.' },
-    { assetId: 'b', name: 'night.mov', message: 'Could not read this media file.' },
+    { assetId: 'a', name: 'beach.mp4', message: 'Couldn’t read this media file.' },
+    { assetId: 'b', name: 'night.mov', message: 'Couldn’t read this media file.' },
   ]
   expect(unanalyzedWarning(['a'], false, state({ failed }))).toBe(
     '“beach.mp4” couldn’t be analyzed, so it was picked for variety.',
@@ -483,7 +483,7 @@ describe('the auto-cut job', () => {
   })
 
   it('cuts on the beats and says so when the bars cannot be found', async () => {
-    refine = () => Promise.reject(new JobError('model-load', 'The beat model could not load'))
+    refine = () => Promise.reject(new JobError('model-load', 'The beat model couldn’t load'))
     const { result } = await cut()
     expect(barsState().status).toBe('unavailable')
     expect(result.stats.cuts).toBeGreaterThan(0)

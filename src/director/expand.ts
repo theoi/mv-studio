@@ -144,7 +144,7 @@ function resolveLook(
 ): { preset?: LookPreset; look?: PlanLook } {
   let preset = brief.lookId ? input.catalog.looks.find((l) => l.id === brief.lookId) : undefined
   if (brief.lookId && !preset)
-    warnings.push(`Look "${brief.lookId}" isn't available, so a matching one was used.`)
+    warnings.push(`Look “${brief.lookId}” isn’t available, so a matching one was used.`)
   preset ??= pickLook(input.prompt, input.kind, input.catalog)
   if (!preset && !brief.adjustments) return {}
   const effects: EffectSpec[] = (preset?.effects ?? [])
@@ -191,12 +191,12 @@ function sanitizeSection(sb: BriefSection, section: SectionInfo, ctx: Ctx): Brie
   const cat = ctx.input.catalog
   const effects = (sb.effects ?? []).filter((id) => {
     const ok = !!findItem(cat.effects, id)
-    if (!ok) warn(ctx, `Effect "${id}" isn't available and was left out.`)
+    if (!ok) warn(ctx, `Effect “${id}” isn’t available and was left out.`)
     return ok
   })
   const transition = sb.transition && findItem(cat.transitions, sb.transition) ? sb.transition : undefined
   if (sb.transition && !transition && sb.transition !== 'none' && sb.transition !== 'cut') {
-    warn(ctx, `Transition "${sb.transition}" isn't available, so a hard cut is used.`)
+    warn(ctx, `Transition “${sb.transition}” isn’t available, so a hard cut is used.`)
   }
   return {
     ...sb,
@@ -699,7 +699,7 @@ async function chooseFootage(shots: PlanShot[], ctx: Ctx): Promise<PlanShot[]> {
       ...(pick.playbackRate !== 1 ? { playbackRate: pick.playbackRate } : {}),
     }
     if ((item.duration ?? length) < length * 0.5)
-      warn(ctx, `"${item.name}" is shorter than some shots, so it is slowed down.`)
+      warn(ctx, `“${item.name}” is shorter than some shots, so it is slowed down.`)
   })
   return unfilled.size ? shots.filter((s) => !unfilled.has(s)) : shots
 }
@@ -752,7 +752,7 @@ function timedLines(lines: LyricLine[], sections: SectionInfo[], duration: Secon
   }
   warn(
     ctx,
-    "Lyrics aren't timed yet, so lines are spread evenly. Use Assist › Lyrics › Time words to the vocals, then run the director again.",
+    'Lyrics aren’t timed yet, so lines are spread evenly. Use Assist › Lyrics › Time words to the vocals, then run the director again.',
   )
   const vocal = sections.filter((s) => !['intro', 'outro'].includes(normalizedLabel(s.label)))
   const from = vocal[0]?.start ?? duration * 0.06

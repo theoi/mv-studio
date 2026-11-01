@@ -60,7 +60,7 @@ function write(storage: Storage, key: string, value: unknown) {
   try {
     storage.setItem(key, JSON.stringify(value))
   } catch (error) {
-    console.warn('Could not save VJ settings', error)
+    console.warn('Couldn’t save VJ settings', error)
   }
 }
 

@@ -185,7 +185,7 @@ export function applyCommand(p: Draft<Project>, cmd: EditCommand): void {
     case 'project.setExtension':
       // Also keeps out keys like __proto__, which would replace the prototype of extensions instead of adding a key.
       if (!EXTENSION_KEY.test(cmd.key))
-        throw new EditError('invalid', `Invalid extension key "${cmd.key}": use a feature id such as "vj"`)
+        throw new EditError('invalid', `Invalid extension key “${cmd.key}”: use a feature id such as “vj”`)
       if (cmd.value !== null) {
         p.extensions ??= {}
         p.extensions[cmd.key] = cmd.value
