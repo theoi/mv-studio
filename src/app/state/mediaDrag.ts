@@ -1,14 +1,17 @@
-import type { Seconds } from '../../model/index.ts'
-import { addAsset, assetPlacement, importFiles } from './importer.ts'
-import type { LibraryDropHint } from './library.ts'
-import { editor } from './project.ts'
+import type { Asset, Project, Seconds } from '../../model/index.ts'
+import { formatTime } from '../format.ts'
+import { gapAt } from './clipDrag.ts'
+import { assetPlacement, baseName, importFiles } from './importer.ts'
+import { undoAction, type LibraryDropHint } from './library.ts'
+import { barsToSeconds } from './prefs.ts'
+import { bpmOf, dispatch, editor } from './project.ts'
 import { replaceableAt, replaceClipMedia } from './replace.ts'
-import { toast } from './ui.ts'
+import { select, toast } from './ui.ts'
 
 /*
  * Media dragged onto the timeline: Library › Media cards, and files from the computer. Either lands where it is
- * dropped, on that track when it fits there. A card dropped on a video clip or image with Alt held replaces what the
- * clip shows instead.
+ * dropped, on that track when it fits there; a card dropped in a gap between clips fills it. A card dropped on a video
+ * clip or image with Alt held replaces what the clip shows instead.
  */
 
 /** Drag data type of Library › Media cards. */
@@ -46,6 +49,8 @@ export type MediaDropHint =
       end: Seconds
       newTrack?: true
       replace?: true
+      trimmed?: true
+      elsewhere?: { trackId: string; at: Seconds; name: string }
       canReplace?: { trackId: string; at: Seconds }
     }
 
@@ -66,10 +71,41 @@ function replaced(at: MediaDropPoint, assetId: string | null) {
   return replaceableAt(project, at.trackId, at.pointer)
 }
 
+/** A gap shorter than this isn't filled: the card goes where it would go anyway. */
+const MIN_FILL = 0.5
+
+/**
+ * Where a card dropped at `at` lands. In an empty stretch of the track that ends at a clip, such as the gap a deleted
+ * shot left, it stays on that track. A card that fits goes as near the drop point as the stretch allows. A longer one
+ * is trimmed at the stretch's end: it fills the stretch from its start when dropped within a bar of it, else it starts
+ * at the drop point, so a drop far into a long stretch stays where it was let go. Elsewhere the card goes as
+ * assetPlacement puts it from the drop point: on that track when it is free there, else on the first free track of its
+ * kind or a new one.
+ */
+function cardPlacement(project: Project, asset: Asset, at: MediaDropPoint) {
+  const plain = assetPlacement(project, asset, { start: at.time, trackId: at.trackId })
+  const gap = gapAt(project, at.trackId, at.pointer)
+  if (!plain || !gap || !Number.isFinite(gap.end) || gap.end - gap.start < MIN_FILL)
+    return plain && { ...plain, trimmed: false, fills: false }
+  const length = plain.clip.duration
+  const time = Math.min(Math.max(at.time, gap.start), gap.end)
+  const start =
+    length <= gap.end - gap.start
+      ? Math.max(gap.start, Math.min(time, gap.end - length))
+      : time - gap.start <= barsToSeconds(1, bpmOf(project))
+        ? gap.start
+        : Math.min(time, gap.end - MIN_FILL)
+  const fit = assetPlacement(project, asset, { start, trackId: at.trackId, maxDuration: gap.end - start })
+  return fit?.clip.trackId === at.trackId
+    ? { ...fit, trimmed: fit.clip.duration < length - 1e-3, fills: start === gap.start }
+    : { ...plain, trimmed: false, fills: false }
+}
+
 /**
  * Where the media being dragged would land when dropped at `at`: the clip's span (on the track it would go to, or the
  * hovered one when it needs a new track), the clip it replaces with Alt held, the drop point for files (their length is
- * not known until they are imported), or the locked track where nothing lands.
+ * not known until they are imported), or the locked track where nothing lands. `trimmed`: it fills a gap shorter than
+ * itself. `elsewhere`: it goes on another track than the hovered one, or on a new one, which says so at the pointer.
  */
 export function mediaDropHint(at: MediaDropPoint): MediaDropHint | null {
   const { trackId, time } = at
@@ -82,16 +118,33 @@ export function mediaDropHint(at: MediaDropPoint): MediaDropHint | null {
   const under = replaced(at, dragging)
   if (under && at.alt)
     return { trackId, start: under.start, end: under.start + under.duration, replace: true }
-  const placed = assetPlacement(project, asset, { start: time, trackId })
+  const placed = cardPlacement(project, asset, at)
   if (!placed) return null
   const span = { start: placed.clip.start, end: placed.clip.start + placed.clip.duration }
   const canReplace = under ? { canReplace: { trackId, at: under.start } } : {}
-  return project.tracks.some((t) => t.id === placed.clip.trackId)
-    ? { trackId: placed.clip.trackId, ...span, ...canReplace }
-    : { trackId, ...span, newTrack: true, ...canReplace }
+  const other = project.tracks.find((t) => t.id === placed.clip.trackId)
+  if (!other)
+    return {
+      trackId,
+      ...span,
+      newTrack: true,
+      elsewhere: { trackId, at: at.pointer, name: 'a new track' },
+      ...canReplace,
+    }
+  return {
+    trackId: other.id,
+    ...span,
+    ...(placed.trimmed ? { trimmed: true as const } : {}),
+    ...(other.id === trackId ? {} : { elsewhere: { trackId, at: at.pointer, name: other.name } }),
+    ...canReplace,
+  }
 }
 
-/** Adds the dropped card's media, or imports the dropped files, at the drop point; with Alt, replaces the clip there. */
+/**
+ * Adds the dropped card's media, or imports the dropped files, at the drop point; with Alt, replaces the clip there. A
+ * card's toast says where it landed when that isn't plainly where it was dropped: trimmed to a gap, or on another
+ * track.
+ */
 export function dropMedia(e: Dragged, at: MediaDropPoint): void {
   const project = editor.getProject()
   const assetId = e.dataTransfer?.getData(MEDIA_DRAG_TYPE) || dragging
@@ -105,7 +158,32 @@ export function dropMedia(e: Dragged, at: MediaDropPoint): void {
     replaceClipMedia(under.id, assetId)
     return
   }
-  const placement = { start: at.time, trackId: at.trackId }
-  if (assetId && project.assets[assetId]) addAsset(assetId, placement)
-  else void importFiles([...(e.dataTransfer?.files ?? [])], placement)
+  const asset = assetId ? project.assets[assetId] : undefined
+  if (!asset) {
+    void importFiles([...(e.dataTransfer?.files ?? [])], { start: at.time, trackId: at.trackId })
+    return
+  }
+  const placed = cardPlacement(project, asset, at)
+  if (!placed) return
+  const name = baseName(asset.name)
+  const label = `Add ${name}`
+  if (!dispatch(placed.commands, { label })) return
+  select({ type: 'clip', id: placed.clip.id })
+  const when = formatTime(placed.clip.start, true)
+  const seconds = placed.clip.duration.toFixed(1)
+  const hovered = project.tracks.find((t) => t.id === at.trackId)
+  const landed = project.tracks.find((t) => t.id === placed.clip.trackId)
+  const added = editor.getProject().tracks.find((t) => t.id === placed.clip.trackId)
+  toast(
+    placed.trimmed
+      ? placed.fills
+        ? `Added “${name}” at ${when}, trimmed to fill the ${seconds} s gap`
+        : `Added “${name}” at ${when}, trimmed to ${seconds} s to end at the next clip`
+      : !landed
+        ? `Added “${name}” on a new track, ${added?.name ?? 'below'}, at ${when}`
+        : landed.id !== at.trackId
+          ? `Added “${name}” on ${landed.name} at ${when}: ${hovered?.name ?? 'that track'} is full there`
+          : `Added “${name}” at ${when}`,
+    undoAction(label),
+  )
 }

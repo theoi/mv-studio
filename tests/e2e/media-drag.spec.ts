@@ -154,7 +154,7 @@ test('a media card is one Tab stop; Space adds it only when it was reached with 
   await expect(play).toBeVisible()
 })
 
-test('a card dragged where its track has no room shows “New track” on the ghost and lands on a new track', async ({
+test('a card dragged where its track has no room says it goes on a new track, and lands on one', async ({
   page,
 }) => {
   await openEmptyEditor(page)
@@ -170,7 +170,7 @@ test('a card dragged where its track has no room shows “New track” on the gh
   await page.mouse.down()
   await page.mouse.move(box.x + 20, box.y + box.height / 2, { steps: 4 })
   await page.mouse.move(box.x + 24, box.y + box.height / 2, { steps: 2 })
-  await expect(lane.getByText('New track', { exact: true })).toBeVisible()
+  await expect(lane.getByText(/^Goes on a new track · Hold (Alt|⌥) to replace$/)).toBeVisible()
   await page.mouse.up()
   // The new track is numbered after Video 1.
   await expect(laneOf(page, 'Video 2').getByRole('button', { name: /^clip, / })).toHaveCount(1)
