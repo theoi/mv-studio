@@ -996,6 +996,17 @@ test('a tagged song names the project, and the title card shows its title and ar
     expect(await page.evaluate(() => window.mvStudio.app.ui.get().selection)).toEqual({ type: 'clip', id })
   }
   expect(boxes[0]!.y + boxes[0]!.height).toBeLessThanOrEqual(boxes[1]!.y)
+  // The shots go on the empty project's Video 1 track, so no empty track sits between the draft and the song.
+  const tracks = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clips = Object.values(project.clips) as { trackId: string }[]
+    return (project.tracks as { id: string; name: string }[]).map((t) => ({
+      name: t.name,
+      clips: clips.filter((c) => c.trackId === t.id).length,
+    }))
+  })
+  expect(tracks.filter((t) => t.clips === 0)).toEqual([])
+  expect(tracks.map((t) => t.name).slice(-2)).toEqual(['Video 1', 'Song'])
 })
 
 /** A mono 16-bit WAV of `seconds` of kicks every 0.5 s (120 BPM) over a low chord, long enough for several Beat This! windows. */

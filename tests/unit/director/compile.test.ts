@@ -13,6 +13,7 @@ import { planFrame } from '../../../src/engine/layout.ts'
 import { describeReaction } from '../../../src/plugins/reactions.ts'
 import { createFromTemplate, templateState } from '../../../src/plugins/templates.ts'
 import { createTextClip, createTrack } from '../../../src/model/factory.ts'
+import type { EditCommand } from '../../../src/model/commands.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import type { Asset, Clip, ImageClip, Project, TextClip, VideoClip } from '../../../src/model/types.ts'
 import { fakeProvider, makeProject, SONG_ID, type FixtureOptions } from './fixtures.ts'
@@ -27,6 +28,39 @@ async function setup(kind: EditPlan['kind'] = 'beat-cut', fixture: FixtureOption
 const clips = (p: Project) => Object.values(p.clips)
 const directorClips = (p: Project) => clips(p).filter((c) => directorMeta(c))
 
+/** A project whose song file name gives a title and an artist, and the lyric draft's plan for it. */
+async function titledDraft() {
+  const project = makeProject()
+  project.assets[SONG_ID] = { ...project.assets[SONG_ID]!, name: 'Josh Woodward - Show Me.mp3' }
+  const editor = new ProjectEditor(project)
+  const plan = await planLocally(await buildPlannerInput(project, { kind: 'lyric', seed: 5 }))
+  return { project, editor, plan }
+}
+
+async function redraft(editor: ProjectEditor): Promise<Project> {
+  const p = editor.getProject()
+  const plan = await planLocally(await buildPlannerInput(p, { kind: 'lyric', seed: 9 }))
+  editor.dispatch(compilePlan(plan, p).commands)
+  return editor.getProject()
+}
+
+function renamedSong(p: Project, name: string): Project {
+  return { ...p, assets: { ...p.assets, [SONG_ID]: { ...p.assets[SONG_ID]!, name } } }
+}
+
+const trackNamed = (p: Project, name: string) => p.tracks.find((t) => t.name === name)!
+
+/** Each title track, top to bottom, with the text on it. */
+const titleRows = (p: Project) =>
+  p.tracks
+    .filter((track) => /^Titles/.test(track.name))
+    .map((track) => [
+      track.name,
+      ...clips(p)
+        .filter((c) => c.trackId === track.id)
+        .map((c) => (c as TextClip).text),
+    ])
+
 describe('compilePlan', () => {
   it('applies a plan as one undo step that restores the project exactly', async () => {
     const { project, editor, plan } = await setup('lyric')
@@ -38,8 +72,8 @@ describe('compilePlan', () => {
     // Shots, lyric lines, the look layer, and the song placed on the timeline.
     expect(clips(after)).toHaveLength(shots + texts + 1 + 1)
     expect(editor.undoLabel()).toBe(`Director: ${plan.title}`)
-    // The title card has a track of its own, above the lyrics.
-    expect(after.tracks.slice(0, 4).map((t) => t.name)).toEqual(['Titles', 'Text', 'Look', 'Shots'])
+    // The title card has a track of its own, above the lyrics, and the shots go on the project's empty Video 1 track.
+    expect(after.tracks.slice(0, 4).map((t) => t.name)).toEqual(['Titles', 'Text', 'Look', 'Video 1'])
     const titles = plan.texts.filter((t) => t.role === 'title')
     expect(titles.length).toBeGreaterThan(0)
     expect(clips(after).filter((c) => c.trackId === after.tracks[0]!.id)).toHaveLength(titles.length)
@@ -49,25 +83,13 @@ describe('compilePlan', () => {
   })
 
   it('puts title cards that overlap in time on rows of their own, and a redraft keeps one row each', async () => {
-    const project = makeProject()
-    project.assets[SONG_ID] = { ...project.assets[SONG_ID]!, name: 'Josh Woodward - Show Me.mp3' }
-    const editor = new ProjectEditor(project)
-    const plan = await planLocally(await buildPlannerInput(project, { kind: 'lyric', seed: 5 }))
+    const { project, editor, plan } = await titledDraft()
     expect(plan.texts.filter((t) => t.role === 'title').map((t) => t.text)).toEqual([
       'Show Me',
       'Josh Woodward',
     ])
     const compiled = compilePlan(plan, project)
     editor.dispatch(compiled.commands)
-    const titleRows = (p: Project) =>
-      p.tracks
-        .filter((track) => /^Titles/.test(track.name))
-        .map((track) => [
-          track.name,
-          ...clips(p)
-            .filter((c) => c.trackId === track.id)
-            .map((c) => (c as TextClip).text),
-        ])
     const after = editor.getProject()
     expect(titleRows(after)).toEqual([
       ['Titles', 'Show Me'],
@@ -77,21 +99,181 @@ describe('compilePlan', () => {
     expect(after.tracks.slice(0, 3).map((t) => t.name)).toEqual(['Titles', 'Titles 2', 'Text'])
     expect(compiled.stats.addedTracks).toBe(after.tracks.length - project.tracks.length)
 
-    const again = await planLocally(await buildPlannerInput(after, { kind: 'lyric', seed: 9 }))
-    editor.dispatch(compilePlan(again, after).commands)
-    expect(titleRows(editor.getProject())).toEqual([
+    const redrafted = await redraft(editor)
+    expect(titleRows(redrafted)).toEqual([
       ['Titles', 'Show Me'],
       ['Titles 2', 'Josh Woodward'],
     ])
+    expect(redrafted.tracks.map((t) => t.id)).toEqual(after.tracks.map((t) => t.id))
 
     // Without an artist, the second row goes with the earlier draft.
-    const plain = editor.getProject()
-    const song = plain.assets[SONG_ID]!
-    const untitled = { ...plain, assets: { ...plain.assets, [SONG_ID]: { ...song, name: 'Show Me.mp3' } } }
-    const single = await planLocally(await buildPlannerInput(untitled, { kind: 'lyric', seed: 9 }))
+    const untitled = renamedSong(redrafted, 'Show Me.mp3')
     const once = new ProjectEditor(untitled)
-    once.dispatch(compilePlan(single, untitled).commands)
-    expect(titleRows(once.getProject())).toEqual([['Titles', 'Show Me']])
+    expect(titleRows(await redraft(once))).toEqual([['Titles', 'Show Me']])
+
+    // Removed after the new tracks go in: the Text track again goes between the titles and the look.
+    const noText = new ProjectEditor(untitled)
+    noText.dispatch([{ type: 'track.remove', trackId: trackNamed(untitled, 'Text').id }])
+    const relyric = await redraft(noText)
+    expect(relyric.tracks.slice(0, 3).map((t) => t.name)).toEqual(['Titles', 'Text', 'Look'])
+  })
+
+  it('reuses the title rows the user changed on a redraft, and names a new row so no two are alike', async () => {
+    const drafted = async () => {
+      const { project, editor, plan } = await titledDraft()
+      editor.dispatch(compilePlan(plan, project).commands)
+      const p = editor.getProject()
+      const artist = clips(p).find((c) => (c as TextClip).text === 'Josh Woodward')!
+      return { editor, p, artist, titles: trackNamed(p, 'Titles'), second: trackNamed(p, 'Titles 2') }
+    }
+
+    // The user deleted the artist: the emptied row takes the new one.
+    let d = await drafted()
+    d.editor.dispatch([{ type: 'clip.remove', clipIds: [d.artist.id] }])
+    let after = await redraft(d.editor)
+    expect(titleRows(after)).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+    ])
+    expect(after.tracks.map((t) => t.id)).toEqual(d.p.tracks.map((t) => t.id))
+
+    // The user hid the artist's row: it stays hidden.
+    d = await drafted()
+    d.editor.dispatch([{ type: 'track.update', trackId: d.second.id, patch: { hidden: true } }])
+    after = await redraft(d.editor)
+    expect(titleRows(after)).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+    ])
+    expect(after.tracks.find((t) => t.id === d.second.id)?.hidden).toBe(true)
+    expect(after.tracks).toHaveLength(d.p.tracks.length)
+
+    // The user's own text on Titles: the draft's titles move to Titles 2 and a Titles 3 below it.
+    d = await drafted()
+    d.editor.dispatch([
+      {
+        type: 'clip.add',
+        clip: createTextClip({ trackId: d.titles.id, text: 'Mine', start: 30, duration: 2 }),
+      },
+    ])
+    expect(titleRows(await redraft(d.editor))).toEqual([
+      ['Titles', 'Mine'],
+      ['Titles 2', 'Show Me'],
+      ['Titles 3', 'Josh Woodward'],
+    ])
+
+    // The user's own text on Titles 2: a Titles 3 goes in just below Titles.
+    d = await drafted()
+    d.editor.dispatch([
+      {
+        type: 'clip.add',
+        clip: createTextClip({ trackId: d.second.id, text: 'Mine', start: 30, duration: 2 }),
+      },
+    ])
+    expect(titleRows(await redraft(d.editor))).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 3', 'Josh Woodward'],
+      ['Titles 2', 'Mine'],
+    ])
+
+    // Titles locked with the earlier title on it: the new ones go on Titles 2 and a Titles 3.
+    d = await drafted()
+    d.editor.dispatch([{ type: 'track.update', trackId: d.titles.id, patch: { locked: true } }])
+    expect(titleRows(await redraft(d.editor))).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Show Me'],
+      ['Titles 3', 'Josh Woodward'],
+    ])
+  })
+
+  it.each([
+    ['locked', { locked: true }, 'Titles 2', 'Titles 3'],
+    ['named for something else', { name: 'Extras 2' }, 'Extras 2', 'Titles 2'],
+    ['named without a number', { name: 'Titles B' }, 'Titles B', 'Titles 2'],
+  ])(
+    'leaves an emptied row below Titles that is %s, adding a new row for the artist',
+    async (_, patch, kept, added) => {
+      const { project, editor, plan } = await titledDraft()
+      editor.dispatch(compilePlan(plan, project).commands)
+      const p = editor.getProject()
+      const artist = clips(p).find((c) => (c as TextClip).text === 'Josh Woodward')!
+      editor.dispatch([
+        { type: 'clip.remove', clipIds: [artist.id] },
+        { type: 'track.update', trackId: artist.trackId, patch },
+      ])
+      const after = await redraft(editor)
+      expect(after.tracks.slice(0, 3).map((t) => t.name)).toEqual(['Titles', added, kept])
+      expect(clips(after).filter((c) => c.trackId === artist.trackId)).toEqual([])
+      expect(
+        clips(after)
+          .filter((c) => c.trackId === trackNamed(after, added).id)
+          .map((c) => (c as TextClip).text),
+      ).toEqual(['Josh Woodward'])
+    },
+  )
+
+  it('removes the earlier title rows on a redraft without title cards, never putting the shots on one', async () => {
+    const { project, editor, plan } = await titledDraft()
+    editor.dispatch(compilePlan(plan, project).commands)
+    // The user deleted every visual track but the titles.
+    const p = editor.getProject()
+    editor.dispatch(
+      p.tracks
+        .filter((t) => t.kind === 'visual' && !t.name.startsWith('Titles'))
+        .map((t): EditCommand => ({ type: 'track.remove', trackId: t.id })),
+    )
+    const titlesOnly = editor.getProject()
+    const beatCut = await planLocally(await buildPlannerInput(titlesOnly, { kind: 'beat-cut', seed: 1 }))
+    expect(beatCut.texts).toHaveLength(0)
+    editor.dispatch(compilePlan(beatCut, titlesOnly).commands)
+    const after = editor.getProject()
+    expect(after.tracks.map((t) => t.name)).toEqual(['Look', 'Shots', 'Song'])
+    expect(directorClips(after).filter((c) => directorMeta(c)!.role === 'shots').length).toBeGreaterThan(0)
+  })
+
+  it('puts the shots on a new project’s empty Video 1 track, so no empty track is left under the draft', async () => {
+    const { project, editor, plan } = await setup('ai')
+    const video = project.tracks.find((t) => t.kind === 'visual')!
+    expect(clips(project).filter((c) => c.trackId === video.id)).toHaveLength(0)
+    const compiled = compilePlan(plan, project)
+    editor.dispatch(compiled.commands)
+    const after = editor.getProject()
+    const shots = directorClips(after).filter((c) => directorMeta(c)!.role === 'shots')
+    expect(shots.length).toBe(plan.shots.filter((s) => s.layer === 'main').length)
+    expect(shots.every((c) => c.trackId === video.id)).toBe(true)
+    expect(
+      after.tracks.filter((t) => t.kind === 'visual' && !clips(after).some((c) => c.trackId === t.id)),
+    ).toEqual([])
+    expect(after.tracks.map((t) => t.name)).not.toContain('Shots')
+    editor.undo()
+    expect(editor.getProject()).toEqual(project)
+  })
+
+  it('leaves a new project’s Video 1 track alone when it is locked, hidden or the user has clips on a visual track', async () => {
+    const { project, plan } = await setup('ai')
+    const video = project.tracks.find((t) => t.kind === 'visual')!
+    const mine = createTextClip({ trackId: video.id, text: 'Mine', start: 1, duration: 2 })
+    const other = createTrack('visual', 'My titles')
+    const theirs = createTextClip({ trackId: other.id, text: 'Theirs', start: 1, duration: 2 })
+    const variants: Project[] = [
+      { ...project, tracks: project.tracks.map((t) => (t.id === video.id ? { ...t, locked: true } : t)) },
+      { ...project, tracks: project.tracks.map((t) => (t.id === video.id ? { ...t, hidden: true } : t)) },
+      { ...project, clips: { [mine.id]: mine } },
+      {
+        ...project,
+        tracks: project.tracks.flatMap((t) => (t.id === video.id ? [t, other] : [t])),
+        clips: { [theirs.id]: theirs },
+      },
+    ]
+    for (const variant of variants) {
+      const editor = new ProjectEditor(variant)
+      editor.dispatch(compilePlan(plan, variant).commands)
+      const after = editor.getProject()
+      expect(after.tracks.map((t) => t.name)).toContain('Shots')
+      expect(
+        clips(after).filter((c) => c.trackId === video.id && directorMeta(c)?.role === 'shots'),
+      ).toHaveLength(0)
+    }
   })
 
   it('keeps title cards that follow one another on one row', async () => {
@@ -253,14 +435,17 @@ describe('compilePlan', () => {
     editor.dispatch(compilePlan(beatCut, first).commands)
     const names = editor.getProject().tracks.map((t) => t.name)
     expect(names).not.toContain('Text')
-    expect(names.filter((n) => n === 'Shots')).toHaveLength(1)
+    expect(names.filter((n) => n === 'Video 1')).toHaveLength(1)
+    expect(names).not.toContain('Shots')
   })
 
   it('keeps earlier director clips on locked tracks and says so', async () => {
     const { project, editor, plan } = await setup('beat-cut')
     editor.dispatch(compilePlan(plan, project).commands)
     const first = editor.getProject()
-    const shotsTrack = first.tracks.find((t) => t.name === 'Shots')!
+    const shotsTrack = first.tracks.find((t) =>
+      directorClips(first).some((c) => c.trackId === t.id && directorMeta(c)!.role === 'shots'),
+    )!
     editor.dispatch({ type: 'track.update', trackId: shotsTrack.id, patch: { locked: true } })
     const compiled = compilePlan(plan, editor.getProject())
     editor.dispatch(compiled.commands)
@@ -464,5 +649,31 @@ describe('compilePlan in a project made from a starter template', () => {
     const after = editor.getProject()
     expect(after.tracks.some((t) => t.id === template.tracks.lyrics)).toBe(true)
     expect(clips(after).filter((c) => c.trackId === template.tracks.lyrics)).toHaveLength(0)
+  })
+
+  it('never removes a template track that held only title cards as a spare title row', async () => {
+    const project = renamedSong(templateProject(), 'Josh Woodward - Show Me.mp3')
+    const lyrics = templateState(project)!.tracks.lyrics!
+    const editor = new ProjectEditor(project)
+    const plan = await planLocally(await buildPlannerInput(project, { kind: 'lyric', seed: 5 }))
+    editor.dispatch(compilePlan(plan, project).commands)
+    const first = editor.getProject()
+    // The user put the artist on the Lyrics track in place of the lines.
+    const artist = clips(first).find((c) => (c as TextClip).text === 'Josh Woodward')!
+    editor.dispatch([
+      {
+        type: 'clip.remove',
+        clipIds: clips(first)
+          .filter((c) => c.trackId === lyrics)
+          .map((c) => c.id),
+      },
+      { type: 'clip.move', moves: [{ clipId: artist.id, start: artist.start, trackId: lyrics }] },
+    ])
+    const moved = editor.getProject()
+    const beatCut = await planLocally(await buildPlannerInput(moved, { kind: 'beat-cut', seed: 1 }))
+    editor.dispatch(compilePlan(beatCut, moved).commands)
+    const after = editor.getProject()
+    expect(after.tracks.some((t) => t.id === lyrics)).toBe(true)
+    expect(clips(after).filter((c) => c.trackId === lyrics)).toHaveLength(0)
   })
 })
