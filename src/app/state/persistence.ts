@@ -246,6 +246,11 @@ function startSaving(seconds: number) {
   return controller
 }
 
+/** Writes the open project's changes that are not saved yet, as before a reload. */
+export async function saveBeforeReload(): Promise<void> {
+  await autosave?.flush()
+}
+
 function onBeforeUnload(e: BeforeUnloadEvent) {
   const { status, tracked } = usePersistence.getState()
   if (!tracked || status === 'saved' || status === 'idle') return
