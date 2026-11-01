@@ -17,7 +17,6 @@ import {
 } from 'lucide-react'
 import {
   barTimes,
-  estimateRenderSeconds,
   framingOverrides,
   loopLengthOf,
   loopLengthRange,
@@ -44,6 +43,7 @@ import { downloadAgain, useExports, type ExportRow } from '../../state/exports.t
 import { startFootageAnalysis } from '../../state/footage.ts'
 import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
 import { sectionName, sectionsOf, sectionTint, timelineDuration, useProject } from '../../state/project.ts'
+import { useExportEstimate } from '../../state/exportEstimate.ts'
 import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
 import { set, toast, useUi } from '../../state/ui.ts'
 import {
@@ -726,6 +726,8 @@ function ExportDialogBody() {
   /** The moment the preview shows once a shot is picked; otherwise each output's own moment. */
   const [viewTime, setViewTime] = useState<number | null>(null)
   const planned = useMemo(() => items.map((i) => planOutput(project, i.spec)), [project, items])
+  const active = useMemo(() => planned.filter((_, k) => items[k]?.on), [planned, items])
+  const seconds = useExportEstimate(project, active, phase === 'setup')
   const index = Math.max(
     0,
     items.findIndex((i) => i.spec.id === selectedId),
@@ -738,9 +740,7 @@ function ExportDialogBody() {
   }
   if (!sel || !selPlan) return null
 
-  const active = planned.filter((_, k) => items[k]?.on)
   const bytes = active.reduce((sum, p) => sum + p.estimatedBytes, 0)
-  const seconds = active.reduce((sum, p) => sum + estimateRenderSeconds(p), 0)
   const update = (patch: Partial<OutputSpec>) =>
     setItems((list) =>
       list.map((i) => (i.spec.id === sel.spec.id ? { ...i, spec: { ...i.spec, ...patch } } : i)),

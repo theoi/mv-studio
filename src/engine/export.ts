@@ -11,7 +11,14 @@ import { projectDuration } from '../model/queries.ts'
 import type { AspectPreset, Project, Seconds } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
 import { audibleClips, audioBufferCache, renderMix } from './audio.ts'
-import { AUDIO_SAMPLE_RATE, encodeExport, type EncodeJob, type EncodeResult } from './encode.ts'
+import {
+  AUDIO_SAMPLE_RATE,
+  encodeExport,
+  type EncodeJob,
+  type EncodeResult,
+  type ExportProbe,
+  type ProbeJob,
+} from './encode.ts'
 import { startRenderWorker, type RenderWorker } from './renderHost.ts'
 import type { ExportResult, ExportSettings, MediaFileSource, PluginRegistry } from './types.ts'
 
@@ -113,6 +120,21 @@ export interface ExportOptions {
     | ((mix: (range: { start: Seconds; end: Seconds }) => Promise<AudioBuffer>) => Promise<AudioBuffer>)
 }
 
+/** The frames an export renders: their size, rate, range and count, checked, and the video bitrate. */
+function exportFrames(project: Project, settings: ExportSettings) {
+  const width = even(settings.width)
+  const height = even(settings.height)
+  const fps = settings.fps
+  if (!(fps > 0) || fps > 120) throw new JobError('invalid-input', `Unsupported frame rate: ${fps}`)
+  const range = settings.range ?? { start: 0, end: projectDuration(project) }
+  const duration = range.end - range.start
+  if (!(duration > 0))
+    throw new JobError('invalid-input', 'There is nothing to export yet. Add clips to the timeline first.')
+  const frameCount = Math.max(1, Math.round(duration * fps))
+  const videoBitrate = settings.videoBitrate ?? defaultVideoBitrate(width, height, fps)
+  return { width, height, fps, range, frameCount, videoBitrate }
+}
+
 /**
  * Exports the project to an MP4 file in browser storage. Run it as a job: jobs.run({ kind: 'export.mp4', ... }).
  * Rendering runs in the render worker, which reads `options.media` through a message port. It runs in-process when
@@ -125,16 +147,7 @@ export async function exportProject(
   options: ExportOptions = {},
 ): Promise<ExportResult> {
   const media = options.media ?? mediaStore
-  const width = even(settings.width)
-  const height = even(settings.height)
-  const fps = settings.fps
-  if (!(fps > 0) || fps > 120) throw new JobError('invalid-input', `Unsupported frame rate: ${fps}`)
-  const range = settings.range ?? { start: 0, end: projectDuration(project) }
-  const duration = range.end - range.start
-  if (!(duration > 0))
-    throw new JobError('invalid-input', 'There is nothing to export yet. Add clips to the timeline first.')
-  const frameCount = Math.max(1, Math.round(duration * fps))
-  const videoBitrate = settings.videoBitrate ?? defaultVideoBitrate(width, height, fps)
+  const { width, height, fps, range, frameCount, videoBitrate } = exportFrames(project, settings)
 
   ctx.progress({ stage: 'prepare', message: 'Preparing export', fraction: 0 })
   if (!(await canEncodeVideo('avc', { width, height, bitrate: videoBitrate })))
@@ -222,6 +235,50 @@ async function encodeInWorker(
     )
   } finally {
     ctx.signal.removeEventListener('abort', onAbort)
+    clearTimeout(timer)
+    worker.dispose()
+  }
+}
+
+/**
+ * Draws and encodes `windows` (runs of consecutive frame indices) of what exportProject would render, in a render
+ * worker and into a discarded file, and times it (measureExport), so the whole export's time can be worked out on
+ * this device before it runs. Null when the render worker cannot draw: the export would then run on the main
+ * thread, and a trial there would hold up the page.
+ */
+export async function probeExport(
+  project: Project,
+  settings: ExportSettings,
+  windows: number[][],
+  options: Pick<ExportOptions, 'media' | 'frameTimes'> & { signal: AbortSignal },
+): Promise<ExportProbe | null> {
+  const { width, height, fps, range, frameCount, videoBitrate } = exportFrames(project, settings)
+  const { frameTimes, signal } = options
+  let worker: RenderWorker
+  try {
+    worker = await startRenderWorker()
+  } catch {
+    return null
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  // The trial stops after the frame it is drawing; a worker that doesn't is terminated.
+  const onAbort = () => (timer = setTimeout(() => worker.dispose(), CANCEL_GRACE_MS))
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    if (signal.aborted) throw new JobError('cancelled', 'Cancelled')
+    const job: ProbeJob = {
+      project,
+      width,
+      height,
+      fps,
+      range,
+      videoBitrate,
+      windows,
+      frameTimes: frameTimes && Array.from({ length: frameCount }, (_, i) => frameTimes(i / fps)),
+    }
+    return await worker.probeExport(job, { signal }, options.media)
+  } finally {
+    signal.removeEventListener('abort', onAbort)
     clearTimeout(timer)
     worker.dispose()
   }

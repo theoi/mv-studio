@@ -148,10 +148,12 @@ export function sizeLabel(bytes: number): string {
     : `About ${Math.max(1, Math.round(bytes / 1e6))} MB`
 }
 
-export function timeLabel(seconds: number): string {
+/** The export time: rounded up, so the label is never under the estimate; null while it is being worked out. */
+export function timeLabel(seconds: number | null): string {
+  if (seconds === null) return 'Working out the time…'
   return seconds < 60
     ? 'Under a minute on this device'
-    : `About ${Math.round(seconds / 60)} min on this device`
+    : `About ${Math.ceil(seconds / 60)} min on this device`
 }
 
 /** What a cancelled export says, however it was cancelled: files done before the cancel are kept. */

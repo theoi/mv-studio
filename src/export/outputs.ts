@@ -24,6 +24,7 @@ import { createSolidClip, createTrack, newId } from '../model/factory.ts'
 import { projectDuration } from '../model/queries.ts'
 import type { AspectPreset, Project, Seconds } from '../model/types.ts'
 import { jobs, type JobContext, type JobHandle } from '../shared/jobs.ts'
+import { rememberPace, type ExportPaceStore } from './estimate.ts'
 import { convertToFormat, type ClipFraming, type FormatOptions } from './formats.ts'
 import {
   barTimes,
@@ -353,7 +354,11 @@ export function loopSeam(planned: PlannedOutput): { last: Seconds; first: Second
   return { last: round(loop.crossfade > 0 ? loop.start - frame : loop.end - frame), first: round(loop.start) }
 }
 
-/** Rough render time: frames divided by a frame rate that scales with frame size from a measured 1080p rate. */
+/**
+ * Rough render time: frames divided by a frame rate that scales with frame size from a measured 1080p rate. It knows
+ * nothing of the project, so it can be far too low; the export dialog uses it only where no trial can run
+ * (estimate.ts).
+ */
 export function estimateRenderSeconds(planned: PlannedOutput, framesPerSecondAt1080p = 12): number {
   const pixels = planned.settings.width * planned.settings.height
   const blended = planned.loop ? 1 + planned.loop.crossfade / Math.max(planned.duration, 1e-3) : 1
@@ -381,6 +386,8 @@ function uniqueNames(planned: PlannedOutput[]): string[] {
 export interface ExportOutputsOptions extends PlanOptions, Pick<ExportOptions, 'media' | 'registry'> {
   /** Called as each file finishes, so it can be saved before the rest are done (or cancelled). */
   onOutput?: (result: OutputResult) => void
+  /** Where each finished output's pace is kept for later estimates (default: this browser's localStorage). */
+  pace?: ExportPaceStore
 }
 
 /** Renders the outputs one after another as one job's work. Progress covers all of them, weighted by frames. */
@@ -414,6 +421,7 @@ export async function exportOutputs(
         })
       },
     }
+    const outputStarted = performance.now()
     const result = await exportProject(p.project, p.settings, sub, {
       media: options.media,
       registry: options.registry,
@@ -429,6 +437,7 @@ export async function exportOutputs(
       width: p.settings.width,
       height: p.settings.height,
     }
+    rememberPace(project.id, p, (performance.now() - outputStarted) / 1000, options.pace)
     results.push(output)
     options.onOutput?.(output)
     done += p.frames

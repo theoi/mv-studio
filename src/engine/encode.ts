@@ -9,6 +9,7 @@ import {
   CanvasSource,
   canEncodeAudio,
   Mp4OutputFormat,
+  NullTarget,
   Output,
   StreamTarget,
 } from 'mediabunny'
@@ -94,29 +95,15 @@ function toJobError(error: unknown): JobError {
   return JobError.from(error)
 }
 
-/**
- * Renders every frame of `job.range` and writes the MP4 to `job.path`. Throws JobErrors. The caller checks that the
- * browser can encode H.264 at the job's size.
- */
-export async function encodeExport(
-  job: EncodeJob,
-  ctx: EncodeContext,
-  options: { media: MediaFileSource; registry?: PluginRegistry },
-): Promise<EncodeResult> {
-  const { width, height, fps, range, audio: mix } = job
-  const duration = range.end - range.start
-  const frameCount = Math.max(1, Math.round(duration * fps))
-  const throwIfCancelled = () => {
-    if (ctx.signal.aborted) throw new JobError('cancelled', 'Export cancelled')
-  }
-  if (mix) await ensureAacEncoder(job.audioBitrate)
-  throwIfCancelled()
+/** What drawing an export's frames needs from its job. */
+type FrameJob = Pick<EncodeJob, 'project' | 'width' | 'height' | 'fps' | 'range' | 'frameTimes'>
 
-  const { writable } = await createOpfsWritable(job.path)
-  const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: false }),
-    target: new StreamTarget(writable as unknown as WritableStream, { chunked: true }),
-  })
+/**
+ * Draws output frame `i` of a job into `canvas`: one compositor render, or for blended frames (loops) a weighted
+ * average of several, each from a renderer of its own.
+ */
+function frameDrawer(job: FrameJob, options: { media: MediaFileSource; registry?: PluginRegistry }) {
+  const { width, height, fps, range } = job
   const renderers: { compositor: WebGLCompositor; frames: DecoderFrameProvider; canvas: OffscreenCanvas }[] =
     []
   const renderer = (k: number) => {
@@ -142,8 +129,58 @@ export async function encodeExport(
   const blendContext = blendCanvas?.getContext('2d') ?? null
   if (blend && !blendContext) throw new JobError('unsupported', 'This browser cannot blend video frames.')
   const { compositor, canvas } = renderer(0)
+  return {
+    canvas: blendCanvas ?? canvas,
+    /** Compositor renders frame `i` takes. */
+    renders: (i: number) => blend?.[i]?.length ?? 1,
+    async draw(i: number) {
+      if (!blend || !blendContext) return compositor.render(job.project, range.start + i / fps)
+      let weight = 0
+      for (const [k, layer] of (blend[i] ?? []).entries()) {
+        const r = renderer(k)
+        await r.compositor.render(job.project, layer.time)
+        weight += layer.weight
+        // Each layer's share of the running average; the first replaces the previous output frame outright.
+        blendContext.globalCompositeOperation = k === 0 ? 'copy' : 'source-over'
+        blendContext.globalAlpha = k === 0 ? 1 : layer.weight / Math.max(weight, 1e-6)
+        blendContext.drawImage(r.canvas, 0, 0)
+      }
+    },
+    dispose() {
+      for (const r of renderers) {
+        r.compositor.dispose()
+        r.frames.dispose()
+      }
+    },
+  }
+}
+
+/**
+ * Renders every frame of `job.range` and writes the MP4 to `job.path`. Throws JobErrors. The caller checks that the
+ * browser can encode H.264 at the job's size.
+ */
+export async function encodeExport(
+  job: EncodeJob,
+  ctx: EncodeContext,
+  options: { media: MediaFileSource; registry?: PluginRegistry },
+): Promise<EncodeResult> {
+  const { fps, range, audio: mix } = job
+  const duration = range.end - range.start
+  const frameCount = Math.max(1, Math.round(duration * fps))
+  const throwIfCancelled = () => {
+    if (ctx.signal.aborted) throw new JobError('cancelled', 'Export cancelled')
+  }
+  if (mix) await ensureAacEncoder(job.audioBitrate)
+  throwIfCancelled()
+
+  const { writable } = await createOpfsWritable(job.path)
+  const output = new Output({
+    format: new Mp4OutputFormat({ fastStart: false }),
+    target: new StreamTarget(writable as unknown as WritableStream, { chunked: true }),
+  })
+  const drawer = frameDrawer(job, options)
   let videoCodec = 'avc'
-  const video = new CanvasSource(blendCanvas ?? canvas, {
+  const video = new CanvasSource(drawer.canvas, {
     codec: 'avc',
     bitrate: job.videoBitrate,
     keyFrameInterval: 2,
@@ -190,18 +227,7 @@ export async function encodeExport(
       const t = i / fps
       // Keep audio about a second ahead of video so the muxer can interleave without buffering much.
       await sendAudioUntil(t + 1)
-      if (blend && blendContext) {
-        let weight = 0
-        for (const [k, layer] of (blend[i] ?? []).entries()) {
-          const r = renderer(k)
-          await r.compositor.render(job.project, layer.time)
-          weight += layer.weight
-          // Each layer's share of the running average; the first replaces the previous output frame outright.
-          blendContext.globalCompositeOperation = k === 0 ? 'copy' : 'source-over'
-          blendContext.globalAlpha = k === 0 ? 1 : layer.weight / Math.max(weight, 1e-6)
-          blendContext.drawImage(r.canvas, 0, 0)
-        }
-      } else await compositor.render(job.project, range.start + t)
+      await drawer.draw(i)
       await video.add(t, 1 / fps)
       if (i % 5 === 0 || i === frameCount - 1) {
         const elapsed = (performance.now() - started) / 1000
@@ -228,9 +254,88 @@ export async function encodeExport(
       : toJobError(error)
   } finally {
     ctx.signal.removeEventListener('abort', onAbort)
-    for (const r of renderers) {
-      r.compositor.dispose()
-      r.frames.dispose()
+    drawer.dispose()
+  }
+}
+
+/** A trial render of some of an export's frames, to time it on this device before it runs (export.ts probeExport). */
+export interface ProbeJob extends FrameJob {
+  videoBitrate: number
+  /** Runs of consecutive output frame indices, in increasing order. */
+  windows: number[][]
+}
+
+export interface ProbeWindow {
+  /** The window's first frame index. */
+  first: number
+  /** Time to draw and encode the window's first frame, which seeks the decoders (and in the first window, warms up). */
+  firstMs: number
+  /** Time for the rest of the window, and the compositor renders they took. */
+  ms: number
+  renders: number
+}
+
+export interface ExportProbe {
+  /** Until the encoder was ready for the first frame. */
+  setupMs: number
+  windows: ProbeWindow[]
+  /** Encoding what was still queued after the last frame. */
+  flushMs: number
+}
+
+/**
+ * Draws and encodes `job.windows` as an export would, into a discarded file, and times it. The encoder sees the
+ * windows back to back, so it works as hard per frame as in the export.
+ */
+export async function measureExport(
+  job: ProbeJob,
+  ctx: { readonly signal: AbortSignal },
+  options: { media: MediaFileSource; registry?: PluginRegistry },
+): Promise<ExportProbe> {
+  const throwIfCancelled = () => {
+    if (ctx.signal.aborted) throw new JobError('cancelled', 'Cancelled')
+  }
+  const started = performance.now()
+  const drawer = frameDrawer(job, options)
+  const output = new Output({ format: new Mp4OutputFormat(), target: new NullTarget() })
+  try {
+    const video = new CanvasSource(drawer.canvas, {
+      codec: 'avc',
+      bitrate: job.videoBitrate,
+      keyFrameInterval: 2,
+      latencyMode: 'quality',
+    })
+    output.addVideoTrack(video, { frameRate: job.fps })
+    await output.start()
+    const setupMs = performance.now() - started
+    const windows: ProbeWindow[] = []
+    let n = 0
+    for (const frames of job.windows) {
+      const window: ProbeWindow = { first: frames[0] ?? 0, firstMs: 0, ms: 0, renders: 0 }
+      for (const [k, i] of frames.entries()) {
+        throwIfCancelled()
+        const t0 = performance.now()
+        await drawer.draw(i)
+        await video.add(n / job.fps, 1 / job.fps)
+        n++
+        const ms = performance.now() - t0
+        if (k === 0) window.firstMs = ms
+        else {
+          window.ms += ms
+          window.renders += drawer.renders(i)
+        }
+      }
+      windows.push(window)
     }
+    throwIfCancelled()
+    const flushStarted = performance.now()
+    video.close()
+    await output.finalize()
+    return { setupMs, windows, flushMs: performance.now() - flushStarted }
+  } catch (error) {
+    if (output.state !== 'finalized') await output.cancel().catch(() => undefined)
+    throw ctx.signal.aborted ? new JobError('cancelled', 'Cancelled', { cause: error }) : toJobError(error)
+  } finally {
+    drawer.dispose()
   }
 }

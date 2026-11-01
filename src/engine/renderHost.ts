@@ -7,7 +7,7 @@
  */
 import { JobError } from '../shared/jobs.ts'
 import { createWorkerClient, type CallOptions } from '../shared/worker.ts'
-import type { EncodeJob, EncodeResult } from './encode.ts'
+import type { EncodeJob, EncodeResult, ExportProbe, ProbeJob } from './encode.ts'
 import type { BridgedVideo } from './frames.ts'
 import { serveMedia, type PreviewRenderRequest } from './previewWorker.ts'
 import type { RenderWorkerApi } from './render.worker.ts'
@@ -20,6 +20,8 @@ export interface RenderWorker {
    * once the worker has stopped writing. If the worker dies, rejects with 'worker-crashed' or 'out-of-memory'.
    */
   exportVideo(job: EncodeJob, options?: CallOptions, media?: MediaFileSource): Promise<EncodeResult>
+  /** Times a trial render of some of an export's frames (measureExport), reading files as exportVideo does. */
+  probeExport(job: ProbeJob, options?: CallOptions, media?: MediaFileSource): Promise<ExportProbe>
   /** Terminates the worker; pending calls reject with 'cancelled'. */
   dispose(): void
 }
@@ -62,6 +64,21 @@ async function whenItCanDraw(client: ReturnType<typeof spawnRenderWorker>, role:
   }
 }
 
+/** Runs `call` with the worker's end of a port served by `media`, or with none; the page's end closes after. */
+async function withMediaPort<T>(
+  media: MediaFileSource | undefined,
+  call: (port: MessagePort | undefined) => Promise<T>,
+): Promise<T> {
+  if (!media) return call(undefined)
+  const channel = new MessageChannel()
+  serveMedia(channel.port1, media)
+  try {
+    return await call(channel.port2)
+  } finally {
+    channel.port1.close()
+  }
+}
+
 /**
  * Starts a render worker for an export. Rejects, with the worker stopped, when it cannot draw (no WebGL2 in workers),
  * fails to start or does not answer in time, so the caller can export on the main thread instead.
@@ -70,20 +87,22 @@ export async function startRenderWorker(): Promise<RenderWorker> {
   const client = spawnRenderWorker('render')
   await whenItCanDraw(client, 'render')
   return {
-    exportVideo: async (job, options = {}, media) => {
-      if (!media) return client.call('exportVideo', { job }, { ...options, awaitCancel: true })
-      const channel = new MessageChannel()
-      serveMedia(channel.port1, media)
-      try {
-        return await client.call(
+    exportVideo: (job, options = {}, media) =>
+      withMediaPort(media, (port) =>
+        client.call(
           'exportVideo',
-          { job, media: channel.port2 },
-          { ...options, transfer: [...(options.transfer ?? []), channel.port2], awaitCancel: true },
-        )
-      } finally {
-        channel.port1.close()
-      }
-    },
+          { job, media: port },
+          { ...options, transfer: [...(options.transfer ?? []), ...(port ? [port] : [])], awaitCancel: true },
+        ),
+      ),
+    probeExport: (job, options = {}, media) =>
+      withMediaPort(media, (port) =>
+        client.call(
+          'probeExport',
+          { job, media: port },
+          { ...options, transfer: port ? [port] : [], awaitCancel: true },
+        ),
+      ),
     dispose: () => client.terminate(),
   }
 }

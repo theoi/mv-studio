@@ -153,6 +153,35 @@ test('cancelling an export keeps the files that are already done', async ({ page
   expect((await again).suggestedFilename()).toBe('Neon Skyline - Canvas.mp4')
 })
 
+test('the time an export takes is worked out on this device, never under it, while Export stays available', async ({
+  page,
+}) => {
+  test.setTimeout(300_000)
+  // Paces of exports in earlier tests would show at once; this test is about the trial.
+  await page.addInitScript(() => localStorage.removeItem('mv-studio.export-pace'))
+  const dialog = await openExport(page)
+  await dialog.getByLabel('Include Full video').uncheck()
+  await dialog.getByLabel('Include Vertical').uncheck()
+  await dialog.getByRole('button', { name: /Loop for Canvas/ }).click()
+  await dialog.getByRole('radio', { name: '720p' }).click()
+  const time = dialog.getByText(/^\s*(Working out the time…|.* on this device)$/)
+  await expect(time).toHaveText('Working out the time…')
+  await expect(dialog.getByRole('button', { name: 'Export 1 file' })).toBeEnabled()
+
+  // The sample project's look, lyrics and visualizers make its frames far slower than a fixed rate would guess.
+  await expect(time).toHaveText(/on this device$/, { timeout: 120_000 })
+  const label = (await time.textContent())?.trim() ?? ''
+  const minutes = /^About (\d+) min/.exec(label)?.[1]
+  const limit = minutes ? Number(minutes) * 60 : 60
+  const download = page.waitForEvent('download', { timeout: 240_000 })
+  const started = Date.now()
+  await dialog.getByRole('button', { name: 'Export 1 file' }).click()
+  await download
+  const took = (Date.now() - started) / 1000
+  console.log('estimate', label, 'took', took)
+  expect(took).toBeLessThanOrEqual(limit)
+})
+
 /** Start and length, in seconds, of the range written under the song lane ("1:04 – 1:34 · ..."). */
 async function laneRange(dialog: Locator): Promise<{ start: number; length: number }> {
   const text = await dialog.getByText(/^\d+:\d\d – \d+:\d\d · /).textContent()

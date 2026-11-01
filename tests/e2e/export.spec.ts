@@ -314,6 +314,53 @@ OffscreenCanvas.prototype.getContext = function (type, ...rest) {
   for (const d of r.diffs) expect(d).toBeLessThan(3)
 })
 
+test('the time estimated before an export is not under the time the export takes', async ({ page }) => {
+  test.setTimeout(180_000)
+  await openHarness(page)
+  await page.setInputFiles(
+    '#e2e-file-input',
+    ['song.mp3', 'clip.mp4'].map((f) => path.join(FIXTURE_DIR, f)),
+  )
+  const r = await page.evaluate(async () => {
+    const { model, media, exporting } = window.mvStudio
+    const [song, video] = await Promise.all(
+      window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
+    )
+    const p = model.createProject({ name: 'Estimate' })
+    p.assets[song.id] = song
+    p.assets[video.id] = video
+    p.songAssetId = song.id
+    const audioTrack = p.tracks.find((t: { kind: string }) => t.kind === 'audio')
+    const visual = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    const titles = model.createTrack('visual', 'Titles')
+    p.tracks.unshift(titles)
+    const clips = [
+      model.createAudioClip({ trackId: audioTrack.id, assetId: song.id, start: 0, duration: 6 }),
+      model.createVideoClip({ trackId: visual.id, assetId: video.id, start: 0, duration: 3 }),
+      model.createVideoClip({ trackId: visual.id, assetId: video.id, start: 3, duration: 3, sourceStart: 1 }),
+      model.createTextClip({
+        trackId: titles.id,
+        text: 'Estimate',
+        start: 1,
+        duration: 4,
+        style: { shadow: { color: 'rgba(0,0,0,0.6)', blur: 24, offsetX: 0, offsetY: 2 } },
+      }),
+    ]
+    for (const c of clips) p.clips[c.id] = c
+    const spec = exporting.newOutput(p, 'video', { resolution: '720p' })
+    const estimate = await exporting.estimateOutput(exporting.planOutput(p, spec), {
+      signal: new AbortController().signal,
+    })
+    const started = performance.now()
+    await exporting.startExport(p, [spec]).promise
+    return { estimate, seconds: (performance.now() - started) / 1000 }
+  })
+  console.log('estimate', JSON.stringify(r))
+  expect(r.estimate).toBeGreaterThanOrEqual(r.seconds)
+  // Not so cautious that it says nothing.
+  expect(r.estimate).toBeLessThan(4 * r.seconds)
+})
+
 test('cancelling an export stops it with a cancelled error and leaves no file behind', async ({ page }) => {
   await openHarness(page)
   const r = await page.evaluate(async () => {
