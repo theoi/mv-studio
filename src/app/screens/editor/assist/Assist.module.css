@@ -166,6 +166,11 @@
   font-weight: var(--weight-medium);
 }
 
+/* Long download lines otherwise leave their last word, "once)", alone on the second line. */
+.jobTop > span:first-child {
+  text-wrap: balance;
+}
+
 .jobPct {
   flex-shrink: 0;
   color: var(--text-2);
