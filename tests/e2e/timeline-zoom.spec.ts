@@ -136,3 +136,29 @@ test('a short clip shows its name once a zoom makes it wide enough, and hides it
   await zoom(30)
   await expect(label).toHaveText('', { useInnerText: true })
 })
+
+test('a short footage clip shows its picture without its name chip over it, and its name once a zoom makes room', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  const duration = await page.evaluate(
+    () => window.mvStudio.app.project.editor.getProject().clips['c-s-c1-1'].duration as number,
+  )
+  const tile = page.locator('[data-clip-id="c-s-c1-1"]')
+  const label = tile.locator('[class*="mediaLabel"]')
+  const zoom = (pps: number) =>
+    page.evaluate(async (v) => {
+      window.mvStudio.app.ui.set({ pxPerSec: v })
+      await new Promise(requestAnimationFrame)
+      document.querySelector('[data-timeline-scroller]')!.scrollLeft = 66 * v - 200
+    }, pps)
+  // 70 px, as a two-bar shot of a director draft is at the default zoom: room for "clip…" and little picture.
+  await zoom(70 / duration)
+  await expect(tile).toHaveCSS('background-image', /^url\(/)
+  await expect(label).toBeHidden()
+  await zoom(200 / duration)
+  await expect(label).toBeVisible()
+  await expect(label).toHaveText('Singer close-up')
+  await zoom(70 / duration)
+  await expect(label).toBeHidden()
+})

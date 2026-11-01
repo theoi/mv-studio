@@ -1045,6 +1045,9 @@ function toggleInSelection(clipId: string) {
   selectTimelineClips(p, picked.includes(clipId) ? picked.filter((id) => id !== clipId) : [...picked, clipId])
 }
 
+/** Narrowest room, in pixels, for a footage clip's name chip; the `.mediaLabel` container query hides it below. */
+const MEDIA_LABEL_MIN = 96
+
 /** What a clip block shows that depends on the zoom, besides its position and width. */
 function zoomedLook(clip: ClipView, pps: number) {
   const width = Math.max(2, (clip.end - clip.start) * pps)
@@ -1052,7 +1055,7 @@ function zoomedLook(clip: ClipView, pps: number) {
   // A media clip's name sits beside its transition marks, which straddle its top edge where the name would be.
   const inW = clip.transitionIn ? transitionMarkWidth(clip.transitionIn, pps) : 0
   const outW = clip.transitionOut ? transitionMarkWidth(clip.transitionOut, pps) : 0
-  const showLabel = isMedia ? width - inW - outW > 36 : width > 54
+  const showLabel = isMedia ? width - inW - outW > MEDIA_LABEL_MIN : width > 54
   return { width, isMedia, inW, outW, showLabel }
 }
 

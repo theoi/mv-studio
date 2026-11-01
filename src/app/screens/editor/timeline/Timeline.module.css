@@ -414,7 +414,9 @@
   }
 }
 
-@container (width <= 36px) {
+/* Below this a footage clip's name chip would cover most of its picture and show only a few letters ("clip…"), so the
+   picture shows alone until a zoom leaves room for both. Matches MEDIA_LABEL_MIN in Timeline.tsx. */
+@container (width <= 96px) {
   .mediaLabel {
     display: none;
   }
