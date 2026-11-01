@@ -62,9 +62,90 @@ test('the export dialog plans every output from the project', async ({ page }) =
   await expect(dialog.getByText(new RegExp(`9:16 · 1080p · 30 fps · ${length} s$`))).toBeVisible()
 })
 
+test('the export dialog shows the editor’s frame at once, without waiting for a preview of its own', async ({
+  page,
+}) => {
+  await openApp(page, './?e2e=1')
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=73.6'
+  })
+  await waitForPreview(page)
+  // Previews started from now on cannot draw, so the dialog's own stills never arrive.
+  await page.evaluate(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      type: string,
+      options?: unknown,
+    ) {
+      return type === 'webgl2' ? null : getContext.call(this, type, options)
+    } as typeof getContext
+    Object.defineProperty(HTMLCanvasElement.prototype, 'transferControlToOffscreen', { value: undefined })
+  })
+  await page.keyboard.press(`${mod}+e`)
+  const preview = page
+    .getByRole('dialog', { name: 'Export' })
+    .getByRole('img', { name: 'Preview of Full video' })
+  await expect.poll(() => backgrounds(preview)).toContain('blob:')
+
+  // It is the frame the editor's preview shows at the playhead.
+  const difference = await preview.evaluate(async (el) => {
+    const url = /url\("?(blob:[^")]+)"?\)/.exec(getComputedStyle(el).backgroundImage)?.[1] ?? ''
+    const shown = await createImageBitmap(await (await fetch(url)).blob())
+    const stage = await window.mvStudio.app.stagePreview().captureFrame()
+    const pixels = (image: ImageBitmap) => {
+      const ctx = new OffscreenCanvas(32, 18).getContext('2d')!
+      ctx.drawImage(image, 0, 0, 32, 18)
+      return ctx.getImageData(0, 0, 32, 18).data
+    }
+    const a = pixels(shown)
+    const b = pixels(stage)
+    let sum = 0
+    for (let i = 0; i < a.length; i += 4) for (let c = 0; c < 3; c++) sum += Math.abs(a[i + c]! - b[i + c]!)
+    return sum / ((a.length / 4) * 3)
+  })
+  expect(difference).toBeLessThan(6)
+})
+
+test('with a stage smaller than the dialog’s frame, the editor’s frame shows first and a sharper one replaces it', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1100, height: 640 })
+  await openApp(page, './?e2e=1')
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=73.6'
+  })
+  await waitForPreview(page)
+  const stageHeight = await page.evaluate(async () => {
+    const preview = window.mvStudio.app.stagePreview()
+    await preview.rendered()
+    return preview.stats().height
+  })
+  expect(stageHeight).toBeLessThan(360)
+
+  await page.keyboard.press(`${mod}+e`)
+  const preview = page
+    .getByRole('dialog', { name: 'Export' })
+    .getByRole('img', { name: 'Preview of Full video' })
+  await expect.poll(() => backgrounds(preview)).toContain('blob:')
+  const first = await backgrounds(preview)
+  await expect
+    .poll(
+      async () => (await backgrounds(preview)) !== first && (await backgrounds(preview)).includes('blob:'),
+    )
+    .toBe(true)
+})
+
 test('the outputs of an export are saved with the project for next time', async ({ page }) => {
   const dialog = await openExport(page)
-  await dialog.getByLabel('Include Vertical').uncheck()
+  // A project that has not exported yet offers the vertical version but leaves it off.
+  await expect(dialog.getByLabel('Include Full video')).toBeChecked()
+  await expect(dialog.getByLabel('Include Vertical')).not.toBeChecked()
+  await expect(dialog.getByRole('button', { name: 'Export 1 file' })).toBeVisible()
   await dialog.getByRole('button', { name: /Square/ }).click()
   await dialog.getByLabel('Name').fill('Square for feed')
   await dialog.getByRole('button', { name: 'Export 2 files' }).click()
@@ -84,9 +165,27 @@ test('the outputs of an export are saved with the project for next time', async 
   await expect(dialog.getByLabel('Name')).toHaveValue('Square for feed')
 })
 
+test('changing an output’s settings includes it, and with nothing included the footer asks for an output', async ({
+  page,
+}) => {
+  const dialog = await openExport(page)
+  await dialog.getByRole('button', { name: /Vertical.*9:16/ }).click()
+  await expect(dialog.getByLabel('Include Vertical')).not.toBeChecked()
+  await dialog.getByRole('radio', { name: '720p' }).click()
+  await expect(dialog.getByLabel('Include Vertical')).toBeChecked()
+  await expect(dialog.getByRole('button', { name: 'Export 2 files' })).toBeVisible()
+
+  await dialog.getByLabel('Include Vertical').uncheck()
+  await dialog.getByLabel('Include Full video').uncheck()
+  await expect(dialog.getByText('Choose at least one output')).toBeVisible()
+  await expect(dialog.getByText(/About [\d.]+ (MB|GB)$/)).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Export', exact: true })).toBeDisabled()
+})
+
 test('dragging the frame adjusts the framing of the shot shown, one shot at a time', async ({ page }) => {
   const dialog = await openExport(page)
   await dialog.getByRole('button', { name: /Vertical.*9:16/ }).click()
+  await expect(dialog.getByLabel('Include Vertical')).not.toBeChecked()
   const preview = dialog.getByRole('img', { name: 'Preview of Vertical' })
   const frame = dialog.getByLabel(/^Framing of shot/)
   const shotLabel = dialog.getByText(/^Shot \d+ of \d+$/)
@@ -101,6 +200,8 @@ test('dragging the frame adjusts the framing of the shot shown, one shot at a ti
   await page.mouse.move(before.x + before.width / 2 - 60, before.y + before.height / 2, { steps: 6 })
   await page.mouse.up()
   await expect(dialog.getByText('Adjusted by hand. Double-click the frame to reset this shot.')).toBeVisible()
+  // Adjusting an output's framing includes it in the export.
+  await expect(dialog.getByLabel('Include Vertical')).toBeChecked()
   await expect.poll(async () => (await frame.boundingBox())!.x).toBeLessThan(before.x - 50)
   await expect
     .poll(

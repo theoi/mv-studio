@@ -329,6 +329,31 @@ describe('export settings and outputs', () => {
     ])
   })
 
+  it('lays the project out for an output’s format only when the planned project is read', () => {
+    const { project } = footageProject()
+    const track = createTrack('visual', 'Lyrics')
+    project.tracks.unshift(track)
+    const title = createTextClip({ trackId: track.id, text: 'Hello', start: 0, duration: 4 })
+    project.clips[title.id] = title
+    let measured = 0
+    const counting = (text: string, font: string) => {
+      measured++
+      return measure(text, font)
+    }
+    const planned = planOutput(project, newOutput(project, 'video', { aspect: '9:16' }), {
+      measure: counting,
+    })
+    expect(planned.estimatedBytes).toBeGreaterThan(0)
+    expect(planned.frames).toBe(120)
+    expect(measured).toBe(0)
+    expect(planned.project.settings.aspect).toBe('9:16')
+    const afterFirstRead = measured
+    expect(afterFirstRead).toBeGreaterThan(0)
+    expect(planned.project).toBe(planned.project)
+    expect(planned.framing[title.id]).toBe('text')
+    expect(measured).toBe(afterFirstRead)
+  })
+
   it('plans frame size, duration and file size for an output', () => {
     const { project } = footageProject()
     const spec = newOutput(project, 'video', { aspect: '9:16', resolution: '720p' })
