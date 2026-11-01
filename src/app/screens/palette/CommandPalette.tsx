@@ -141,9 +141,9 @@ export function CommandPalette() {
     close()
     fn()
   }
-  const openPage = (next: PageState) => {
+  const openPage = (next: PageState, initialSearch = '') => {
     setPages((list) => [...list, next])
-    setSearch('')
+    setSearch(initialSearch)
     setMoved(true)
   }
   const back = () => {
@@ -153,7 +153,7 @@ export function CommandPalette() {
     setMoved(true)
   }
   const pickAction = (a: Action) => {
-    if (a.page) openPage({ id: a.page })
+    if (a.page) openPage({ id: a.page }, a.pageSearch?.(search))
     else if (a.run) run(a.run)
   }
   const pickItem = (item: PageItem) => {

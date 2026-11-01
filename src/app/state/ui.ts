@@ -34,6 +34,7 @@ export type PageId =
   | 'previewZoom'
   | 'keyframe'
   | 'react'
+  | 'sections'
 export type AssistView =
   | 'home'
   | 'director'
