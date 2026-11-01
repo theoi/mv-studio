@@ -16,15 +16,17 @@ import {
   transformersFiles,
   transformersRevisions,
   VISION_MODELS,
+  visionDtype,
+  type VisionDtype,
   type VisionModel,
 } from '../runtime/models.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../../shared/worker.ts'
 import { detectCapabilities } from '../../shared/capabilities.ts'
-import { fetchModelFile, modelCache, preferredDevice, type ModelDescriptor } from '../../shared/models.ts'
+import { fetchModelFile, modelCache, type ModelDescriptor } from '../../shared/models.ts'
 import type { Mask } from '../types.ts'
 
 type T = typeof Transformers
-type Device = { device: 'webgpu' | 'wasm'; dtype: 'fp32' | 'fp16' | 'q8' }
+type Device = { device: 'webgpu' | 'wasm'; dtype: VisionDtype }
 
 const WASM: Device = { device: 'wasm', dtype: 'q8' }
 let gpuDevice: Promise<Device | null> | null = null
@@ -33,11 +35,10 @@ for (const [repo, revision] of transformersRevisions()) pinRevision(repo, revisi
 registerModelFiles(transformersFiles())
 
 function webgpuDevice(): Promise<Device | null> {
-  gpuDevice ??= detectCapabilities().then((caps): Device | null =>
-    preferredDevice(caps) === 'webgpu'
-      ? { device: 'webgpu', dtype: caps.webgpu.shaderF16 ? 'fp16' : 'fp32' }
-      : null,
-  )
+  gpuDevice ??= detectCapabilities().then((caps): Device | null => {
+    const dtype = visionDtype(caps)
+    return dtype === 'q8' ? null : { device: 'webgpu', dtype }
+  })
   return gpuDevice
 }
 
@@ -59,7 +60,7 @@ async function load<M>(
 }
 
 /** The weights `load(key)` loads: the device's, or WASM's once WebGPU failed for it. */
-async function dtypeOf(key: string): Promise<Device['dtype']> {
+async function dtypeOf(key: string): Promise<VisionDtype> {
   return gpuFailed.has(key) ? WASM.dtype : ((await webgpuDevice())?.dtype ?? WASM.dtype)
 }
 
@@ -229,8 +230,11 @@ const api = {
       try {
         if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
         const Tx = await loadTransformers()
-        const m = await loadingModel('depth', ctx.progress, () =>
-          imageModel('depth', VISION_MODELS.depthAnythingSmall, 'auto', 'depth'),
+        const m = await loadingModel(
+          'depth',
+          ctx.progress,
+          () => imageModel('depth', VISION_MODELS.depthAnythingSmall, 'auto', 'depth'),
+          await dtypeOf('depth'),
         )
         // DPT resizes so the short side matches and keeps aspect (multiple of 14).
         setSize(m.processor, { height: input.shortSide, width: input.shortSide })
@@ -258,8 +262,11 @@ const api = {
       try {
         if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
         const Tx = await loadTransformers()
-        const m = await loadingModel('matte', ctx.progress, () =>
-          imageModel('modnet', VISION_MODELS.modnet, 'auto', 'matte'),
+        const m = await loadingModel(
+          'matte',
+          ctx.progress,
+          () => imageModel('modnet', VISION_MODELS.modnet, 'auto', 'matte'),
+          await dtypeOf('modnet'),
         )
         setSize(m.processor, { shortest_edge: input.shortSide })
         const inputs = await m.processor(rawImage(Tx, bitmap))
@@ -291,14 +298,18 @@ const api = {
         const Tx = await loadTransformers()
         const isClip = input.model === 'clipB32'
         const key = `${input.model}:vision`
-        const m = await loadingModel('tagger', ctx.progress, () =>
-          imageModel(
-            key,
-            EMBEDDING_MODELS[input.model],
-            isClip ? 'clipVision' : 'siglipVision',
-            'tagger',
-            () => fetchEmbeddingWeights(input.model, key),
-          ),
+        const m = await loadingModel(
+          'tagger',
+          ctx.progress,
+          () =>
+            imageModel(
+              key,
+              EMBEDDING_MODELS[input.model],
+              isClip ? 'clipVision' : 'siglipVision',
+              'tagger',
+              () => fetchEmbeddingWeights(input.model, key),
+            ),
+          await dtypeOf(key),
         )
         const inputs = await m.processor(input.bitmaps.map((b) => rawImage(Tx, b)))
         const out = (await m.model(inputs)) as Record<string, Transformers.Tensor>
@@ -321,7 +332,12 @@ const api = {
       try {
         if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
         if (!input.texts.length) return { dim: 0, data: new Float32Array(0) }
-        const m = await loadingModel('tagger', ctx.progress, () => textModel(input.model))
+        const m = await loadingModel(
+          'tagger',
+          ctx.progress,
+          () => textModel(input.model),
+          await dtypeOf(`${input.model}:text`),
+        )
         const isClip = input.model === 'clipB32'
         const tokens = m.tokenizer(
           input.texts,
