@@ -640,7 +640,14 @@ function cleanupPrevious(project: Project, ctx: Ctx, keep: ReadonlySet<Id>): Cle
     const roles = new Set(ours.map((c) => directorMeta(c)?.role))
     const onlyOurs = ours.length === clips.length
     const role = roles.size === 1 ? ([...roles][0] as DirectorTrackRole) : undefined
-    const row = Math.min(...ours.map((c) => directorMeta(c)?.titleRow ?? 0))
+    // A track can hold title cards of more than one row (one dragged or pasted onto another's): it takes the first
+    // of their rows still free.
+    const row =
+      role === 'title'
+        ? [...new Set(ours.map((c) => directorMeta(c)?.titleRow ?? 0))]
+            .sort((a, b) => a - b)
+            .find((r) => (r === 0 ? !reused.has('title') : !titleRows.has(r)))
+        : 0
     for (const c of ours) removedIds.add(c.id)
     if (onlyOurs && role && track.kind === 'visual' && !reused.has(role) && row === 0) {
       reused.set(role, track.id)
@@ -650,7 +657,7 @@ function cleanupPrevious(project: Project, ctx: Ctx, keep: ReadonlySet<Id>): Cle
       role === 'title' &&
       track.kind === 'visual' &&
       !keep.has(track.id) &&
-      !titleRows.has(row)
+      row !== undefined
     ) {
       titleRows.set(row, track.id)
       commands.push({ type: 'clip.remove', clipIds: ours.map((c) => c.id) })
@@ -813,6 +820,8 @@ function titleRows(
         next &&
         next.kind === 'visual' &&
         !next.locked &&
+        // An earlier row kept for a later row isn't free.
+        ![...earlier.values()].includes(next.id) &&
         next.name.startsWith(`${base} `) &&
         /^\d+$/.test(next.name.slice(base.length + 1)) &&
         clipsOnTrack(project, next.id).every((c) => cleanup.removedIds.has(c.id))

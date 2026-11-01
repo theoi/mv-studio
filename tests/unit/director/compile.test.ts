@@ -50,6 +50,12 @@ function renamedSong(p: Project, name: string): Project {
 
 const trackNamed = (p: Project, name: string) => p.tracks.find((t) => t.name === name)!
 
+/** The plan with a third title card shown with the title and artist, as a language model's plan can have. */
+function withLive(plan: EditPlan): EditPlan {
+  const artist = plan.texts.find((x) => x.text === 'Josh Woodward')!
+  return { ...plan, texts: [...plan.texts, { ...artist, id: `${artist.id}-live`, text: 'Live', start: 1.1 }] }
+}
+
 /** Each title track, top to bottom, with the text on it. */
 const titleRows = (p: Project) =>
   p.tracks
@@ -124,7 +130,8 @@ describe('compilePlan', () => {
       editor.dispatch(compilePlan(plan, project).commands)
       const p = editor.getProject()
       const artist = clips(p).find((c) => (c as TextClip).text === 'Josh Woodward')!
-      return { editor, p, artist, titles: trackNamed(p, 'Titles'), second: trackNamed(p, 'Titles 2') }
+      const title = clips(p).find((c) => (c as TextClip).text === 'Show Me')!
+      return { editor, p, artist, title, titles: trackNamed(p, 'Titles'), second: trackNamed(p, 'Titles 2') }
     }
 
     // The user deleted the artist: the emptied row takes the new one.
@@ -162,6 +169,20 @@ describe('compilePlan', () => {
       ['Titles 2', 'Josh Woodward'],
     ])
     expect(after.tracks.map((t) => t.id)).toEqual(d.p.tracks.map((t) => t.id))
+
+    // The user hid the artist's row and pasted a copy of the song's title onto it: it stays the artist's, hidden.
+    d = await drafted()
+    d.editor.dispatch([
+      { type: 'track.update', trackId: d.second.id, patch: { hidden: true } },
+      { type: 'clip.add', clip: { ...d.title, id: 'pasted-title', trackId: d.second.id, start: 10 } },
+    ])
+    after = await redraft(d.editor)
+    expect(titleRows(after)).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+    ])
+    expect(after.tracks.map((t) => t.id)).toEqual(d.p.tracks.map((t) => t.id))
+    expect(after.tracks.find((t) => t.id === d.second.id)?.hidden).toBe(true)
 
     // The user hid the artist's row: it stays hidden.
     d = await drafted()
@@ -229,11 +250,6 @@ describe('compilePlan', () => {
 
   it('gives each further title row back its own track on a redraft, by row', async () => {
     const { project, editor, plan } = await titledDraft()
-    // A language model's plan can show more than two title cards at once.
-    const withLive = (p: EditPlan): EditPlan => {
-      const artist = p.texts.find((x) => x.text === 'Josh Woodward')!
-      return { ...p, texts: [...p.texts, { ...artist, id: `${artist.id}-live`, text: 'Live', start: 1.1 }] }
-    }
     editor.dispatch(compilePlan(withLive(plan), project).commands)
     const p = editor.getProject()
     expect(titleRows(p)).toEqual([
@@ -255,6 +271,21 @@ describe('compilePlan', () => {
       ['Titles', 'Show Me'],
       ['Titles 4', 'Josh Woodward'],
       ['Titles 2', 'Mine'],
+      ['Titles 3', 'Live'],
+    ])
+  })
+
+  it('never gives a row kept for a later title card to an earlier one on a redraft', async () => {
+    const { project, editor, plan } = await titledDraft()
+    editor.dispatch(compilePlan(withLive(plan), project).commands)
+    // The user deleted the artist's track, so the third card's sits just below Titles.
+    editor.dispatch([{ type: 'track.remove', trackId: trackNamed(editor.getProject(), 'Titles 2').id }])
+    const deleted = editor.getProject()
+    const again = await planLocally(await buildPlannerInput(deleted, { kind: 'lyric', seed: 9 }))
+    editor.dispatch(compilePlan(withLive(again), deleted).commands)
+    expect(titleRows(editor.getProject())).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
       ['Titles 3', 'Live'],
     ])
   })
