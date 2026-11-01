@@ -107,7 +107,7 @@ export function createMaskRefinePass(gl: WebGL2RenderingContext): MaskRefinePass
   const program = link(gl, VERTEX, FRAGMENT)
   const vao = gl.createVertexArray()
   const maskTex = gl.createTexture()
-  if (!vao || !maskTex) throw new JobError('unsupported', 'Could not allocate WebGL resources.')
+  if (!vao || !maskTex) throw new JobError('unsupported', 'Couldn’t allocate WebGL resources.')
   gl.bindTexture(gl.TEXTURE_2D, maskTex)
   for (const [k, v] of [
     [gl.TEXTURE_MIN_FILTER, gl.NEAREST],
@@ -163,13 +163,13 @@ export function createMaskRefinePass(gl: WebGL2RenderingContext): MaskRefinePass
 
 function link(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
   const program = gl.createProgram()
-  if (!program) throw new JobError('unsupported', 'Could not create a WebGL program.')
+  if (!program) throw new JobError('unsupported', 'Couldn’t create a WebGL program.')
   for (const [type, src] of [
     [gl.VERTEX_SHADER, vs],
     [gl.FRAGMENT_SHADER, fs],
   ] as const) {
     const shader = gl.createShader(type)
-    if (!shader) throw new JobError('unsupported', 'Could not create a WebGL shader.')
+    if (!shader) throw new JobError('unsupported', 'Couldn’t create a WebGL shader.')
     gl.shaderSource(shader, src)
     gl.compileShader(shader)
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))

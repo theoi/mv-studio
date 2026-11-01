@@ -112,7 +112,7 @@ export async function createVideoElementSource(
   video.src = url
   await new Promise<void>((resolve, reject) => {
     video.addEventListener('loadeddata', () => resolve(), { once: true })
-    video.addEventListener('error', () => reject(new JobError('decode', `Could not load video ${mediaId}`)), {
+    video.addEventListener('error', () => reject(new JobError('decode', `Couldn’t load video ${mediaId}`)), {
       once: true,
     })
   })
@@ -127,7 +127,7 @@ export async function createVideoElementSource(
       }
       const fail = () => {
         video.removeEventListener('seeked', done)
-        reject(new JobError('decode', `Could not seek video ${mediaId} to ${t.toFixed(3)} s`))
+        reject(new JobError('decode', `Couldn’t seek video ${mediaId} to ${t.toFixed(3)} s`))
       }
       video.addEventListener('seeked', done, { once: true })
       video.addEventListener('error', fail, { once: true })

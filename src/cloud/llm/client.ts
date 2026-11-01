@@ -306,7 +306,7 @@ export class OpenAICompatibleClient {
     throw (
       lastUnsupported ??
       this.error('unsupported', {
-        title: "This model can't give structured answers",
+        title: 'This model can’t give structured answers',
         message: 'The model did not return usable JSON.',
         steps: ['Pick a larger or newer model and try again.'],
       })
@@ -349,7 +349,7 @@ export class OpenAICompatibleClient {
       if (calls.length === 0 && text) calls = parseCallsFromText(text, request.tools, choice)
       if (calls.length === 0 && choice !== 'auto') {
         throw this.error('unsupported', {
-          title: "This model didn't call a tool",
+          title: 'This model didn’t call a tool',
           message: 'Tool calling returned no call.',
         })
       }
@@ -374,7 +374,7 @@ export class OpenAICompatibleClient {
         return finish([], stripReasoning(content).trim(), mode, response)
       throw this.error(mode === 'prompt' ? 'bad-response' : 'unsupported', {
         title: 'The model did not answer in JSON',
-        message: 'The reply could not be read as JSON.',
+        message: 'The reply couldn’t be read as JSON.',
         steps: ['Try again, or pick a larger model.'],
       })
     }
@@ -419,7 +419,7 @@ export class OpenAICompatibleClient {
       if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('scheme')
     } catch {
       throw this.error('invalid-request', {
-        title: "That base URL isn't valid",
+        title: 'That base URL isn’t valid',
         message:
           'Enter the endpoint address, for example https://api.openai.com/v1 or http://localhost:11434/v1.',
         steps: ['Check the base URL in Settings › AI and cloud.'],
@@ -479,7 +479,7 @@ export class OpenAICompatibleClient {
     if (!response.ok) throw this.httpError(response.status, json, text)
     if (json === undefined) {
       throw this.error('bad-response', {
-        title: "The endpoint didn't answer like an OpenAI-compatible API",
+        title: 'The endpoint didn’t answer like an OpenAI-compatible API',
         message: 'The reply was not JSON. The base URL may point to a web page instead of the API.',
         steps: ['Check that the base URL ends with /v1.'],
       })
@@ -497,15 +497,15 @@ export class OpenAICompatibleClient {
       const runner = guessLocalRunner(this.baseUrl, this.endpoint.preset)
       const name = runner === 'ollama' ? 'Ollama' : runner === 'lmstudio' ? 'LM Studio' : 'the local server'
       return this.error('local-server', {
-        title: `Couldn't connect to ${name} on this computer`,
-        message: `No answer from ${this.baseUrl}. Either ${name} isn't running, or it doesn't allow requests from this site yet.`,
+        title: `Couldn’t connect to ${name} on this computer`,
+        message: `No answer from ${this.baseUrl}. Either ${name} isn’t running, or it doesn’t allow requests from this site yet.`,
         steps: localSetupSteps(runner, this.origin),
         cause,
       })
     }
     if (browserOffline()) {
       return this.error('network', {
-        title: "You're offline",
+        title: 'You’re offline',
         message: 'LLM features need a connection to your endpoint.',
         steps: ['Reconnect, then try again.'],
         cause,
@@ -530,7 +530,7 @@ export class OpenAICompatibleClient {
     // A hosted provider's base URL comes with its preset, and its CORS is not the user's to change.
     const hosted = this.endpoint.preset === 'openai' || this.endpoint.preset === 'openrouter'
     return this.error('network', {
-      title: `Couldn't reach ${this.providerName()}`,
+      title: `Couldn’t reach ${this.providerName()}`,
       message: `The request to ${base.host} did not get through.`,
       steps: hosted
         ? ['Check your internet connection.', 'Allow the endpoint in any ad or content blocker.']
@@ -626,7 +626,7 @@ export class OpenAICompatibleClient {
         const model = this.endpoint.model ?? ''
         return this.error('model-not-found', {
           status,
-          title: `Model "${model}" isn't available`,
+          title: `Model “${model}” isn’t available`,
           message,
           steps:
             guessLocalRunner(this.baseUrl, this.endpoint.preset) === 'ollama'
@@ -645,14 +645,14 @@ export class OpenAICompatibleClient {
       if (/tool|function/i.test(message)) {
         return this.error('unsupported', {
           status,
-          title: "This model doesn't support tool calling",
+          title: 'This model doesn’t support tool calling',
           message,
         })
       }
       if (/response_format|json_schema|json_object|json mode|structured output/i.test(message)) {
         return this.error('unsupported', {
           status,
-          title: "This endpoint doesn't support JSON mode",
+          title: 'This endpoint doesn’t support JSON mode',
           message,
         })
       }

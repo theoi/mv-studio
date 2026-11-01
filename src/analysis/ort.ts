@@ -53,7 +53,7 @@ export function beatThisModel(
         graphOptimizationLevel: 'all',
       })
     } catch (error) {
-      throw new JobError('model-load', `Could not start ${theModel(MODEL_TITLES.beats)}`, { cause: error })
+      throw new JobError('model-load', `Couldn’t start ${theModel(MODEL_TITLES.beats)}`, { cause: error })
     }
     const input = s.inputNames[0]
     return {

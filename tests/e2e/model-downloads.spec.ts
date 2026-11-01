@@ -19,7 +19,7 @@ test('a first 3D camera move shows the depth estimator downloading, and names it
   await context.route('https://huggingface.co/**', (route) => route.abort())
   await assist.getByRole('button', { name: /^Apply to \d+ images$/ }).click()
   const failure = assist.getByRole('alert')
-  await expect(failure).toContainText('Could not download the depth estimator')
+  await expect(failure).toContainText('Couldn’t download the depth estimator')
   await expect(failure).not.toContainText('https://')
   await context.unroute('https://huggingface.co/**')
 
@@ -86,7 +86,7 @@ test('a 3D camera move names the depth estimator it could not download when Hugg
   await context.route('https://huggingface.co/**', (route) => route.fulfill({ status: 503, body: '' }))
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await assist.getByRole('button', { name: /^Apply to \d+ images$/ }).click()
-  await expect(assist.getByRole('alert')).toContainText('Could not download the depth estimator')
+  await expect(assist.getByRole('alert')).toContainText('Couldn’t download the depth estimator')
 })
 
 test('the footage tagger downloads its image and text weights as one line the first time either is used', async ({
@@ -146,7 +146,7 @@ test('putting text behind the subject names the person finder when its models ca
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   await inspector.getByRole('button', { name: 'Layering' }).click()
   await inspector.getByRole('switch', { name: 'Put text and effects behind the subject' }).click()
-  await expect(inspector.getByText('Could not download the person finder').first()).toBeVisible({
+  await expect(inspector.getByText('Couldn’t download the person finder').first()).toBeVisible({
     timeout: 60_000,
   })
   await expect(inspector.getByText(/https?:\/\//)).toHaveCount(0)
