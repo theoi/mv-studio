@@ -47,7 +47,7 @@ export function openImport(what: 'media' | 'song' = 'media'): void {
   fileInput.click()
 }
 
-function baseName(name: string): string {
+export function baseName(name: string): string {
   return name.replace(/\.[^.]+$/, '')
 }
 
@@ -283,9 +283,12 @@ function placeAll(
   return placed
 }
 
+/** Rounding a placement's end (start + duration) can put it a hair past a neighbor that it only touches. */
+const TOUCH = 1e-6
+
 function busyAt(project: Project, trackId: string, start: number, end: number): boolean {
   return Object.values(project.clips).some(
-    (c) => c.trackId === trackId && c.start < end && c.start + c.duration > start,
+    (c) => c.trackId === trackId && c.start < end - TOUCH && c.start + c.duration > start + TOUCH,
   )
 }
 

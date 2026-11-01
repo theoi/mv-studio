@@ -123,7 +123,8 @@ test('a Library › Media card replaces the selected clip from its menu, or when
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 8 })
   // The drag starts during the first move, so the pointer moves once more over the clip.
   await page.mouse.move(box.x + box.width / 2 - 1, box.y + box.height / 2)
-  await expect(page.getByText(/^Hold (Alt|⌥) to replace$/)).toBeVisible()
+  // Night city goes on a new track there, since Overlay has Spectrum bars.
+  await expect(page.getByText(/^Goes on a new track · Hold (Alt|⌥) to replace$/)).toBeVisible()
   await expect(page.getByText('Replace', { exact: true })).toBeHidden()
   await page.keyboard.down('Alt')
   await page.mouse.move(box.x + box.width / 2 + 2, box.y + box.height / 2, { steps: 2 })

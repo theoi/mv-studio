@@ -204,8 +204,26 @@ import styles from './Timeline.module.css'
 const HEADER_W = 148
 const RULER_H = 24
 const SONG_H = 30
-/** About the width of the "Replace" label on a drop's ghost: on a narrower clip it sits above the clip instead. */
-const REPLACE_LABEL_W = 64
+const DROP_LABELS = {
+  replace: ['Replace', 64],
+  trimmed: ['Trimmed to fit', 96],
+} as const
+
+/**
+ * What a media drop's ghost says it does (a drop onto another or a new track says so in the note at the pointer
+ * instead). On a ghost narrower than the label (its width is about the label's), the label sits above the ghost, so it
+ * covers no neighbor.
+ */
+function DropLabel({ hint, pps }: { hint: Exclude<MediaDropHint, { locked: true }>; pps: number }) {
+  const key = (['replace', 'trimmed'] as const).find((k) => k in hint)
+  if (!key) return null
+  const [text, width] = DROP_LABELS[key]
+  return (
+    <span className={styles.dropLabel} data-above={(hint.end - hint.start) * pps < width || undefined}>
+      {text}
+    </span>
+  )
+}
 
 type LaneKind = 'video' | 'overlay' | 'lyrics' | 'look' | 'audio'
 
@@ -2801,28 +2819,25 @@ export function Timeline() {
                                 : undefined,
                           }}
                         >
-                          {'newTrack' in dropHint && <span className={styles.dropLabel}>New track</span>}
-                          {'replace' in dropHint && (
-                            <span
-                              className={styles.dropLabel}
-                              data-above={
-                                (dropHint.end - dropHint.start) * pps < REPLACE_LABEL_W || undefined
-                              }
-                            >
-                              Replace
-                            </span>
-                          )}
+                          <DropLabel hint={dropHint} pps={pps} />
                         </div>
                       ))}
-                    {dropHint && 'canReplace' in dropHint && dropHint.canReplace?.trackId === track.id && (
-                      <div
-                        className={styles.dropNote}
-                        style={{ left: dropHint.canReplace.at * pps }}
-                        data-beside
-                      >
-                        Hold {keyName('Alt')} to replace
-                      </div>
-                    )}
+                    {dropHint &&
+                      'start' in dropHint &&
+                      (dropHint.canReplace ?? dropHint.elsewhere)?.trackId === track.id && (
+                        <div
+                          className={styles.dropNote}
+                          style={{ left: (dropHint.canReplace?.at ?? dropHint.elsewhere?.at ?? 0) * pps }}
+                          data-beside
+                        >
+                          {[
+                            dropHint.elsewhere && `Goes on ${dropHint.elsewhere.name}`,
+                            dropHint.canReplace && `Hold ${keyName('Alt')} to replace`,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </div>
+                      )}
                     {kind === 'lyrics' &&
                       !empty &&
                       !lines.length &&
