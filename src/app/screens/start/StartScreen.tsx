@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import {
   ArrowRight,
   Clock,
@@ -287,15 +287,26 @@ function RecentProjects() {
     </section>
   )
 }
-/** The project file being opened, with how far its media has got into this browser's storage. */
-function OpeningFile() {
+/**
+ * The project file being opened, with how far its media has got into this browser’s storage. Cancel gives focus to
+ * `returnTo`, as the card goes away with it.
+ */
+function OpeningFile({ returnTo }: { returnTo: RefObject<HTMLButtonElement | null> }) {
   const job = runningJobs(useJobs()).find((j) => j.kind === JOB_KINDS.projectImport)
   if (!job) return null
   return (
     <section className={styles.opening} aria-label={job.title}>
       <div className={styles.openingHeader}>
-        <h2 className={styles.openingTitle}>{job.title}</h2>
-        <CancelButton job={job} inline />
+        <h2
+          className={styles.openingTitle}
+          onPointerEnter={(e) => {
+            const el = e.currentTarget
+            el.title = el.scrollWidth > el.clientWidth ? job.title : ''
+          }}
+        >
+          {job.title}
+        </h2>
+        <CancelButton job={job} inline onCancel={() => returnTo.current?.focus()} />
       </div>
       <RunCard
         job={job}
@@ -308,13 +319,22 @@ function OpeningFile() {
 }
 
 export function StartScreen() {
+  // Starting another project while a project file opens would be replaced by the file's project when it is in.
   const opening = useIsRunning(JOB_KINDS.projectImport)
+  const openButton = useRef<HTMLButtonElement>(null)
   return (
     <div className={styles.page}>
       <header className={styles.header}>
         <Logo />
         <div className={styles.headerActions}>
-          <Button variant="ghost" icon={<FileUp />} onClick={openProjectFile} disabled={opening}>
+          {/* aria-disabled keeps it focusable, so Cancel on the opening card can give it focus right away. */}
+          <Button
+            ref={openButton}
+            variant="ghost"
+            icon={<FileUp />}
+            onClick={openProjectFile}
+            aria-disabled={opening || undefined}
+          >
             Open project file
           </Button>
           <IconButton
@@ -328,7 +348,7 @@ export function StartScreen() {
       </header>
 
       <main className={styles.main}>
-        <OpeningFile />
+        <OpeningFile returnTo={openButton} />
         <div className={styles.hero}>
           <h1 className={styles.title}>What are you making?</h1>
           <p className={styles.subtitle}>Pick a starting point. You can mix everything later.</p>
@@ -336,7 +356,7 @@ export function StartScreen() {
 
         <div className={styles.kinds}>
           {kinds.map((k) => (
-            <button key={k.id} className={styles.kind} onClick={() => startSetup(k.id)}>
+            <button key={k.id} className={styles.kind} onClick={() => startSetup(k.id)} disabled={opening}>
               <KindArt kind={k.id} />
               <div className={styles.kindText}>
                 <span className={styles.kindTitle}>{k.title}</span>
@@ -346,7 +366,7 @@ export function StartScreen() {
           ))}
         </div>
 
-        <button className={styles.blank} onClick={() => void openBlankProject()}>
+        <button className={styles.blank} onClick={() => void openBlankProject()} disabled={opening}>
           <span className={styles.blankIcon}>
             <Plus />
           </span>

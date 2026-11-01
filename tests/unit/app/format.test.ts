@@ -4,6 +4,7 @@ import {
   aboutMinutes,
   distinctName,
   editedAgo,
+  editedTimes,
   formatParam,
   formatTime,
   formatTimecode,
@@ -30,6 +31,34 @@ it('says "yesterday", then the date, with the year only when it is not this year
   expect(editedAgo(at(2025, 11, 2, 12, 0), now)).toBe('Edited Dec 2, 2025')
 })
 
+it('tells two versions apart by clock time when "Edited …" reads the same for both', () => {
+  const later = new Date(2026, 9, 31, 15, 0, 30).getTime()
+  const iso = (...parts: number[]) =>
+    new Date(...(parts as [number, number, number, number, number, number])).toISOString()
+  // Different wording stays as it is, and so does one version compared with itself.
+  expect(editedTimes(iso(2026, 9, 31, 14, 50, 0), iso(2026, 9, 31, 15, 0, 0), later)).toEqual([
+    'Edited 10 minutes ago',
+    'Edited just now',
+  ])
+  expect(editedTimes(iso(2026, 9, 31, 15, 0, 10), iso(2026, 9, 31, 15, 0, 10), later)).toEqual([
+    'Edited just now',
+    'Edited just now',
+  ])
+  // Both "just now": the minutes, then the seconds when the minute matches.
+  expect(editedTimes(iso(2026, 9, 31, 15, 0, 10), iso(2026, 9, 31, 14, 59, 50), later)).toEqual([
+    'Edited 3:00 PM',
+    'Edited 2:59 PM',
+  ])
+  expect(editedTimes(iso(2026, 9, 31, 15, 0, 20), iso(2026, 9, 31, 15, 0, 5), later)).toEqual([
+    'Edited 3:00:20 PM',
+    'Edited 3:00:05 PM',
+  ])
+  // Both "Edited Oct 24": the date with the time.
+  expect(editedTimes(iso(2026, 9, 24, 9, 15, 0), iso(2026, 9, 24, 0, 40, 0), later)).toEqual([
+    'Edited Oct 24, 9:15 AM',
+    'Edited Oct 24, 12:40 AM',
+  ])
+})
 it('shows a setting’s value with its unit, as a percentage for amounts and as a multiplier for factors', () => {
   const number = (o: { min: number; max: number; step?: number; unit?: string }) =>
     ({ key: 'k', label: 'K', type: 'number', default: o.min, ...o }) as const

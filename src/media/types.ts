@@ -31,5 +31,5 @@ export interface ProjectStore {
   remove(id: Id): Promise<void>
   /** Bundles the project JSON and its media into one portable file. */
   exportPortable(project: Project, ctx?: JobContext): Promise<Blob>
-  importPortable(file: File, ctx?: JobContext): Promise<Project>
+  importPortable(file: File, ctx?: JobContext, name?: string): Promise<Project>
 }

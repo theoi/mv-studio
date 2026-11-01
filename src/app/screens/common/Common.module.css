@@ -160,3 +160,31 @@
 .reviewLink:focus-visible {
   outline-color: var(--accent-line);
 }
+
+.sameProject {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  color: var(--text-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.sameProjectVersions {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-4);
+}
+
+.sameProjectVersions > div {
+  display: contents;
+}
+
+.sameProjectVersions dt {
+  color: var(--text-3);
+}
+
+.sameProjectVersions dd {
+  color: var(--text-1);
+}

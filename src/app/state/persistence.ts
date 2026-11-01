@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { OpfsMediaStore, mediaStore } from '../../media/mediaStore.ts'
-import { IdbProjectStore, PORTABLE_EXTENSION } from '../../media/projectStore.ts'
+import { IdbProjectStore, PORTABLE_EXTENSION, readPortable } from '../../media/projectStore.ts'
 import {
   newId,
   projectDuration,
@@ -60,6 +60,8 @@ interface PersistenceState {
   recents: RecentProject[] | null
   /** The project a link or the last visit points to is loading, so the editor shows nothing else meanwhile. */
   restoring: boolean
+  /** A project file whose project is already here, while the app asks what to open (`importProjectFile`). */
+  sameProject: SameProject | null
 }
 
 export const usePersistence = create<PersistenceState>(() => ({
@@ -67,6 +69,7 @@ export const usePersistence = create<PersistenceState>(() => ({
   tracked: false,
   recents: null,
   restoring: false,
+  sameProject: null,
 }))
 
 const LAST_KEY = 'mv-studio.last-project'
@@ -440,15 +443,22 @@ export async function renameProject(id: Id, name: string): Promise<void> {
   }
 }
 
+/**
+ * A copy's name, numbered like projects of one song from (2): a copy of "Neon Skyline (2)" is the next free
+ * "Neon Skyline (n)", never one of the `taken` names.
+ */
+function copyName(name: string, taken: Iterable<string>): string {
+  // " (2)" is a copy's number, " (2019)" part of the name.
+  const base = name.replace(/ \(\d{1,3}\)$/, '')
+  return distinctName(base, [...taken, name, base])
+}
+
 /** Keeps a copy of a project under a new id and returns it. */
 export async function duplicateProject(id: Id): Promise<Project> {
   const source = editor.getProject().id === id ? editor.getProject() : await store.load(id)
   const now = new Date().toISOString()
-  // Numbered like projects of one song, from (2): a copy of "Neon Skyline (2)" is the next free "Neon Skyline (n)",
-  // never a name a kept project or the open one (kept or not) has.
-  // " (2)" is a copy's number, " (2019)" part of the name.
-  const base = source.name.replace(/ \(\d{1,3}\)$/, '')
-  const name = distinctName(base, [...storedNames.values(), source.name, editor.getProject().name, base])
+  // Never a name a kept project or the open one (kept or not) has.
+  const name = copyName(source.name, [...storedNames.values(), editor.getProject().name])
   const copy = { ...source, id: newId(), name, createdAt: now, updatedAt: now }
   await writeProject(copy)
   return copy
@@ -511,14 +521,85 @@ export function downloadProjectFile(id?: Id): void {
   )
 }
 
-/** Opens a project file: its media goes into browser storage and the project opens in the editor. */
+/** A project file whose project is already kept in this browser, while the app asks what to open. */
+export interface SameProject {
+  /** The kept project's name. */
+  name: string
+  fileName: string
+  /** The name the file's version opens under as a copy. */
+  copyName: string
+  /** When the kept project and the file's version were last edited (ISO). */
+  keptAt: string
+  fileAt: string
+}
+
+export type SameProjectChoice = 'open' | 'copy' | null
+
+let answerSameProject: ((choice: SameProjectChoice) => void) | null = null
+
+/** Answers what to do with a project file whose project is here: open the kept one, keep a copy, or nothing (null). */
+export function chooseSameProject(choice: SameProjectChoice): void {
+  const answer = answerSameProject
+  answerSameProject = null
+  usePersistence.setState({ sameProject: null })
+  answer?.(choice)
+}
+
+function askSameProject(question: SameProject): Promise<SameProjectChoice> {
+  chooseSameProject(null)
+  return new Promise((resolve) => {
+    answerSameProject = resolve
+    usePersistence.setState({ sameProject: question })
+  })
+}
+
+/**
+ * Opens a project file: its media goes into browser storage and the project opens in the editor. When the file's
+ * project is already kept here, asks first whether to open that one or to keep the file's version as a copy.
+ */
 export async function importProjectFile(file: File): Promise<void> {
   // Two opens at once could restore the same media, and cancelling one would delete files the other's project uses.
   if (isRunning(JOB_KINDS.projectImport)) return
+  let incoming: Project
+  try {
+    incoming = (await readPortable(file)).project
+  } catch (error) {
+    toast(JobError.from(error).message)
+    return
+  }
+  const list = await store.list().catch(() => null)
+  if (!list) {
+    // Without the kept projects there is no telling whether this one is here, and opening it could make a copy unasked.
+    toast(
+      `Couldn’t open ${file.name}: the projects kept in this browser can’t be read. Reload the page and try again.`,
+    )
+    return
+  }
+  // Like a new project or a duplicate, it never opens under a kept project's name: "Portable (2)".
+  const taken = list.map((s) => s.name)
+  const name = taken.includes(incoming.name) ? copyName(incoming.name, taken) : incoming.name
+  const kept = list.find((s) => s.id === incoming.id)
+  if (kept) {
+    const choice = await askSameProject({
+      name: kept.name,
+      fileName: file.name,
+      copyName: name,
+      keptAt: kept.updatedAt,
+      fileAt: incoming.updatedAt,
+    })
+    if (choice === null) return
+    if (choice === 'open') {
+      // Reopening the project being edited would reload it and lose its undo history and selection.
+      if (editor.getProject().id !== kept.id || get().screen !== 'editor') await openProject(kept.id)
+      else toast(`“${kept.name}” is already open`)
+      return
+    }
+    if (isRunning(JOB_KINDS.projectImport)) return
+  }
   const handle = jobs.run({
     kind: JOB_KINDS.projectImport,
     title: `Opening ${file.name}`,
-    run: (ctx) => store.importPortable(file, ctx),
+    run: (ctx) => store.importPortable(file, ctx, name),
   })
   try {
     const project = await handle.promise
