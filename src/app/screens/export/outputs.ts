@@ -19,6 +19,7 @@ import { readSubjectTrack } from '../../../vision/analysisData.ts'
 import { formatTime } from '../../format.ts'
 import {
   downloadFile,
+  exportResolution,
   markExportRunning,
   showExport,
   useExports,
@@ -205,7 +206,7 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
       frames: p.frames,
     })),
   )
-  markExportRunning(Math.max(...planned.map((p) => p.settings.height)), handle.promise)
+  markExportRunning(exportResolution(planned.map((p) => p.settings)), handle.promise)
   handle.promise.then(
     (results) => {
       toast(
