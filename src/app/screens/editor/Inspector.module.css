@@ -67,6 +67,20 @@
   text-overflow: ellipsis;
 }
 
+/* Breaks only at the spaces between parts (MetaLine) */
+.metaParts {
+  white-space: normal;
+}
+
+.metaPart {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
 .value {
   width: 36px;
   flex: none;

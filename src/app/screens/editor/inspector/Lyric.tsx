@@ -5,7 +5,7 @@ import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
-import { aboutMinutes, formatBytes, formatTime, plural } from '../../../format.ts'
+import { aboutMinutes, formatBytes, formatSpan, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
 import {
   isUncertain,
@@ -350,7 +350,12 @@ export function LyricInspector({ id }: { id: string }) {
       <Header
         icon={<Mic2 />}
         title="Lyric line"
-        meta={`${sec ? sectionName(sec) : 'Lyrics'} · ${formatTime(line.start ?? 0, true)} – ${formatTime(line.end ?? 0, true)}`}
+        meta={[
+          sec ? sectionName(sec) : 'Lyrics',
+          line.start !== undefined && line.end !== undefined && formatSpan(line.start, line.end - line.start),
+        ]
+          .filter(Boolean)
+          .join(' · ')}
       />
       <WordsSection line={line} />
       <LyricStyleSections clip={clip} />

@@ -3,12 +3,12 @@ import type { AdjustmentClip, Project, VisualClip } from '../../../../model/inde
 import { currentLook, lookIdOf, lookRegistry, ORIGINAL_LOOK } from '../../../../plugins/looks.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { AnimateButtons, FieldRow, Section, Slider } from '../../../ds/Fields.tsx'
-import { formatTime } from '../../../format.ts'
+import { formatSpan } from '../../../format.ts'
 import { revealLooks } from '../../../state/library.ts'
 import { isLookClip, useProject } from '../../../state/project.ts'
 import { useAnimatable } from './animatable.ts'
 import { ColorSection, EffectsSection } from './Effects.tsx'
-import { Header } from './parts.tsx'
+import { Header, MetaLine } from './parts.tsx'
 import styles from '../Inspector.module.css'
 
 /** Where the look layer applies: everywhere, or the part of the video it was trimmed to. */
@@ -17,9 +17,7 @@ function lookSpan(project: Project, clip: VisualClip): string {
   for (const c of Object.values(project.clips))
     if (c.id !== clip.id) end = Math.max(end, c.start + c.duration)
   const clipEnd = clip.start + clip.duration
-  return clip.start <= 0.05 && clipEnd >= end - 0.05
-    ? 'On every clip'
-    : `${formatTime(clip.start)} to ${formatTime(clipEnd)}`
+  return clip.start <= 0.05 && clipEnd >= end - 0.05 ? 'On every clip' : formatSpan(clip.start, clip.duration)
 }
 
 /** The look's intensity is the opacity of its layer, so it can be keyframed and react to the music. */
@@ -58,7 +56,7 @@ export function LookSection() {
           <div className={styles.lookName}>
             {layer ? (look?.name ?? layer.name ?? 'Custom look') : ORIGINAL_LOOK.name}
           </div>
-          <div className={styles.meta}>{layer ? lookSpan(project, layer) : 'No look'}</div>
+          <MetaLine text={layer ? lookSpan(project, layer) : 'No look'} />
         </div>
         <Button size="sm" variant="secondary" onClick={revealLooks}>
           Change

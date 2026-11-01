@@ -9,7 +9,7 @@ async function openVisualizer(page: Page) {
     window.location.hash = '#/editor?sel=clip:o-spec1&t=70.4'
   })
   await waitForPreview(page)
-  await expect(page.getByText('Visualizer · 1:04 – 1:36')).toBeVisible()
+  await expect(page.getByText('Visualizer · 1:04.00 – 1:36.00 · 32.0 s')).toBeVisible()
 }
 
 /** The sample's first spectrum clip as the inspector edits it. */
