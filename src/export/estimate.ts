@@ -4,15 +4,15 @@
  * lyrics with shadows, visualizers) takes about 0.6 s to render and encode, one of a clip and a photo about 0.05 s.
  * So no fixed frame rate fits. Instead the render worker draws and encodes a few short runs of the output's own frames
  * (probeExport): spread over its range, in the looks (what is drawn, see frameLooks) that take most of its frames, at
- * its busiest look, and for a loop in its crossfade. Each look's frames take the pace measured in it; a look no run
- * measured takes the slowest pace. After an export, its own pace is kept per project and frame size, shown at once
+ * its busiest look, in a transition, and for a loop in its crossfade. Each look's frames take the pace measured in it;
+ * a look no run measured takes the slowest pace. After an export, its own pace is kept per project and frame size, shown at once
  * the next time and never undercut by a trial.
  */
 import type { ExportProbe } from '../engine/encode.ts'
 import { probeExport } from '../engine/export.ts'
+import { planFrame, type LayerPlan } from '../engine/layout.ts'
 import type { MediaFileSource } from '../engine/types.ts'
-import { clipsAt } from '../model/queries.ts'
-import type { Id, Project, Seconds, VisualClip } from '../model/types.ts'
+import type { Id, Project, VisualClip } from '../model/types.ts'
 import type { PlannedOutput } from './outputs.ts'
 
 /** Frames in each trial run. Its first frame seeks the decoders (and in the first run warms up), so it is timed apart. */
@@ -33,12 +33,8 @@ const MIX_SECONDS_PER_SECOND = 0.02
 const SAME_PROJECT = 0.25
 /** Looks that get a trial run of their own, besides the busiest: those that take the most renders. */
 const LOOK_RUNS = 3
-
-/** The clips drawn at `time`. */
-function drawnAt(project: Project, time: Seconds): VisualClip[] {
-  const hidden = new Set(project.tracks.filter((t) => t.hidden).map((t) => t.id))
-  return clipsAt(project, time).filter((c): c is VisualClip => c.type !== 'audio' && !hidden.has(c.trackId))
-}
+/** A transition's own cost on top of its two clips: it draws both into textures and blends them in a shader. */
+const TRANSITION_BUSYNESS = 3
 
 function clipBusyness(clip: VisualClip): number {
   let score = 1 + 2 * clip.effects.filter((e) => e.enabled).length
@@ -50,16 +46,24 @@ function clipBusyness(clip: VisualClip): number {
   return score
 }
 
-/** How much is drawn at `time`, roughly: layers, effects, text and generators. */
-export function busyness(project: Project, time: Seconds): number {
-  return drawnAt(project, time).reduce((sum, clip) => sum + clipBusyness(clip), 0)
+function layerBusyness(layer: LayerPlan): number {
+  if (layer.kind !== 'transition') return clipBusyness(layer.clip)
+  const from = layer.from ? clipBusyness(layer.from) : 0
+  const to = layer.to ? clipBusyness(layer.to) : 0
+  return TRANSITION_BUSYNESS + from + to
 }
 
-/** What a clip draws, as far as it decides the cost: its kind, source, enabled effects, adjustments and matte. */
-function clipLook(clip: VisualClip): string {
+/**
+ * What a clip draws, as far as it decides the cost: its kind, source, enabled effects, adjustments and matte. Footage
+ * and photos count by their type and size: decoding and drawing one costs about what another of the same size does.
+ */
+function clipLook(clip: VisualClip, assets: Project['assets']): string {
+  const asset = clip.type === 'video' || clip.type === 'image' ? assets[clip.assetId] : undefined
   const source =
     clip.type === 'video' || clip.type === 'image'
-      ? clip.assetId
+      ? asset?.width && asset.height
+        ? `${asset.mimeType}@${asset.width}x${asset.height}`
+        : clip.assetId
       : clip.type === 'generator'
         ? clip.generatorId
         : clip.type === 'text' && clip.style.shadow
@@ -75,10 +79,20 @@ function clipLook(clip: VisualClip): string {
   ].join(':')
 }
 
+/** What a layer of the compositor's plan draws: a clip's look, or a transition's kind and both its clips' looks. */
+function layerLook(layer: LayerPlan, assets: Project['assets']): string {
+  if (layer.kind !== 'transition') return clipLook(layer.clip, assets)
+  const from = layer.from ? clipLook(layer.from, assets) : ''
+  const to = layer.to ? clipLook(layer.to, assets) : ''
+  return `transition:${layer.transition.kind}(${from} > ${to})`
+}
+
 /** Frames with the same look, by `frameLooks`. */
 interface Look {
   renders: number
   busyness: number
+  /** Whether its frames draw a transition. */
+  transition: boolean
   /** Its longest stretch of consecutive frames. */
   longest: { start: number; length: number }
 }
@@ -92,8 +106,9 @@ interface FrameLooks {
 const lookCache = new WeakMap<PlannedOutput, FrameLooks>()
 
 /**
- * Each frame's look: what its renders draw, as far as that decides what they cost. Frames of a look cost about the
- * same whatever the words of a lyric line or the frame of a clip, so one trial run stands for all of them.
+ * Each frame's look: what its renders draw (by the compositor's plan, so with solo tracks and transitions), as far as
+ * that decides what they cost. Frames of a look cost about the same whatever the words of a lyric line or the frame
+ * of a clip, so one trial run stands for all of them.
  */
 function frameLooks(planned: PlannedOutput): FrameLooks {
   const known = lookCache.get(planned)
@@ -105,13 +120,21 @@ function frameLooks(planned: PlannedOutput): FrameLooks {
   let stretch = 0
   for (let i = 0; i < frames; i++) {
     const times = frameTimes ? frameTimes(i / spec.fps).map((l) => l.time) : [range.start + i / spec.fps]
-    const drawn = times.map((t) => drawnAt(project, t))
-    const key = drawn.map((clips) => clips.map(clipLook).sort().join('|')).join(' + ')
+    const drawn = times.map((t) => planFrame(project, t))
+    const key = drawn
+      .map((layers) =>
+        layers
+          .map((l) => layerLook(l, project.assets))
+          .sort()
+          .join('|'),
+      )
+      .join(' + ')
     keys.push(key)
     let look = looks.get(key)
     if (!look) {
-      const busy = Math.max(...drawn.map((clips) => clips.reduce((sum, c) => sum + clipBusyness(c), 0)))
-      look = { renders: 0, busyness: busy, longest: { start: i, length: 0 } }
+      const busy = Math.max(...drawn.map((layers) => layers.reduce((sum, l) => sum + layerBusyness(l), 0)))
+      const transition = drawn.some((layers) => layers.some((l) => l.kind === 'transition'))
+      look = { renders: 0, busyness: busy, transition, longest: { start: i, length: 0 } }
       looks.set(key, look)
     }
     look.renders += times.length
@@ -136,8 +159,9 @@ function meanBusyness(planned: PlannedOutput): number {
 
 /**
  * The frames a trial renders, as runs of consecutive output frames in increasing order: near the start, middle and
- * end of the range, in the looks that take the most renders and the busiest look (each in the middle of its longest
- * stretch), and for a loop at its end, where frames blend two renders.
+ * end of the range, in the looks that take the most renders, the busiest look and the transition look with the
+ * longest stretch (each in the middle of its longest stretch), and for a loop at its end, where frames blend two
+ * renders. Transitions get a run of their own because they sit at the edges of clips, where no other run goes.
  */
 export function trialRuns(planned: PlannedOutput): number[][] {
   const { frames, range } = planned
@@ -149,6 +173,9 @@ export function trialRuns(planned: PlannedOutput): number[][] {
   const picked = new Set([...looks].sort((x, y) => y.renders - x.renders).slice(0, LOOK_RUNS))
   const busiest = looks.reduce((x, y) => (y.busyness > x.busyness ? y : x), looks[0]!)
   picked.add(busiest)
+  const transitions = looks.filter((l) => l.transition)
+  if (transitions.length)
+    picked.add(transitions.reduce((x, y) => (y.longest.length > x.longest.length ? y : x)))
   for (const { longest } of picked) starts.push(clamp(longest.start + Math.floor((longest.length - n) / 2)))
   if (planned.loop && planned.loop.crossfade > 0) starts.push(frames - n)
   const runs: number[][] = []
@@ -188,10 +215,14 @@ const median = (values: number[]) => {
 export function estimateFromTrial(planned: PlannedOutput, trial: ExportProbe): number {
   const { keys, looks } = frameLooks(planned)
   // A run's frames after its first are timed; they stand for their look.
+  const lookOf = (w: ExportProbe['windows'][number]) => keys[w.first + 1] ?? keys[w.first] ?? ''
+  const timed = trial.windows.filter((w) => w.renders > 0)
   const paces = new Map<string, number>()
-  for (const w of trial.windows) {
-    if (!(w.renders > 0)) continue
-    const key = keys[w.first + 1] ?? keys[w.first] ?? ''
+  for (const [i, w] of timed.entries()) {
+    const key = lookOf(w)
+    // The renderer is still warming up past the first run's first frame (its frames took about 1.4 times what a
+    // later run's took in the same look), so a look that a later run also timed takes that run's pace.
+    if (i === 0 && timed.slice(1).some((o) => lookOf(o) === key)) continue
     paces.set(key, Math.max(paces.get(key) ?? 0, w.ms / w.renders))
   }
   const slowest = Math.max(0, ...paces.values())

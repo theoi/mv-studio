@@ -148,12 +148,20 @@ export function sizeLabel(bytes: number): string {
     : `About ${Math.max(1, Math.round(bytes / 1e6))} MB`
 }
 
-/** The export time: rounded up, so the label is never under the estimate; null while it is being worked out. */
+/**
+ * The export time, null while it is being worked out. Rounded up, so the label is never under the estimate, and in
+ * coarser steps the longer it is: to the minute up to 10 min, then 5 min, then 10 min above an hour.
+ */
 export function timeLabel(seconds: number | null): string {
   if (seconds === null) return 'Working out the time…'
-  return seconds < 60
-    ? 'Under a minute on this device'
-    : `About ${Math.ceil(seconds / 60)} min on this device`
+  if (seconds < 60) return 'Under a minute on this device'
+  const minutes = seconds / 60
+  const step = minutes <= 10 ? 1 : minutes <= 60 ? 5 : 10
+  const rounded = Math.ceil(minutes / step) * step
+  if (rounded < 60) return `About ${rounded} min on this device`
+  const hours = Math.floor(rounded / 60)
+  const rest = rounded % 60
+  return `About ${hours} h${rest ? ` ${rest} min` : ''} on this device`
 }
 
 /** What a cancelled export says, however it was cancelled: files done before the cancel are kept. */

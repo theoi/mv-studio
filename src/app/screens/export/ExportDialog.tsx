@@ -768,7 +768,10 @@ function ExportDialogBody() {
                 <HardDrive /> {sizeLabel(bytes)}
               </span>
               <span>
-                <Clock /> {timeLabel(seconds)}
+                <Clock />{' '}
+                <span className={styles.time}>
+                  <span>{timeLabel(seconds)}</span>
+                </span>
               </span>
               <span>
                 <Lock /> Free · rendered in your browser

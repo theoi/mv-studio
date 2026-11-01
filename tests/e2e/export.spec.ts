@@ -361,6 +361,57 @@ test('the time estimated before an export is not under the time the export takes
   expect(r.estimate).toBeLessThan(4 * r.seconds)
 })
 
+test('transitions the trial runs at 10, 50 and 90% miss still raise the estimate as much as the export', async ({
+  page,
+}) => {
+  test.setTimeout(240_000)
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'clip1080.mp4')])
+  const r = await page.evaluate(async () => {
+    const { model, media, exporting } = window.mvStudio
+    const [video] = await Promise.all(
+      window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
+    )
+    // 8 s cut every 1.25 s. At 30 fps the runs at 10, 50 and 90% start at 0.8, 3.93 and 7.2 s: only the cut at
+    // 3.75 s has its transition under one of them, so the others get one.
+    const project = (transitions: boolean) => {
+      const p = model.createProject({ name: 'Cuts' })
+      p.assets[video.id] = video
+      const visual = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+      for (let i = 0; i * 1.25 < 8; i++) {
+        const start = i * 1.25
+        const clip = model.createVideoClip({
+          trackId: visual.id,
+          assetId: video.id,
+          start,
+          duration: Math.min(1.25, 8 - start),
+          sourceStart: (i % 3) * 0.5,
+        })
+        if (transitions && i > 0 && start !== 3.75)
+          clip.transitionIn = { kind: 'zoom-blur', duration: 0.6, easing: 'linear' }
+        p.clips[clip.id] = clip
+      }
+      return p
+    }
+    const measure = async (transitions: boolean) => {
+      const p = project(transitions)
+      const spec = exporting.newOutput(p, 'video', { resolution: '720p' })
+      const estimate = await exporting.estimateOutput(exporting.planOutput(p, spec), {
+        signal: new AbortController().signal,
+      })
+      const started = performance.now()
+      await exporting.startExport(p, [spec]).promise
+      return { estimate, seconds: (performance.now() - started) / 1000 }
+    }
+    return { cuts: await measure(false), transitions: await measure(true) }
+  })
+  console.log('transitions', JSON.stringify(r))
+  expect(r.transitions.estimate).toBeGreaterThanOrEqual(r.transitions.seconds)
+  expect(r.transitions.estimate - r.cuts.estimate).toBeGreaterThanOrEqual(
+    r.transitions.seconds - r.cuts.seconds,
+  )
+})
+
 test('cancelling an export stops it with a cancelled error and leaves no file behind', async ({ page }) => {
   await openHarness(page)
   const r = await page.evaluate(async () => {

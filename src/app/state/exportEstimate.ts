@@ -1,10 +1,11 @@
 /**
  * The export dialog's time estimate. Each checked output gets a trial in a render worker (src/export/estimate.ts),
  * one output after another, after the outputs have stayed the same for a moment. A trial is cancelled when the
- * outputs change, the dialog closes or an export starts, and none starts while an export runs; Export never waits for
- * one. Results are kept per project version and output, so reopening the dialog shows them at once.
+ * outputs or what the project draws change, the dialog closes or an export starts, and none starts while an export
+ * runs; Export never waits for one. Results are kept per drawn project and output, so reopening the dialog shows
+ * them at once, and while an output is timed again its last estimate stays on screen.
  */
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useEffectEvent, useSyncExternalStore } from 'react'
 import {
   estimateOutput,
   estimateRenderSeconds,
@@ -14,13 +15,14 @@ import {
 import type { Project } from '../../model/index.ts'
 import { JOB_KINDS, runningJobs, useJobs } from './jobs.ts'
 import { appMedia } from './media.ts'
-import { versionOf } from './stills.ts'
 
 /** Lets quick changes to the outputs settle, and the dialog's stills render first, before a trial starts. */
 const TRIAL_DELAY_MS = 400
 
 /** Trial estimates in seconds by `trialKey`; null where no trial could run (the render worker cannot draw). */
 const trials = new Map<string, number | null>()
+/** The latest trial estimate of each output by `outputKey`, whatever the project drew then. */
+const latest = new Map<string, number | null>()
 const listeners = new Set<() => void>()
 let version = 0
 
@@ -34,11 +36,34 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
-function trialKey(project: Project, planned: PlannedOutput): string {
+const drawnKeys = new WeakMap<Project, string>()
+
+/**
+ * What the project draws, as a short fingerprint. Analysis results are left out: background jobs write them (the
+ * export dialog itself starts footage analysis, one write per clip), and they change values a frame uses, not what
+ * it costs, so they don't restart a trial.
+ */
+function drawnKey(project: Project): string {
+  let key = drawnKeys.get(project)
+  if (key === undefined) {
+    const json = JSON.stringify({ ...project, analysis: undefined })
+    // FNV-1a.
+    let hash = 0x811c9dc5
+    for (let i = 0; i < json.length; i++) hash = Math.imul(hash ^ json.charCodeAt(i), 0x01000193)
+    key = `${json.length.toString(36)}.${(hash >>> 0).toString(36)}`
+    drawnKeys.set(project, key)
+  }
+  return key
+}
+
+function outputKey(planned: PlannedOutput): string {
   const { spec, settings, range } = planned
-  return [versionOf(project), spec.kind, spec.aspect, spec.reframe, spec.quality, spec.audio]
-    .concat([settings.width, settings.height, settings.fps, range.start, range.end])
-    .join('|')
+  const parts: unknown[] = [spec.kind, spec.aspect, spec.reframe, spec.quality, spec.audio]
+  return parts.concat([settings.width, settings.height, settings.fps, range.start, range.end]).join('|')
+}
+
+function trialKey(project: Project, planned: PlannedOutput): string {
+  return `${drawnKey(project)}|${outputKey(planned)}`
 }
 
 /** The trial estimates made so far, by output: for tests and for checking estimates against real exports. */
@@ -58,6 +83,7 @@ async function runTrials(project: Project, outputs: PlannedOutput[], signal: Abo
     }
     if (signal.aborted) return
     trials.set(key, seconds)
+    latest.set(outputKey(planned), seconds)
     changed()
   }
 }
@@ -70,21 +96,26 @@ async function runTrials(project: Project, outputs: PlannedOutput[], signal: Abo
 export function useExportEstimate(project: Project, outputs: PlannedOutput[], open: boolean): number | null {
   useSyncExternalStore(subscribe, () => version)
   const exporting = runningJobs(useJobs()).some((j) => j.kind === JOB_KINDS.export)
-  useEffect(() => {
-    if (!open || exporting) return
+  // A new project object or new plans of the same outputs restart nothing unless what they draw changed.
+  const keys = outputs.map((p) => trialKey(project, p)).join('\n')
+  const startTrials = useEffectEvent((signal: AbortSignal) => {
     const todo = outputs.filter((p) => !trials.has(trialKey(project, p)))
-    if (!todo.length) return
+    if (todo.length) void runTrials(project, todo, signal)
+  })
+  useEffect(() => {
+    if (!open || exporting || !keys) return
     const controller = new AbortController()
-    const timer = setTimeout(() => void runTrials(project, todo, controller.signal), TRIAL_DELAY_MS)
+    const timer = setTimeout(() => startTrials(controller.signal), TRIAL_DELAY_MS)
     return () => {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [project, outputs, open, exporting])
+  }, [keys, open, exporting])
   let total = 0
   for (const planned of outputs) {
     const remembered = rememberedEstimate(project.id, planned)
-    const trial = trials.get(trialKey(project, planned))
+    const key = trialKey(project, planned)
+    const trial = trials.has(key) ? trials.get(key) : latest.get(outputKey(planned))
     if (typeof trial === 'number') total += Math.max(trial, remembered ?? 0)
     else if (remembered !== null) total += remembered
     // Without a trial the export would run on the main thread too; only the rough frame-rate guess is left.

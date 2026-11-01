@@ -371,6 +371,21 @@
   white-space: nowrap;
 }
 
+/* As wide as the longest time label, so the items after it stay put while the time is worked out or changes. */
+.summary .time {
+  display: inline-grid;
+}
+
+.summary .time > span,
+.summary .time::after {
+  grid-area: 1 / 1;
+}
+
+.summary .time::after {
+  content: 'About 00 h 00 min on this device';
+  visibility: hidden;
+}
+
 .summary svg {
   width: 14px;
   height: 14px;

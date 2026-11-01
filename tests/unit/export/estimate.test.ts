@@ -53,6 +53,29 @@ function addBusy(
   return clip
 }
 
+/** Adds `count` 1920×1080 photos of 3 s each, one after another, on a track of their own. */
+function addPhotos(project: Project, count: number): void {
+  const track = createTrack('visual', 'Photos')
+  project.tracks.unshift(track)
+  for (let i = 0; i < count; i++) {
+    const asset: Asset = {
+      id: `photo${i}`,
+      kind: 'image',
+      name: `photo${i}.jpg`,
+      mimeType: 'image/jpeg',
+      byteSize: 1,
+      storageKey: `media/photo${i}.jpg`,
+      width: 1920,
+      height: 1080,
+      origin: { type: 'import' },
+      createdAt: new Date(0).toISOString(),
+    }
+    project.assets[asset.id] = asset
+    const clip = createImageClip({ trackId: track.id, assetId: asset.id, start: i * 3, duration: 3 })
+    project.clips[clip.id] = clip
+  }
+}
+
 const plan = (project: Project, patch: Partial<OutputSpec> = {}) =>
   planOutput(project, newOutput(project, 'video', patch), { measure })
 
@@ -156,25 +179,7 @@ describe('the estimate from a trial', () => {
 
   it('adds what a seek costs for every cut to another photo or clip', () => {
     const project = plain()
-    const track = createTrack('visual', 'Photos')
-    project.tracks.unshift(track)
-    for (let i = 0; i < 20; i++) {
-      const asset: Asset = {
-        id: `photo${i}`,
-        kind: 'image',
-        name: `photo${i}.jpg`,
-        mimeType: 'image/jpeg',
-        byteSize: 1,
-        storageKey: `media/photo${i}.jpg`,
-        width: 1920,
-        height: 1080,
-        origin: { type: 'import' },
-        createdAt: new Date(0).toISOString(),
-      }
-      project.assets[asset.id] = asset
-      const clip = createImageClip({ trackId: track.id, assetId: asset.id, start: i * 3, duration: 3 })
-      project.clips[clip.id] = clip
-    }
+    addPhotos(project, 20)
     const planned = plan(project)
     const withoutSeeks = estimateFromTrial(planned, trial([10, 10, 10, 10]))
     // 19 cuts after the first frame, at 200 ms each.
@@ -182,8 +187,49 @@ describe('the estimate from a trial', () => {
       19 * 0.2,
     )
   })
-})
 
+  it('counts photos of the same size as one look, so the runs in a few of them stand for all', () => {
+    const project = plain()
+    addPhotos(project, 20)
+    addBusy(project, 40, 3)
+    const planned = plan(project)
+    const firsts = trialRuns(planned).map((r) => r[0]!)
+    const busy = (frame: number) => frame >= 40 * 30 && frame < 43 * 30
+    const seconds = estimateFromTrial(
+      planned,
+      trial(
+        firsts.map((f) => (busy(f + 1) ? 50 : 10)),
+        0,
+        firsts,
+      ),
+    )
+    // With a look per photo, the photos no run landed in would take the busy part's pace.
+    expect(seconds).toBeLessThan((planned.frames * 50) / 1000 / 2)
+  })
+
+  it("leaves out the first run's warm-up where a later run timed the same look", () => {
+    const planned = plan(plain())
+    const firsts = trialRuns(planned).map((r) => r[0]!)
+    expect(firsts.length).toBeGreaterThan(1)
+    const warm = estimateFromTrial(
+      planned,
+      trial(
+        firsts.map(() => 10),
+        0,
+        firsts,
+      ),
+    )
+    const cold = estimateFromTrial(
+      planned,
+      trial(
+        firsts.map((_, i) => (i === 0 ? 14 : 10)),
+        0,
+        firsts,
+      ),
+    )
+    expect(cold).toBeCloseTo(warm, 1)
+  })
+})
 describe('the remembered pace of an earlier export', () => {
   it('is never under the time that export took, for the same project and frame size only', () => {
     const store = memoryStore()
@@ -205,5 +251,66 @@ describe('the remembered pace of an earlier export', () => {
     expect(rememberedEstimate(project.id, plan(trimmed), store)).not.toBeNull()
     addBusy(project, 30, 30)
     expect(rememberedEstimate(project.id, plan(project), store)).toBeNull()
+  })
+})
+
+describe('transitions', () => {
+  /** A 60 s project cut every 7 s, so no cut is near 10, 50 or 90% of it; with `transition` on every cut. */
+  function cuts(transition?: string): Project {
+    const project = createProject({ name: 'Cuts' })
+    for (let start = 0; start < 60; start += 7) {
+      const clip = createSolidClip({
+        trackId: project.tracks[0]!.id,
+        color: '#336699',
+        start,
+        duration: Math.min(7, 60 - start),
+      })
+      if (transition && start > 0) clip.transitionIn = { kind: transition, duration: 0.6, easing: 'linear' }
+      project.clips[clip.id] = clip
+    }
+    project.duration = 60
+    return project
+  }
+
+  const inTransition = (frame: number) => {
+    const t = frame / 30
+    return t >= 7 && t % 7 < 0.6
+  }
+
+  it('get a trial run of their own, though they sit away from the runs at 10, 50 and 90%', () => {
+    expect(trialRuns(plan(cuts())).some((run) => run.some(inTransition))).toBe(false)
+    expect(trialRuns(plan(cuts('zoom-blur'))).some((run) => inTransition(run[1]!))).toBe(true)
+  })
+
+  it('take the pace measured in them, so they raise the estimate', () => {
+    const plainCuts = plan(cuts())
+    const plainFirsts = trialRuns(plainCuts).map((r) => r[0]!)
+    const withTransitions = plan(cuts('zoom-blur'))
+    const firsts = trialRuns(withTransitions).map((r) => r[0]!)
+    const without = estimateFromTrial(
+      plainCuts,
+      trial(
+        plainFirsts.map(() => 10),
+        0,
+        plainFirsts,
+      ),
+    )
+    const slow = estimateFromTrial(
+      withTransitions,
+      trial(
+        firsts.map((f) => (inTransition(f + 1) ? 40 : 10)),
+        0,
+        firsts,
+      ),
+    )
+    // 8 transitions of 18 frames at 30 ms more each.
+    expect(slow - without).toBeGreaterThanOrEqual((8 * 18 * 30) / 1000)
+  })
+
+  it('count in the busyness a remembered pace is checked against', () => {
+    const store = memoryStore()
+    const project = cuts()
+    rememberPace(project.id, plan(project), 90, store)
+    expect(rememberedEstimate(project.id, plan(cuts('zoom-blur')), store)).toBeNull()
   })
 })
