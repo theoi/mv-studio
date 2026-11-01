@@ -2,7 +2,7 @@
 import { newId } from '../model/factory.ts'
 import type { Asset, AssetKind, AssetOrigin } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
-import { opfsFileExists, readOpfsFile, removeOpfsEntry, writeOpfsFile } from './opfs.ts'
+import { opfsDirectory, opfsFileExists, readOpfsFile, removeOpfsEntry, writeOpfsFile } from './opfs.ts'
 import { detectKind, probeMedia } from './probe.ts'
 import type { MediaStore } from './types.ts'
 
@@ -102,7 +102,18 @@ export class OpfsMediaStore implements MediaStore {
   }
 
   async remove(asset: Asset): Promise<void> {
-    await removeOpfsEntry(asset.storageKey.split('/').slice(0, 2).join('/')).catch(() => undefined)
+    await removeOpfsEntry(storageFolder(asset.storageKey)).catch(() => undefined)
+  }
+
+  /** Deletes stored media no project uses: see removeUnusedFolders(). */
+  async removeUnused(
+    inUse: ReadonlySet<string>,
+    options: { minAgeMs: number; now?: number },
+  ): Promise<{ folders: number; bytes: number }> {
+    const media = await opfsDirectory(MEDIA_ROOT)
+    if (!media) return { folders: 0, bytes: 0 }
+    // The DOM types give folder entries as plain FileSystemHandles, without file or folder methods.
+    return removeUnusedFolders(media as unknown as MediaFolder, inUse, options)
   }
 
   async usage(): Promise<{ usedBytes: number; quotaBytes: number; persisted: boolean }> {
@@ -120,3 +131,57 @@ export class OpfsMediaStore implements MediaStore {
 }
 
 export const mediaStore = new OpfsMediaStore()
+
+/** The OPFS folder a stored file is in: "media/<asset id>". */
+export function storageFolder(storageKey: string): string {
+  return storageKey.split('/').slice(0, 2).join('/')
+}
+
+/** What the sweep reads of an OPFS folder (the DOM types in use don't declare folder iteration). */
+export interface MediaFolder {
+  values(): AsyncIterable<
+    | { kind: 'file'; name: string; getFile(): Promise<{ size: number; lastModified: number }> }
+    | ({ kind: 'directory'; name: string } & MediaFolder)
+  >
+  removeEntry(name: string, options: { recursive: boolean }): Promise<void>
+}
+
+/**
+ * Deletes the asset folders in `media` that are not in `inUse` ("media/<id>") and whose files were all last written at
+ * least `minAgeMs` before `now`. A folder with no files, or with a folder in it, is left alone: a write may have only
+ * just made it, and the store never makes such a folder. Returns the folders deleted and the bytes they held.
+ */
+export async function removeUnusedFolders(
+  media: MediaFolder,
+  inUse: ReadonlySet<string>,
+  { minAgeMs, now = Date.now() }: { minAgeMs: number; now?: number },
+): Promise<{ folders: number; bytes: number }> {
+  const unused: { name: string; bytes: number }[] = []
+  for await (const folder of media.values()) {
+    if (folder.kind !== 'directory' || inUse.has(`${MEDIA_ROOT}/${folder.name}`)) continue
+    let bytes = 0
+    let newest = -Infinity
+    let usable = true
+    for await (const entry of folder.values()) {
+      if (entry.kind !== 'file') {
+        usable = false
+        break
+      }
+      const file = await entry.getFile()
+      bytes += file.size
+      newest = Math.max(newest, file.lastModified)
+    }
+    if (usable && newest > -Infinity && now - newest >= minAgeMs) unused.push({ name: folder.name, bytes })
+  }
+  const removed = { folders: 0, bytes: 0 }
+  for (const { name, bytes } of unused) {
+    try {
+      await media.removeEntry(name, { recursive: true })
+      removed.folders++
+      removed.bytes += bytes
+    } catch {
+      // A file still open for reading can't be deleted; the next sweep tries again.
+    }
+  }
+  return removed
+}
