@@ -3,6 +3,7 @@ import { createDepthService, type DepthService } from './depth/service.ts'
 import {
   deserializeClipIndex,
   indexClip,
+  samplePeakLuma,
   serializeClipIndex,
   CLIP_INDEX_VERSION,
   type ClipIndexOptions,
@@ -101,6 +102,8 @@ export interface VisionService {
   ): Record<string, ReframePlan>
   /** Footage-matching index of a clip (cached). */
   indexClip(source: FrameSource, options?: ClipIndexOptions): Promise<ClipVisionIndex>
+  /** The fast blank check: the brightest luma in a few frames of the clip (`samplePeakLuma`). Needs no model. */
+  peakLuma(source: FrameSource, options?: { frames?: number; signal?: AbortSignal }): Promise<number>
   readonly matcher: FootageMatcher
   /** Depth maps for 2.5D camera moves (cached; preview and full quality). */
   readonly depth: DepthService
@@ -379,6 +382,9 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
           ),
         { ...(signal ? { signal } : {}), ...(onProgress ? { onProgress } : {}) },
       )
+    },
+    peakLuma(source, o = {}) {
+      return samplePeakLuma({ toGray }, source, o)
     },
     matcher,
     depth: createDepthService({ onnx: backends.onnx(), cache }),

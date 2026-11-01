@@ -162,6 +162,7 @@ export async function planAutoCut(
     ...(energyAt ? { energyAt } : {}),
     ...(deps.matcher ? { matcher: deps.matcher } : {}),
     ...(deps.unanalyzedWarning ? { unanalyzedWarning: deps.unanalyzedWarning } : {}),
+    rerun: 'Run auto-cut again',
     seed: resolved.seed,
     ...(task.signal ? { signal: task.signal } : {}),
   })

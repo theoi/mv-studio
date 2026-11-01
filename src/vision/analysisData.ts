@@ -31,6 +31,8 @@ export interface VisualAnalysisParts {
   personMask?: { assetId: Id; quality: string; fps: number }
   /** Words describing the clip (`readClipTags`), from its matching index. */
   tags?: readonly string[]
+  /** The fast blank check (`samplePeakLuma`): the brightest luma in a few frames spread over the clip. */
+  blankCheck?: { peakLuma: number; frames: number }
 }
 
 const round = (v: number, digits = 3) => {
@@ -126,6 +128,8 @@ export function buildVisualAnalysis(parts: VisualAnalysisParts, previous?: Visua
   if (parts.suitability) data.suitability = json(parts.suitability)
   if (parts.personMask) data.personMask = json(parts.personMask)
   if (parts.tags) data.tags = [...parts.tags]
+  if (parts.blankCheck)
+    data.blankCheck = { peakLuma: round(parts.blankCheck.peakLuma, 1), frames: parts.blankCheck.frames }
   return { assetId: parts.assetId, version: VISION_ANALYSIS_VERSION, data }
 }
 
@@ -192,11 +196,53 @@ function readMotion(m: Record<string, unknown>): MotionAnalysis | null {
  */
 const BLANK_PEAK_LUMA = 16
 
+/**
+ * The brightest luma footage analysis saw in the clip: from the matching index, which samples 4 frames a second, else
+ * from the fast blank check, which samples a few frames and runs first.
+ */
+function peakLumaOf(analysis: VisualAnalysis | undefined): number | undefined {
+  if (analysis?.version !== VISION_ANALYSIS_VERSION) return undefined
+  const { motion, blankCheck } = analysis.data
+  if (isObject(motion) && typeof motion.peakLuma === 'number') return motion.peakLuma
+  if (isObject(blankCheck) && typeof blankCheck.peakLuma === 'number') return blankCheck.peakLuma
+  return undefined
+}
+
 /** Whether footage analysis found every sampled frame of the clip or image black or fully transparent. */
 export function isBlankClip(analysis: VisualAnalysis | undefined): boolean {
-  if (analysis?.version !== VISION_ANALYSIS_VERSION) return false
-  const { motion } = analysis.data
-  return isObject(motion) && typeof motion.peakLuma === 'number' && motion.peakLuma < BLANK_PEAK_LUMA
+  const peak = peakLumaOf(analysis)
+  return peak !== undefined && peak < BLANK_PEAK_LUMA
+}
+
+/** Whether footage analysis has looked at the clip's frames enough to say whether it shows anything. */
+export function hasBlankVerdict(analysis: VisualAnalysis | undefined): boolean {
+  return peakLumaOf(analysis) !== undefined
+}
+
+/** Media footage analysis reads: clips and stills the user imported or generated (a clip once its size is known). */
+export function analyzableMedia(asset: Asset): asset is Asset & { kind: 'video' | 'image' } {
+  if (asset.origin.type !== 'import' && asset.origin.type !== 'generated') return false
+  if (asset.kind === 'video') return !!(asset.duration && asset.width && asset.height)
+  return asset.kind === 'image'
+}
+
+/**
+ * Whether any of these clips and stills (default: all of them) has no blank verdict yet (`hasBlankVerdict`), leaving
+ * out those known to show something (`showsSomething`, such as the app's built-in sample).
+ */
+export function hasUncheckedMedia(
+  project: Project,
+  assetIds?: readonly Id[],
+  showsSomething?: (asset: Asset) => boolean,
+): boolean {
+  const wanted = assetIds && new Set(assetIds)
+  return Object.values(project.assets).some(
+    (a) =>
+      (!wanted || wanted.has(a.id)) &&
+      analyzableMedia(a) &&
+      !showsSomething?.(a) &&
+      !hasBlankVerdict(project.analysis.visual[a.id]),
+  )
 }
 
 /** The clips and images in the project that show nothing (`isBlankClip`), in import order. */

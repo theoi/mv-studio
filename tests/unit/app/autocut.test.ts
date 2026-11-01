@@ -29,9 +29,15 @@ import type * as Footage from '../../../src/app/state/footage.ts'
 import { JobError, jobs, type JobErrorCode } from '../../../src/shared/jobs.ts'
 import type { IndexingState } from '../../../src/vision/index.ts'
 
+/** The fast blank check, which decodes frames: done at once unless a test says otherwise. */
+const blankCheck = vi.hoisted(() => ({
+  run: (_options: Parameters<typeof Footage.checkClipsForBlank>[0]): Promise<void> => Promise.resolve(),
+}))
+
 vi.mock('../../../src/app/state/footage.ts', async (original) => ({
   ...(await original<typeof Footage>()),
   visionService: () => Promise.resolve({ matcher: undefined }),
+  checkClipsForBlank: (options: Parameters<typeof Footage.checkClipsForBlank>[0]) => blankCheck.run(options),
 }))
 
 const choices: AutoCutChoices = { ...DEFAULT_AUTOCUT_CHOICES, pace: 'beat', followEnergy: false }
@@ -479,7 +485,48 @@ describe('the auto-cut job', () => {
     expect(first.etas.get('planning')).toBeGreaterThan(0)
     const again = await cut()
     expect(again.stages.has('planning')).toBe(true)
+    expect(again.stages.has('checking')).toBe(false)
     expect(again.etas.size).toBe(0)
+  })
+
+  it('waits for the clips’ blank check, says so while it runs, and leaves out a clip it found black', async () => {
+    refine = () => Promise.resolve(found)
+    await cut()
+    const project = editor.getProject()
+    const [black] = Object.values(project.assets).filter((a) => a.kind === 'video')
+    let finish!: () => void
+    const asked: Parameters<typeof Footage.checkClipsForBlank>[0][] = []
+    blankCheck.run = (options) => {
+      asked.push(options)
+      options?.progress?.(0.5)
+      return new Promise<void>((resolve) => {
+        finish = () => {
+          editor.dispatch(
+            {
+              type: 'analysis.setVisual',
+              analysis: {
+                assetId: black!.id,
+                version: VISION_ANALYSIS_VERSION,
+                data: { blankCheck: { peakLuma: 0, frames: 8 } },
+              },
+            },
+            { history: 'skip' },
+          )
+          resolve()
+        }
+      })
+    }
+    try {
+      const cutting = cut()
+      await vi.waitFor(() => expect(jobs.list().at(-1)?.progress.stage).toBe('checking'))
+      expect(jobs.list().at(-1)?.progress.message).toBe('Checking your clips…')
+      finish()
+      const { result } = await cutting
+      expect(asked).toHaveLength(1)
+      expect(result.warnings.join(' ')).toContain(`Left out “${black!.name}” because every frame`)
+    } finally {
+      blankCheck.run = () => Promise.resolve()
+    }
   })
 
   it('cuts on the beats and says so when the bars cannot be found', async () => {

@@ -1,5 +1,10 @@
 import { beforeEach, expect, it } from 'vitest'
-import { clipTags, footageDownloadNote, waitForMatching } from '../../../src/app/state/footage.ts'
+import {
+  checkClipsForBlank,
+  clipTags,
+  footageDownloadNote,
+  waitForMatching,
+} from '../../../src/app/state/footage.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import { VISION_ANALYSIS_VERSION } from '../../../src/vision/analysisData.ts'
 import type { AssetIndexStatus, IndexingState } from '../../../src/vision/index.ts'
@@ -63,6 +68,12 @@ it('has no tags for a clip of the user’s own until it is analyzed', () => {
   expect(clipTags(editor.getProject(), 'mine')).toEqual([])
   setTags('mine', ['city'])
   expect(clipTags(editor.getProject(), 'mine')).toEqual(['city'])
+})
+
+it('starts no blank check for the sample’s own clips, which are drawn and never blank', () => {
+  const project = editor.getProject()
+  expect(Object.values(project.assets).some((a) => a.kind === 'video' || a.kind === 'image')).toBe(true)
+  expect(checkClipsForBlank()).toBeUndefined()
 })
 
 /** An indexer that updates only when the test says so. */

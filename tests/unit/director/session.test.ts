@@ -7,6 +7,7 @@ import {
   DirectorSession,
   directorMeta,
   planLocally,
+  type DirectorRequest,
   type DirectorState,
   type Planner,
 } from '../../../src/director/index.ts'
@@ -15,6 +16,7 @@ import type { DirectorDeps } from '../../../src/director/session.ts'
 import { BARS_NOTES } from '../../../src/model/queries.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
+import { buildVisualAnalysis } from '../../../src/vision/analysisData.ts'
 import {
   analysis,
   badKey,
@@ -783,5 +785,110 @@ describe('DirectorSession says it is slow only for the stage at hand', () => {
     await vi.waitFor(() => expect(slow(session)).toBe(true))
     session.cancel()
     await planned
+  })
+})
+
+describe('DirectorSession and clips that show nothing', () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  /** What the app's fast blank check stores for a clip whose frames it found black. */
+  const checkedBlack = (editor: ProjectEditor, assetId: string) =>
+    editor.dispatch(
+      {
+        type: 'analysis.setVisual',
+        analysis: buildVisualAnalysis({
+          assetId,
+          duration: 6,
+          sourceSize: { width: 1920, height: 1080 },
+          blankCheck: { peakLuma: 0, frames: 8 },
+        }),
+      },
+      { history: 'skip' },
+    )
+  const LEFT_OUT = 'Left out “video3.mp4” because every frame of it is black or see-through.'
+
+  it('checks the clips while it waits for the song, and waits for the check to leave out one that shows nothing', async () => {
+    const project = makeProject()
+    delete project.analysis.audio[SONG_ID]
+    const editor = new ProjectEditor(project)
+    const jobs = new JobRunner()
+    const seen = stagesOf(jobs)
+    let songReady!: () => void
+    let checked!: () => void
+    let checking = false
+    const session = new DirectorSession({
+      editor,
+      jobs,
+      waitForSong: () =>
+        new Promise<void>((resolve) => {
+          songReady = () => {
+            editor.dispatch(
+              { type: 'analysis.setAudio', analysis: analysis({ downbeats: DOWNBEATS }) },
+              { history: 'skip' },
+            )
+            resolve()
+          }
+        }),
+      checkClips: ({ progress }) => {
+        checking = true
+        progress(0.5)
+        return new Promise<void>((resolve) => {
+          checked = () => {
+            checkedBlack(editor, 'video3')
+            resolve()
+          }
+        })
+      },
+    })
+    const planned = session.plan(REQUEST)
+    await tick()
+    expect(checking).toBe(true)
+    expect(seen.some(([stage]) => stage === 'clips')).toBe(false)
+    songReady()
+    // A check that ends right after the song isn't worth a word: it is named only once it has run on for a moment.
+    await sleep(100)
+    expect(seen.some(([stage]) => stage === 'clips')).toBe(false)
+    await sleep(300)
+    expect(seen[seen.length - 1]).toEqual(['clips', 0.025])
+    expect(session.getState()).toMatchObject({
+      status: 'planning',
+      stage: 'clips',
+      message: 'Checking your clips…',
+    })
+    checked()
+    const state = await planned
+    expect(ready(state).plan.warnings).toContain(LEFT_OUT)
+  })
+
+  it('says nothing about a check done in time or soon after, plans on when the check fails, and checks nothing without media', async () => {
+    const plan = (
+      check: (editor: ProjectEditor) => Promise<void> | undefined,
+      request: DirectorRequest = REQUEST,
+      project = makeProject(),
+    ) => {
+      const editor = new ProjectEditor(project)
+      const jobs = new JobRunner()
+      const seen = stagesOf(jobs)
+      const planned = new DirectorSession({ editor, jobs, checkClips: () => check(editor) }).plan(request)
+      return { planned, seen }
+    }
+    const said = (seen: ReturnType<typeof stagesOf>) => seen.some(([stage]) => stage === 'clips')
+    const inTime = plan(async (editor) => checkedBlack(editor, 'video3'))
+    expect(ready(await inTime.planned).plan.warnings).toContain(LEFT_OUT)
+    expect(said(inTime.seen)).toBe(false)
+    const soonAfter = plan(async (editor) => {
+      await sleep(100)
+      checkedBlack(editor, 'video3')
+    })
+    expect(ready(await soonAfter.planned).plan.warnings).toContain(LEFT_OUT)
+    expect(said(soonAfter.seen)).toBe(false)
+    expect(ready(await plan(() => undefined).planned).plan.warnings).not.toContain(LEFT_OUT)
+
+    expect((await plan(() => Promise.reject(new Error('no decoder'))).planned).status).toBe('ready')
+
+    const unused = vi.fn(async () => undefined)
+    await plan(unused, { ...REQUEST, useMedia: false }).planned
+    await plan(unused, REQUEST, makeProject({ videos: 0 })).planned
+    expect(unused).not.toHaveBeenCalled()
   })
 })

@@ -12,6 +12,21 @@ import type { FootageMatcher } from '../matching/matcher.ts'
 import type { ClipMatch, ClipVisionIndex, MatchQuery, Mood, TimeRange } from '../types.ts'
 
 export type AutoCutOrder = 'matched' | 'shuffled' | 'chronological'
+
+/** "3 clips and 2 images aren’t": videos and stills named apart, so a count of both doesn't read as clips alone. */
+function unanalyzedCount(
+  pool: readonly { assetId: Id; kind: 'video' | 'image' }[],
+  ids: readonly Id[],
+): string {
+  const left = new Set(ids)
+  const videos = pool.filter((p) => left.has(p.assetId) && p.kind === 'video').length
+  const images = left.size - videos
+  const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+  if (videos && images) return `${count(videos, 'clip')} and ${count(images, 'image')} aren’t`
+  const n = videos || images
+  return `${count(n, videos ? 'clip' : 'image')} ${n === 1 ? 'isn’t' : 'aren’t'}`
+}
+
 /** Why a clip was chosen, for "Show why" in the UI. `brief`: the shot's text, mood or preferred clips. */
 export type PickReason = 'lyric' | 'brief' | 'energy' | 'variety' | 'story'
 
@@ -61,6 +76,8 @@ export interface ChooseInput {
    * from a caller that knows why they have none. Undefined keeps "…aren’t analyzed yet".
    */
   unanalyzedWarning?: (assetIds: readonly Id[], all: boolean) => string | undefined
+  /** What the user does to choose again, ending the note when no clip is analyzed: "Run auto-cut again". */
+  rerun?: string
   seed: number
   signal?: AbortSignal
 }
@@ -233,14 +250,14 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
     warnings.push(
       matcher
         ? (explained ??
-            'Your clips aren’t analyzed yet, so they were picked for variety. Run auto-cut again once analysis finishes.')
+            `Your clips aren’t analyzed yet, so they were picked for variety.${input.rerun ? ` ${input.rerun} once analysis finishes.` : ''}`)
         : 'Footage matching is off, so clips were picked for variety.',
     )
   } else if (library.length < pool.length) {
     const n = pool.length - library.length
     warnings.push(
       explained ??
-        `${n} ${n === 1 ? 'clip isn’t' : 'clips aren’t'} analyzed yet, so ${n === 1 ? 'it was' : 'they were'} only used for variety.`,
+        `${unanalyzedCount(pool, unindexed)} analyzed yet, so ${n === 1 ? 'it was' : 'they were'} only used for variety.`,
     )
   }
   const hasRanking = ranked.size > 0

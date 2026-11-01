@@ -134,6 +134,17 @@ describe('local planner', () => {
     for (let i = 1; i < chorus.length; i++) expect(asset(chorus[i]!)).not.toBe(asset(chorus[i - 1]!))
   })
 
+  it('says how to draft again when the clips are not analyzed yet, not how to run auto-cut', async () => {
+    const project = visionProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) })
+    const p = await planLocally(
+      await buildPlannerInput(project, { kind: 'beat-cut', seed: 7, footage: fakeMatcher() }),
+    )
+    expect(p.warnings).toContain(
+      'Your clips aren’t analyzed yet, so they were picked for variety. Draft again once analysis finishes.',
+    )
+    expect(p.warnings.join(' ')).not.toMatch(/auto-cut/)
+  })
+
   it('leaves clips that show nothing out of a draft and says so', async () => {
     const asset = (s: PlanShot) => (s.source.type === 'media' ? s.source.assetId : undefined)
     const project = visionProject({ clips: CLIPS.map((c) => (c.id === 'city' ? { ...c, blank: true } : c)) })

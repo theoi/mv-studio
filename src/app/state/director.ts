@@ -15,7 +15,7 @@ import { templateState } from '../../plugins/templates.ts'
 import { JobError, jobs, type JobSnapshot } from '../../shared/jobs.ts'
 import { isBlankClip } from '../../vision/analysisData.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
-import { directorFootage } from './footage.ts'
+import { checkClipsForBlank, directorFootage } from './footage.ts'
 import { appMedia } from './media.ts'
 import { songAnalysisRunning } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
@@ -91,6 +91,7 @@ function directorSession(): Promise<DirectorSession> {
       ledger: spendLedger,
       ensureBars,
       waitForSong,
+      checkClips: checkClipsForBlank,
       planner: d.createDirectorPlanner({
         client: () => cloud.llm(),
         model: () => cloudSettings.get().llm?.model,

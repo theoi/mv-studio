@@ -101,6 +101,16 @@ export interface DirectorDeps {
    * the plan has them. Reports progress only while it waits.
    */
   waitForSong?: (options: { signal: AbortSignal; progress: (fraction: number) => void }) => Promise<void>
+  /**
+   * Checks the user's clips that footage analysis hasn't reached yet for ones that show nothing (the app's fast blank
+   * check), so the plan leaves those out. It runs while the plan waits for the song and its bars, and reports progress
+   * only if the plan then still waits for it. A check that fails doesn't stop the plan. Undefined when there is nothing
+   * to check; never called for a project without clips or images.
+   */
+  checkClips?: (options: {
+    signal: AbortSignal
+    progress: (fraction: number) => void
+  }) => Promise<void> | undefined
 }
 
 /** Share of the plan's progress spent finding the song's bars when they are not found yet (often the longest step). */
@@ -111,6 +121,11 @@ const BARS_PASS_SHARE = 0.2
 const SONG_SHARE = 0.25
 /** As the song's row in the Library says while it is analyzed. */
 const SONG_NOTE = 'Finding beats and sections…'
+const CLIPS_NOTE = 'Checking your clips…'
+/** A clip check that ends this soon after the song and the bars isn't worth a word. */
+const CLIPS_QUIET_MS = 300
+/** Share of the plan's progress (after the song and the bars) for the clip check when the plan has to wait for it. */
+const CLIPS_SHARE = 0.05
 /** Time left for the built-in planner once the bars are found: it plans in about a second. */
 const LOCAL_PLAN_SECONDS = 2
 
@@ -123,7 +138,7 @@ export interface PlanPreview {
   warnings: string[]
 }
 
-export type PlanStage = 'song' | 'bars' | 'plan'
+export type PlanStage = 'song' | 'bars' | 'clips' | 'plan'
 
 /** What the plan's AI shots are called in the panel: "clip" when they are all videos. */
 export type GeneratedUnit = 'shot' | 'clip'
@@ -136,8 +151,8 @@ export type DirectorState =
       jobId: string
       message: string
       /**
-       * What the draft is doing: waiting for the song analysis ('song') or the bars ('bars'), which report measured
-       * progress, or planning ('plan').
+       * What the draft is doing: waiting for the song analysis ('song'), the bars ('bars') or the check of the clips
+       * for ones that show nothing ('clips'), which report measured progress, or planning ('plan').
        */
       stage: PlanStage
       /** Still planning after a few seconds: show "Still working" with Cancel. */
@@ -293,6 +308,26 @@ export class DirectorSession {
             jobCtx.progress({ ...p, fraction: shown })
           },
         }
+        let clipsFraction = 0
+        let reportClips: ((fraction: number) => void) | undefined
+        const hasMedia = Object.values(this.deps.editor.getProject().assets).some(
+          (a) => a.kind === 'video' || a.kind === 'image',
+        )
+        const clipsChecked =
+          request.useMedia === false || !hasMedia
+            ? undefined
+            : this.deps.checkClips?.({
+                signal: ctx.signal,
+                progress: (f) => {
+                  clipsFraction = f
+                  reportClips?.(f)
+                },
+              })
+        let checking = !!clipsChecked
+        clipsChecked?.then(
+          () => (checking = false),
+          () => (checking = false),
+        )
         // The song analysis and the bars report progress only while they run; the rest of the plan then gets the rest
         // of the bar.
         let share = 0
@@ -338,6 +373,23 @@ export class DirectorSession {
                     p.fraction === undefined ? p : { ...p, fraction: share + p.fraction * (1 - share) },
                   ),
               }
+        if (checking)
+          await Promise.race([
+            clipsChecked?.catch(() => undefined),
+            new Promise((r) => setTimeout(r, CLIPS_QUIET_MS)),
+          ])
+        if (checking) {
+          reportClips = (f) =>
+            planCtx.progress({
+              stage: 'clips',
+              fraction: CLIPS_SHARE * f,
+              message: CLIPS_NOTE,
+              etaSeconds: undefined,
+            })
+          reportClips(clipsFraction)
+        }
+        await clipsChecked?.catch(() => ctx.throwIfCancelled())
+        reportClips = undefined
         // The time left for the bars no longer holds (the job keeps the last one it was given).
         planCtx.progress({
           stage: 'gather',
@@ -403,7 +455,7 @@ export class DirectorSession {
     // Called from the job's progress with each stage's own fraction, before the bar's no-going-back clamp: a second
     // pass that starts lower is still progress.
     const onStage = (name: string, f: number | undefined) => {
-      const next: PlanStage = name === 'song' || name === 'bars' ? name : 'plan'
+      const next: PlanStage = name === 'song' || name === 'bars' || name === 'clips' ? name : 'plan'
       if (next !== stage) {
         stage = next
         fraction = f

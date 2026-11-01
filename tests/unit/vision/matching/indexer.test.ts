@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   deserializeClipIndex,
   indexClip,
+  samplePeakLuma,
   serializeClipIndex,
 } from '../../../../src/vision/matching/indexer.ts'
 import type { Size } from '../../../../src/vision/types.ts'
-import { fakeOnnx, fakeSource, flatGray } from '../segmentation/fakes.ts'
+import { fakeOnnx, fakeSource, flatGray, timeOf } from '../segmentation/fakes.ts'
 
 const DIM = 8
 const basis = (k: number) => Float32Array.from({ length: DIM }, (_, i) => (i === k ? 1 : 0))
@@ -81,5 +82,48 @@ describe('indexClip', () => {
     ).rejects.toMatchObject({ code: 'out-of-memory' })
     expect(opened.length).toBeGreaterThan(0)
     expect(opened.every((b) => (b as unknown as { closed: boolean }).closed)).toBe(true)
+  })
+})
+
+describe('samplePeakLuma', () => {
+  const closed = (bitmaps: ImageBitmap[]) =>
+    bitmaps.every((b) => (b as unknown as { closed: boolean }).closed)
+
+  it('reads 8 frames spread over the clip at the matching size, so a light in any of them counts', async () => {
+    const { source, opened } = fakeSource({ duration: 10, width: 3840, height: 2160 })
+    const sizes: Size[] = []
+    // Black except a 2 px light in the frame at 6.875 s, the sixth of the 8.
+    const toGray = (b: ImageBitmap, s: Size) => {
+      sizes.push(s)
+      const gray = flatGray(s, 4)
+      if (timeOf(b) === 6.875) gray.data.fill(200, 10, 12)
+      return gray
+    }
+    expect(await samplePeakLuma({ toGray }, source)).toBe(200)
+    expect(opened.map(timeOf)).toEqual([0.625, 1.875, 3.125, 4.375, 5.625, 6.875, 8.125, 9.375])
+    expect(sizes[0]).toEqual({ width: 399, height: 224 })
+    expect(closed(opened)).toBe(true)
+    expect(await samplePeakLuma({ toGray }, fakeSource({ duration: 10 }).source, { frames: 4 })).toBe(4)
+  })
+
+  it('reads a still once', async () => {
+    const { source, opened } = fakeSource({ duration: 0 })
+    expect(await samplePeakLuma({ toGray: (_b, s) => flatGray(s, 0) }, source)).toBe(0)
+    expect(opened).toHaveLength(1)
+  })
+
+  it('fails as a decode error, and stops when cancelled', async () => {
+    const broken = fakeSource({ duration: 10, failAt: 5 })
+    await expect(samplePeakLuma({ toGray: (_b, s) => flatGray(s) }, broken.source)).rejects.toMatchObject({
+      code: 'decode',
+    })
+    expect(closed(broken.opened)).toBe(true)
+    const stop = new AbortController()
+    stop.abort()
+    await expect(
+      samplePeakLuma({ toGray: (_b, s) => flatGray(s) }, fakeSource({ duration: 10 }).source, {
+        signal: stop.signal,
+      }),
+    ).rejects.toMatchObject({ code: 'cancelled' })
   })
 })
