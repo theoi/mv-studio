@@ -11,6 +11,7 @@ import {
 } from '../../../src/model/index.ts'
 import { dispatch, editor } from '../../../src/app/state/project.ts'
 import { assetPlacement, importFiles } from '../../../src/app/state/importer.ts'
+import { refreshRecents } from '../../../src/app/state/persistence.ts'
 import { findBars } from '../../../src/app/state/songAnalysis.ts'
 
 const analyses = vi.hoisted(() => [] as ((analysis: AudioAnalysis) => void)[])
@@ -25,7 +26,17 @@ vi.mock('../../../src/app/state/ui.ts', () => ({
   maybeStartGuide: vi.fn(),
 }))
 
+vi.mock('../../../src/media/projectStore.ts', () => ({
+  PORTABLE_EXTENSION: '.mvstudio',
+  IdbProjectStore: class {
+    async list() {
+      return [{ id: 'kept', name: 'Song', updatedAt: new Date(0).toISOString() }]
+    }
+  },
+}))
+
 vi.mock('../../../src/media/mediaStore.ts', () => ({
+  OpfsMediaStore: class {},
   mediaStore: {
     requestPersistence: async () => true,
     getFile: async () => new Blob(),
@@ -68,6 +79,12 @@ beforeEach(() => {
 })
 
 const beats = (n: number, step: number) => Array.from({ length: n }, (_, i) => i * step)
+
+it('names an untitled project after the song, numbered when a kept project already has that name', async () => {
+  await refreshRecents()
+  await importFiles([new File(['x'], 'song.mp3', { type: 'audio/mpeg' })])
+  expect(editor.getProject().name).toBe('Song (2)')
+})
 
 it('writes the song analysis without an undo step, keeping edits made while it ran undoable and redoable', async () => {
   await importFiles([new File(['x'], 'song.mp3', { type: 'audio/mpeg' })])

@@ -49,6 +49,7 @@ vi.mock('../../../src/app/state/cloud.ts', async (original) => ({
 }))
 
 vi.mock('../../../src/media/mediaStore.ts', () => ({
+  OpfsMediaStore: class {},
   mediaStore: {
     getFile: async () => new Blob(),
     storeBlob: async (

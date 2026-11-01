@@ -420,6 +420,14 @@
   text-overflow: ellipsis;
 }
 
+.recentKind {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .recentMeta {
   display: flex;
   align-items: center;

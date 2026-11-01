@@ -80,7 +80,7 @@ test('a project comes back after a reload: edits, imported media, analysis and l
   await importFiles(page, ['song.mp3', 'image.png'])
   await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
   await expect(page.getByLabel('image, image')).toBeVisible()
-  await renameOpenProject(page, 'song', 'Night drive')
+  await renameOpenProject(page, 'Song', 'Night drive')
   await page.evaluate(() => {
     const { editor } = window.mvStudio.app.project
     const songId = editor.getProject().songAssetId
@@ -304,7 +304,7 @@ test('a project file carries the project and its media into another browser prof
   await openBlank(page)
   await importFiles(page, ['song.mp3', 'image.png'])
   await expect(page.getByLabel('image, image')).toBeVisible()
-  await renameOpenProject(page, 'song', 'Portable')
+  await renameOpenProject(page, 'Song', 'Portable')
   await expect(saved(page)).toBeVisible()
   const before = await snapshot(page)
 

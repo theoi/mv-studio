@@ -110,7 +110,7 @@ test('a first-visit guide whose code can’t load fails quietly and stays unseen
   const requests = await block(page, GUIDE_CODE)
   await openApp(page)
   await page.evaluate(() => localStorage.removeItem('mv-studio.guide-seen'))
-  await page.getByRole('button', { name: /Lyric video/ }).click()
+  await page.getByRole('button', { name: /^Lyric video/ }).click()
   const before = requests.count
   // Opening the first project starts the guide by itself.
   await page.getByRole('button', { name: 'Skip for now' }).click()

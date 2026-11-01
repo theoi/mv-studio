@@ -38,6 +38,15 @@ export function shortFileName(name: string, max = 23): string {
 }
 
 /** When a project was last changed, as on its card: "Edited 5 minutes ago", "Edited yesterday", "Edited Oct 24". */
+/** `name`, or the first of "name (2)", "name (3)"... that `taken` doesn't have. */
+export function distinctName(name: string, taken: Iterable<string>): string {
+  const used = new Set(taken)
+  if (!used.has(name)) return name
+  let n = 2
+  while (used.has(`${name} (${n})`)) n++
+  return `${name} (${n})`
+}
+
 export function editedAgo(iso: string, now = Date.now()): string {
   const then = new Date(iso)
   const seconds = Math.max(0, (now - then.getTime()) / 1000)

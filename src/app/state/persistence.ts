@@ -13,7 +13,9 @@ import {
   type Id,
   type Project,
 } from '../../model/index.ts'
+import { templateState } from '../../plugins/templates.ts'
 import { JobError, jobs, type JobErrorCode } from '../../shared/jobs.ts'
+import { distinctName } from '../format.ts'
 import { isSampleAsset, sampleFile } from '../mock/sampleMedia.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { usePrefs } from './prefs.ts'
@@ -43,6 +45,8 @@ export interface RecentProject {
   id: Id
   name: string
   updatedAt: string
+  /** The kind of video it was started as ('lyric', 'visualizer', 'footage', 'ai' or 'blank'), when known. */
+  kind?: string
   /** A frame of the project's footage as a data URL; absent when it has none. */
   thumbnail?: string
 }
@@ -68,6 +72,8 @@ export const usePersistence = create<PersistenceState>(() => ({
 const LAST_KEY = 'mv-studio.last-project'
 
 const storedIds = new Set<Id>()
+/** Kept projects' names, for unusedProjectName(). */
+const storedNames = new Map<Id, string>()
 /** Projects deleted in this session; a late autosave must not bring them back. */
 const removed = new Set<Id>()
 /** The cover asset each project's stored thumbnail shows, so thumbnails are only made when it changes. */
@@ -81,6 +87,17 @@ let failSaves: JobErrorCode | null = null
 
 export function isStored(id: Id): boolean {
   return storedIds.has(id)
+}
+
+/**
+ * `name`, or "name (2)", "name (3)"... when another kept project already has it, so projects made from one song can be
+ * told apart in Recent projects and their exports get different file names.
+ */
+export function unusedProjectName(name: string, except?: Id): string {
+  return distinctName(
+    name,
+    [...storedNames].flatMap(([id, n]) => (id === except ? [] : [n])),
+  )
 }
 
 /** Runs edits that are not the user's (design-preview deep links), so they don't make a project worth keeping. */
@@ -169,7 +186,7 @@ async function writeProject(project: Project, leaving = false): Promise<void> {
     if (failSaves) throw new JobError(failSaves, 'Save failed for the test')
     const thumbnail = leaving ? undefined : await thumbnailFor(project)
     if (latestWrite.get(project.id) !== write) return
-    await store.save(project, thumbnail?.blob)
+    await store.save(project, thumbnail?.blob, templateState(project)?.kind)
     if (thumbnail) covers.set(project.id, thumbnail.cover)
   } catch (error) {
     const failure = new Error(saveErrorMessage(error), { cause: error })
@@ -177,6 +194,7 @@ async function writeProject(project: Project, leaving = false): Promise<void> {
     throw failure
   }
   storedIds.add(project.id)
+  storedNames.set(project.id, project.name)
   if (!persistenceAsked) {
     persistenceAsked = true
     void mediaStore.requestPersistence().catch(() => false)
@@ -348,12 +366,17 @@ export async function refreshRecents(): Promise<void> {
     return
   }
   storedIds.clear()
-  for (const s of list) storedIds.add(s.id)
+  storedNames.clear()
+  for (const s of list) {
+    storedIds.add(s.id)
+    storedNames.set(s.id, s.name)
+  }
   const recents = await Promise.all(
     list.map(async (s) => ({
       id: s.id,
       name: s.name,
       updatedAt: s.updatedAt,
+      ...(s.kind ? { kind: s.kind } : {}),
       thumbnail: s.thumbnail ? await readDataUrl(s.thumbnail).catch(() => undefined) : undefined,
     })),
   )
@@ -424,6 +447,7 @@ export async function duplicateCurrent(): Promise<void> {
 export async function deleteProject(id: Id): Promise<void> {
   removed.add(id)
   storedIds.delete(id)
+  storedNames.delete(id)
   if (lastProjectId() === id) forgetLast()
   if (editor.getProject().id === id) loadEmptyProject()
   try {

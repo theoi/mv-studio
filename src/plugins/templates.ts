@@ -9,6 +9,7 @@
  * The template's state (kind, its tracks, the user's idea) lives in project.extensions.template.
  */
 import { directorMeta } from '../director/meta.ts'
+import { songName } from '../director/songTitle.ts'
 import { pluginRegistry } from '../engine/registry.ts'
 import type { PluginRegistry } from '../engine/types.ts'
 import type { EditCommand } from '../model/commands.ts'
@@ -441,10 +442,7 @@ export function templateCommands(
   // A title with the song's name over the first bars of beat-cut footage.
   if (state.kind === 'footage' && template.textStyleId && !clipsOn(now(), state.tracks.titles).length) {
     const songAsset = now().assets[placed.assetId]
-    const title = (songAsset?.name ?? 'Untitled')
-      .replace(/\.[a-z0-9]{2,4}$/i, '')
-      .replace(/[-_]+/g, ' ')
-      .trim()
+    const title = songAsset ? songName(songAsset) : 'Untitled'
     const clip = createTextClip({
       trackId: state.tracks.titles as Id,
       text: title,

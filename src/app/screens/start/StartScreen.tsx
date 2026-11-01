@@ -55,6 +55,11 @@ const kinds: { id: Exclude<Kind, 'blank'>; title: string; description: string }[
   },
 ]
 
+const KIND_TITLES: Record<string, string> = {
+  ...Object.fromEntries(kinds.map((k) => [k.id, k.title])),
+  blank: 'Blank project',
+}
+
 const RECENT_LIMIT = 6
 
 export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
@@ -131,11 +136,15 @@ function RecentCard({ project }: { project: RecentProject }) {
       {!project.thumbnail && <Music />}
     </span>
   )
+  const kind = project.kind && KIND_TITLES[project.kind]
   const meta = (
-    <span className={styles.recentMeta}>
-      <Clock />
-      {editedAgo(project.updatedAt)}
-    </span>
+    <>
+      {kind && <span className={styles.recentKind}>{kind}</span>}
+      <span className={styles.recentMeta}>
+        <Clock />
+        {editedAgo(project.updatedAt)}
+      </span>
+    </>
   )
   return (
     <div className={styles.recentItem}>

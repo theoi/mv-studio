@@ -6,7 +6,8 @@ import {
   type EditPlan,
   type PlanShot,
 } from '../../../src/director/index.ts'
-import { musicEnd, songInfoFromProject, songTitle, songTitleFromName } from '../../../src/director/inputs.ts'
+import { musicEnd, songInfoFromProject } from '../../../src/director/inputs.ts'
+import { songName, songTitle, songTitleFromName } from '../../../src/director/songTitle.ts'
 import { parseProject } from '../../../src/model/migrations.ts'
 import { paceFor } from '../../../src/director/rules.ts'
 import { beatGrid, cutTimes, phrasedCutTimes } from '../../../src/director/timing.ts'
@@ -172,6 +173,8 @@ describe('songTitleFromName', () => {
     ['neon-skyline.wav', { title: 'Neon Skyline' }],
     ['NEON_SKYLINE - NIGHT DRIVE.mp3', { artist: 'Neon Skyline', title: 'Night Drive' }],
     ['Jay-Z - Empire State of Mind.mp3', { artist: 'Jay-Z', title: 'Empire State of Mind' }],
+    ['Jay-Z_-_Empire_State_of_Mind.mp3', { artist: 'Jay-Z', title: 'Empire State of Mind' }],
+    ['song_show-me_josh-woodward.mp3', { title: 'Song Show Me Josh Woodward' }],
   ])('%s', (name, expected) => {
     expect(songTitleFromName(name)).toEqual(expected)
   })
@@ -194,6 +197,13 @@ describe('songTitle', () => {
     ['the file name without tags', undefined, { artist: 'Rxbyn', title: 'Bad Side' }],
   ])('uses %s', (_, tags, expected) => {
     expect(songTitle({ name, ...(tags ? { tags } : {}) })).toEqual(expected)
+  })
+
+  it.each([
+    ['its tagged title', { title: 'Show Me', artist: 'Josh Woodward' }, 'Show Me'],
+    ['the title in its file name', { artist: 'Josh Woodward' }, 'Song Show Me Josh Woodward'],
+  ])('names the song by %s', (_, tags, expected) => {
+    expect(songName({ name: 'song_show-me_josh-woodward.mp3', tags })).toBe(expected)
   })
 
   it('reads tags from a saved project, and the file name from one saved before tags were read', () => {

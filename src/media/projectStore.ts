@@ -83,7 +83,7 @@ export class IdbProjectStore implements ProjectStore {
    * away. A save started as the page closes (autosave on pagehide) then still lands: a transaction that is still
    * waiting to read something when the page goes away is aborted. The summary keeps its thumbnail when none is given.
    */
-  async save(project: Project, thumbnail?: Blob): Promise<void> {
+  async save(project: Project, thumbnail?: Blob, kind?: string): Promise<void> {
     const db = await openDb()
     if (!thumbnail && !this.thumbnails.has(project.id)) {
       const previous = await request(
@@ -102,6 +102,7 @@ export class IdbProjectStore implements ProjectStore {
       name: project.name,
       updatedAt: project.updatedAt,
       thumbnail: kept,
+      ...(kind ? { kind } : {}),
     }
     tx.objectStore(SUMMARIES).put(summary)
     tx.commit()
