@@ -23,15 +23,30 @@ test('a first 3D camera move shows the depth estimator downloading, and names it
   await expect(failure).not.toContainText('https://')
   await context.unroute('https://huggingface.co/**')
 
-  // Every line the run shows, however briefly, in order, and every percentage the top bar's task shows.
+  // Every line the run shows, however briefly, in order, with the run card's percentage and bar, and every
+  // percentage the top bar's task shows.
+  type Seen = { lines: string[]; card: { line: string; pct: string; bar: string }[]; chip: number[] }
   await page.evaluate(() => {
-    const seen = { lines: [] as string[], chip: [] as number[] }
-    ;(window as unknown as { seen: typeof seen }).seen = seen
+    const seen: Seen = { lines: [], card: [], chip: [] }
+    ;(window as unknown as { seen: Seen }).seen = seen
     new MutationObserver(() => {
       for (const el of document.querySelectorAll('[role="tabpanel"] span')) {
         const line = el.textContent ?? ''
         if (/^(Downloading |Estimating depth · )/.test(line) && seen.lines.at(-1) !== line)
           seen.lines.push(line)
+      }
+      const bar = document.querySelector('[role="progressbar"][aria-label="3D camera progress"]')
+      const top = bar?.parentElement?.firstElementChild
+      const line = top?.firstElementChild?.textContent ?? ''
+      if (line.startsWith('Downloading ') && top) {
+        const shown = {
+          line,
+          pct: top.lastElementChild?.textContent ?? '',
+          bar: bar.getAttribute('aria-valuenow') ?? '',
+        }
+        const last = seen.card.at(-1)
+        if (!last || last.line !== shown.line || last.pct !== shown.pct || last.bar !== shown.bar)
+          seen.card.push(shown)
       }
       const chip = document.querySelector('button[aria-label^="Adding 3D camera moves"]')
       const pct = /(\d+)%$/.exec(chip?.getAttribute('aria-label') ?? '')?.[1]
@@ -40,14 +55,19 @@ test('a first 3D camera move shows the depth estimator downloading, and names it
   })
   await assist.getByRole('button', { name: 'Try again' }).click()
   await expect(assist.getByText(/^Added a 3D camera move to \d+ images$/)).toBeVisible({ timeout: 200_000 })
-  const seen = await page.evaluate(
-    () => (window as unknown as { seen: { lines: string[]; chip: number[] } }).seen,
-  )
-  expect(seen.lines).toContain(DEPTH_LINE)
+  const seen = await page.evaluate(() => (window as unknown as { seen: Seen }).seen)
+  const downloading = seen.lines.findIndex((l) => l.startsWith(DEPTH_LINE))
+  expect(downloading).toBeGreaterThanOrEqual(0)
   // The run's own line comes back once the download is in.
-  expect(seen.lines.findLastIndex((l) => l.startsWith('Estimating depth · '))).toBeGreaterThan(
-    seen.lines.indexOf(DEPTH_LINE),
-  )
+  expect(seen.lines.findLastIndex((l) => l.startsWith('Estimating depth · '))).toBeGreaterThan(downloading)
+  // The download's percentage is in its line and only rises; the card's own percentage is the bar's.
+  expect(seen.card.length).toBeGreaterThan(0)
+  const inLine = seen.card.map((c) => {
+    expect(c.line).toMatch(/^Downloading the depth estimator \(27 MB, once\)… \d+%$/)
+    expect(c.pct).toBe(`${c.bar}%`)
+    return Number(/(\d+)%$/.exec(c.line)?.[1])
+  })
+  expect(inLine).toEqual([...inLine].sort((a, b) => a - b))
   // The task's progress only moves forward, through the download too.
   expect(seen.chip.length).toBeGreaterThan(1)
   expect(seen.chip).toEqual([...seen.chip].sort((a, b) => a - b))
