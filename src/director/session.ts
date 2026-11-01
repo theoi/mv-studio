@@ -558,9 +558,16 @@ export class DirectorSession {
   /**
    * Generates any AI shots, then applies the plan as one undo step. Throws DirectorError('needs-confirmation')
    * when the cost needs the user's OK and `confirmSpend` is not set, so nothing is ever spent silently.
-   * With `skipGeneration`, AI shots that are not generated yet become placeholders.
+   * With `skipGeneration`, AI shots that are not generated yet become placeholders. `beforeApply` runs with the plan
+   * just before its edits are dispatched.
    */
-  async apply(options: { confirmSpend?: boolean; skipGeneration?: boolean } = {}): Promise<DirectorState> {
+  async apply(
+    options: {
+      confirmSpend?: boolean
+      skipGeneration?: boolean
+      beforeApply?: (plan: EditPlan) => void
+    } = {},
+  ): Promise<DirectorState> {
     const current = this.state
     const plan = 'plan' in current ? current.plan : undefined
     const request = 'request' in current ? current.request : undefined
@@ -701,6 +708,7 @@ export class DirectorSession {
         generated: done,
         ...(failed ? { placeholderNote: 'none' as const } : {}),
       })
+      options.beforeApply?.(plan)
       this.deps.editor.dispatch(compiled.commands, { label: compiled.label })
     } catch (error) {
       this.failOrReset(error, request, plan)

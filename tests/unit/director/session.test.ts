@@ -12,6 +12,7 @@ import {
   type Planner,
 } from '../../../src/director/index.ts'
 import { summaryLeft } from '../../../src/director/expand.ts'
+import type { EditPlan } from '../../../src/director/plan.ts'
 import type { DirectorDeps } from '../../../src/director/session.ts'
 import { BARS_NOTES } from '../../../src/model/queries.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
@@ -90,6 +91,27 @@ describe('DirectorSession', () => {
     expect(session.undo()).toBe(true)
     expect(editor.getProject()).toEqual(project)
     expect(session.getState().status).toBe('ready')
+  })
+
+  it('hands the plan to beforeApply just before its edits reach the project', async () => {
+    const { editor, session } = setup()
+    const planned = ready(await session.plan({ kind: 'beat-cut', seed: 4 }))
+    const before = editor.getProject()
+    const calls: { plan: EditPlan; unchanged: boolean }[] = []
+    const applied = await session.apply({
+      beforeApply: (plan) => calls.push({ plan, unchanged: editor.getProject() === before }),
+    })
+    expect(applied.status).toBe('applied')
+    expect(calls).toEqual([{ plan: planned.plan, unchanged: true }])
+    expect(editor.getProject()).not.toBe(before)
+  })
+
+  it('does not call beforeApply when it refuses to apply', async () => {
+    const { session } = setup({ provider: fakeProvider(), videos: 0, confirmAboveUsd: 0.01 })
+    await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } })
+    const beforeApply = vi.fn()
+    await expect(session.apply({ beforeApply })).rejects.toBeInstanceOf(DirectorError)
+    expect(beforeApply).not.toHaveBeenCalled()
   })
 
   it('does not undo a change the user made after applying', async () => {

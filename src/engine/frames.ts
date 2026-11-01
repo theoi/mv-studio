@@ -60,6 +60,23 @@ class ImageCache {
 // ---------------------------------------------------------------------------------------------------------------
 // Preview: <video> elements
 
+/** A seek started by seek(), for a paused frame. */
+interface PendingSeek {
+  to: Seconds
+  /**
+   * When it started (performance.now()), where the element was then, whether another seek was under way, and whether
+   * the element had just been paused while playing: what seek()'s frame check needs.
+   */
+  start: number
+  from: Seconds
+  inFlight: boolean
+  justPaused: boolean
+  /** The event that ended it ('seeked', 'error' or 'emptied'), or 'timeout' once its patience ran out. */
+  ended: Promise<string>
+  /** A frame stopped waiting for it (SEEK_WAIT_MS) and was drawn without its frame. */
+  late: boolean
+}
+
 interface VideoSlot {
   video: HTMLVideoElement
   ready: Promise<boolean>
@@ -79,6 +96,8 @@ interface VideoSlot {
   /** Latest requested time while paused; queued seeks skip to it. */
   target: Seconds
   seeking: Promise<void>
+  /** The seek for a paused frame that has not ended yet; requests for the same time wait for it. */
+  pending: PendingSeek | null
   lastUsed: number
 }
 
@@ -107,9 +126,26 @@ const MAX_FRAME_SPACING = 1
 const JUST_PAUSED_MS = 200
 /** How long that wait lasts where animation frames don't run (a hidden page), in ms. */
 const FRAME_TIMEOUT_MS = 50
+/** How long a paused frame waits for its seek, in ms; past it, the frame is drawn with the frame the element has. */
+const SEEK_WAIT_MS = 5_000
+/**
+ * A seek still under way after this long (ms) is sent to the element again, in case it was dropped, and each retry
+ * waits twice as long as the one before. Sending a seek again starts it over, and a 4K seek far past a key frame can
+ * take 15 s or more (longer with other videos decoding), so retrying sooner could keep a slow seek from ever ending.
+ */
+const SEEK_RETRY_MS = 20_000
 
 /** Unique across slots, so a texture never mistakes a new slot's frame for one it already holds. */
 let presentedSerial = 0
+
+/** What `promise` resolves to, or 'wait' when that takes longer than `ms`. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | 'wait'> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const wait = new Promise<'wait'>((resolve) => {
+    timer = setTimeout(() => resolve('wait'), ms)
+  })
+  return Promise.race([promise, wait]).finally(() => clearTimeout(timer))
+}
 
 function once(target: EventTarget, events: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve) => {
@@ -138,6 +174,11 @@ function nextFrame(timeoutMs: number): Promise<void> {
   })
 }
 
+/** The element is still seeking to `t`, for this seek. */
+function headingTo(video: HTMLVideoElement, pending: PendingSeek, t: Seconds): boolean {
+  return Math.abs(pending.to - t) < 1e-6 && video.seeking && Math.abs(video.currentTime - t) < 1e-6
+}
+
 /**
  * One <video> element per clip on screen. When a new clip starts, it takes over the element of a clip of the same
  * footage that left the screen, so contiguous pieces (splits, beat cuts) continue without a seek and a freeze is a
@@ -159,10 +200,16 @@ export class VideoElementFrameProvider implements FrameProvider {
   private playing = false
   private rate = 1
   private frame = 0
+  private readonly onLateFrame: (() => void) | undefined
 
-  constructor(media: MediaFileSource) {
+  /**
+   * `onLateFrame` is called when a seek that a paused frame stopped waiting for ends, for a clip of the latest frame:
+   * that frame was drawn without it, so it needs drawing again.
+   */
+  constructor(media: MediaFileSource, options: { onLateFrame?: () => void } = {}) {
     this.media = media
     this.images = new ImageCache(media)
+    this.onLateFrame = options.onLateFrame
   }
 
   /**
@@ -239,6 +286,7 @@ export class VideoElementFrameProvider implements FrameProvider {
       pausedAt: -Infinity,
       target: 0,
       seeking: Promise.resolve(),
+      pending: null,
       lastUsed: this.frame,
     }
     this.slots.set(id, slot)
@@ -332,17 +380,17 @@ export class VideoElementFrameProvider implements FrameProvider {
     const { video } = slot
     const t = slot.target
     if (Math.abs(video.currentTime - t) < 1e-6 && !video.seeking) return
-    const from = video.currentTime
-    // Just after a playing element is paused, the media pipeline can go on presenting playback frames after this seek
-    // starts: past where the video paused, for tens of ms while it is busy with other videos. They all come before the
-    // seek's own frame, which comes before 'seeked', so one animation frame after 'seeked' the latest frame is its own.
-    const justPaused = performance.now() - slot.pausedAt < JUST_PAUSED_MS
-    // A seek still under way (playback's, warm()'s, or one on an element taken over from another clip) can hand its
-    // frame to the compositor after this one starts.
-    const inFlight = video.seeking
-    const start = performance.now()
-    video.currentTime = t
-    await once(video, ['seeked', 'error'], 5_000)
+    // Setting currentTime starts a seek over, even one to the time the element is already seeking to: Chrome decodes
+    // again from the key frame before it. A request for the time a seek is under way to waits for that seek instead;
+    // sent again by each redraw, a seek that outlasts SEEK_WAIT_MS would never end.
+    let pending = slot.pending
+    if (!pending || !headingTo(video, pending, t)) pending = this.startSeek(slot, t, SEEK_RETRY_MS)
+    const ended = await within(pending.ended, SEEK_WAIT_MS)
+    if (ended !== 'seeked' && ended !== 'error') {
+      if (slot.pending && headingTo(video, slot.pending, t)) slot.pending.late = true
+      return
+    }
+    const { from, inFlight, justPaused, start } = pending
     if (justPaused) await nextFrame(FRAME_TIMEOUT_MS)
     // Chrome hands each seek's frame to the compositor before 'seeked' fires, even a seek within the frame already
     // shown, and the frame's presentationTime says when, however late its callback runs. So the seek's own frame went
@@ -373,6 +421,42 @@ export class VideoElementFrameProvider implements FrameProvider {
         })
       watch()
     })
+  }
+
+  /**
+   * Sends a paused element to `t` for seek(). Once the seek ends, a frame drawn without it is drawn again
+   * (onLateFrame); a seek that has not ended after `patience` ms is sent again, waiting twice as long.
+   */
+  private startSeek(slot: VideoSlot, t: Seconds, patience: number, retrying?: PendingSeek): PendingSeek {
+    const { video } = slot
+    const now = performance.now()
+    const pending: PendingSeek = {
+      to: t,
+      start: now,
+      // Just after a playing element is paused, the media pipeline can go on presenting playback frames after this seek
+      // starts: past where the video paused, for tens of ms while it is busy with other videos. They all come before
+      // the seek's own frame, which comes before 'seeked', so one animation frame after 'seeked' the latest frame is its
+      // own.
+      justPaused: retrying?.justPaused ?? now - slot.pausedAt < JUST_PAUSED_MS,
+      // A seek still under way (playback's, warm()'s, or one on an element taken over from another clip) can hand its
+      // frame to the compositor after this one starts.
+      inFlight: retrying?.inFlight ?? video.seeking,
+      from: retrying?.from ?? video.currentTime,
+      ended: once(video, ['seeked', 'error', 'emptied'], patience),
+      late: retrying?.late ?? false,
+    }
+    slot.pending = pending
+    video.currentTime = t
+    void pending.ended.then((event) => {
+      if (slot.pending !== pending) return
+      if (event === 'timeout' && video.paused && headingTo(video, pending, t)) {
+        this.startSeek(slot, t, patience * 2, pending)
+        return
+      }
+      slot.pending = null
+      if (pending.late && event === 'seeked' && this.active.has(slot.clipKey)) this.onLateFrame?.()
+    })
+    return pending
   }
 
   /**
@@ -463,6 +547,7 @@ export class VideoElementFrameProvider implements FrameProvider {
   }
 
   private release(id: string, slot: VideoSlot): void {
+    slot.pending = null
     slot.video.pause()
     slot.video.removeAttribute('src')
     slot.video.load()
@@ -471,6 +556,7 @@ export class VideoElementFrameProvider implements FrameProvider {
 
   dispose(): void {
     for (const slot of this.slots.values()) {
+      slot.pending = null
       slot.video.pause()
       slot.video.removeAttribute('src')
       slot.video.load()

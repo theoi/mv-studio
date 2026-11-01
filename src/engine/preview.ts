@@ -445,7 +445,7 @@ export class PreviewController {
 
   constructor(options: PreviewOptions) {
     this.canvas = options.canvas
-    this.frames = new VideoElementFrameProvider(options.media)
+    this.frames = new VideoElementFrameProvider(options.media, { onLateFrame: () => this.drawLateFrame() })
     this.preserveDrawingBuffer = options.preserveDrawingBuffer ?? false
     this.rendererReady = this.createRenderer(options)
     this.clock = new WebAudioPlaybackClock(options.media)
@@ -858,6 +858,20 @@ export class PreviewController {
     this.stillPending = false
     void this.draw(this.clock.currentTime(), true)
     this.updateSnapshot()
+  }
+
+  /**
+   * A seek that a paused frame stopped waiting for has ended, so the frame on screen lacks it. Drawing it again is not
+   * a drag step, so it starts no scrub: not while a frame is in flight, nor right after the last still.
+   */
+  private drawLateFrame(): void {
+    if (this.disposed || this.clock.state === 'playing') return
+    if (this.inFlight) {
+      this.stillPending = true
+      return
+    }
+    this.lastStillEnd = -Infinity
+    this.requestStill()
   }
 
   /** Stills arrive faster than they are drawn: a scrub, judged from its own stills (the level carries over). */

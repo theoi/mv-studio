@@ -28,6 +28,10 @@ class FakeVideo extends EventTarget {
   firstFrameAfter: number | null = null
   /** Frames of seeks whose callbacks ran: the seek they were for, and when. */
   readonly presented: { t: number; at: number }[] = []
+  /** Every time currentTime was set: the time, and when. */
+  readonly sets: { t: number; at: number }[] = []
+  /** How many seeks, from the next one, the element drops: they never end. */
+  dropSeeks = 0
   private time = 0
   private seeks = 0
   private callbacks: FrameCallback[] = []
@@ -54,7 +58,12 @@ class FakeVideo extends EventTarget {
   set currentTime(t: number) {
     this.time = t
     this.seeking = true
+    this.sets.push({ t, at: performance.now() })
     const seek = ++this.seeks
+    if (this.dropSeeks > 0) {
+      this.dropSeeks--
+      return
+    }
     const after = this.presentAfter(t)
     setTimeout(() => {
       const presentedAt = performance.now()
@@ -117,7 +126,10 @@ const asset = {
 } as Asset
 
 /** A paused preview's frame provider whose <video> elements are `video`. */
-function pausedProvider(video: FakeVideo): VideoElementFrameProvider {
+function pausedProvider(
+  video: FakeVideo,
+  options: ConstructorParameters<typeof VideoElementFrameProvider>[1] = {},
+): VideoElementFrameProvider {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
   vi.stubGlobal('document', { createElement: () => video })
   vi.stubGlobal('HTMLMediaElement', { HAVE_CURRENT_DATA: 2 })
@@ -125,7 +137,7 @@ function pausedProvider(video: FakeVideo): VideoElementFrameProvider {
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
     setTimeout(() => callback(performance.now()), 16),
   )
-  const provider = new VideoElementFrameProvider({ getFile: async () => new Blob() })
+  const provider = new VideoElementFrameProvider({ getFile: async () => new Blob() }, options)
   provider.setPlaying(false)
   return provider
 }
@@ -441,6 +453,97 @@ describe('seeking a paused preview video', () => {
     const own = video.presented.find((p) => p.t > 0.4)
     expect(own).toBeDefined()
     expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
+  })
+})
+
+describe('a paused frame’s seek that outlasts the frame’s wait for it (5 s)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  /** A paused provider whose element takes `seekMs` to seek, and the redraws it asks for. */
+  function slowSeeks(seekMs: number, dropSeeks = 0) {
+    const video = new FakeVideo()
+    video.seekMs = seekMs
+    video.dropSeeks = dropSeeks
+    const onLateFrame = vi.fn()
+    const provider = pausedProvider(video, { onLateFrame })
+    return { video, provider, onLateFrame, start: performance.now() }
+  }
+
+  /** Asks for the frame of `key` at `t` as the preview does; resolves once it is drawn. */
+  async function draw(provider: VideoElementFrameProvider, t: number, key = 'clip') {
+    provider.beginFrame([key])
+    let drawn = false
+    void provider.videoFrame(asset, t, key).then(() => (drawn = true))
+    while (!drawn) await vi.advanceTimersByTimeAsync(50)
+    provider.endFrame()
+  }
+
+  const ago = (start: number, at: number | undefined) => Math.round(((at ?? Infinity) - start) / 1000)
+
+  it('ends, as the frames drawn meanwhile wait for it instead of sending the element there again', async () => {
+    const { video, provider, start } = slowSeeks(12_000)
+    // Edits elsewhere (footage analysis, say) draw the paused frame again, one frame at a time, 2 s apart.
+    while (performance.now() - start < 40_000) {
+      await draw(provider, 4)
+      await vi.advanceTimersByTimeAsync(2000)
+    }
+    provider.dispose()
+    expect(video.sets.map((s) => s.t)).toEqual([expect.closeTo(4, 3)])
+    expect(ago(start, video.presented.find((p) => Math.abs(p.t - 4) < 0.01)?.at)).toBe(12)
+    expect(video.seeking).toBe(false)
+  })
+
+  it.each([
+    { on: 'still on screen', next: 'clip', redraws: 1 },
+    { on: 'gone from the frame since', next: 'other', redraws: 0 },
+  ])('asks for a redraw once it ends, for a clip $on', async ({ next, redraws }) => {
+    const { provider, onLateFrame, start } = slowSeeks(12_000)
+    await draw(provider, 4)
+    expect(ago(start, performance.now())).toBe(5)
+    provider.beginFrame([next])
+    provider.endFrame()
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(onLateFrame).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2000)
+    provider.dispose()
+    expect(onLateFrame).toHaveBeenCalledTimes(redraws)
+  })
+
+  it('asks for no redraw after a seek that ended in time', async () => {
+    const { provider, onLateFrame } = slowSeeks(300)
+    await draw(provider, 4)
+    await vi.advanceTimersByTimeAsync(30_000)
+    provider.dispose()
+    expect(onLateFrame).not.toHaveBeenCalled()
+  })
+
+  it('still sends the element at once to a new time asked for meanwhile', async () => {
+    const { video, provider, onLateFrame, start } = slowSeeks(12_000)
+    await draw(provider, 4)
+    const asked = performance.now()
+    await draw(provider, 7)
+    await vi.advanceTimersByTimeAsync(10_000)
+    provider.dispose()
+    expect(video.sets.map((s) => s.t)).toEqual([expect.closeTo(4, 3), expect.closeTo(7, 3)])
+    expect(video.sets[1]!.at - asked).toBeLessThan(1)
+    expect(ago(start, video.presented.find((p) => Math.abs(p.t - 7) < 0.01)?.at)).toBe(17)
+    expect(video.seeking).toBe(false)
+    // For the seek to 7 s, whose frame was drawn without it too; the seek to 4 s it replaced asks for none.
+    expect(onLateFrame).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends a seek the element dropped again after 20 s, then after 40 s more, and asks for a redraw once it ends', async () => {
+    const { video, provider, onLateFrame, start } = slowSeeks(100, 2)
+    await draw(provider, 4)
+    await vi.advanceTimersByTimeAsync(70_000)
+    provider.dispose()
+    expect(video.sets.map((s) => ago(start, s.at))).toEqual([0, 20, 60])
+    expect(video.sets.every((s) => Math.abs(s.t - 4) < 0.01)).toBe(true)
+    expect(video.seeking).toBe(false)
+    expect(onLateFrame).toHaveBeenCalledTimes(1)
   })
 })
 
