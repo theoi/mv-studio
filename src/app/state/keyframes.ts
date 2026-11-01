@@ -1,4 +1,5 @@
 import type {
+  Animatable,
   Clip,
   Easing,
   EditCommand,
@@ -18,6 +19,63 @@ const undoAction = (label: string) => ({
     if (editor.undoLabel() === label) editor.undo()
   },
 })
+
+/**
+ * The command that gives the clip the property at `path` with `value`, or null when the clip has it. Older projects
+ * can lack a plugin parameter, and a clip has no color adjustment until one is changed.
+ */
+export function createAt(clip: Clip, path: PropertyPath, value: ParamValue): EditCommand | null {
+  let node: unknown = clip
+  for (let i = 0; i < path.length; i++) {
+    const next = (node as Record<string | number, unknown>)[path[i] as string | number]
+    if (next === undefined || next === null) {
+      let created: unknown = { value }
+      for (let j = path.length - 1; j > i; j--) created = { [path[j] as string]: created }
+      return { type: 'clip.set', clipId: clip.id, path: path.slice(0, i + 1), value: created }
+    }
+    node = next
+  }
+  return null
+}
+
+export function animatableAt(clip: Clip, path: PropertyPath): Animatable<ParamValue> | undefined {
+  let node: unknown = clip
+  for (const k of path) node = (node as Record<string | number, unknown> | undefined)?.[k]
+  return node as Animatable<ParamValue> | undefined
+}
+
+/** Keyframes this close to a time, in seconds, are the keyframe at that time. */
+const AT_KEYFRAME = 0.005
+
+export const keyframeAt = (anim: Animatable<ParamValue> | undefined, time: Seconds) =>
+  anim?.keyframes?.find((k) => Math.abs(k.time - time) < AT_KEYFRAME)
+
+/**
+ * Commands that make the clip's property at `path` draw `value` at clip-local `time`. On a keyframed property that is
+ * the keyframe at `time` (the one there keeps its time and easing, a new one eases in and out), since the value under
+ * the keyframes is not what is drawn; otherwise the value itself, creating the property if the clip lacks it.
+ */
+export function valueAtCommands(
+  clip: Clip,
+  path: PropertyPath,
+  value: ParamValue,
+  time: Seconds,
+): EditCommand[] {
+  const anim = animatableAt(clip, path)
+  if (!anim?.keyframes?.length)
+    return [
+      createAt(clip, path, value) ?? { type: 'clip.set', clipId: clip.id, path: [...path, 'value'], value },
+    ]
+  const at = keyframeAt(anim, time)
+  return [
+    {
+      type: 'keyframe.set',
+      clipId: clip.id,
+      path,
+      keyframe: { time: at?.time ?? time, value, easing: at?.easing ?? 'ease-in-out' },
+    },
+  ]
+}
 
 /** The easings offered for a keyframe, in menu order. Custom curves made elsewhere show with none checked. */
 export const EASINGS: { value: Exclude<Easing, object>; label: string }[] = [

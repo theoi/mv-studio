@@ -4,7 +4,6 @@
  * the clip with Alt held.
  */
 import {
-  createVideoClip,
   type Asset,
   type Clip,
   type EditCommand,
@@ -19,6 +18,7 @@ import { cutoutsOf } from './behind.ts'
 import { baseName } from './importer.ts'
 import { libraryAssets, undoAction } from './library.ts'
 import { dispatch, editor, viewOf } from './project.ts'
+import { createShot } from './shotSound.ts'
 import { select, selectedClipIds, toast, type Selection } from './ui.ts'
 
 type Picture = VideoClip | ImageClip
@@ -63,7 +63,7 @@ function withFootage(
     }
   } else if (clip.type === 'video') next = { ...clip, assetId: asset.id, sourceStart: 0 }
   else {
-    const fresh = createVideoClip({
+    const fresh = createShot({
       trackId: clip.trackId,
       assetId: asset.id,
       start: clip.start,

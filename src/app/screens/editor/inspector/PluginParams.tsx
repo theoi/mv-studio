@@ -14,8 +14,9 @@ import {
 import { formatParam } from '../../../format.ts'
 import { BUILT_IN_LUTS, isLutAsset } from '../../../../plugins/lut.ts'
 import { LUT_FILE_TYPES, loadLut, lutFiles, pickFile } from '../../../state/luts.ts'
+import { valueAtCommands } from '../../../state/keyframes.ts'
 import { editor, useProject } from '../../../state/project.ts'
-import { settingName, useAnimatable, valueAtCommands } from './animatable.ts'
+import { settingName, useAnimatable } from './animatable.ts'
 import { LutFilesDialog } from './LutFiles.tsx'
 import styles from '../Inspector.module.css'
 

@@ -17,6 +17,7 @@ import {
   type Project,
   type PropertyPath,
   type SongSection,
+  type VideoClip,
 } from '../../model/index.ts'
 import { directorMeta } from '../../director/meta.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
@@ -234,6 +235,23 @@ export function songAnalysis(p: Project): AudioAnalysis | undefined {
   return p.songAssetId ? p.analysis.audio[p.songAssetId] : undefined
 }
 
+/**
+ * A shot whose own sound Inspector › Sound and the palette control: a video clip whose file has sound. A cutout for
+ * text behind the subject is left out: it shows its shot's footage, and the shot carries the sound.
+ */
+export function hasShotSound(p: Project, c: Clip | undefined): c is VideoClip {
+  return c?.type === 'video' && !c.meta?.behindSubjectOf && p.assets[c.assetId]?.hasAudio !== false
+}
+
+/** A shot set to play its own sound: not muted, at a volume above zero somewhere. */
+export function playsOwnSound(p: Project, c: Clip | undefined): c is VideoClip {
+  return (
+    hasShotSound(p, c) &&
+    !c.muted &&
+    (c.volume.value > 0 || c.volume.keyframes?.some((k) => k.value > 0) === true)
+  )
+}
+
 export function hasSong(p: Project): boolean {
   return !!p.songAssetId
 }
@@ -382,6 +400,8 @@ export interface ClipView {
   /** Video and image clips: how long their transitions in and out are, whose marks the clip's name sits beside. */
   transitionIn?: number
   transitionOut?: number
+  /** Video clips that play their own sound (playsOwnSound), for the speaker on the timeline. */
+  sound?: true
 }
 
 export function viewOf(p: Project, c: Clip): ClipView {
@@ -398,6 +418,7 @@ export function viewOf(p: Project, c: Clip): ClipView {
         ...(c.type === 'video' ? { sourceStart: c.sourceStart } : {}),
         ...(c.transitionIn ? { transitionIn: c.transitionIn.duration } : {}),
         ...(c.transitionOut ? { transitionOut: c.transitionOut.duration } : {}),
+        ...(playsOwnSound(p, c) ? { sound: true as const } : {}),
       }
     }
     case 'text':

@@ -1096,6 +1096,8 @@ function toggleInSelection(clipId: string) {
 /** `.mediaLabel`: its font, and its padding plus its inset from the clip's edges. */
 const MEDIA_LABEL_FONT = '520 10px "Inter Variable", Inter, sans-serif'
 const MEDIA_LABEL_EXTRA = 10 + 6
+/** The speaker before the name of a shot that plays its own sound: its width and gap. */
+const SOUND_ICON_WIDTH = 10 + 3
 /** Room from which a footage clip's name chip shows even when the name does not fit whole (it is cut off). */
 const MEDIA_LABEL_MIN = 96
 
@@ -1109,7 +1111,9 @@ function zoomedLook(clip: ClipView, pps: number) {
   const room = width - inW - outW
   // Below MEDIA_LABEL_MIN a cut-off name ("clip…") would cover most of the picture and name nothing.
   const showLabel = isMedia
-    ? room > MEDIA_LABEL_MIN || labelWidth(clip.name, MEDIA_LABEL_FONT) + MEDIA_LABEL_EXTRA <= room
+    ? room > MEDIA_LABEL_MIN ||
+      labelWidth(clip.name, MEDIA_LABEL_FONT) + MEDIA_LABEL_EXTRA + (clip.sound ? SOUND_ICON_WIDTH : 0) <=
+        room
     : width > 54
   return { width, isMedia, inW, outW, showLabel }
 }
@@ -1189,7 +1193,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
             tabIndex={0}
             data-clip-id={clip.id}
             title={isMedia && !showLabel ? clip.name : undefined}
-            aria-label={`${label}, ${formatTime(clip.start, true)} to ${formatTime(clip.end, true)}`}
+            aria-label={`${label}, ${formatTime(clip.start, true)} to ${formatTime(clip.end, true)}${clip.sound ? ', with its sound' : ''}`}
             aria-pressed={selected}
             aria-keyshortcuts="Enter Shift+Enter"
             // Enter selects and Shift Enter adds to the selection; Space plays or pauses, as in other editors, even
@@ -1217,6 +1221,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
                 className={styles.mediaLabel}
                 style={inW || outW ? { left: inW + 3, maxWidth: width - inW - outW - 6 } : undefined}
               >
+                {clip.sound && <Volume2 className={styles.soundIcon} aria-hidden />}
                 {clip.name}
               </span>
             )}

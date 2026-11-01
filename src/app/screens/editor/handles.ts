@@ -8,8 +8,8 @@ import {
   type Project,
   type VisualClip,
 } from '../../../model/index.ts'
+import { valueAtCommands } from '../../state/keyframes.ts'
 import { clipsLabel, dispatch, editor } from '../../state/project.ts'
-import { valueAtCommands } from './inspector/animatable.ts'
 
 /*
  * Dragging the selected clip on the preview: inside its outline moves it, a corner scales it, the knob above the top
