@@ -75,6 +75,7 @@ import { get, set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'
 import { usePick } from '../../state/pick.ts'
 import { changeAspect } from '../../state/reframe.ts'
+import { clearVjReturnFrame, SHOWN_AFTER_MS, subscribeVjReturnFrame, vjReturnFrame } from '../../state/vj.ts'
 import { PickOverlay } from './PickOverlay.tsx'
 import type { Rect } from './handles.ts'
 import { SelectionOverlay } from './SelectionOverlay.tsx'
@@ -131,6 +132,32 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
   const zoom = useUi((s) => s.previewZoom)
   const full = useSyncExternalStore(subscribeFullscreen, () => isFullscreen(wrapRef.current))
   const zoomed = zoom !== 'fit' && !full
+  // Back from VJ mode: its last frame stands in until this preview shows its own, instead of "Preparing the preview".
+  const returnFrame = useSyncExternalStore(subscribeVjReturnFrame, vjReturnFrame)
+  const returnBitmap = returnFrame === 'pending' ? null : returnFrame
+  const drawReturn = useCallback(
+    (canvas: HTMLCanvasElement | null) => {
+      if (!canvas || !returnBitmap) return
+      canvas.width = returnBitmap.width
+      canvas.height = returnBitmap.height
+      try {
+        canvas.getContext('2d')?.drawImage(returnBitmap, 0, 0)
+      } catch {
+        // Closed already: this preview has shown its own frame.
+      }
+    },
+    [returnBitmap],
+  )
+
+  useEffect(() => {
+    if (status === 'loading') return
+    if (status !== 'ready') {
+      clearVjReturnFrame()
+      return
+    }
+    const timer = window.setTimeout(clearVjReturnFrame, SHOWN_AFTER_MS)
+    return () => window.clearTimeout(timer)
+  }, [status])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -228,7 +255,8 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
           <SelectionOverlay width={size.width} height={size.height} view={view} />
         )}
         {status === 'ready' && picking && <PickOverlay width={size.width} height={size.height} />}
-        {status === 'loading' && (
+        {returnBitmap && <canvas ref={drawReturn} className={styles.returnFrame} aria-hidden />}
+        {status === 'loading' && !returnFrame && (
           <div className={styles.stageNote}>
             <Spinner /> Preparing the preview
           </div>

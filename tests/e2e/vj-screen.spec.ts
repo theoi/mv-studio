@@ -552,6 +552,66 @@ test('opened from the editor, VJ mode shows the frame at the playhead at once; l
   expect(problems).toEqual([])
 })
 
+test('back in the editor, the stage shows VJ mode’s last frame until its own preview draws, never “Preparing the preview”', async ({
+  page,
+}) => {
+  await openApp(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=60'
+  })
+  await waitForPreview(page)
+  const stage = page.getByRole('img', { name: 'Video preview' })
+  const shown = await brightness(page, stage)
+  expect(shown).toBeGreaterThan(5)
+  await page.keyboard.press('Shift+KeyV')
+  const live = page.getByRole('img', { name: 'Live output' })
+  await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+
+  // Before each paint from the press on: whether the editor's stage says it is preparing, and whether it is busy
+  // (its preview hasn't drawn) with nothing standing in for its frame.
+  await page.evaluate(() => {
+    const w = window as unknown as { back: { note: number; bare: number; standIn: number; done: boolean } }
+    w.back = { note: 0, bare: 0, standIn: 0, done: false }
+    const tick = () => {
+      if (w.back.done) return
+      const canvas = document.querySelector('canvas[aria-label="Video preview"]')
+      const standIn = canvas?.parentElement?.querySelector('canvas[aria-hidden="true"]')
+      if (
+        [...document.querySelectorAll('div')].some((d) => d.textContent?.trim() === 'Preparing the preview')
+      )
+        w.back.note++
+      if (canvas?.getAttribute('aria-busy') === 'true' && !standIn) w.back.bare++
+      if (standIn) w.back.standIn++
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+  await page.keyboard.press('Escape')
+  await expect(live).toBeHidden()
+  // While the editor's own preview starts, its stage shows the live output's last frame.
+  let busyWhenShown: string | null = null
+  await expect
+    .poll(async () => {
+      busyWhenShown = await stage.getAttribute('aria-busy')
+      return brightness(page, stage)
+    })
+    .toBeGreaterThan(shown * 0.85)
+  expect(busyWhenShown).toBe('true')
+  await waitForPreview(page)
+  await expect.poll(() => brightness(page, stage)).toBeGreaterThan(shown * 0.85)
+  await page.waitForTimeout(600)
+  const back = await page.evaluate(() => {
+    const w = window as unknown as { back: { note: number; bare: number; standIn: number; done: boolean } }
+    w.back.done = true
+    return w.back
+  })
+  expect(back.note).toBe(0)
+  expect(back.bare).toBe(0)
+  expect(back.standIn).toBeGreaterThan(0)
+  // The stand-in goes once the editor's preview has drawn.
+  await expect(stage.locator('xpath=..').locator('canvas[aria-hidden="true"]')).toHaveCount(0)
+})
 test('the first VJ entry keeps the editor on screen until VJ mode has loaded', async ({ page }) => {
   // VJ mode's code arrives only once the test lets it, as on a first visit over a slow connection. Held, not
   // delayed: the editor's idle preload asks for it too, and could otherwise have it before the press.
