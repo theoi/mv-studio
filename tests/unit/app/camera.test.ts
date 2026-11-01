@@ -127,6 +127,40 @@ it('says once that straight lines bend with any motion where every motion bends 
   )
 })
 
+it('names a Motion that keeps the lines straight where a still’s move bends them below the lowest automatic strength', () => {
+  const below = (above: number, cleanAlternatives: Vision.CameraPreset[]) => ({
+    risks: [{ risk: 'bend' as const, above }],
+    alwaysBends: false,
+    cleanAlternatives,
+  })
+  expect(riskNote(1, [below(20, ['pan-right', 'orbit-right'])])).toBe(
+    'This image may bend straight lines at this strength. Try Drift instead.',
+  )
+  expect(riskNote(1, [below(0, ['dolly-in'])])).toBe(
+    'This image may bend straight lines at this strength. Try Push in instead.',
+  )
+  // Several stills: the first one's best Motion that keeps every one of them straight.
+  expect(riskNote(3, [below(20, ['dolly-in', 'orbit-right']), none, below(15, ['orbit-right'])])).toBe(
+    '2 of 3 images may bend straight lines at this strength. Try Orbit instead.',
+  )
+  expect(riskNote(2, [below(20, ['dolly-in']), below(15, ['orbit-right'])])).toBe(
+    'Both images may bend straight lines at this strength. Try another Motion.',
+  )
+  // The move may smear too: the Motion is still the advice, since it keeps the lines straight at the lowest strength.
+  expect(
+    riskNote(1, [{ ...below(15, ['orbit-right']), risks: [...below(15, []).risks, ...smear.risks] }]),
+  ).toBe(
+    'This image may smear behind foreground objects or bend straight lines at this strength. Try Orbit instead.',
+  )
+  // Another still that a lower Strength helps, or a move lowered under its bend that may still smear.
+  expect(riskNote(2, [below(20, ['pan-right']), smear])).toBe(
+    'Both images may smear behind foreground objects or bend straight lines at this strength. Try a lower Strength.',
+  )
+  expect(riskNote(1, [{ ...smear, cleanAlternatives: ['pan-right'] }])).toBe(
+    'This image may smear behind foreground objects at this strength. Try a lower Strength.',
+  )
+})
+
 it('lists what a move may do above which strength, the lowest first, from the safe amounts', () => {
   const safe = { smear: 0.4, bend: 0.15 }
   expect(cameraRisks(safe, 15)).toEqual([])
@@ -154,7 +188,12 @@ it('lists what a move may do above which strength, the lowest first, from the sa
 })
 
 it('tells what moves may do at the strength they were added with', () => {
-  const move = (intensity: number, safe: { smear: number; bend: number }, alwaysBends = false) => ({
+  const move = (
+    intensity: number,
+    safe: { smear: number; bend: number },
+    alwaysBends = false,
+    cleanAlternatives: Vision.CameraPreset[] = [],
+  ) => ({
     clipId: 'c',
     effectInstanceId: 'fx',
     depthAssetId: 'd',
@@ -164,6 +203,7 @@ it('tells what moves may do at the strength they were added with', () => {
     smearRisk: intensity > safe.smear,
     bendRisk: intensity > safe.bend,
     alwaysBends,
+    cleanAlternatives,
   })
   expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.25 })] })).toBeNull()
   expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.1 })] })).toBe(
@@ -171,6 +211,9 @@ it('tells what moves may do at the strength they were added with', () => {
   )
   expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.1 }, true)] })).toBe(
     'Straight lines in this image may bend with any Motion. A lower Strength bends them less.',
+  )
+  expect(addedRiskNote({ moves: [move(0.25, { smear: 0.5, bend: 0.1 }, false, ['pan-right'])] })).toBe(
+    'This image may bend straight lines at this strength. Try Drift instead.',
   )
 })
 
@@ -248,6 +291,7 @@ describe('editing a move in Inspector › Motion', () => {
       smearRisk: intensity > safe.smear,
       bendRisk: intensity > safe.bend,
       alwaysBends: false,
+      cleanAlternatives: [],
     })
     const result = {
       moves: [at(0.4, { smear: 0.3, bend: 0.15 }), { ...at(0.4, { smear: 0.3, bend: 0.15 }), clipId: other }],

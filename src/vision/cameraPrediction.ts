@@ -41,6 +41,11 @@ export interface CameraPrediction {
   safe: SafeAmounts
   /** `preset` and every one of `alternatives` bend the still's straight lines at some amount up to `floor`. */
   alwaysBends: boolean
+  /**
+   * Where `preset` bends the still's straight lines below `floor`: the `alternatives` predicted neither to bend them
+   * nor to smear up to `floor`, the one with the largest safe amount first (`cleanAlternatives`). Empty otherwise.
+   */
+  cleanAlternatives: CameraPreset[]
   /** For a fresh estimate: the estimate prepared for the parallax renderer, which the move renders and stores. */
   prepared?: DepthMap
 }
@@ -56,13 +61,38 @@ export async function predictCameraMove(request: PredictionRequest): Promise<Cam
   }
   const focus = request.focus ?? suggestFocus(scene.depth)
   const safe = safeAmounts(scene, preset, focus)
-  const alwaysBends =
-    !!alternatives &&
-    safe.bend < alternatives.floor &&
-    alternatives.presets.every(
-      (p) => p === preset || safeBend(scene, p, focus, alternatives.floor) < alternatives.floor,
-    )
-  return { focus, safe, alwaysBends, ...(prepared ? { prepared } : {}) }
+  const below = alternatives && safe.bend < alternatives.floor ? alternatives : undefined
+  const straight = below
+    ? below.presets.filter((p) => p !== preset && safeBend(scene, p, focus, below.floor) >= below.floor)
+    : []
+  return {
+    focus,
+    safe,
+    alwaysBends: !!below && !straight.length,
+    cleanAlternatives: below
+      ? cleanAlternatives(
+          straight.map((p) => ({ preset: p, safe: safeAmounts(scene, p, focus) })),
+          below.floor,
+        )
+      : [],
+    ...(prepared ? { prepared } : {}),
+  }
+}
+
+/**
+ * The presets that stay under both limits up to `floor`, the one with the largest safe amount first (ties keep their
+ * order). Below `floor` an automatic move is hard to see, so where the chosen preset bends a still's lines under it,
+ * one of these keeps a visible move without the bend; a lower strength would not.
+ */
+export function cleanAlternatives(
+  candidates: readonly { preset: CameraPreset; safe: SafeAmounts }[],
+  floor: number,
+): CameraPreset[] {
+  const amount = (s: SafeAmounts) => Math.min(s.smear, s.bend)
+  return candidates
+    .filter((c) => amount(c.safe) >= floor)
+    .sort((a, b) => amount(b.safe) - amount(a.safe))
+    .map((c) => c.preset)
 }
 
 function sceneOf(depth: DepthField, gray: GrayImage): SmearScene {

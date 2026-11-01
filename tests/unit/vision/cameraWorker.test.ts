@@ -50,7 +50,12 @@ vi.mock('../../../src/vision/runtime/canvas.ts', async (importOriginal) => ({
 }))
 
 const requests: PredictionRequest[] = []
-const prediction = { focus: 0.4, safe: { smear: 0.35, bend: 0.2 }, alwaysBends: true }
+const prediction = {
+  focus: 0.4,
+  safe: { smear: 0.35, bend: 0.2 },
+  alwaysBends: false,
+  cleanAlternatives: ['pan-right'],
+}
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -151,7 +156,8 @@ describe('the camera-move prediction', () => {
       safe: prediction.safe,
       safeIntensity: 0.2,
       bendRisk: true,
-      alwaysBends: true,
+      alwaysBends: false,
+      cleanAlternatives: ['pan-right'],
     })
     const effect = editor.getProject().clips[clip.id]!
     expect('effects' in effect && effect.effects[0]!.params.focus!.value).toBe(0.4)

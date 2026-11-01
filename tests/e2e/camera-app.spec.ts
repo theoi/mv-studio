@@ -685,9 +685,9 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
   await expect(detail).toBeVisible()
   // The fake depths make a still that smears or one that bends, never both, so the move's safe amounts are set to
   // each case the row puts into words.
-  const setSafe = (smear: number, bend: number, alwaysBends = false) =>
+  const setSafe = (smear: number, bend: number, alwaysBends = false, cleanAlternatives: string[] = []) =>
     page.evaluate(
-      ([s, b, always]) => {
+      ([s, b, always, clean]) => {
         const { useCamera } = window.mvStudio.app.camera
         useCamera.setState((state: Untyped) => ({
           results: Object.fromEntries(
@@ -702,13 +702,14 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
                   smearRisk: m.intensity > s,
                   bendRisk: m.intensity > b,
                   alwaysBends: always,
+                  cleanAlternatives: clean,
                 })),
               },
             ]),
           ),
         }))
       },
-      [smear, bend, alwaysBends] as const,
+      [smear, bend, alwaysBends, cleanAlternatives] as const,
     )
   for (const [smear, bend, words] of [
     [0.1, 1, 'may smear above 10%'],
@@ -740,6 +741,10 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
   await expect(note).toHaveText(
     'Straight lines in this image may bend with any Motion. A lower Strength bends them less.',
   )
+  await expect(detail).toHaveText('Strength 100% · may bend lines above 10%')
+  // Where another Motion keeps the lines straight at the lowest automatic strength, the note names it.
+  await setSafe(1, 0.1, false, ['orbit-right', 'pan-right'])
+  await expect(note).toHaveText('This image may bend straight lines at this strength. Try Orbit instead.')
   await expect(detail).toHaveText('Strength 100% · may bend lines above 10%')
 })
 

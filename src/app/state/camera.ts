@@ -26,6 +26,8 @@ export const MOTION_PRESETS: Record<CameraMotion, CameraPreset> = {
   drift: 'pan-right',
 }
 
+export const MOTION_LABELS: Record<CameraMotion, string> = { push: 'Push in', orbit: 'Orbit', drift: 'Drift' }
+
 /** The move's intensity when nothing set it (the effect's own default), and the panels' starting strength. */
 const DEFAULT_CAMERA_INTENSITY = 0.5
 
@@ -200,12 +202,17 @@ export function riskyMoves(
 
 /**
  * What to tell the user when some of the `total` stills just given a move may smear or bend (`risks` lists what
- * each move may do, `alwaysBends` that every Motion bends its straight lines even at the lowest automatic strength);
- * null when none may.
+ * each move may do, `alwaysBends` that every Motion bends its straight lines even at the lowest automatic strength,
+ * `cleanAlternatives` the Motions predicted to keep them straight at that strength where this one bends them below
+ * it); null when none may.
  */
 export function riskNote(
   total: number,
-  moves: readonly { risks: readonly CameraRiskAt[]; alwaysBends: boolean }[],
+  moves: readonly {
+    risks: readonly CameraRiskAt[]
+    alwaysBends: boolean
+    cleanAlternatives?: readonly CameraPreset[]
+  }[],
 ): string | null {
   const risky = moves.filter((m) => m.risks.length)
   if (!risky.length) return null
@@ -216,9 +223,21 @@ export function riskNote(
   const has = (risk: CameraRisk) => risky.some((m) => m.risks.some((x) => x.risk === risk))
   const { smear, bend } = RISK_WORDS.long
   const what = has('smear') && has('bend') ? `${smear} or ${bend}` : has('smear') ? smear : bend
+  // Lines that bend below the lowest automatic strength: a lower Strength leaves little motion to see and may not
+  // straighten them, so a Motion predicted to keep them straight at that strength is the better advice.
+  const bendsBelow = risky.every((m) => m.risks.some((r) => r.risk === 'bend') && m.cleanAlternatives?.length)
+  const motions = bendsBelow ? risky[0]!.cleanAlternatives!.map(motionOf) : []
+  const named = motions.find(
+    (motion) => motion && risky.every((m) => m.cleanAlternatives!.includes(MOTION_PRESETS[motion])),
+  )
   // Only another motion helps a still that may do it at any strength, unless every motion bends its lines.
-  const other = risky.every((m) => m.risks[0]!.above === 0 && !m.alwaysBends)
-  const rest = `may ${what} at this strength. ${other ? 'Try another Motion.' : 'Try a lower Strength.'}`
+  const other = bendsBelow || risky.every((m) => m.risks[0]!.above === 0 && !m.alwaysBends)
+  const advice = named
+    ? `Try ${MOTION_LABELS[named]} instead.`
+    : other
+      ? 'Try another Motion.'
+      : 'Try a lower Strength.'
+  const rest = `may ${what} at this strength. ${advice}`
   if (total === 1) return `This image ${rest}`
   return `${count[0]!.toUpperCase()}${count.slice(1)} images ${rest}`
 }
@@ -230,6 +249,7 @@ export function addedRiskNote(result: Pick<CameraMovesResult, 'moves'>): string 
     result.moves.map((m) => ({
       risks: cameraRisks(m.safe, Math.round(m.intensity * 100)),
       alwaysBends: m.alwaysBends,
+      cleanAlternatives: m.cleanAlternatives,
     })),
   )
 }
