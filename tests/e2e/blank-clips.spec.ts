@@ -88,4 +88,30 @@ test('a clip that shows nothing is badged, left out of the cut unless ticked in 
       /^“clear\.webm” shows nothing: every frame is black or see-through\. It plays (at \d+:\d\d(, \d+:\d\d)?( and \d+:\d\d)?|\d+ times, first at \d+:\d\d)\.$/,
     ),
   ).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+
+  // Replace with… names it too, in place of its length.
+  await page
+    .getByRole('button', { name: /^clip\.mp4, \d/ })
+    .first()
+    .click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Replace with…' }).click()
+  const palette = page.getByRole('dialog', { name: 'Command palette' })
+  await expect(palette.getByRole('option', { name: /^clear/ })).toContainText('Shows nothing')
+  const shown = palette.getByRole('option', { name: /^clip/ })
+  await expect(shown).toContainText(/\d:\d\d/)
+  await expect(shown).not.toContainText('Shows nothing')
+  await page.keyboard.press('Escape')
+  await expect(palette).toBeHidden()
+  // And so does the palette's Add media list.
+  await page.keyboard.press('Control+k')
+  await palette.getByRole('combobox').fill('add media')
+  await palette.getByRole('option', { name: /^Add media at the playhead…/ }).click()
+  await expect(palette.getByRole('option', { name: /^clear/ })).toContainText('Shows nothing')
+  await expect(palette.getByRole('option', { name: /^clip/ })).not.toContainText('Shows nothing')
+  await page.keyboard.press('Escape')
+  if (await palette.isVisible()) await page.keyboard.press('Escape')
+  await expect(palette).toBeHidden()
 })
