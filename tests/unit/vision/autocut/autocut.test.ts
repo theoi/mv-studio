@@ -81,7 +81,9 @@ describe('auto-cut plan', () => {
   it('picks for variety with a warning when the clips are not analyzed yet', async () => {
     const project = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) })
     const result = await plan(project)
-    expect(result.warnings.join(' ')).toMatch(/aren’t analyzed yet/)
+    expect(result.warnings).toContain(
+      'Your clips aren’t analyzed yet, so they were picked for variety. Run auto-cut again once analysis finishes.',
+    )
     expect(new Set(result.shots.map((s) => s.assetId)).size).toBe(CLIPS.length)
     expect(result.shots.every((s) => s.reason === 'variety')).toBe(true)
   })
@@ -103,6 +105,25 @@ describe('auto-cut plan', () => {
       [CLIPS.map((c) => c.id), true],
       [[CLIPS[2]!.id], false],
     ])
+  })
+
+  it('counts the clips and the images it used without analysis apart', async () => {
+    const still = (id: string) => ({ id, image: true, indexed: false })
+    const mixed = makeProject({
+      clips: [
+        ...CLIPS.slice(0, 2),
+        { ...CLIPS[2]!, indexed: false },
+        { ...CLIPS[3]!, indexed: false },
+        still('a'),
+      ],
+    })
+    expect((await plan(mixed)).warnings).toContain(
+      '2 clips and 1 image aren’t analyzed yet, so they were only used for variety.',
+    )
+    const stills = makeProject({ clips: [...CLIPS.slice(0, 2), still('a'), still('b')] })
+    expect((await plan(stills)).warnings).toContain(
+      '2 images aren’t analyzed yet, so they were only used for variety.',
+    )
   })
 
   it('uses only the chosen clips, and refuses without a song or clips', async () => {

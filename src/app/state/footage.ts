@@ -14,7 +14,7 @@ import type {
   VisionService,
   VisionServiceOptions,
 } from '../../vision/index.ts'
-import { readClipTags } from '../../vision/analysisData.ts'
+import { hasUncheckedMedia, readClipTags } from '../../vision/analysisData.ts'
 import { mediaById } from '../mock/media.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
 import { appMedia } from './media.ts'
@@ -95,7 +95,8 @@ export function showingDownloads<T>(
 
 export function footageService(): Promise<FootageService> {
   loading ??= Promise.all([import('../../vision/index.ts'), visionService()]).then(([v, vision]) => {
-    const service = v.createFootageService({ editor, vision, media: appMedia })
+    // The sample's clips are drawn, never blank: checking them would only hold up the first draft people try.
+    const service = v.createFootageService({ editor, vision, media: appMedia, showsSomething: isSampleAsset })
     service.indexing.subscribe((indexing) => useFootage.setState({ indexing }))
     useFootage.setState({ service, indexing: service.indexing.getState(), strongMatch: v.STRONG_MATCH })
     return service
@@ -148,6 +149,19 @@ export function analyzeFootageNow(): void {
     service.indexing.start()
     service.indexing.resume()
   })
+}
+
+/**
+ * Waits for the fast blank check of these clips and stills (default: all) that footage analysis hasn't looked at yet,
+ * so a draft or a cut can leave out the ones that show nothing before analysis reaches them. It downloads no model,
+ * so it also runs where background analysis is off. Undefined when every one of them has been looked at.
+ */
+export function checkClipsForBlank(
+  options: { assetIds?: readonly Id[]; signal?: AbortSignal; progress?: (fraction: number) => void } = {},
+): Promise<void> | undefined {
+  const { assetIds, ...rest } = options
+  if (!hasUncheckedMedia(editor.getProject(), assetIds, isSampleAsset)) return undefined
+  return footageService().then((service) => service.checkBlank(assetIds, rest))
 }
 
 const hasOwnFootage = (project: Project) =>
