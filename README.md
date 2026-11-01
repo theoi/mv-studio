@@ -120,7 +120,7 @@ Everything works without an account or key. Two optional connections add AI feat
   - Windows: add a user environment variable `OLLAMA_ORIGINS` = `https://theoi.github.io`, then restart Ollama from the tray.
   - Linux (systemd): `sudo systemctl edit ollama`, add `Environment="OLLAMA_ORIGINS=https://theoi.github.io"` under `[Service]`, then `sudo systemctl restart ollama`.
 
-  Use the base URL `http://localhost:11434/v1`. Models with tool support (for example `qwen2.5` or `llama3.1`) work best. Also set Ollama's context length to 16k: in the Ollama app under Settings › Context length, or with `OLLAMA_CONTEXT_LENGTH=16384` set the same way as above. Without a GPU, Ollama reads only 4,096 tokens by default, and a plain-language edit sends 11,000 to 16,000, or about 18,000 after a long director draft (then use 32k). When a request doesn't fit, the studio says so and names the length to set.
+  Use the base URL `http://localhost:11434/v1`. Models with tool support (for example `qwen2.5` or `llama3.1`) work best. Also set Ollama's context length to 16k: in the Ollama app under Settings › Context length, or with `OLLAMA_CONTEXT_LENGTH=16384` set the same way as above. On most computers (less than 24 GB of graphics memory), Ollama reads only 4,096 tokens by default, and a plain-language edit sends 11,000 to 16,000. The largest edits, and edits after a long director draft (about 18,000), need 32k. When a request doesn't fit, the studio says so and names the length to set.
 
 - **LM Studio** (free, runs on your computer): start the server in the Developer tab, turn on **Enable CORS** in its settings, load a model, and use `http://localhost:1234/v1`.
 
@@ -177,7 +177,7 @@ Developer notes on the providers, error states and model choice are in [src/clou
 
 **LLM answers time out.** Raise the answer time limit in Settings › AI and cloud, use a smaller project or a GPU, or switch to a cloud model. See [Choosing an LLM](#choosing-an-llm).
 
-**A local model says it read only part of the request.** The model's context length is too small for the request. Raise it to the length the message names (16k, or 32k after a long director draft), restart the server and try again. A larger context uses more memory.
+**A local model says it read only part of the request.** The model's context length is too small for the request. Raise it to the length the message names (16k, or 32k for the largest edits and after a long director draft) by following the steps in the message, then try again. A larger context uses more memory.
 
 **The browser says storage is full.** Free some disk space, or remove projects and media you no longer need. Browsers give each site a share of the free disk space.
 
