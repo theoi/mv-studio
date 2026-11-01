@@ -20,7 +20,9 @@ test('a first 3D camera move shows the depth estimator downloading, and names it
   await context.route('https://huggingface.co/**', (route) => route.abort())
   await assist.getByRole('button', { name: /^Apply to \d+ images$/ }).click()
   const failure = assist.getByRole('alert')
-  await expect(failure).toContainText('Couldn’t download the depth estimator')
+  await expect(failure).toContainText(
+    'Couldn’t download the depth estimator. Check your connection and try again.',
+  )
   await expect(failure).not.toContainText('https://')
   await context.unroute('https://huggingface.co/**')
 
@@ -74,21 +76,32 @@ test('a first 3D camera move shows the depth estimator downloading, and names it
   expect(seen.chip).toEqual([...seen.chip].sort((a, b) => a - b))
 })
 
-test('a 3D camera move names the depth estimator it could not download when Hugging Face answers with an error', async ({
-  page,
-  context,
-}) => {
-  await openHarness(page)
-  await page.evaluate(() => {
-    localStorage.setItem('mv-studio.guide-seen', '1')
-    window.location.hash = '#/editor?tab=assist&assist=camera&t=28'
+// A network that blocks Hugging Face answers 403; a file this build asks for that has moved, 404.
+const STATUS_HINTS = [
+  [503, 'The server is having trouble. Try again in a few minutes.'],
+  [403, 'The server refused the file. If your network blocks huggingface.co, try another network.'],
+  [404, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
+] as const
+
+for (const [status, hint] of STATUS_HINTS) {
+  test(`a 3D camera move names the depth estimator it could not download when Hugging Face answers ${status}`, async ({
+    page,
+    context,
+  }) => {
+    await openHarness(page)
+    await page.evaluate(() => {
+      localStorage.setItem('mv-studio.guide-seen', '1')
+      window.location.hash = '#/editor?tab=assist&assist=camera&t=28'
+    })
+    await waitForPreview(page)
+    await context.route('https://huggingface.co/**', (route) => route.fulfill({ status, body: '' }))
+    const assist = page.getByRole('tabpanel', { name: 'Assist' })
+    await assist.getByRole('button', { name: /^Apply to \d+ images$/ }).click()
+    const failure = assist.getByRole('alert')
+    await expect(failure).toContainText(`Couldn’t download the depth estimator. ${hint}`)
+    await expect(failure).not.toContainText('https://')
   })
-  await waitForPreview(page)
-  await context.route('https://huggingface.co/**', (route) => route.fulfill({ status: 503, body: '' }))
-  const assist = page.getByRole('tabpanel', { name: 'Assist' })
-  await assist.getByRole('button', { name: /^Apply to \d+ images$/ }).click()
-  await expect(assist.getByRole('alert')).toContainText('Couldn’t download the depth estimator')
-})
+}
 
 /** Opens Assist › Lyrics with the song as its own vocals stem, so timing and drafting go straight to their models. */
 async function openLyricsWithVocals(page: Page) {
@@ -132,11 +145,8 @@ test('timing lyrics names the lyrics aligner it couldn’t download, without the
   await expect(failure).not.toContainText('https://')
 })
 
-// A 403 is what a network that blocks Hugging Face answers, and Transformers.js reads it as a missing file.
-for (const [status, hint] of [
-  [503, 'The server is having trouble. Try again in a few minutes.'],
-  [403, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
-] as const) {
+// Transformers.js reads 403 and 404 as a missing file.
+for (const [status, hint] of STATUS_HINTS) {
   test(`drafting lyrics names the lyrics transcriber when Hugging Face answers ${status}`, async ({
     page,
     context,
@@ -208,8 +218,8 @@ test('putting text behind the subject names the person finder when its models ca
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   await inspector.getByRole('button', { name: 'Layering' }).click()
   await inspector.getByRole('switch', { name: 'Put text and effects behind the subject' }).click()
-  await expect(inspector.getByText('Couldn’t download the person finder').first()).toBeVisible({
-    timeout: 60_000,
-  })
+  await expect(
+    inspector.getByText('Couldn’t download the person finder. Check your connection and try again.').first(),
+  ).toBeVisible({ timeout: 60_000 })
   await expect(inspector.getByText(/https?:\/\//)).toHaveCount(0)
 })

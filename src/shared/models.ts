@@ -119,13 +119,15 @@ const STALL_SECONDS = 30
  * A failed download's message: with the model's title, a sentence naming it followed by `hint`, the file's URL left
  * to the error's details; without one, `plain`, which callers that name the model keep in their own details.
  */
-function failedMessage(title: string | undefined, hint: string, plain: string): string {
+export function failedMessage(title: string | undefined, hint: string, plain: string): string {
   return title ? `Couldn’t download ${theModel(title)}. ${hint}` : plain
 }
 
 /**
  * The error for a download the server answered with error `status`, retryable when the server is in trouble (5xx,
- * 429). Its message is `failedMessage`'s; the status goes into `details` with `where` (the file's URL, say).
+ * 429). Its message is `failedMessage`'s; the status goes into `details` with `where` (the file's URL, say). A refusal
+ * (401, 403) is most likely a network that blocks the file's host (from `where.url`); any other status most likely
+ * means this build asks for a file that has moved.
  */
 export function downloadStatusError(
   status: number,
@@ -134,17 +136,16 @@ export function downloadStatusError(
   where: Record<string, unknown>,
 ): JobError {
   const serverTrouble = status >= 500 || status === 429
-  return new JobError(
-    'model-load',
-    failedMessage(
-      title,
-      serverTrouble
-        ? 'The server is having trouble. Try again in a few minutes.'
-        : 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.',
-      plain,
-    ),
-    { retryable: serverTrouble, details: { ...where, status } },
-  )
+  const host = typeof where.url === 'string' && URL.canParse(where.url) ? new URL(where.url).hostname : ''
+  const hint = serverTrouble
+    ? 'The server is having trouble. Try again in a few minutes.'
+    : status === 401 || status === 403
+      ? `The server refused the file. If your network blocks ${host || 'model downloads'}, try another network.`
+      : 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'
+  return new JobError('model-load', failedMessage(title, hint, plain), {
+    retryable: serverTrouble,
+    details: { ...where, status },
+  })
 }
 
 /** The error for a download that stopped arriving: a network error, so the job's Try again applies. */

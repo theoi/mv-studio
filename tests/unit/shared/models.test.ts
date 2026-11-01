@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { wasmThreadCount } from '../../../src/shared/capabilities.ts'
 import { JobError, type JobProgress } from '../../../src/shared/jobs.ts'
-import { configureOnnxEnv, downloadingModel, fetchModelFile } from '../../../src/shared/models.ts'
+import {
+  configureOnnxEnv,
+  downloadStatusError,
+  downloadingModel,
+  fetchModelFile,
+} from '../../../src/shared/models.ts'
 
 function streamResponse(chunks: Uint8Array[], headers: Record<string, string> = {}) {
   const body = new ReadableStream<Uint8Array>({
@@ -86,7 +91,7 @@ describe('a model download that fails, given the model’s title', () => {
     expect((await failure({ url })).message).toContain(url)
   })
 
-  it('says whether the server is in trouble or did not send the file, and keeps the status', async () => {
+  it('says whether the server is in trouble, refused the file or did not send it, and keeps the status', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('busy', { status: 503 })),
@@ -98,16 +103,33 @@ describe('a model download that fails, given the model’s title', () => {
         'Couldn’t download the stem separator. The server is having trouble. Try again in a few minutes.',
       details: { url, status: 503 },
     })
+    // A network that blocks the host answers 401 or 403.
+    for (const status of [401, 403]) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('nope', { status })),
+      )
+      expect(await failure({ url }, 'Stem separator')).toMatchObject({
+        retryable: false,
+        message:
+          'Couldn’t download the stem separator. The server refused the file. If your network blocks huggingface.co, try another network.',
+        details: { url, status },
+      })
+    }
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('nope', { status: 403 })),
+      vi.fn(async () => new Response('nope', { status: 404 })),
     )
     expect(await failure({ url }, 'Stem separator')).toMatchObject({
       retryable: false,
       message:
         'Couldn’t download the stem separator. The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.',
-      details: { url, status: 403 },
+      details: { url, status: 404 },
     })
+    // Without the file's URL, the refusal doesn't name a host.
+    expect(downloadStatusError(403, 'Stem separator', 'plain', {}).message).toBe(
+      'Couldn’t download the stem separator. The server refused the file. If your network blocks model downloads, try another network.',
+    )
   })
 
   it('names the model when the file that arrived fails its checksum', async () => {

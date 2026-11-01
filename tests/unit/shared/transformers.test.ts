@@ -65,17 +65,26 @@ describe('a required file Transformers.js finds missing', () => {
       { name: 'ModelFileNotFoundError', status },
     )
 
-  it('fails as the loader’s download error naming the model, keeping Transformers.js’s message in the details', async () => {
-    const error = missing(403)
-    const load = withModelProgress(undefined, () => Promise.reject(error), 'Lyrics transcriber')
-    await expect(load).rejects.toMatchObject({
-      code: 'model-load',
-      retryable: false,
-      message:
-        'Couldn’t download the lyrics transcriber. The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.',
-      details: { status: 403, message: error.message },
-    })
-  })
+  it.each([
+    [403, 'The server refused the file. If your network blocks huggingface.co, try another network.'],
+    [404, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
+  ])(
+    'fails at %i as the loader’s download error naming the model, keeping Transformers.js’s message in the details',
+    async (status, hint) => {
+      const error = missing(status)
+      const load = withModelProgress(undefined, () => Promise.reject(error), 'Lyrics transcriber')
+      await expect(load).rejects.toMatchObject({
+        code: 'model-load',
+        retryable: false,
+        message: `Couldn’t download the lyrics transcriber. ${hint}`,
+        details: {
+          status,
+          message: error.message,
+          url: 'https://huggingface.co/x/w/resolve/main/config.json',
+        },
+      })
+    },
+  )
 
   it('passes on unchanged without a title, and other errors with one', async () => {
     const error = missing(404)
