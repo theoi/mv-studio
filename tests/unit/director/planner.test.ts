@@ -13,7 +13,7 @@ import {
   type PlanShot,
   PACES,
 } from '../../../src/director/index.ts'
-import { ideaAsks } from '../../../src/director/rules.ts'
+import { ideaAsks, visualIdea } from '../../../src/director/rules.ts'
 import { CLIPS, fakeMatcher, makeProject as visionProject } from '../vision/autocut/fixtures.ts'
 import {
   BEATS,
@@ -288,6 +288,126 @@ describe('local planner', () => {
       // Video shots never exceed what one request can return.
       expect(s.end - s.start).toBeLessThanOrEqual(generation.maxVideoDuration + 1e-3)
     }
+  })
+
+  it('sends the picture the idea describes to the image model, not what it asks of the edit', async () => {
+    const generation = generationOptionsFor(fakeProvider(), { mode: 'images', tier: 'draft' })!
+    const idea = 'Summer day outdoors: ocean waves, bees in lavender, a city at night. Use my own clips.'
+    const shots = shotsToGenerate(await plan('ai', { videos: 0 }, { generation, prompt: idea }))
+    expect(shots.length).toBeGreaterThan(0)
+    for (const s of shots) {
+      expect(s.source.prompt).toMatch(
+        /^Summer day outdoors: ocean waves, bees in lavender, a city at night\. \w/,
+      )
+      expect(s.source.prompt).not.toMatch(/clips/i)
+    }
+    // With nothing visual left, the prompts describe the kind of video instead.
+    const bare = shotsToGenerate(await plan('ai', { videos: 0 }, { generation, prompt: 'Use my own clips.' }))
+    expect(bare.length).toBeGreaterThan(0)
+    for (const s of bare)
+      expect(s.source.prompt).toMatch(/^Cinematic music video with a consistent main character/)
+  })
+
+  it('leaves what an LLM concept asks of the edit out of the prompts filled in from it', async () => {
+    const generation = generationOptionsFor(fakeProvider(), { mode: 'images', tier: 'draft' })!
+    const input = await buildPlannerInput(makeProject({ videos: 0 }), { kind: 'ai', seed: 1, generation })
+    const concept = 'A runner crosses a neon city at night. Use the user’s own clips, cut on the beat.'
+    const p = await expandBrief({ title: 'Test', concept, visual: 'generated', sections: [] }, input, {
+      planner: 'llm',
+    })
+    const shots = shotsToGenerate(p)
+    expect(shots.length).toBeGreaterThan(0)
+    for (const s of shots) {
+      expect(s.source.prompt).toMatch(/^A runner crosses a neon city at night\. \w/)
+      expect(s.source.prompt).not.toMatch(/clips|beat/i)
+    }
+  })
+
+  it('titles and describes a rule brief by the picture in the idea, in any script', async () => {
+    const input = await buildPlannerInput(makeProject({ videos: 0 }), {
+      kind: 'ai',
+      seed: 1,
+      prompt: 'Use my own clips. 東京の夜、ネオンの雨',
+    })
+    // An LLM brief without a title takes this one, and it can reach the title card.
+    expect(ruleBrief(input)).toMatchObject({ title: '東京の夜、ネオンの雨', concept: '東京の夜、ネオンの雨' })
+  })
+
+  it.each([
+    [
+      'Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night. Use my own clips.',
+      'Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night',
+    ],
+    [
+      'Make a music video about a girl skating through Tokyo. Cut on the beat and show the lyrics.',
+      'a girl skating through Tokyo',
+    ],
+    [
+      'Waves crashing on black rocks with my own clips, fast cuts in the chorus',
+      'Waves crashing on black rocks',
+    ],
+    ['Fireworks over the harbour in the chorus; vertical 9:16 for TikTok', 'Fireworks over the harbour'],
+    ['Dancers moving to the beat in a warehouse. Make it 30 seconds long.', 'Dancers moving in a warehouse'],
+    ['Use my footage. No AI.', ''],
+    [
+      'A neon city at night, use stock footage, quick edits, keep it under 2 minutes, for TikTok',
+      'A neon city at night',
+    ],
+    ['Sunset over the sea. Make a 30-second video for Instagram, no AI images.', 'Sunset over the sea'],
+    ['Sync it to the music. Smooth transitions. A desert road.', 'A desert road'],
+    ['A rooftop at dawn. Show the lyrics on screen.', 'A rooftop at dawn'],
+    ['Create images of a lighthouse in a storm', 'a lighthouse in a storm'],
+    ['Faster in the chorus, a city at night', 'a city at night'],
+    ['東京の夜。ネオンの雨。Use my own clips.', '東京の夜。ネオンの雨'],
+    // AI as the source: the request words go, the picture stays.
+    ['Make an AI video of a dragon flying over snowy mountains', 'a dragon flying over snowy mountains'],
+    ['AI visuals of a neon city in the rain', 'a neon city in the rain'],
+    ['An AI-generated dreamscape with floating islands', 'A dreamscape with floating islands'],
+    ['I want AI clips of wolves running through a forest', 'wolves running through a forest'],
+    ['Generate AI footage of a samurai in a bamboo forest', 'a samurai in a bamboo forest'],
+    ['Use AI to show a desert caravan at sunset', 'a desert caravan at sunset'],
+    ['AI images: a lighthouse in a storm, waves', 'a lighthouse in a storm, waves'],
+    ['Make an AI music video about a lonely astronaut on Mars', 'a lonely astronaut on Mars'],
+    ['Use my clips of the beach at sunset', 'the beach at sunset'],
+    ['Use stock footage of a busy market', 'a busy market'],
+    ['Make a music video with my footage of the band', 'the band'],
+    ['Edit my clips into a dreamy montage of summer', 'a dreamy montage of summer'],
+    ['A neon city at night and AI shots of the ocean', 'A neon city at night and the ocean'],
+    ['The AI-generated city glows', 'The city glows'],
+    ['AI shots for the chorus, a neon alley. AI images only. Make an AI music video.', 'a neon alley'],
+    // Nothing is left of an edit instruction once its phrase goes.
+    ['Cut to the beat. Cut on the beat.', ''],
+    ['A girl in a red dress, cuts on every beat, rain', 'A girl in a red dress, rain'],
+    ['A forest at dawn, sync it to the beat', 'A forest at dawn'],
+  ])('takes the picture out of the idea %j', (idea, picture) => {
+    expect(visualIdea(idea)).toBe(picture)
+  })
+
+  it.each([
+    '東京の夜、ネオンの雨',
+    'Ночной Токио, неоновый дождь',
+    '서울의 밤거리, 네온 불빛',
+    'Νύχτα στην Αθήνα, βροχή',
+    'A lonely AI android walking through a rainy city',
+    'A YouTube star dancing in her bedroom',
+    'An Instagram influencer on a beach at sunset',
+    'Use a vintage film look with heavy grain',
+    'Use warm colors, neon and rain',
+    'A woman editing photos in a darkroom',
+    'Kids making paper cuts at a kitchen table',
+    'A man waiting 10 minutes for a train in the snow',
+    'A boxer with a cut on his cheek, a tailor cutting with scissors',
+    'A singer scribbling lyrics on a napkin',
+    'Make it 3D animated, a robot city',
+    'A choir singing in the chorus of a cathedral',
+    'Dancers on the beat of the drum',
+    'A 1990s mall, freshly cut grass outside, a bridge over the river',
+    'The cuts of meat at a butcher shop',
+    'A gallery of AI images in a museum',
+    'The AI generated a storm',
+    'use of color: neon pink and teal',
+  ])('keeps an idea that only describes pictures as it is: %j', (idea) => {
+    expect(visualIdea(idea)).toBe(idea)
   })
 })
 

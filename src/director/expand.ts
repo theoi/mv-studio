@@ -54,6 +54,7 @@ import {
   scenePool,
   sectionPrompts,
   sectionTier,
+  visualIdea,
   visualizerPalette,
   type SectionTier,
 } from './rules.ts'
@@ -1511,7 +1512,7 @@ export async function expandBrief(
     warnings,
     look: preset,
     visual,
-    concept: brief.concept.trim() || input.prompt || DEFAULT_CONCEPT[input.kind],
+    concept: visualIdea(brief.concept) || visualIdea(input.prompt) || DEFAULT_CONCEPT[input.kind],
     promptStyle: brief.promptStyle ?? preset?.promptStyle ?? '',
     pending: [],
     shotIndex: 0,

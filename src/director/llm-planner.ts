@@ -130,6 +130,7 @@ export function briefMessages(input: PlannerInput, payload: Record<string, unkno
     '- Repeated sections (same label) should feel related.',
     '- A label with labelGuessed was guessed from the audio alone: when its energy disagrees, follow the energy.',
     '- Generation prompts describe one concrete image each: subject, setting, action, camera and light. Keep the same main subject and style throughout. No text, logos or real people.',
+    '- Prompts and concept describe only what is seen. Leave out what the user asks of the edit, such as using their own clips, cutting on the beat or showing lyrics.',
     '- Follow the user prompt as the creative direction when there is one.',
   ].join('\n')
   return [
