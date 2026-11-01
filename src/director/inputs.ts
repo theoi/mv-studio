@@ -3,13 +3,14 @@
  * project.analysis.audio (src/analysis); footage tags (createDirectorFootageMatcher), clip indexes and the matcher
  * that ranks clips per shot come from src/vision, whose types are used as is.
  */
-import type { AspectPreset, Asset, FeatureSeries, Id, LyricsDoc, Project, Seconds } from '../model/types.ts'
+import type { AspectPreset, FeatureSeries, Id, LyricsDoc, Project, Seconds } from '../model/types.ts'
 import { projectDuration } from '../model/queries.ts'
 import type { CostEstimate } from '../cloud/pricing.ts'
 import type { GenerationRequest, GenerationTier } from '../cloud/types.ts'
 import type { MediaFileSource } from '../engine/types.ts'
 import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
 import { createBrightnessProbe, type BrightnessProbe } from './contrast.ts'
+import { songTitle } from './songTitle.ts'
 import type { Pace } from './plan.ts'
 import type { DirectorFootageMatch, DirectorFootageMatcher, FootageInfo } from '../vision/director.ts'
 import { readClipIndex, readSubjectTrack } from '../vision/analysisData.ts'
@@ -150,45 +151,6 @@ export function musicEnd(song: Pick<SongInfo, 'energy' | 'duration'>, minTail: S
   while (i >= 0 && (series.values[i] ?? 0) <= threshold) i--
   const end = Math.min(song.duration, (i + 1) / series.rate)
   return song.duration - end >= minTail ? end : song.duration
-}
-
-/** "Neon Skyline" for "neon skyline" or "NEON SKYLINE"; names in mixed case are kept as written. */
-function unshout(text: string): string {
-  if (text !== text.toLowerCase() && text !== text.toUpperCase()) return text
-  return text
-    .toLowerCase()
-    .replace(/(^|[\s(])(\p{L})/gu, (_, before: string, c: string) => before + c.toUpperCase())
-}
-
-/**
- * Artist and title from a file name such as "Artist - Title.mp3", "Artist_-_Title.mp3" or "neon-skyline.wav" (a name
- * without spaces reads its hyphens as spaces). All-lowercase and all-capitals names are title-cased.
- */
-export function songTitleFromName(name: string): { title?: string; artist?: string } {
-  let base = name
-    .replace(/\.[a-z0-9]{2,5}$/i, '')
-    .replace(/_/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^\d{1,2}\s*[.-]\s+/, '')
-  if (!base.includes(' ')) base = base.replace(/-+/g, ' ').trim()
-  if (!base) return {}
-  const m = /^(.+?)\s+[-–—]\s+(.+)$/.exec(base)
-  return m
-    ? { artist: unshout((m[1] as string).trim()), title: unshout((m[2] as string).trim()) }
-    : { title: unshout(base) }
-}
-
-/**
- * The song's title and artist: its own tags first, then its file name. A tagged title brings only the tagged artist,
- * since the file name may name a different song or none.
- */
-export function songTitle(asset: Pick<Asset, 'name' | 'tags'>): { title?: string; artist?: string } {
-  const tags = asset.tags
-  if (tags?.title) return { title: tags.title, ...(tags.artist ? { artist: tags.artist } : {}) }
-  const named = songTitleFromName(asset.name)
-  const artist = tags?.artist ?? named.artist
-  return { ...(named.title ? { title: named.title } : {}), ...(artist ? { artist } : {}) }
 }
 
 /** Rank-normalizes raw section energies to 0..1 so "the loudest part" is high even in a quiet song. */

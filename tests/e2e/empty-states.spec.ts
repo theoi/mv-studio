@@ -52,7 +52,7 @@ test('a Lyric video made on the start screen with a song says how to add clips, 
 }) => {
   await openHarness(page)
   await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
-  await page.getByRole('button', { name: /Lyric video/ }).click()
+  await page.getByRole('button', { name: /^Lyric video/ }).click()
   await page.getByRole('button', { name: 'Use a sample song' }).click()
   await page.getByRole('button', { name: 'Open the editor' }).click()
   await waitForPreview(page)

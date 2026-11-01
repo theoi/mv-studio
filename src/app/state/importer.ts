@@ -13,11 +13,13 @@ import {
 import { importLut, isCubeFile, isLutAsset } from '../../plugins/lut.ts'
 import { JobError, jobs } from '../../shared/jobs.ts'
 import { templateState } from '../../plugins/templates.ts'
+import { songName } from '../../director/songTitle.ts'
 import { TRACK_IDS } from '../mock/demoProject.ts'
 import { numberedName } from './clipboard.ts'
 import { backgroundAnalysisOn } from './footage.ts'
 import { JOB_KINDS } from './jobs.ts'
 import { formatTime, plural } from '../format.ts'
+import { unusedProjectName } from './persistence.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
 import { analysisService, findBars, foundText, markSongPending } from './songAnalysis.ts'
@@ -67,7 +69,7 @@ function songCommands(project: Project, song: Asset): EditCommand[] {
   commands.push({ type: 'clip.add', clip: { ...clip, name: baseName(song.name) } })
   commands.push({ type: 'project.setSong', assetId: song.id })
   if (project.name === 'Untitled video')
-    commands.push({ type: 'project.rename', name: song.tags?.title ?? baseName(song.name) })
+    commands.push({ type: 'project.rename', name: unusedProjectName(songName(song), project.id) })
   return commands
 }
 

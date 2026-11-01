@@ -13,12 +13,13 @@ import {
   type TemplateInput,
   type VideoKind,
 } from '../../plugins/templates.ts'
+import { songName } from '../../director/songTitle.ts'
 import { sampleSong } from '../mock/demoProject.ts'
 import { autoCutOptions, startAutoCut, useAutoCut } from './autocut.ts'
 import { draftFromSetup } from './director.ts'
 import { analyzeSong, storeFiles } from './importer.ts'
 import { startLyrics } from './lyrics.ts'
-import { loadSetupDraft, startProject } from './persistence.ts'
+import { loadSetupDraft, startProject, unusedProjectName } from './persistence.ts'
 import { editor } from './project.ts'
 import { editorPreset, get as getUi, maybeStartGuide, set as setUi, type Kind, type Selection } from './ui.ts'
 
@@ -27,7 +28,7 @@ export interface SetupSong {
   status: 'adding' | 'ready'
   /** The file's name. */
   name: string
-  /** The song's name: the file's name without its extension, or the sample song's title. */
+  /** The song's name: its tagged title, else the title in its file name, or the sample song's title. */
   title: string
   asset?: Asset
   sample?: boolean
@@ -92,10 +93,6 @@ export const isAudioFile = (f: File) => f.type.startsWith('audio/') || (!f.type 
 export const isVisualFile = (f: File) =>
   f.type.startsWith('video/') || f.type.startsWith('image/') || (!f.type && VISUAL_NAME.test(f.name))
 
-function baseName(name: string): string {
-  return name.replace(/\.[^.]+$/, '')
-}
-
 const UNREADABLE = 'Could not read this media file.'
 
 function notAdded(name: string, reason: string | undefined): string {
@@ -129,7 +126,7 @@ export async function chooseSong(file: File): Promise<void> {
   const adding: SetupSong = {
     status: 'adding',
     name: file.name,
-    title: baseName(file.name),
+    title: songName({ name: file.name }),
     analysis: 'running',
   }
   update({ song: adding, songError: null })
@@ -143,7 +140,7 @@ export async function chooseSong(file: File): Promise<void> {
     })
     return
   }
-  const ready: SetupSong = { ...adding, status: 'ready', asset }
+  const ready: SetupSong = { ...adding, status: 'ready', asset, title: songName(asset) }
   update({ song: ready })
   await loadDraft(asset, ready.title)
   const ok = await analyzeSong(asset)
@@ -275,7 +272,7 @@ export async function openFromSetup(withSong = true): Promise<void> {
   const action = asset ? setupAction(kind, s) : 'open'
   const analysis = asset && editor.getProject().analysis.audio[asset.id]
   const input: SetupInput = {
-    ...(song && asset ? { song: asset, name: song.title } : {}),
+    ...(song && asset ? { song: asset, name: unusedProjectName(song.title) } : {}),
     ...(analysis ? { analysis } : {}),
     ...(song?.sample && kind === 'lyric' ? { timedLyrics: sampleSong().lyrics } : {}),
     ...(kind === 'lyric' ? { lyrics: s.lyrics } : {}),

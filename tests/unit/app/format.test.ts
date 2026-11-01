@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest'
+import { exportFileName } from '../../../src/engine/export.ts'
 import {
   aboutMinutes,
+  distinctName,
   editedAgo,
   formatParam,
   formatTime,
@@ -79,4 +81,14 @@ it('words undo labels for the tooltips: a leading verb lowered, names and featur
   expect(undoAction('Ask: Added a title at the start')).toBe('Ask: Added a title at the start')
   expect(undoAction('Auto-cut: 12 cuts')).toBe('Auto-cut: 12 cuts')
   expect(undoAction('VJ take 2')).toBe('VJ take 2')
+})
+
+it.each([
+  [[], 'Show Me'],
+  [['Show Me'], 'Show Me (2)'],
+  [['Show Me', 'Show Me (2)', 'Show Me (4)'], 'Show Me (3)'],
+  [['Show Me (2)'], 'Show Me'],
+])('names a project "Show Me" next to %j as %s, which exports under its own file name', (taken, name) => {
+  expect(distinctName('Show Me', taken)).toBe(name)
+  if (taken.length) expect(exportFileName(name)).not.toBe(exportFileName(taken[0]!))
 })

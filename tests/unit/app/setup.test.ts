@@ -3,11 +3,17 @@ import type { Clip, GeneratorClip, Project } from '../../../src/model/types.ts'
 import { currentLook } from '../../../src/plugins/looks.ts'
 import { sampleSong } from '../../../src/app/mock/demoProject.ts'
 
-vi.mock('../../../src/app/state/persistence.ts', () => ({ loadSetupDraft: vi.fn(), startProject: vi.fn() }))
+vi.mock('../../../src/app/state/persistence.ts', () => ({
+  loadSetupDraft: vi.fn(),
+  startProject: vi.fn(),
+  unusedProjectName: (name: string) => name,
+}))
 vi.mock('../../../src/app/state/importer.ts', () => ({ analyzeSong: vi.fn(), storeFiles: vi.fn() }))
 vi.mock('../../../src/app/state/director.ts', () => ({ draftFromSetup: vi.fn() }))
 
-const { buildSetupProject, isAudioFile, isVisualFile } = await import('../../../src/app/state/setup.ts')
+const { buildSetupProject, chooseSong, isAudioFile, isVisualFile, useSetup } =
+  await import('../../../src/app/state/setup.ts')
+const { storeFiles } = await import('../../../src/app/state/importer.ts')
 
 const onTrack = (p: Project, name: string): Clip[] => {
   const track = p.tracks.find((t) => t.name === name)
@@ -62,6 +68,24 @@ describe('the project the setup screen opens', () => {
     expect(p.assets['clip-1']?.name).toBe('clip.mp4')
     expect(p.songAssetId).toBeUndefined()
     expect(p.tracks.map((t) => t.name)).toContain('Video')
+  })
+})
+
+describe('the song the setup screen takes', () => {
+  it('is named by the title in its file name while it is stored, then by its tags', async () => {
+    const tagged = {
+      ...sampleSong().asset,
+      id: 'song-2',
+      name: 'song_show-me_josh-woodward.mp3',
+      tags: { title: 'Show Me', artist: 'Josh Woodward' },
+    }
+    let stored: (result: Awaited<ReturnType<typeof storeFiles>>) => void = () => {}
+    vi.mocked(storeFiles).mockReturnValue(new Promise((resolve) => (stored = resolve)))
+    const choosing = chooseSong(new File(['x'], tagged.name, { type: 'audio/mpeg' }))
+    expect(useSetup.getState().song?.title).toBe('Song Show Me Josh Woodward')
+    stored({ assets: [tagged], failed: [] })
+    await choosing
+    expect(useSetup.getState().song?.title).toBe('Show Me')
   })
 })
 

@@ -109,7 +109,7 @@ test('drafts a lyric video on this device, lists the plan, and undoes it', async
 test('drafts from the setup screen with the idea typed there', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
-  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('button', { name: /^AI music video/ }).click()
   await page.getByRole('textbox', { name: 'Describe your video' }).fill('a rainy city at dawn')
   await page.getByRole('button', { name: 'Use a sample song' }).click()
   await page.getByRole('button', { name: 'Draft my video' }).click()
@@ -138,7 +138,7 @@ test('a draft from the setup screen goes on the template’s tracks, with one lo
 }) => {
   await openHarness(page)
   await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
-  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('button', { name: /^AI music video/ }).click()
   await page.getByRole('textbox', { name: 'Describe your video' }).fill('neon night drive')
   await page.getByRole('button', { name: 'Use a sample song' }).click()
   await page.getByRole('button', { name: 'Draft my video' }).click()
@@ -684,7 +684,7 @@ test('a draft from the setup screen waits for the song analysis still running', 
   })
   await openHarness(page)
   await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
-  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('button', { name: /^AI music video/ }).click()
   await page.getByRole('textbox', { name: 'Describe your video' }).fill('a rainy city at dawn')
   await page.getByLabel('Song file').setInputFiles(path.join(FIXTURE_DIR, 'song.mp3'))
   await page.getByRole('button', { name: 'Draft my video' }).click()

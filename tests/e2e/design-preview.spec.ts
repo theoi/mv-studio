@@ -14,7 +14,7 @@ async function openEditorAt(page: Page, hash: string) {
 
 test('a new user goes from the start screen to the editor and sees the guide once', async ({ page }) => {
   await openApp(page)
-  await page.getByRole('button', { name: /Lyric video/ }).click()
+  await page.getByRole('button', { name: /^Lyric video/ }).click()
   await expect(page.getByRole('heading', { name: 'Lyric video' })).toBeVisible()
 
   const open = page.getByRole('button', { name: 'Open the editor' })
@@ -29,7 +29,7 @@ test('a new user goes from the start screen to the editor and sees the guide onc
   await expect(guide).toBeHidden()
 
   await page.getByRole('button', { name: 'Home' }).click()
-  await page.getByRole('button', { name: /Lyric video/ }).click()
+  await page.getByRole('button', { name: /^Lyric video/ }).click()
   await page.getByRole('button', { name: 'Skip for now' }).click()
   await expect(page.getByText('Start with a song')).toBeVisible()
   await expect(guide).toBeHidden()

@@ -133,13 +133,14 @@ function silentWav(seconds: number): Buffer {
 test('a lyric video from a song file and pasted lyrics is analyzed, timed, kept and reopened', async ({
   page,
 }) => {
-  await startKind(page, /Lyric video/)
+  await startKind(page, /^Lyric video/)
   await fakeLyrics(page)
   await expect(page.getByRole('button', { name: 'Open the editor' })).toBeDisabled()
   await page.getByLabel('Song file').setInputFiles(fixture('song.wav'))
   const status = page.getByRole('status')
   await expect(status.getByText(/^\d+ BPM$/)).toBeVisible({ timeout: 60_000 })
-  await expect(page.getByText('song · WAV · ', { exact: false })).toBeVisible()
+  // An untagged file's name, title-cased.
+  await expect(page.getByText('Song · WAV · ', { exact: false })).toBeVisible()
   // With a song on the card, Skip for now would drop it, so it is gone.
   await expect(page.getByRole('button', { name: 'Skip for now' })).toHaveCount(0)
   await page.getByLabel('Lyrics').fill('Hello night\n\nNeon lights  ')
@@ -154,7 +155,7 @@ test('a lyric video from a song file and pasted lyrics is analyzed, timed, kept 
   await expect(page).toHaveURL(/#\/editor\?.*project=/)
   const project = await opened(page)
   expect(project).toMatchObject({
-    name: 'song',
+    name: 'Song',
     tracks: ['Lyrics', 'Look', 'Background', 'Song'],
     song: 'song.wav',
     assets: ['song.wav'],
@@ -175,7 +176,7 @@ test('a lyric video from a song file and pasted lyrics is analyzed, timed, kept 
   await page.reload()
   await waitForPreview(page)
   const reopened = await opened(page)
-  expect(reopened).toMatchObject({ id: project.id, name: 'song', song: 'song.wav', lyrics: timed.lyrics })
+  expect(reopened).toMatchObject({ id: project.id, name: 'Song', song: 'song.wav', lyrics: timed.lyrics })
 })
 
 test('a visualizer with the sample song uses the chosen style and opens on its visualizer', async ({
@@ -210,7 +211,7 @@ test('a visualizer with the sample song uses the chosen style and opens on its v
 })
 
 test('a lyric video with the sample song gets its timed lyrics', async ({ page }) => {
-  await startKind(page, /Lyric video/)
+  await startKind(page, /^Lyric video/)
   await page.getByRole('button', { name: 'Use a sample song' }).click()
   await expect(page.getByText('The sample song comes with timed lyrics.', { exact: false })).toBeVisible()
   await page.getByRole('button', { name: 'Open the editor' }).click()
@@ -224,7 +225,7 @@ test('a lyric video with the sample song gets its timed lyrics', async ({ page }
 test('beat-cut footage keeps the chosen clips, one can be removed first, and they are cut on open', async ({
   page,
 }) => {
-  await startKind(page, /Beat-cut footage/)
+  await startKind(page, /^Beat-cut footage/)
   // Model-free footage analysis (mean color), so the cut downloads nothing. It waits for __embedGate, so the test
   // decides when the clips are analyzed.
   await page.evaluate(() => {
@@ -265,7 +266,7 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
   await page.getByRole('button', { name: /^Visualizer/ }).click()
   await expect(page.getByText('Neon Skyline · WAV', { exact: false })).toBeVisible()
   await page.getByRole('button', { name: 'All kinds' }).click()
-  await page.getByRole('button', { name: /Beat-cut footage/ }).click()
+  await page.getByRole('button', { name: /^Beat-cut footage/ }).click()
   await expect(clips.getByRole('listitem')).toHaveCount(1)
 
   await expect(page.getByText(/Runs on this device · free · \d+ MB download, once/)).toBeVisible()
@@ -314,6 +315,70 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
   expect(placed).toEqual({ offVideo: 0, autoCutTrack: false })
 })
 
+test('a tagged song names the project and the beat cut’s title; another project of it is numbered, and Recent projects says the kind', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000)
+  await startKind(page, /^Beat-cut footage/)
+  // Model-free footage analysis (mean color), so the cut downloads nothing.
+  await page.evaluate(() => {
+    const onnx = {
+      async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        for (const b of bitmaps) b.close()
+        return { dim: 2, data: new Float32Array(bitmaps.flatMap(() => [0.6, 0.8])) }
+      },
+      async embedTexts({ texts }: { texts: string[] }) {
+        return { dim: 2, data: new Float32Array(texts.flatMap(() => [0.6, 0.8])) }
+      },
+    }
+    window.mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => onnx,
+      segmentation: () => {
+        throw new Error('unused')
+      },
+    })
+  })
+  // The file's tags say "Neon Skyline" by "The Night Shift"; its name says neither.
+  await page.getByLabel('Song file').setInputFiles(fixture('tagged.mp3'))
+  await expect(page.getByText('Neon Skyline · MP3', { exact: false })).toBeVisible({ timeout: 30_000 })
+  await page.getByLabel('Clip files').setInputFiles(fixture('clip.mp4'))
+  await expect(page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')).toHaveCount(1, {
+    timeout: 30_000,
+  })
+  await page.getByRole('button', { name: 'Cut my clips' }).click()
+  await waitForPreview(page)
+  expect((await opened(page)).name).toBe('Neon Skyline')
+  await expect(page.getByRole('tabpanel', { name: 'Assist' }).getByText(/^On the Video track\./)).toBeVisible(
+    {
+      timeout: 60_000,
+    },
+  )
+  const titles = await page.evaluate(() => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    const track = p.extensions.template.tracks.titles as string
+    return Object.values(p.clips as Record<string, { type: string; trackId: string; text?: string }>)
+      .filter((c) => c.type === 'text' && c.trackId === track)
+      .map((c) => c.text)
+  })
+  expect(titles).toEqual(['Neon Skyline'])
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByRole('button', { name: /^Visualizer/ }).click()
+  await page.getByLabel('Song file').setInputFiles(fixture('tagged.mp3'))
+  await expect(page.getByText('Neon Skyline · MP3', { exact: false })).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Open the editor' }).click()
+  await waitForPreview(page)
+  expect((await opened(page)).name).toBe('Neon Skyline (2)')
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  const recent = page.getByRole('region', { name: 'Recent projects' })
+  await expect(recent.getByRole('button', { name: /^Neon Skyline \(2\).*Visualizer.*Edited/ })).toBeVisible()
+  await expect(
+    recent.getByRole('button', { name: /^Neon Skyline(?! \(2\)).*Beat-cut footage.*Edited/ }),
+  ).toBeVisible()
+  await recent.screenshot({ path: testInfo.outputPath('recent-projects-kinds.png') })
+})
+
 for (const { failure, error, file, note } of [
   {
     failure: 'stops with an error',
@@ -339,7 +404,7 @@ for (const { failure, error, file, note } of [
   }) => {
     // The narrowest editor layout, where the Assist panel's notes have the least room.
     await page.setViewportSize({ width: 1280, height: 720 })
-    await startKind(page, /Beat-cut footage/)
+    await startKind(page, /^Beat-cut footage/)
     await page.evaluate((message) => {
       const onnx = {
         async embedImages({
@@ -394,7 +459,7 @@ for (const { failure, error, file, note } of [
 test('a file that is not audio is refused as the song, and Skip for now opens the template without one', async ({
   page,
 }) => {
-  await startKind(page, /Lyric video/)
+  await startKind(page, /^Lyric video/)
   await page.getByLabel('Song file').setInputFiles(fixture('image.png'))
   await expect(page.getByRole('alert')).toHaveText(/“image\.png” isn’t an audio file/)
   await expect(page.getByRole('button', { name: 'Open the editor' })).toBeDisabled()
@@ -422,7 +487,7 @@ test('a file that is not audio is refused as the song, and Skip for now opens th
 test('a song without a beat says no beat was found, as the editor does, and shows no tempo', async ({
   page,
 }) => {
-  await startKind(page, /Lyric video/)
+  await startKind(page, /^Lyric video/)
   await page
     .getByLabel('Song file')
     .setInputFiles({ name: 'quiet.wav', mimeType: 'audio/wav', buffer: silentWav(20) })
