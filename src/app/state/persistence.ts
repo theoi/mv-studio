@@ -567,7 +567,8 @@ let holdingTabLock = false
 const SWEEP_SINCE_KEY = 'mv-studio.media-sweep-since'
 const OLDER_TABS_GONE_MS = 3 * 24 * 60 * 60 * 1000
 
-function olderTabsGone(now = Date.now()): boolean {
+/** Whether the startup sweep may run: three days after this build first started here, never without localStorage. */
+export function olderTabsGone(now = Date.now()): boolean {
   try {
     const since = Number(localStorage.getItem(SWEEP_SINCE_KEY))
     if (since > 0) return now - since >= OLDER_TABS_GONE_MS
