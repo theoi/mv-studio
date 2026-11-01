@@ -2,7 +2,7 @@
  * Playback clock driven by Web Audio: the song plays through an AudioContext and the timeline time is derived from
  * the time of the sample currently leaving the speakers, so the picture follows what the user hears.
  */
-import { projectDuration } from '../model/queries.ts'
+import { LAST_FRAME_LEAD, projectDuration } from '../model/queries.ts'
 import type { Id, Project, Seconds } from '../model/types.ts'
 import { JobError } from '../shared/jobs.ts'
 import {
@@ -268,7 +268,9 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     const duration = this.duration
     if (this.loop && (this.position < this.loop.start || this.position >= this.loop.end))
       this.position = this.loop.start
-    else if (duration > 0 && this.position >= duration - 1e-3) this.position = 0
+    // End and a step past the end stop on the last frame, just before the end: Play there starts from the top too,
+    // instead of playing that last moment and stopping.
+    else if (duration > 0 && this.position >= duration - LAST_FRAME_LEAD - 1e-3) this.position = 0
     this.playState = 'playing'
     this.reschedule(this.position)
     this.ticker = setInterval(() => this.tick(), TICK_MS)

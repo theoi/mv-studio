@@ -157,6 +157,14 @@ test('a link past the end, End, stepping forward and a scrub past the end all st
   await page.mouse.move(box.x + 2 * end + 100, y, { steps: 4 })
   await page.mouse.up()
   expect(await playhead()).toBeCloseTo(end - 0.01, 6)
+
+  // Play from the last frame starts from the top, not just playing to the end and stopping.
+  await page.keyboard.press('End')
+  await expect.poll(playhead).toBeCloseTo(end - 0.01, 6)
+  await page.keyboard.press('Space')
+  await expect.poll(playhead).toBeLessThan(5)
+  await expect.poll(playhead).toBeGreaterThan(0)
+  await page.keyboard.press('Space')
 })
 
 test('playing to the end, and going to a marker on the end, show the video’s last frame', async ({

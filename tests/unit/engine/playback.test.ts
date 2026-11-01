@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { audioBufferCache } from '../../../src/engine/audio.ts'
 import { STEM_RELEASE_MS, WebAudioPlaybackClock } from '../../../src/engine/playback.ts'
 import { createAudioClip, createProject } from '../../../src/model/factory.ts'
+import { LAST_FRAME_LEAD } from '../../../src/model/queries.ts'
 import {
   STEM_NAMES,
   type Asset,
@@ -256,5 +257,39 @@ describe('WebAudioPlaybackClock', () => {
     expect(cache.error('stem-bass')).toBeUndefined()
     editorClock.dispose()
     otherClock.dispose()
+  })
+
+  it('plays from the top when Play is pressed on the last frame, where End leaves the playhead', async () => {
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        readonly currentTime = 0
+        readonly outputLatency = 0
+        readonly destination = {}
+        createGain() {
+          return { gain: { value: 1 }, connect: () => undefined }
+        }
+        resume() {
+          return Promise.resolve()
+        }
+        close() {
+          return Promise.resolve()
+        }
+      },
+    )
+    const clock = new WebAudioPlaybackClock({ getFile: async () => new Blob() })
+    const project = createProject()
+    project.duration = 10
+    clock.setProject(project)
+    clock.seek(10 - LAST_FRAME_LEAD)
+    await clock.play()
+    expect(clock.state).toBe('playing')
+    expect(clock.currentTime()).toBe(0)
+    clock.pause()
+    // Just before the last frame, it plays on from there.
+    clock.seek(9.9)
+    await clock.play()
+    expect(clock.currentTime()).toBeCloseTo(9.9, 9)
+    clock.dispose()
   })
 })
