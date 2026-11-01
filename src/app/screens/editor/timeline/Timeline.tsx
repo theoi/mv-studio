@@ -1204,7 +1204,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
           ))}
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => openAssist('behind')}>Put text behind subject…</ContextMenuItem>
-          <ContextMenuItem onSelect={() => openAssist('match')}>Find similar clips…</ContextMenuItem>
+          <ContextMenuItem onSelect={() => openAssist('match')}>Find matching footage…</ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem danger shortcut="Delete" onSelect={deleteSelection}>
             Delete

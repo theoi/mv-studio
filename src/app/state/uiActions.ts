@@ -175,9 +175,9 @@ export const UI_ACTIONS: readonly UiAction[] = [
   },
   {
     area: 'Timeline',
-    name: 'Find similar clips…',
+    name: 'Find matching footage…',
     palette: 'match',
-    search: ['find similar clips', 'similar footage'],
+    search: ['find matching footage', 'find similar clips', 'similar footage'],
   },
   {
     area: 'Timeline',
