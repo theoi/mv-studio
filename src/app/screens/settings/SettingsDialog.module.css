@@ -112,13 +112,27 @@
   gap: var(--space-2);
 }
 
+/* As wide as its text, not the card, so the space beside it does not open the page. */
 .link {
+  position: relative;
+  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   color: var(--accent-text);
   font-size: var(--text-sm);
   text-decoration: none;
+}
+
+/* Takes clicks over 24 px of height, centered on the line of text. */
+.link::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 24px;
+  transform: translateY(-50%);
 }
 
 .link:hover {

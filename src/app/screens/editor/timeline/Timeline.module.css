@@ -467,6 +467,30 @@
   bottom: 3px;
   background-color: var(--clip-overlay);
   background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
+  /* Lets the click area and the trim handles below reach outside the bar. */
+  overflow-clip-margin: 5px;
+}
+
+/* The look lane is 22 px tall, so the 15 px bar takes clicks over 24 px: down to the lane's bottom edge and 2 px up
+   into the lane above, which keeps clear of its clips there. The drag counts a press there as one on the look lane. */
+.clip-look::before {
+  content: '';
+  position: absolute;
+  inset: -5px 0 -4px;
+}
+
+/* Centered on the bar like the click area, so a selected bar's grips stay where they are drawn. */
+.clip-look .handle {
+  top: -5px;
+  bottom: -5px;
+}
+
+/* Clips the look's name to the bar, as other clips' names are, now that the bar lets its click area out. */
+.lookName {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: clip;
 }
 
 /* Sticks to the left edge of the lanes, so a clip that started off screen (a look over the whole song) keeps its name. */
