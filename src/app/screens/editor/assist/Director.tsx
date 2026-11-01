@@ -731,7 +731,7 @@ function DoneView({ state, actionRef, onRedraft }: { state: StateOf<'applied'> }
         label="Refine the draft"
         hint={
           builtIn
-            ? 'The built-in planner takes the look, mood and pace from your words (“faster in the chorus”). Connect a language model in Settings for changes like this.'
+            ? 'Press Enter to draft again. The built-in planner follows the look, mood and pace in your words (“brighter, faster in the chorus”), not changes to particular shots (“fewer crowd shots”). For those, connect a language model in Settings.'
             : 'Press Enter to draft again with this change.'
         }
       >
@@ -745,7 +745,11 @@ function DoneView({ state, actionRef, onRedraft }: { state: StateOf<'applied'> }
               submit()
             }
           }}
-          placeholder="For example: fewer crowd shots, more of the singer in verse 2"
+          placeholder={
+            builtIn
+              ? 'For example: brighter, faster in the chorus'
+              : 'For example: fewer crowd shots, more of the singer in verse 2'
+          }
           aria-label="Refine the draft"
         />
       </Field>

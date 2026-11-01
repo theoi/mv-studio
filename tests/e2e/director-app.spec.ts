@@ -153,10 +153,17 @@ test('drafts from the setup screen with the idea typed there', async ({ page }) 
   await expect(page.getByText('Your own tracks are kept below the draft, hidden.')).toBeHidden()
   expect(first.hiddenTracks).toBe(0)
 
-  // The built-in planner only takes the look, mood and pace from Refine, so it offers another version instead.
+  // Refine says what the built-in planner follows and what needs a language model, with an example it can follow, and
+  // offers another version too.
   await expect(
-    page.getByText('The built-in planner takes the look, mood and pace from your words', { exact: false }),
+    page.getByText(
+      'Press Enter to draft again. The built-in planner follows the look, mood and pace in your words (“brighter, faster in the chorus”), not changes to particular shots (“fewer crowd shots”). For those, connect a language model in Settings.',
+    ),
   ).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Refine the draft' })).toHaveAttribute(
+    'placeholder',
+    'For example: brighter, faster in the chorus',
+  )
   await page.getByRole('button', { name: 'Try another version' }).focus()
   await page.keyboard.press('Enter')
   await expect.poll(async () => (await draftState(page)).ids.join()).not.toBe(first.ids.join())
@@ -961,14 +968,45 @@ test('a tagged song names the project, and the title card shows its title and ar
   await page.getByRole('button', { name: 'Draft video' }).click()
   await expect(page.getByRole('button', { name: 'Undo draft' })).toBeVisible({ timeout: 30_000 })
   const titles = await page.evaluate(() => {
-    const clips = Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clips = Object.values(project.clips) as {
+      id: string
+      trackId: string
       type: string
       text?: string
       meta?: { director?: { role?: string } }
     }[]
-    return clips.filter((c) => c.type === 'text' && c.meta?.director?.role === 'title').map((c) => c.text)
+    return clips
+      .filter((c) => c.type === 'text' && c.meta?.director?.role === 'title')
+      .map((c) => ({
+        id: c.id,
+        text: c.text,
+        track: (project.tracks as { id: string; name: string }[]).find((t) => t.id === c.trackId)?.name,
+      }))
   })
-  expect(titles).toEqual(['Neon Skyline', 'The Night Shift'])
+  expect(titles.map((t) => t.text)).toEqual(['Neon Skyline', 'The Night Shift'])
+  // The title and the artist show at the same time, so each has a row of its own: both can be seen and clicked.
+  expect(titles.map((t) => t.track)).toEqual(['Titles', 'Titles 2'])
+  const boxes = []
+  for (const { id } of titles) {
+    const clip = page.locator(`[data-clip-id="${id}"]`)
+    await expect(clip).toBeVisible()
+    boxes.push((await clip.boundingBox())!)
+    await clip.click()
+    expect(await page.evaluate(() => window.mvStudio.app.ui.get().selection)).toEqual({ type: 'clip', id })
+  }
+  expect(boxes[0]!.y + boxes[0]!.height).toBeLessThanOrEqual(boxes[1]!.y)
+  // The shots go on the empty project's Video 1 track, so no empty track sits between the draft and the song.
+  const tracks = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clips = Object.values(project.clips) as { trackId: string }[]
+    return (project.tracks as { id: string; name: string }[]).map((t) => ({
+      name: t.name,
+      clips: clips.filter((c) => c.trackId === t.id).length,
+    }))
+  })
+  expect(tracks.filter((t) => t.clips === 0)).toEqual([])
+  expect(tracks.map((t) => t.name).slice(-2)).toEqual(['Video 1', 'Song'])
 })
 
 /** A mono 16-bit WAV of `seconds` of kicks every 0.5 s (120 BPM) over a low chord, long enough for several Beat This! windows. */
