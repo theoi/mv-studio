@@ -76,7 +76,10 @@ export function BehindView() {
   const checking = rows.some(
     (r) => r.suitability.status === 'checking' || r.suitability.status === 'unchecked',
   )
-  const download = usePersonDownload(rows.some((r) => !isSampleAsset(r.asset)))
+  const download = usePersonDownload(
+    rows.some((r) => !isSampleAsset(r.asset)),
+    checking,
+  )
   useEffect(() => {
     if (unchecked) checkFootage(unchecked.split(','))
   }, [unchecked])

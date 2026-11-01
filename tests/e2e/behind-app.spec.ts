@@ -142,6 +142,33 @@ test('a clip with no one in it says why it cannot be cut out', async ({ page }) 
   expect(await cutouts(page)).toEqual([])
 })
 
+test('Assist › Behind the subject says what finding people downloads the first time, and what is left once the check has run', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  // The models wait until the first figure is read, so the check started at import has nothing in the cache yet.
+  let release = () => {}
+  const held = new Promise<void>((resolve) => (release = resolve))
+  await page.context().route('https://storage.googleapis.com/mediapipe-models/**', async (route) => {
+    await held
+    await route.continue()
+  })
+  await open(page, '#/editor?t=10')
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const cost = assist.getByText(/Runs on this device/)
+  // The models and the MediaPipe runtime as they arrive: the runtime is 14.8 MB unpacked, 3.8 MB compressed.
+  await expect(cost).toContainText(/\s9 MB download, once/)
+  release()
+  const row = assist.getByText('people-interview', { exact: true }).locator('..').locator('..')
+  await expect(row.getByText(/^(Person found|Works in parts of this shot.+)\s· 1 clip$/)).toBeVisible({
+    timeout: 90_000,
+  })
+  // The check brought the runtime, the person detector and a segmenter; the face detector comes with the cutout.
+  await expect(cost).toContainText(/\sunder 1 MB download, once/)
+})
+
 test('a clip is cut out when the person and face detectors cannot download, says the people check was skipped, and is cut out again once back online', async ({
   page,
 }) => {
