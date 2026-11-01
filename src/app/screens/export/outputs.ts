@@ -164,8 +164,8 @@ export function sizeLabel(bytes: number): string {
 /**
  * The export time, null while it is being worked out (`waitingForJobs` while that waits for other jobs to finish).
  * Rounded up, so the label is never under the estimate, which already has a margin: to the minute up to an hour,
- * then 5 min, then 10 min above two hours, so rounding adds at most about a tenth. A `provisional` time, timed
- * while other work kept the device busy, reads "Up to" until it is timed again.
+ * then 5 min, then 10 min above two hours, so from 10 min up rounding adds at most about a tenth. A `provisional`
+ * time, timed while other work kept the device busy, reads "Up to" until it is timed again.
  */
 export function timeLabel(
   seconds: number | null,

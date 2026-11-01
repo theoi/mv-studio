@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   currentEstimate,
   drawnKey,
+  othersBusy,
   outputEstimate,
   QUIET_WAIT_MS,
   runTrials,
@@ -11,6 +12,7 @@ import {
 } from '../../../src/app/state/exportEstimate.ts'
 import { newOutput, planOutput, type PlannedOutput } from '../../../src/export/index.ts'
 import { createProject, createSolidClip, ProjectEditor, type Project } from '../../../src/model/index.ts'
+import type { JobSnapshot, JobStatus } from '../../../src/shared/jobs.ts'
 
 describe('what an export time trial is kept for', () => {
   it('stays the same through an analysis write, which stamps the project too, and changes when the drawing does', () => {
@@ -55,6 +57,7 @@ function environment(options: { busy?: boolean; pageAge?: number } = {}) {
   const loaded = Date.now() - (options.pageAge ?? 60_000)
   const listeners = new Set<() => void>()
   const trials: ((seconds: number) => void)[] = []
+  const fails: ((error: Error) => void)[] = []
   const env: TrialEnvironment = {
     pageAge: () => Date.now() - loaded,
     busy: () => busy,
@@ -63,13 +66,16 @@ function environment(options: { busy?: boolean; pageAge?: number } = {}) {
       return () => listeners.delete(listener)
     },
     estimate: () =>
-      new Promise((resolve) => trials.push((seconds) => resolve({ seconds, expected: { seconds } }))),
+      new Promise((resolve, reject) => {
+        trials.push((seconds) => resolve({ seconds, expected: { seconds } }))
+        fails.push(reject)
+      }),
   }
   const setBusy = (value: boolean) => {
     busy = value
     for (const listener of [...listeners]) listener()
   }
-  return { env, trials, setBusy }
+  return { env, trials, fails, setBusy }
 }
 
 const unsettled = (project: Project) => unsettledTrials().filter((k) => k.startsWith(`${drawnKey(project)}|`))
@@ -83,6 +89,7 @@ describe('when an export time trial runs', () => {
   })
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('waits while another job runs, and starts when it ends', async () => {
@@ -184,5 +191,84 @@ describe('when an export time trial runs', () => {
     await runTrials(project, [planned], new AbortController().signal, fake.env)
     expect(fake.trials).toHaveLength(1)
     expect(shown(project, planned)).toBe(600)
+  })
+
+  it('waits for other jobs once for all the outputs, not once for each', async () => {
+    const { project, planned } = output()
+    const other = planOutput(project, newOutput(project, 'video', { resolution: '1080p' }))
+    const fake = environment({ busy: true })
+    void runTrials(project, [planned, other], new AbortController().signal, fake.env)
+    await vi.advanceTimersByTimeAsync(QUIET_WAIT_MS)
+    expect(fake.trials).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(3000)
+    fake.trials[0]!(1200)
+    await vi.advanceTimersByTimeAsync(0)
+    // The job still runs, and the wait is over for the second output too.
+    expect(fake.trials).toHaveLength(2)
+  })
+
+  it('keeps a figure from under load provisional after an edit, until the edited project is timed', async () => {
+    const { project, planned } = output()
+    const fake = environment({ busy: true })
+    const dialog = new AbortController()
+    void runTrials(project, [planned], dialog.signal, fake.env)
+    await vi.advanceTimersByTimeAsync(QUIET_WAIT_MS)
+    fake.trials[0]!(1200)
+    await vi.advanceTimersByTimeAsync(0)
+    dialog.abort()
+    // The edited project draws something else, so its output has no trial of its own yet.
+    const edited = { ...project, settings: { ...project.settings, backgroundColor: '#ff0000' } }
+    const editedPlanned = planOutput(edited, planned.spec)
+    expect(drawnKey(edited)).not.toBe(drawnKey(project))
+    expect(shown(edited, editedPlanned)).toBe(1200)
+    expect(provisional(edited, editedPlanned)).toBe(true)
+    void runTrials(edited, [editedPlanned], new AbortController().signal, fake.env)
+    fake.setBusy(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fake.trials).toHaveLength(2)
+    fake.trials[1]!(600)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(shown(edited, editedPlanned)).toBe(600)
+    expect(provisional(edited, editedPlanned)).toBe(false)
+  })
+
+  it('times an output again when its trial failed under load, but not when it failed on a quiet page', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { project, planned } = output()
+    const fake = environment({ busy: true })
+    void runTrials(project, [planned], new AbortController().signal, fake.env)
+    await vi.advanceTimersByTimeAsync(QUIET_WAIT_MS)
+    fake.fails[0]!(new Error('Out of memory'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(unsettled(project)).toHaveLength(1)
+    // The rough guess shows meanwhile, and it is no upper bound.
+    expect(provisional(project, planned)).toBe(false)
+    fake.setBusy(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fake.trials).toHaveLength(2)
+    fake.fails[1]!(new Error('Out of memory'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(unsettled(project)).toEqual([])
+    await runTrials(project, [planned], new AbortController().signal, fake.env)
+    expect(fake.trials).toHaveLength(2)
+  })
+})
+
+describe('what keeps the device busy for a trial', () => {
+  const job = (kind: string, status: JobStatus = 'running'): JobSnapshot => ({
+    id: kind,
+    kind,
+    title: kind,
+    status,
+    progress: {},
+  })
+
+  it('leaves out exports and generations that wait on fal.ai, and counts work on this device', () => {
+    expect(othersBusy([job('export.outputs'), job('cloud.generate.image'), job('director.generate')])).toBe(
+      false,
+    )
+    expect(othersBusy([job('director.plan')])).toBe(true)
+    expect(othersBusy([job('vision.index', 'queued')])).toBe(true)
+    expect(othersBusy([job('analysis.stems', 'succeeded')])).toBe(false)
   })
 })
