@@ -386,7 +386,7 @@ test('with background analysis on, Export times its outputs before it starts foo
   const time = dialog.getByText(
     /^\s*(Working out the time…|Timing once other tasks finish…|.* on this device)$/,
   )
-  await expect(time).toHaveText(/on this device$/, { timeout: 60_000 })
+  await expect(time).toHaveText(/^About .* on this device$/, { timeout: 60_000 })
   const first = (await trial720(page)) ?? 0
   // The dialog still starts footage analysis for framing, after the trial, and it runs to the end.
   await expect.poll(() => footageStatus(page), { timeout: 30_000 }).toBe('indexing')
@@ -410,7 +410,8 @@ test('a time worked out while footage analysis runs is shown, not kept: it is wo
     d.getByText(/^\s*(Working out the time…|Timing once other tasks finish…|.* on this device)$/)
   // It says why there is no time yet, then times the output anyway rather than wait for the whole analysis.
   await expect(timeOf(dialog)).toHaveText('Timing once other tasks finish…', { timeout: 15_000 })
-  await expect(timeOf(dialog)).toHaveText(/on this device$/, { timeout: 90_000 })
+  // A time from under load is likely too long, and says so.
+  await expect(timeOf(dialog)).toHaveText(/^Up to .* on this device$/, { timeout: 90_000 })
   expect(await footageStatus(page)).toBe('indexing')
   expect(await unsettled(page)).toHaveLength(1)
   const underLoad = (await trial720(page)) ?? 0
@@ -419,7 +420,7 @@ test('a time worked out while footage analysis runs is shown, not kept: it is wo
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   dialog = await openExport720(page)
-  await expect(timeOf(dialog)).toHaveText(/on this device$/)
+  await expect(timeOf(dialog)).toHaveText(/^Up to .* on this device$/)
   expect(await unsettled(page)).toHaveLength(1)
 
   // Once the analysis ends, the output is timed again and that time replaces the one from under load.
@@ -429,7 +430,7 @@ test('a time worked out while footage analysis runs is shown, not kept: it is wo
   console.log('under load', underLoad, 'settled', settled)
   expect(settled).toBeGreaterThan(0)
   expect(settled).toBeLessThan(underLoad)
-  await expect(timeOf(dialog)).toHaveText(/on this device$/)
+  await expect(timeOf(dialog)).toHaveText(/^About .* on this device$/)
 })
 /** Start and length, in seconds, of the range written under the song lane ("1:04 – 1:34 · ..."). */
 async function laneRange(dialog: Locator): Promise<{ start: number; length: number }> {

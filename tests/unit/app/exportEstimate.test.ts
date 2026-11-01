@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  currentEstimate,
   drawnKey,
   outputEstimate,
   QUIET_WAIT_MS,
@@ -73,6 +74,8 @@ function environment(options: { busy?: boolean; pageAge?: number } = {}) {
 
 const unsettled = (project: Project) => unsettledTrials().filter((k) => k.startsWith(`${drawnKey(project)}|`))
 const shown = (project: Project, planned: PlannedOutput) => outputEstimate(project, planned)?.seconds
+const provisional = (project: Project, planned: PlannedOutput) =>
+  currentEstimate(project, [planned]).provisional
 
 describe('when an export time trial runs', () => {
   beforeEach(() => {
@@ -107,7 +110,7 @@ describe('when an export time trial runs', () => {
     expect(fake.trials).toHaveLength(1)
   })
 
-  it('runs anyway once it has waited long enough, shows that figure, and replaces it with a trial once the job ends', async () => {
+  it('runs anyway once it has waited long enough, shows that figure as provisional, and replaces it with a trial once the job ends', async () => {
     const { project, planned } = output()
     const fake = environment({ busy: true })
     void runTrials(project, [planned], new AbortController().signal, fake.env)
@@ -116,6 +119,7 @@ describe('when an export time trial runs', () => {
     fake.trials[0]!(1200)
     await vi.advanceTimersByTimeAsync(0)
     expect(shown(project, planned)).toBe(1200)
+    expect(provisional(project, planned)).toBe(true)
     expect(unsettled(project)).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(fake.trials).toHaveLength(1)
@@ -125,6 +129,7 @@ describe('when an export time trial runs', () => {
     fake.trials[1]!(600)
     await vi.advanceTimersByTimeAsync(0)
     expect(shown(project, planned)).toBe(600)
+    expect(provisional(project, planned)).toBe(false)
     expect(unsettled(project)).toEqual([])
   })
 
@@ -157,14 +162,16 @@ describe('when an export time trial runs', () => {
     fake.setBusy(false)
     await vi.advanceTimersByTimeAsync(1000)
     expect(fake.trials).toHaveLength(1)
-    // Opened again: the figure from under load shows while the output is timed again.
+    // Opened again: the figure from under load shows, still provisional, while the output is timed again.
     expect(shown(project, planned)).toBe(1200)
+    expect(provisional(project, planned)).toBe(true)
     void runTrials(project, [planned], new AbortController().signal, fake.env)
     await vi.advanceTimersByTimeAsync(0)
     expect(fake.trials).toHaveLength(2)
     fake.trials[1]!(600)
     await vi.advanceTimersByTimeAsync(0)
     expect(shown(project, planned)).toBe(600)
+    expect(provisional(project, planned)).toBe(false)
   })
 
   it('keeps a trial that ran while nothing else did: opening the dialog again times nothing', async () => {

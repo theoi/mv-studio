@@ -33,6 +33,14 @@ describe('the export time label', () => {
   })
 
   it('says why it has no figure yet while the time waits for other tasks', () => {
-    expect(timeLabel(null, true)).toBe('Timing once other tasks finish…')
+    expect(timeLabel(null, { waitingForJobs: true })).toBe('Timing once other tasks finish…')
+  })
+
+  it.each([
+    [1213, 'Up to 21 min on this device'],
+    [3601, 'Up to 1 h 5 min on this device'],
+    [59, 'Under a minute on this device'],
+  ])('for %s s timed under load says %s until it is timed again', (seconds, label) => {
+    expect(timeLabel(seconds, { provisional: true })).toBe(label)
   })
 })

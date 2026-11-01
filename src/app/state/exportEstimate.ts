@@ -247,6 +247,25 @@ export interface ExportEstimate {
   waitingForJobs: boolean
   /** Every checked output has had a trial, settled or not. */
   timed: boolean
+  /** Some of `seconds` comes from a trial that ran under load, so it is likely too long until timed again. */
+  provisional: boolean
+}
+
+/** What the export dialog shows for `outputs`, from the trials so far. */
+export function currentEstimate(project: Project, outputs: PlannedOutput[]): ExportEstimate {
+  const timed = outputs.every((p) => trials.has(trialKey(project, p)))
+  let total: number | null = 0
+  for (const planned of outputs) {
+    const estimate = outputEstimate(project, planned)
+    if (!estimate) {
+      total = null
+      break
+    }
+    total += estimate.seconds
+  }
+  const provisional =
+    total !== null && outputs.some((p) => trials.get(trialKey(project, p))?.settled === false)
+  return { seconds: total, waitingForJobs: total === null && waitingForJobs, timed, provisional }
 }
 
 /** The time the checked outputs take to export on this device. Trials run while `open` (the dialog shows its outputs). */
@@ -268,15 +287,5 @@ export function useExportEstimate(project: Project, outputs: PlannedOutput[], op
       controller.abort()
     }
   }, [keys, open, exporting])
-  const timed = outputs.every((p) => trials.has(trialKey(project, p)))
-  let total: number | null = 0
-  for (const planned of outputs) {
-    const estimate = outputEstimate(project, planned)
-    if (!estimate) {
-      total = null
-      break
-    }
-    total += estimate.seconds
-  }
-  return { seconds: total, waitingForJobs: total === null && waitingForJobs, timed }
+  return currentEstimate(project, outputs)
 }

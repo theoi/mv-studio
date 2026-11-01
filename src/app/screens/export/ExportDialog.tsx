@@ -784,7 +784,7 @@ function ExportDialogBody() {
                   <span>
                     <Clock />{' '}
                     <span className={styles.time}>
-                      <span>{timeLabel(estimate.seconds, estimate.waitingForJobs)}</span>
+                      <span>{timeLabel(estimate.seconds, estimate)}</span>
                     </span>
                   </span>
                 </>
