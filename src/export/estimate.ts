@@ -10,9 +10,9 @@
  */
 import type { ExportProbe } from '../engine/encode.ts'
 import { probeExport } from '../engine/export.ts'
-import { planFrame, type LayerPlan } from '../engine/layout.ts'
+import { planEdges, planFrame, type LayerPlan } from '../engine/layout.ts'
 import type { MediaFileSource } from '../engine/types.ts'
-import type { Id, Project, VisualClip } from '../model/types.ts'
+import type { Id, Project, Seconds, VisualClip } from '../model/types.ts'
 import type { PlannedOutput } from './outputs.ts'
 
 /** Frames in each trial run. Its first frame seeks the decoders (and in the first run warms up), so it is timed apart. */
@@ -105,35 +105,70 @@ interface FrameLooks {
 /** Planned outputs are not changed once made, and the export dialog asks about the same ones on every render. */
 const lookCache = new WeakMap<PlannedOutput, FrameLooks>()
 
+/** What the renders at one time draw, by `frameLooks`. */
+interface TimeLook {
+  key: string
+  busyness: number
+  transition: boolean
+}
+
+/**
+ * A time this close to an edge of planEdges is planned on its own: rounding in planFrame decides which side of the
+ * edge it is on.
+ */
+const EDGE_EPSILON = 1e-6
+
 /**
  * Each frame's look: what its renders draw (by the compositor's plan, so with solo tracks and transitions), as far as
  * that decides what they cost. Frames of a look cost about the same whatever the words of a lyric line or the frame
- * of a clip, so one trial run stands for all of them.
+ * of a clip, so one trial run stands for all of them. The plan is made once per stretch between two edges where it
+ * can change, not per frame: a song's worth of frames each planned took over 100 ms of the main thread.
  */
 function frameLooks(planned: PlannedOutput): FrameLooks {
   const known = lookCache.get(planned)
   if (known) return known
   const { project, range, frames, spec } = planned
   const frameTimes = planned.exportOptions.frameTimes
+  const edges = planEdges(project)
+  const stretches = new Map<number, TimeLook>()
+  const lookAt = (time: Seconds): TimeLook => {
+    // The stretch is the number of edges at or before the time.
+    let lo = 0
+    let hi = edges.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if ((edges[mid] as number) <= time) lo = mid + 1
+      else hi = mid
+    }
+    const nearEdge =
+      (lo > 0 && time - (edges[lo - 1] as number) < EDGE_EPSILON) ||
+      (lo < edges.length && (edges[lo] as number) - time < EDGE_EPSILON)
+    const cached = nearEdge ? undefined : stretches.get(lo)
+    if (cached) return cached
+    const layers = planFrame(project, time)
+    const look: TimeLook = {
+      key: layers
+        .map((l) => layerLook(l, project.assets))
+        .sort()
+        .join('|'),
+      busyness: layers.reduce((sum, l) => sum + layerBusyness(l), 0),
+      transition: layers.some((l) => l.kind === 'transition'),
+    }
+    if (!nearEdge) stretches.set(lo, look)
+    return look
+  }
   const keys: string[] = []
   const looks = new Map<string, Look>()
   let stretch = 0
   for (let i = 0; i < frames; i++) {
     const times = frameTimes ? frameTimes(i / spec.fps).map((l) => l.time) : [range.start + i / spec.fps]
-    const drawn = times.map((t) => planFrame(project, t))
-    const key = drawn
-      .map((layers) =>
-        layers
-          .map((l) => layerLook(l, project.assets))
-          .sort()
-          .join('|'),
-      )
-      .join(' + ')
+    const drawn = times.map(lookAt)
+    const key = drawn.map((d) => d.key).join(' + ')
     keys.push(key)
     let look = looks.get(key)
     if (!look) {
-      const busy = Math.max(...drawn.map((layers) => layers.reduce((sum, l) => sum + layerBusyness(l), 0)))
-      const transition = drawn.some((layers) => layers.some((l) => l.kind === 'transition'))
+      const busy = Math.max(...drawn.map((d) => d.busyness))
+      const transition = drawn.some((d) => d.transition)
       look = { renders: 0, busyness: busy, transition, longest: { start: i, length: 0 } }
       looks.set(key, look)
     }
@@ -145,7 +180,6 @@ function frameLooks(planned: PlannedOutput): FrameLooks {
   lookCache.set(planned, result)
   return result
 }
-
 /** How busy the output's renders are on average. */
 function meanBusyness(planned: PlannedOutput): number {
   let sum = 0
