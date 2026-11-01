@@ -685,6 +685,9 @@ test('failed clips share one row that opens to show why, and Cancel stays in vie
   await expect(reasons).toHaveText(
     /^fal\.ai said: Internal server error(\S.* · clip \d+, ){4}\S.* · clip \d+$/,
   )
+  // The reasons start where the row's words do, after its icon, as they do under Retry.
+  const words = (await failed.locator('[class*="failText"]').boundingBox())!
+  expect(Math.abs((await reasons.boundingBox())!.x - words.x)).toBeLessThan(1)
   await cancelInView()
   await page.screenshot({ path: testInfo.outputPath('director-video-failed-reasons.png') })
   // In the narrowest inspector the lines wrap more, and Cancel stays pinned in view.

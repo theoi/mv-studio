@@ -31,7 +31,7 @@ import { Button } from '../../../ds/Button.tsx'
 import { Dialog } from '../../../ds/Dialog.tsx'
 import { Badge, Spinner } from '../../../ds/Feedback.tsx'
 import { Segmented, TextArea } from '../../../ds/Fields.tsx'
-import { plural } from '../../../format.ts'
+import { capitalize, plural } from '../../../format.ts'
 import { llmLabel, useCloud } from '../../../state/cloud.ts'
 import {
   applyDraft,
@@ -70,8 +70,6 @@ export function DirectorBadge() {
   if (state.status === 'error') return <Badge tone="danger">Failed</Badge>
   return null
 }
-
-const capitalized = (word: string) => word.charAt(0).toUpperCase() + word.slice(1)
 
 /**
  * A button label that ends in its price ("Generate 12 clips · about $3.38", with the button's `pricedButton` class).
@@ -205,7 +203,7 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
           ))}
         </ul>
         <p className={styles.muted}>
-          Estimates from fal.ai’s prices on {paid.pricesCheckedOn}. {capitalized(unit)}s already made are kept
+          Estimates from fal.ai’s prices on {paid.pricesCheckedOn}. {capitalize(unit)}s already made are kept
           if you cancel.
         </p>
       </div>
@@ -487,7 +485,7 @@ function ShotList({ shots, unit }: { shots: ShotStatus[]; unit: GeneratedUnit })
   return (
     <div className={styles.shots}>
       {underway.length > 0 && (
-        <ul aria-label={`${capitalized(unit)}s underway`}>
+        <ul className={styles.shotList} aria-label={`${capitalize(unit)}s underway`}>
           {underway.map((s) => (
             <li key={s.shotId} className={styles.shotRow}>
               <span className={styles.shotMark}>
@@ -596,7 +594,7 @@ function GeneratingView({ state, onCancel }: { state: StateOf<'generating'>; onC
       </div>
       {!stopping && (
         <p className={styles.muted}>
-          {notice} {capitalized(unit)}s already made are kept.
+          {notice} {capitalize(unit)}s already made are kept.
         </p>
       )}
     </ToolView>
