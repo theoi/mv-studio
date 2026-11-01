@@ -287,13 +287,11 @@ export class OpenAICompatibleClient {
     let context = await this.ollamaContext(model, signal)
     if (context === null) {
       onLoadingModel?.(true)
+      // A load that runs out the answer time limit ends here: sending the request would start a second full wait.
+      const loadTimeout = AbortSignal.timeout(this.timeoutMs)
       try {
-        const loaded = await this.ollamaNative(
-          '/api/generate',
-          { model, stream: false },
-          signal,
-          this.timeoutMs,
-        )
+        const loaded = await this.ollamaNative('/api/generate', { model, stream: false }, signal, loadTimeout)
+        if (loadTimeout.aborted && !signal?.aborted) throw this.timeoutError(loadTimeout.reason)
         context = loaded ? await this.ollamaContext(model, signal) : undefined
       } finally {
         onLoadingModel?.(false)
@@ -302,11 +300,13 @@ export class OpenAICompatibleClient {
     // Ollama cuts only a prompt longer than its context, so the answer's room (which contextFor() adds) isn't asked for.
     if (typeof context !== 'number' || tokens * ESTIMATE_MARGIN <= context) return undefined
     const count = (n: number) => n.toLocaleString('en-US')
+    // Refused just over the context, the estimate itself can round to the context or below it.
+    const shown = Math.max(Math.round(tokens / 1000), Math.floor(context / 1000) + 1) * 1000
     return this.error('prompt-cut', {
       title: 'Ollama can read only part of this request',
       message:
-        `Its context length is ${count(context)} tokens and this request is about ${count(Math.round(tokens / 1000) * 1000)}, ` +
-        'so Ollama would drop its start. Nothing was sent or changed.',
+        `Its context length is ${count(context)} tokens and this request is about ${count(shown)}, ` +
+        'so Ollama would drop the start of the request. Nothing was sent or changed.',
       steps: contextLengthSteps('ollama', model, tokens),
       action: raiseContextLength('ollama', tokens),
     })
@@ -320,7 +320,8 @@ export class OpenAICompatibleClient {
     model: string,
     signal: AbortSignal | undefined,
   ): Promise<number | null | undefined> {
-    const json = (await this.ollamaNative('/api/ps', undefined, signal, OLLAMA_FIT.psTimeoutMs)) as
+    const timeout = AbortSignal.timeout(OLLAMA_FIT.psTimeoutMs)
+    const json = (await this.ollamaNative('/api/ps', undefined, signal, timeout)) as
       { models?: unknown } | undefined
     if (!Array.isArray(json?.models)) return undefined
     const names = new Set([model, model.includes(':') ? model : `${model}:latest`])
@@ -338,9 +339,8 @@ export class OpenAICompatibleClient {
     path: string,
     body: Record<string, unknown> | undefined,
     signal: AbortSignal | undefined,
-    timeoutMs: number,
+    timeout: AbortSignal,
   ): Promise<unknown> {
-    const timeout = AbortSignal.timeout(timeoutMs)
     try {
       const response = await this.doFetch(`${this.baseUrl.replace(/\/v1$/, '')}${path}`, {
         method: body ? 'POST' : 'GET',

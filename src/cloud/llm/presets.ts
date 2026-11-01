@@ -156,24 +156,44 @@ const CONTEXT_SIZES = [LOCAL_CONTEXT_TOKENS, 32768, 65536, 131072] as const
 /**
  * A request's tokens as Qwen 2.5 counts them, from its JSON: about 4.4 characters per token for words and JSON, 1.35
  * tokens per digit (Qwen reads each digit as a token of its own, and numbers bring their points and commas), and a
- * token for each character outside ASCII (lyrics in other scripts, typographic quotes). On the requests measured
- * (llm.contract.test.ts) it is 0.4 to 1.1% over Qwen's count; a flat 4 characters per token was 4% over on director
- * requests and 17 to 20% under on Ask requests after a long draft, whose shots bring thousands of digits. Llama 3 groups
- * digits in threes, so for it this errs high.
+ * token or more for each character outside ASCII (wideTokens()). On the Ask and director requests measured
+ * (llm.contract.test.ts) it is 0.3 to 1.8% over Qwen's count, and 1 to 6% under when the clips are UUIDs or short
+ * phrases (see ESTIMATE_MARGIN); a flat 4 characters per token was 4% over on director requests and 17 to 20% under on
+ * Ask requests after a long draft, whose shots bring thousands of digits. Llama 3 groups digits in threes, so for it
+ * this errs high.
  */
 export function estimateTokens(text: string): number {
+  let ascii = 0
   let digits = 0
   let wide = 0
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i)
     if (c >= 48 && c <= 57) digits++
-    else if (c > 127) wide++
+    else if (c > 127) wide += wideTokens(c)
+    else ascii++
   }
-  return (text.length - digits - wide) / 4.4 + digits * 1.35 + wide
+  return ascii / 4.4 + digits * 1.35 + wide
 }
 
-/** How far over its estimate a request may run, for requests unlike those estimateTokens() was measured on. */
-export const ESTIMATE_MARGIN = 1.05
+/**
+ * Qwen 2.5's tokens for a character outside ASCII, measured on lyric lines. Hangul, Georgian, Armenian and the Indic
+ * scripts take more than one (Hangul 1 to 1.36 depending on the syllables, Georgian and Armenian 1.1 to 1.17,
+ * Devanagari, Bengali and Tamil 1.2 to 1.32, the other Indic scripts and Sinhala 1.47 to 1.85); Greek, CJK, emoji and
+ * typographic quotes about one or less, and Cyrillic, Arabic, Hebrew and Thai about half, which errs high.
+ */
+function wideTokens(c: number): number {
+  if ((c >= 0x0900 && c <= 0x09ff) || (c >= 0x0b80 && c <= 0x0bff)) return 1.35
+  if (c >= 0x0a00 && c <= 0x0dff) return 1.9
+  if ((c >= 0x0530 && c <= 0x058f) || (c >= 0x10a0 && c <= 0x10ff)) return 1.25
+  if ((c >= 0x1100 && c <= 0x11ff) || (c >= 0xac00 && c <= 0xd7af)) return 1.3
+  return 1
+}
+
+/**
+ * How far over its estimate a request may run. Measured requests came out 0.94 to 1.02 of Qwen's count, the lowest a
+ * shot list made of short phrases ("label": "Chorus, clip", "mood": "euphoric, peak, neon night drive").
+ */
+export const ESTIMATE_MARGIN = 1.08
 
 /** The smallest of CONTEXT_SIZES that holds a request estimated at `tokens` with room for the answer. */
 export function contextFor(tokens = 0): number {

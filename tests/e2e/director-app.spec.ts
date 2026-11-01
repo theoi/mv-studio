@@ -18,6 +18,11 @@ const CORS = {
 const OLLAMA = { preset: 'ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'qwen2.5:7b' }
 
 async function openDirector(page: Page, cloud?: Record<string, unknown>, kind = 'ai') {
+  // Ollama's own API (the context check before a long request) answers as an Ollama without it, so an Ollama running
+  // on this computer stays out of the test.
+  await page
+    .context()
+    .route('http://localhost:11434/api/**', (route) => route.fulfill({ status: 404, headers: CORS }))
   await openHarness(page)
   await page.evaluate((settings) => {
     localStorage.setItem('mv-studio.guide-seen', '1')
