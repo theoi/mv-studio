@@ -12,6 +12,7 @@ import { StartScreen } from './screens/start/StartScreen.tsx'
 import { Deferred } from './screens/common/Deferred.tsx'
 import { LoadBoundary, ScreenLoadFailed } from './screens/common/LoadBoundary.tsx'
 import { Toaster } from './screens/common/Toaster.tsx'
+import { RestoringScreen } from './screens/common/RestoringScreen.tsx'
 import { ReviewNav } from './screens/common/ReviewNav.tsx'
 import { SameProjectDialog } from './screens/common/SameProjectDialog.tsx'
 import { useGlobalShortcuts } from './shortcuts.ts'
@@ -35,7 +36,7 @@ export function App() {
 
   return (
     <TooltipProvider>
-      {restoring && <div className="screen-loading" />}
+      {restoring && <RestoringScreen />}
       {screen === 'start' && !restoring && <StartScreen />}
       {/* One boundary per screen: while the next screen's code loads, a shared boundary would only hide the
           previous screen, keeping its effects (preview, VJ session, key handlers) running. */}
@@ -43,7 +44,7 @@ export function App() {
         <Suspense fallback={<div className="screen-loading" />}>
           {screen === 'editor' && !restoring && <Editor />}
           {screen === 'setup' && <SetupScreen />}
-          {screen === 'vj' && <VjMode />}
+          {screen === 'vj' && !restoring && <VjMode />}
         </Suspense>
       </LoadBoundary>
       <Deferred when={settingsOpen} onFail={closeWithToast('Settings', () => set({ dialog: null }))}>

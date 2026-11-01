@@ -34,6 +34,12 @@ export function projectDuration(project: Project): Seconds {
   return end
 }
 
+/**
+ * How far before the project's end its last frame is. Every clip has ended at the end itself, so the frame there is
+ * empty: the preview draws a playhead at the end this much earlier, and the app's End goes to the same place.
+ */
+export const LAST_FRAME_LEAD: Seconds = 0.01
+
 export function clipsOnTrack(project: Project, trackId: Id): Clip[] {
   return Object.values(project.clips)
     .filter((c) => c.trackId === trackId)

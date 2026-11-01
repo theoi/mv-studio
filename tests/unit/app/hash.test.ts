@@ -68,6 +68,8 @@ async function start(hash: string) {
   const ui = await import('../../../src/app/state/ui.ts')
   const { editor, timelineDuration } = await import('../../../src/app/state/project.ts')
   const { usePersistence } = await import('../../../src/app/state/persistence.ts')
+  // vi.resetModules() keeps mocked modules: a restore an earlier test left open would hold back every write.
+  usePersistence.setState({ restoring: false })
   initHashSync()
   return { page, ...ui, editor, timelineDuration, usePersistence }
 }
@@ -157,13 +159,24 @@ describe('the URL hash and the app state', () => {
     expect(get().playhead).toBe(0)
   })
 
-  it('keeps a link’s time within the timeline', async () => {
+  it('keeps a link’s time from the start to the last frame, where End goes', async () => {
     const { page, get, editor, timelineDuration } = await start('#/editor?t=9999')
     const end = timelineDuration(editor.getProject())
     expect(end).toBeLessThan(9999)
-    expect(get().playhead).toBe(end)
+    expect(get().playhead).toBeCloseTo(end - 0.01, 9)
     page.window.location.hash = '#/editor?t=-5'
     page.fire('hashchange')
     expect(get().playhead).toBe(0)
+  })
+
+  it('names a kept project in VJ mode’s link too, so a reload there opens it again', async () => {
+    const { page, editor, set } = await start('#/editor')
+    set({ screen: 'vj' })
+    expect(page.window.location.hash).toBe('#/vj')
+
+    set({ screen: 'editor' })
+    stored.add(editor.getProject().id)
+    set({ screen: 'vj' })
+    expect(page.window.location.hash).toBe(`#/vj?project=${editor.getProject().id}`)
   })
 })

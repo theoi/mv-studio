@@ -545,3 +545,26 @@ describe('sending the render worker the frames of a paused frame with several la
     preview.dispose()
   })
 })
+
+describe('drawing the end of the project', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('draws the last frame at the end itself, where playback stops, and other times as they are', async () => {
+    compositor.render.mockResolvedValue(undefined)
+    const preview = open()
+    const project = createProject()
+    project.duration = 10
+    preview.setProject(project)
+    const drawnAt = async (time: number) => {
+      preview.seek(time)
+      await preview.rendered()
+      return (compositor.render.mock.lastCall as unknown[] | undefined)?.[1]
+    }
+    expect(await drawnAt(10)).toBeCloseTo(9.99, 9)
+    expect(await drawnAt(4)).toBe(4)
+    expect(await drawnAt(9.995)).toBeCloseTo(9.99, 9)
+    preview.dispose()
+  })
+})

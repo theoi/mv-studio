@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { audioBufferCache } from '../../../src/engine/audio.ts'
 import { STEM_RELEASE_MS, WebAudioPlaybackClock } from '../../../src/engine/playback.ts'
 import { createAudioClip, createProject } from '../../../src/model/factory.ts'
+import { LAST_FRAME_LEAD } from '../../../src/model/queries.ts'
 import {
   STEM_NAMES,
   type Asset,
@@ -256,5 +257,63 @@ describe('WebAudioPlaybackClock', () => {
     expect(cache.error('stem-bass')).toBeUndefined()
     editorClock.dispose()
     otherClock.dispose()
+  })
+
+  /** A clock on a 10 s project without audio, whose audio context's time stands still. */
+  function clockOfTenSeconds(): WebAudioPlaybackClock {
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        readonly currentTime = 0
+        readonly outputLatency = 0
+        readonly destination = {}
+        createGain() {
+          return { gain: { value: 1 }, connect: () => undefined }
+        }
+        resume() {
+          return Promise.resolve()
+        }
+        close() {
+          return Promise.resolve()
+        }
+      },
+    )
+    const clock = new WebAudioPlaybackClock({ getFile: async () => new Blob() })
+    const project = createProject()
+    project.duration = 10
+    clock.setProject(project)
+    return clock
+  }
+
+  it('plays from the top when Play is pressed on the last frame, where End leaves the playhead', async () => {
+    const clock = clockOfTenSeconds()
+    clock.seek(10 - LAST_FRAME_LEAD)
+    await clock.play()
+    expect(clock.state).toBe('playing')
+    expect(clock.currentTime()).toBe(0)
+    clock.pause()
+    // Just before the last frame, it plays on from there.
+    clock.seek(9.9)
+    await clock.play()
+    expect(clock.currentTime()).toBeCloseTo(9.9, 9)
+    clock.dispose()
+  })
+
+  it('repeats a loop over the last section when Play is pressed on the last frame', async () => {
+    const clock = clockOfTenSeconds()
+    clock.setLoop({ start: 6, end: 10 })
+    clock.seek(10 - LAST_FRAME_LEAD)
+    await clock.play()
+    expect(clock.currentTime()).toBe(6)
+    clock.pause()
+    // Inside the loop it plays on from where it is, and before it from the loop's start.
+    clock.seek(8)
+    await clock.play()
+    expect(clock.currentTime()).toBe(8)
+    clock.pause()
+    clock.seek(2)
+    await clock.play()
+    expect(clock.currentTime()).toBe(6)
+    clock.dispose()
   })
 })

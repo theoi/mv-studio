@@ -15,15 +15,7 @@ import { nudgeLine } from './lyricEdits.ts'
 import { addMarkerAtPlayhead } from './markers.ts'
 import { jumpSection, stepPlayhead } from './playback.ts'
 import { toggleFullscreen, toggleLoop } from './previewControls.ts'
-import {
-  addTextAtPlayhead,
-  editor,
-  hasSong,
-  redo,
-  splitAtPlayhead,
-  timelineDuration,
-  undo,
-} from './project.ts'
+import { addTextAtPlayhead, editor, hasSong, lastFrameTime, redo, splitAtPlayhead, undo } from './project.ts'
 import { shuttle, stopShuttle } from './shuttle.ts'
 import { get, openAssist, set, setSnap, toast } from './ui.ts'
 import { enterVj } from './vj.ts'
@@ -223,7 +215,7 @@ export const SHORTCUTS = [
     label: 'Go to the end',
     group: 'Playback',
     keys: ['End'],
-    run: () => set({ playhead: timelineDuration(editor.getProject()) - 0.01 }),
+    run: () => set({ playhead: lastFrameTime(editor.getProject()) }),
   },
   { id: 'loop', label: 'Loop playback', group: 'Playback', keys: ['Mod L'], run: toggleLoop },
   { id: 'fullscreen', label: 'Full-screen preview', group: 'Playback', keys: ['F'], run: toggleFullscreen },
