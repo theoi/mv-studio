@@ -148,7 +148,8 @@ describe('reporting drawn frames', () => {
     vi.clearAllMocks()
   })
 
-  it('does not report a frame asked for before a seek, only the frames of the new position', async () => {
+  /** A preview whose first frame (at 0) is still being drawn, and the times of the frames it reports. */
+  function drawing() {
     let finish = () => {}
     compositor.render.mockReturnValueOnce(
       new Promise<void>((resolve) => {
@@ -159,13 +160,45 @@ describe('reporting drawn frames', () => {
     const preview = open()
     const times: number[] = []
     preview.onFrame((time) => times.push(time))
+    const playing = () => vi.spyOn(preview.clock, 'state', 'get').mockReturnValue('playing')
+    return { preview, times, finish, playing }
+  }
+
+  it('while playing, does not report a frame asked for before a seek, only the frames of the new position', async () => {
+    const { preview, times, finish, playing } = drawing()
+    preview.seek(30)
+    playing()
+    finish()
+    await preview.rendered()
+    // A scrub's frame, then the same time again at full resolution.
+    expect([...new Set(times)]).toEqual([30])
+    preview.dispose()
+  })
+
+  it('while paused, reports every frame drawn, so a scrub reports the frames it shows', async () => {
+    const { preview, times, finish } = drawing()
     preview.seek(30)
     finish()
     await preview.rendered()
-    expect(times).not.toContain(0)
-    expect(times).toContain(30)
+    expect([...new Set(times)]).toEqual([0, 30])
     preview.dispose()
   })
+
+  it.each([
+    { range: { start: 10, end: 20 }, reported: [] },
+    { range: { start: 0, end: 20 }, reported: [0] },
+  ])(
+    'while playing, takes a loop from $range.start to $range.end for a seek only when it moves the playhead',
+    async ({ range, reported }) => {
+      const { preview, times, finish, playing } = drawing()
+      playing()
+      preview.setLoop(range)
+      finish()
+      await preview.rendered()
+      expect(times).toEqual(reported)
+      preview.dispose()
+    },
+  )
 })
 
 describe('scrubbing on the render worker', () => {
