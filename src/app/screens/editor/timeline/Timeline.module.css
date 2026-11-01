@@ -414,12 +414,6 @@
   }
 }
 
-@container (width <= 36px) {
-  .mediaLabel {
-    display: none;
-  }
-}
-
 .clip:active {
   cursor: grabbing;
 }
