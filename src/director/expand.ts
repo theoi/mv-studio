@@ -10,7 +10,7 @@ import { chooseClips, type ChooseSpan, type PoolItem } from '../vision/index.ts'
 import type { BriefSection, CreativeBrief } from './brief.ts'
 import { bestByTags, findItem, type CatalogItem, type LookPreset } from './catalog.ts'
 import type { BrightnessRequest } from './contrast.ts'
-import { NO_AI_SCENES } from './notes.ts'
+import { NO_AI_SHOTS } from './notes.ts'
 import {
   energyScale,
   musicEnd,
@@ -172,7 +172,7 @@ function resolveVisual(wanted: CreativeBrief['visual'], input: PlannerInput, war
     return hasGenerators ? 'visualizer' : 'solid'
   }
   if (wanted === 'generated' && !input.generation) {
-    warnings.push(NO_AI_SCENES)
+    warnings.push(NO_AI_SHOTS)
     return fallback()
   }
   if (wanted === 'footage' && !hasVideo && !hasImage) {

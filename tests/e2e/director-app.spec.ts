@@ -125,9 +125,12 @@ test('drafts from the setup screen with the idea typed there', async ({ page }) 
   await expect(
     page.getByText('The built-in planner takes the look and mood from your words.', { exact: false }),
   ).toBeVisible()
-  await page.getByRole('button', { name: 'Try another version' }).click()
+  await page.getByRole('button', { name: 'Try another version' }).focus()
+  await page.keyboard.press('Enter')
   await expect.poll(async () => (await draftState(page)).ids.join()).not.toBe(first.ids.join())
   await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  // The new version goes on the timeline right away, and focus goes to its main action instead of the page.
+  await expect(page.getByRole('button', { name: 'Play the draft' })).toBeFocused()
 })
 
 test('a draft from the setup screen goes on the template’s tracks, with one look and no empty tracks', async ({
@@ -539,7 +542,7 @@ test('a draft made without fal.ai offers to draft again with AI shots once fal.a
   await openDirector(page, undefined, 'ai')
   await page.getByRole('button', { name: 'Draft video' }).click()
   const connectFirst = page.getByText(
-    'This draft uses your media or visuals. To generate AI scenes, connect fal.ai in Settings and turn on AI shots.',
+    'This draft uses your media or visuals. To add AI shots, connect fal.ai in Settings.',
   )
   await expect(connectFirst).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole('button', { name: 'Draft again with AI shots' })).toHaveCount(0)
@@ -560,12 +563,14 @@ test('a draft made without fal.ai offers to draft again with AI shots once fal.a
   await expect(connectFirst).toHaveCount(0)
   await expect(
     page.getByText(
-      'This draft uses your media or visuals. With fal.ai connected, the director can add AI scenes.',
+      'This draft uses your media or visuals. With fal.ai connected, the director can add AI shots.',
     ),
   ).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('director-ai-scenes-connected.png') })
-  await page.getByRole('button', { name: 'Draft again with AI shots' }).click()
-  await expect(page.getByRole('button', { name: /^Generate \d+ shots · about \$\d+\.\d\d$/ })).toBeVisible({
+  // From the keyboard, focus lands on the new plan's price rather than dropping to the page.
+  await page.getByRole('button', { name: 'Draft again with AI shots' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: /^Generate \d+ shots · about \$\d+\.\d\d$/ })).toBeFocused({
     timeout: 30_000,
   })
 })

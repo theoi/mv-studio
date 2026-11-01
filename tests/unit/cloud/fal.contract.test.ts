@@ -7,6 +7,13 @@ import { FAL_TEST_KEY, MockFalServer } from './mocks/fal-server.ts'
 
 const PNG_HEAD = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const JPEG_HEAD = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
+/** An AVIF `ftyp` box whose major brand is the generic mif1, with avif last among its compatible brands. */
+const AVIF_MIF1_HEAD = new Uint8Array([
+  ...[0, 0, 0, 32],
+  ...new TextEncoder().encode('ftypmif1'),
+  ...[0, 0, 0, 0],
+  ...new TextEncoder().encode('mif1miafMA1Bavif'),
+])
 
 function setup(key = FAL_TEST_KEY) {
   const server = new MockFalServer()
@@ -127,6 +134,18 @@ describe('fal.ai adapter against a mock fal queue', () => {
       still: () => new File([JPEG_HEAD, 'rest'], 'sunset.png', { type: 'image/png' }),
       type: 'image/jpeg',
       name: 'sunset.jpg',
+    },
+    {
+      what: 'an untyped AVIF whose major brand is mif1',
+      still: () => new File([AVIF_MIF1_HEAD, 'rest'], 'photo', { type: '' }),
+      type: 'image/avif',
+      name: 'photo.avif',
+    },
+    {
+      what: 'an image whose long name is cut at a space',
+      still: () => new File([PNG_HEAD, 'rest'], `${'a'.repeat(59)} bbbb.png`, { type: 'image/png' }),
+      type: 'image/png',
+      name: `${'a'.repeat(59)}.png`,
     },
   ])('uploads $what with its real type and a matching extension', async ({ still, type, name }) => {
     const { server, provider } = setup()

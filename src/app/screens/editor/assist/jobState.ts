@@ -26,11 +26,11 @@ export function useSongState(): SongState {
 }
 
 /**
- * Keeps focus in a tool after its Cancel. The running view goes away when the run ends, which drops focus to the
- * page: it goes to the next view's main action (`target`, in the tool's footer) instead, unless something else took
- * it meanwhile. Pass `cancelled` as the CancelButton's `onCancel`.
+ * Keeps focus in a tool through a run started or stopped from a button that the run's views replace: a Cancel, or a
+ * redraft. When the run ends, focus would drop to the page: it goes to the next view's main action (`target`, in the
+ * tool's footer) instead, unless something else took it meanwhile. Call `keep` from that button's handler.
  */
-export function useFocusAfterCancel(running: boolean) {
+export function useKeepFocus(running: boolean) {
   const pending = useRef(false)
   const target = useRef<HTMLButtonElement>(null)
   const wasRunning = useRef(running)
@@ -47,10 +47,10 @@ export function useFocusAfterCancel(running: boolean) {
     const footer = button.closest<HTMLElement>('[data-tool-footer]') ?? button
     footer.scrollIntoView({ block: 'nearest' })
   }, [running])
-  const cancelled = () => {
+  const keep = () => {
     pending.current = true
   }
-  return { cancelled, target }
+  return { keep, target }
 }
 
 /** Returns a finished or failed tool view to idle. */

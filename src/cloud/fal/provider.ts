@@ -38,6 +38,15 @@ const NIL_REQUEST_ID = '00000000-0000-0000-0000-000000000000'
 
 const ascii = (b: Uint8Array, from: number, to: number) => String.fromCharCode(...b.subarray(from, to))
 
+/** The major and compatible brands of an ISO-BMFF `ftyp` box, as far as `head` holds them. */
+function brands(head: Uint8Array): string[] {
+  if (ascii(head, 4, 8) !== 'ftyp') return []
+  const end = Math.min(new DataView(head.buffer, head.byteOffset).getUint32(0), head.length)
+  const found = [ascii(head, 8, 12)]
+  for (let at = 16; at + 4 <= end; at += 4) found.push(ascii(head, at, at + 4))
+  return found
+}
+
 /** Image formats by their first bytes, with the extension that goes with each. */
 const IMAGE_FORMATS: readonly { type: string; ext: string; is: (head: Uint8Array) => boolean }[] = [
   { type: 'image/png', ext: 'png', is: (b) => b[0] === 0x89 && ascii(b, 1, 4) === 'PNG' },
@@ -47,7 +56,8 @@ const IMAGE_FORMATS: readonly { type: string; ext: string; is: (head: Uint8Array
   {
     type: 'image/avif',
     ext: 'avif',
-    is: (b) => ascii(b, 4, 8) === 'ftyp' && /^avi[fs]$/.test(ascii(b, 8, 12)),
+    // The major brand can be the generic mif1 or msf1, with avif among the compatible ones.
+    is: (b) => brands(b).some((brand) => brand === 'avif' || brand === 'avis'),
   },
 ]
 
@@ -57,15 +67,16 @@ const IMAGE_FORMATS: readonly { type: string; ext: string; is: (head: Uint8Array
  * application/octet-stream under a name without one.
  */
 async function asImageFile(blob: Blob): Promise<Blob> {
-  const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer())
+  const head = new Uint8Array(await blob.slice(0, 32).arrayBuffer())
   const format = IMAGE_FORMATS.find((f) => f.is(head)) ?? IMAGE_FORMATS.find((f) => f.type === blob.type)
   if (!format) return blob
   const name = blob instanceof File ? blob.name.replace(/\.[a-z0-9]{1,5}$/i, '') : ''
   const base =
     name
       .replace(/[^\w.-]+/g, '-')
-      .replace(/^[-.]+|[-.]+$/g, '')
-      .slice(0, 60) || 'image'
+      .replace(/^[-.]+/, '')
+      .slice(0, 60)
+      .replace(/[-.]+$/, '') || 'image'
   return new File([blob], `${base}.${format.ext}`, { type: format.type })
 }
 
