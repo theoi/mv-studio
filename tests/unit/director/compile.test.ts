@@ -715,6 +715,96 @@ describe('compilePlan', () => {
   })
 })
 
+describe('a title card the user corrected', () => {
+  const textOf = (p: Project, text: string) => clips(p).find((c) => (c as TextClip).text === text)!
+  const setText = (editor: ProjectEditor, text: string, to: string) =>
+    editor.dispatch({
+      type: 'clip.set',
+      clipId: textOf(editor.getProject(), text).id,
+      path: ['text'],
+      value: to,
+    })
+
+  it('keeps the title and artist the user typed on it through later drafts of the song', async () => {
+    const { project, editor, plan } = await titledDraft()
+    editor.dispatch(compilePlan(plan, project).commands)
+    setText(editor, 'Show Me', 'Show Me (Live)')
+    setText(editor, 'Josh Woodward', 'J. Woodward')
+    const fixed = [
+      ['Titles', 'Show Me (Live)'],
+      ['Titles 2', 'J. Woodward'],
+    ]
+    expect(titleRows(await redraft(editor))).toEqual(fixed)
+    // The redraft's card shows the correction it read, and the one after reads it again from that card.
+    expect(titleRows(await redraft(editor))).toEqual(fixed)
+  })
+
+  it('keeps a correction when a copy of the card still shows the song’s own title', async () => {
+    const { project, editor, plan } = await titledDraft()
+    editor.dispatch(compilePlan(plan, project).commands)
+    const card = textOf(editor.getProject(), 'Show Me')
+    // Pasted copies keep the card's Director tag.
+    editor.dispatch({ type: 'clip.add', clip: { ...card, id: 'pasted-title', start: 20 } })
+    setText(editor, 'Show Me', 'Show Me (Live)')
+    expect((await buildPlannerInput(editor.getProject(), { kind: 'lyric' })).song.title).toBe(
+      'Show Me (Live)',
+    )
+  })
+
+  it('reads a title the draft broke over two lines as the song’s own', async () => {
+    const long = renamedSong(makeProject(), 'Josh Woodward - Show Me Where The Long Road Ends Tonight.mp3')
+    const plan = await planLocally(await buildPlannerInput(long, { kind: 'lyric', seed: 5 }))
+    const drafted = new ProjectEditor(long)
+    drafted.dispatch(compilePlan(plan, long).commands)
+    const card = clips(drafted.getProject()).find((c) => directorMeta(c)?.textRole === 'title')! as TextClip
+    expect(card.text).toContain('\n')
+    const input = await buildPlannerInput(drafted.getProject(), { kind: 'lyric', seed: 9 })
+    expect(input.song.title).toBe('Show Me Where The Long Road Ends Tonight')
+  })
+
+  it('takes nothing from a card of another song, or from one drafted before cards recorded their song', async () => {
+    const { project, editor, plan } = await titledDraft()
+    editor.dispatch(compilePlan(plan, project).commands)
+    setText(editor, 'Show Me', 'Show Me (Live)')
+    const fixed = editor.getProject()
+    expect((await buildPlannerInput(fixed, { kind: 'lyric' })).song.title).toBe('Show Me (Live)')
+
+    const other: Asset = { ...fixed.assets[SONG_ID]!, id: 'other-song', name: 'Ana Ruiz - Blue Hour.mp3' }
+    const switched = new ProjectEditor(fixed)
+    switched.dispatch([
+      { type: 'asset.add', asset: other },
+      { type: 'project.setSong', assetId: other.id },
+    ])
+    expect((await buildPlannerInput(switched.getProject(), { kind: 'lyric' })).song).toMatchObject({
+      title: 'Blue Hour',
+      artist: 'Ana Ruiz',
+    })
+
+    const older = structuredClone(fixed)
+    for (const c of Object.values(older.clips))
+      delete (c.meta?.director as { songId?: string } | undefined)?.songId
+    expect((await buildPlannerInput(older, { kind: 'lyric' })).song.title).toBe('Show Me')
+  })
+
+  it('never takes a further title card of a song without an artist as its artist', async () => {
+    const plain = renamedSong(makeProject(), 'Show Me.mp3')
+    const single = await planLocally(await buildPlannerInput(plain, { kind: 'lyric', seed: 5 }))
+    // A language model's plan with a second card shown with the title, where there is no artist.
+    const title = single.texts.find((x) => x.role === 'title')!
+    const withSubtitle = {
+      ...single,
+      texts: [...single.texts, { ...title, id: 'subtitle', text: 'Live', start: 0.8 }],
+    }
+    const drafted = new ProjectEditor(plain)
+    drafted.dispatch(compilePlan(withSubtitle, plain).commands)
+    expect(titleRows(drafted.getProject())).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Live'],
+    ])
+    expect((await buildPlannerInput(drafted.getProject(), { kind: 'lyric' })).song.artist).toBeUndefined()
+  })
+})
+
 describe('compilePlan in a project made from a starter template', () => {
   /** The AI starter template with the fixture's song, analysis, footage and lyrics, before anything is placed. */
   function templateProject(): Project {

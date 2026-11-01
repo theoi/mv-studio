@@ -10,6 +10,7 @@ import type { GenerationRequest, GenerationTier } from '../cloud/types.ts'
 import type { MediaFileSource } from '../engine/types.ts'
 import { DEFAULT_CATALOG, type DirectorCatalog } from './catalog.ts'
 import { createBrightnessProbe, type BrightnessProbe } from './contrast.ts'
+import { directorMeta } from './meta.ts'
 import { songTitle } from './songTitle.ts'
 import type { Pace } from './plan.ts'
 import type { DirectorFootageMatch, DirectorFootageMatcher, FootageInfo } from '../vision/director.ts'
@@ -199,6 +200,30 @@ export function songInfoFromProject(project: Project): SongInfo {
   }
 }
 
+const TITLE_FIELDS = ['title', 'artist'] as const
+const words = (s: string) => s.replace(/\s+/g, ' ').trim()
+
+/**
+ * The song's title and artist as the user corrected them on a Director title card of this song (usually a name the
+ * file name got wrong): the first row's text where it differs from the song's own title, the second row's from its
+ * artist. Compared with the song's own each time, so a correction lasts through later drafts and a card put back to
+ * the song's own name ends it. Only names the song gives: an untitled song's card text is the planner's, not a fix.
+ */
+function withCorrectedTitles(project: Project, song: SongInfo): SongInfo {
+  const fixed: Partial<Record<(typeof TITLE_FIELDS)[number], string>> = {}
+  for (const clip of Object.values(project.clips)) {
+    const meta = directorMeta(clip)
+    // Only title cards record their song.
+    if (clip.type !== 'text' || !meta || !song.assetId || meta.songId !== song.assetId) continue
+    const field = TITLE_FIELDS[meta.titleRow ?? 0]
+    const own = field && song[field]
+    if (!field || !own) continue
+    const text = words(clip.text)
+    if (text && text !== words(own)) fixed[field] = text
+  }
+  return { ...song, ...fixed }
+}
+
 /** Subject masks src/vision stored for a clip (maskAssetInfo): derived videos named "<clip> (subject mask).webm". */
 function subjectMasks(project: Project): Map<Id, Id> {
   const masks = new Map<Id, Id>()
@@ -278,7 +303,7 @@ export async function buildPlannerInput(project: Project, options: BuildInputOpt
   return {
     kind: options.kind,
     prompt: (options.prompt ?? '').trim(),
-    song: songInfoFromProject(project),
+    song: withCorrectedTitles(project, songInfoFromProject(project)),
     lyrics: project.lyrics,
     media: mediaFromProject(project, info),
     ...(blank.length ? { blank } : {}),

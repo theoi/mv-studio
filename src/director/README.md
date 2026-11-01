@@ -107,7 +107,11 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   from src/vision, up to four of its lines go behind the subject (`behind` → a matte outside the mask).
 - **Title card** over the intro (not for beat cuts): the song's title and artist from its tags, else from its file
   name (`songTitle`, `songTitleFromName` in `songTitle.ts`), never the prompt or the kind of video. The project's
-  name and the title over a beat cut use the same title (`songName`).
+  name and the title over a beat cut use the same title (`songName`). A title or artist the user corrected on a
+  Director title card of the same song (each card records its song, `meta.director.songId`, and its row) is the
+  song's title or artist for later drafts, the language model's included (`buildPlannerInput`), so the card is laid
+  out again for it. It is read from the card each time: a card put back to the song's own name ends it, and one of
+  another song, or drafted before cards recorded their song, counts for nothing.
 - **Opening and ending**: the first shot fades in from black and the last fades out, ending when the music does
   when the song has a silent tail (`musicEnd`).
 - **Clip choice** (`chooseFootage`): footage and stills come from src/vision's `chooseClips`, the chooser auto-cut
