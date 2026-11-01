@@ -32,6 +32,8 @@ export interface EditChange {
   /** Commands applied (empty for undo/redo/load). */
   commands: EditCommand[]
   patches: Patch[]
+  /** On 'load', the history of the project that was replaced, to save with it. */
+  replaced?: SavedHistory
 }
 
 interface HistoryEntry {
@@ -40,6 +42,61 @@ interface HistoryEntry {
   patches: Patch[]
   inversePatches: Patch[]
   coalesceKey?: string
+}
+
+/** An undo or redo step as plain data, kept with the saved project. */
+export interface SavedStep {
+  label: string
+  patches: Patch[]
+  inversePatches: Patch[]
+}
+
+/**
+ * The undo and redo steps of a project as saved with it, so they survive a reload or a crash. `updatedAt` is the
+ * project's when they were taken: they apply only to that very version of it.
+ */
+export interface SavedHistory {
+  updatedAt: string
+  /** Oldest first, as the stacks are. */
+  undo: SavedStep[]
+  redo: SavedStep[]
+}
+
+/** How much history is saved with a project: the most recent steps, within a step count and a rough size. */
+const SAVED_STEPS = 100
+const SAVED_BYTES = 2_000_000
+
+const PATCH_OPS: readonly unknown[] = ['add', 'remove', 'replace']
+
+function isPatch(value: unknown): value is Patch {
+  if (typeof value !== 'object' || value === null) return false
+  const { op, path } = value as Partial<Record<keyof Patch, unknown>>
+  return PATCH_OPS.includes(op) && Array.isArray(path)
+}
+
+function isSavedStep(value: unknown): value is SavedStep {
+  if (typeof value !== 'object' || value === null) return false
+  const { label, patches, inversePatches } = value as Partial<Record<keyof SavedStep, unknown>>
+  return (
+    typeof label === 'string' &&
+    Array.isArray(patches) &&
+    patches.every(isPatch) &&
+    Array.isArray(inversePatches) &&
+    inversePatches.every(isPatch)
+  )
+}
+
+/** Whether a history read back from storage has the shape of a SavedHistory, which only then is restored. */
+export function isSavedHistory(value: unknown): value is SavedHistory {
+  if (typeof value !== 'object' || value === null) return false
+  const { updatedAt, undo, redo } = value as Partial<Record<keyof SavedHistory, unknown>>
+  return (
+    typeof updatedAt === 'string' &&
+    Array.isArray(undo) &&
+    undo.every(isSavedStep) &&
+    Array.isArray(redo) &&
+    redo.every(isSavedStep)
+  )
 }
 
 type Listener = (project: Project, change: EditChange) => void
@@ -69,6 +126,10 @@ export class ProjectEditor {
   private readonly listeners = new Set<Listener>()
   private readonly historyLimit: number
   private readonly now: () => Date
+  /** Rough JSON size of each step, measured once. */
+  private readonly stepBytes = new WeakMap<HistoryEntry, number>()
+  /** Whether an edit, undo or redo has run since this editor was made, whatever project it was on. */
+  private edited = false
 
   constructor(project: Project, options: { historyLimit?: number; now?: () => Date } = {}) {
     this.project = project
@@ -101,11 +162,13 @@ export class ProjectEditor {
       return
     }
 
+    this.edited = true
     const last = this.undoStack[this.undoStack.length - 1]
     if (options.coalesceKey && last?.coalesceKey === options.coalesceKey && this.redoStack.length === 0) {
       last.commands.push(...list)
       last.patches.push(...patches)
       last.inversePatches = [...inversePatches, ...last.inversePatches]
+      this.stepBytes.delete(last)
     } else {
       this.undoStack.push({
         label: options.label ?? describeCommand(list[0] as EditCommand),
@@ -170,6 +233,14 @@ export class ProjectEditor {
     return this.redoStack.length > 0
   }
 
+  /**
+   * Whether an edit, undo or redo has run since this editor was made. Undo and redo steps restored with a project
+   * (load with a saved history) don't count: they are stored with it.
+   */
+  editedThisSession(): boolean {
+    return this.edited
+  }
+
   undoLabel(): string | undefined {
     return this.undoStack[this.undoStack.length - 1]?.label
   }
@@ -189,6 +260,7 @@ export class ProjectEditor {
   undo(): boolean {
     const entry = this.undoStack.pop()
     if (!entry) return false
+    this.edited = true
     delete entry.coalesceKey
     this.project = applyPatches(this.project, entry.inversePatches)
     this.redoStack.push(entry)
@@ -199,18 +271,56 @@ export class ProjectEditor {
   redo(): boolean {
     const entry = this.redoStack.pop()
     if (!entry) return false
+    this.edited = true
     this.project = applyPatches(this.project, entry.patches)
     this.undoStack.push(entry)
     this.emit({ source: 'redo', commands: [], patches: entry.patches })
     return true
   }
 
-  /** Replaces the whole project (open/new) and clears history. */
-  load(project: Project): void {
+  /**
+   * The history to save with the current project: the most recent undo and redo steps, at most SAVED_STEPS of each
+   * and SAVED_BYTES of patches in all, the next to undo kept first.
+   */
+  savedHistory(): SavedHistory {
+    let bytes = 0
+    const keep = (stack: HistoryEntry[]): SavedStep[] => {
+      const kept: SavedStep[] = []
+      for (let i = stack.length - 1; i >= 0 && kept.length < SAVED_STEPS; i--) {
+        const entry = stack[i] as HistoryEntry
+        let size = this.stepBytes.get(entry)
+        if (size === undefined) {
+          size = JSON.stringify([entry.patches, entry.inversePatches]).length
+          this.stepBytes.set(entry, size)
+        }
+        if (bytes + size > SAVED_BYTES) break
+        bytes += size
+        kept.unshift({ label: entry.label, patches: entry.patches, inversePatches: entry.inversePatches })
+      }
+      return kept
+    }
+    const undo = keep(this.undoStack)
+    return { updatedAt: this.project.updatedAt, undo, redo: keep(this.redoStack) }
+  }
+
+  /**
+   * Replaces the whole project (open/new). Its history is cleared, or restored from `history` when that was saved
+   * with this very version of the project.
+   */
+  load(project: Project, history?: SavedHistory): void {
+    const restore = history?.updatedAt === project.updatedAt ? history : undefined
+    const entries = (steps: SavedStep[] = []) =>
+      steps.map((s) => ({
+        label: s.label,
+        commands: [],
+        patches: s.patches,
+        inversePatches: s.inversePatches,
+      }))
+    const replaced = this.savedHistory()
     this.project = project
-    this.undoStack = []
-    this.redoStack = []
-    this.emit({ source: 'load', commands: [], patches: [] })
+    this.undoStack = entries(restore?.undo)
+    this.redoStack = entries(restore?.redo)
+    this.emit({ source: 'load', commands: [], patches: [], replaced })
   }
 
   private emit(change: EditChange) {

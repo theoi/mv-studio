@@ -335,3 +335,37 @@ test('a project file open that reuses media already stored keeps it when unused 
   )
   expect(size).toBe(song.byteSize)
 })
+
+test('the sweep keeps media a kept project’s saved undo history can bring back, and runs with that history open', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'image.png')])
+  // A kept project the image was added to and then removed from, saved with that undo history.
+  const kept = await page.evaluate(async () => {
+    const { model, media } = window.mvStudio
+    const image = await media.mediaStore.importFile(window.mvStudio.files()[0])
+    const editor = new model.ProjectEditor(model.createProject({ name: 'History test' }))
+    editor.dispatch({ type: 'asset.add', asset: image })
+    editor.dispatch({ type: 'asset.remove', assetId: image.id })
+    const project = editor.getProject()
+    await media.projectStore.save(project, undefined, undefined, editor.savedHistory())
+    return { id: project.id as string, folder: image.storageKey.split('/')[1] as string, image }
+  })
+  await leaveFileBehind(page, 'left-behind')
+  // Opened with its history, which the editor can undo: no edit has been made in this tab.
+  expect(await page.evaluate((id) => window.mvStudio.app.persistence.openStoredProject(id), kept.id)).toBe(
+    true,
+  )
+  expect(await page.evaluate(() => window.mvStudio.app.project.editor.canUndo())).toBe(true)
+
+  expect(await page.evaluate(() => window.mvStudio.app.persistence.removeUnusedMedia(0))).toBe(1)
+  expect(await mediaFolderNames(page)).toEqual([kept.folder])
+  await page.evaluate(() => window.mvStudio.app.project.editor.undo())
+  expect(
+    await page.evaluate(
+      async (asset) => (await window.mvStudio.media.mediaStore.getFile(asset)).size,
+      kept.image,
+    ),
+  ).toBe(kept.image.byteSize)
+})

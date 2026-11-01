@@ -10,8 +10,10 @@ import {
   type AutosaveState,
   type AutosaveStatus,
   type Clip,
+  type EditChange,
   type Id,
   type Project,
+  type SavedHistory,
 } from '../../model/index.ts'
 import { templateState } from '../../plugins/templates.ts'
 import { JobError, jobs, type JobErrorCode } from '../../shared/jobs.ts'
@@ -181,7 +183,7 @@ const latestWrite = new Map<Id, number>()
  * Stores the project. When the page is `leaving`, it is written at once without making a thumbnail: decoding a frame
  * takes longer than a closing page lives, and the card keeps its earlier thumbnail until the next save.
  */
-async function writeProject(project: Project, leaving = false): Promise<void> {
+async function writeProject(project: Project, leaving = false, history?: SavedHistory): Promise<void> {
   if (removed.has(project.id)) return
   const write = ++writes
   latestWrite.set(project.id, write)
@@ -189,7 +191,7 @@ async function writeProject(project: Project, leaving = false): Promise<void> {
     if (failSaves) throw new JobError(failSaves, 'Save failed for the test')
     const thumbnail = leaving ? undefined : await thumbnailFor(project)
     if (latestWrite.get(project.id) !== write) return
-    await store.save(project, thumbnail?.blob, templateState(project)?.kind)
+    await store.save(project, thumbnail?.blob, templateState(project)?.kind, history)
     if (thumbnail) covers.set(project.id, thumbnail.cover)
   } catch (error) {
     const failure = new Error(saveErrorMessage(error), { cause: error })
@@ -208,19 +210,21 @@ async function writeProject(project: Project, leaving = false): Promise<void> {
 
 async function autosaveProject(project: Project, { leaving }: { leaving: boolean }): Promise<void> {
   if (!storedIds.has(project.id) && !edited) return
-  await writeProject(project, leaving)
+  // Taken now, with the project it belongs to: by the time the write starts, the editor may have moved on.
+  const history = editor.getProject() === project ? editor.savedHistory() : undefined
+  await writeProject(project, leaving, history)
   if (editor.getProject().id === project.id && get().screen === 'editor') rememberLast(project.id)
   syncCurrent()
 }
 
-function onEditorChange(project: Project, change: { source: string }) {
+function onEditorChange(project: Project, change: EditChange) {
   if (change.source === 'load') {
     // Another project replaced this one before its last change was written.
     const prev = previous
     const unsaved =
       autosave && autosave.getState().status !== 'saved' && autosave.getState().status !== 'idle'
     if (unsaved && prev.id !== project.id && (storedIds.has(prev.id) || edited))
-      writeProject(prev).catch((error: unknown) => toast(saveErrorMessage(error)))
+      writeProject(prev, false, change.replaced).catch((error: unknown) => toast(saveErrorMessage(error)))
     edited = false
   } else if (tracking && change.source !== 'derived') {
     edited = true
@@ -285,10 +289,10 @@ function cancelProjectJobs(keep: readonly string[] = []) {
   }
 }
 
-function show(project: Project) {
+function show(project: Project, history?: SavedHistory) {
   cancelProjectJobs()
   storedIds.add(project.id)
-  editor.load(project)
+  editor.load(project, history)
   rememberLast(project.id)
 }
 
@@ -334,13 +338,13 @@ export async function startProject(project: Project, options: { keep: boolean; f
 /** Loads a kept project into the editor, after writing the open one. Returns false when it is not there. */
 export async function openStoredProject(id: Id): Promise<boolean> {
   await autosave?.flush()
-  let project: Project
+  let stored: Awaited<ReturnType<typeof store.loadWithHistory>>
   try {
-    project = await store.load(id)
+    stored = await store.loadWithHistory(id)
   } catch {
     return false
   }
-  show(project)
+  show(stored.project, stored.history)
   return true
 }
 
@@ -665,12 +669,13 @@ export function olderTabsGone(now = Date.now()): boolean {
 /**
  * Deletes stored media that no kept project nor the open one uses, once it is `minAgeMs` old (see
  * `IdbProjectStore.removeUnusedMedia`), unless another tab is open: its unsaved edits and undo history can use media no
- * kept project does, and not after an edit in this tab. Returns how many media folders it deleted, or null when it
- * didn't look.
+ * kept project does, and not after an edit, undo or redo in this tab. Returns how many media folders it deleted, or
+ * null when it didn't look.
  */
 export async function removeUnusedMedia(minAgeMs = UNUSED_MEDIA_AGE_MS): Promise<number | null> {
-  // Edits made in this tab can be undone back to media they removed.
-  if (!holdingTabLock || editor.canUndo() || editor.canRedo()) return null
+  // Edits made in this tab can be undone back to media they removed before their project's record says so. Undo
+  // history that came back with a project is in its record, which the sweep reads.
+  if (!holdingTabLock || editor.editedThisSession()) return null
   try {
     const { held = [] } = await navigator.locks.query()
     if (held.filter((l) => l.name === TAB_LOCK).length > 1) return null
