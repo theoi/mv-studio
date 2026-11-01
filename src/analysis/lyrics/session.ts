@@ -14,6 +14,7 @@ export async function createCtcModel(
   const report = options.onProgress ?? (() => undefined)
   const files = await loadModelFiles(WAV2VEC2_MODEL, {
     signal: options.signal,
+    title: MODEL_TITLES.aligner,
     onProgress: alignerLoadProgress(report),
   })
   report(ALIGNER_STARTING)
