@@ -674,6 +674,7 @@ async function chooseFootage(shots: PlanShot[], ctx: Ctx): Promise<PlanShot[]> {
     ...(ctx.input.lyrics ? { lyrics: ctx.input.lyrics } : {}),
     ...(ctx.energyAt ? { energyAt: ctx.energyAt } : {}),
     ...(ctx.input.footage ? { matcher: ctx.input.footage } : {}),
+    rerun: 'Draft again',
     seed: ctx.input.seed,
   })
   // Without a matcher every pick is for variety, which needs no explaining in each draft.

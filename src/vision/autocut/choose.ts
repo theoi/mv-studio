@@ -76,6 +76,8 @@ export interface ChooseInput {
    * from a caller that knows why they have none. Undefined keeps "…aren’t analyzed yet".
    */
   unanalyzedWarning?: (assetIds: readonly Id[], all: boolean) => string | undefined
+  /** What the user does to choose again, ending the note when no clip is analyzed: "Run auto-cut again". */
+  rerun?: string
   seed: number
   signal?: AbortSignal
 }
@@ -248,7 +250,7 @@ export async function chooseClips(input: ChooseInput): Promise<ChooseResult> {
     warnings.push(
       matcher
         ? (explained ??
-            'Your clips aren’t analyzed yet, so they were picked for variety. Run auto-cut again once analysis finishes.')
+            `Your clips aren’t analyzed yet, so they were picked for variety.${input.rerun ? ` ${input.rerun} once analysis finishes.` : ''}`)
         : 'Footage matching is off, so clips were picked for variety.',
     )
   } else if (library.length < pool.length) {

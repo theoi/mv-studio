@@ -189,6 +189,12 @@ test('with footage analysis stuck on the first clip, a clip that shows nothing i
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await expect(page.getByText(/^Placed \d+ (shots|scenes)/)).toBeVisible({ timeout: 60_000 })
   await expect(assist.getByText(LEFT_OUT)).toBeVisible()
+  // The draft's own way to choose again, not auto-cut's.
+  await expect(
+    assist.getByText(
+      'Your clips aren’t analyzed yet, so they were picked for variety. Draft again once analysis finishes.',
+    ),
+  ).toBeVisible()
   expect(await usedNames(page, 'director')).toEqual(['clip.mp4', 'clip1080.mp4'])
 
   await expect(
