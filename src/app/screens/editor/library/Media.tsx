@@ -293,7 +293,7 @@ function SongRow() {
         <span className={`${styles.songMeta} tnum`}>
           {state === 'analyzed' || state === 'no-beat' ? (
             <>
-              {formatTime(timelineDuration(project))} · {bpm ? `${formatBpm(bpm)} · ` : ''}
+              {formatTime(asset?.duration || timelineDuration(project))} · {bpm ? `${formatBpm(bpm)} · ` : ''}
               {plural(sectionsOf(project).length, 'section')}
             </>
           ) : state === 'analyzing' ? (
