@@ -112,7 +112,7 @@ function MediaMenu({ asset, onRemove }: { asset: Asset; onRemove: () => void }) 
       <ContextMenuItem
         icon={<Plus />}
         description={`At ${formatTime(playhead, true)}`}
-        onSelect={() => addAsset(asset.id)}
+        onSelect={() => addAssetAtPlayhead(asset.id)}
       >
         Add at playhead
       </ContextMenuItem>

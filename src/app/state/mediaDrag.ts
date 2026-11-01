@@ -6,6 +6,7 @@ import { undoAction, type LibraryDropHint } from './library.ts'
 import { barsToSeconds } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
 import { replaceableAt, replaceClipMedia } from './replace.ts'
+import { addedToast } from './shotSound.ts'
 import { select, toast } from './ui.ts'
 
 /*
@@ -174,7 +175,7 @@ export function dropMedia(e: Dragged, at: MediaDropPoint): void {
   const hovered = project.tracks.find((t) => t.id === at.trackId)
   const landed = project.tracks.find((t) => t.id === placed.clip.trackId)
   const added = editor.getProject().tracks.find((t) => t.id === placed.clip.trackId)
-  toast(
+  const toastFor = addedToast(
     placed.trimmed
       ? placed.fills
         ? `Added “${name}” at ${when}, trimmed to fill the ${seconds} s gap`
@@ -184,6 +185,7 @@ export function dropMedia(e: Dragged, at: MediaDropPoint): void {
         : landed.id !== at.trackId
           ? `Added “${name}” on ${landed.name} at ${when}: ${hovered?.name ?? 'that track'} is full there`
           : `Added “${name}” at ${when}`,
-    undoAction(label),
+    [placed.clip.id],
   )
+  toast(toastFor.message, undoAction(label), { fix: toastFor.fix })
 }

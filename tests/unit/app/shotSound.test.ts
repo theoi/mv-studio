@@ -1,10 +1,18 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Asset, Clip, VideoClip } from '../../../src/model/index.ts'
 import { cutoutCommands, cutoutsOf } from '../../../src/app/state/behind.ts'
-import { assetPlacement } from '../../../src/app/state/importer.ts'
+import { addAssetAtPlayhead, assetPlacement } from '../../../src/app/state/importer.ts'
 import { editor, loadDemoProject, viewOf } from '../../../src/app/state/project.ts'
 import { replaceClipMedia } from '../../../src/app/state/replace.ts'
-import { setShotsMuted, setShotsVolume, shotSilencedBy } from '../../../src/app/state/shotSound.ts'
+import { get, set, withdrawUndo } from '../../../src/app/state/ui.ts'
+import {
+  addedToast,
+  setShotsMuted,
+  setShotsVolume,
+  shotSilencedBy,
+  shotVolumeAt,
+  volumeKeptNote,
+} from '../../../src/app/state/shotSound.ts'
 
 beforeAll(() => {
   // Toasts time out through window.setTimeout.
@@ -79,6 +87,100 @@ describe('a shot’s own sound', () => {
     expect([clip(talk).volume.value, clip(talk).muted]).toEqual([0, false])
     // At 0% nothing plays, so the timeline shows no speaker.
     expect(viewOf(project(), clip(talk)).sound).toBeUndefined()
+  })
+
+  it('sets a level on a shot with Volume keyframes as the keyframe at the playhead, and leaves one away from it', () => {
+    const keyed = addShot(footage('talk', true), 200)
+    const away = addShot(footage('away', true), 210)
+    const plain = addShot(footage('plain', true), 215)
+    for (const id of [keyed, away])
+      editor.dispatch([
+        {
+          type: 'keyframe.set',
+          clipId: id,
+          path: ['volume'],
+          keyframe: { time: 0, value: 1, easing: 'linear' },
+        },
+        {
+          type: 'keyframe.set',
+          clipId: id,
+          path: ['volume'],
+          keyframe: { time: 2, value: 0.2, easing: 'hold' },
+        },
+      ])
+    const before = clip(away)
+
+    expect(setShotsVolume([keyed, away, plain], 0.5, { at: 201 })).toBe(true)
+    expect(editor.undoLabel()).toBe('Change shot volume')
+    expect(shotVolumeAt(clip(keyed), 201)).toBe(0.5)
+    expect(clip(keyed)).toMatchObject({
+      muted: false,
+      volume: {
+        value: 1,
+        keyframes: [
+          { time: 0, value: 1, easing: 'linear' },
+          { time: 1, value: 0.5, easing: 'ease-in-out' },
+          { time: 2, value: 0.2, easing: 'hold' },
+        ],
+      },
+    })
+    expect(clip(away)).toBe(before)
+    expect(clip(plain)).toMatchObject({ muted: false, volume: { value: 0.5 } })
+    expect(volumeKeptNote([clip(keyed), clip(away), clip(plain)], 201)).toBe(
+      '1 shot has Volume keyframes away from the playhead, so its volume stays. Move the playhead over it to set a keyframe there.',
+    )
+    expect(volumeKeptNote([clip(keyed), clip(away)], 216)).toMatch(/^2 shots have Volume keyframes/)
+    expect(volumeKeptNote([clip(away)], 211)).toBeNull()
+
+    // On a keyframe, the level replaces it, keeping its time and easing.
+    setShotsVolume([keyed], 0.3, { at: 202 })
+    expect(clip(keyed).volume.keyframes?.at(-1)).toEqual({ time: 2, value: 0.3, easing: 'hold' })
+    // Only shots away from the playhead: nothing changes.
+    expect(setShotsVolume([away], 0.3, { at: 201 })).toBe(false)
+  })
+
+  it('says in the add toast that the shot’s sound is off and offers to turn it on, not for a silent file or a still', () => {
+    editor.dispatch({ type: 'asset.add', asset: footage('talk', true) })
+    editor.dispatch({ type: 'asset.add', asset: footage('silent', false) })
+    set({ playhead: 200 })
+    const lastToast = () => get().toasts.at(-1)!
+    const selected = () => {
+      const { selection } = get()
+      return selection.type === 'clip' ? selection.id : ''
+    }
+
+    addAssetAtPlayhead('talk')
+    const talk = selected()
+    expect(lastToast().message).toMatch(/^Added “.+” at \S+\. Its sound is off\.$/)
+    expect(lastToast().action?.label).toBe('Undo')
+    expect(lastToast().fix?.label).toBe('Turn sound on')
+    // Another edit takes back Undo, and the toast stays with its fix.
+    withdrawUndo()
+    expect(lastToast()).toMatchObject({ action: undefined, fix: { label: 'Turn sound on' } })
+    lastToast().fix!.run()
+    expect(clip(talk).muted).toBe(false)
+    expect(editor.undoLabel()).toBe('Unmute shot sound')
+    editor.undo()
+    expect(clip(talk).muted).toBe(true)
+
+    // Turned on another way, the toast closes on the next edit.
+    addAssetAtPlayhead('talk')
+    const again = lastToast()
+    setShotsMuted([selected()], false)
+    withdrawUndo()
+    expect(get().toasts).not.toContain(again)
+
+    addAssetAtPlayhead('silent')
+    expect(lastToast().message).not.toMatch(/sound/)
+    expect(lastToast().fix).toBeUndefined()
+    const still = Object.values(project().assets).find((a) => a.kind === 'image')!
+    addAssetAtPlayhead(still.id)
+    expect(lastToast().message).not.toMatch(/sound/)
+    expect(lastToast().fix).toBeUndefined()
+
+    expect(addedToast('Added 2 files', [talk, selected()]).message).toBe(
+      'Added 2 files. Sound is off for 1 of them.',
+    )
   })
 
   it('says why a shot set to play is silent: a hidden or muted track, or a solo', () => {

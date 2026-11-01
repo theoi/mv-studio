@@ -21,7 +21,7 @@ import { formatTime, plural } from '../format.ts'
 import { unusedProjectName } from './persistence.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
-import { createShot } from './shotSound.ts'
+import { addedToast, createShot } from './shotSound.ts'
 import { analysisService, findBars, foundText, markSongPending } from './songAnalysis.ts'
 import { get, select, set, toast } from './ui.ts'
 
@@ -227,11 +227,13 @@ export async function importFiles(files: File[], at?: Placement): Promise<Asset[
   const first = placed[0]?.clip
   if (first) {
     select({ type: 'clip', id: first.id })
-    toast(
+    const added = addedToast(
       placed.length === 1
         ? `Added “${first.name}” at ${formatTime(first.start, true)}`
         : `Added ${placed.length} files from ${formatTime(first.start, true)}`,
+      placed.map((p) => p.clip.id),
     )
+    toast(added.message, undefined, { fix: added.fix })
   }
   if (song) {
     set({ playhead: 0, selection: { type: 'none' } })
@@ -345,12 +347,17 @@ export function addAssetAtPlayhead(assetId: string): void {
   const clip = selection.type === 'clip' ? editor.getProject().clips[selection.id] : undefined
   if (!clip) return
   const label = editor.undoLabel()
-  toast(`Added “${clip.name}” at ${formatTime(clip.start, true)}`, {
-    label: 'Undo',
-    run: () => {
-      if (editor.undoLabel() === label) editor.undo()
+  const added = addedToast(`Added “${clip.name}” at ${formatTime(clip.start, true)}`, [clip.id])
+  toast(
+    added.message,
+    {
+      label: 'Undo',
+      run: () => {
+        if (editor.undoLabel() === label) editor.undo()
+      },
     },
-  })
+    { fix: added.fix },
+  )
 }
 
 /**

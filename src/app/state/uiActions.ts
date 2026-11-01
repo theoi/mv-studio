@@ -333,7 +333,7 @@ export const UI_ACTIONS: readonly UiAction[] = [
     area: 'Inspector',
     name: 'Own sound',
     palette: 'shotSound',
-    search: ['mute shot', 'shot sound', 'hear the clip'],
+    search: ['mute shot', 'shot sound', 'hear the clip', 'original audio', 'camera sound', 'silent clip'],
   },
   { area: 'Inspector', name: 'Volume', palette: 'shotVolume', search: ['shot volume', 'clip volume'] },
   { area: 'Inspector', name: 'Aspect ratio', palette: 'aspect9x16', search: ['aspect ratio'] },

@@ -100,12 +100,16 @@ describe('a Library › Media card dropped on the timeline', () => {
     const far = dropCard('long', 't-overlay', 30)
     expect(far.hint).toEqual({ trackId: 't-overlay', start: 30, end: 64, trimmed: true })
     expect(far.clip).toMatchObject({ trackId: 't-overlay', start: 30, duration: 34 })
-    expect(lastToast()?.message).toBe('Added “long” at 0:30.0, trimmed to 34.0 s to end at the next clip')
+    expect(lastToast()?.message).toBe(
+      'Added “long” at 0:30.0, trimmed to 34.0 s to end at the next clip. Its sound is off.',
+    )
     editor.undo()
 
     const near = dropCard('long', 't-overlay', 10.5)
     expect(near.clip).toMatchObject({ trackId: 't-overlay', start: 9, duration: 55 })
-    expect(lastToast()?.message).toBe('Added “long” at 0:09.0, trimmed to fill the 55.0 s gap')
+    expect(lastToast()?.message).toBe(
+      'Added “long” at 0:09.0, trimmed to fill the 55.0 s gap. Its sound is off.',
+    )
   })
 
   it('stays on the hovered track when its fitted end rounds a hair past the gap’s end', () => {

@@ -63,6 +63,11 @@ export interface Toast {
   action?: { label: string; run: () => void }
   /** Selects what an automatic or AI tool just made. The toast stays, so Undo is still at hand. */
   show?: () => void
+  /**
+   * A button before `action` that fixes what the message points out (Turn sound on). It stays when Undo is taken back;
+   * once `done` says it is no longer needed (fixed another way), the toast closes on the next edit.
+   */
+  fix?: { label: string; run: () => void; done?: () => boolean }
   /** A new toast with the same key takes this one's place instead of stacking under it. */
   key?: string
   /** Stays until it is dismissed or its action runs. */
@@ -239,17 +244,19 @@ const toastTimers = new Map<number, number>()
 export function toast(
   message: string,
   action?: Toast['action'],
-  options: { show?: () => void; key?: string; sticky?: boolean } = {},
+  options: { show?: () => void; fix?: Toast['fix']; key?: string; sticky?: boolean } = {},
 ) {
-  const { show, key, sticky } = options
+  const { show, fix, key, sticky } = options
   const same = key === undefined ? undefined : get().toasts.find((t) => t.key === key)
   if (same) {
-    set((s) => ({ toasts: s.toasts.map((t) => (t === same ? { ...t, message, action, show, sticky } : t)) }))
+    set((s) => ({
+      toasts: s.toasts.map((t) => (t === same ? { ...t, message, action, show, fix, sticky } : t)),
+    }))
     releaseToast(same.id)
     return
   }
   const id = toastId++
-  set((s) => ({ toasts: [...room(s.toasts), { id, message, action, show, key, sticky }] }))
+  set((s) => ({ toasts: [...room(s.toasts), { id, message, action, show, fix, key, sticky }] }))
   releaseToast(id)
 }
 
@@ -268,14 +275,18 @@ export function closeWithToast(name: string, close: () => void) {
 
 /**
  * Takes back the Undo of toasts shown before an edit, an undo or a redo: each one undoes only while its edit is the
- * last step. A toast that also has Show keeps it.
+ * last step. A toast that also has Show or a fix keeps it, and one whose fix is done closes.
  */
 export function withdrawUndo() {
+  for (const t of get().toasts) if (t.fix?.done?.()) dismissToast(t.id)
   const stale = get().toasts.filter((t) => t.action?.label === 'Undo')
   if (!stale.length) return
-  for (const t of stale) if (!t.show) holdToast(t.id)
+  const kept = (t: Toast) => !!(t.show || t.fix)
+  for (const t of stale) if (!kept(t)) holdToast(t.id)
   set((s) => ({
-    toasts: s.toasts.flatMap((t) => (!stale.includes(t) ? [t] : t.show ? [{ ...t, action: undefined }] : [])),
+    toasts: s.toasts.flatMap((t) =>
+      !stale.includes(t) ? [t] : kept(t) ? [{ ...t, action: undefined }] : [],
+    ),
   }))
 }
 
@@ -306,7 +317,7 @@ export function releaseToast(id: number) {
   if (!t || t.sticky) return
   toastTimers.set(
     id,
-    window.setTimeout(() => dismissToast(id), t.action || t.show ? ACTION_TOAST_MS : TOAST_MS),
+    window.setTimeout(() => dismissToast(id), t.action || t.show || t.fix ? ACTION_TOAST_MS : TOAST_MS),
   )
 }
 

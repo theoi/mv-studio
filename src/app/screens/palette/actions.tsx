@@ -127,7 +127,7 @@ import {
   viewOf,
 } from '../../state/project.ts'
 import { changeAspect } from '../../state/reframe.ts'
-import { selectedShots, setShotsMuted } from '../../state/shotSound.ts'
+import { selectedShots, setShotsMuted, shotVolumeAt } from '../../state/shotSound.ts'
 import { closeGap, gapForPalette, gapLength } from '../../state/ripple.ts'
 import { replacementAssets, replaceTarget } from '../../state/replace.ts'
 import { cutClipsToSection, sectionClipIds } from '../../state/sections.ts'
@@ -244,7 +244,7 @@ function shotsDetail(): string | undefined {
   const shot = shots[0]
   return (
     shot &&
-    `${viewOf(project(), shot).name} · ${shot.muted ? 'Muted' : `${Math.round(shot.volume.value * 100)}%`}`
+    `${viewOf(project(), shot).name} · ${shot.muted ? 'Muted' : `${Math.round(shotVolumeAt(shot, get().playhead) * 100)}%`}`
   )
 }
 
@@ -823,7 +823,15 @@ export const actions: Action[] = [
       return shots.length && shots.every((c) => !c.muted) ? 'Mute shot sound' : 'Unmute shot sound'
     },
     icon: <VolumeX />,
-    aliases: ['mute shot', 'unmute shot', 'shot sound', 'clip sound'],
+    aliases: [
+      'mute shot',
+      'unmute shot',
+      'shot sound',
+      'clip sound',
+      'original audio',
+      'camera sound',
+      'silent clip',
+    ],
     keywords: 'audio volume hear own video footage clip silent',
     run: () => {
       const shots = selectedShots()

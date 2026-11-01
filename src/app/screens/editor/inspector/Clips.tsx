@@ -1,10 +1,18 @@
 import { Layers } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import type { Clip, VideoClip, VisualClip } from '../../../../model/index.ts'
 import { FieldRow, Section, Select, Slider, Switch } from '../../../ds/Fields.tsx'
 import { keyName } from '../../../ds/keys.ts'
 import { formatTime } from '../../../format.ts'
 import { dispatch, editor, hasShotSound, useProject } from '../../../state/project.ts'
-import { setShotsMuted, setShotsVolume } from '../../../state/shotSound.ts'
+import {
+  setShotsMuted,
+  setShotsVolume,
+  shotVolumeAt,
+  volumeKeptNote,
+  volumeSettableAt,
+} from '../../../state/shotSound.ts'
+import { useUi } from '../../../state/ui.ts'
 import { blendModes } from './blendModes.ts'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
@@ -93,14 +101,23 @@ function SharedCompositing({ clips }: { clips: VisualClip[] }) {
   )
 }
 
-/** The own sound of the selected shots whose files have sound: on or off for all, and the volume of those playing. */
+/**
+ * The own sound of the selected shots whose files have sound: on or off for all, and the volume of those playing at
+ * the playhead. A shot with Volume keyframes away from the playhead keeps its volume, and a note says so.
+ */
 function SharedSound({ shots }: { shots: VideoClip[] }) {
   const ids = shots.map((c) => c.id)
   const playing = shots.filter((c) => !c.muted)
   const allOn = playing.length === shots.length
-  const volumes = playing.map((c) => c.volume.value)
-  const sameVolume = volumes.every((v) => v === volumes[0])
-  const pct = Math.round((volumes.reduce((a, v) => a + v, 0) / Math.max(1, volumes.length)) * 100)
+  // Keyframed volumes change with the playhead; shallow equality re-renders only when a shown level changes.
+  const levels = useUi(
+    useShallow((s) =>
+      playing.flatMap((c) => (volumeSettableAt(c, s.playhead) ? [shotVolumeAt(c, s.playhead)] : [])),
+    ),
+  )
+  const kept = useUi((s) => volumeKeptNote(playing, s.playhead))
+  const sameVolume = levels.every((v) => v === levels[0])
+  const pct = Math.round((levels.reduce((a, v) => a + v, 0) / Math.max(1, levels.length)) * 100)
   return (
     <Section title="Sound">
       <FieldRow label="Own sound" trailing={<span className={styles.trailSpacer} />}>
@@ -111,7 +128,7 @@ function SharedSound({ shots }: { shots: VideoClip[] }) {
         />
         {playing.length > 0 && !allOn && <span className={styles.value}>Mixed</span>}
       </FieldRow>
-      {playing.length > 0 && (
+      {levels.length > 0 && (
         <FieldRow label="Volume" trailing={<span className={styles.trailSpacer} />}>
           <Slider
             value={pct}
@@ -129,6 +146,7 @@ function SharedSound({ shots }: { shots: VideoClip[] }) {
         </FieldRow>
       )}
       {playing.length === 0 && <p className={styles.note}>Off: only the song plays during these shots.</p>}
+      {kept && <p className={styles.note}>{kept}</p>}
     </Section>
   )
 }

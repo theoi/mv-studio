@@ -58,7 +58,7 @@ test('a double-click on a media card adds it once, and the add says where it lan
   const card = page.getByRole('button', { name: 'clip, video' })
   const blocks = page.locator('[data-timeline-scroller] [role="button"][aria-label^="clip, "]')
   await card.dblclick()
-  await expect(page.getByText('Added “clip” at 0:00.0', { exact: true })).toBeVisible()
+  await expect(page.getByText('Added “clip” at 0:00.0. Its sound is off.', { exact: true })).toBeVisible()
   await expect(blocks).toHaveCount(1)
   // A second add would have gone on a new track; give it time to show up if it were coming.
   await page.waitForTimeout(300)
@@ -70,7 +70,7 @@ test('a double-click on a media card adds it once, and the add says where it lan
   await card.hover()
   await card.getByRole('button', { name: 'Add at playhead' }).click()
   await expect(blocks).toHaveCount(1)
-  await expect(page.getByText('Added “clip” at 0:00.0', { exact: true })).toBeVisible()
+  await expect(page.getByText('Added “clip” at 0:00.0. Its sound is off.', { exact: true })).toBeVisible()
 })
 test('a file dropped on a track is imported and lands at the drop point, as one undo step', async ({
   page,
