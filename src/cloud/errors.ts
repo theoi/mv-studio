@@ -32,6 +32,8 @@ export type CloudErrorKind =
   | 'bad-response'
   /** The endpoint lacks a needed feature (for example tool calling and JSON output). */
   | 'unsupported'
+  /** A local runner cut the prompt to fit its context length and answered anyway (Ollama does this silently). */
+  | 'prompt-cut'
 
 export interface CloudErrorInfo {
   kind: CloudErrorKind
@@ -61,6 +63,7 @@ const JOB_CODE: Record<CloudErrorKind, JobErrorCode> = {
   cancelled: 'cancelled',
   'bad-response': 'provider',
   unsupported: 'unsupported',
+  'prompt-cut': 'invalid-input',
 }
 
 const RETRYABLE = new Set<CloudErrorKind>(['rate-limit', 'network', 'local-server', 'server', 'timeout'])

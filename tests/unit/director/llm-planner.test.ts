@@ -255,4 +255,31 @@ describe('LLM planner against OpenAI-compatible endpoints', () => {
     expect(plan.planner).toBe('llm')
     expect(plan.sections[0]!.mood).toBe('mood 1')
   })
+
+  it('drafts with the built-in planner when Ollama cut the request short, and says what to change', async () => {
+    const server = new MockLlmServer({ flavor: 'ollama', allowedOrigins: ['*'], contextTokens: 1024 }).reply({
+      content: null,
+      tool_calls: [
+        {
+          id: 'c1',
+          type: 'function',
+          function: { name: 'make_brief', arguments: JSON.stringify(brief(SECTIONS.length)) },
+        },
+      ],
+    })
+    const client = new OpenAICompatibleClient(
+      { baseUrl: 'http://localhost:11434/v1', model: 'model-a', preset: 'ollama' },
+      {
+        fetch: browserFetch({ 'http://localhost:11434': server.handler() }).fetch,
+        pageOrigin: PAGE_ORIGIN,
+        pageProtocol: 'https:',
+      },
+    )
+    const plan = await createDirectorPlanner({ client: () => client })(await input(), testCtx())
+    expect(plan.planner).toBe('local')
+    expect(plan.warnings[0]).toBe(
+      "Your AI model couldn't help (Ollama read only part of the request), so the built-in planner made this draft. Raise Ollama's context length to 16k, then try again.",
+    )
+    expect(server.chatBodies).toHaveLength(1)
+  })
 })

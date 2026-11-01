@@ -319,8 +319,9 @@ export function createDirectorPlanner(options: LlmPlannerOptions) {
       const err = JobError.from(error)
       if (err.code === 'cancelled' || ctx.signal.aborted) throw err
       if (err.details && typeof err.details === 'object' && 'director' in err.details) throw err
-      const title = cloudErrorInfo(err)?.title ?? err.message
-      reason = `Your AI model couldn't help (${title}), so the built-in planner made this draft.`
+      const cloud = cloudErrorInfo(err)
+      reason = `Your AI model couldn't help (${cloud?.title ?? err.message}), so the built-in planner made this draft.`
+      if (cloud?.kind === 'prompt-cut' && cloud.steps[0]) reason += ` ${cloud.steps[0]}`
     }
     const plan = await expandBrief(ruleBrief(input), input, { planner: 'local' })
     return { ...plan, warnings: [reason, ...plan.warnings] }

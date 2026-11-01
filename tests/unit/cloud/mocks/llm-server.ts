@@ -23,6 +23,8 @@ export interface MockLlmOptions {
   chatError?: { status: number; body: unknown }
   /** Reject chat bodies that contain one of these parameters with a 400 and the given message. */
   rejectParams?: Record<string, string>
+  /** The context length. A longer prompt is cut without an error and only the kept tokens are counted, as Ollama does. */
+  contextTokens?: number
 }
 
 export class MockLlmServer {
@@ -121,6 +123,11 @@ export class MockLlmServer {
         })
       }
       const reply = this.replies.shift() ?? { content: '' }
+      // Qwen 2.5 reads these requests at about 3.4 characters per token.
+      const promptTokens = Math.ceil(JSON.stringify(body).length / 3.4)
+      const context = this.options.contextTokens
+      // Ollama 0.40 at 4,096 tokens logged "truncating input prompt limit=2050".
+      const read = context && promptTokens > context ? Math.floor(context / 2) + 2 : promptTokens
       return json(
         {
           id: 'chatcmpl-1',
@@ -137,7 +144,7 @@ export class MockLlmServer {
               },
             },
           ],
-          usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+          usage: { prompt_tokens: read, completion_tokens: 20, total_tokens: read + 20 },
         },
         200,
         this.corsHeaders(request, false),

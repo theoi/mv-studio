@@ -14,7 +14,7 @@ import {
   modelSizeBillions,
   pickDefaultModel,
 } from '../../../src/cloud/llm/presets.ts'
-import { browserFetch, PAGE_ORIGIN, type MockHandler } from './mocks/browser.ts'
+import { browserFetch, json, PAGE_ORIGIN, type MockHandler } from './mocks/browser.ts'
 import { MockLlmServer } from './mocks/llm-server.ts'
 
 const OPENAI = 'https://api.openai.com'
@@ -596,5 +596,114 @@ describe('OpenAI-compatible client: model parameters and limits', () => {
     expect(pickDefaultModel(['qwen3:4b', 'llama3.1:8b'], 'ollama')).toBe('llama3.1:8b')
     expect(pickDefaultModel(['qwen3:4b', 'phi3:3.8b'], 'ollama')).toBe('qwen3:4b')
     expect(pickDefaultModel(['gpt-4o-mini', 'gpt-5-mini'], 'openai')).toBe('gpt-5-mini')
+  })
+})
+
+describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
+  const editCall = {
+    id: 'call_e',
+    type: 'function' as const,
+    function: { name: 'set_opacity', arguments: '{"clip":"c1","value":0.5}' },
+  }
+  // About 11,000 tokens, as an Ask request on a small project.
+  const long = {
+    messages: [{ role: 'user' as const, content: 'Make the chorus brighter. '.repeat(1500) }],
+    tools,
+    toolChoice: 'required' as const,
+  }
+  const ollama = { baseUrl: `${OLLAMA}/v1`, model: 'qwen2.5:7b', preset: 'ollama' as const }
+  const ollamaServer = (contextTokens: number) =>
+    new MockLlmServer({
+      flavor: 'ollama',
+      allowedOrigins: [PAGE_ORIGIN],
+      models: ['qwen2.5:7b'],
+      contextTokens,
+    }).reply({ tool_calls: [editCall] })
+
+  it('stops at an answer to a prompt Ollama cut short, and says how to raise its context length', async () => {
+    const server = ollamaServer(4096)
+    const error = await failure(client({ [OLLAMA]: server.handler() }, ollama).llm.callTools(long))
+    expect(error.kind).toBe('prompt-cut')
+    expect(error.retryable).toBe(false)
+    expect(error.title).toBe('Ollama read only part of the request')
+    expect(error.message).toMatch(
+      /^It read 2,050 tokens of a request about 10,000 tokens long and dropped the rest, because its context length is too small\./,
+    )
+    expect(error.steps[0]).toBe("Raise Ollama's context length to 16k, then try again.")
+    expect(error.steps.join('\n')).toContain('Environment="OLLAMA_CONTEXT_LENGTH=16384"')
+    // No second try in JSON mode: it would read the same cut prompt.
+    expect(server.chatBodies).toHaveLength(1)
+  })
+
+  it('accepts the same request when the context holds it', async () => {
+    const { llm } = client({ [OLLAMA]: ollamaServer(16384).handler() }, ollama)
+    expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
+  })
+
+  it('leaves hosted providers alone: they reject a request that is too long instead of cutting it', async () => {
+    const server = new MockLlmServer({
+      flavor: 'openai',
+      apiKey: KEY,
+      models: ['gpt-test'],
+      contextTokens: 4096,
+    }).reply({ tool_calls: [editCall] })
+    const { llm } = client(
+      { [OPENAI]: server.handler() },
+      { baseUrl: `${OPENAI}/v1`, apiKey: KEY, model: 'gpt-test', preset: 'openai' },
+    )
+    expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
+  })
+
+  it('names LM Studio and other servers, each with its own step', async () => {
+    const lm = new MockLlmServer({ flavor: 'lmstudio', models: ['m'], contextTokens: 4096 }).reply({
+      tool_calls: [editCall],
+    })
+    const lmError = await failure(
+      client(
+        { [LMSTUDIO]: lm.handler() },
+        { baseUrl: `${LMSTUDIO}/v1`, model: 'm', preset: 'lmstudio' },
+      ).llm.callTools(long),
+    )
+    expect(lmError.title).toBe('LM Studio read only part of the request')
+    expect(lmError.steps).toEqual([
+      'In LM Studio, load the model again with Context Length set to 16384 or more, then try again.',
+    ])
+    const OTHER = 'http://localhost:8080'
+    const other = new MockLlmServer({ flavor: 'lmstudio', models: ['m'], contextTokens: 4096 }).reply({
+      tool_calls: [editCall],
+    })
+    const otherError = await failure(
+      client(
+        { [OTHER]: other.handler() },
+        { baseUrl: `${OTHER}/v1`, model: 'm', preset: 'custom' },
+      ).llm.callTools(long),
+    )
+    expect(otherError.title).toBe('The model read only part of the request')
+    expect(otherError.steps).toEqual([
+      "Give the model a context length of at least 16384 tokens in the server's settings, then try again.",
+    ])
+  })
+
+  it('trusts answers without a token count, and short requests', async () => {
+    const answer =
+      (usage?: unknown): MockHandler =>
+      () =>
+        Promise.resolve(
+          json(
+            {
+              choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [editCall] } }],
+              ...(usage ? { usage } : {}),
+            },
+            200,
+            { 'access-control-allow-origin': '*' },
+          ),
+        )
+    for (const usage of [undefined, { prompt_tokens: 0, completion_tokens: 0 }]) {
+      const { llm } = client({ [OLLAMA]: answer(usage) }, ollama)
+      expect((await llm.callTools(long)).calls[0]?.name).toBe('set_opacity')
+    }
+    const short = { ...long, messages: [{ role: 'user' as const, content: 'Make the chorus brighter.' }] }
+    const { llm } = client({ [OLLAMA]: ollamaServer(64).handler() }, ollama)
+    expect((await llm.callTools(short)).calls[0]?.name).toBe('set_opacity')
   })
 })

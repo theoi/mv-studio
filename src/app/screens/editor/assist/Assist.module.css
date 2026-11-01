@@ -112,6 +112,8 @@
   color: var(--text-2);
   font-size: var(--text-sm);
   line-height: var(--lh-sm);
+  /* Setup steps hold long commands such as Environment="OLLAMA_CONTEXT_LENGTH=16384". */
+  overflow-wrap: anywhere;
 }
 
 .changes li + li {

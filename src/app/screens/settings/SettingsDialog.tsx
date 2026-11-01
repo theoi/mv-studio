@@ -30,6 +30,7 @@ import type { CloudSettings, LlmSettings } from '../../../cloud/keys.ts'
 import {
   llmPreset,
   llmTimeoutSeconds,
+  LOCAL_CONTEXT_TOKENS,
   modelHint,
   pageOrigin,
   pickDefaultModel,
@@ -232,6 +233,17 @@ const PROVIDER_NAME: Record<LlmSettings['preset'], string> = {
 const sameEndpoint = (a: LlmSettings, b: LlmSettings) =>
   a.preset === b.preset && a.baseUrl === b.baseUrl && a.apiKey === b.apiKey
 
+/** Stays visible after connecting: Ollama works with its default context, but cuts Ask's requests short. */
+function OllamaContext() {
+  return (
+    <>
+      Set Ollama’s context length to 16k: in the Ollama app under Settings › Context length, or with{' '}
+      <code>OLLAMA_CONTEXT_LENGTH={LOCAL_CONTEXT_TOKENS}</code>. By default it reads only 4,096 tokens on most
+      computers, and an edit sends up to 16,000.
+    </>
+  )
+}
+
 function LlmCard({ saved }: { saved: LlmSettings | null }) {
   const [draft, setDraft] = useState<LlmSettings>(() => saved ?? draftFor('ollama'))
   const [models, setModels] = useState<string[]>([])
@@ -388,7 +400,7 @@ function LlmCard({ saved }: { saved: LlmSettings | null }) {
             {choice === 'ollama' ? (
               <>
                 Local runners must allow requests from this site. For Ollama, start it with{' '}
-                <code>OLLAMA_ORIGINS={pageOrigin()}</code>.
+                <code>OLLAMA_ORIGINS={pageOrigin()}</code>. <OllamaContext />
               </>
             ) : choice === 'lmstudio' ? (
               <>
@@ -401,6 +413,14 @@ function LlmCard({ saved }: { saved: LlmSettings | null }) {
                 settings.
               </>
             )}
+          </span>
+        </div>
+      )}
+      {connected && choice === 'ollama' && (
+        <div className={styles.hintBox}>
+          <Info />
+          <span>
+            <OllamaContext />
           </span>
         </div>
       )}
