@@ -443,15 +443,22 @@ export async function renameProject(id: Id, name: string): Promise<void> {
   }
 }
 
+/**
+ * A copy's name, numbered like projects of one song from (2): a copy of "Neon Skyline (2)" is the next free
+ * "Neon Skyline (n)", never one of the `taken` names.
+ */
+function copyName(name: string, taken: Iterable<string>): string {
+  // " (2)" is a copy's number, " (2019)" part of the name.
+  const base = name.replace(/ \(\d{1,3}\)$/, '')
+  return distinctName(base, [...taken, name, base])
+}
+
 /** Keeps a copy of a project under a new id and returns it. */
 export async function duplicateProject(id: Id): Promise<Project> {
   const source = editor.getProject().id === id ? editor.getProject() : await store.load(id)
   const now = new Date().toISOString()
-  // Numbered like projects of one song, from (2): a copy of "Neon Skyline (2)" is the next free "Neon Skyline (n)",
-  // never a name a kept project or the open one (kept or not) has.
-  // " (2)" is a copy's number, " (2019)" part of the name.
-  const base = source.name.replace(/ \(\d{1,3}\)$/, '')
-  const name = distinctName(base, [...storedNames.values(), source.name, editor.getProject().name, base])
+  // Never a name a kept project or the open one (kept or not) has.
+  const name = copyName(source.name, [...storedNames.values(), editor.getProject().name])
   const copy = { ...source, id: newId(), name, createdAt: now, updatedAt: now }
   await writeProject(copy)
   return copy
@@ -569,10 +576,8 @@ export async function importProjectFile(file: File): Promise<void> {
     return
   }
   // Like a new project or a duplicate, it never opens under a kept project's name: "Portable (2)".
-  const name = distinctName(
-    incoming.name,
-    list.map((s) => s.name),
-  )
+  const taken = list.map((s) => s.name)
+  const name = taken.includes(incoming.name) ? copyName(incoming.name, taken) : incoming.name
   const kept = list.find((s) => s.id === incoming.id)
   if (kept) {
     const choice = await askSameProject({
