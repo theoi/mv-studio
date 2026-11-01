@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Page, TestInfo } from '@playwright/test'
+import type { BrowserContext, Page, TestInfo } from '@playwright/test'
 import { expect, launchProfile, openApp, openHarness, test, waitForPreview } from './fixtures.ts'
 
 const FIXTURE_DIR = path.resolve(import.meta.dirname, '../fixtures/.cache')
@@ -74,6 +74,44 @@ async function renameOpenProject(page: Page, current: string, name: string) {
 }
 
 const saved = (page: Page) => page.getByRole('banner').getByText('Saved', { exact: true })
+
+/**
+ * Holds the kept projects' `stores` from another tab, as a long write there would, until the returned function
+ * releases them; a restore started meanwhile waits.
+ */
+async function holdProjects(
+  context: BrowserContext,
+  page: Page,
+  stores: string[],
+): Promise<() => Promise<void>> {
+  const other = await context.newPage()
+  await other.goto(new URL('favicon.svg', page.url()).href)
+  await other.evaluate(
+    (names) =>
+      new Promise<void>((started) => {
+        const open = indexedDB.open('mv-studio')
+        open.onsuccess = () => {
+          const tx = open.result.transaction(names, 'readwrite')
+          const w = window as unknown as { release?: boolean }
+          const until = performance.now() + 20_000
+          // A transaction with no request pending commits, so keep one going.
+          const spin = () => {
+            tx.objectStore(names[0] as string).count().onsuccess = () => {
+              started()
+              if (!w.release && performance.now() < until) spin()
+            }
+          }
+          spin()
+          tx.oncomplete = () => open.result.close()
+        }
+      }),
+    stores,
+  )
+  return async () => {
+    await other.evaluate(() => ((window as unknown as { release?: boolean }).release = true))
+    await other.close()
+  }
+}
 
 test('a project comes back after a reload: edits, imported media, analysis and lyrics', async ({ page }) => {
   test.setTimeout(120_000)
@@ -186,37 +224,16 @@ test('a reload in VJ mode opens the kept project again, in its own shape, once i
   await expect(songName).toHaveText('Song')
   expect(page.url()).toContain(`#/vj?project=${id}`)
 
-  // Another tab holds the kept projects until released, so the reload's restore waits for it.
-  const other = await context.newPage()
-  await other.goto(new URL('favicon.svg', page.url()).href)
-  await other.evaluate(
-    () =>
-      new Promise<void>((started) => {
-        const open = indexedDB.open('mv-studio')
-        open.onsuccess = () => {
-          const tx = open.result.transaction('projects', 'readwrite')
-          const w = window as unknown as { release?: boolean }
-          const until = performance.now() + 20_000
-          // A transaction with no request pending commits, so keep one going.
-          const spin = () => {
-            tx.objectStore('projects').count().onsuccess = () => {
-              started()
-              if (!w.release && performance.now() < until) spin()
-            }
-          }
-          spin()
-          tx.oncomplete = () => open.result.close()
-        }
-      }),
-  )
+  // With the project list held too, the name isn't known yet.
+  const release = await holdProjects(context, page, ['projects', 'summaries'])
   await page.reload()
   await page.waitForFunction(() => window.mvStudio?.ready === true)
   await expect(page.locator('.screen-loading').first()).toBeVisible()
   // Long enough for VJ mode's code to load: it must still wait for the project.
   await page.waitForTimeout(1500)
   await expect(live).toHaveCount(0)
-  await other.evaluate(() => ((window as unknown as { release?: boolean }).release = true))
-  await other.close()
+  await expect(page.getByText('Opening the project…')).toBeVisible()
+  await release()
 
   await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
   await expect(songName).toHaveText('Song')
@@ -226,6 +243,44 @@ test('a reload in VJ mode opens the kept project again, in its own shape, once i
   await page.keyboard.press('Escape')
   await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
   expect(page.url()).toContain(`#/editor?project=${id}`)
+})
+
+test('a project that takes a while to open says which one after a second, and a quick one shows nothing', async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(90_000)
+  await openBlank(page)
+  await importFiles(page, ['song.mp3'])
+  await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
+  await expect(saved(page)).toBeVisible()
+  // Every note the page shows, however briefly.
+  await page.addInitScript(() => {
+    const w = window as unknown as { notes: string[] }
+    w.notes = []
+    new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes)
+          if (node.textContent?.startsWith('Opening ')) w.notes.push(node.textContent)
+    }).observe(document, { childList: true, subtree: true })
+  })
+  const notes = () => page.evaluate(() => (window as unknown as { notes: string[] }).notes)
+  const project = page.getByRole('button', { name: 'Project: Song' })
+
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect(project).toBeVisible()
+  expect(await notes()).toEqual([])
+
+  const release = await holdProjects(context, page, ['projects'])
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  const note = page.getByRole('status').filter({ hasText: 'Opening “Song”…' })
+  await expect(note).toBeVisible()
+  await expect(project).toBeHidden()
+  await release()
+  await expect(project).toBeVisible()
+  await expect(note).toBeHidden()
 })
 
 test('an edit made right before a reload or closing the tab is kept, and the project keeps its thumbnail', async ({
