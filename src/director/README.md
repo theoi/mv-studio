@@ -174,7 +174,9 @@ and `reply`. Operations are a small vocabulary (`set`, `animate`, `fade`, `react
 `remove`, `duplicate`, `add_text`, `add_visualizer`, `add_effect`, `set_effect`, `remove_effect`, `transition`,
 markers, tracks, aspect, lyric text) that target clip ids or selectors such as `{"type":"text","section":"s3"}`.
 They are validated with zod and tried in order on a scratch editor; any error goes back to the model to fix (two
-repair rounds), so nothing half-applies.
+repair rounds), so nothing half-applies. The tool asks for a `summary` that labels the result and the undo step, but
+an edit without one is not sent back: small local models often leave it out, so the request stands in for it (the
+first request, also after a clarifying question), and a summary over 160 characters is shortened.
 
 `AskSession` (`useSyncExternalStore(ask.subscribe, ask.getState)`) states:
 
