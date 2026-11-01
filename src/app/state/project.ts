@@ -271,6 +271,18 @@ export function sectionName(s: SongSection): string {
   return s.confidence === 1 ? s.label : s.label.charAt(0).toUpperCase() + s.label.slice(1)
 }
 
+/** Each section's name as shown, numbered when a name repeats ("Chorus 1", "Chorus 2"), so a list tells them apart. */
+export function sectionLabels(p: Project): string[] {
+  const names = sectionsOf(p).map(sectionName)
+  const seen = new Map<string, number>()
+  return names.map((name) => {
+    if (/\d$/.test(name) || names.filter((n) => n === name).length < 2) return name
+    const n = (seen.get(name) ?? 0) + 1
+    seen.set(name, n)
+    return `${name} ${n}`
+  })
+}
+
 const GUESS: Record<SectionKind, string> = {
   intro: 'the intro',
   verse: 'a verse',

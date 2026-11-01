@@ -40,6 +40,7 @@ import {
   Keyboard,
   KeyRound,
   Layers,
+  ListMusic,
   Lock,
   Magnet,
   Maximize2,
@@ -116,6 +117,7 @@ import {
   redo,
   resetTransform,
   sectionAt,
+  sectionLabels,
   sectionName,
   sectionsOf,
   songAnalysis,
@@ -204,10 +206,12 @@ export interface Action {
   icon: ReactNode
   shortcut?: ShortcutId
   keywords?: string
-  /** Other names people search for it by; they rank like its own name. */
-  aliases?: string[]
+  /** Other names people search for it by; they rank like its own name. A function for names that follow the project. */
+  aliases?: string[] | (() => string[])
   run?: () => void
   page?: PageId
+  /** The search its page opens with, from the search that found the action: "go to verse 2" opens on "verse 2". */
+  pageSearch?: (search: string) => string
   /**
    * Why the action can't run right now, shown in its row. The row stays in the list and can be highlighted (a
    * disabled cmdk item is skipped by the arrow keys and hides the reason), but Enter does nothing.
@@ -1114,6 +1118,34 @@ export const actions: Action[] = [
     unavailable: () => (sectionsOf(project()).length ? undefined : 'No song sections yet'),
   },
   {
+    id: 'goToSection',
+    group: 'Playback',
+    label: 'Go to a section…',
+    icon: <ListMusic />,
+    // Each section's name, numbered or not ("Chorus 2", "Chorus"), so "go to the chorus" names this action.
+    aliases: () => [
+      'jump',
+      ...new Set(sectionLabels(project()).flatMap((label) => [label, label.replace(/\s+\d+$/, '')])),
+    ],
+    keywords: 'song part',
+    page: 'sections',
+    // The typed words that name sections, as typed: "go to the Pre-chorus" opens on "Pre-chorus".
+    pageSearch: (search) => {
+      const words = (text: string) =>
+        text
+          .toLowerCase()
+          .split(/[^\p{L}\p{N}]+/u)
+          .filter(Boolean)
+      const named = new Set(sectionLabels(project()).flatMap(words))
+      return search
+        .split(/\s+/)
+        .filter((typed) => words(typed).length && words(typed).every((w) => named.has(w)))
+        .map((typed) => typed.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+        .join(' ')
+    },
+    unavailable: () => (sectionsOf(project()).length ? undefined : 'No song sections yet'),
+  },
+  {
     id: 'loop',
     group: 'Playback',
     label: 'Loop playback',
@@ -1381,6 +1413,8 @@ export const actionsById = new Map(actions.map((a) => [a.id, a]))
 
 const keywordsOf = (a: Action): string[] => (a.keywords ? [a.keywords] : [])
 
+const aliasesOf = (a: Action): string[] => (typeof a.aliases === 'function' ? a.aliases() : (a.aliases ?? []))
+
 /** What the actions of a group act on without naming it: Copy acts on clips. */
 const GROUP_OBJECTS: Partial<Record<Group, string>> = { Edit: 'clip', Clip: 'clip' }
 
@@ -1397,7 +1431,7 @@ const weights = new Map<string, number>()
 function wordWeight(word: string): number {
   let weight = weights.get(word)
   if (weight === undefined) {
-    const having = actions.filter((a) => wordMatches(labelOf(a), keywordsOf(a), a.aliases ?? [], word)).length
+    const having = actions.filter((a) => wordMatches(labelOf(a), keywordsOf(a), aliasesOf(a), word)).length
     // A word no action has weighs like the rarest one, so a typo doesn't hide the words that match.
     weight = Math.log((actions.length + 1) / (Math.max(having, 1) + 1))
     weights.set(word, weight)
@@ -1425,7 +1459,7 @@ function remember(key: string, search: string, score: () => number): number {
 function fullScore(a: Action, search: string): number {
   const label = labelOf(a)
   return remember(`${a.id}\n${label}`, search, () =>
-    paletteScore(label, keywordsOf(a), search, a.aliases, {
+    paletteScore(label, keywordsOf(a), search, aliasesOf(a), {
       weight: wordWeight,
       strict: true,
       context: contextOf(a),
@@ -1450,7 +1484,7 @@ export function actionScore(a: Action, search: string): number {
   if (full > 0 || !isSentence(search) || aboveAsk(a.group, search)) return full
   const label = labelOf(a)
   return remember(`${a.id}\n${label}\npartial`, search, () =>
-    paletteScore(label, keywordsOf(a), search, a.aliases, {
+    paletteScore(label, keywordsOf(a), search, aliasesOf(a), {
       weight: wordWeight,
       partial: true,
       strict: true,

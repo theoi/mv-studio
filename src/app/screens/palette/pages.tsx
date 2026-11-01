@@ -7,6 +7,7 @@ import {
   Diamond,
   Film,
   Image,
+  ListMusic,
   Music2,
   Palette,
   Redo2,
@@ -50,7 +51,17 @@ import {
 } from '../../state/library.ts'
 import { prefs, setPref } from '../../state/prefs.ts'
 import { PREVIEW_ZOOMS, zoomLabel } from '../../state/previewControls.ts'
-import { dispatch, editor, redo, undo, viewOf } from '../../state/project.ts'
+import {
+  dispatch,
+  editor,
+  redo,
+  sectionKind,
+  sectionLabels,
+  sectionName,
+  sectionsOf,
+  undo,
+  viewOf,
+} from '../../state/project.ts'
 import { replaceClipMedia, replacementAssets, replaceTarget } from '../../state/replace.ts'
 import { get, set, toast, type PageId } from '../../state/ui.ts'
 import {
@@ -100,6 +111,32 @@ const project = () => editor.getProject()
 function selectedClip(): Clip | undefined {
   const { selection } = get()
   return selection.type === 'clip' ? project().clips[selection.id] : undefined
+}
+
+/**
+ * The song's sections, by name and start. Going to one moves the playhead to its start (playback goes on from there);
+ * a selected section gives way to it, so the section actions act on it.
+ */
+function sectionItems(): PageItem[] {
+  const p = project()
+  const labels = sectionLabels(p)
+  const { playhead } = get()
+  return sectionsOf(p).map((s, i) => {
+    const label = labels[i] ?? sectionName(s)
+    return {
+      value: s.id,
+      label,
+      icon: <ListMusic />,
+      keywords: [label, sectionName(s), sectionKind(s)],
+      current: playhead >= s.start && playhead < s.end,
+      detail: formatTime(s.start),
+      run: () =>
+        set({
+          playhead: s.start,
+          ...(get().selection.type === 'section' && { selection: { type: 'section', id: s.id } }),
+        }),
+    }
+  })
 }
 
 /** Undoes or redoes `count` steps as separate steps, so Redo and Undo walk them back one at a time. */
@@ -436,6 +473,11 @@ export const PAGES: Record<PageState['id'], PageDef> = {
     groups: () => [
       { heading: `Add a keyframe at ${formatTime(get().playhead, true)}`, items: keyframeItems() },
     ],
+  },
+  sections: {
+    placeholder: 'Search sections',
+    empty: noMatch('section'),
+    groups: () => [{ heading: 'Go to a section', items: sectionItems() }],
   },
   react: {
     placeholder: 'Search properties',
