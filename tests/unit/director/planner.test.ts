@@ -461,6 +461,9 @@ describe('pace and brightness words in the idea', () => {
     ['dark, camera shake verses', { verse: { pace: 0, light: -1, words: ['dark'] } }, none],
     // A part after "but" with words of its own is about its section, not an exception.
     ['fast cuts but keep the bridge slow', { bridge: { pace: -1, light: 0, words: ['slow'] } }, fast],
+    // "the same as" matches a section to another, it doesn't leave either alone.
+    ['fast cuts, keep the bridge the same as the chorus', {}, fast],
+    ['fast everywhere, the outro the same as the intro', {}, fast],
   ])('reads “%s”', (idea, roles, all) => {
     const asks = ideaAsks(idea)
     expect(Object.fromEntries(asks.roles)).toEqual(roles)
@@ -516,6 +519,23 @@ describe('pace and brightness words in the idea', () => {
     expect(asks.all).toEqual(fast)
     expect(Object.fromEntries(asks.roles)).toEqual(roles)
     expect(Object.fromEntries(asks.excepted)).toEqual(excepted)
+  })
+
+  // "leave" or "keep" starts a clause of its own, so leaving alone doesn't reach back past it into a described list.
+  it.each([
+    [
+      'dark everywhere, fast verses and chorus, leave the bridge alone',
+      { verse: { pace: 1, light: 0, words: ['fast'] } },
+    ],
+    [
+      'dark everywhere, slow verses and the chorus, keep the bridge untouched',
+      { verse: { pace: -1, light: 0, words: ['slow'] } },
+    ],
+  ])('keeps the chorus dark in “%s”', (idea, roles) => {
+    const asks = ideaAsks(idea)
+    expect(asks.all).toEqual({ pace: 0, light: -1, words: ['dark'] })
+    expect(Object.fromEntries(asks.roles)).toEqual(roles)
+    expect(Object.fromEntries(asks.excepted)).toEqual({ bridge: none })
   })
 
   it('leaves a section out of only the whole-video words of the sentences that except it', () => {

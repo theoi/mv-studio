@@ -133,8 +133,10 @@ const RELATIVES = new Set(['which', 'where', 'when', 'that', 'there'])
 /** "in the chorus" ends its part of the sentence: what follows is about something else. */
 const PREPOSITIONS = new Set(['in', 'during', 'for', 'on', 'through', 'throughout', 'at'])
 const DETERMINERS = new Set(['the', 'a', 'an', 'each', 'every', 'all', 'its', 'both'])
+/** Words that start a clause leaving sections alone: "leave the bridge alone". */
+const KEEP_VERBS = new Set(['keep', 'leave', 'let'])
 /** Words a part can have besides sections and still only name them: "keep the intro" in "… and outro untouched". */
-const NAMING = new Set([...DETERMINERS, 'keep', 'leave', 'let', ',', 'and'])
+const NAMING = new Set([...DETERMINERS, ...KEEP_VERBS, ',', 'and'])
 
 const roleWord = (word: string) => ROLE_WORDS.find(([pattern]) => pattern.test(word))?.[1]
 const paceOf = (word: string) => (FASTER.has(word) ? 1 : SLOWER.has(word) ? -1 : 0)
@@ -164,7 +166,7 @@ function ideaTokens(prompt: string): string[] {
     .replace(/\b(apart|aside)\s+from\b/g, '$1-from')
     .replace(/\bother\s+than\b/g, 'other-than')
     .replace(/\bas\s+((it|they)\s+)?(is|are)\b/g, 'as-is')
-    .replace(/\bthe\s+same\b/g, 'the-same')
+    .replace(/\bthe\s+same\b(?!\s+as\b)/g, 'the-same')
     .replace(/&/g, ' and ')
     .replace(/[.;:!?()\n]/g, ' . ')
     .replace(/,/g, ' , ')
@@ -282,8 +284,9 @@ function tally(votes: Vote[]): IdeaAsk | undefined {
  * words of its sentence ("fast everywhere except the bridge", "fast cuts, but not in the verses", "leave the bridge
  * alone"), as does a part naming only sections after "but" ("everything fast but the chorus") or right after such a
  * part ("except the bridge and the outro"). Leaving alone also reaches sections named just before it in its sentence
- * by parts that only name them ("keep the intro and outro untouched"). In a sentence with no whole-video words of its
- * own, it reaches the whole idea ("Fast cuts. Don't touch the bridge.").
+ * by parts that only name them ("keep the intro and outro untouched"), unless its own part starts with "keep", "leave"
+ * or "let". In a sentence with no whole-video words of its own, it reaches the whole idea ("Fast cuts. Don't touch the
+ * bridge.").
  */
 export function ideaAsks(prompt: string): IdeaAsks {
   const votes = new Map<string | undefined, Vote[]>()
@@ -306,8 +309,9 @@ export function ideaAsks(prompt: string): IdeaAsks {
           (!!afterBut || keeps(words) || (!!previous?.excluding && previous.sentence === sentence))))
     if (excluding) leftOut.push(...named.map(({ role }) => ({ role, sentence })))
     waiting = waiting.filter((w) => w.sentence === sentence && !afterBut)
-    // The word that leaves sections alone comes last, so it reaches back: "keep the intro and outro untouched".
-    if (excluding && !negated && keeps(words)) leftOut.push(...waiting)
+    // The word that leaves sections alone comes last, so it reaches back ("keep the intro and outro untouched"),
+    // unless its part starts a clause of its own ("fast verses and chorus, leave the bridge alone").
+    if (excluding && !negated && keeps(words) && !KEEP_VERBS.has(words[0] ?? '')) leftOut.push(...waiting)
     waiting =
       named.length && onlyNames(words) ? [...waiting, ...named.map(({ role }) => ({ role, sentence }))] : []
     if (described && !negated) {
