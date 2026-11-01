@@ -353,7 +353,7 @@ test('the time estimated before an export is not under the time the export takes
     })
     const started = performance.now()
     await exporting.startExport(p, [spec]).promise
-    return { estimate, seconds: (performance.now() - started) / 1000 }
+    return { estimate: estimate?.seconds, seconds: (performance.now() - started) / 1000 }
   })
   console.log('estimate', JSON.stringify(r))
   expect(r.estimate).toBeGreaterThanOrEqual(r.seconds)
@@ -401,7 +401,7 @@ test('transitions the trial runs at 10, 50 and 90% miss still raise the estimate
       })
       const started = performance.now()
       await exporting.startExport(p, [spec]).promise
-      return { estimate, seconds: (performance.now() - started) / 1000 }
+      return { estimate: estimate?.seconds, seconds: (performance.now() - started) / 1000 }
     }
     return { cuts: await measure(false), transitions: await measure(true) }
   })
@@ -410,6 +410,61 @@ test('transitions the trial runs at 10, 50 and 90% miss still raise the estimate
   expect(r.transitions.estimate - r.cuts.estimate).toBeGreaterThanOrEqual(
     r.transitions.seconds - r.cuts.seconds,
   )
+})
+
+test('the time left early in an export holds when its first frames are quicker than the rest', async ({
+  page,
+}) => {
+  test.setTimeout(240_000)
+  await openHarness(page)
+  const r = await page.evaluate(async () => {
+    const { model, exporting } = window.mvStudio
+    // 12 s: a plain color for the first 4 s, then a layer with glow, blur, grain and an RGB split over it.
+    const p = model.createProject({ name: 'Quiet intro' })
+    const plain = model.createSolidClip({ trackId: p.tracks[0].id, color: '#336699', start: 0, duration: 12 })
+    const effects = model.createTrack('visual', 'Effects')
+    p.tracks.unshift(effects)
+    const busy = model.createSolidClip({ trackId: effects.id, color: '#ffffff', start: 4, duration: 8 })
+    busy.effects = ['glow', 'blur', 'film-grain', 'rgb-split'].map((effectId, i) => ({
+      id: `e${i}`,
+      effectId,
+      enabled: true,
+      params: {},
+    }))
+    for (const c of [plain, busy]) p.clips[c.id] = c
+    p.duration = 12
+    const spec = exporting.newOutput(p, 'video', { resolution: '720p' })
+    const estimate = await exporting.estimateOutput(exporting.planOutput(p, spec), {
+      signal: new AbortController().signal,
+    })
+    const job = exporting.startExport(p, [spec], { estimates: estimate ? { [spec.id]: estimate } : {} })
+    const reports: { at: number; fraction: number; eta?: number }[] = []
+    job.subscribe((s: { progress: { stage?: string; fraction?: number; etaSeconds?: number } }) => {
+      if (s.progress.stage === 'render')
+        reports.push({
+          at: performance.now(),
+          fraction: s.progress.fraction ?? 0,
+          eta: s.progress.etaSeconds,
+        })
+    })
+    await job.promise
+    const end = performance.now()
+    const left = (x: { at: number }) => (end - x.at) / 1000
+    // The first report after 5% of the frames, all of the plain color.
+    const early = reports.find((x) => x.fraction >= 0.02 + 0.96 * 0.05)
+    const first = reports[0]
+    return {
+      expected: estimate?.expected?.seconds,
+      early: early && { eta: early.eta, left: left(early) },
+      start: first && { eta: first.eta, left: left(first) },
+      reports: reports.length,
+    }
+  })
+  console.log('time left', JSON.stringify(r))
+  expect(r.early?.eta).toBeGreaterThanOrEqual(0.6 * r.early!.left)
+  // It starts from the estimate the dialog showed, margin included, so it may be above.
+  expect(r.early?.eta).toBeLessThanOrEqual(2 * r.early!.left)
+  expect(r.expected).toBeGreaterThan(0)
 })
 
 test('cancelling an export stops it with a cancelled error and leaves no file behind', async ({ page }) => {

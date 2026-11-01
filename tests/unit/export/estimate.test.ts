@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ExportProbe } from '../../../src/engine/encode.ts'
+import { expectedShare, exportTimeLeft } from '../../../src/engine/exportTime.ts'
 import type * as Layout from '../../../src/engine/layout.ts'
 import {
   estimateFromTrial,
+  expectedFromTrial,
+  knownEstimate,
   newOutput,
   planOutput,
   rememberedEstimate,
@@ -318,6 +321,65 @@ describe('trial runs, timed frame by frame', () => {
     expect(ratio).toBeLessThanOrEqual(1.5)
   })
 })
+
+describe('what a trial expects of the frames, for the time left while exporting', () => {
+  it("has the busy frames where they are, and is the frames' part of the estimate the dialog shows", () => {
+    const project = plain()
+    addBusy(project, 40, 3)
+    const planned = plan(project)
+    const firsts = trialRuns(planned).map((r) => r[0]!)
+    const busy = (frame: number) => frame >= 40 * 30 && frame < 43 * 30
+    const probe = (
+      setupMs: number,
+      flushMs: number,
+      ms = (f: number): number => (busy(f + 1) ? 50 : 10),
+    ) => ({
+      ...trial(firsts.map(ms), 0, firsts),
+      setupMs,
+      flushMs,
+    })
+    const expected = expectedFromTrial(planned, probe(500, 300))
+    // What the estimate adds over a trial whose frames took no time; the work before and after them is left out.
+    const framesPart =
+      estimateFromTrial(planned, probe(0, 0)) -
+      estimateFromTrial(
+        planned,
+        probe(0, 0, () => 0),
+      )
+    expect(expected.seconds).toBeCloseTo(framesPart, 6)
+    // 90 busy frames at 50 ms, the rest at 10 ms, and the first frame's own 10 ms.
+    const framesMs = 90 * 50 + (planned.frames - 90) * 10 + 10
+    expect(expectedShare(expected, 0)).toBe(0)
+    expect(expectedShare(expected, 1)).toBeCloseTo(1, 9)
+    // 5% of the frames, 21% of the time.
+    expect(expectedShare(expected, 43 / 60) - expectedShare(expected, 40 / 60)).toBeCloseTo(
+      4500 / framesMs,
+      1,
+    )
+    expect(expectedShare(expected, 40 / 60)).toBeCloseTo(12_010 / framesMs, 1)
+  })
+})
+describe("what an export's time left starts from", () => {
+  const timed = { seconds: 600, expected: { seconds: 500, profile: [0, 0.5, 1] } }
+
+  it('scales with a remembered pace above the trial, so the first figure is the one the dialog showed', () => {
+    expect(knownEstimate(timed, true, 1020)).toEqual({
+      seconds: 1020,
+      expected: { seconds: 850, profile: [0, 0.5, 1] },
+    })
+    expect(knownEstimate(timed, true, 300)).toEqual(timed)
+  })
+
+  it('is the estimate, frames costing the same, without a trial of the project as it draws now', () => {
+    const remembered = knownEstimate(undefined, false, 900)
+    expect(remembered).toEqual({ seconds: 900, expected: { seconds: 900 } })
+    expect(knownEstimate(timed, false, null)).toEqual({ seconds: 600, expected: { seconds: 600 } })
+    expect(knownEstimate(undefined, false, null)).toBeNull()
+    // A figure from the export's first frames, not only after a tenth of them.
+    expect(exportTimeLeft(1000, remembered?.expected)(5, 4)).toBeGreaterThan(800)
+  })
+})
+
 describe('the remembered pace of an earlier export', () => {
   it('is never under the time that export took, for the same project and frame size only', () => {
     const store = memoryStore()

@@ -85,7 +85,7 @@ export function startMockExport(startAt = 0) {
     onDone: () => toast('Saved 2 files to Downloads'),
   })
   showExport(handle.id, [
-    { id: 'mock-full', title: 'Full video', aspect: '16:9', frames: 6120 },
-    { id: 'mock-vertical', title: 'Vertical', aspect: '9:16', frames: 6120 },
+    { id: 'mock-full', title: 'Full video', aspect: '16:9', frames: 6120, seconds: 20 },
+    { id: 'mock-vertical', title: 'Vertical', aspect: '9:16', frames: 6120, seconds: 20 },
   ])
 }
