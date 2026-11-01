@@ -141,7 +141,7 @@ import { exportSectionTeaser } from '../../../state/exports.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { spaceGoesToControl } from '../../../state/keymap.ts'
 import { addMarkerAtPlayhead } from '../../../state/markers.ts'
-import { goToSection } from '../../../state/playback.ts'
+import { goToSection, scrubTime } from '../../../state/playback.ts'
 import {
   EASINGS,
   groupMarks,
@@ -1896,7 +1896,7 @@ export function Timeline() {
     // React bubbles events from portals (a marker's menu) through the ruler; those would capture the pointer here.
     if (!lane.contains(e.target as Node)) return
     const rect = lane.getBoundingClientRect()
-    const toT = (cx: number) => Math.min(duration, Math.max(0, (cx - rect.left) / get().pxPerSec))
+    const toT = (cx: number) => scrubTime(project, (cx - rect.left) / get().pxPerSec, duration)
     set({ playhead: toT(e.clientX), playing: false })
     lane.setPointerCapture(e.pointerId)
     const move = (ev: PointerEvent) => set({ playhead: toT(ev.clientX) })

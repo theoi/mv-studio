@@ -1,4 +1,4 @@
-import { editor, hasSong, timelineDuration } from './project.ts'
+import { editor, hasSong, lastFrameTime } from './project.ts'
 import { get, set } from './ui.ts'
 
 /*
@@ -23,7 +23,7 @@ function tick(now: number) {
   }
   const dt = Math.min(0.1, (now - last) / 1000)
   last = now
-  const end = timelineDuration(editor.getProject())
+  const end = lastFrameTime(editor.getProject())
   const t = Math.min(end, Math.max(0, s.playhead + speed * dt))
   written = t
   set({ playhead: t })

@@ -85,7 +85,9 @@ test('Loop repeats the section under the playhead, moves with a seek to another 
   await expect(loop).toHaveAccessibleName('Loop playback')
 })
 
-test('a link to a time past the end opens on the video’s last frame, where End goes', async ({ page }) => {
+test('a link past the end, End, stepping forward and a scrub past the end all stop on the video’s last frame', async ({
+  page,
+}) => {
   await openEditor(page, '#/editor?t=9999')
   const end = await page.evaluate(() => {
     const { editor, timelineDuration } = window.mvStudio.app.project
@@ -113,6 +115,24 @@ test('a link to a time past the end opens on the video’s last frame, where End
   await expect.poll(playhead).toBe(0)
   await page.keyboard.press('End')
   await expect.poll(playhead).toBeCloseTo(end - 0.01, 6)
+
+  // A frame or a beat forward from there stays on the last frame.
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Shift+ArrowRight')
+  expect(await playhead()).toBeCloseTo(end - 0.01, 6)
+  await expect.poll(brightness).toBeGreaterThan(5)
+
+  // So does a scrub on the ruler past the end, with the whole timeline in view.
+  await page.keyboard.press('Home')
+  await page.evaluate(() => window.mvStudio.app.ui.set({ pxPerSec: 2 }))
+  const ruler = page.locator('[data-timeline-scroller] [class*="ruler"]').first()
+  const box = (await ruler.boundingBox())!
+  const y = box.y + box.height / 2
+  await page.mouse.move(box.x + 2 * (end - 5), y)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 2 * end + 100, y, { steps: 4 })
+  await page.mouse.up()
+  expect(await playhead()).toBeCloseTo(end - 0.01, 6)
 })
 
 test('Volume sets the preview level, which is remembered after a reload', async ({ page }) => {
