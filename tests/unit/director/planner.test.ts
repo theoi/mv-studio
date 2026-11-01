@@ -381,6 +381,16 @@ describe('local planner', () => {
     ['Cut to the beat. Cut on the beat.', ''],
     ['A girl in a red dress, cuts on every beat, rain', 'A girl in a red dress, rain'],
     ['A forest at dawn, sync it to the beat', 'A forest at dawn'],
+    // The source words go wherever they are, and what they show stays.
+    ['The AI generated images of a storm', 'a storm'],
+    ['A summer montage with my photos of the beach', 'A summer montage of the beach'],
+    ['Use my footage of the city and stock footage of the sea', 'the city and the sea'],
+    ['with my footage of the band playing live, cut on the drums', 'the band playing live'],
+    [
+      'A gritty rock video with my footage of the band playing live',
+      'A gritty rock video of the band playing live',
+    ],
+    ['Skaters at night and my clips showing the harbour', 'Skaters at night and the harbour'],
   ])('takes the picture out of the idea %j', (idea, picture) => {
     expect(visualIdea(idea)).toBe(picture)
   })
@@ -408,6 +418,8 @@ describe('local planner', () => {
     'A gallery of AI images in a museum',
     'The AI generated a storm',
     'use of color: neon pink and teal',
+    'Kids looking at old photos of their grandparents',
+    'A stock trader watching screens full of numbers',
   ])('keeps an idea that only describes pictures as it is: %j', (idea) => {
     expect(visualIdea(idea)).toBe(idea)
   })

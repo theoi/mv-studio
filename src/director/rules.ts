@@ -694,9 +694,22 @@ const INSTRUCTION_PHRASES = [
     String.raw`\s*\b(in|during|for)\s+(the|every|each)\s+(chorus(es)?|verses?|intro|outro)\b${PHRASE_END}`,
     'gi',
   ),
-  // "…and AI shots of the ocean": the source words go, what they show stays.
-  new RegExp(String.raw`\b${AI_SOURCE}${SHOTS}\s+(of|showing|featuring)\s+`, 'gi'),
+  // "…and AI shots of the ocean", "The AI generated images of a storm", "…and stock footage of the sea", "…and my
+  // photos of the beach": the source words go, what they show stays.
+  new RegExp(
+    String.raw`\b((the|these|those|some|my|our)\s+)?(own\s+)?(stock\s+|${AI_SOURCE})${SHOTS}\s+(of|showing|featuring)\s+|\b(my|our)\s+(own\s+)?${MEDIA}\s+(of|showing|featuring)\s+`,
+    'gi',
+  ),
 ]
+
+/**
+ * "A summer montage with my photos of the beach" → "A summer montage of the beach": the source goes, what it shows
+ * stays. At the start of a clause, the preposition goes too.
+ */
+const WITH_OWN_MEDIA = new RegExp(
+  String.raw`(^|\s+)(with|using|from|in)\s+(my|our)\s+(own\s+)?${MEDIA}\s+(of|showing|featuring)\s+`,
+  'gi',
+)
 
 const FILLER = new Set(
   'please make do create it this that the a an me video music clip just and also so faster slower ai generated cut cuts cutting sync syncing synced edit edits editing'.split(
@@ -723,6 +736,7 @@ export function visualIdea(idea: string): string {
           article ? `${articleFor(next, article)} ` : '',
         ),
       )
+      .map((c) => c.replace(WITH_OWN_MEDIA, (_m, before: string) => (before ? ' of ' : '')))
       .map((c) => INSTRUCTION_PHRASES.reduce((s, p) => s.replace(p, ''), c).trim())
       .filter((c) => c && !INSTRUCTION_CLAUSES.some((p) => p.test(c)) && !onlyFiller(c))
     if (!clauses.length) continue
