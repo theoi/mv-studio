@@ -329,6 +329,23 @@ describe('fal.ai adapter against a mock fal queue', () => {
     expect(malformed.net.requests).toHaveLength(0)
   })
 
+  it('stops a key check that gets no answer, even when the request ignores the signal', async () => {
+    const silent: typeof fetch = () => new Promise<Response>(() => {})
+    const provider = new FalProvider({ getKey: () => FAL_TEST_KEY, fetch: silent, keyCheckTimeoutMs: 50 })
+    const result = await provider.validateKey()
+    expect(result.ok === false && result.error).toMatchObject({
+      kind: 'timeout',
+      title: "fal.ai didn't answer",
+      message: "No answer after 0 s, so MV Studio stopped waiting. The key isn't saved yet.",
+    })
+
+    const controller = new AbortController()
+    const cancelled = provider.validateKey(controller.signal)
+    controller.abort()
+    const cancelledResult = await cancelled
+    expect(cancelledResult.ok === false && cancelledResult.error.kind).toBe('cancelled')
+  })
+
   it('transcribes with word timings, skipping spacing tokens, and estimates per minute', async () => {
     const { server, provider } = setup()
     server.script('fal-ai/elevenlabs/speech-to-text', {

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -41,12 +41,14 @@ import { capitalize, formatBytes, plural } from '../../format.ts'
 import {
   choiceOf,
   cloudSettings,
+  connectFalKey,
   draftFor,
   presetFor,
   spendLedger,
-  testFalKey,
   testLlm,
+  typeFalKey,
   useCloud,
+  useFalKeyEntry,
   type LlmChoice,
 } from '../../state/cloud.ts'
 import { GESTURES, SHORTCUTS, SHORTCUT_GROUPS } from '../../state/keymap.ts'
@@ -164,20 +166,35 @@ function CheckFailed({ error }: { error: CloudError }) {
   )
 }
 
+/**
+ * A key field password managers leave alone. Chrome offers to save whatever was typed in a password field once the
+ * field goes away, autocomplete="off" or not, so a key is a text field drawn as dots.
+ */
+function KeyInput(props: Omit<ComponentProps<typeof Input>, 'type'>) {
+  return (
+    <Input
+      {...props}
+      type="text"
+      className={styles.secret}
+      autoComplete="off"
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      data-1p-ignore="true"
+      data-lpignore="true"
+      data-bwignore="true"
+      data-form-type="other"
+    />
+  )
+}
+
 function FalCard({ falKey }: { falKey: string }) {
-  const [draft, setDraft] = useState('')
-  const [checking, setChecking] = useState(false)
-  const [error, setError] = useState<CloudError>()
+  const { draft, checking, error } = useFalKeyEntry()
   const connect = async () => {
-    setChecking(true)
-    setError(undefined)
-    const result = await testFalKey(draft)
-    setChecking(false)
-    if (!result.ok) return setError(result.error)
-    cloudSettings.setFalKey(draft)
-    setDraft('')
-    toast('fal.ai connected. The key is saved in this browser.')
+    if (await connectFalKey()) toast('fal.ai connected. The key is saved in this browser.')
   }
+  // A check that got no answer, or couldn't get through, is worth repeating with the same key.
+  const retry = !!error && error.kind !== 'bad-key'
   return (
     <Card
       title="fal.ai"
@@ -207,19 +224,18 @@ function FalCard({ falKey }: { falKey: string }) {
         </div>
       ) : (
         <div className={styles.keyRow}>
-          <Input
-            type="password"
+          <KeyInput
             placeholder="Paste your fal.ai key"
             aria-label="fal.ai key"
             mono
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => typeFalKey(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && draft.trim() && !checking) void connect()
             }}
           />
           <Button variant="secondary" disabled={!draft.trim() || checking} onClick={() => void connect()}>
-            {checking ? 'Checking…' : 'Connect'}
+            {checking ? 'Checking…' : retry ? 'Try again' : 'Connect'}
           </Button>
         </div>
       )}
@@ -341,8 +357,7 @@ function LlmCard({ saved }: { saved: LlmSettings | null }) {
         </div>
         <div className={styles.field}>
           <span className={styles.fieldLabel}>API key</span>
-          <Input
-            type="password"
+          <KeyInput
             value={draft.apiKey}
             onChange={(e) => edit({ apiKey: e.target.value })}
             placeholder={

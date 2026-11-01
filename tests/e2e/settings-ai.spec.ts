@@ -1,4 +1,4 @@
-import type { Page, Route } from '@playwright/test'
+import { chromium, type Page, type Route } from '@playwright/test'
 import { expect, openApp, test } from './fixtures.ts'
 
 /*
@@ -32,8 +32,8 @@ async function serve(page: Page, url: string, reply: Reply): Promise<string[]> {
   return seen
 }
 
-async function openAiSettings(page: Page) {
-  await openApp(page)
+async function openAiSettings(page: Page, path?: string) {
+  await openApp(page, path)
   await page.evaluate(() => {
     localStorage.setItem('mv-studio.guide-seen', '1')
     window.location.hash = '#/editor?dialog=settings&page=ai'
@@ -231,6 +231,99 @@ test('says what this month’s generations cost, as "Under $0.01" when that smal
     }, usd)
     await page.reload()
     await expect(spending.getByText(line, { exact: true })).toBeVisible()
+  }
+})
+
+test('a fal.ai key check that gets no answer stops with Try again, and the typed key stays when Settings closes', async ({
+  page,
+}, testInfo) => {
+  let answer = false
+  const unanswered: Route[] = []
+  await page.context().route('https://queue.fal.run/**', (route) => {
+    const request = route.request()
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    if (!answer) {
+      unanswered.push(route)
+      return
+    }
+    return route.fulfill({
+      status: 404,
+      headers: CORS,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: 'Request not found' }),
+    })
+  })
+  const dialog = await openAiSettings(page, './?e2e=1')
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate(() => window.mvStudio.app.cloud.setFalKeyCheckTimeoutForTests(1500))
+  const fal = card(page, 'fal.ai')
+  const key = fal.getByLabel('fal.ai key')
+  await key.fill('key-id:key-secret')
+  await fal.getByRole('button', { name: 'Connect' }).click()
+  await expect(fal.getByRole('button', { name: 'Checking…' })).toBeDisabled()
+  await expect(fal.getByRole('alert')).toContainText("fal.ai didn't answer")
+  await expect(fal.getByRole('alert')).toContainText(
+    "No answer after 2 s, so MV Studio stopped waiting. The key isn't saved yet.",
+  )
+  await expect(fal.getByRole('button', { name: 'Try again' })).toBeEnabled()
+  await expect(key).toHaveValue('key-id:key-secret')
+  expect(unanswered).toHaveLength(1)
+  expect((await saved(page)).falKey ?? '').toBe('')
+  await dialog.screenshot({ path: testInfo.outputPath('settings-ai-fal-no-answer.png') })
+
+  // Closing Settings keeps the typed key and what its check said.
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await page.evaluate(() => (window.location.hash = '#/editor?dialog=settings&page=ai'))
+  await expect(key).toHaveValue('key-id:key-secret')
+  await expect(fal.getByText('Not connected')).toBeVisible()
+  await expect(fal.getByRole('alert')).toContainText("fal.ai didn't answer")
+
+  answer = true
+  await fal.getByRole('button', { name: 'Try again' }).click()
+  await expect(fal.getByText('Connected', { exact: true })).toBeVisible()
+  expect((await saved(page)).falKey).toBe('key-id:key-secret')
+  await expect(fal.getByRole('alert')).toHaveCount(0)
+  await Promise.all(unanswered.map((r) => r.abort().catch(() => {})))
+})
+
+test('Chrome doesn’t offer to save a fal.ai or LLM key as a password', async ({ baseURL }, testInfo) => {
+  // The password manager runs in full Chromium, not the headless shell the other tests use. Its internals page logs
+  // each form Chrome would offer to save while it is open.
+  const context = await chromium.launchPersistentContext(testInfo.outputPath('profile-pm'), {
+    channel: 'chromium',
+    headless: true,
+    baseURL,
+    viewport: { width: 1440, height: 900 },
+  })
+  try {
+    await context.route('https://queue.fal.run/**', (route) =>
+      route.request().method() === 'OPTIONS'
+        ? route.fulfill({ status: 204, headers: CORS })
+        : route.fulfill({
+            status: 404,
+            headers: CORS,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'Request not found' }),
+          }),
+    )
+    const internals = context.pages()[0] ?? (await context.newPage())
+    await internals.goto('chrome://password-manager-internals')
+    const page = await context.newPage()
+    await openAiSettings(page)
+    const fal = card(page, 'fal.ai')
+    await card(page, 'Language model').getByLabel('LLM API key').pressSequentially('sk-not-a-password')
+    await fal.getByLabel('fal.ai key').pressSequentially('key-id:key-secret')
+    await fal.getByRole('button', { name: 'Connect', exact: true }).click()
+    // The key field goes away as the key is saved, which Chrome reads as a sign-in that worked.
+    await expect(fal.getByText('Connected', { exact: true })).toBeVisible()
+    const log = internals.locator('body')
+    await expect(log).toContainText('The new state of the UI')
+    await page.waitForTimeout(1000)
+    await expect(log).not.toContainText('PENDING_PASSWORD_STATE')
+    await expect(log).not.toContainText('ProvisionallySaveForm')
+  } finally {
+    await context.close()
   }
 })
 

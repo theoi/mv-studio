@@ -66,6 +66,21 @@ export function falKeyFormatError(): CloudError {
   })
 }
 
+export function falKeyCheckNoAnswerError(seconds: number, cause?: unknown): CloudError {
+  return new CloudError({
+    kind: 'timeout',
+    provider: 'fal',
+    title: "fal.ai didn't answer",
+    message: `No answer after ${Math.round(seconds)} s, so MV Studio stopped waiting. The key isn't saved yet.`,
+    steps: [
+      'Check your internet connection.',
+      'Allow fal.ai, fal.run and fal.media in any ad or content blocker.',
+      'Choose Try again.',
+    ],
+    cause,
+  })
+}
+
 /** Normalizes anything thrown while talking to fal.ai. `key` is only used to scrub it from messages. */
 export function mapFalError(
   error: unknown,
