@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { deployedBuild, isLoadFailure, newerBuildDeployed } from '../../../src/shared/update.ts'
 
-declare const __BUILD_ID__: string
-
 afterEach(() => vi.unstubAllGlobals())
 
 function serve(body: unknown, status = 200) {
@@ -13,15 +11,20 @@ function serve(body: unknown, status = 200) {
 
 describe('the deployed build', () => {
   it("is read from version.json next to index.html, past the browser's cache", async () => {
-    const fetchMock = serve({ build: 'abc' })
-    expect(await deployedBuild()).toBe('abc')
+    const fetchMock = serve({ build: 'abc', time: 1 })
+    expect(await deployedBuild()).toEqual({ build: 'abc', time: 1 })
     expect(fetchMock).toHaveBeenCalledWith(`${import.meta.env.BASE_URL}version.json`, { cache: 'no-store' })
   })
 
-  it("is newer when its id is another than this build's", async () => {
-    serve({ build: 'a build deployed later' })
+  it('is newer when it is another build than this one, built after it', async () => {
+    serve({ build: 'a build deployed later', time: __BUILD_TIME__ + 1 })
     expect(await newerBuildDeployed()).toBe(true)
-    serve({ build: __BUILD_ID__ })
+    serve({ build: __BUILD_ID__, time: __BUILD_TIME__ })
+    expect(await newerBuildDeployed()).toBe(false)
+  })
+
+  it('is not newer when a cache still serves the build before this one', async () => {
+    serve({ build: 'the build before', time: __BUILD_TIME__ - 1 })
     expect(await newerBuildDeployed()).toBe(false)
   })
 
@@ -29,6 +32,8 @@ describe('the deployed build', () => {
     serve('Not found', 404)
     expect(await newerBuildDeployed()).toBe(false)
     serve({ assets: [] })
+    expect(await newerBuildDeployed()).toBe(false)
+    serve({ build: 'a build without a time' })
     expect(await newerBuildDeployed()).toBe(false)
     vi.stubGlobal(
       'fetch',

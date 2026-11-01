@@ -2,22 +2,22 @@ import type { Page } from '@playwright/test'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
-const UPDATED = 'MV Studio was updated. Reload to continue; your project is saved.'
+const UPDATED = 'MV Studio was updated. Reload to continue.'
 const VERSION = /\/mv-studio\/version\.json$/
 const ANALYSIS_WORKER = /\/assets\/analysis\.worker-[^/]+\.js$/
 const EXPORT_CODE = /\/assets\/ExportDialog-[^/]+\.js$/
 
 /**
  * Serves version.json as GitHub Pages does across a deploy: this build's (from dist/) until `deployed` is set, then
- * that of a build deployed later. Counts the requests for it.
+ * that of a build made a minute later. Counts the requests for it.
  */
 async function serveVersion(page: Page): Promise<{ deployed: boolean; requests: number }> {
   const site = { deployed: false, requests: 0 }
-  await page.context().route(VERSION, (route) => {
+  await page.context().route(VERSION, async (route) => {
     site.requests++
-    return site.deployed
-      ? route.fulfill({ json: { build: 'a build deployed later', assets: [] } })
-      : route.continue()
+    if (!site.deployed) return route.continue()
+    const own = (await (await route.fetch()).json()) as { time: number }
+    return route.fulfill({ json: { build: 'a build deployed later', time: own.time + 60_000, assets: [] } })
   })
   return site
 }
@@ -51,7 +51,7 @@ async function renameOpenProject(page: Page, current: string, name: string): Pro
   await expect(page.getByRole('button', { name: `Project: ${name}` })).toBeVisible()
 }
 
-test('a task whose worker can’t load after a deploy offers a reload, which keeps the edit not saved yet', async ({
+test('a task whose worker can’t load after a deploy offers a reload, which saves the project first', async ({
   page,
 }) => {
   test.setTimeout(90_000)
@@ -70,10 +70,23 @@ test('a task whose worker can’t load after a deploy offers a reload, which kee
   expect(
     await page.evaluate(() => window.mvStudio.app.persistence.usePersistence.getState().status as string),
   ).toBe('pending')
-  // The reloaded tab runs the deployed build. The rename comes back only if Reload saved it first: a page that is
-  // leaving has no time to finish a save.
+  const reloadButton = toasts.getByRole('button', { name: 'Save and reload' })
+
+  // While the project can't be saved, the tab stays: the save's error shows and the reload is offered again.
+  await page.evaluate(() => {
+    window.mvStudio.app.persistence.failSavesForTests('storage-quota')
+    ;(window as { notReloaded?: boolean }).notReloaded = true
+  })
+  await reloadButton.click()
+  await expect(page.getByText('This browser’s storage is full.', { exact: false }).first()).toBeVisible()
+  await expect(reloadButton).toBeVisible()
+  expect(await page.evaluate(() => (window as { notReloaded?: boolean }).notReloaded)).toBe(true)
+
+  // The reloaded tab runs the deployed build. The rename comes back only if the reload saved it first: a page that
+  // is leaving has no time to finish a save.
+  await page.evaluate(() => window.mvStudio.app.persistence.failSavesForTests(null))
   await page.context().unroute(VERSION)
-  await Promise.all([page.waitForEvent('load'), toasts.getByRole('button', { name: 'Reload' }).click()])
+  await Promise.all([page.waitForEvent('load'), reloadButton.click()])
   await page.waitForFunction(() => window.mvStudio?.ready === true)
   await expect(page.getByRole('button', { name: 'Project: Night drive' })).toBeVisible()
   await expect(page.getByText(UPDATED)).toBeHidden()

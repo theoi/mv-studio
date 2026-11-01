@@ -9,7 +9,7 @@ import { isLoadFailure, newerBuildDeployed } from '../../shared/update.ts'
 import { saveBeforeReload } from './persistence.ts'
 import { get, toast } from './ui.ts'
 
-export const UPDATED_MESSAGE = 'MV Studio was updated. Reload to continue; your project is saved.'
+export const UPDATED_MESSAGE = 'MV Studio was updated. Reload to continue.'
 const UPDATE_KEY = 'update'
 /** Checks when a task starts or the tab comes back are at most this often; after a failure, at once. */
 const CHECK_EVERY_MS = 5 * 60_000
@@ -17,12 +17,19 @@ const CHECK_EVERY_MS = 5 * 60_000
 let lastCheck = Number.NEGATIVE_INFINITY
 let checking = false
 
+function offerReload(): void {
+  toast(
+    UPDATED_MESSAGE,
+    { label: 'Save and reload', run: () => void reload() },
+    { key: UPDATE_KEY, sticky: true },
+  )
+}
+
+/** Reloads once the project is saved; if it can't be, stays, with the save's error and the offer shown again. */
 async function reload(): Promise<void> {
-  try {
-    await saveBeforeReload()
-  } finally {
-    window.location.reload()
-  }
+  const saved = await saveBeforeReload().catch(() => false)
+  if (saved) window.location.reload()
+  else offerReload()
 }
 
 /** Looks for a newer deployed build, and offers to reload into it. */
@@ -33,12 +40,7 @@ export function checkForUpdate({ now = false }: { now?: boolean } = {}): void {
   lastCheck = performance.now()
   void newerBuildDeployed()
     .then((newer) => {
-      if (newer)
-        toast(
-          UPDATED_MESSAGE,
-          { label: 'Reload', run: () => void reload() },
-          { key: UPDATE_KEY, sticky: true },
-        )
+      if (newer) offerReload()
     })
     .finally(() => (checking = false))
 }

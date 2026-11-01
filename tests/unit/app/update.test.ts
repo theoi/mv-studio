@@ -7,20 +7,20 @@ import type * as UiModule from '../../../src/app/state/ui.ts'
 let update: typeof UpdateModule
 let shared: typeof JobsModule
 let ui: typeof UiModule
-let deployed: string
+let deployed: { build: string; time: number }
 let fetchMock: ReturnType<typeof vi.fn>
 let reload: ReturnType<typeof vi.fn>
 let stop: (() => void) | undefined
 
-declare const __BUILD_ID__: string
+const later = { build: 'a build deployed later', time: __BUILD_TIME__ + 60_000 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 beforeEach(async () => {
   vi.resetModules()
   vi.useFakeTimers({ toFake: ['performance'] })
-  deployed = __BUILD_ID__
-  fetchMock = vi.fn(async () => new Response(JSON.stringify({ build: deployed })))
+  deployed = { build: __BUILD_ID__, time: __BUILD_TIME__ }
+  fetchMock = vi.fn(async () => new Response(JSON.stringify(deployed)))
   reload = vi.fn()
   vi.stubGlobal('fetch', fetchMock)
   vi.stubGlobal(
@@ -71,30 +71,30 @@ describe('a tab open over a deploy', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(updateToast()).toBeUndefined()
 
-    deployed = 'a build deployed later'
+    deployed = later
     await runJob(new shared.JobError('worker-crashed', 'The task stopped unexpectedly. Try again.'))
     // The task that started checked a moment ago; the failure checks again anyway.
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(updateToast()).toMatchObject({ action: { label: 'Reload' }, sticky: true })
+    expect(updateToast()).toMatchObject({ action: { label: 'Save and reload' }, sticky: true })
   })
 
   it('also when code of the build failed to load in a task', async () => {
     await runJob()
-    deployed = 'a build deployed later'
+    deployed = later
     await runJob(new Error('Failed to fetch dynamically imported module: /mv-studio/assets/encode-abc.js'))
     expect(updateToast()).toBeDefined()
   })
 
   it('waits for its time after a task that failed for another reason', async () => {
     await runJob()
-    deployed = 'a build deployed later'
+    deployed = later
     await runJob(new shared.JobError('decode', 'The audio could not be decoded'))
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(updateToast()).toBeUndefined()
   })
 
   it('checks when the tab comes back to the front, at most every five minutes', async () => {
-    deployed = 'a build deployed later'
+    deployed = later
     window.dispatchEvent(new Event('focus'))
     await flush()
     expect(updateToast()).toBeDefined()
@@ -120,11 +120,31 @@ describe('a tab open over a deploy', () => {
   })
 
   it('reloads from the toast', async () => {
-    deployed = 'a build deployed later'
+    deployed = later
     window.dispatchEvent(new Event('focus'))
     await flush()
     updateToast()!.action!.run()
     await flush()
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays when the project could not be saved, and offers the reload again', async () => {
+    stop?.()
+    vi.resetModules()
+    vi.doMock('../../../src/app/state/persistence.ts', () => ({ saveBeforeReload: async () => false }))
+    ui = await import('../../../src/app/state/ui.ts')
+    update = await import('../../../src/app/state/update.ts')
+    stop = update.initUpdateCheck()
+    deployed = later
+    window.dispatchEvent(new Event('focus'))
+    await flush()
+    const offered = updateToast()!
+    // As the toast's button does: run the action, then close the toast.
+    offered.action!.run()
+    ui.dismissToast(offered.id)
+    await flush()
+    expect(reload).not.toHaveBeenCalled()
+    expect(updateToast()).toMatchObject({ action: { label: 'Save and reload' }, sticky: true })
+    vi.doUnmock('../../../src/app/state/persistence.ts')
   })
 })

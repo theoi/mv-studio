@@ -246,9 +246,19 @@ function startSaving(seconds: number) {
   return controller
 }
 
-/** Writes the open project's changes that are not saved yet, as before a reload. */
-export async function saveBeforeReload(): Promise<void> {
+/**
+ * Writes the open project's changes that are not saved yet, as before a reload, and says whether everything is saved.
+ * A failed save leaves the error to its toast (onAutosave).
+ */
+export async function saveBeforeReload(): Promise<boolean> {
+  const saved = () => {
+    const { status, tracked } = usePersistence.getState()
+    return !tracked || status === 'saved' || status === 'idle'
+  }
   await autosave?.flush()
+  // An edit made while that save ran is written too.
+  if (usePersistence.getState().status === 'pending') await autosave?.flush()
+  return saved()
 }
 
 function onBeforeUnload(e: BeforeUnloadEvent) {

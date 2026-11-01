@@ -4,28 +4,36 @@
  * yet: it can only reload. Each build writes version.json next to index.html (vite.config.ts).
  */
 
-/** This build's id, set at build time (vite.config.ts). */
-declare const __BUILD_ID__: string
-
 const VERSION_URL = `${import.meta.env.BASE_URL}version.json`
 
-/** The id of the deployed build, or null when it can't be read (offline, or a dev server, which has no version.json). */
-export async function deployedBuild(): Promise<string | null> {
+export interface DeployedBuild {
+  build: string
+  /** When it was built, in ms since 1970. */
+  time: number
+}
+
+/**
+ * The deployed build, or null when it can't be read (offline, or a dev server, which has no version.json).
+ */
+export async function deployedBuild(): Promise<DeployedBuild | null> {
   try {
     const response = await fetch(VERSION_URL, { cache: 'no-store' })
     if (!response.ok) return null
-    const version: unknown = await response.json()
-    const build = (version as { build?: unknown } | null)?.build
-    return typeof build === 'string' ? build : null
+    const version = (await response.json()) as Partial<Record<keyof DeployedBuild, unknown>> | null
+    const { build, time } = version ?? {}
+    return typeof build === 'string' && typeof time === 'number' ? { build, time } : null
   } catch {
     return null
   }
 }
 
-/** Whether the deployed build is another one than this tab's. */
+/**
+ * Whether the deployed build is newer than this tab's. Not just another one: a cache that still serves the previous
+ * version.json to a tab already on the new build must not tell it to reload.
+ */
 export async function newerBuildDeployed(): Promise<boolean> {
-  const build = await deployedBuild()
-  return build !== null && build !== __BUILD_ID__
+  const deployed = await deployedBuild()
+  return deployed !== null && deployed.build !== __BUILD_ID__ && deployed.time > __BUILD_TIME__
 }
 
 /**
