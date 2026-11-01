@@ -166,6 +166,28 @@ test('Preview zoom shows the frame at 100%, scrolled to its middle, and Fit fits
   await expect.poll(width).toBe(fit)
 })
 
+test('at a 50% preview zoom, a browser zoom renders the preview at the new pixel ratio', async ({ page }) => {
+  const preview = await openEditor(page, '#/editor?t=21')
+  const projectWidth = await page.evaluate(
+    () => window.mvStudio.app.project.editor.getProject().settings.width as number,
+  )
+  await page.getByRole('button', { name: 'Preview zoom: Fit' }).click()
+  await page.getByRole('menuitem', { name: '50%' }).click()
+  const rendered = () => page.evaluate(() => window.mvStudio.app.stagePreview().stats().width as number)
+  await expect.poll(rendered).toBe(projectWidth / 2)
+
+  // What a 200% browser zoom does: half the CSS pixels, twice the pixel ratio.
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: 720,
+    height: 450,
+    deviceScaleFactor: 2,
+    mobile: false,
+  })
+  await expect.poll(rendered).toBe(projectWidth)
+  expect((await preview.boundingBox())?.width).toBe(projectWidth / 2)
+})
+
 test('Inspector › Transform and the preview handles move the clip together, one undo step per drag', async ({
   page,
 }) => {

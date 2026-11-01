@@ -108,6 +108,7 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
   const previewRef = useRef<PreviewController | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const sizeRef = useRef(size)
+  const dprRef = useRef(0)
   const [status, setStatus] = useState<StageStatus>('loading')
   // Each preview gets a fresh canvas (the canvas key): a canvas handed to a render worker that died can't draw again.
   const [generation, setGeneration] = useState(0)
@@ -172,14 +173,11 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
 
   useEffect(() => {
     const canvas = canvasRef.current
-    const wrap = wrapRef.current
-    if (!canvas || !wrap) return
-    const { width, height } = editor.getProject().settings
+    if (!canvas) return
     let connection: ReturnType<typeof connectPreview>
     try {
-      // A restarted preview keeps the current size, which a zoom level or full screen may have set.
-      const viewport = sizeRef.current.width ? sizeRef.current : fitStage(wrap, width / height)
-      connection = connectPreview(canvas, viewport)
+      // The size the layout effect below measured before this ran (or a zoom level or full screen set).
+      connection = connectPreview(canvas, sizeRef.current)
     } catch (error) {
       console.error('The preview could not start', error)
       void Promise.resolve().then(() => setStatus('failed'))
@@ -217,19 +215,28 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
     return () => setFullscreenTarget(null)
   }, [])
 
-  useEffect(() => {
+  // Sized before the first paint: the observer's first report comes after it, which left one paint with no stage.
+  useLayoutEffect(() => {
     const wrap = wrapRef.current
     if (!wrap) return
     centerNext.current = zoomed
     const layout = () => {
-      const size = zoomed
+      const next = zoomed
         ? { width: Math.round(projectWidth * zoom), height: Math.round((projectWidth * zoom) / ratio) }
         : fitStage(wrap, ratio, full ? 0 : undefined)
-      sizeRef.current = size
-      setSize(size)
-      previewRef.current?.setViewport(size.width, size.height)
+      const prev = sizeRef.current
+      const sizeChanged = next.width !== prev.width || next.height !== prev.height
+      // A browser zoom changes the pixel ratio, which the preview renders at, without changing a zoomed stage's size.
+      const dpr = globalThis.devicePixelRatio || 1
+      if (sizeChanged) {
+        sizeRef.current = next
+        setSize(next)
+      }
+      if (sizeChanged || dpr !== dprRef.current) previewRef.current?.setViewport(next.width, next.height)
+      dprRef.current = dpr
       measureView()
     }
+    layout()
     const ro = new ResizeObserver(layout)
     ro.observe(wrap)
     return () => ro.disconnect()
