@@ -99,6 +99,7 @@ import { withCutoutTrims, withCutouts } from '../../../state/behind.ts'
 import { closeGap, gapBefore, gapLength, type Gap } from '../../../state/ripple.ts'
 import {
   bpmOf,
+  clipsLabel,
   dispatch,
   editor,
   hasSong,
@@ -125,6 +126,7 @@ import {
   selectClips,
   selectedClipIds,
   set,
+  setSnap,
   toast,
   useUi,
 } from '../../../state/ui.ts'
@@ -609,7 +611,7 @@ const Toolbar = memo(function Toolbar({
             shortcut="N"
             size="sm"
             active={snap}
-            onClick={() => set({ snap: !snap })}
+            onClick={() => setSnap('snap', !snap)}
           >
             <Magnet />
           </IconButton>
@@ -620,29 +622,42 @@ const Toolbar = memo(function Toolbar({
               </button>
             </MenuTrigger>
             <MenuContent width={220}>
-              <MenuLabel>Snap to</MenuLabel>
+              <MenuLabel>{snap ? 'Snap to' : 'Snapping is off'}</MenuLabel>
               <MenuCheckItem
                 checked={beatSnap}
-                onCheckedChange={(v) => set({ beatSnap: v })}
+                onCheckedChange={(v) => setSnap('beatSnap', v)}
+                disabled={!snap}
                 shortcut="Shift N"
               >
                 Beats
               </MenuCheckItem>
               <MenuCheckItem
                 checked={barSnap && !waiting}
-                onCheckedChange={(v) => set({ barSnap: v })}
-                disabled={waiting}
+                onCheckedChange={(v) => setSnap('barSnap', v)}
+                disabled={!snap || waiting}
                 description={barsShort}
               >
                 Bar starts
               </MenuCheckItem>
-              <MenuCheckItem checked={sectionSnap} onCheckedChange={(v) => set({ sectionSnap: v })}>
+              <MenuCheckItem
+                checked={sectionSnap}
+                onCheckedChange={(v) => setSnap('sectionSnap', v)}
+                disabled={!snap}
+              >
                 Sections
               </MenuCheckItem>
-              <MenuCheckItem checked={edgeSnap} onCheckedChange={(v) => set({ edgeSnap: v })}>
+              <MenuCheckItem
+                checked={edgeSnap}
+                onCheckedChange={(v) => setSnap('edgeSnap', v)}
+                disabled={!snap}
+              >
                 Clip edges
               </MenuCheckItem>
-              <MenuCheckItem checked={playheadSnap} onCheckedChange={(v) => set({ playheadSnap: v })}>
+              <MenuCheckItem
+                checked={playheadSnap}
+                onCheckedChange={(v) => setSnap('playheadSnap', v)}
+                disabled={!snap}
+              >
                 Playhead
               </MenuCheckItem>
             </MenuContent>
@@ -2202,11 +2217,13 @@ export function Timeline() {
           const trimTo = place ? undefined : fit?.duration
           begin(trimTo === undefined ? 'move' : 'move:trim')
           const cut = trimTo === undefined ? 0 : self.duration - trimTo
+          // Named by the clips dragged, not the cutouts that follow them.
+          const label = `Move ${clipsLabel(p, moving)}`
           dropNote =
             cut >= 0.005
               ? {
                   message: `Trimmed ${cut.toFixed(2)} s off ${viewOf(p, self).name} to fit the gap`,
-                  undo: 'Move clip',
+                  undo: label,
                 }
               : null
           setSnapLine(
@@ -2223,7 +2240,7 @@ export function Timeline() {
               : [{ type: 'clip.trim' as const, clipId: self.id, start: self.start + shift, duration: trimTo }]
           dispatch([{ type: 'clip.move', moves }, ...withCutoutTrims(p, moves, trims)], {
             coalesceKey: key,
-            label: 'Move clip',
+            label,
           })
         } else if (mode === 'start') {
           const r = snapTime(clip.start + dt, scale, grid, edges, sectionEdges)

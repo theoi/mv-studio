@@ -11,6 +11,7 @@ import {
   get,
   initialUi,
   set,
+  snapChoices,
   useUi,
   type AssistView,
   type DialogName,
@@ -114,6 +115,7 @@ function applyHash(hash: string, navigated = false) {
   const opening = project !== null && !wantEmpty && project !== openId
   set({
     ...initialUi,
+    ...snapChoices(get()),
     ...next,
     playhead: opening ? time : clampToTimeline(editor.getProject(), time),
     toasts: get().toasts,

@@ -133,8 +133,8 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-6);
-  background: rgb(8 8 11 / 0.6);
-  backdrop-filter: blur(2px);
+  /* No backdrop blur: without a GPU the browser blurs the whole window again on every frame of a drag. */
+  background: rgb(8 8 11 / 0.7);
   pointer-events: none;
 }
 

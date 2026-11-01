@@ -20,16 +20,16 @@ test('the top bar Undo and Redo buttons name the edit they step through', async 
 
   await page.keyboard.press('s')
   await expect(firstHalf).toBeVisible()
-  await bar.getByRole('button', { name: 'Undo split clip' }).click()
+  await bar.getByRole('button', { name: 'Undo split Singer close-up' }).click()
   await expect(whole).toBeVisible()
   await expect(firstHalf).toBeHidden()
   await expect(bar.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled()
 
-  await bar.getByRole('button', { name: 'Redo split clip' }).click()
+  await bar.getByRole('button', { name: 'Redo split Singer close-up' }).click()
   await expect(firstHalf).toBeVisible()
   await expect(whole).toBeHidden()
   await expect(bar.getByRole('button', { name: 'Redo', exact: true })).toBeDisabled()
-  await expect(bar.getByRole('button', { name: 'Undo split clip' })).toBeEnabled()
+  await expect(bar.getByRole('button', { name: 'Undo split Singer close-up' })).toBeEnabled()
 })
 
 test('the search field opens the command palette, which runs the action picked and gives focus back', async ({

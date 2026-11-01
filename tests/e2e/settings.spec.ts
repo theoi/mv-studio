@@ -64,7 +64,7 @@ test('General and Editing settings apply where they belong and are remembered', 
   expect(parseFloat(duration)).toBe(0)
   await choose(page, 'Default frame rate', '24 fps')
   await dialog.getByRole('button', { name: 'Editing' }).click()
-  await dialog.getByRole('switch', { name: 'Snap to beats by default' }).click()
+  await dialog.getByRole('switch', { name: 'Snap to beats' }).click()
   await choose(page, 'Default text duration', '1 bar')
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
@@ -90,7 +90,7 @@ test('General and Editing settings apply where they belong and are remembered', 
   expect(await page.evaluate(() => window.mvStudio.app.project.editor.getProject().settings.fps)).toBe(24)
   expect(await page.evaluate(() => document.documentElement.hasAttribute('data-reduce-motion'))).toBe(true)
   await openSettings(page, 'editing')
-  await expect(page.getByRole('switch', { name: 'Snap to beats by default' })).not.toBeChecked()
+  await expect(page.getByRole('switch', { name: 'Snap to beats' })).not.toBeChecked()
   await expect(page.getByRole('combobox', { name: 'Default text duration' })).toHaveText('1 bar')
 })
 

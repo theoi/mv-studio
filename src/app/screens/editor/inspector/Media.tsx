@@ -53,7 +53,7 @@ export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string 
               onChange={(v) =>
                 dispatch(
                   { type: 'clip.set', clipId: clip.id, path: ['playbackRate'], value: v / 100 },
-                  { coalesceKey: `inspector:${clip.id}:speed` },
+                  { label: 'Change speed', coalesceKey: `inspector:${clip.id}:speed` },
                 )
               }
               onCommit={() => editor.endGesture()}
