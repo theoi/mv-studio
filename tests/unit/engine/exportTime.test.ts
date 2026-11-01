@@ -46,7 +46,7 @@ describe('the time left in an export', () => {
 
   it('says nothing without an expected time until a tenth of the frames are done, then follows its pace', () => {
     const timeLeft = exportTimeLeft(FRAMES)
-    expect(timeLeft(0.05 * FRAMES, 30)).toBeUndefined()
+    expect(timeLeft(0.05 * FRAMES, 15)).toBeUndefined()
     expect(timeLeft(0.2 * FRAMES, 60)).toBe(240)
   })
 
@@ -55,5 +55,27 @@ describe('the time left in an export', () => {
     expect(timeLeft(0.2 * FRAMES, 60)).toBe(240)
     // Its own pace now says 450 s.
     expect(timeLeft(0.25 * FRAMES, 150)).toBe(240 + 0.2 * (450 - 240))
+  })
+
+  it('follows the pace of the latest frames, so frames dearer than the trial expected count in full', () => {
+    // As expected up to halfway, then 1.6 times slower.
+    const half = expectedShare(quietIntro, 0.5)
+    const elapsedAt = (share: number) => {
+      const done = expectedShare(quietIntro, share)
+      return quietIntro.seconds * (done <= half ? done : half + 1.6 * (done - half))
+    }
+    const left = run(exportTimeLeft(FRAMES, quietIntro), elapsedAt, 0.75)!
+    const truth = elapsedAt(1) - elapsedAt(0.75)
+    expect(left).toBeGreaterThan(0.97 * truth)
+    expect(left).toBeLessThan(1.03 * truth)
+  })
+
+  it('follows the pace of the latest frames without an expected time too', () => {
+    // 0.1 s a frame up to halfway, then 0.2 s.
+    const elapsedAt = (share: number) => (share <= 0.5 ? 540 * share : 270 + 1080 * (share - 0.5))
+    const left = run(exportTimeLeft(FRAMES), elapsedAt, 0.75)!
+    const truth = elapsedAt(1) - elapsedAt(0.75)
+    expect(left).toBeGreaterThan(0.97 * truth)
+    expect(left).toBeLessThan(1.03 * truth)
   })
 })
