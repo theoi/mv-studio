@@ -205,23 +205,9 @@ export class IdbProjectStore implements ProjectStore {
 
   /** Imports a portable project file. Media keeps its asset ids; the project gets a new id if one already exists. */
   async importPortable(file: File, ctx?: JobContext): Promise<Project> {
-    let entries: TarEntry[]
-    try {
-      entries = await readTar(file)
-    } catch (error) {
-      throw new JobError('invalid-input', 'This is not an MV Studio project file', { cause: error })
-    }
-    const json = entries.find((e) => e.name === PROJECT_ENTRY)
-    if (!json) throw new JobError('invalid-input', 'This is not an MV Studio project file')
-    let project: Project
-    try {
-      project = parseProject(JSON.parse(await json.data.text()))
-    } catch (error) {
-      throw new JobError('invalid-input', error instanceof Error ? error.message : 'Invalid project file', {
-        cause: error,
-      })
-    }
-    const byName = new Map(entries.map((e) => [e.name, e.data]))
+    const read = await readPortable(file)
+    let project = read.project
+    const byName = read.files
     const assets = Object.values(project.assets)
     const total = assets.reduce((sum, a) => sum + (byName.get(a.storageKey)?.size ?? 0), 0)
     const started = performance.now()
@@ -257,7 +243,7 @@ export class IdbProjectStore implements ProjectStore {
         }
         const existing = await this.list()
         if (existing.some((s) => s.id === project.id))
-          project = { ...project, id: newId(), name: `${project.name} (imported)` }
+          project = { ...project, id: newId(), name: importedName(project.name) }
         ctx?.throwIfCancelled()
         await this.save(project)
         saved = true
@@ -270,6 +256,34 @@ export class IdbProjectStore implements ProjectStore {
         throw error
       }
       return project
+    })
+  }
+}
+
+/** The name a project file's project opens under when the project is already kept. */
+export function importedName(name: string): string {
+  return `${name} (imported)`
+}
+
+/**
+ * The project in a portable project file, and the file's entries by name. Reads only the project and the entries'
+ * headers, so it is quick however much media the file holds.
+ */
+export async function readPortable(file: Blob): Promise<{ project: Project; files: Map<string, Blob> }> {
+  let entries: TarEntry[]
+  try {
+    entries = await readTar(file)
+  } catch (error) {
+    throw new JobError('invalid-input', 'This is not an MV Studio project file', { cause: error })
+  }
+  const json = entries.find((e) => e.name === PROJECT_ENTRY)
+  if (!json) throw new JobError('invalid-input', 'This is not an MV Studio project file')
+  try {
+    const project = parseProject(JSON.parse(await json.data.text()))
+    return { project, files: new Map(entries.map((e) => [e.name, e.data])) }
+  } catch (error) {
+    throw new JobError('invalid-input', error instanceof Error ? error.message : 'Invalid project file', {
+      cause: error,
     })
   }
 }

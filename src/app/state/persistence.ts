@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { OpfsMediaStore, mediaStore } from '../../media/mediaStore.ts'
-import { IdbProjectStore, PORTABLE_EXTENSION } from '../../media/projectStore.ts'
+import { IdbProjectStore, PORTABLE_EXTENSION, importedName, readPortable } from '../../media/projectStore.ts'
 import {
   newId,
   projectDuration,
@@ -60,6 +60,8 @@ interface PersistenceState {
   recents: RecentProject[] | null
   /** The project a link or the last visit points to is loading, so the editor shows nothing else meanwhile. */
   restoring: boolean
+  /** A project file whose project is already here, while the app asks what to open (`importProjectFile`). */
+  sameProject: SameProject | null
 }
 
 export const usePersistence = create<PersistenceState>(() => ({
@@ -67,6 +69,7 @@ export const usePersistence = create<PersistenceState>(() => ({
   tracked: false,
   recents: null,
   restoring: false,
+  sameProject: null,
 }))
 
 const LAST_KEY = 'mv-studio.last-project'
@@ -511,10 +514,69 @@ export function downloadProjectFile(id?: Id): void {
   )
 }
 
-/** Opens a project file: its media goes into browser storage and the project opens in the editor. */
+/** A project file whose project is already kept in this browser, while the app asks what to open. */
+export interface SameProject {
+  /** The kept project's name. */
+  name: string
+  fileName: string
+  /** The name the file's version opens under as a copy. */
+  copyName: string
+  /** When the kept project and the file's version were last edited (ISO). */
+  keptAt: string
+  fileAt: string
+}
+
+export type SameProjectChoice = 'open' | 'copy' | null
+
+let answerSameProject: ((choice: SameProjectChoice) => void) | null = null
+
+/** Answers what to do with a project file whose project is here: open the kept one, keep a copy, or nothing (null). */
+export function chooseSameProject(choice: SameProjectChoice): void {
+  const answer = answerSameProject
+  answerSameProject = null
+  usePersistence.setState({ sameProject: null })
+  answer?.(choice)
+}
+
+function askSameProject(question: SameProject): Promise<SameProjectChoice> {
+  chooseSameProject(null)
+  return new Promise((resolve) => {
+    answerSameProject = resolve
+    usePersistence.setState({ sameProject: question })
+  })
+}
+
+/**
+ * Opens a project file: its media goes into browser storage and the project opens in the editor. When the file's
+ * project is already kept here, asks first whether to open that one or to keep the file's version as a copy.
+ */
 export async function importProjectFile(file: File): Promise<void> {
   // Two opens at once could restore the same media, and cancelling one would delete files the other's project uses.
   if (isRunning(JOB_KINDS.projectImport)) return
+  let incoming: Project
+  try {
+    incoming = (await readPortable(file)).project
+  } catch (error) {
+    toast(JobError.from(error).message)
+    return
+  }
+  const kept = (await store.list().catch(() => [])).find((s) => s.id === incoming.id)
+  if (kept) {
+    const choice = await askSameProject({
+      name: kept.name,
+      fileName: file.name,
+      copyName: importedName(incoming.name),
+      keptAt: kept.updatedAt,
+      fileAt: incoming.updatedAt,
+    })
+    if (choice === null) return
+    if (choice === 'open') {
+      // Reopening the project being edited would reload it and lose its undo history and selection.
+      if (editor.getProject().id !== kept.id || get().screen !== 'editor') await openProject(kept.id)
+      return
+    }
+    if (isRunning(JOB_KINDS.projectImport)) return
+  }
   const handle = jobs.run({
     kind: JOB_KINDS.projectImport,
     title: `Opening ${file.name}`,

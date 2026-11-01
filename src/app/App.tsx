@@ -13,6 +13,7 @@ import { Deferred } from './screens/common/Deferred.tsx'
 import { LoadBoundary, ScreenLoadFailed } from './screens/common/LoadBoundary.tsx'
 import { Toaster } from './screens/common/Toaster.tsx'
 import { ReviewNav } from './screens/common/ReviewNav.tsx'
+import { SameProjectDialog } from './screens/common/SameProjectDialog.tsx'
 import { useGlobalShortcuts } from './shortcuts.ts'
 
 function preloadWhenIdle() {
@@ -48,6 +49,7 @@ export function App() {
       <Deferred when={settingsOpen} onFail={closeWithToast('Settings', () => set({ dialog: null }))}>
         <SettingsDialog />
       </Deferred>
+      <SameProjectDialog />
       <Toaster />
       {import.meta.env.DEV && review && <ReviewNav />}
     </TooltipProvider>
