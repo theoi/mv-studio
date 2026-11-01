@@ -51,7 +51,6 @@ import {
 } from '../../state/cloud.ts'
 import { GESTURES, SHORTCUTS, SHORTCUT_GROUPS } from '../../state/keymap.ts'
 import {
-  LOCAL_MODELS,
   clearModels,
   refreshModels,
   removeModel,
@@ -678,6 +677,7 @@ function useThreadLimit(): [string | null, (value: string) => void] {
 function LocalPage() {
   const caps = useCapabilities()
   const cached = useModels((s) => s.cached)
+  const models = useModels((s) => s.models)
   const [threads, setThreads] = useThreadLimit()
   useEffect(() => {
     void refreshModels()
@@ -739,7 +739,7 @@ function LocalPage() {
         </span>
       </Row>
       <div className={styles.scLabel}>Models · downloaded once, then used offline</div>
-      {LOCAL_MODELS.map((m) => (
+      {models.map((m) => (
         <ModelRow key={m.id} model={m} cached={cached?.[m.id] ?? null} />
       ))}
     </>

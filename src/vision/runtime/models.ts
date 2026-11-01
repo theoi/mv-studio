@@ -1,4 +1,5 @@
-import { modelBytes, type ModelDescriptor, type ModelFile } from '../../shared/models.ts'
+import type { RuntimeCapabilities } from '../../shared/capabilities.ts'
+import { preferredDevice, type ModelDescriptor, type ModelFile } from '../../shared/models.ts'
 
 const MP = 'https://storage.googleapis.com/mediapipe-models'
 const HF = 'https://huggingface.co'
@@ -264,9 +265,44 @@ export const VISION_MODEL_PARTS: Record<VisionModel, readonly ModelDescriptor[]>
   picker: [VISION_MODELS.magicTouch],
 }
 
-/** Total size of a named model's files. */
-export const visionModelBytes = (model: VisionModel) =>
-  VISION_MODEL_PARTS[model].reduce((sum, m) => sum + modelBytes(m), 0)
+/**
+ * The weights the Transformers.js models load on a device: q8 on WASM, and on WebGPU fp16 where the adapter has
+ * shader-f16, else fp32. The descriptors list the q8 files.
+ */
+export type VisionDtype = 'q8' | 'fp16' | 'fp32'
+
+export const VISION_DTYPES: readonly VisionDtype[] = ['q8', 'fp16', 'fp32']
+
+export function visionDtype(caps: RuntimeCapabilities): VisionDtype {
+  if (preferredDevice(caps) !== 'webgpu') return 'q8'
+  return caps.webgpu.shaderF16 ? 'fp16' : 'fp32'
+}
+
+const DTYPE_SUFFIX: Record<VisionDtype, string> = { q8: '_quantized', fp16: '_fp16', fp32: '' }
+const Q8_WEIGHTS =
+  /^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\/resolve\/[0-9a-f]{40}\/(onnx\/\w+)_quantized\.onnx$/
+
+/** A model's files with its Transformers.js weights in `dtype`; MediaPipe models have one file on every device. */
+function filesIn(model: ModelDescriptor, dtype: VisionDtype): ModelFile[] {
+  return Object.values(model.files).map((f) => {
+    const q8 = Q8_WEIGHTS.exec(f.url)
+    return q8 ? hfFile(q8[1]!, `${q8[2]}${DTYPE_SUFFIX[dtype]}.onnx`) : f
+  })
+}
+
+/** The files of a named model a device loading `dtype` weights downloads. */
+export const visionModelFiles = (model: VisionModel, dtype: VisionDtype = 'q8'): ModelFile[] =>
+  VISION_MODEL_PARTS[model].flatMap((m) => filesIn(m, dtype))
+
+/** Every file of a named model, its weights in every dtype, so removing it leaves none behind. */
+export function allVisionModelFiles(model: VisionModel): ModelFile[] {
+  const files = new Map(VISION_DTYPES.flatMap((d) => visionModelFiles(model, d)).map((f) => [f.url, f]))
+  return [...files.values()]
+}
+
+/** Total size of a named model's files, with its weights in `dtype`. */
+export const visionModelBytes = (model: VisionModel, dtype: VisionDtype = 'q8') =>
+  visionModelFiles(model, dtype).reduce((sum, f) => sum + (f.bytes ?? 0), 0)
 
 /** Whether `url` is one of a named model's files, its weights for every device included. */
 export function isVisionModelFile(model: VisionModel, url: string): boolean {
