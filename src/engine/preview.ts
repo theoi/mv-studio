@@ -22,7 +22,7 @@
  * elements and hands the worker each frame's video frames. Drawing then never blocks input, however slow the GPU.
  * Read pixels with captureFrame(), which works in both cases.
  */
-import { projectDuration } from '../model/queries.ts'
+import { LAST_FRAME_LEAD, projectDuration } from '../model/queries.ts'
 import type { Asset, Project, Seconds, VideoClip } from '../model/types.ts'
 import type { JobError, SerializedJobError } from '../shared/jobs.ts'
 import { createAudioSampler, type AudioSampler } from './audioFeatures.ts'
@@ -383,8 +383,6 @@ const PREWARM_TRANSITIONS = 2
 const WARM_EVERY_MS = 200
 /** How long dispose() waits for frames being drawn or captured before it stops the renderer anyway. */
 const DISPOSE_WAIT_MS = 2000
-/** How far before the project's end its last frame is drawn; the app's End goes to the same place. */
-const LAST_FRAME_LEAD = 0.01
 
 /**
  * The time a frame is drawn at. Every clip has ended at the project's end itself, so a playhead there (where playback

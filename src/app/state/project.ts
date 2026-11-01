@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import {
   EditError,
+  LAST_FRAME_LEAD,
   ProjectEditor,
   clipsAt,
   createProject,
@@ -162,7 +163,7 @@ export function clampToTimeline(p: Project, t: number): number {
 
 /** The last moment with a picture: every clip has ended at the timeline's end itself, so the frame there is empty. */
 export function lastFrameTime(p: Project): number {
-  return Math.max(0, timelineDuration(p) - 0.01)
+  return Math.max(0, timelineDuration(p) - LAST_FRAME_LEAD)
 }
 
 /** A time kept from the timeline's start to its last frame (see lastFrameTime). */
