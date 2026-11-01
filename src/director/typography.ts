@@ -364,37 +364,77 @@ export const blockHeight = (rows: number, style: Pick<TextStyleSpec, 'fontSize' 
 /** Space between a title card's title and its artist, as a fraction of the frame height. */
 export const TITLE_GAP = 0.02
 
+/** The split of `words` into `rows` rows breaking only before an opening bracket, with the narrowest widest row. */
+function bracketSplit(words: string[], rows: number, width: (s: string) => number) {
+  const opens = words.flatMap((w, i) => (i > 0 && /^[([]/.test(w) ? [i] : []))
+  let best: { rows: string[]; widest: number } | undefined
+  const visit = (from: number, cuts: number[]) => {
+    if (cuts.length === rows - 1) {
+      const ends = [...cuts, words.length]
+      const out = ends.map((end, k) => words.slice(k ? ends[k - 1] : 0, end).join(' '))
+      const widest = Math.max(...out.map(width))
+      if (!best || widest < best.widest) best = { rows: out, widest }
+      return
+    }
+    for (let k = from; k < opens.length; k++) visit(k + 1, [...cuts, opens[k] as number])
+  }
+  if (rows > 1) visit(0, [])
+  return best
+}
+
 /**
- * A title card row at its style's size: in the rows typed with line breaks when each fits, else like a lyric line
- * (balanced rows, shrunk when even those do not fit). The artist and other rows under the title shrink on one row
- * first, as far as a lyric line would, and break into rows only past that.
+ * A title card row at its style's size, its every row within the clip's width:
+ * - rows typed with line breaks stay when each fits at 70% of the size or more;
+ * - the artist and other rows under the title shrink on one row first, as far as a lyric line would;
+ * - else balanced rows like a lyric line, and one whose rows would still be wider than the clip at 70% gets one more
+ *   row and type as much smaller as it needs;
+ * - phrases in brackets ("(feat. …)", "[… Remix]") start a row of their own when that keeps the type as large, with
+ *   one more row at most when the type had to shrink.
  */
 function fitTitleRow(text: string, style: TextStyleSpec, aspect: AspectPreset, under: boolean) {
+  const words = text.split(/\s+/).filter(Boolean)
   const typed = text
     .split('\n')
     .map((row) => row.split(/\s+/).filter(Boolean).join(' '))
     .filter(Boolean)
   const size = style.fontSize ?? LINE_SIZE[aspect]
-  const fill = (row: string) => rowWidth(style, aspect) / textWidth(row, style, size)
-  if (typed.length > 1 && typed.length <= MAX_ROWS[aspect] && typed.every((row) => fill(row) >= 1))
-    return { text: typed.join('\n'), fontSize: size, rows: typed.length }
-  const one = typed.join(' ')
-  if (under && fill(one) >= MIN_SHRINK)
-    return { text: one, fontSize: Math.round(size * Math.min(1, fill(one))), rows: 1 }
-  return layoutLine(text, style, aspect)
+  const most = MAX_ROWS[aspect] + 1
+  const fill = (rows: string[]) =>
+    rowWidth(style, aspect) / Math.max(...rows.map((r) => textWidth(r, style, size)))
+  const laid = (rows: string[], fontSize = Math.round(size * Math.min(1, fill(rows)))) => ({
+    text: rows.join('\n'),
+    fontSize,
+    rows: rows.length,
+  })
+  if (typed.length > 1 && fill(typed) >= MIN_SHRINK) return laid(typed)
+  if (under && fill([typed.join(' ')]) >= MIN_SHRINK) return laid([typed.join(' ')])
+  let best = layoutLine(text, style, aspect)
+  // Rows wider than the clip even at 70% would wrap again, over the next row of the card.
+  if (fill(best.text.split('\n')) * (size / best.fontSize) < LAYOUT_FILL) {
+    const split = bestSplit(words, Math.min(most, words.length), (s) => textWidth(s, style, size))
+    if (split) best = laid(split.rows, Math.max(8, Math.round(size * Math.min(1, fill(split.rows)))))
+  }
+  // The largest type, then the fewest rows.
+  const bracketed = (best.fontSize < size ? [best.rows, best.rows + 1] : [best.rows])
+    .filter((rows) => rows <= most)
+    .flatMap((rows) => bracketSplit(words, rows, (s) => textWidth(s, style, size)) ?? [])
+    .map((split) => laid(split.rows))
+    .reduce<typeof best | undefined>((top, l) => (!top || l.fontSize > top.fontSize ? l : top), undefined)
+  return bracketed && bracketed.fontSize >= best.fontSize ? bracketed : best
 }
 
 /**
  * A title card's rows (the title, then the artist) each laid out from its style's size and stacked about `center` (a
- * fraction of the frame height): each row's text, font size and center.
+ * fraction of the frame height): each row's text, font size and center. Rows `under` the title (by default all but
+ * the first) shrink on one row before they break.
  */
 export function stackTitleCard(
-  rows: readonly { text: string; style: TextStyleSpec }[],
+  rows: readonly { text: string; style: TextStyleSpec; under?: boolean }[],
   aspect: AspectPreset,
   center = 0.5,
 ): { text: string; fontSize: number; y: number }[] {
-  const laid = rows.map(({ text, style }, i) => {
-    const fit = fitTitleRow(text, style, aspect, i > 0)
+  const laid = rows.map(({ text, style, under }, i) => {
+    const fit = fitTitleRow(text, style, aspect, under ?? i > 0)
     return { ...fit, height: blockHeight(fit.rows, { ...style, fontSize: fit.fontSize }) }
   })
   const total = laid.reduce((sum, l, i) => sum + (i > 0 ? TITLE_GAP + l.height : l.height), 0)

@@ -545,7 +545,7 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx, titleRow = 0): TextClip | 
     ...(titleRow > 0 ? { titleRow } : {}),
     ...(t.role === 'title' && songId ? { songId } : {}),
     ...(t.role === 'title' && t.baseFontSize
-      ? { titleSize: { base: t.baseFontSize, fitted: style.fontSize } }
+      ? { titleLayout: { base: t.baseFontSize, fitted: style.fontSize, y: t.position.y } }
       : {}),
   }
   const clip: TextClip = {

@@ -95,6 +95,12 @@ const FIELD_LABELS: Record<string, string> = {
   generatorId: 'visual',
 }
 
+/** Positions read as a direction: a number on the canvas means little to the user. */
+const MOVES: Record<string, [string, string]> = {
+  'transform.x.value': ['left', 'right'],
+  'transform.y.value': ['up', 'down'],
+}
+
 function short(value: unknown): string {
   if (value === undefined) return 'none'
   if (typeof value === 'number') return String(Math.round(value * 1000) / 1000)
@@ -171,6 +177,11 @@ function clipDetails(before: Clip, after: Clip, beforeProject: Project, afterPro
     }
     // A color adjustment created at neutral only to carry a music reaction is not a visible change by itself.
     if (was === undefined && now === 0 && path.startsWith('adjustments.')) continue
+    const move = MOVES[path]
+    if (move && typeof was === 'number' && typeof now === 'number') {
+      details.push(`moved ${now < was ? move[0] : move[1]}`)
+      continue
+    }
     details.push(
       `${pathLabel(path)} ${describeValue(path, now, tracks)} (was ${describeValue(path, was, tracks)})`,
     )

@@ -24,10 +24,11 @@ export interface DirectorClipMeta {
   /** Title cards: the song whose title or artist they show, so a later draft takes a name corrected on one only for it. */
   songId?: Id
   /**
-   * Title cards: the font size the text was laid out from and the size it fit at, so laying the card out again after
-   * an edit can grow its text back, unless the user has since set another size.
+   * Title cards: the font size the text was laid out from, the size it fit at and where the layout put the row (its
+   * `y`). Laying the card out again after an edit grows the text back unless the user has since set another size, and
+   * restacks the rows only while they are where the layout put them or moved together.
    */
-  titleSize?: { base: number; fitted: number }
+  titleLayout?: { base: number; fitted: number; y: number }
   /** Set on placeholders for AI shots that have not been generated yet. */
   pending?: { task: GenerateSource['task']; prompt: string; modelId: string; duration?: number }
 }

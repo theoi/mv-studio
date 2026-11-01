@@ -74,6 +74,8 @@ describe('compileOperations', () => {
     )
     expect((after.clips[title.id] as TextClip).text).toContain('\n')
     expect((after.clips[artist.id] as TextClip).transform.y.value).toBeGreaterThan(artist.transform.y.value)
+    // The change list says where the artist went, not a number on the canvas.
+    expect(describeChanges(project, after).find((i) => i.id === artist.id)?.details).toEqual(['moved down'])
   })
 
   it('limits a selector to a song section', async () => {

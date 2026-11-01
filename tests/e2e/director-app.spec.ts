@@ -1041,6 +1041,41 @@ test('a tagged song names the project, and the title card shows its title and ar
   await page.keyboard.press('ControlOrMeta+Shift+z')
   expect(await card()).toEqual(relaid)
 
+  // A title too long for two rows even at 70% gets a third and smaller type: the preview draws each row on one line,
+  // so the card's outline holds as many lines as the title has rows, and the artist stays clear below it.
+  const preview = page.getByRole('img', { name: 'Video preview' })
+  const linesShown = async (id: string) => {
+    await page.evaluate((clipId) => {
+      window.location.hash = `#/editor?sel=clip:${clipId}&t=2`
+    }, id)
+    const outline = preview.locator('xpath=..').locator('svg polygon')
+    await expect(outline).toHaveCount(1)
+    const [box, frame] = [(await outline.boundingBox())!, (await preview.boundingBox())!]
+    const style = await page.evaluate(
+      (clipId) =>
+        (
+          window.mvStudio.app.project.editor.getProject().clips[clipId] as {
+            style: { fontSize: number; lineHeight: number }
+          }
+        ).style,
+      id,
+    )
+    // The outline is the text's lines plus a padding of 0.2 of the font size on each side.
+    const fontPx = (style.fontSize * frame.height) / 1080
+    return (box.height / fontPx - 0.4) / style.lineHeight
+  }
+  await linesShown(titles[0]!.id)
+  await field.fill('Neon Skyline (The Extended Midnight Club Remix Version)')
+  await field.blur()
+  const long = await card()
+  const rows = long[0]!.text.split('\n').length
+  expect(rows).toBe(3)
+  expect(long[0]!.bottom).toBeLessThan(long[1]!.top)
+  expect(await linesShown(titles[0]!.id)).toBeCloseTo(rows, 0)
+  expect(await linesShown(titles[1]!.id)).toBeCloseTo(1, 0)
+  await page.keyboard.press('ControlOrMeta+z')
+  expect(await card()).toEqual(relaid)
+
   // Another version keeps the correction.
   await page.evaluate(() => {
     window.location.hash = '#/editor?tab=assist&assist=director'
