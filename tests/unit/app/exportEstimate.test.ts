@@ -58,6 +58,7 @@ function environment(options: { busy?: boolean; pageAge?: number } = {}) {
   const listeners = new Set<() => void>()
   const trials: ((seconds: number) => void)[] = []
   const fails: ((error: Error) => void)[] = []
+  const held: Promise<unknown>[] = []
   const env: TrialEnvironment = {
     pageAge: () => Date.now() - loaded,
     busy: () => busy,
@@ -70,12 +71,13 @@ function environment(options: { busy?: boolean; pageAge?: number } = {}) {
         trials.push((seconds) => resolve({ seconds, expected: { seconds } }))
         fails.push(reject)
       }),
+    holdBackground: (trial) => void held.push(trial),
   }
   const setBusy = (value: boolean) => {
     busy = value
     for (const listener of [...listeners]) listener()
   }
-  return { env, trials, fails, setBusy }
+  return { env, trials, fails, held, setBusy }
 }
 
 const unsettled = (project: Project) => unsettledTrials().filter((k) => k.startsWith(`${drawnKey(project)}|`))
@@ -154,6 +156,21 @@ describe('when an export time trial runs', () => {
     fake.trials[1]!(600)
     await vi.advanceTimersByTimeAsync(0)
     expect(shown(project, planned)).toBe(600)
+  })
+
+  it('holds thumbnails back while the trial runs, until it ends', async () => {
+    const { project, planned } = output()
+    const fake = environment()
+    void runTrials(project, [planned], new AbortController().signal, fake.env)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fake.held).toHaveLength(1)
+    let released = false
+    void fake.held[0]!.then(() => (released = true))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(released).toBe(false)
+    fake.trials[0]!(600)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(released).toBe(true)
   })
 
   it('does not keep a trial taken under load when the dialog opens again, but times the output again', async () => {

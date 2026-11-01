@@ -10,6 +10,10 @@
  * 1.3 times. So a trial waits until the page has settled and no other job runs, for a limited time. One that ran
  * under load anyway is shown but not kept: the output is timed again as soon as the app is quiet, also after the
  * dialog was closed and reopened.
+ *
+ * Timeline thumbnails decode video too, but aren't jobs. Right after an auto-cut into 354 shots they decoded for about
+ * 50 s, and a trial started meanwhile, with no job running, gave 2.2 times one on a quiet page. So they wait while a
+ * trial runs.
  */
 import { useEffect, useEffectEvent, useSyncExternalStore } from 'react'
 import {
@@ -24,6 +28,7 @@ import type { Project } from '../../model/index.ts'
 import { jobs, type JobSnapshot } from '../../shared/jobs.ts'
 import { JOB_KINDS, runningJobs, useJobs } from './jobs.ts'
 import { appMedia } from './media.ts'
+import { holdThumbnailsUntil } from './thumbs.ts'
 
 /** Lets quick changes to the outputs settle, and the dialog's stills render first, before a trial starts. */
 const TRIAL_DELAY_MS = 400
@@ -37,6 +42,11 @@ export const SETTLE_MS = 10_000
  * are timed again later), so the dialog shows a figure while a long job, such as stems, runs.
  */
 export const QUIET_WAIT_MS = 20_000
+/**
+ * The longest a trial holds thumbnails back, so one that never ends doesn't leave them empty. Trials took 20 to 45 s on
+ * a 4-core machine without a GPU.
+ */
+const TRIAL_HOLD_MS = 60_000
 /** Kinds of job that don't slow a trial down: exports, which no trial runs beside, and those waiting on fal.ai. */
 const IDLE_KINDS: readonly string[] = [JOB_KINDS.export, JOB_KINDS.generate, JOB_KINDS.directorShots]
 
@@ -134,6 +144,8 @@ export interface TrialEnvironment {
   /** Calls `listener` when jobs start, progress or end. Returns stop. */
   watchJobs(listener: () => void): () => void
   estimate(planned: PlannedOutput, signal: AbortSignal): Promise<Required<OutputEstimate> | null>
+  /** Holds back work that isn't a job and can wait (timeline thumbnails) until `trial` settles. */
+  holdBackground(trial: Promise<unknown>): void
 }
 
 const appEnvironment: TrialEnvironment = {
@@ -141,6 +153,7 @@ const appEnvironment: TrialEnvironment = {
   busy: () => othersBusy(jobs.list()),
   watchJobs: (listener) => jobs.subscribe(() => listener()),
   estimate: (planned, signal) => estimateOutput(planned, { signal, media: appMedia }),
+  holdBackground: (trial) => holdThumbnailsUntil(trial, TRIAL_HOLD_MS),
 }
 
 /**
@@ -194,7 +207,9 @@ async function timeOutput(
   let estimate: Required<OutputEstimate> | null = null
   let failed = false
   try {
-    estimate = await env.estimate(planned, signal)
+    const timing = env.estimate(planned, signal)
+    env.holdBackground(timing)
+    estimate = await timing
   } catch (error) {
     if (signal.aborted) return
     failed = true

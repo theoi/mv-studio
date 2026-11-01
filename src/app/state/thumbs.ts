@@ -25,6 +25,8 @@ const kept = {
 }
 
 let previewShown: Promise<void> = Promise.resolve()
+/** Holds besides the preview's (holdThumbnailsUntil), each until it ends. */
+const holds = new Set<Promise<void>>()
 
 /**
  * Holds thumbnail decoding until `shown` resolves (the editor's preview showing a project's first frame): decoding
@@ -34,11 +36,27 @@ export function decodeThumbnailsAfter(shown: Promise<void>): void {
   previewShown = shown
 }
 
+/**
+ * Holds thumbnail decoding until `done` settles as well, or for `maxMs` at most: e.g. while an export trial times this
+ * device, which video decoded for thumbnails meanwhile slows down. Unlike decodeThumbnailsAfter, it adds to the
+ * preview's hold instead of replacing it. Kept thumbnails don't wait.
+ */
+export function holdThumbnailsUntil(done: Promise<unknown>, maxMs: number): void {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const limit = new Promise((resolve) => (timer = setTimeout(resolve, maxMs)))
+  const hold = Promise.race([done, limit]).then(
+    () => clearTimeout(timer),
+    () => clearTimeout(timer),
+  )
+  holds.add(hold)
+  void hold.then(() => holds.delete(hold))
+}
+
 async function previewFirst(): Promise<void> {
-  // A newer hold (another project shown meanwhile) replaces the one waited for.
+  // A newer hold (another project shown meanwhile) replaces the one waited for; other holds added meanwhile count too.
   for (let hold = previewShown; ; hold = previewShown) {
-    await hold
-    if (hold === previewShown) return
+    await Promise.all([hold, ...holds])
+    if (hold === previewShown && holds.size === 0) return
   }
 }
 
