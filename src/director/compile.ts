@@ -534,6 +534,7 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx, titleRow = 0): TextClip | 
   const end = Math.min(t.end, ctx.plan.duration)
   const duration = end - t.start
   if (duration <= 0.01) return undefined
+  const songId = ctx.plan.songAssetId ?? ctx.project.songAssetId
   const meta: DirectorClipMeta = {
     planId: ctx.plan.id,
     role: textTrackRole(t),
@@ -541,6 +542,7 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx, titleRow = 0): TextClip | 
     ...(t.role ? { textRole: t.role } : {}),
     ...(t.lyricLineId ? { lyricLineId: t.lyricLineId } : {}),
     ...(titleRow > 0 ? { titleRow } : {}),
+    ...(t.role === 'title' && songId ? { songId } : {}),
   }
   const clip: TextClip = {
     ...visualBase(trackId, t.start, duration, meta),
