@@ -2,7 +2,7 @@ import { Dialog as RDialog } from 'radix-ui'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { IconButton } from './Button.tsx'
-import { useReturnFocus } from './focus.ts'
+import { escapeClosedTooltip, useReturnFocus } from './focus.ts'
 import styles from './Dialog.module.css'
 
 interface DialogProps {
@@ -54,6 +54,12 @@ export function Dialog({
             if ((e.target as Element | null)?.closest?.('[data-toast]')) e.preventDefault()
           }}
           onCloseAutoFocus={returnFocus.onCloseAutoFocus}
+          // A tooltip showing in the dialog takes the Escape that would close it, so one press closes both. A press in
+          // a menu or popover opened from the dialog (rendered outside its content) still closes only that.
+          onKeyDown={(e) => {
+            if (escapeClosedTooltip(e.nativeEvent) && e.currentTarget.contains(e.target as Node))
+              onOpenChange(false)
+          }}
         >
           {bare ? (
             <RDialog.Title className="sr-only">{title}</RDialog.Title>

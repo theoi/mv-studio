@@ -1,5 +1,6 @@
 import { Tooltip as RTooltip } from 'radix-ui'
 import type { FocusEvent, ReactNode } from 'react'
+import { tooltipTookEscape } from './focus.ts'
 import { Kbd } from './Kbd.tsx'
 import styles from './Feedback.module.css'
 
@@ -34,7 +35,13 @@ export function Tooltip({ label, shortcut, description, side = 'bottom', childre
         {children}
       </RTooltip.Trigger>
       <RTooltip.Portal>
-        <RTooltip.Content side={side} sideOffset={6} collisionPadding={8} className={styles.tooltip}>
+        <RTooltip.Content
+          side={side}
+          sideOffset={6}
+          collisionPadding={8}
+          className={styles.tooltip}
+          onEscapeKeyDown={tooltipTookEscape}
+        >
           <span className={styles.tooltipRow}>
             <span>{label}</span>
             {shortcut && <Kbd keys={shortcut} />}
