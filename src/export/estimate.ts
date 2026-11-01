@@ -8,7 +8,7 @@
  * a look no run measured takes the slowest pace. After an export, its own pace is kept per project and frame size, shown at once
  * the next time and never undercut by a trial.
  */
-import type { ExportProbe } from '../engine/encode.ts'
+import type { ExportProbe, ProbeWindow } from '../engine/encode.ts'
 import { probeExport } from '../engine/export.ts'
 import { planFrame, type LayerPlan } from '../engine/layout.ts'
 import type { MediaFileSource } from '../engine/types.ts'
@@ -19,10 +19,11 @@ import type { PlannedOutput } from './outputs.ts'
 const RUN_FRAMES = 4
 /**
  * On top of a trial's pace: the export runs while the page shows its progress, and on a machine without a GPU the
- * compositor shares the GPU process with the export (about 1.15 times slower than the trial on a 4-core machine);
- * runs also vary, and a few runs can miss a costly moment.
+ * compositor shares the GPU process with the export. On a 4-core machine without a GPU, exports took 0.8 to 1.25
+ * times what their trial's pace gave (footage comes out faster than in a few frames after a seek, busy looks slower),
+ * so this keeps an export within 0.67 to 1.5 times its estimate either way.
  */
-const TRIAL_MARGIN = 1.4
+const TRIAL_MARGIN = 1.15
 /** On top of a past export's pace, which already includes all of that: run-to-run variation only. */
 const REMEMBERED_MARGIN = 1.15
 /** Besides rendering: checking the encoder, removing old exports, finishing the file and reading it back. */
@@ -211,6 +212,15 @@ const median = (values: number[]) => {
   return sorted[Math.floor(sorted.length / 2)] ?? 0
 }
 
+/**
+ * Milliseconds per render in a trial run. Its frames count at their median: one of a few frames can take twice the
+ * others (the encoder catching up, a garbage collection), which an export spreads over all its frames.
+ */
+function windowPace(w: ProbeWindow): number {
+  const ms = w.frameMs.length ? median(w.frameMs) * w.frameMs.length : w.ms
+  return ms / w.renders
+}
+
 /** Seconds the output takes to export, from a trial of some of its frames on this device. */
 export function estimateFromTrial(planned: PlannedOutput, trial: ExportProbe): number {
   const { keys, looks } = frameLooks(planned)
@@ -223,7 +233,7 @@ export function estimateFromTrial(planned: PlannedOutput, trial: ExportProbe): n
     // The renderer is still warming up past the first run's first frame (its frames took about 1.4 times what a
     // later run's took in the same look), so a look that a later run also timed takes that run's pace.
     if (i === 0 && timed.slice(1).some((o) => lookOf(o) === key)) continue
-    paces.set(key, Math.max(paces.get(key) ?? 0, w.ms / w.renders))
+    paces.set(key, Math.max(paces.get(key) ?? 0, windowPace(w)))
   }
   const slowest = Math.max(0, ...paces.values())
   const paceOf = (key: string) => paces.get(key) ?? slowest
