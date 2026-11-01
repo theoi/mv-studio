@@ -545,3 +545,15 @@ test('while clips are being checked, the top bar opens Behind the subject, not E
   await expect(assist.getByText('Text sits between the person and the background')).toBeVisible()
   await expect(page.getByRole('dialog', { name: 'Export' })).toBeHidden()
 })
+
+test('a clip name cut short in Behind the subject’s list shows in full on hover', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await open(page, '#/editor?tab=assist&assist=behind&t=10')
+  const name = page
+    .getByRole('tabpanel', { name: 'Assist' })
+    .getByText('Aurora over the city', { exact: true })
+  await expect(name).toBeVisible()
+  // At 1280×720 the name doesn't fit its row and ends in an ellipsis.
+  expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
+  await expect(name).toHaveAttribute('title', 'Aurora over the city')
+})

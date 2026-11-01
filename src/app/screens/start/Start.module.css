@@ -595,6 +595,22 @@
   color: var(--text-3);
 }
 
+/* The AI music video's three steps don't fit a short window (1280×720 to 1280×800) under a full-size song drop zone,
+   so there it goes compact: no icon and tighter spacing. */
+@media (max-height: 820px) {
+  .drop {
+    padding-block: var(--space-4);
+  }
+
+  .dropIcon {
+    display: none;
+  }
+
+  .dropActions {
+    margin-top: var(--space-3);
+  }
+}
+
 .songCard {
   display: flex;
   align-items: center;

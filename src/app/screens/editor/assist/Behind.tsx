@@ -42,11 +42,14 @@ function SuitRow({ asset, suitability, clips }: Omit<FootageRow, 'key'>) {
   const detail = `${(text.brief ?? text.why ?? text.status).replace(/\.$/, '')}\u00a0· ${plural(clips, 'clip')}`
 
   const checked = suitability.status === 'checked'
+  const name = asset.name.replace(/\.[^.]+$/, '')
   return (
     <div className={styles.suitRow}>
       <span className={styles.suitThumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined} />
       <span className={styles.suitText}>
-        <span className={styles.toolTitle}>{asset.name.replace(/\.[^.]+$/, '')}</span>
+        <span className={styles.toolTitle} title={name}>
+          {name}
+        </span>
         <span className={checked ? (text.ok ? styles.okText : styles.warnText) : styles.muted}>{detail}</span>
       </span>
       {checked ? (
