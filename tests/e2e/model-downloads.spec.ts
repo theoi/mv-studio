@@ -119,7 +119,7 @@ test('timing lyrics names the lyrics aligner it couldn’t download, without the
   await assist.getByRole('button', { name: 'Time words to the vocals' }).click()
   const failure = assist.getByRole('alert')
   await expect(failure).toContainText(
-    'Couldn’t download the lyrics aligner. Check your connection, then try again.',
+    'Couldn’t download the lyrics aligner. Check your connection and try again.',
   )
   await expect(failure).not.toContainText('https://')
 
@@ -132,20 +132,24 @@ test('timing lyrics names the lyrics aligner it couldn’t download, without the
   await expect(failure).not.toContainText('https://')
 })
 
-test('drafting lyrics names the lyrics transcriber when Hugging Face answers with an error', async ({
-  page,
-  context,
-}) => {
-  const assist = await openLyricsWithVocals(page)
-  await context.route('https://huggingface.co/**', (route) => route.fulfill({ status: 503, body: '' }))
-  await assist.getByRole('radio', { name: 'Draft from vocals' }).click()
-  await assist.getByRole('button', { name: 'Draft lyrics from the vocals' }).click()
-  const failure = assist.getByRole('alert')
-  await expect(failure).toContainText(
-    'Couldn’t download the lyrics transcriber. The server is having trouble. Try again in a few minutes.',
-  )
-  await expect(failure).not.toContainText('https://')
-})
+// A 403 is what a network that blocks Hugging Face answers, and Transformers.js reads it as a missing file.
+for (const [status, hint] of [
+  [503, 'The server is having trouble. Try again in a few minutes.'],
+  [403, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
+] as const) {
+  test(`drafting lyrics names the lyrics transcriber when Hugging Face answers ${status}`, async ({
+    page,
+    context,
+  }) => {
+    const assist = await openLyricsWithVocals(page)
+    await context.route('https://huggingface.co/**', (route) => route.fulfill({ status, body: '' }))
+    await assist.getByRole('radio', { name: 'Draft from vocals' }).click()
+    await assist.getByRole('button', { name: 'Draft lyrics from the vocals' }).click()
+    const failure = assist.getByRole('alert')
+    await expect(failure).toContainText(`Couldn’t download the lyrics transcriber. ${hint}`)
+    await expect(failure).not.toContainText('https://')
+  })
+}
 
 test('the footage tagger downloads its image and text weights as one line the first time either is used', async ({
   page,

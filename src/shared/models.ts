@@ -123,10 +123,34 @@ function failedMessage(title: string | undefined, hint: string, plain: string): 
   return title ? `Couldn’t download ${theModel(title)}. ${hint}` : plain
 }
 
+/**
+ * The error for a download the server answered with error `status`, retryable when the server is in trouble (5xx,
+ * 429). Its message is `failedMessage`'s; the status goes into `details` with `where` (the file's URL, say).
+ */
+export function downloadStatusError(
+  status: number,
+  title: string | undefined,
+  plain: string,
+  where: Record<string, unknown>,
+): JobError {
+  const serverTrouble = status >= 500 || status === 429
+  return new JobError(
+    'model-load',
+    failedMessage(
+      title,
+      serverTrouble
+        ? 'The server is having trouble. Try again in a few minutes.'
+        : 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.',
+      plain,
+    ),
+    { retryable: serverTrouble, details: { ...where, status } },
+  )
+}
+
 /** The error for a download that stopped arriving: a network error, so the job's Try again applies. */
 function notArriving(file: ModelFile, title: string | undefined): JobError {
   const download = title ? `The download of ${theModel(title)}` : 'The model download'
-  return new JobError('network', `${download} isn’t arriving. Check your connection, then try again.`, {
+  return new JobError('network', `${download} isn’t arriving. Check your connection and try again.`, {
     details: { url: file.url, seconds: STALL_SECONDS },
   })
 }
@@ -171,7 +195,7 @@ export async function fetchModelFile(
       'network',
       failedMessage(
         options.title,
-        'Check your connection, then try again.',
+        'Check your connection and try again.',
         `Couldn’t download model file ${file.url}`,
       ),
       { cause: error, details: { url: file.url } },
@@ -194,18 +218,9 @@ export async function fetchModelFile(
     quiet = 0
     if (!response.ok) {
       const { status } = response
-      const serverTrouble = status >= 500 || status === 429
-      throw new JobError(
-        'model-load',
-        failedMessage(
-          options.title,
-          serverTrouble
-            ? 'The server is having trouble. Try again in a few minutes.'
-            : 'The server didn’t send the file.',
-          `Model download failed (${status}) for ${file.url}`,
-        ),
-        { retryable: serverTrouble, details: { url: file.url, status } },
-      )
+      throw downloadStatusError(status, options.title, `Model download failed (${status}) for ${file.url}`, {
+        url: file.url,
+      })
     }
 
     const total = Number(response.headers.get('content-length')) || file.bytes

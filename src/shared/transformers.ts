@@ -9,7 +9,7 @@ import type * as Transformers from '@huggingface/transformers'
 import ortMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url'
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url'
 import { JobError, type JobProgress } from './jobs.ts'
-import { configureOnnxEnv, fetchModelFile, type ModelFile } from './models.ts'
+import { configureOnnxEnv, downloadStatusError, fetchModelFile, type ModelFile } from './models.ts'
 
 /**
  * Progress of one file a model loads: `file` names it and `url`, where known, is where it loads from; `cached` when
@@ -27,7 +27,7 @@ let modelTitle: string | undefined
 
 /**
  * Reports model downloads started while `run` runs (by Transformers.js or `downloadProgress`) to `onProgress`.
- * `title`, the model's title in Settings › This device, names a download of it that isn't arriving.
+ * `title`, the model's title in Settings › This device, names a download of it that fails.
  */
 export async function withModelProgress<T>(
   onProgress: ((p: ModelFileProgress) => void) | undefined,
@@ -39,10 +39,23 @@ export async function withModelProgress<T>(
   modelTitle = title
   try {
     return await run()
+  } catch (err) {
+    throw title ? namedMissingFile(err, title) : err
   } finally {
     progressSink = previous.sink
     modelTitle = previous.title
   }
+}
+
+/**
+ * For a required file that `sharedFetch` answered as missing (`NOT_FOUND`), Transformers.js throws an error of its
+ * own with the file's URL. With the model's title, that becomes the loader's error for the status, naming the model.
+ * Optional files never get here: Transformers.js skips them instead.
+ */
+function namedMissingFile(err: unknown, title: string): unknown {
+  if (!(err instanceof Error) || err.name !== 'ModelFileNotFoundError') return err
+  const { status } = err as Error & { status?: number | null }
+  return status ? downloadStatusError(status, title, err.message, { message: err.message }) : err
 }
 
 /** Progress callback for downloading `name` (from `url`) inside the current `withModelProgress` call. */

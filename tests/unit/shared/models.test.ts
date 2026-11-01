@@ -79,7 +79,7 @@ describe('a model download that fails, given the model’s title', () => {
     expect(await failure({ url }, 'Lyrics aligner')).toMatchObject({
       code: 'network',
       retryable: true,
-      message: 'Couldn’t download the lyrics aligner. Check your connection, then try again.',
+      message: 'Couldn’t download the lyrics aligner. Check your connection and try again.',
       details: { url },
     })
     // Without a title the message keeps the URL, for callers that name the model and keep it in their details.
@@ -104,7 +104,8 @@ describe('a model download that fails, given the model’s title', () => {
     )
     expect(await failure({ url }, 'Stem separator')).toMatchObject({
       retryable: false,
-      message: 'Couldn’t download the stem separator. The server didn’t send the file.',
+      message:
+        'Couldn’t download the stem separator. The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.',
       details: { url, status: 403 },
     })
   })
@@ -204,7 +205,7 @@ describe('a model download that gets no bytes', () => {
     expect(error).toBeInstanceOf(JobError)
     expect([error.code, error.retryable]).toEqual(['network', true])
     expect(error.message).toBe(
-      'The download of the lyrics aligner isn’t arriving. Check your connection, then try again.',
+      'The download of the lyrics aligner isn’t arriving. Check your connection and try again.',
     )
     // The request itself is aborted, so the browser drops it instead of waiting on.
     expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
@@ -225,7 +226,7 @@ describe('a model download that gets no bytes', () => {
     await settled
     expect(seen.outcome).toBeInstanceOf(JobError)
     expect((seen.outcome as JobError).message).toBe(
-      'The model download isn’t arriving. Check your connection, then try again.',
+      'The model download isn’t arriving. Check your connection and try again.',
     )
   })
 

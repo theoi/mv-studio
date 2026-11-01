@@ -57,6 +57,36 @@ describe('sharedFetch', () => {
   })
 })
 
+describe('a required file Transformers.js finds missing', () => {
+  /** What Transformers.js throws for a required file answered 401, 403 or 404 (its hub's `handleError`). */
+  const missing = (status: number) =>
+    Object.assign(
+      new Error(`Forbidden access to file: "https://huggingface.co/x/w/resolve/main/config.json".`),
+      { name: 'ModelFileNotFoundError', status },
+    )
+
+  it('fails as the loader’s download error naming the model, keeping Transformers.js’s message in the details', async () => {
+    const error = missing(403)
+    const load = withModelProgress(undefined, () => Promise.reject(error), 'Lyrics transcriber')
+    await expect(load).rejects.toMatchObject({
+      code: 'model-load',
+      retryable: false,
+      message:
+        'Couldn’t download the lyrics transcriber. The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.',
+      details: { status: 403, message: error.message },
+    })
+  })
+
+  it('passes on unchanged without a title, and other errors with one', async () => {
+    const error = missing(404)
+    await expect(withModelProgress(undefined, () => Promise.reject(error))).rejects.toBe(error)
+    const session = new Error('failed to create session')
+    await expect(
+      withModelProgress(undefined, () => Promise.reject(session), 'Lyrics transcriber'),
+    ).rejects.toBe(session)
+  })
+})
+
 describe('a model download through sharedFetch that gets no bytes', () => {
   afterEach(() => vi.useRealTimers())
 
@@ -79,8 +109,7 @@ describe('a model download through sharedFetch that gets no bytes', () => {
     await vi.advanceTimersByTimeAsync(30_000)
     expect(await load).toMatchObject({
       code: 'network',
-      message:
-        'The download of the lyrics transcriber isn’t arriving. Check your connection, then try again.',
+      message: 'The download of the lyrics transcriber isn’t arriving. Check your connection and try again.',
     })
   })
 })
