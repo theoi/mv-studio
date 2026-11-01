@@ -197,8 +197,10 @@ const PLAY_LINE_ARM = 0.5
 /**
  * How far a playhead step may differ from the time that passed and still be playback (s). Playback runs at 1×, so a
  * late frame (a stall, or a hidden tab while the audio plays on) is a long step that is still playback; a seek is not.
+ * The preview takes a frame's time before drawing it and reports it after, so one slow draw (a clip to decode at a
+ * cut) moves a step this far off on its own. Moving the playhead to a line stops the watcher itself.
  */
-const PLAY_DRIFT = 0.1
+const PLAY_DRIFT = 0.3
 /** Play line stops waiting for playback from the line's start after this long once the preview has started (s). */
 const PLAY_LINE_WAIT = 1
 let stopPlayingLine: (() => void) | undefined

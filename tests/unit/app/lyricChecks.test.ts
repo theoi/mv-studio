@@ -238,6 +238,23 @@ describe('stepping through and playing the lines to check', () => {
     expect(get().playing).toBe(false)
   })
 
+  it('pauses at the end after a slow draw: its frame comes late, and the next one a long step on', () => {
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    editor.load(checking())
+    playLine('c')
+    play(10.62, 11.2)
+    // Each frame's time is taken before its draw and reported after it: this draw, past the line's first half second,
+    // takes 150 ms instead of 16.
+    clock += 150
+    set({ playhead: 11.216 })
+    clock += 16
+    set({ playhead: 11.366 })
+    play(11.9)
+    expect(get().playing).toBe(true)
+    play(12.05)
+    expect(get().playing).toBe(false)
+  })
+
   it('pauses at the end after a late frame (a stall, or a hidden tab while the audio plays on)', () => {
     vi.spyOn(performance, 'now').mockImplementation(() => clock)
     editor.load(checking())
@@ -251,9 +268,9 @@ describe('stepping through and playing the lines to check', () => {
   it('leaves playback alone once the playhead moves to the next line before the end', () => {
     vi.spyOn(performance, 'now').mockImplementation(() => clock)
     editor.load(checking())
-    // Line a would pause at 11 s; b starts at 10.6 s.
+    // Line a would pause at 11 s; b starts at 10.6 s, here 0.58 s ahead in one frame.
     playLine('a')
-    play(10.02, 10.3)
+    play(10.02)
     jump(10.6)
     play(10.8, 11.2)
     expect(get().playing).toBe(true)
