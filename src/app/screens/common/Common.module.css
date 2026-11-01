@@ -45,6 +45,11 @@
   animation: toastIn var(--dur-slow) var(--ease-out);
 }
 
+/* Balances the lines so a toast never ends on one short word (“off.”) alone. */
+.toastMessage {
+  text-wrap: pretty;
+}
+
 @keyframes toastIn {
   from {
     opacity: 0;

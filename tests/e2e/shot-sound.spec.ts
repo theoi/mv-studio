@@ -79,6 +79,12 @@ test('a shot added by hand starts muted, its add toast says so and turns it on, 
   await expect(added.getByRole('button', { name: 'Undo' })).toBeVisible()
   const turnOn = added.getByRole('button', { name: 'Turn sound on' })
   await expect(turnOn).toBeVisible()
+  // Balanced lines, so “off.” doesn't end up alone on the second line.
+  expect(
+    await added
+      .getByText(/Its sound is off\.$/)
+      .evaluate((el) => getComputedStyle(el).getPropertyValue('text-wrap-style')),
+  ).toBe('pretty')
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   const block = page.locator(`[data-clip-id="${id}"]`)
   const sound = inspector.getByRole('switch', { name: 'Play the shot’s own sound' })
@@ -198,7 +204,7 @@ test('several selected shots turn their sound on together, their volume shows Mi
     window.mvStudio.app.ui.set({ playhead: 6 })
   }, a)
   const note = inspector.getByText(
-    '1 shot has Volume keyframes away from the playhead, so its volume stays. Move the playhead over it to set a keyframe there.',
+    '“clip” has Volume keyframes and isn’t under the playhead, so its volume stays. Move the playhead over it to set a keyframe there.',
   )
   await expect(note).toBeVisible()
   const volume = inspector.getByRole('slider', { name: 'Volume' })
