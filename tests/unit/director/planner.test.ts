@@ -323,6 +323,16 @@ describe('local planner', () => {
     }
   })
 
+  it('titles and describes a rule brief by the picture in the idea, in any script', async () => {
+    const input = await buildPlannerInput(makeProject({ videos: 0 }), {
+      kind: 'ai',
+      seed: 1,
+      prompt: 'Use my own clips. 東京の夜、ネオンの雨',
+    })
+    // An LLM brief without a title takes this one, and it can reach the title card.
+    expect(ruleBrief(input)).toMatchObject({ title: '東京の夜、ネオンの雨', concept: '東京の夜、ネオンの雨' })
+  })
+
   it.each([
     [
       'Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night. Use my own clips.',
@@ -339,13 +349,41 @@ describe('local planner', () => {
     ['Fireworks over the harbour in the chorus; vertical 9:16 for TikTok', 'Fireworks over the harbour'],
     ['Dancers moving to the beat in a warehouse. Make it 30 seconds long.', 'Dancers moving in a warehouse'],
     ['Use my footage. No AI.', ''],
-    // Words that also describe pictures stay.
     [
-      'A 1990s mall, freshly cut grass outside, a bridge over the river.',
-      'A 1990s mall, freshly cut grass outside, a bridge over the river',
+      'A neon city at night, use stock footage, quick edits, keep it under 2 minutes, for TikTok',
+      'A neon city at night',
     ],
+    ['Sunset over the sea. Make a 30-second video for Instagram, no AI images.', 'Sunset over the sea'],
+    ['Sync it to the music. Smooth transitions. A desert road.', 'A desert road'],
+    ['A rooftop at dawn. Show the lyrics on screen.', 'A rooftop at dawn'],
+    ['Create images of a lighthouse in a storm', 'a lighthouse in a storm'],
+    ['Faster in the chorus, a city at night', 'a city at night'],
+    ['東京の夜。ネオンの雨。Use my own clips.', '東京の夜。ネオンの雨'],
   ])('takes the picture out of the idea %j', (idea, picture) => {
     expect(visualIdea(idea)).toBe(picture)
+  })
+
+  it.each([
+    '東京の夜、ネオンの雨',
+    'Ночной Токио, неоновый дождь',
+    '서울의 밤거리, 네온 불빛',
+    'Νύχτα στην Αθήνα, βροχή',
+    'A lonely AI android walking through a rainy city',
+    'A YouTube star dancing in her bedroom',
+    'An Instagram influencer on a beach at sunset',
+    'Use a vintage film look with heavy grain',
+    'Use warm colors, neon and rain',
+    'A woman editing photos in a darkroom',
+    'Kids making paper cuts at a kitchen table',
+    'A man waiting 10 minutes for a train in the snow',
+    'A boxer with a cut on his cheek, a tailor cutting with scissors',
+    'A singer scribbling lyrics on a napkin',
+    'Make it 3D animated, a robot city',
+    'A choir singing in the chorus of a cathedral',
+    'Dancers on the beat of the drum',
+    'A 1990s mall, freshly cut grass outside, a bridge over the river',
+  ])('keeps an idea that only describes pictures as it is: %j', (idea) => {
+    expect(visualIdea(idea)).toBe(idea)
   })
 })
 

@@ -31,9 +31,11 @@ export function ruleBrief(input: PlannerInput): CreativeBrief {
   const look = pickLook(input.prompt, input.kind, input.catalog)
   const generated = visual === 'generated'
   const palette = visualizerPalette(sections, input, scenePool(input))
+  // An LLM brief without a title falls back to this one, which can reach the title card.
+  const idea = visualIdea(input.prompt)
   return {
-    title: input.prompt ? input.prompt.slice(0, 60) : TITLES[input.kind],
-    concept: visualIdea(input.prompt) || DEFAULT_CONCEPT[input.kind],
+    title: idea ? idea.slice(0, 60) : TITLES[input.kind],
+    concept: idea || DEFAULT_CONCEPT[input.kind],
     lookId: look?.id,
     visual,
     text: { show: input.kind === 'lyric' },
