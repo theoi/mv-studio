@@ -23,6 +23,7 @@ export type PageId =
   | 'looks'
   | 'history'
   | 'addMedia'
+  | 'insertMedia'
   | 'removeMedia'
   | 'replaceMedia'
   | 'textStyle'
@@ -86,6 +87,8 @@ export interface UiState {
   paletteOpen: boolean
   /** The list the palette opens on instead of its actions, as from the clip menu's Replace with…. */
   palettePage: PageId | null
+  /** Where the palette's Insert media list puts a video or image, as from the clip menu; null: at the playhead. */
+  insertAt: { trackId: string; time: number } | null
   /** The top bar shows the project name as a field to rename it. */
   renaming: boolean
   lyricsMode: LyricsMode
@@ -139,6 +142,7 @@ export const initialUi: UiState = {
   exportPhase: 'setup',
   paletteOpen: false,
   palettePage: null,
+  insertAt: null,
   renaming: false,
   lyricsMode: 'paste',
   guideStep: null,
@@ -360,6 +364,7 @@ export function editorPreset(kind: Kind): Partial<UiState> {
     dialog: null,
     paletteOpen: false,
     palettePage: null,
+    insertAt: null,
     playhead: 0,
     playing: false,
   }

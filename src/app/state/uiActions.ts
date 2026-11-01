@@ -179,6 +179,12 @@ export const UI_ACTIONS: readonly UiAction[] = [
     palette: 'replaceMedia',
     search: ['replace', 'replace clip', 'swap footage'],
   },
+  {
+    area: 'Timeline',
+    name: 'Insert media…',
+    palette: 'insertMedia',
+    search: ['insert', 'insert clip between shots', 'push the later clips', 'ripple insert'],
+  },
   { area: 'Timeline', name: 'Select all on the track', palette: 'selectAll', search: ['select all'] },
   {
     area: 'Timeline',

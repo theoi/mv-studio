@@ -6,6 +6,7 @@ import {
   ArrowRightToLine,
   ArrowUp,
   AudioWaveform,
+  BetweenVerticalStart,
   BookOpen,
   Box,
   Cable,
@@ -85,7 +86,7 @@ import {
 } from 'lucide-react'
 import type { AspectPreset, Clip, LyricLine, Project, TextClip, Track } from '../../../model/index.ts'
 import { canReact } from '../../../plugins/reactions.ts'
-import { formatBpm } from '../../format.ts'
+import { formatBpm, formatTime } from '../../format.ts'
 import {
   copySelection,
   cutSelection,
@@ -104,6 +105,7 @@ import { askAssist, SHORTCUTS, type ShortcutId } from '../../state/keymap.ts'
 import { effectTarget, libraryAssets, textTargets, transitionTarget } from '../../state/library.ts'
 import { retimeLine } from '../../state/lyricTiming.ts'
 import { addMarkerAtPlayhead } from '../../state/markers.ts'
+import { insertSpot, insertTarget } from '../../state/mediaDrag.ts'
 import { ASK_SCORE, isSentence, keyCombo, paletteScore, wordMatches } from '../../state/paletteScore.ts'
 import { downloadProjectFile, duplicateCurrent, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { jumpSection } from '../../state/playback.ts'
@@ -1043,6 +1045,28 @@ export const actions: Action[] = [
     keywords: 'clip image video library timeline',
     page: 'addMedia',
     unavailable: () => (libraryAssets(project()).length ? undefined : 'Import media first'),
+  },
+  {
+    id: 'insertMedia',
+    group: 'Library',
+    label: 'Insert media at the playhead…',
+    icon: <BetweenVerticalStart />,
+    aliases: ['insert', 'insert clip', 'insert between shots', 'ripple insert'],
+    keywords: 'push later clips cut shot video image library timeline',
+    page: 'insertMedia',
+    unavailable: () => {
+      if (!replacementAssets(project()).length) return 'Import a video or image first'
+      const point = insertTarget(project(), get().playhead)
+      if (!point) return 'Add a video or image to the timeline first'
+      const track = project().tracks.find((t) => t.id === point.trackId)
+      return track?.locked ? 'Its track is locked' : track?.hidden ? 'Its track is hidden' : undefined
+    },
+    detail: () => {
+      const point = insertTarget(project(), get().playhead)
+      if (!point) return undefined
+      const spot = insertSpot(project(), point.trackId, point.pointer)
+      return `At ${spot.cut ? 'the cut at ' : ''}${formatTime(spot.at, true)}`
+    },
   },
   {
     id: 'removeMedia',

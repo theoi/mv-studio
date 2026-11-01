@@ -126,7 +126,8 @@
   background: var(--bg-panel);
 }
 
-.rowHidden .lane {
+/* Not the note a drop shows there, which stays readable */
+.rowHidden .lane > :not(.dropNote) {
   opacity: 0.35;
 }
 
@@ -918,6 +919,20 @@
   background: var(--accent-softer);
 }
 
+/* Where a media card goes in by insert: the clips from here on move right by its length */
+.dropInsert {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  z-index: 4;
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  pointer-events: none;
+}
+
 /* What the drop does, on its ghost: adds a track (the ghost shows on the hovered track) or replaces the clip under it */
 .dropLabel {
   position: absolute;
@@ -956,7 +971,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-/* A note beside a drop: the track is locked, or Alt replaces the clip under the pointer */
+/* A note beside a drop: the track is locked, where an insert goes in, or Alt replaces the clip under the pointer */
 .dropNote {
   position: absolute;
   top: 50%;
@@ -975,6 +990,12 @@
 /* Off the clip's edge, where the playhead may be */
 .dropNote[data-beside] {
   margin-left: var(--space-1);
+}
+
+/* Ends before its point, where it would run past the right edge of the lanes in view */
+.dropNote[data-end] {
+  margin-left: calc(-1 * var(--space-1));
+  transform: translate(-100%, -50%);
 }
 
 .dropHint {

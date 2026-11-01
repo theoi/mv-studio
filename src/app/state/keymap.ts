@@ -333,7 +333,12 @@ export interface GestureShortcut {
 }
 
 export const GESTURES: readonly GestureShortcut[] = [
-  { id: 'insertDrag', label: 'Insert while dragging a clip (hold)', group: 'Timeline', keys: ['Mod'] },
+  {
+    id: 'insertDrag',
+    label: 'Insert while dragging a clip or media (hold)',
+    group: 'Timeline',
+    keys: ['Mod'],
+  },
 ]
 
 /** The keys tooltips and the palette show for a shortcut. */
