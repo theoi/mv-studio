@@ -36,8 +36,8 @@ import {
   pickDefaultModel,
   RECOMMENDED_MODELS,
 } from '../../../cloud/llm/presets.ts'
-import { formatUsd } from '../../../cloud/pricing.ts'
-import { formatBytes, plural } from '../../format.ts'
+import { formatEstimate, formatUsd } from '../../../cloud/pricing.ts'
+import { capitalize, formatBytes, plural } from '../../format.ts'
 import {
   choiceOf,
   cloudSettings,
@@ -491,7 +491,8 @@ function SpendingCard({ settings }: { settings: CloudSettings }) {
       </Row>
       <Row
         title="Remind me when this month’s spending passes"
-        desc={month > 0 ? `About ${formatUsd(month)} so far this month (estimated)` : undefined}
+        // formatEstimate already says "About" or "Under", so the line needs no "(estimated)".
+        desc={month > 0 ? `${capitalize(formatEstimate({ usd: month }))} so far this month` : undefined}
       >
         <Select
           value={String(settings.monthlyReminderUsd)}
