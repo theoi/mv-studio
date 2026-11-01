@@ -204,8 +204,7 @@ export function riskyMoves(
  * What to tell the user when some of the `total` stills just given a move may smear or bend (`risks` lists what
  * each move may do, `alwaysBends` that every Motion bends its straight lines even at the lowest automatic strength,
  * `cleanAlternatives` the Motions predicted to keep them straight at that strength where this one bends them below
- * it, and how much each can take); null when none may. `intensity` is the Strength the user set, which another
- * Motion would get too (`chosenIntensity()`); left out while it is automatic.
+ * it, and how much each can take, `strength` the move's strength in percent); null when none may.
  */
 export function riskNote(
   total: number,
@@ -213,8 +212,8 @@ export function riskNote(
     risks: readonly CameraRiskAt[]
     alwaysBends: boolean
     cleanAlternatives?: CameraMoveResult['cleanAlternatives']
+    strength: number
   }[],
-  intensity?: number,
 ): string | null {
   const risky = moves.filter((m) => m.risks.length)
   if (!risky.length) return null
@@ -226,13 +225,12 @@ export function riskNote(
   const { smear, bend } = RISK_WORDS.long
   const what = has('smear') && has('bend') ? `${smear} or ${bend}` : has('smear') ? smear : bend
   // Lines that bend below the lowest automatic strength: a lower Strength leaves little motion to see and may not
-  // straighten them, so a Motion predicted to keep them straight is the better advice. With an automatic Strength it
-  // gets at least that strength and no more than it can take; a Strength the user set must be within what it can take.
+  // straighten them, so a Motion predicted to keep them straight is the better advice. Changing Motion keeps the
+  // move's strength, so the Motion must take that strength: an automatic move that bends is at the lowest automatic
+  // strength, which every clean alternative takes; one set by hand may be beyond some or all of them.
   const clean = risky.map((m) =>
     (m.cleanAlternatives ?? [])
-      .filter(
-        (a) => intensity === undefined || Math.round(a.safeIntensity * 100) >= Math.round(intensity * 100),
-      )
+      .filter((a) => Math.round(a.safeIntensity * 100) >= m.strength)
       .map((a) => a.preset),
   )
   const bendsBelow = risky.every((m, i) => m.risks.some((r) => r.risk === 'bend') && clean[i]!.length)
@@ -253,16 +251,19 @@ export function riskNote(
   return `${count[0]!.toUpperCase()}${count.slice(1)} images ${rest}`
 }
 
-/** `riskNote` for a result as it was added, with the Strength the user set (`intensity`) if any. */
-export function addedRiskNote(result: Pick<CameraMovesResult, 'moves'>, intensity?: number): string | null {
+/** `riskNote` for a result as it was added. */
+export function addedRiskNote(result: Pick<CameraMovesResult, 'moves'>): string | null {
   return riskNote(
     result.moves.length,
-    result.moves.map((m) => ({
-      risks: cameraRisks(m.safe, Math.round(m.intensity * 100)),
-      alwaysBends: m.alwaysBends,
-      cleanAlternatives: m.cleanAlternatives,
-    })),
-    intensity,
+    result.moves.map((m) => {
+      const strength = Math.round(m.intensity * 100)
+      return {
+        risks: cameraRisks(m.safe, strength),
+        alwaysBends: m.alwaysBends,
+        cleanAlternatives: m.cleanAlternatives,
+        strength,
+      }
+    }),
   )
 }
 

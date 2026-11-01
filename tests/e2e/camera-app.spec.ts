@@ -747,8 +747,8 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
     'Straight lines in this image may bend with any Motion. A lower Strength bends them less.',
   )
   await expect(detail).toHaveText('Strength 100% · may bend lines above 10%')
-  // Where another Motion keeps the lines straight at the lowest automatic strength, the note names it, but at the
-  // Strength set here (100%) only a Motion that can take it.
+  // Where another Motion keeps the lines straight at the lowest automatic strength, the note names it, but only one
+  // that can take the move's strength (100% here), which changing Motion keeps.
   const orbit = (safeIntensity: number) => [
     { preset: 'orbit-right', safeIntensity },
     { preset: 'pan-right', safeIntensity: 0.25 },
@@ -757,10 +757,17 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
   await expect(note).toHaveText('This image may bend straight lines at this strength. Try a lower Strength.')
   await setSafe(1, 0.1, false, orbit(1))
   await expect(note).toHaveText('This image may bend straight lines at this strength. Set Motion to Orbit.')
-  await setSafe(1, 0.1, false, orbit(0.3))
+  // The panel's Strength back on automatic leaves the clip at 100%.
   await page.evaluate(() => window.mvStudio.app.camera.resetStrength())
-  await expect(note).toHaveText('This image may bend straight lines at this strength. Set Motion to Orbit.')
+  await setSafe(1, 0.1, false, orbit(0.3))
+  await expect(note).toHaveText('This image may bend straight lines at this strength. Try a lower Strength.')
   await expect(detail).toHaveText('Strength 100% · may bend lines above 10%')
+  // The clip's own strength lowered to 30%, as Inspector › Motion does.
+  await page.evaluate((id) => window.mvStudio.app.camera.setCameraMove(id, { intensity: 0.3 }), clipId)
+  await expect(assist.getByText(/^Strength\s30%\s·\smay\s/)).toHaveText(
+    'Strength 30% · may bend lines above 10%',
+  )
+  await expect(note).toHaveText('This image may bend straight lines at this strength. Set Motion to Orbit.')
 })
 
 test('one inline suggestion at a time: a selected still’s suggestion takes the lyrics hint’s place, which comes back after', async ({
