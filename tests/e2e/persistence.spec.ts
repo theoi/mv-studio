@@ -449,7 +449,7 @@ function mediaFolders(page: Page): Promise<number> {
 
 /** The opening card's restore line ("long.wav · 1 of 3 files") and percentage. */
 async function restoreStep(page: Page): Promise<{ line: string; percent: number }> {
-  const text = await page.getByRole('region', { name: 'Opening Portable.mvstudio' }).innerText()
+  const text = await page.getByRole('region', { name: /^Opening / }).innerText()
   return { line: /Restoring (.+ files)/.exec(text)?.[1] ?? '', percent: Number(/(\d+)%/.exec(text)?.[1]) }
 }
 
@@ -459,24 +459,37 @@ test('opening a project file shows how far each file is, and a Cancel part way t
 }, testInfo) => {
   test.setTimeout(150_000)
   const { file, names } = await downloadPortable(page, testInfo)
+  const longName = `${'Portable tour cut '.repeat(6)}final.mvstudio`
+  const longFile = testInfo.outputPath(longName)
+  fs.copyFileSync(file, longFile)
   const other = await launchProfile(testInfo.outputPath('second-profile'), baseURL)
   try {
     const page2 = other.pages()[0] ?? (await other.newPage())
     await openHarness(page2)
     const writes = await holdWrites(page2)
-    const opening = page2.getByRole('region', { name: 'Opening Portable.mvstudio' })
+    const opening = page2.getByRole('region', { name: /^Opening / })
+    const openButton = page2.getByRole('button', { name: 'Open project file' })
 
-    await openProjectFileIn(page2, file)
+    await openProjectFileIn(page2, longFile)
     await expect(opening).toContainText('Restoring long.wav · 1 of 3 files')
-    await expect(page2.getByRole('button', { name: 'Open project file' })).toBeDisabled()
+    await expect(openButton).toBeDisabled()
+    // Starting another project now would be replaced by the file's project when it is in.
+    await expect(page2.getByRole('button', { name: /^Lyric video/ })).toBeDisabled()
+    await expect(page2.getByRole('button', { name: /^Blank project/ })).toBeDisabled()
+    // The cut-off title gives the whole file name on hover.
+    await opening.getByRole('heading').hover()
+    await expect(opening.getByRole('heading')).toHaveAttribute('title', `Opening ${longName}`)
     expect((await restoreStep(page2)).percent).toBe(0)
     // The song's first 8 MB are in: the percentage moves within the file.
     await writes.release()
     await expect.poll(async () => (await restoreStep(page2)).percent).toBeGreaterThan(0)
     expect((await restoreStep(page2)).line).toBe('long.wav · 1 of 3 files')
     await opening.getByRole('button', { name: 'Cancel' }).click()
+    await expect(openButton).toBeFocused()
     await writes.release()
     await expect(opening).toBeHidden()
+    await expect(openButton).toBeEnabled()
+    await expect(page2.getByRole('button', { name: /^Lyric video/ })).toBeEnabled()
     await expect(page2.getByRole('heading', { name: 'What are you making?' })).toBeVisible()
     expect(await keptCount(page2)).toBe(0)
     expect(await mediaFolders(page2)).toBe(0)
@@ -485,6 +498,10 @@ test('opening a project file shows how far each file is, and a Cancel part way t
     const steps: { line: string; percent: number }[] = []
     for (let i = 0; i < 5; i++) {
       await expect(opening).toContainText('Restoring')
+      if (i === 0) {
+        await opening.getByRole('heading').hover()
+        await expect(opening.getByRole('heading')).toHaveAttribute('title', '')
+      }
       const step = await restoreStep(page2)
       steps.push(step)
       await writes.release()
@@ -567,9 +584,115 @@ test('a project file that lacks a media file fails to open and leaves no media o
   const chooser = page.waitForEvent('filechooser')
   await page.getByRole('menuitem', { name: /Open project file/ }).click()
   await (await chooser).setFiles(broken)
+  await page
+    .getByRole('dialog', { name: '“Portable” is already in this browser' })
+    .getByRole('button', { name: 'Keep a copy' })
+    .click()
   await expect(page.getByText(missing)).toBeVisible({ timeout: 30_000 })
   expect(await storedSizes(page)).toEqual((await snapshot(page)).assets.map((a) => a.byteSize))
   expect(await keptCount(page)).toBe(1)
+})
+async function openFromMenu(page: Page, current: string, file: string) {
+  await page.getByRole('button', { name: `Project: ${current}` }).click()
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('menuitem', { name: /Open project file/ }).click()
+  await (await chooser).setFiles(file)
+}
+
+/** A copy of a project file whose project has another id of the same length: another project of the same name. */
+function withOtherId(file: string, id: string, out: string): void {
+  const other = (id[0] === 'a' ? 'b' : 'a') + id.slice(1)
+  fs.writeFileSync(out, Buffer.from(fs.readFileSync(file).toString('latin1').replaceAll(id, other), 'latin1'))
+}
+
+test('opening a project file of a project already here asks whether to open that one or keep a copy', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000)
+  await openBlank(page)
+  await importFiles(page, ['song.mp3', 'image.png'])
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  await renameOpenProject(page, 'song', 'Portable')
+  await expect(saved(page)).toBeVisible()
+  const before = await snapshot(page)
+  await page.getByRole('button', { name: 'Project: Portable' }).click()
+  const download = page.waitForEvent('download')
+  await page.getByRole('menuitem', { name: /Download project file/ }).click()
+  const file = testInfo.outputPath('Portable.mvstudio')
+  await (await download).saveAs(file)
+  await page.keyboard.press('Escape')
+  // An edit after the download: the project here is newer than the file's.
+  await page.keyboard.press('t')
+  await expect.poll(async () => (await snapshot(page)).clips).toBe(before.clips + 1)
+  await expect(saved(page)).toBeVisible()
+  const folders = await mediaFolders(page)
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  const ask = page.getByRole('dialog', { name: '“Portable” is already in this browser' })
+  const openButton = page.getByRole('button', { name: 'Open project file' })
+  await openProjectFileIn(page, file)
+  await expect(ask).toContainText('keep the file’s version too, as “Portable (2)”')
+  // Both were edited "just now", so the times are clock times.
+  await expect(ask.getByRole('definition').first()).toHaveText(
+    /^Edited \d{1,2}:\d{2}(:\d{2})? [AP]M · newer$/,
+  )
+  await expect(ask).toContainText('“Portable.mvstudio” holds a project you already have here.')
+  await expect(ask.getByRole('term').nth(1)).toHaveText('In the file')
+  await page.keyboard.press('Escape')
+  await expect(ask).toBeHidden()
+  await expect(openButton).toBeFocused()
+  await expect(page.getByRole('heading', { name: 'What are you making?' })).toBeVisible()
+  expect(await keptCount(page)).toBe(1)
+
+  await openProjectFileIn(page, file)
+  await ask.getByRole('button', { name: 'Open the one here' }).click()
+  await expect(page.getByRole('button', { name: 'Project: Portable' })).toBeVisible()
+  expect(await snapshot(page)).toEqual({ ...before, clips: before.clips + 1 })
+  expect(await keptCount(page)).toBe(1)
+  // Asked again while editing it, the one here is already open.
+  await openFromMenu(page, 'Portable', file)
+  await ask.getByRole('button', { name: 'Open the one here' }).click()
+  await expect(page.getByText('“Portable” is already open')).toBeVisible()
+  expect(await snapshot(page)).toEqual({ ...before, clips: before.clips + 1 })
+
+  // Keep a copy: nothing is restored while the question is up, then only the file missing here.
+  await page.evaluate(async () => {
+    const p = window.mvStudio.app.project.editor.getProject()
+    const image = Object.values(p.assets as Record<string, { name: string }>).find(
+      (a) => a.name === 'image.png',
+    )
+    await window.mvStudio.media.mediaStore.remove(image)
+  })
+  const writes = await holdWrites(page)
+  await openFromMenu(page, 'Portable', file)
+  await expect(ask).toContainText('keep the file’s version too, as “Portable (2)”')
+  // A restore started before the answer would have a write held by now.
+  await page.waitForTimeout(500)
+  expect(await page.evaluate(() => (window as unknown as { held: unknown[] }).held.length)).toBe(0)
+  await ask.getByRole('button', { name: 'Keep a copy' }).click()
+  await writes.release()
+  await expect(page.getByRole('button', { name: 'Project: Portable (2)' })).toBeVisible({ timeout: 30_000 })
+  const copy = await snapshot(page)
+  expect(copy.id).not.toBe(before.id)
+  expect(copy).toEqual({ ...before, id: copy.id, name: 'Portable (2)' })
+  expect(await storedSizes(page)).toEqual(copy.assets.map((a) => a.byteSize))
+  expect(await keptCount(page)).toBe(2)
+  // The copy uses the media already here instead of storing it twice.
+  expect(await mediaFolders(page)).toBe(folders)
+
+  // A second copy gets a name of its own too.
+  await openFromMenu(page, 'Portable (2)', file)
+  await expect(ask).toContainText('as “Portable (3)”')
+  await ask.getByRole('button', { name: 'Keep a copy' }).click()
+  await expect(page.getByRole('button', { name: 'Project: Portable (3)' })).toBeVisible({ timeout: 30_000 })
+  expect(await keptCount(page)).toBe(3)
+
+  // Another project of the same name opens without the question, under a name no kept project has.
+  const others = testInfo.outputPath('Others.mvstudio')
+  withOtherId(file, before.id, others)
+  await openFromMenu(page, 'Portable (3)', others)
+  await expect(page.getByRole('button', { name: 'Project: Portable (4)' })).toBeVisible({ timeout: 30_000 })
+  expect(await keptCount(page)).toBe(4)
 })
 test('a failed save says so, and saving again works', async ({ page }) => {
   await openHarness(page)
