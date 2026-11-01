@@ -16,12 +16,19 @@ function activePreview(): Promise<WorkerPreview> {
 }
 
 const api = {
-  exportVideo: async (job: EncodeJob, ctx: WorkerCallContext) => {
-    const [{ encodeExport }, { mediaStore }] = await Promise.all([
-      import('./encode.ts'),
-      import('../media/mediaStore.ts'),
-    ])
-    return encodeExport(job, ctx, { media: mediaStore })
+  /** With `media`, a port served by the page's media source (serveMedia), files come from the page, else from OPFS. */
+  exportVideo: async ({ job, media }: { job: EncodeJob; media?: MessagePort }, ctx: WorkerCallContext) => {
+    try {
+      const [{ encodeExport }, source] = await Promise.all([
+        import('./encode.ts'),
+        media
+          ? import('./previewWorker.ts').then(({ portMedia }) => portMedia(media))
+          : import('../media/mediaStore.ts').then(({ mediaStore }) => mediaStore),
+      ])
+      return await encodeExport(job, ctx, { media: source })
+    } finally {
+      media?.close()
+    }
   },
   /** Checks that this worker can draw before the main thread moves its canvas here (which cannot be undone). */
   previewProbe: () => {

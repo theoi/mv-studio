@@ -13,11 +13,11 @@ import type { MediaFileSource } from './types.ts'
 
 export interface RenderWorker {
   /**
-   * Renders and encodes an export (encodeExport). Pass the audio channel buffers in `options.transfer`. On cancel, the
-   * call settles once the worker has stopped writing. If the worker dies, rejects with 'worker-crashed' or
-   * 'out-of-memory'.
+   * Renders and encodes an export (encodeExport). Pass the audio channel buffers in `options.transfer`. With `media`,
+   * the worker reads files through the page's media source instead of straight from OPFS. On cancel, the call settles
+   * once the worker has stopped writing. If the worker dies, rejects with 'worker-crashed' or 'out-of-memory'.
    */
-  exportVideo(job: EncodeJob, options?: CallOptions): Promise<EncodeResult>
+  exportVideo(job: EncodeJob, options?: CallOptions, media?: MediaFileSource): Promise<EncodeResult>
   /** Terminates the worker; pending calls reject with 'cancelled'. */
   dispose(): void
 }
@@ -31,7 +31,20 @@ function spawnRenderWorker(name: string) {
 export function startRenderWorker(): RenderWorker {
   const client = spawnRenderWorker('render')
   return {
-    exportVideo: (job, options) => client.call('exportVideo', job, { ...options, awaitCancel: true }),
+    exportVideo: async (job, options = {}, media) => {
+      if (!media) return client.call('exportVideo', { job }, { ...options, awaitCancel: true })
+      const channel = new MessageChannel()
+      serveMedia(channel.port1, media)
+      try {
+        return await client.call(
+          'exportVideo',
+          { job, media: channel.port2 },
+          { ...options, transfer: [...(options.transfer ?? []), channel.port2], awaitCancel: true },
+        )
+      } finally {
+        channel.port1.close()
+      }
+    },
     dispose: () => client.terminate(),
   }
 }

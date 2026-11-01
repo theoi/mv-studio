@@ -18,7 +18,7 @@ import {
 } from '../model/factory.ts'
 import { projectDuration } from '../model/queries.ts'
 import type { AdjustmentClip, Asset, GeneratorClip, Project, Track } from '../model/types.ts'
-import type { ExportSettings } from '../engine/types.ts'
+import type { ExportSettings, MediaFileSource } from '../engine/types.ts'
 
 export interface BenchAssets {
   song: Asset
@@ -478,11 +478,15 @@ export interface ExportBenchResult {
   main: MainThreadSample
 }
 
-/** Exports the first `seconds` of a bench project and samples main-thread responsiveness meanwhile. */
+/**
+ * Exports the first `seconds` of a bench project and samples main-thread responsiveness meanwhile. With `media`, the
+ * export reads files through that source, as the app's exports do.
+ */
 export async function runExportBenchmark(
   kind: BenchProjectKind,
   assets: BenchAssets,
   settings: { width: number; height: number; fps: number; seconds: number },
+  media?: MediaFileSource,
 ): Promise<ExportBenchResult> {
   const project = kind === 'heavy' ? heavyProject(assets) : typicalProject(assets)
   const exportSettings: ExportSettings = {
@@ -497,7 +501,7 @@ export async function runExportBenchmark(
   const job = jobs.run({
     kind: 'export.mp4',
     title: 'Benchmark export',
-    run: (ctx) => exportProject(project, exportSettings, ctx),
+    run: (ctx) => exportProject(project, exportSettings, ctx, media ? { media } : {}),
   })
   await job.promise
   const elapsed = (performance.now() - started) / 1000

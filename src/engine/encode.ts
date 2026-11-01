@@ -1,7 +1,7 @@
 /**
  * Renders and encodes an export to an OPFS file: the same compositor as preview, fed by the frame-exact WebCodecs
  * decoder, encoding H.264 + AAC with mediabunny and streaming to disk so memory stays flat for full-length songs. Runs
- * in the render worker (renderHost.ts), or in-process when an export is given its own media source or plugin registry.
+ * in the render worker (renderHost.ts), or in-process when an export is given its own plugin registry.
  */
 import {
   AudioSample,
