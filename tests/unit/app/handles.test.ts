@@ -242,7 +242,7 @@ describe('dragging a clip of the sample project', () => {
       0,
     )
     expect(after.transform.y.value).toBeGreaterThan(before.transform.y.value)
-    expect(editor.undoLabel()).toBe('Move clip')
+    expect(editor.undoLabel()).toBe('Move Title')
     editor.undo()
     const undone = project().clips['o-title'] as VisualClip
     expect(undone.transform.x.value).toBe(before.transform.x.value)

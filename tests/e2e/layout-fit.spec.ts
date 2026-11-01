@@ -430,3 +430,29 @@ test('Ask’s Apply keeps its primary colors and Discard stays grey, though text
     expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width + 0.5)
   }
 })
+
+test('a long toast with a button wraps instead of covering the preview’s zoom control and position', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  await waitForPreview(page)
+  await page.evaluate(() =>
+    window.mvStudio.app.ui.toast(
+      'This browser’s storage is full. Free space in Settings › Storage, or download the project file.',
+      { label: 'Download project file', run: () => {} },
+    ),
+  )
+  const toast = page.locator('[data-toast]')
+  await expect(toast).toBeVisible()
+  const t = (await toast.boundingBox())!
+  const zoom = (await page.getByRole('button', { name: /^Preview zoom/ }).boundingBox())!
+  const position = (await page
+    .locator('[class*="position"]')
+    .filter({ hasText: /Bar \d+/ })
+    .boundingBox())!
+  expect(t.x).toBeGreaterThan(zoom.x + zoom.width)
+  expect(t.x + t.width).toBeLessThan(position.x)
+  // The message wraps; the button stays whole on one line.
+  const button = (await toast.getByRole('button', { name: 'Download project file' }).boundingBox())!
+  expect(button.height).toBeLessThan(30)
+})

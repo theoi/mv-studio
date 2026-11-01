@@ -192,7 +192,8 @@ describe('duplicate, cut and delete', () => {
     selectClips([s.d.id])
     expect(duplicateSelection()).toBe(true)
     expect(onTrack(s.footage.id).at(-1)).toEqual([18, 4])
-    expect(editor.undoLabel()).toBe('Duplicate clip')
+    // Named as the timeline names the clip: its media's name.
+    expect(editor.undoLabel()).toBe('Duplicate v')
     expect(selected().map((c) => c?.start)).toEqual([18])
 
     selectClips([s.b.id])

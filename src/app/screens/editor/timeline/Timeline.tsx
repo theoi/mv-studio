@@ -125,6 +125,7 @@ import {
   selectClips,
   selectedClipIds,
   set,
+  setSnap,
   toast,
   useUi,
 } from '../../../state/ui.ts'
@@ -609,7 +610,7 @@ const Toolbar = memo(function Toolbar({
             shortcut="N"
             size="sm"
             active={snap}
-            onClick={() => set({ snap: !snap })}
+            onClick={() => setSnap('snap', !snap)}
           >
             <Magnet />
           </IconButton>
@@ -623,26 +624,26 @@ const Toolbar = memo(function Toolbar({
               <MenuLabel>Snap to</MenuLabel>
               <MenuCheckItem
                 checked={beatSnap}
-                onCheckedChange={(v) => set({ beatSnap: v })}
+                onCheckedChange={(v) => setSnap('beatSnap', v)}
                 shortcut="Shift N"
               >
                 Beats
               </MenuCheckItem>
               <MenuCheckItem
                 checked={barSnap && !waiting}
-                onCheckedChange={(v) => set({ barSnap: v })}
+                onCheckedChange={(v) => setSnap('barSnap', v)}
                 disabled={waiting}
                 description={barsShort}
               >
                 Bar starts
               </MenuCheckItem>
-              <MenuCheckItem checked={sectionSnap} onCheckedChange={(v) => set({ sectionSnap: v })}>
+              <MenuCheckItem checked={sectionSnap} onCheckedChange={(v) => setSnap('sectionSnap', v)}>
                 Sections
               </MenuCheckItem>
-              <MenuCheckItem checked={edgeSnap} onCheckedChange={(v) => set({ edgeSnap: v })}>
+              <MenuCheckItem checked={edgeSnap} onCheckedChange={(v) => setSnap('edgeSnap', v)}>
                 Clip edges
               </MenuCheckItem>
-              <MenuCheckItem checked={playheadSnap} onCheckedChange={(v) => set({ playheadSnap: v })}>
+              <MenuCheckItem checked={playheadSnap} onCheckedChange={(v) => setSnap('playheadSnap', v)}>
                 Playhead
               </MenuCheckItem>
             </MenuContent>

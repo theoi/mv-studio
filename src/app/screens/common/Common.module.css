@@ -28,10 +28,12 @@
   pointer-events: none;
 }
 
+/* At most 460 px, so a long message wraps rather than covering the preview's zoom control and readout at 1280 px. */
 .toast {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  max-width: 460px;
   min-height: 36px;
   padding: 6px 6px 6px 14px;
   border-radius: var(--radius-md);

@@ -16,7 +16,7 @@ import { plural } from '../format.ts'
 import { idsWithCutouts, withCutouts } from './behind.ts'
 import { undoAction } from './library.ts'
 import { removeLyricLinesCommands } from './lyrics.ts'
-import { dispatch, editor, isLookClip } from './project.ts'
+import { clipsLabel, dispatch, editor, isLookClip } from './project.ts'
 import { revealClips } from './reveal.ts'
 import { closeUpMoves } from './ripple.ts'
 import { removeTransition } from './transitions.ts'
@@ -80,10 +80,10 @@ function clipsCounted(clips: Clip[]): string {
     .join(' and ')
 }
 
-/** For undo labels: "clip", "2 clips", "2 lyric lines", "1 clip and 1 lyric line". */
+/** For undo labels: "clip04_16x9_bee-lavender", "2 clips", "2 lyric lines", "1 clip and 1 lyric line". */
 function clipsNamed(clips: Clip[]): string {
   const lines = clips.filter(isLyricClip).length
-  if (!lines) return clipCount(clips.length)
+  if (!lines) return clipsLabel(editor.getProject(), clips)
   return lines === clips.length ? lineCount(lines) : clipsCounted(clips)
 }
 
@@ -264,8 +264,18 @@ export function duplicateSelection(): boolean {
  * chips are plain text clips, and the toast says so.
  */
 function place(source: ClipboardContent, verb: 'Paste' | 'Duplicate', offset: number, onto?: Track): void {
-  const { commands, ids } = plan(editor.getProject(), source, offset, onto)
-  if (!dispatch(commands, { label: `${verb} ${clipCount(ids.length)}` })) return
+  const p = editor.getProject()
+  const { commands, ids } = plan(p, source, offset, onto)
+  // A copy from another project names its media from the clipboard, which brings it along.
+  const withAssets = {
+    ...p,
+    assets: { ...Object.fromEntries(source.assets.map((a) => [a.id, a])), ...p.assets },
+  }
+  const named =
+    ids.length === 1 && source.clips.length === 1
+      ? clipsLabel(withAssets, source.clips)
+      : clipCount(ids.length)
+  if (!dispatch(commands, { label: `${verb} ${named}` })) return
   selectClips(ids)
   revealClips(ids)
   const lines = source.clips.filter(isLyricClip).length

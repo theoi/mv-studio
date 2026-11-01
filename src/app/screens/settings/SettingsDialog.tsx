@@ -1010,20 +1010,20 @@ const barOptions = [
 ]
 
 function EditingPage() {
-  const beatSnap = usePrefs((p) => p.beatSnap)
+  const snap = useUi((s) => s.snap)
+  const beatSnap = useUi((s) => s.beatSnap)
   const imageBars = usePrefs((p) => p.imageBars)
   const textBars = usePrefs((p) => p.textBars)
   return (
     <>
-      <Row title="Snap to beats by default">
-        <Switch
-          checked={beatSnap}
-          onCheckedChange={(v) => {
-            setPref('beatSnap', v)
-            set({ beatSnap: v })
-          }}
-          ariaLabel="Snap to beats by default"
-        />
+      <Row
+        title="Snapping"
+        desc="Clips snap as you drag them. The timeline’s snap menu picks what they snap to."
+      >
+        <Switch checked={snap} onCheckedChange={(v) => set({ snap: v })} ariaLabel="Snapping" />
+      </Row>
+      <Row title="Snap to beats">
+        <Switch checked={beatSnap} onCheckedChange={(v) => set({ beatSnap: v })} ariaLabel="Snap to beats" />
       </Row>
       <Row title="Default image duration">
         <Select

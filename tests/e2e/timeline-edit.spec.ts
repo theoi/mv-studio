@@ -148,7 +148,7 @@ test('Shift and Mod click select several clips, and copy, paste, duplicate, cut 
   const copy = page.getByRole('button', { name: 'Singer close-up, 1:08.0 to 1:10.0' })
   await expect(copy).toHaveAttribute('aria-pressed', 'true')
   await page.keyboard.press(`${mod}+z`)
-  await expect(page.getByText('Undid: Duplicate clip')).toBeVisible()
+  await expect(page.getByText('Undid: Duplicate Singer close-up')).toBeVisible()
   await expect(copy).toBeHidden()
 
   await singer.click()
@@ -158,7 +158,7 @@ test('Shift and Mod click select several clips, and copy, paste, duplicate, cut 
   await expect(page.getByRole('button', { name: 'Singer close-up, 1:07.0 to 1:09.0' })).toBeVisible()
   await page.keyboard.press(`${mod}+z`)
   await page.keyboard.press(`${mod}+z`)
-  await expect(page.getByText('Undid: Cut clip')).toBeVisible()
+  await expect(page.getByText('Undid: Cut Singer close-up')).toBeVisible()
   await expect(singer).toBeVisible()
 })
 
@@ -517,7 +517,7 @@ test('Paste here on an empty stretch of a lane pastes at that time, on that trac
     const clip = project.editor.getProject().clips[id]
     return { trackId: clip.trackId, label: project.editor.undoLabel() }
   })
-  expect(placed).toEqual({ trackId: 't-overlay', label: 'Paste clip' })
+  expect(placed).toEqual({ trackId: 't-overlay', label: 'Paste Singer close-up' })
   await page.keyboard.press(`${mod}+z`)
   await expect(pasted).toHaveCount(0)
 
@@ -586,7 +586,9 @@ test('with the split tool, a click cuts a clip where it is clicked, snapping to 
   const right = page.getByRole('button', { name: 'Singer close-up, 1:07.0 to 1:08.0' })
   await expect(right).toBeVisible()
   expect(await undoDepth()).toBe(before + 1)
-  expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBe('Split clip')
+  expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBe(
+    'Split Singer close-up',
+  )
 
   // Away from anything to snap to, it cuts at the click point.
   await page.evaluate(() => window.mvStudio.app.ui.set({ snap: false }))
@@ -766,4 +768,27 @@ test('lyric chips join Shift and Mod click and marquee selections; Delete takes 
   await expect(chip1).toBeVisible()
   expect(await lineIds()).toEqual(allLines)
   expect(await selectedIds(page)).toEqual(picked)
+})
+
+test('turning snapping off says so, and the snapping choices are kept after a reload', async ({ page }) => {
+  await openEditor(page, '#/editor?t=67')
+  const toasts = page.getByRole('status')
+  await page.getByRole('button', { name: 'Snapping on' }).click()
+  await expect(toasts.getByText('Snapping off', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Snapping options' }).click()
+  await page.getByRole('menuitemcheckbox', { name: 'Clip edges' }).click()
+  // One toast, saying the latest change.
+  await expect(toasts.getByText('Snapping to clip edges off')).toBeVisible()
+  await expect(toasts.getByText('Snapping off', { exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  await page.reload()
+  await openEditor(page, '#/editor?t=67')
+  await expect(page.getByRole('button', { name: 'Snapping off' })).toBeVisible()
+  await page.getByRole('button', { name: 'Snapping options' }).click()
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Clip edges' })).toHaveAttribute(
+    'aria-checked',
+    'false',
+  )
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Beats' })).toHaveAttribute('aria-checked', 'true')
 })

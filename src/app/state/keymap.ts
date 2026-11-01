@@ -25,7 +25,7 @@ import {
   undo,
 } from './project.ts'
 import { shuttle, stopShuttle } from './shuttle.ts'
-import { get, openAssist, set, toast } from './ui.ts'
+import { get, openAssist, set, setSnap, toast } from './ui.ts'
 import { enterVj } from './vj.ts'
 import { fitTimeline, zoomBy } from './zoom.ts'
 
@@ -241,22 +241,14 @@ export const SHORTCUTS = [
     label: 'Snapping',
     group: 'Timeline',
     keys: ['N'],
-    run: () => {
-      const on = !get().snap
-      set({ snap: on })
-      toast(on ? 'Snapping on' : 'Snapping off')
-    },
+    run: () => setSnap('snap', !get().snap),
   },
   {
     id: 'beatSnap',
     label: 'Beat snapping',
     group: 'Timeline',
     keys: ['Shift N'],
-    run: () => {
-      const on = !get().beatSnap
-      set({ beatSnap: on })
-      toast(on ? 'Beat snapping on' : 'Beat snapping off')
-    },
+    run: () => setSnap('beatSnap', !get().beatSnap),
   },
   { id: 'copy', label: 'Copy', group: 'Timeline', keys: ['Mod C'], run: copySelection },
   { id: 'cut', label: 'Cut', group: 'Timeline', keys: ['Mod X'], run: cutSelection },

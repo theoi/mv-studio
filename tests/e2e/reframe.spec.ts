@@ -158,3 +158,36 @@ test('every way of changing the frame offers to reframe', async ({ page }) => {
   await toasts.getByRole('button', { name: 'Reframe automatically' }).click()
   await expect(toasts.getByText(/^Reframed for 9:16 · /)).toBeVisible()
 })
+
+test('an offer stays until it no longer applies, and Inspector › Project offers it while it does', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=20')
+  const toasts = page.getByRole('status')
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  const aspect = inspector.getByRole('radiogroup', { name: 'Aspect ratio' })
+  const offer = toasts.getByText('Switched to 9:16. Keep subjects in frame?')
+
+  // Undoing the frame change takes the offer away, with the note in the Inspector.
+  await aspect.getByRole('radio', { name: '9:16' }).click()
+  await expect(offer).toBeVisible()
+  await expect(inspector.getByText('The clips are still laid out for 16:9.')).toBeVisible()
+  await page.getByRole('banner').getByRole('button', { name: 'Undo change aspect ratio' }).click()
+  await expect(offer).toHaveCount(0)
+  await expect(inspector.getByText('The clips are still laid out for 16:9.')).toHaveCount(0)
+
+  // Taken in the Inspector, the offer in the toast goes too.
+  await aspect.getByRole('radio', { name: '9:16' }).click()
+  await expect(offer).toBeVisible()
+  await inspector.getByRole('button', { name: 'Reframe automatically' }).click()
+  await expect(toasts.getByText(/^Reframed for 9:16 · /)).toBeVisible()
+  await expect(offer).toHaveCount(0)
+  await expect(inspector.getByRole('button', { name: 'Reframe automatically' })).toHaveCount(0)
+
+  // Back in 16:9, the Inspector offers the layout the clips had there.
+  await aspect.getByRole('radio', { name: '16:9' }).click()
+  await expect(inspector.getByText('The clips can go back to their 16:9 layout.')).toBeVisible()
+  await inspector.getByRole('button', { name: 'Restore layout' }).click()
+  await expect(toasts.getByText(/^Restored the 16:9 layout of \d+ clips\.$/)).toBeVisible()
+  await expect(inspector.getByRole('button', { name: 'Restore layout' })).toHaveCount(0)
+})

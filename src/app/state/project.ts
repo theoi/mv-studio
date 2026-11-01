@@ -20,6 +20,7 @@ import {
 import { directorMeta } from '../../director/meta.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
 import { followStems } from '../../plugins/reactions.ts'
+import { plural } from '../format.ts'
 import { TRACK_IDS, buildDemoProject } from '../mock/demoProject.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { get, select, set, toast } from './ui.ts'
@@ -47,10 +48,18 @@ export function loadSample() {
   toast(`Sample project loaded: “${editor.getProject().name}”`)
 }
 
-/** Dispatches through the editor and turns rejected edits (locked track, invalid input) into a toast. */
+/**
+ * Dispatches through the editor and turns rejected edits (locked track, invalid input) into a toast. An edit of clips
+ * given no label gets one that names them (clipEditLabel), for the Undo button and the toast after an undo.
+ */
 export function dispatch(commands: EditCommand | EditCommand[], options?: DispatchOptions): boolean {
+  const label =
+    options?.label ??
+    (options?.history === 'skip'
+      ? undefined
+      : clipEditLabel(editor.getProject(), Array.isArray(commands) ? commands : [commands]))
   try {
-    editor.dispatch(commands, options)
+    editor.dispatch(commands, label === undefined ? options : { ...options, label })
     return true
   } catch (error) {
     if (error instanceof EditError) {
@@ -59,6 +68,82 @@ export function dispatch(commands: EditCommand | EditCommand[], options?: Dispat
     }
     throw error
   }
+}
+
+const CLIP_EDITS: Partial<Record<EditCommand['type'], (clips: string) => string>> = {
+  'clip.add': (clips) => `Add ${clips}`,
+  'clip.remove': (clips) => `Delete ${clips}`,
+  'clip.move': (clips) => `Move ${clips}`,
+  'clip.trim': (clips) => `Trim ${clips}`,
+  'clip.split': (clips) => `Split ${clips}`,
+  'clip.set': (clips) => `Change ${clips}`,
+  'keyframe.set': (clips) => `Set keyframe on ${clips}`,
+  'keyframe.remove': (clips) => `Remove keyframe from ${clips}`,
+  'effect.add': (clips) => `Add effect to ${clips}`,
+  'effect.remove': (clips) => `Remove effect from ${clips}`,
+}
+
+function clipsOf(p: Project, cmd: EditCommand): (Clip | undefined)[] {
+  switch (cmd.type) {
+    case 'clip.add':
+      return [cmd.clip]
+    case 'clip.remove':
+      return cmd.clipIds.map((id) => p.clips[id])
+    case 'clip.move':
+      return cmd.moves.map((m) => p.clips[m.clipId])
+    case 'clip.trim':
+    case 'clip.split':
+    case 'clip.set':
+    case 'keyframe.set':
+    case 'keyframe.remove':
+    case 'effect.add':
+    case 'effect.remove':
+      return [p.clips[cmd.clipId]]
+    default:
+      return []
+  }
+}
+
+/**
+ * The undo label of a clip edit dispatched without one, from its first command: "Move clip04_16x9_bee-lavender",
+ * "Trim “Hold on tonight”", "Move 3 clips". Undefined for other edits, which keep the editor's own label.
+ */
+export function clipEditLabel(p: Project, commands: readonly EditCommand[]): string | undefined {
+  const first = commands[0]
+  const say = first && CLIP_EDITS[first.type]
+  if (!say) return undefined
+  const clips = new Map<string, Clip>()
+  for (const cmd of commands)
+    if (cmd.type === first.type)
+      for (const c of clipsOf(p, cmd)) {
+        if (!c) return undefined
+        clips.set(c.id, c)
+      }
+  return clips.size ? say(clipsLabel(p, [...clips.values()])) : undefined
+}
+
+/** Longest clip name an undo label shows in full. */
+const LABEL_NAME_MAX = 32
+
+/**
+ * Clips as an undo label names them: one by its name as the timeline shows it (a file without its extension, words
+ * in quotes), several by their number.
+ */
+export function clipsLabel(p: Project, clips: readonly Clip[]): string {
+  const [only] = clips
+  if (clips.length !== 1 || !only) return plural(clips.length, 'clip')
+  const view = viewOf(p, only)
+  const name = view.asset && !only.name ? view.name.replace(/\.[a-z0-9]{2,5}$/i, '') : view.name
+  const words = only.type === 'text' && (only.lyricLineId || !only.name)
+  return words ? `“${shortName(name)}”` : shortName(name)
+}
+
+/** A long name cut at a word where one ends near the limit. */
+function shortName(name: string): string {
+  if (name.length <= LABEL_NAME_MAX) return name
+  const cut = name.slice(0, LABEL_NAME_MAX - 1)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > LABEL_NAME_MAX / 2 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '')}…`
 }
 
 export function undo() {
@@ -92,17 +177,18 @@ export function splitAtPlayhead(clipId?: string) {
   }
   dispatch(
     { type: 'clip.split', clipId: target.id, time: t, newClipId: crypto.randomUUID() },
-    { label: 'Split clip' },
+    { label: `Split ${clipsLabel(p, [target])}` },
   )
 }
 
 /** Splits a clip at `t` (a click with the split tool) as one undo step; nothing when `t` is at either end. */
 export function splitClipAt(clipId: string, t: number): boolean {
-  const clip = editor.getProject().clips[clipId]
+  const p = editor.getProject()
+  const clip = p.clips[clipId]
   if (!clip || t <= clip.start + 0.02 || t >= clip.start + clip.duration - 0.02) return false
   return dispatch(
     { type: 'clip.split', clipId, time: t, newClipId: crypto.randomUUID() },
-    { label: 'Split clip' },
+    { label: `Split ${clipsLabel(p, [clip])}` },
   )
 }
 
