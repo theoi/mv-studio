@@ -1,6 +1,6 @@
 import { Layers } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import type { Clip, VideoClip, VisualClip } from '../../../../model/index.ts'
+import type { Clip, Project, VideoClip, VisualClip } from '../../../../model/index.ts'
 import { FieldRow, Section, Select, Slider, Switch } from '../../../ds/Fields.tsx'
 import { keyName } from '../../../ds/keys.ts'
 import { formatTime } from '../../../format.ts'
@@ -40,7 +40,7 @@ export function ClipsInspector({ ids }: { ids: string[] }) {
         meta={`${formatTime(start)} – ${formatTime(end)}`}
       />
       {visual.length > 0 && <SharedCompositing clips={visual} />}
-      {shots.length > 0 && <SharedSound shots={shots} />}
+      {shots.length > 0 && <SharedSound project={project} shots={shots} />}
       <p className={styles.note}>
         Shift-click or {keyName('Mod')}-click a clip to add or remove it. Drag across empty track space to
         select an area.
@@ -105,7 +105,7 @@ function SharedCompositing({ clips }: { clips: VisualClip[] }) {
  * The own sound of the selected shots whose files have sound: on or off for all, and the volume of those playing at
  * the playhead. A shot with Volume keyframes away from the playhead keeps its volume, and a note says so.
  */
-function SharedSound({ shots }: { shots: VideoClip[] }) {
+function SharedSound({ project, shots }: { project: Project; shots: VideoClip[] }) {
   const ids = shots.map((c) => c.id)
   const playing = shots.filter((c) => !c.muted)
   const allOn = playing.length === shots.length
@@ -115,7 +115,7 @@ function SharedSound({ shots }: { shots: VideoClip[] }) {
       playing.flatMap((c) => (volumeSettableAt(c, s.playhead) ? [shotVolumeAt(c, s.playhead)] : [])),
     ),
   )
-  const kept = useUi((s) => volumeKeptNote(playing, s.playhead))
+  const kept = useUi((s) => volumeKeptNote(project, playing, s.playhead))
   const sameVolume = levels.every((v) => v === levels[0])
   const pct = Math.round((levels.reduce((a, v) => a + v, 0) / Math.max(1, levels.length)) * 100)
   return (

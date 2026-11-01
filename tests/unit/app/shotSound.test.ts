@@ -126,11 +126,13 @@ describe('a shot’s own sound', () => {
     })
     expect(clip(away)).toBe(before)
     expect(clip(plain)).toMatchObject({ muted: false, volume: { value: 0.5 } })
-    expect(volumeKeptNote([clip(keyed), clip(away), clip(plain)], 201)).toBe(
-      '1 shot has Volume keyframes away from the playhead, so its volume stays. Move the playhead over it to set a keyframe there.',
+    expect(volumeKeptNote(project(), [clip(keyed), clip(away), clip(plain)], 201)).toBe(
+      '“away” has Volume keyframes and isn’t under the playhead, so its volume stays. Move the playhead over it to set a keyframe there.',
     )
-    expect(volumeKeptNote([clip(keyed), clip(away)], 216)).toMatch(/^2 shots have Volume keyframes/)
-    expect(volumeKeptNote([clip(away)], 211)).toBeNull()
+    expect(volumeKeptNote(project(), [clip(keyed), clip(away)], 216)).toBe(
+      '2 shots have Volume keyframes and aren’t under the playhead, so their volume stays. Move the playhead over one to set a keyframe there.',
+    )
+    expect(volumeKeptNote(project(), [clip(away)], 211)).toBeNull()
 
     // On a keyframe, the level replaces it, keeping its time and easing.
     setShotsVolume([keyed], 0.3, { at: 202 })

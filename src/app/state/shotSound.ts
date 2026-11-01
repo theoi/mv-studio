@@ -10,7 +10,7 @@ import { evaluate } from '../../engine/animation.ts'
 import { audibleClips } from '../../engine/audio.ts'
 import { formatTime } from '../format.ts'
 import { keyframeAt, valueAtCommands } from './keyframes.ts'
-import { dispatch, editor, hasShotSound, playsOwnSound } from './project.ts'
+import { dispatch, editor, hasShotSound, playsOwnSound, viewOf } from './project.ts'
 import { get, selectedClipIds, toast, type Toast } from './ui.ts'
 
 /**
@@ -91,12 +91,13 @@ export const shotVolumeAt = (clip: VideoClip, at: Seconds): number =>
   evaluate(clip.volume, Math.max(0, at - clip.start))
 
 /** Says which of the shots a level set at `at` leaves alone (volumeSettableAt), or null when it reaches them all. */
-export function volumeKeptNote(shots: readonly VideoClip[], at: Seconds): string | null {
-  const n = shots.filter((c) => !volumeSettableAt(c, at)).length
-  if (!n) return null
-  return n === 1
-    ? '1 shot has Volume keyframes away from the playhead, so its volume stays. Move the playhead over it to set a keyframe there.'
-    : `${n} shots have Volume keyframes away from the playhead, so their volume stays. Move the playhead over one to set a keyframe there.`
+export function volumeKeptNote(project: Project, shots: readonly VideoClip[], at: Seconds): string | null {
+  const kept = shots.filter((c) => !volumeSettableAt(c, at))
+  const [one] = kept
+  if (!one) return null
+  return kept.length === 1
+    ? `“${viewOf(project, one).name}” has Volume keyframes and isn’t under the playhead, so its volume stays. Move the playhead over it to set a keyframe there.`
+    : `${kept.length} shots have Volume keyframes and aren’t under the playhead, so their volume stays. Move the playhead over one to set a keyframe there.`
 }
 
 /**

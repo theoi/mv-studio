@@ -482,7 +482,7 @@ export const PAGES: Record<PageState['id'], PageDef> = {
       const now = levels.size === 1 ? [...levels][0] : undefined
       const setLevel = (v: number) => {
         setShotsVolume(ids, v)
-        const kept = volumeKeptNote(selectedShots(), get().playhead)
+        const kept = volumeKeptNote(editor.getProject(), selectedShots(), get().playhead)
         if (kept) toast(kept)
       }
       return [
