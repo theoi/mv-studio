@@ -16,13 +16,12 @@ import {
 } from '../../model/index.ts'
 import { CAMERA_EFFECT_ID } from '../../vision/render/cameraEffect.ts'
 import { cutoutsOf } from './behind.ts'
+import { baseName } from './importer.ts'
 import { libraryAssets, undoAction } from './library.ts'
 import { dispatch, editor, viewOf } from './project.ts'
 import { select, selectedClipIds, toast, type Selection } from './ui.ts'
 
 type Picture = VideoClip | ImageClip
-
-const baseName = (name: string) => name.replace(/\.[^.]+$/, '')
 
 /** A clip Replace can give other footage: a video clip or image that isn't a cutout of another clip. */
 export function isReplaceable(clip: Clip | undefined): clip is Picture {
