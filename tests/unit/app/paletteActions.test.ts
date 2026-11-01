@@ -7,7 +7,7 @@ import {
 } from '../../../src/app/screens/palette/actions.tsx'
 import { PAGES } from '../../../src/app/screens/palette/pages.tsx'
 import { SHORTCUTS } from '../../../src/app/state/keymap.ts'
-import { editor } from '../../../src/app/state/project.ts'
+import { editor, sectionLabels } from '../../../src/app/state/project.ts'
 import { get, select, set } from '../../../src/app/state/ui.ts'
 import { settingsForAspect } from '../../../src/model/index.ts'
 import { ASK_SCORE, isSentence } from '../../../src/app/state/paletteScore.ts'
@@ -232,6 +232,61 @@ describe('command palette coverage', () => {
       expect(get().selection).toEqual({ type: 'section', id: 's-v2' })
     } finally {
       set({ playhead: before.playhead, selection: before.selection })
+    }
+  })
+  it('leaves another action first for a section the user named after its words: an outro named “End” is not Go to the end', () => {
+    const assetId = editor.getProject().songAssetId!
+    editor.dispatch({
+      type: 'analysis.updateSection',
+      assetId,
+      sectionId: 's-outro',
+      patch: { label: 'End' },
+    })
+    try {
+      expect(paletteResults('end')[0]?.id).toBe('end')
+      expect(paletteResults('go to end')[0]?.id).toBe('end')
+      expect(paletteResults('go to the chorus')[0]?.id).toBe('goToSection')
+      const page = PAGES.sections.groups({ id: 'sections' }).flatMap((g) => g.items)
+      expect(page.map((i) => i.label)).toContain('End')
+    } finally {
+      editor.undo()
+    }
+  })
+
+  it('numbers a repeated section name past the numbers other sections already have', () => {
+    const assetId = editor.getProject().songAssetId!
+    editor.dispatch(
+      ['s-v1', 's-bridge'].map((sectionId) => ({
+        type: 'analysis.updateSection' as const,
+        assetId,
+        sectionId,
+        patch: { label: 'Verse' },
+      })),
+    )
+    try {
+      expect(sectionLabels(editor.getProject()).filter((l) => l.startsWith('Verse'))).toEqual([
+        'Verse 1',
+        'Verse 2',
+        'Verse 3',
+      ])
+    } finally {
+      editor.undo()
+    }
+  })
+
+  it('finds a section named while the search stays the same', () => {
+    expect(paletteResults('finale')).toEqual([])
+    const assetId = editor.getProject().songAssetId!
+    editor.dispatch({
+      type: 'analysis.updateSection',
+      assetId,
+      sectionId: 's-outro',
+      patch: { label: 'Finale' },
+    })
+    try {
+      expect(paletteResults('finale')[0]?.id).toBe('goToSection')
+    } finally {
+      editor.undo()
     }
   })
 })

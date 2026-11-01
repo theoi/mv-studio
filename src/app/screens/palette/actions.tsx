@@ -83,7 +83,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import type { AspectPreset, Clip, LyricLine, TextClip, Track } from '../../../model/index.ts'
+import type { AspectPreset, Clip, LyricLine, Project, TextClip, Track } from '../../../model/index.ts'
 import { canReact } from '../../../plugins/reactions.ts'
 import { formatBpm } from '../../format.ts'
 import {
@@ -1122,11 +1122,7 @@ export const actions: Action[] = [
     group: 'Playback',
     label: 'Go to a section…',
     icon: <ListMusic />,
-    // Each section's name, numbered or not ("Chorus 2", "Chorus"), so "go to the chorus" names this action.
-    aliases: () => [
-      'jump',
-      ...new Set(sectionLabels(project()).flatMap((label) => [label, label.replace(/\s+\d+$/, '')])),
-    ],
+    aliases: () => ['jump', ...sectionAliases()],
     keywords: 'song part',
     page: 'sections',
     // The typed words that name sections, as typed: "go to the Pre-chorus" opens on "Pre-chorus".
@@ -1415,6 +1411,38 @@ const keywordsOf = (a: Action): string[] => (a.keywords ? [a.keywords] : [])
 
 const aliasesOf = (a: Action): string[] => (typeof a.aliases === 'function' ? a.aliases() : (a.aliases ?? []))
 
+/** The words of section kinds, which name sections whatever other actions use them ("Export a chorus teaser…"). */
+const SECTION_WORDS = new Set(['intro', 'verse', 'pre', 'chorus', 'bridge', 'outro'])
+
+const nameWords = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+
+/**
+ * Each section's name, numbered or not ("Chorus 2", "Chorus"), as other names of Go to a section…, so "go to the chorus"
+ * names it. A name the user gave whose words another action's name or aliases all have ("End", "Solo") is left out,
+ * as an alias would rank above that action's own name: "end" stays Go to the end. The page still lists the section.
+ */
+function sectionAliases(): string[] {
+  const names = [
+    ...new Set(sectionLabels(project()).flatMap((label) => [label, label.replace(/\s+\d+$/, '')])),
+  ]
+  const own = (name: string) => nameWords(name).filter((w) => !SECTION_WORDS.has(w) && !/^\d+$/.test(w))
+  if (names.every((name) => !own(name).length)) return names
+  const taken = new Set(
+    actions
+      .filter((a) => a.id !== 'goToSection')
+      .flatMap((a) => [labelOf(a), ...(Array.isArray(a.aliases) ? a.aliases : [])])
+      .flatMap(nameWords),
+  )
+  return names.filter((name) => {
+    const words = own(name)
+    return !words.length || words.some((w) => !taken.has(w))
+  })
+}
+
 /** What the actions of a group act on without naming it: Copy acts on clips. */
 const GROUP_OBJECTS: Partial<Record<Group, string>> = { Edit: 'clip', Clip: 'clip' }
 
@@ -1423,12 +1451,18 @@ const shortcutKeys = (id: ShortcutId): readonly string[] => SHORTCUTS.find((s) =
 const contextOf = (a: Action): string => `${a.group} ${GROUP_OBJECTS[a.group] ?? ''}`
 
 const weights = new Map<string, number>()
+let weightsFor: Project | undefined
 
 /**
  * How telling a typed word is: a word few actions have ("ollama") says more about which one a search means than one
- * many have ("add"). Kept per word; the names that follow the state change too little to matter.
+ * many have ("add"). Kept per word while the project stays the same, since its section names are other names of Go to
+ * a section…; the names that follow the rest of the state change too little to matter.
  */
 function wordWeight(word: string): number {
+  if (weightsFor !== project()) {
+    weights.clear()
+    weightsFor = project()
+  }
   let weight = weights.get(word)
   if (weight === undefined) {
     const having = actions.filter((a) => wordMatches(labelOf(a), keywordsOf(a), aliasesOf(a), word)).length
@@ -1441,12 +1475,17 @@ function wordWeight(word: string): number {
 
 /**
  * The scores for the last search: ordering the groups and their actions asks for each one many times per keystroke.
- * Keyed by the name too, which can follow the state.
+ * Kept while the project stays the same (sections can arrive while the palette is open), and keyed by the name too,
+ * which can follow the state.
  */
-let last = { search: '', scores: new Map<string, number>() }
+let last: { search: string; project?: Project; scores: Map<string, number> } = {
+  search: '',
+  scores: new Map(),
+}
 
 function remember(key: string, search: string, score: () => number): number {
-  if (last.search !== search) last = { search, scores: new Map() }
+  if (last.search !== search || last.project !== project())
+    last = { search, project: project(), scores: new Map() }
   let value = last.scores.get(key)
   if (value === undefined) {
     value = score()

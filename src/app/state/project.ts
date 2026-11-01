@@ -271,14 +271,19 @@ export function sectionName(s: SongSection): string {
   return s.confidence === 1 ? s.label : s.label.charAt(0).toUpperCase() + s.label.slice(1)
 }
 
-/** Each section's name as shown, numbered when a name repeats ("Chorus 1", "Chorus 2"), so a list tells them apart. */
+/**
+ * Each section's name as shown, numbered when a name repeats ("Chorus 1", "Chorus 2"), so a list tells them apart. A
+ * number another section is already named with is skipped: Verse, Verse 2, Verse give Verse 1, Verse 2, Verse 3.
+ */
 export function sectionLabels(p: Project): string[] {
   const names = sectionsOf(p).map(sectionName)
-  const seen = new Map<string, number>()
+  const taken = new Set(names)
+  const next = new Map<string, number>()
   return names.map((name) => {
     if (/\d$/.test(name) || names.filter((n) => n === name).length < 2) return name
-    const n = (seen.get(name) ?? 0) + 1
-    seen.set(name, n)
+    let n = next.get(name) ?? 1
+    while (taken.has(`${name} ${n}`)) n++
+    next.set(name, n + 1)
     return `${name} ${n}`
   })
 }
