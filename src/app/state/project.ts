@@ -18,12 +18,14 @@ import {
 } from '../../model/index.ts'
 import { directorMeta } from '../../director/meta.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
+import { followStems } from '../../plugins/reactions.ts'
 import { TRACK_IDS, buildDemoProject } from '../mock/demoProject.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { get, select, set, toast } from './ui.ts'
 
 /** The app's single editor. The design preview starts it with the demo project. */
 export const editor = new ProjectEditor(buildDemoProject())
+followStems(editor)
 
 export function useProject(): Project {
   return useSyncExternalStore(editor.subscribe, editor.getProject)
