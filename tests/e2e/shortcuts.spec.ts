@@ -201,7 +201,7 @@ test('Settings › Shortcuts lists the keys that work, from the shortcut table',
   await search.fill('zoom')
   await expect(dialog.getByText(/^Zoom /)).toHaveCount(3)
   await expect(dialog.getByText('Redo', { exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('status')).toHaveCount(0)
+  await expect(dialog.getByRole('status')).toHaveText('')
 
   await search.fill('replace')
   await expect(dialog.getByRole('status')).toHaveText('No matching shortcut. Try another word.')

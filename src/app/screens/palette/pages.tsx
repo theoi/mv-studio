@@ -316,7 +316,7 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   history: {
     placeholder: 'Search edits',
-    empty: () => 'No edits to undo or redo yet',
+    empty: () => 'No edits to undo or redo yet.',
     groups: historyGroups,
   },
   addMedia: {
@@ -392,7 +392,7 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   volume: {
     placeholder: 'Search volume levels',
-    empty: () => 'No matching level',
+    empty: () => 'No matching level.',
     groups: () => {
       const now = Math.round(prefs().previewVolume * 100)
       return [
@@ -412,7 +412,7 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   previewZoom: {
     placeholder: 'Search zoom levels',
-    empty: () => 'No matching zoom level',
+    empty: () => 'No matching zoom level.',
     groups: () => {
       const now = get().previewZoom
       return [

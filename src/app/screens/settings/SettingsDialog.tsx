@@ -605,11 +605,10 @@ function ShortcutsPage() {
   return (
     <>
       <SearchInput value={q} onChange={setQ} placeholder="Search shortcuts" />
-      {groups.every((g) => !g.items.length) && (
-        <p className={styles.scEmpty} role="status">
-          {noMatch('shortcut')(q)}
-        </p>
-      )}
+      {/* Mounted while empty: a live region that appears already filled is often not announced. */}
+      <p className={styles.scEmpty} role="status">
+        {groups.every((g) => !g.items.length) ? noMatch('shortcut')(q) : ''}
+      </p>
       {groups.map(({ group, items }) => {
         if (!items.length) return null
         return (

@@ -35,9 +35,11 @@ const PARTIAL_SCORE = 0.09
  */
 const COVERAGE_SCORE = 0.06
 
+/** The words of a text. An aspect ratio is one word ("9:16" as "9x16"): as two, "9:16" would name 16:9 too. */
 function words(text: string): string[] {
   return text
     .toLowerCase()
+    .replace(/(\d)\s*[:×/]\s*(\d)/g, '$1x$2')
     .replace(/['’](s|d|ll|m|re|ve)\b/g, '')
     .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
     .split(/\s+/)

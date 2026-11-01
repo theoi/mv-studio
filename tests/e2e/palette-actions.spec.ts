@@ -223,7 +223,7 @@ test('the palette renames the project, switches the aspect ratio, drafts lyrics 
   await input.fill('landscape')
   await expect(selected).toHaveText(/^Switch to landscape 16:9\s*Current aspect ratio$/)
   await input.fill('square')
-  await expect(selected).toHaveText(/^Switch to square 1:1\s*Changes the project’s frame$/)
+  await expect(selected).toHaveText(/^Switch to square 1:1\s*Changes the project to 1:1$/)
   await page.keyboard.press('Enter')
   await expect(dialog).toBeHidden()
   expect(await page.evaluate(() => window.mvStudio.app.project.editor.getProject().settings.aspect)).toBe(
@@ -253,7 +253,7 @@ test('the palette tells a vertical version from switching the project to vertica
   await input.fill('tiktok')
   await expect(selected).toHaveText(/^Export a vertical version…\s*Keeps the project 16:9$/)
   await expect(dialog.getByRole('option', { name: /^Switch to vertical 9:16/ })).toHaveText(
-    /Changes the project’s frame$/,
+    /Changes the project to 9:16$/,
   )
 
   await input.fill('replace')
