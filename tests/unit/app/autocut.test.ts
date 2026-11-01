@@ -3,8 +3,12 @@ import type { RefinedFields } from '../../../src/analysis/song.ts'
 import { autoCut, autoCutPool } from '../../../src/vision/autocut/index.ts'
 import {
   analysisBacklog,
+  analysisPace,
+  analysisProgress,
+  analysisQueue,
   autoCutAssets,
   autoCutOptions,
+  clipAnalysisSeconds,
   clipChoice,
   DEFAULT_AUTOCUT_CHOICES,
   matchesMood,
@@ -16,6 +20,8 @@ import {
   type AutoCutChoices,
 } from '../../../src/app/state/autocut.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
+import { VISION_ANALYSIS_VERSION } from '../../../src/vision/analysisData.ts'
+import type { Asset, Project } from '../../../src/model/index.ts'
 import { barsState, setSongAnalysisServiceForTests } from '../../../src/app/state/songAnalysis.ts'
 import type * as Footage from '../../../src/app/state/footage.ts'
 import { JobError, jobs, type JobErrorCode } from '../../../src/shared/jobs.ts'
@@ -244,6 +250,160 @@ it('passes the More options through: where cuts land, and story order over the m
   expect(matchesMood({ ...choices, matchMood: false })).toBe(false)
 })
 
+describe('the time left in a cut', () => {
+  const clip = (id: string, patch: Partial<Asset> = {}): Asset => ({
+    id,
+    kind: 'video',
+    name: `${id}.webm`,
+    mimeType: 'video/webm',
+    byteSize: 1,
+    storageKey: id,
+    duration: 10,
+    width: 1920,
+    height: 1080,
+    frameRate: 30,
+    origin: { type: 'import' },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...patch,
+  })
+  /** Which of its analysis steps a clip has done. */
+  type Done = { matched?: boolean; tags?: boolean; subjects?: boolean }
+  const withAssets = (assets: Asset[], done: Record<string, Done> = {}): Project => {
+    const project = editor.getProject()
+    const analysis = (assetId: string, d: Done) => ({
+      assetId,
+      version: VISION_ANALYSIS_VERSION,
+      data: {
+        sourceSize: { width: 1920, height: 1080 },
+        ...(d.matched ? { embedding: { model: 'm' } } : {}),
+        ...(d.tags ? { tags: ['sea'] } : {}),
+        ...(d.subjects ? { subjects: { samples: [] } } : {}),
+      },
+    })
+    return {
+      ...project,
+      assets: Object.fromEntries(assets.map((a) => [a.id, a])),
+      analysis: {
+        ...project.analysis,
+        visual: Object.fromEntries(Object.entries(done).map(([id, d]) => [id, analysis(id, d)])),
+      },
+    }
+  }
+  const indexing = (
+    assetId: string,
+    step: 'matching' | 'tags' | 'subjects',
+    fraction: number,
+    failed: string[] = [],
+  ): IndexingState => ({
+    status: 'indexing',
+    total: 2,
+    done: 1,
+    current: { assetId, name: `${assetId}.webm`, fraction, step },
+    failed: failed.map((id) => ({ assetId: id, name: `${id}.webm`, message: 'unreadable' })),
+  })
+  const all = { matched: true, tags: true, subjects: true }
+  const at = (n: number) => `2026-01-01T00:00:0${n}.000Z`
+
+  it('predicts the analysis of measured phone and camera clips, never shorter and at most a fifth longer in total', () => {
+    // Matching plus subjects, measured through the app on a 4-core computer without a GPU (models already loaded).
+    const measured = [
+      { width: 1920, height: 1080, frameRate: 30, duration: 10.7, seconds: 6.7 },
+      { width: 1080, height: 1920, frameRate: 30, duration: 8.0, seconds: 6.8 },
+      { width: 1440, height: 2560, frameRate: 27.9, duration: 10.4, seconds: 7.5 },
+      { width: 3840, height: 2160, frameRate: 30, duration: 14.1, seconds: 23.5 },
+      { width: 1920, height: 1080, frameRate: 30, duration: 21.3, seconds: 16 },
+      { width: 1080, height: 1920, frameRate: 60, duration: 10.7, seconds: 8 },
+      { width: 1920, height: 1080, frameRate: 30, duration: 13.6, seconds: 9.5 },
+      { width: 1080, height: 1920, frameRate: 59.4, duration: 15.8, seconds: 15.3 },
+      { width: 2160, height: 3840, frameRate: 25, duration: 27.2, seconds: 31.3 },
+      { width: 3840, height: 2160, frameRate: 30, duration: 15.8, seconds: 20 },
+    ]
+    let predicted = 0
+    for (const { seconds, ...size } of measured) {
+      const p = clipAnalysisSeconds(clip('c', size))
+      expect(p / seconds).toBeGreaterThan(0.8)
+      expect(p / seconds).toBeLessThan(1.4)
+      predicted += p
+    }
+    const total = measured.reduce((sum, m) => sum + m.seconds, 0)
+    expect(predicted).toBeGreaterThanOrEqual(total)
+    expect(predicted).toBeLessThanOrEqual(total * 1.2)
+    expect(clipAnalysisSeconds(clip('photo', { kind: 'image', duration: undefined }))).toBeLessThan(2)
+  })
+
+  it('follows this computer’s pace as analysis goes on, without one short clip setting it alone', () => {
+    expect(analysisPace(0, 0)).toBe(1)
+    expect(analysisPace(5, 15)).toBeLessThan(1.5)
+    expect(analysisPace(120, 240)).toBeGreaterThan(1.7)
+    expect(analysisPace(120, 60)).toBeLessThan(0.65)
+    expect(analysisPace(10, 10_000)).toBe(4)
+    expect(analysisPace(1000, 1)).toBe(0.5)
+  })
+
+  it('waits for the older clips analysis goes through first, not newer or analyzed ones', () => {
+    const project = withAssets(
+      [
+        clip('d', { createdAt: at(4) }),
+        clip('b', { createdAt: at(2) }),
+        clip('c', { createdAt: at(3) }),
+        clip('a', { createdAt: at(1) }),
+        clip('done', { createdAt: at(0) }),
+      ],
+      { done: all },
+    )
+    expect(analysisQueue(project, ['c', 'a']).map((c) => c.asset.id)).toEqual(['a', 'b', 'c'])
+    expect(analysisQueue(project, ['done'])).toEqual([])
+  })
+
+  it('waits for an older matched clip whose subjects were never found, but not for one that only needs tags', () => {
+    const old = clip('old', { createdAt: at(1) })
+    const tagless = clip('tagless', { createdAt: at(2) })
+    const fresh = clip('new', { createdAt: at(3) })
+    const project = withAssets([old, tagless, fresh], {
+      old: { matched: true, tags: true },
+      tagless: { matched: true, subjects: true },
+    })
+    const queue = analysisQueue(project, ['new'])
+    expect(queue.map((c) => [c.asset.id, c.steps])).toEqual([
+      ['old', ['subjects']],
+      ['tagless', ['tags']],
+      ['new', ['matching', 'tags', 'subjects']],
+    ])
+    const left = analysisProgress(project, queue).left
+    const leftOf = (p: Project) => analysisProgress(p, analysisQueue(p, ['new'])).left
+    const withoutOld = leftOf(
+      withAssets([old, tagless, fresh], { old: all, tagless: { matched: true, subjects: true } }),
+    )
+    expect(withoutOld).toBeCloseTo(leftOf(withAssets([fresh])))
+    expect(left - withoutOld).toBeGreaterThan(0)
+    expect(left - withoutOld).toBeLessThan(clipAnalysisSeconds(old))
+    // Halfway through finding the old clip's subjects, half of its share is left.
+    expect(analysisProgress(project, queue, indexing('old', 'subjects', 0.5)).left).toBeCloseTo(
+      (left + withoutOld) / 2,
+    )
+  })
+
+  it('counts clips analysis could not read as done, and the last clip once it is matched', () => {
+    const a = clip('a', { createdAt: at(1) })
+    const b = clip('b', { createdAt: at(2) })
+    const project = withAssets([a, b])
+    const queue = analysisQueue(project, ['a', 'b'])
+    const before = analysisProgress(project, queue)
+    expect(before.done).toBe(0)
+    const onlyB = analysisProgress(withAssets([b]), analysisQueue(withAssets([b]), ['b'])).left
+    // Matching is the first of b's three steps: at 0.2 of the clip, it is 0.6 of the way through matching.
+    const matching = analysisProgress(project, queue, indexing('b', 'matching', 0.2, ['a']))
+    expect(matching.left).toBeCloseTo(0.4 * onlyB)
+    expect(analysisProgress(project, queue, indexing('b', 'matching', 0.2)).left).toBeGreaterThan(
+      matching.left,
+    )
+    const matchedB = withAssets([a, b], { b: { matched: true } })
+    const matched = analysisProgress(matchedB, queue, indexing('b', 'tags', 0.4, ['a']))
+    expect(matched.left).toBe(0)
+    expect(matched.done).toBeCloseTo(before.left)
+  })
+})
+
 describe('the auto-cut job', () => {
   let refine: () => Promise<RefinedFields>
   let found: RefinedFields
@@ -267,8 +427,12 @@ describe('the auto-cut job', () => {
   async function cut() {
     const handle = startAutoCut({ pace: 'bar' })!
     const stages = new Set<string | undefined>()
-    handle.subscribe((s) => stages.add(s.progress.stage))
-    return { result: await handle.promise, stages }
+    const etas = new Map<string | undefined, number>()
+    handle.subscribe((s) => {
+      stages.add(s.progress.stage)
+      if (s.progress.etaSeconds !== undefined) etas.set(s.progress.stage, s.progress.etaSeconds)
+    })
+    return { result: await handle.promise, stages, etas }
   }
 
   it('finds the song’s bars first when they are not found yet', async () => {
@@ -278,6 +442,16 @@ describe('the auto-cut job', () => {
     expect(barsState().status).toBe('ready')
     expect(result.stats.cuts).toBeGreaterThan(0)
     expect(result.warnings.join(' ')).not.toMatch(/Bars not found yet/)
+  })
+
+  it('says how long it has left while it waits for the bars, and nothing when it waits for nothing', async () => {
+    refine = () => Promise.resolve(found)
+    const first = await cut()
+    expect(first.etas.get('bars')).toBeGreaterThan(first.etas.get('planning')!)
+    expect(first.etas.get('planning')).toBeGreaterThan(0)
+    const again = await cut()
+    expect(again.stages.has('planning')).toBe(true)
+    expect(again.etas.size).toBe(0)
   })
 
   it('cuts on the beats and says so when the bars cannot be found', async () => {

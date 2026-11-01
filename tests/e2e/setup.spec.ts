@@ -279,6 +279,7 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
   // The cut first waits for the clips to be analyzed, so it can match them to the mood.
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await expect(assist.getByText('Analyzing your footage… 0 of 1 clip')).toBeVisible()
+  await expect(assist.getByText('Less than a minute left')).toBeVisible()
   const videoClips = () =>
     page.evaluate(
       () =>

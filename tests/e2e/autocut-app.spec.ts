@@ -461,6 +461,7 @@ test('a cut that analyzes first waits for footage analysis and matches every cli
   })
   await start()
   await expect(assist.getByText(/^Analyzing your footage… 0 of \d+ clips$/)).toBeVisible()
+  await expect(assist.getByText(/^(Less than a minute|About \d+ min) left$/)).toBeVisible()
   await assist.getByRole('button', { name: 'Cancel' }).click()
   await expect(cutButton).toBeVisible()
   await expect.poll(status).toBe('paused')

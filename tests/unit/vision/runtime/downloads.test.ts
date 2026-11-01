@@ -183,6 +183,18 @@ describe('downloadLines', () => {
     expect(heard).toEqual([`${DEPTH_LINE} 0.4`, null])
   })
 
+  it('drops the time left the job gave while a download shows, until the job gives it again', () => {
+    const h = harness()
+    const lines = downloadLines(h.ctx, h.vision, ['depth'])
+    lines.progress({ fraction: 0.2, message: 'Analyzing your footage… 0 of 3 clips', etaSeconds: 120 })
+    h.send(h.download(0.4))
+    expect(h.state().etaSeconds).toBeUndefined()
+    h.send(h.download(1, true))
+    expect(h.state().etaSeconds).toBeUndefined()
+    lines.progress({ fraction: 0.3, etaSeconds: 90 })
+    expect(h.state().etaSeconds).toBe(90)
+  })
+
   it('leaves out the downloads of models the job does not use', () => {
     const h = harness()
     const lines = downloadLines(h.ctx, h.vision, ['cutout'])
