@@ -283,7 +283,7 @@ for (const right of [undefined, 272])
     await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
     const charged = panel
       .locator('[class*="viewBody"]')
-      .getByText(/Charged by fal\.ai to your key\s· prices checked /)
+      .getByText(/Charged by fal\.ai to your\skey\s· prices checked /)
     await expect(charged).toBeVisible()
     expect(within((await charged.boundingBox())!, view)).toBe(true)
     expect(within((await generate.boundingBox())!, view)).toBe(true)
