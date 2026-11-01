@@ -20,6 +20,13 @@ export function storageKeyFor(assetId: string, name: string): string {
   return `${MEDIA_ROOT}/${assetId}/${safeFileName(name)}`
 }
 
+/**
+ * Where a sidecar of an asset's media is kept: beside the media file, as "@<name>". Stored media names never hold an
+ * "@" (safeFileName), so the two can't collide, and the asset's folder holds only files.
+ */
+const sidecarPath = (asset: Asset, name: string) =>
+  `${asset.storageKey.split('/').slice(0, 2).join('/')}/@${name}`
+
 export class OpfsMediaStore implements MediaStore {
   async importFile(file: File, ctx?: JobContext): Promise<Asset> {
     const kind = detectKind(file)
@@ -114,6 +121,29 @@ export class OpfsMediaStore implements MediaStore {
     if (!media) return { folders: 0, bytes: 0 }
     // The DOM types give folder entries as plain FileSystemHandles, without file or folder methods.
     return removeUnusedFolders(media as unknown as MediaFolder, inUse, options)
+  }
+
+  /**
+   * A sidecar: a small file made from an asset's media, such as its thumbnail, kept beside the media file so it goes
+   * when the media is removed. Null when there is none.
+   */
+  async readSidecar(asset: Asset, name: string): Promise<File | null> {
+    const file = await readOpfsFile(sidecarPath(asset, name)).catch(() => null)
+    // An empty file is a write that failed part way (or an older build's).
+    return file?.size ? file : null
+  }
+
+  /** Keeps a sidecar of the asset's media (see readSidecar), unless the media is gone. */
+  async writeSidecar(asset: Asset, name: string, data: Blob): Promise<void> {
+    if (!(await opfsFileExists(asset.storageKey))) return
+    const path = sidecarPath(asset, name)
+    try {
+      await writeOpfsFile(path, data)
+    } catch (error) {
+      // The file is made before it is written, so a failed write (a full disk) would leave it empty.
+      await removeOpfsEntry(path).catch(() => undefined)
+      throw error
+    }
   }
 
   async usage(): Promise<{ usedBytes: number; quotaBytes: number; persisted: boolean }> {

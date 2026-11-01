@@ -1,7 +1,7 @@
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
 import { FIXTURE_DIR } from './global-setup.ts'
-import { expect, openHarness, test } from './fixtures.ts'
+import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
 
@@ -139,4 +139,188 @@ test('imported footage shows its own frames: the library card, and the inspector
   expect(seen.length).toBeGreaterThan(1)
   expect(seen).not.toContain('none')
   expect(seen).not.toContain(wholeUrl)
+})
+
+/** What an asset's folder in browser storage holds (a folder ends in "/"), or null once it is gone. */
+function assetFolder(page: Page, assetId: string) {
+  return page.evaluate(async (id) => {
+    const root = await navigator.storage.getDirectory()
+    let folder: FileSystemDirectoryHandle
+    try {
+      folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
+    } catch {
+      return null
+    }
+    const names: string[] = []
+    const entries = (folder as unknown as { values(): AsyncIterable<FileSystemHandle> }).values()
+    for await (const entry of entries) names.push(entry.kind === 'directory' ? `${entry.name}/` : entry.name)
+    return names.sort()
+  }, assetId)
+}
+
+interface ThumbLog {
+  /** When the thumbnails' video decoder (the vision-frames worker) started, ms since navigation. */
+  decoder: number[]
+  /** When the preview showed its first frame. */
+  firstFrame?: number
+}
+
+const KEPT = ['@thumb1-card-320x180.jpg', '@thumb1-frame-160x90-0.jpg']
+
+/**
+ * A kept project with a song and frames.mp4 on the timeline, once its card and its clip show their frames (12 and 0,
+ * as `frames()` reads them) and those are kept.
+ */
+async function framesProject(page: Page, { kept = true }: { kept?: boolean } = {}) {
+  await openBlank(page)
+  const chooser = page.waitForEvent('filechooser')
+  await page.keyboard.press(`${mod}+i`)
+  // With a song, so the editor shows the preview.
+  await (await chooser).setFiles(['song.wav', 'frames.mp4'].map((f) => path.join(FIXTURE_DIR, f)))
+  await waitForPreview(page)
+  const card = page.getByLabel('frames, video')
+  await card.hover()
+  await card.getByRole('button', { name: 'Add at playhead' }).click()
+  const cardThumb = card.locator('div').first()
+  const timelineClip = page.getByRole('button', { name: /^frames, 0:00\.0 to / })
+  const frames = async () => [(await shown(cardThumb))?.frame, (await shown(timelineClip))?.frame]
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([12, 0])
+  const { projectId, assetId } = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const assets = Object.values(project.assets) as { id: string; kind: string }[]
+    return { projectId: project.id as string, assetId: assets.find((a) => a.kind === 'video')!.id }
+  })
+  // Beside the media file, so the folder holds only files.
+  if (kept) await expect.poll(() => assetFolder(page, assetId)).toEqual([...KEPT, 'frames.mp4'])
+  await page.waitForFunction((id) => location.hash.includes(`project=${id}`), projectId)
+  return { frames, projectId, assetId }
+}
+
+/** Deletes an asset's kept thumbnails, as in a browser that has not shown its project yet. */
+function forgetThumbnails(page: Page, assetId: string) {
+  return page.evaluate(
+    async ({ id, names }) => {
+      const root = await navigator.storage.getDirectory()
+      const folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
+      for (const name of names) await folder.removeEntry(name)
+    },
+    { id: assetId, names: KEPT },
+  )
+}
+
+test('a reload shows the thumbnails kept beside the media without decoding the video, and decoding waits for the preview’s first frame', async ({
+  page,
+}) => {
+  const { frames, projectId, assetId } = await framesProject(page)
+
+  await page.addInitScript(() => {
+    const log: ThumbLog = { decoder: [] }
+    Object.assign(window, { thumbLog: log })
+    const Base = window.Worker
+    window.Worker = class extends Base {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        if (options?.name === 'vision-frames') log.decoder.push(performance.now())
+      }
+    }
+    new MutationObserver(() => {
+      if (
+        log.firstFrame === undefined &&
+        document.querySelector('[aria-label="Video preview"][aria-busy="false"]')
+      )
+        log.firstFrame = performance.now()
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-busy'] })
+  })
+  const thumbLog = () => page.evaluate(() => (window as unknown as { thumbLog: ThumbLog }).thumbLog)
+
+  // Kept: shown again without decoding the video.
+  await page.reload()
+  await waitForPreview(page)
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([12, 0])
+  expect((await thumbLog()).decoder).toEqual([])
+
+  // Not kept (a project file opened in another browser): made again, after the preview's first frame, and kept.
+  await forgetThumbnails(page, assetId)
+  await page.reload()
+  await waitForPreview(page)
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([12, 0])
+  const log = await thumbLog()
+  expect(log.decoder).toHaveLength(1)
+  expect(log.decoder[0]).toBeGreaterThan(log.firstFrame!)
+  await expect.poll(() => assetFolder(page, assetId)).toEqual([...KEPT, 'frames.mp4'])
+
+  // They go with the media.
+  await page.evaluate((id) => window.mvStudio.app.persistence.deleteProject(id), projectId)
+  await expect.poll(() => assetFolder(page, assetId)).toBeNull()
+})
+
+test('thumbnails still appear when the preview never shows its first frame', async ({ page }) => {
+  test.skip(process.env.E2E_PREVIEW_WORKER === '0', 'The preview is stalled by stopping its render worker')
+  const { frames, assetId } = await framesProject(page)
+  await forgetThumbnails(page, assetId)
+  // Every preview render worker stops as it starts, like one the browser stops, so the stage stays on "Preparing the
+  // preview" (until the preview gives up on the worker after 15 s).
+  await page.addInitScript(() => {
+    const Base = window.Worker
+    window.Worker = class extends Base {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        if (options?.name === 'preview') this.terminate()
+      }
+    }
+  })
+  await page.reload()
+  await expect.poll(frames, { timeout: 10_000 }).toEqual([12, 0])
+  await expect(page.getByRole('img', { name: 'Video preview' })).toHaveAttribute('aria-busy', 'true')
+})
+
+test('a thumbnail that could not be kept leaves no empty file, and an empty one is made again, never shown', async ({
+  page,
+}) => {
+  // While the flag is set, writing a sidecar fails as on a full disk: after the file is made, before any byte.
+  await page.addInitScript(() => {
+    const create = FileSystemFileHandle.prototype.createWritable
+    FileSystemFileHandle.prototype.createWritable = async function (
+      this: FileSystemFileHandle,
+      ...args: Parameters<typeof create>
+    ) {
+      const writable = await create.apply(this, args)
+      if (this.name.startsWith('@') && localStorage.getItem('e2e.fail-sidecars')) {
+        Object.assign(window, {
+          sidecarFailures: ((window as { sidecarFailures?: number }).sidecarFailures ?? 0) + 1,
+        })
+        writable.write = () => Promise.reject(new DOMException('The disk is full', 'QuotaExceededError'))
+      }
+      return writable
+    }
+  })
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('e2e.fail-sidecars', '1'))
+  const { frames, assetId } = await framesProject(page, { kept: false })
+  await expect
+    .poll(() => page.evaluate(() => (window as { sidecarFailures?: number }).sidecarFailures ?? 0))
+    .toBeGreaterThanOrEqual(KEPT.length)
+  expect(await assetFolder(page, assetId)).toEqual(['frames.mp4'])
+
+  // An empty card left behind (by an older build) counts as none.
+  await page.evaluate(async (id) => {
+    localStorage.removeItem('e2e.fail-sidecars')
+    const root = await navigator.storage.getDirectory()
+    const folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
+    await folder.getFileHandle('@thumb1-card-320x180.jpg', { create: true })
+  }, assetId)
+  await page.reload()
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([12, 0])
+  const sizes = () =>
+    page.evaluate(async (id) => {
+      const root = await navigator.storage.getDirectory()
+      const folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
+      const out: Record<string, number> = {}
+      for await (const entry of (
+        folder as unknown as { values(): AsyncIterable<FileSystemFileHandle> }
+      ).values())
+        if (entry.name.startsWith('@')) out[entry.name] = (await entry.getFile()).size > 0 ? 1 : 0
+      return out
+    }, assetId)
+  await expect.poll(sizes).toEqual({ '@thumb1-card-320x180.jpg': 1, '@thumb1-frame-160x90-0.jpg': 1 })
 })
