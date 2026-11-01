@@ -329,8 +329,28 @@ export function expectedFromTrial(planned: PlannedOutput, trial: ExportProbe): E
 export interface OutputEstimate {
   /** Seconds for the whole output, with margins: what the export dialog shows. */
   seconds: number
-  /** What a trial expects of its frames (expectedFromTrial); missing when no trial of this output ran. */
+  /** What the export's time left starts from (exportTimeLeft); missing when nothing is known of the frames. */
   expected?: ExpectedTime
+}
+
+/**
+ * An output's estimate from its trial (null or undefined when there is none; `current` when it timed the project as
+ * it draws now) and the estimate from a remembered pace of an earlier export, or null when neither is known. A trial
+ * never brings the estimate below the remembered one, and what the export starts from scales with the estimate, so
+ * its first figure is the one the dialog showed. Without a current trial the frames are expected to cost the same.
+ */
+export function knownEstimate(
+  trial: Required<OutputEstimate> | null | undefined,
+  current: boolean,
+  remembered: number | null,
+): OutputEstimate | null {
+  if (trial) {
+    const seconds = Math.max(trial.seconds, remembered ?? 0)
+    const scale = trial.seconds > 0 ? seconds / trial.seconds : 1
+    const expected = current ? { ...trial.expected, seconds: scale * trial.expected.seconds } : { seconds }
+    return { seconds, expected }
+  }
+  return remembered === null ? null : { seconds: remembered, expected: { seconds: remembered } }
 }
 
 /** A finished export's pace: its whole time per compositor render, and how busy its frames were. */

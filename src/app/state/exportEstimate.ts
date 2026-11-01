@@ -9,6 +9,7 @@ import { useEffect, useEffectEvent, useSyncExternalStore } from 'react'
 import {
   estimateOutput,
   estimateRenderSeconds,
+  knownEstimate,
   rememberedEstimate,
   type OutputEstimate,
   type PlannedOutput,
@@ -94,24 +95,18 @@ async function runTrials(project: Project, outputs: PlannedOutput[], signal: Abo
 }
 
 /**
- * What is known of how long the output takes to export on this device, or null while that is still being worked
- * out. A remembered pace of an earlier export counts at once, and a trial never brings the estimate below it. What a
- * trial expects of the frames comes only from a trial of the project as it draws now.
+ * What is known of how long the output takes to export on this device (knownEstimate), or null while that is still
+ * being worked out. A remembered pace of an earlier export counts at once.
  */
 export function outputEstimate(project: Project, planned: PlannedOutput): OutputEstimate | null {
-  const remembered = rememberedEstimate(project.id, planned)
   const key = trialKey(project, planned)
   const current = trials.has(key)
   const trial = current ? trials.get(key) : latest.get(latestKey(project, planned))
-  if (trial)
-    return {
-      seconds: Math.max(trial.seconds, remembered ?? 0),
-      ...(current ? { expected: trial.expected } : {}),
-    }
-  if (remembered !== null) return { seconds: remembered }
-  // Without a trial the export would run on the main thread too; only the rough frame-rate guess is left.
-  if (trial === null) return { seconds: estimateRenderSeconds(planned) }
-  return null
+  const known = knownEstimate(trial, current, rememberedEstimate(project.id, planned))
+  if (known) return known
+  // Without a trial the export would run on the main thread too; only the rough frame-rate guess is left, and it can
+  // be far too low for the export's time left to start from.
+  return trial === null ? { seconds: estimateRenderSeconds(planned) } : null
 }
 
 /**
