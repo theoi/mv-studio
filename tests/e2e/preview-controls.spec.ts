@@ -85,28 +85,52 @@ test('Loop repeats the section under the playhead, moves with a seek to another 
   await expect(loop).toHaveAccessibleName('Loop playback')
 })
 
+const timelineEnd = (page: Page) =>
+  page.evaluate(() => {
+    const { editor, timelineDuration } = window.mvStudio.app.project
+    return timelineDuration(editor.getProject()) as number
+  })
+
+/** Mean luma of the preview frame, drawn again for the current state (captureFrame). */
+const frameBrightness = (page: Page) =>
+  page.evaluate(async () => {
+    const frame: ImageBitmap = await window.mvStudio.app.stagePreview().captureFrame()
+    const ctx = new OffscreenCanvas(frame.width, frame.height).getContext(
+      '2d',
+    ) as OffscreenCanvasRenderingContext2D
+    ctx.drawImage(frame, 0, 0)
+    const d = ctx.getImageData(0, 0, frame.width, frame.height).data
+    let sum = 0
+    for (let i = 0; i < d.length; i += 4)
+      sum += 0.2126 * (d[i] as number) + 0.7152 * (d[i + 1] as number) + 0.0722 * (d[i + 2] as number)
+    return sum / (d.length / 4)
+  })
+
+/** Mean luma of the preview as it is on screen. */
+async function shownBrightness(page: Page): Promise<number> {
+  const png = await page.getByRole('img', { name: 'Video preview' }).screenshot()
+  return page.evaluate(async (base64) => {
+    const blob = await (await fetch(`data:image/png;base64,${base64}`)).blob()
+    const frame = await createImageBitmap(blob)
+    const ctx = new OffscreenCanvas(frame.width, frame.height).getContext(
+      '2d',
+    ) as OffscreenCanvasRenderingContext2D
+    ctx.drawImage(frame, 0, 0)
+    const d = ctx.getImageData(0, 0, frame.width, frame.height).data
+    let sum = 0
+    for (let i = 0; i < d.length; i += 4)
+      sum += 0.2126 * (d[i] as number) + 0.7152 * (d[i + 1] as number) + 0.0722 * (d[i + 2] as number)
+    return sum / (d.length / 4)
+  }, png.toString('base64'))
+}
+
 test('a link past the end, End, stepping forward and a scrub past the end all stop on the video’s last frame', async ({
   page,
 }) => {
   await openEditor(page, '#/editor?t=9999')
-  const end = await page.evaluate(() => {
-    const { editor, timelineDuration } = window.mvStudio.app.project
-    return timelineDuration(editor.getProject()) as number
-  })
+  const end = await timelineEnd(page)
   const playhead = () => page.evaluate(() => window.mvStudio.app.ui.get().playhead as number)
-  const brightness = () =>
-    page.evaluate(async () => {
-      const frame: ImageBitmap = await window.mvStudio.app.stagePreview().captureFrame()
-      const ctx = new OffscreenCanvas(frame.width, frame.height).getContext(
-        '2d',
-      ) as OffscreenCanvasRenderingContext2D
-      ctx.drawImage(frame, 0, 0)
-      const d = ctx.getImageData(0, 0, frame.width, frame.height).data
-      let sum = 0
-      for (let i = 0; i < d.length; i += 4)
-        sum += 0.2126 * (d[i] as number) + 0.7152 * (d[i + 1] as number) + 0.0722 * (d[i + 2] as number)
-      return sum / (d.length / 4)
-    })
+  const brightness = () => frameBrightness(page)
   expect(await playhead()).toBeCloseTo(end - 0.01, 6)
   // At the end itself every clip has ended and the frame is black.
   await expect.poll(brightness).toBeGreaterThan(5)
@@ -133,6 +157,41 @@ test('a link past the end, End, stepping forward and a scrub past the end all st
   await page.mouse.move(box.x + 2 * end + 100, y, { steps: 4 })
   await page.mouse.up()
   expect(await playhead()).toBeCloseTo(end - 0.01, 6)
+})
+
+test('playing to the end, and going to a marker on the end, show the video’s last frame', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=202.5')
+  const end = await timelineEnd(page)
+  const playhead = () => page.evaluate(() => window.mvStudio.app.ui.get().playhead as number)
+  const playing = () => page.evaluate(() => window.mvStudio.app.ui.get().playing as boolean)
+  await page.keyboard.press('Space')
+  await expect.poll(playing).toBe(true)
+  await expect.poll(playing, { timeout: 15_000 }).toBe(false)
+  // Playback stops on the end itself, where every clip has ended.
+  expect(await playhead()).toBeCloseTo(end, 2)
+  await expect.poll(() => shownBrightness(page)).toBeGreaterThan(5)
+  // And a capture of it (VJ mode's entry frame, stills) too.
+  await expect.poll(() => frameBrightness(page)).toBeGreaterThan(5)
+  // Play from there starts again from the top.
+  await page.keyboard.press('Space')
+  await expect.poll(playhead).toBeLessThan(5)
+  await page.keyboard.press('Space')
+  await expect.poll(playing).toBe(false)
+
+  await page.evaluate(
+    (time) =>
+      window.mvStudio.app.project.editor.dispatch({
+        type: 'marker.add',
+        marker: { id: 'finale', time, kind: 'user', label: 'Finale' },
+      }),
+    end,
+  )
+  await page.getByRole('button', { name: /^Finale, marker at/ }).focus()
+  await page.keyboard.press('Enter')
+  await expect.poll(playhead).toBe(end)
+  await expect.poll(() => shownBrightness(page)).toBeGreaterThan(5)
 })
 
 test('Volume sets the preview level, which is remembered after a reload', async ({ page }) => {

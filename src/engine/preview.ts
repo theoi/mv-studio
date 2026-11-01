@@ -383,6 +383,17 @@ const PREWARM_TRANSITIONS = 2
 const WARM_EVERY_MS = 200
 /** How long dispose() waits for frames being drawn or captured before it stops the renderer anyway. */
 const DISPOSE_WAIT_MS = 2000
+/** How far before the project's end its last frame is drawn; the app's End goes to the same place. */
+const LAST_FRAME_LEAD = 0.01
+
+/**
+ * The time a frame is drawn at. Every clip has ended at the project's end itself, so a playhead there (where playback
+ * stops) shows the last frame instead of an empty one.
+ */
+function shownTime(project: Project, time: Seconds): Seconds {
+  const duration = projectDuration(project)
+  return duration > 0 ? Math.min(time, Math.max(0, duration - LAST_FRAME_LEAD)) : time
+}
 
 export class PreviewController {
   readonly canvas: HTMLCanvasElement
@@ -751,7 +762,7 @@ export class PreviewController {
     await this.rendered()
     const project = this.project
     if (!project) throw new Error('The preview has no project')
-    return renderer.snapshot(project, this.clock.currentTime(), this.frameSize(project))
+    return renderer.snapshot(project, shownTime(project, this.clock.currentTime()), this.frameSize(project))
   }
 
   /**
@@ -880,9 +891,10 @@ export class PreviewController {
     this.requestStill()
   }
 
-  private draw(time: Seconds, still = false): Promise<void> {
+  private draw(requested: Seconds, still = false): Promise<void> {
     const project = this.project
     if (!project || this.disposed) return Promise.resolve()
+    const time = shownTime(project, requested)
     const started = performance.now()
     const size = this.frameSize(project)
     const scale = this.scale
@@ -913,7 +925,7 @@ export class PreviewController {
           while (this.frameLog.length > 0 && now - (this.frameLog[0] as { at: number }).at > 1000)
             this.frameLog.shift()
           if (seeks === this.seeks || this.clock.state !== 'playing')
-            for (const listener of this.frameListeners) listener(time)
+            for (const listener of this.frameListeners) listener(requested)
         },
         (error: unknown) => {
           if (this.disposed) return
