@@ -12,7 +12,7 @@ import type { AspectPreset, Project, Seconds } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
 import { audibleClips, audioBufferCache, renderMix } from './audio.ts'
 import { AUDIO_SAMPLE_RATE, encodeExport, type EncodeJob, type EncodeResult } from './encode.ts'
-import { startRenderWorker } from './renderHost.ts'
+import { startRenderWorker, type RenderWorker } from './renderHost.ts'
 import type { ExportResult, ExportSettings, MediaFileSource, PluginRegistry } from './types.ts'
 
 export type ExportResolution = '720p' | '1080p' | '1440p' | '2160p'
@@ -115,8 +115,8 @@ export interface ExportOptions {
 
 /**
  * Exports the project to an MP4 file in browser storage. Run it as a job: jobs.run({ kind: 'export.mp4', ... }).
- * Rendering runs in the render worker unless `options` supplies a media source or plugin registry, which cannot cross
- * to a worker; then it runs in-process.
+ * Rendering runs in the render worker, which reads `options.media` through a message port. It runs in-process when
+ * `options` supplies a plugin registry, which cannot cross to a worker, or when the worker cannot draw.
  */
 export async function exportProject(
   project: Project,
@@ -173,10 +173,9 @@ export async function exportProject(
     path: `${dir}/${options.fileName ?? exportFileName(project.name)}`,
   }
   try {
-    const result =
-      options.media || options.registry
-        ? await encodeExport(job, ctx, { media, registry: options.registry })
-        : await encodeInWorker(job, ctx)
+    const result = options.registry
+      ? await encodeExport(job, ctx, { media, registry: options.registry })
+      : await encodeInWorker(job, ctx, options.media)
     ctx.throwIfCancelled()
     const file = await readOpfsFile(job.path)
     return {
@@ -193,18 +192,34 @@ export async function exportProject(
   }
 }
 
-async function encodeInWorker(job: EncodeJob, ctx: JobContext): Promise<EncodeResult> {
-  const worker = startRenderWorker()
+async function encodeInWorker(
+  job: EncodeJob,
+  ctx: JobContext,
+  media?: MediaFileSource,
+): Promise<EncodeResult> {
+  let worker: RenderWorker
+  try {
+    worker = await startRenderWorker()
+  } catch (error) {
+    ctx.throwIfCancelled()
+    // As the preview does: the page may have WebGL2 where its workers don't.
+    console.warn('The render worker cannot draw; exporting on the main thread', error)
+    return encodeExport(job, ctx, { media: media ?? mediaStore })
+  }
   let timer: ReturnType<typeof setTimeout> | undefined
   // A worker that does not stop soon after cancelling (a hung GPU, for example) is terminated.
   const onAbort = () => (timer = setTimeout(() => worker.dispose(), CANCEL_GRACE_MS))
   ctx.signal.addEventListener('abort', onAbort, { once: true })
   try {
-    return await worker.exportVideo(job, {
-      signal: ctx.signal,
-      onProgress: (p) => ctx.progress(p),
-      transfer: job.audio?.channels.map((c) => c.buffer) ?? [],
-    })
+    return await worker.exportVideo(
+      job,
+      {
+        signal: ctx.signal,
+        onProgress: (p) => ctx.progress(p),
+        transfer: job.audio?.channels.map((c) => c.buffer) ?? [],
+      },
+      media,
+    )
   } finally {
     ctx.signal.removeEventListener('abort', onAbort)
     clearTimeout(timer)

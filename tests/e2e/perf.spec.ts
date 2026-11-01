@@ -172,28 +172,32 @@ test('cuts between pieces of the same footage play without stalls or wrong frame
   expect(r.maxStallMs).toBeLessThan(50)
 })
 
-test('export benchmark: speed and main-thread responsiveness', async ({ page }, testInfo) => {
-  test.setTimeout(300_000)
-  await openHarness(page)
-  await page.setInputFiles('#e2e-file-input', MEDIA)
-  const result = await page.evaluate(async () => {
-    const { media, testing } = window.mvStudio
-    const [song, hd, sd] = await Promise.all(
-      window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
-    )
-    return testing.bench.runExportBenchmark(
-      'typical',
-      { song, hd, sd },
-      { width: 1280, height: 720, fps: 30, seconds: 2 },
-    )
+for (const source of ['storage', 'page'] as const)
+  test(`export benchmark, media from ${source === 'page' ? 'a page media source as in the app' : 'browser storage'}: speed and main-thread responsiveness`, async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(300_000)
+    await openHarness(page)
+    await page.setInputFiles('#e2e-file-input', MEDIA)
+    const result = await page.evaluate(async (source) => {
+      const { media, testing } = window.mvStudio
+      const [song, hd, sd] = await Promise.all(
+        window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
+      )
+      return testing.bench.runExportBenchmark(
+        'typical',
+        { song, hd, sd },
+        { width: 1280, height: 720, fps: 30, seconds: 2 },
+        source === 'page' ? { getFile: (asset: unknown) => media.mediaStore.getFile(asset) } : undefined,
+      )
+    }, source)
+    console.log(`export benchmark (${source})`, JSON.stringify(result))
+    await testInfo.attach(`export-benchmark-${source}.json`, {
+      body: JSON.stringify(result, null, 2),
+      contentType: 'application/json',
+    })
+    expect(result.realtime).toBeGreaterThan(0.01)
+    // Rendering and encoding run in the render worker, so the page keeps handling input while exporting.
+    expect(result.main.inputDelayP95Ms).toBeLessThan(50)
+    expect(result.main.longTaskMaxMs).toBeLessThan(200)
   })
-  console.log('export benchmark', JSON.stringify(result))
-  await testInfo.attach('export-benchmark.json', {
-    body: JSON.stringify(result, null, 2),
-    contentType: 'application/json',
-  })
-  expect(result.realtime).toBeGreaterThan(0.01)
-  // Rendering and encoding run in the render worker, so the page keeps handling input while exporting.
-  expect(result.main.inputDelayP95Ms).toBeLessThan(50)
-  expect(result.main.longTaskMaxMs).toBeLessThan(200)
-})

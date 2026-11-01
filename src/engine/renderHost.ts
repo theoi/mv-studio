@@ -1,7 +1,9 @@
 /**
  * Main-thread side of the render worker (render.worker.ts). The worker renders with its own WebGL context on an
- * OffscreenCanvas and reads media straight from OPFS (export) or through the page's media source (preview), so however
- * slow the GPU (or a GPU-less machine's software renderer) is, rendering never blocks input on the main thread.
+ * OffscreenCanvas and reads media through the page's media source (serveMedia), or straight from OPFS for an export
+ * given none, so however slow the GPU (or a GPU-less machine's software renderer) is, rendering never blocks input on
+ * the main thread. A worker is asked whether it can draw before it gets any work; when it can't, the preview and
+ * exports draw on the main thread instead.
  */
 import { JobError } from '../shared/jobs.ts'
 import { createWorkerClient, type CallOptions } from '../shared/worker.ts'
@@ -13,13 +15,24 @@ import type { MediaFileSource } from './types.ts'
 
 export interface RenderWorker {
   /**
-   * Renders and encodes an export (encodeExport). Pass the audio channel buffers in `options.transfer`. On cancel, the
-   * call settles once the worker has stopped writing. If the worker dies, rejects with 'worker-crashed' or
-   * 'out-of-memory'.
+   * Renders and encodes an export (encodeExport). Pass the audio channel buffers in `options.transfer`. With `media`,
+   * the worker reads files through the page's media source instead of straight from OPFS. On cancel, the call settles
+   * once the worker has stopped writing. If the worker dies, rejects with 'worker-crashed' or 'out-of-memory'.
    */
-  exportVideo(job: EncodeJob, options?: CallOptions): Promise<EncodeResult>
+  exportVideo(job: EncodeJob, options?: CallOptions, media?: MediaFileSource): Promise<EncodeResult>
   /** Terminates the worker; pending calls reject with 'cancelled'. */
   dispose(): void
+}
+
+/** `promise`, or a rejection with `timedOut` after `ms`. */
+function within<T>(promise: Promise<T>, ms: number, timedOut: JobError): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(timedOut), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
 }
 
 function spawnRenderWorker(name: string) {
@@ -28,10 +41,49 @@ function spawnRenderWorker(name: string) {
   )
 }
 
-export function startRenderWorker(): RenderWorker {
+/**
+ * Until a worker has answered that it can draw, and for a preview until it has drawn its first frame, it counts as
+ * dead when a call takes longer than this. Calls made before it holds its watch lock (worker.ts) would otherwise wait
+ * forever if it was stopped then.
+ */
+const WORKER_START_TIMEOUT_MS = 15_000
+
+/** Resolves once a new worker says it can draw; else stops it and rejects (unsupported, crashed or timeout). */
+async function whenItCanDraw(client: ReturnType<typeof spawnRenderWorker>, role: string): Promise<void> {
+  try {
+    await within(
+      client.call('probe', undefined),
+      WORKER_START_TIMEOUT_MS,
+      new JobError('timeout', `The ${role} worker did not start`),
+    )
+  } catch (error) {
+    client.terminate()
+    throw error
+  }
+}
+
+/**
+ * Starts a render worker for an export. Rejects, with the worker stopped, when it cannot draw (no WebGL2 in workers),
+ * fails to start or does not answer in time, so the caller can export on the main thread instead.
+ */
+export async function startRenderWorker(): Promise<RenderWorker> {
   const client = spawnRenderWorker('render')
+  await whenItCanDraw(client, 'render')
   return {
-    exportVideo: (job, options) => client.call('exportVideo', job, { ...options, awaitCancel: true }),
+    exportVideo: async (job, options = {}, media) => {
+      if (!media) return client.call('exportVideo', { job }, { ...options, awaitCancel: true })
+      const channel = new MessageChannel()
+      serveMedia(channel.port1, media)
+      try {
+        return await client.call(
+          'exportVideo',
+          { job, media: channel.port2 },
+          { ...options, transfer: [...(options.transfer ?? []), channel.port2], awaitCancel: true },
+        )
+      } finally {
+        channel.port1.close()
+      }
+    },
     dispose: () => client.terminate(),
   }
 }
@@ -53,25 +105,8 @@ export interface PreviewWorker {
   dispose(): void
 }
 
-/**
- * Until a worker has drawn its first frame, it counts as dead when a call takes longer than this. Calls made before
- * it holds its watch lock (worker.ts) would otherwise wait forever if it was stopped then.
- */
-const PREVIEW_START_TIMEOUT_MS = 15_000
-
 /** How long a closing preview's worker gets to close its frames before it is terminated anyway. */
 const PREVIEW_STOP_TIMEOUT_MS = 1000
-
-/** `promise`, or a rejection with `timedOut` after `ms`. */
-function within<T>(promise: Promise<T>, ms: number, timedOut: JobError): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(timedOut), ms)
-    }),
-  ]).finally(() => clearTimeout(timer))
-}
 
 /**
  * Starts a render worker for a preview and moves `canvas` into it. Rejects with the canvas untouched when the worker
@@ -85,20 +120,11 @@ export async function startPreviewWorker(
   options: { preserveDrawingBuffer?: boolean } = {},
 ): Promise<PreviewWorker> {
   const client = spawnRenderWorker('preview')
+  await whenItCanDraw(client, 'preview')
   const channel = new MessageChannel()
   const stop = () => {
     client.terminate()
     channel.port1.close()
-  }
-  try {
-    await within(
-      client.call('previewProbe', undefined),
-      PREVIEW_START_TIMEOUT_MS,
-      new JobError('timeout', 'The preview worker did not start'),
-    )
-  } catch (error) {
-    stop()
-    throw error
   }
   const offscreen = canvas.transferControlToOffscreen()
   serveMedia(channel.port1, media)
@@ -112,7 +138,7 @@ export async function startPreviewWorker(
   const timedOut = new JobError('timeout', 'The preview worker stopped responding')
   /** Rejects with the failure once the worker is taken for dead (or failed, with `fatal`); other errors pass. */
   const starting = <T>(call: Promise<T>, fatal: boolean): Promise<T> =>
-    within(call, PREVIEW_START_TIMEOUT_MS, timedOut).catch((error: unknown) => {
+    within(call, WORKER_START_TIMEOUT_MS, timedOut).catch((error: unknown) => {
       const death = client.failure() ?? (error === timedOut || fatal ? JobError.from(error) : null)
       throw death ? fail(death) : (failure ?? error)
     })

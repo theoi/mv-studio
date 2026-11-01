@@ -4,6 +4,7 @@
  * elements; images and fonts are read through the main thread's media source, which may generate files (sample media).
  */
 import type { Asset, Project, Seconds } from '../model/types.ts'
+import { JobError, type SerializedJobError } from '../shared/jobs.ts'
 import { videoTextureKey, WebGLCompositor } from './compositor.ts'
 import { BridgedFrameProvider, type BridgedVideo } from './frames.ts'
 import type { MediaFileSource } from './types.ts'
@@ -78,7 +79,7 @@ export interface MediaPortRequest {
   id: number
   asset: Asset
 }
-export type MediaPortResponse = { id: number; file: Blob } | { id: number; error: string }
+export type MediaPortResponse = { id: number; file: Blob } | { id: number; error: SerializedJobError }
 
 /** Worker end of the media port. */
 export function portMedia(port: MessagePort): MediaFileSource {
@@ -90,7 +91,7 @@ export function portMedia(port: MessagePort): MediaFileSource {
     if (!request) return
     pending.delete(msg.id)
     if ('file' in msg) request.resolve(msg.file)
-    else request.reject(new Error(msg.error))
+    else request.reject(JobError.fromJSON(msg.error))
   }
   return {
     getFile: (asset) =>
@@ -109,10 +110,7 @@ export function serveMedia(port: MessagePort, media: MediaFileSource): void {
     media.getFile(asset).then(
       (file) => port.postMessage({ id, file } satisfies MediaPortResponse),
       (error: unknown) =>
-        port.postMessage({
-          id,
-          error: error instanceof Error ? error.message : String(error),
-        } satisfies MediaPortResponse),
+        port.postMessage({ id, error: JobError.from(error).toJSON() } satisfies MediaPortResponse),
     )
   }
 }
