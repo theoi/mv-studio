@@ -105,13 +105,22 @@ export class OpfsMediaStore implements MediaStore {
    * when the media is removed. Null when there is none.
    */
   async readSidecar(asset: Asset, name: string): Promise<File | null> {
-    return readOpfsFile(sidecarPath(asset, name)).catch(() => null)
+    const file = await readOpfsFile(sidecarPath(asset, name)).catch(() => null)
+    // An empty file is a write that failed part way (or an older build's).
+    return file?.size ? file : null
   }
 
   /** Keeps a sidecar of the asset's media (see readSidecar), unless the media is gone. */
   async writeSidecar(asset: Asset, name: string, data: Blob): Promise<void> {
     if (!(await opfsFileExists(asset.storageKey))) return
-    await writeOpfsFile(sidecarPath(asset, name), data)
+    const path = sidecarPath(asset, name)
+    try {
+      await writeOpfsFile(path, data)
+    } catch (error) {
+      // The file is made before it is written, so a failed write (a full disk) would leave it empty.
+      await removeOpfsEntry(path).catch(() => undefined)
+      throw error
+    }
   }
 
   async usage(): Promise<{ usedBytes: number; quotaBytes: number; persisted: boolean }> {

@@ -41,6 +41,7 @@ async function previewFirst(): Promise<void> {
     if (hold === previewShown) return
   }
 }
+
 /** Thumbnails made at once, so importing many clips does not open a video decoder for each of them together. */
 const AT_ONCE = 2
 /** Object URLs of made thumbnails by asset id; null while one is waiting or being made, or when it cannot be. */
@@ -79,11 +80,11 @@ async function frameOf(asset: Asset, file: Blob): Promise<ImageBitmap> {
   }
 }
 
+const hasCard = (asset: Asset) => asset.kind === 'image' || asset.kind === 'video'
+
+/** Makes the asset's card from its media, and keeps it. */
 async function makeThumb(asset: Asset): Promise<Blob | null> {
-  if (asset.kind !== 'image' && asset.kind !== 'video') return null
-  const stored = await kept.get(asset, CARD)
-  if (stored) return stored
-  await previewFirst()
+  if (!hasCard(asset)) return null
   const frame = await frameOf(asset, await appMedia.getFile(asset))
   try {
     const jpeg = await coverJpeg(frame, WIDTH, HEIGHT, 0.84)
@@ -94,16 +95,21 @@ async function makeThumb(asset: Asset): Promise<Blob | null> {
   }
 }
 
+function show(asset: Asset, card: Blob | null): void {
+  thumbs.set(asset.id, card ? URL.createObjectURL(card) : null)
+  for (const l of listeners) l()
+}
+
 function pump(): void {
   while (running < AT_ONCE && queue.length) {
     const asset = queue.shift()!
     running++
-    void makeThumb(asset)
+    void previewFirst()
+      .then(() => makeThumb(asset))
       .catch(() => null)
-      .then((blob) => {
+      .then((card) => {
         running--
-        thumbs.set(asset.id, blob ? URL.createObjectURL(blob) : null)
-        for (const l of listeners) l()
+        show(asset, card)
         pump()
       })
   }
@@ -112,16 +118,28 @@ function pump(): void {
 function request(asset: Asset): void {
   if (thumbs.has(asset.id)) return
   thumbs.set(asset.id, null)
-  queue.push(asset)
-  pump()
+  if (!hasCard(asset)) return
+  // Looked up before the queue, so kept cards don't wait behind cards being made.
+  void kept
+    .get(asset, CARD)
+    .catch(() => null)
+    .then((card) => {
+      if (card) return show(asset, card)
+      queue.push(asset)
+      pump()
+    })
 }
 
-/** A thumbnail image of an image or video asset, e.g. for a project's card on the start screen. */
+/**
+ * A thumbnail image of an image or video asset, e.g. for a project's card on the start screen. It doesn't wait for the
+ * preview's first frame: saving the project waits for it.
+ */
 export async function thumbnailBlob(asset: Asset): Promise<Blob | null> {
   const scene = sceneOf(asset)
   if (scene) return (await fetch(sceneThumb(scene))).blob()
   const made = thumbs.get(asset.id)
-  return made ? (await fetch(made)).blob() : makeThumb(asset)
+  if (made) return (await fetch(made)).blob()
+  return (await kept.get(asset, CARD).catch(() => null)) ?? makeThumb(asset)
 }
 
 /** The thumbnail URL for an asset, or undefined while it is being made (or for audio). */

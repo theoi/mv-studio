@@ -171,7 +171,7 @@ const KEPT = ['@thumb1-card-320x180.jpg', '@thumb1-frame-160x90-0.jpg']
  * A kept project with a song and frames.mp4 on the timeline, once its card and its clip show their frames (12 and 0,
  * as `frames()` reads them) and those are kept.
  */
-async function framesProject(page: Page) {
+async function framesProject(page: Page, { kept = true }: { kept?: boolean } = {}) {
   await openBlank(page)
   const chooser = page.waitForEvent('filechooser')
   await page.keyboard.press(`${mod}+i`)
@@ -191,7 +191,7 @@ async function framesProject(page: Page) {
     return { projectId: project.id as string, assetId: assets.find((a) => a.kind === 'video')!.id }
   })
   // Beside the media file, so the folder holds only files.
-  await expect.poll(() => assetFolder(page, assetId)).toEqual([...KEPT, 'frames.mp4'])
+  if (kept) await expect.poll(() => assetFolder(page, assetId)).toEqual([...KEPT, 'frames.mp4'])
   await page.waitForFunction((id) => location.hash.includes(`project=${id}`), projectId)
   return { frames, projectId, assetId }
 }
@@ -272,4 +272,55 @@ test('thumbnails still appear when the preview never shows its first frame', asy
   await page.reload()
   await expect.poll(frames, { timeout: 10_000 }).toEqual([12, 0])
   await expect(page.getByRole('img', { name: 'Video preview' })).toHaveAttribute('aria-busy', 'true')
+})
+
+test('a thumbnail that could not be kept leaves no empty file, and an empty one is made again, never shown', async ({
+  page,
+}) => {
+  // While the flag is set, writing a sidecar fails as on a full disk: after the file is made, before any byte.
+  await page.addInitScript(() => {
+    const create = FileSystemFileHandle.prototype.createWritable
+    FileSystemFileHandle.prototype.createWritable = async function (
+      this: FileSystemFileHandle,
+      ...args: Parameters<typeof create>
+    ) {
+      const writable = await create.apply(this, args)
+      if (this.name.startsWith('@') && localStorage.getItem('e2e.fail-sidecars')) {
+        Object.assign(window, {
+          sidecarFailures: ((window as { sidecarFailures?: number }).sidecarFailures ?? 0) + 1,
+        })
+        writable.write = () => Promise.reject(new DOMException('The disk is full', 'QuotaExceededError'))
+      }
+      return writable
+    }
+  })
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('e2e.fail-sidecars', '1'))
+  const { frames, assetId } = await framesProject(page, { kept: false })
+  await expect
+    .poll(() => page.evaluate(() => (window as { sidecarFailures?: number }).sidecarFailures ?? 0))
+    .toBeGreaterThanOrEqual(KEPT.length)
+  expect(await assetFolder(page, assetId)).toEqual(['frames.mp4'])
+
+  // An empty card left behind (by an older build) counts as none.
+  await page.evaluate(async (id) => {
+    localStorage.removeItem('e2e.fail-sidecars')
+    const root = await navigator.storage.getDirectory()
+    const folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
+    await folder.getFileHandle('@thumb1-card-320x180.jpg', { create: true })
+  }, assetId)
+  await page.reload()
+  await expect.poll(frames, { timeout: 15_000 }).toEqual([12, 0])
+  const sizes = () =>
+    page.evaluate(async (id) => {
+      const root = await navigator.storage.getDirectory()
+      const folder = await (await root.getDirectoryHandle('media')).getDirectoryHandle(id)
+      const out: Record<string, number> = {}
+      for await (const entry of (
+        folder as unknown as { values(): AsyncIterable<FileSystemFileHandle> }
+      ).values())
+        if (entry.name.startsWith('@')) out[entry.name] = (await entry.getFile()).size > 0 ? 1 : 0
+      return out
+    }, assetId)
+  await expect.poll(sizes).toEqual({ '@thumb1-card-320x180.jpg': 1, '@thumb1-frame-160x90-0.jpg': 1 })
 })
