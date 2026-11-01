@@ -139,7 +139,9 @@ import {
 } from '../../../state/library.ts'
 import { exportSectionTeaser } from '../../../state/exports.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
+import { spaceGoesToControl } from '../../../state/keymap.ts'
 import { addMarkerAtPlayhead } from '../../../state/markers.ts'
+import { goToSection } from '../../../state/playback.ts'
 import {
   EASINGS,
   groupMarks,
@@ -1650,6 +1652,8 @@ export function Timeline() {
   const [insertPill, setInsertPill] = useState<{ x: number; y: number; label: string } | null>(null)
   const [view, setView] = useState({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
+  // Where the playhead was before a click on a section moved it, so a double-click to rename can put it back.
+  const beforeSectionClick = useRef<{ id: string; playhead: number; at: number } | null>(null)
   const [dropHint, setDropHint] = useState<MediaDropHint | null>(null)
 
   const tool = useUi((s) => s.tool)
@@ -2592,7 +2596,7 @@ export function Timeline() {
                 <span className={styles.trackName}>Song map</span>
                 <Tooltip
                   label="Sections, chorus and energy were found automatically"
-                  description="Double-click a section to rename it. Drag its edges to adjust."
+                  description="Click a section to go to its start. Double-click to rename it. Drag its edges to adjust."
                 >
                   <span className={styles.autoBadge}>
                     <Sparkles />
@@ -2622,13 +2626,37 @@ export function Timeline() {
                           }}
                           onPointerDown={(e) => {
                             e.stopPropagation()
-                            if (e.button === 0) select({ type: 'section', id: s.id })
+                            if (e.button !== 0) return
+                            // A pointerdown's detail is 0 in Chrome, so a double-click's second press is told by its time.
+                            const prev = beforeSectionClick.current
+                            if (!(prev?.id === s.id && e.timeStamp - prev.at < 500))
+                              beforeSectionClick.current = {
+                                id: s.id,
+                                playhead: get().playhead,
+                                at: e.timeStamp,
+                              }
+                            goToSection(s)
                           }}
-                          onDoubleClick={() => setRenaming(s.id)}
+                          onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget) return
+                            // After a click, Space plays from the section's start like anywhere else.
+                            if (e.key !== 'Enter' && !(e.key === ' ' && spaceGoesToControl(e.currentTarget)))
+                              return
+                            e.preventDefault()
+                            goToSection(s)
+                          }}
+                          onDoubleClick={() => {
+                            const before = beforeSectionClick.current
+                            if (before?.id === s.id) set({ playhead: before.playhead })
+                            setRenaming(s.id)
+                          }}
                           role="button"
                           tabIndex={0}
                           aria-label={`Section ${sectionName(s)}, ${formatTime(s.start)} to ${formatTime(s.end)}`}
-                          title={sectionGuess(s) && `${sectionGuess(s)}. Double-click to rename.`}
+                          title={
+                            sectionGuess(s) &&
+                            `${sectionGuess(s)}. Click to go to its start, double-click to rename.`
+                          }
                         >
                           {renaming === s.id ? (
                             <input
@@ -2665,9 +2693,7 @@ export function Timeline() {
                         </div>
                       </ContextMenuTrigger>
                       <ContextMenuContent>
-                        <ContextMenuItem onSelect={() => set({ playhead: s.start, playing: false })}>
-                          Go to its start
-                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => goToSection(s)}>Go to its start</ContextMenuItem>
                         <ContextMenuItem onSelect={() => selectClips(sectionClipIds(editor.getProject(), s))}>
                           Select its clips
                         </ContextMenuItem>

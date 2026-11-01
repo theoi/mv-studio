@@ -304,3 +304,63 @@ test('the section inspector sets color, start and end; the section menu selects 
   await expect(dialog.getByLabel('Include Teaser')).toBeChecked()
   await expect(dialog.getByText(/^1:02 – .* · starts on Chorus$/)).toBeVisible()
 })
+
+test('a click on a Song map section puts the playhead at its start and shows the section; Enter does too, and playback goes on from there', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  const playhead = () => page.evaluate(() => window.mvStudio.app.ui.get().playhead as number)
+  await page.getByRole('button', { name: 'Section Chorus, 1:04 to 1:36' }).click()
+  expect(await playhead()).toBe(64)
+  await expect(page.getByText(/^Section: Chorus/)).toBeVisible()
+
+  await page.getByRole('button', { name: /^Section Verse 2, 1:36 to / }).focus()
+  await page.keyboard.press('Enter')
+  expect(await playhead()).toBe(96)
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().selection)).toEqual({
+    type: 'section',
+    id: 's-v2',
+  })
+
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playing: true }))
+  await page.getByRole('button', { name: 'Section Pre-chorus, 0:48 to 1:04' }).click()
+  const t = await playhead()
+  expect(t).toBeGreaterThanOrEqual(48)
+  expect(t).toBeLessThan(52)
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().playing)).toBe(true)
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playing: false }))
+})
+
+test('after a click on a section, Space plays from its start; a double-click renames it without moving the playhead, and Go to its start keeps playing', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  const ui = () =>
+    page.evaluate(() => {
+      const { playhead, playing } = window.mvStudio.app.ui.get()
+      return { playhead: playhead as number, playing: playing as boolean }
+    })
+  await page.getByRole('button', { name: 'Section Chorus, 1:04 to 1:36' }).click()
+  await page.keyboard.press('Space')
+  await expect.poll(async () => (await ui()).playing).toBe(true)
+  const t = (await ui()).playhead
+  expect(t).toBeGreaterThanOrEqual(64)
+  expect(t).toBeLessThan(67)
+  await page.keyboard.press('Space')
+  await expect.poll(async () => (await ui()).playing).toBe(false)
+
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 10 }))
+  await page.getByRole('button', { name: /^Section Verse 2, 1:36 to / }).dblclick()
+  await expect(page.getByRole('textbox', { name: 'Rename section' })).toBeFocused()
+  expect((await ui()).playhead).toBe(10)
+  await page.keyboard.press('Escape')
+
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playing: true }))
+  await page.getByRole('button', { name: 'Section Pre-chorus, 0:48 to 1:04' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Go to its start' }).click()
+  const after = await ui()
+  expect(after.playhead).toBeGreaterThanOrEqual(48)
+  expect(after.playhead).toBeLessThan(52)
+  expect(after.playing).toBe(true)
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playing: false }))
+})
