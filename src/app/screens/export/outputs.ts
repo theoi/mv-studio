@@ -27,6 +27,7 @@ import {
 } from '../../state/exports.ts'
 import { JOB_KINDS, runningJobs } from '../../state/jobs.ts'
 import { appMedia } from '../../state/media.ts'
+import { isStored } from '../../state/persistence.ts'
 import { dispatch, editor } from '../../state/project.ts'
 import { toast } from '../../state/ui.ts'
 
@@ -206,7 +207,11 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
       frames: p.frames,
     })),
   )
-  markExportRunning(exportResolution(planned.map((p) => p.settings)), handle.promise)
+  markExportRunning(
+    exportResolution(planned.map((p) => p.settings)),
+    { id: project.id, name: project.name, kept: isStored(project.id) },
+    handle.promise,
+  )
   handle.promise.then(
     (results) => {
       toast(

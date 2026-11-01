@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   exportResolution,
   exportStoppedMessage,
+  findStoppedExport,
   markExportRunning,
-  reportStoppedExport,
+  useStoppedExport,
 } from '../../../src/app/state/exports.ts'
-import { useUi } from '../../../src/app/state/ui.ts'
 import { exportSize } from '../../../src/engine/export.ts'
 
 const LOWER = /Try a lower resolution\.$/
@@ -39,12 +39,12 @@ describe('without Web Locks', () => {
       removeItem: (key: string) => stored.delete(key),
     })
     vi.stubGlobal('navigator', {})
-    markExportRunning(1080, new Promise(() => undefined))
+    markExportRunning(1080, { id: 'p', name: 'Night drive', kept: true }, new Promise(() => undefined))
     expect(stored.size).toBe(0)
 
     stored.set(MARK, JSON.stringify({ resolution: 1080, lock: 'mv-studio.export:in-another-tab' }))
-    await reportStoppedExport()
+    expect(await findStoppedExport()).toBeNull()
     expect(stored.has(MARK)).toBe(true)
-    expect(useUi.getState().toasts).toEqual([])
+    expect(useStoppedExport.getState().stopped).toBeNull()
   })
 })

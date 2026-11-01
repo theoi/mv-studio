@@ -79,12 +79,31 @@ const RUNNING_KEY = 'mv-studio.export-running'
  * studio then doesn't take an export that is still running for one that stopped.
  */
 const EXPORT_LOCK = 'mv-studio.export:'
-/** Held while a tab checks for a stopped export, so tabs restored together after a crash say it once. */
+/** Held while a tab checks for a stopped export, so tabs restored together after a crash find it once. */
 const REPORT_LOCK = 'mv-studio.export-report'
+
+/** The project of an export, as its mark keeps it. */
+export interface ExportProject {
+  id: string
+  name: string
+  /** Kept in this browser, so it can be opened again. */
+  kept: boolean
+}
+
+/** An export whose tab died while it ran. */
+export interface StoppedExport {
+  /** Null for a mark that doesn't name it. */
+  project: ExportProject | null
+  resolution: number
+}
+
+/** The export found stopped at start (findStoppedExport), until the next export starts. */
+export const useStoppedExport = create<{ stopped: StoppedExport | null }>(() => ({ stopped: null }))
 
 interface RunningMark {
   resolution?: unknown
   lock?: unknown
+  project?: unknown
 }
 
 /**
@@ -95,11 +114,14 @@ export function exportResolution(sizes: readonly { width: number; height: number
   return Math.max(0, ...sizes.map((s) => Math.min(s.width, s.height)))
 }
 
-/** What the next visit says when an export stopped because its tab died, by the export's resolution. */
-export function exportStoppedMessage(resolution: number): string {
-  return resolution > 720
-    ? 'The last export stopped unexpectedly, maybe because the browser ran out of memory. Try a lower resolution.'
-    : 'The last export stopped unexpectedly, maybe because the browser ran out of memory. Close other tabs and try again.'
+/**
+ * Says that an export didn't finish because its tab died, with what may help at its resolution, and names its
+ * project when that isn't the one showing.
+ */
+export function exportStoppedMessage(resolution: number, projectName?: string): string {
+  const which = projectName === undefined ? 'The last export' : `The export of “${projectName}”`
+  const advice = resolution > 720 ? 'Try a lower resolution.' : 'Close other tabs and try again.'
+  return `${which} didn’t finish. The browser may have run out of memory. ${advice}`
 }
 
 /** Web Locks, without which a tab can't tell an export running in another tab from one that stopped. */
@@ -131,12 +153,20 @@ function clearMark(lock?: string): void {
   }
 }
 
+function markedProject(mark: RunningMark): ExportProject | null {
+  const p = mark.project as Partial<Record<keyof ExportProject, unknown>> | null | undefined
+  return p && typeof p.id === 'string' && typeof p.name === 'string'
+    ? { id: p.id, name: p.name, kept: p.kept === true }
+    : null
+}
+
 /**
  * Marks an export as running until `done` settles. A tab that dies first (a crash, or the browser running out of
- * memory) fires no event, so the mark stays and the next visit says the export stopped (reportStoppedExport). A page
+ * memory) fires no event, so the mark stays and the next visit finds the export stopped (findStoppedExport). A page
  * closed or reloaded on purpose clears it.
  */
-export function markExportRunning(resolution: number, done: Promise<unknown>): void {
+export function markExportRunning(resolution: number, project: ExportProject, done: Promise<unknown>): void {
+  useStoppedExport.setState({ stopped: null })
   const manager = locks()
   if (!manager) return
   const lock = `${EXPORT_LOCK}${crypto.randomUUID()}`
@@ -145,7 +175,7 @@ export function markExportRunning(resolution: number, done: Promise<unknown>): v
   // running export without its lock.
   const run = async () => {
     try {
-      localStorage.setItem(RUNNING_KEY, JSON.stringify({ resolution, lock }))
+      localStorage.setItem(RUNNING_KEY, JSON.stringify({ resolution, lock, project }))
     } catch {
       return
     }
@@ -157,24 +187,30 @@ export function markExportRunning(resolution: number, done: Promise<unknown>): v
   manager.request(lock, run).catch(() => undefined)
 }
 
-/** Says once that the last export stopped, when its tab died while it ran. */
-export async function reportStoppedExport(): Promise<void> {
+/**
+ * The last export, when its tab died while it ran. Found once: the mark it left is removed, and the export is kept in
+ * useStoppedExport until the next one starts.
+ */
+export async function findStoppedExport(): Promise<StoppedExport | null> {
   const manager = locks()
-  if (!manager || readMark() === null) return
+  if (!manager || readMark() === null) return null
   try {
-    await manager.request(REPORT_LOCK, async () => {
+    return await manager.request(REPORT_LOCK, async () => {
       const mark = readMark()
-      if (mark === null) return
+      if (mark === null) return null
       if (typeof mark.lock === 'string') {
         const { held = [] } = await manager.query()
         // An export running in another tab holds its lock: its mark is not of a stopped export.
-        if (held.some((l) => l.name === mark.lock)) return
-        if (readMark()?.lock !== mark.lock) return
+        if (held.some((l) => l.name === mark.lock)) return null
+        if (readMark()?.lock !== mark.lock) return null
       }
       clearMark()
-      toast(exportStoppedMessage(Number(mark.resolution) || 0), undefined, { key: 'export-stopped' })
+      const stopped = { project: markedProject(mark), resolution: Number(mark.resolution) || 0 }
+      useStoppedExport.setState({ stopped })
+      return stopped
     })
   } catch {
-    // Web Locks refused here (a sandboxed frame): nothing is reported.
+    // Web Locks refused here (a sandboxed frame): nothing is found.
+    return null
   }
 }
