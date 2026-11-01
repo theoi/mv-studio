@@ -13,7 +13,13 @@ import { createBrightnessProbe, type BrightnessProbe } from './contrast.ts'
 import { songTitle } from './songTitle.ts'
 import type { Pace } from './plan.ts'
 import type { DirectorFootageMatch, DirectorFootageMatcher, FootageInfo } from '../vision/director.ts'
-import { blankAssets, isBlankClip, readClipIndex, readSubjectTrack } from '../vision/analysisData.ts'
+import {
+  blankAssets,
+  isBlankClip,
+  readClipIndex,
+  readSubjectTrack,
+  withoutUnchecked,
+} from '../vision/analysisData.ts'
 import type { FootageMatcher as ClipMatcher } from '../vision/matching/matcher.ts'
 import type { ClipVisionIndex, MatchQuery, Mood, SubjectTrack } from '../vision/types.ts'
 
@@ -98,6 +104,8 @@ export interface PlannerInput {
   media: MediaItem[]
   /** Names of the clips and images left out of `media` because they show nothing (black or fully transparent). */
   blank?: string[]
+  /** The note about clips and images the fast blank check didn't reach in time (`withoutUnchecked`). */
+  unchecked?: string
   matcher?: FootageMatcher
   footage?: FootageRanker
   unanalyzedWarning?: UnanalyzedWarning
@@ -262,6 +270,11 @@ export interface BuildInputOptions {
   matcher?: FootageMatcher
   footage?: FootageRanker
   unanalyzedWarning?: UnanalyzedWarning
+  /**
+   * Clips and images the fast blank check didn't reach in time (`DirectorDeps.checkClips`): left out of `media` when
+   * the checked ones are enough, else kept (`withoutUnchecked`).
+   */
+  unchecked?: readonly Id[]
   generation?: GenerationOptions
   pace?: Pace
   seed?: number
@@ -283,13 +296,20 @@ export async function buildPlannerInput(project: Project, options: BuildInputOpt
     }
   }
   const blank = blankAssets(project).map((a) => a.name)
+  const { pool: media, note: unchecked } = withoutUnchecked(
+    project,
+    mediaFromProject(project, info),
+    options.unchecked ?? [],
+    { rerun: 'Draft again' },
+  )
   return {
     kind: options.kind,
     prompt: (options.prompt ?? '').trim(),
     song: songInfoFromProject(project),
     lyrics: project.lyrics,
-    media: mediaFromProject(project, info),
+    media,
     ...(blank.length ? { blank } : {}),
+    ...(unchecked ? { unchecked } : {}),
     matcher: options.matcher,
     ...(options.footage ? { footage: options.footage } : {}),
     ...(options.unanalyzedWarning ? { unanalyzedWarning: options.unanalyzedWarning } : {}),

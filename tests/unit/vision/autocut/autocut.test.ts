@@ -160,6 +160,22 @@ describe('auto-cut plan', () => {
     })
   })
 
+  it('leaves out clips the blank check didn’t reach when enough others are left, and cuts them with a note when chosen', async () => {
+    const project = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) })
+    const left = await planAutoCut(project, {}, { matcher, unchecked: ['misc'] })
+    expect(left.shots.length).toBeGreaterThan(10)
+    expect(left.shots.map((s) => s.assetId)).not.toContain('misc')
+    expect(left.warnings).toContain(
+      'Left out 1 clip that wasn’t checked yet, in case it shows nothing. Cut again to use it.',
+    )
+    const all = ['city', 'ocean', 'crowd', 'misc']
+    const chosen = await planAutoCut(project, { assetIds: all }, { matcher, unchecked: ['misc'] })
+    expect(chosen.shots.map((s) => s.assetId)).toContain('misc')
+    expect(chosen.warnings).toContain(
+      '1 clip wasn’t checked yet, so it may show nothing. Cut again to check it.',
+    )
+  })
+
   it('follows an even grid with a warning when the song has no beat analysis', async () => {
     const result = await plan(makeProject({ analyzed: false }), { followEnergy: false })
     expect(result.estimatedGrid).toBe(true)

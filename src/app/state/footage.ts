@@ -162,11 +162,12 @@ export function analyzeFootageNow(): void {
 /**
  * Waits for the fast blank check of these clips and stills (default: all) that footage analysis hasn't looked at yet,
  * so a draft or a cut can leave out the ones that show nothing before analysis reaches them. It downloads no model,
- * so it also runs where background analysis is off. Undefined when every one of them has been looked at.
+ * so it also runs where background analysis is off. Resolves with the ones it didn't check in time
+ * (`FootageService.checkBlank`). Undefined when every one of them has been looked at.
  */
 export function checkClipsForBlank(
   options: { assetIds?: readonly Id[]; signal?: AbortSignal; progress?: (fraction: number) => void } = {},
-): Promise<void> | undefined {
+): Promise<Id[]> | undefined {
   const { assetIds, ...rest } = options
   if (!hasUncheckedMedia(editor.getProject(), assetIds, isSampleAsset)) return undefined
   return footageService().then((service) => service.checkBlank(assetIds, rest))

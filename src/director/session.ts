@@ -107,13 +107,14 @@ export interface DirectorDeps {
   /**
    * Checks the user's clips that footage analysis hasn't reached yet for ones that show nothing (the app's fast blank
    * check), so the plan leaves those out. It runs while the plan waits for the song and its bars, and reports progress
-   * only if the plan then still waits for it. A check that fails doesn't stop the plan. Undefined when there is nothing
-   * to check; never called for a project without clips or images.
+   * only if the plan then still waits for it. It resolves with the clips and images it didn't check in time, which the
+   * plan leaves out when it has enough others (`BuildInputOptions.unchecked`). A check that fails doesn't stop the
+   * plan. Undefined when there is nothing to check; never called for a project without clips or images.
    */
   checkClips?: (options: {
     signal: AbortSignal
     progress: (fraction: number) => void
-  }) => Promise<void> | undefined
+  }) => Promise<readonly Id[] | void> | undefined
 }
 
 /** Share of the plan's progress spent finding the song's bars when they are not found yet (often the longest step). */
@@ -391,7 +392,7 @@ export class DirectorSession {
             })
           reportClips(clipsFraction)
         }
-        await clipsChecked?.catch(() => ctx.throwIfCancelled())
+        const unchecked = await clipsChecked?.catch(() => ctx.throwIfCancelled())
         reportClips = undefined
         // The time left for the bars no longer holds (the job keeps the last one it was given).
         planCtx.progress({
@@ -411,6 +412,7 @@ export class DirectorSession {
           matcher: this.deps.matcher?.(),
           footage: this.deps.footage?.(),
           ...(this.deps.unanalyzedWarning ? { unanalyzedWarning: this.deps.unanalyzedWarning } : {}),
+          ...(unchecked?.length ? { unchecked } : {}),
           ...(this.deps.media ? { media: this.deps.media } : {}),
           generation:
             provider && request.generate ? generationOptionsFor(provider, request.generate) : undefined,

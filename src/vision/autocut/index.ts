@@ -13,6 +13,7 @@ import {
   blankClipsUsedNote,
   quotedFileNames,
   readClipIndex,
+  withoutUnchecked,
 } from '../analysisData.ts'
 import { songEnergyScale } from '../footage/song.ts'
 import type { FootageMatcher } from '../matching/matcher.ts'
@@ -74,6 +75,11 @@ export interface AutoCutDeps {
   matcher?: Pick<FootageMatcher, 'model' | 'rankAll'>
   /** Words the warning about clips used without analysis, when the caller knows why (see `ChooseInput`). */
   unanalyzedWarning?: ChooseInput['unanalyzedWarning']
+  /**
+   * Clips and images the fast blank check didn't reach in time (`FootageService.checkBlank`): left out when the
+   * checked ones are enough and nobody chose them, else cut (`withoutUnchecked`).
+   */
+  unchecked?: readonly Id[]
 }
 
 /** Job kind for `jobs.run`, so the Assist panel can follow a running auto-cut. */
@@ -118,7 +124,12 @@ export async function planAutoCut(
   const song = songInfoFromProject(project)
   if (!song.assetId || !(song.duration > 0))
     throw new JobError('invalid-input', 'Add a song first: auto-cut cuts your clips to its beats.')
-  const pool = autoCutPool(project, options.assetIds)
+  const { pool, note: uncheckedNote } = withoutUnchecked(
+    project,
+    autoCutPool(project, options.assetIds),
+    deps.unchecked ?? [],
+    { rerun: 'Cut again', keep: !!options.assetIds },
+  )
   // Chosen clips are cut even when they show nothing (with a note); the rest are left out when nobody chose.
   const blank = blankAssets(project)
   const blankUsed = blank.filter((a) => pool.some((p) => p.assetId === a.id)).map((a) => a.name)
@@ -171,6 +182,7 @@ export async function planAutoCut(
     const pick = picks[i]
     if (pick) shots.push({ start: span.start, end: span.end, sectionId: span.sectionId, ...pick })
   })
+  if (uncheckedNote) warnings.unshift(uncheckedNote)
   const blankNote = blankClipsNote(leftOut) ?? blankClipsUsedNote(blankUsed)
   if (blankNote) warnings.unshift(blankNote)
   if (rhythm.grid.estimated)

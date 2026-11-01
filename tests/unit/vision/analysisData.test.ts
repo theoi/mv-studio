@@ -11,6 +11,7 @@ import {
   readSubjectTrack,
   reframePlanFor,
   VISION_ANALYSIS_VERSION,
+  withoutUnchecked,
 } from '../../../src/vision/analysisData.ts'
 import { createProject } from '../../../src/model/factory.ts'
 import type { Asset } from '../../../src/model/types.ts'
@@ -247,6 +248,61 @@ describe('visual analysis data', () => {
     expect(blankClipsNote(['a.webm', 'night_drive_with_the_windows_down.webm'])).toBe(
       'Left out 2 clips because every frame of them is black or see-through: “a.webm”, “night_drive_wi…own.webm”.',
     )
+  })
+})
+
+describe('withoutUnchecked', () => {
+  const pool = (kinds: string) =>
+    [...kinds].map((k, i) => ({
+      assetId: `m${i}`,
+      kind: k === 'i' ? ('image' as const) : ('video' as const),
+    }))
+  const project = createProject({ name: 'Unchecked', now: new Date(0) })
+  const ids = (items: readonly { assetId: string }[]) => items.map((m) => m.assetId)
+  const draft = { rerun: 'Draft again' }
+
+  it('leaves out media the blank check didn’t reach when at least 3 checked ones, and as many, are left', () => {
+    expect(withoutUnchecked(project, pool('vvvv'), ['m3'], draft)).toEqual({
+      pool: pool('vvv'),
+      note: 'Left out 1 clip that wasn’t checked yet, in case it shows nothing. Draft again to use it.',
+    })
+    const mixed = withoutUnchecked(project, pool('vvvviv'), ['m3', 'm4', 'm5'], draft)
+    expect(ids(mixed.pool)).toEqual(['m0', 'm1', 'm2'])
+    expect(mixed.note).toBe(
+      'Left out 2 clips and 1 image that weren’t checked yet, in case they show nothing. Draft again to use them.',
+    )
+  })
+
+  it('uses them when too few checked ones are left, or when the user chose them, and says so', () => {
+    expect(withoutUnchecked(project, pool('vvvv'), ['m2', 'm3'], draft)).toEqual({
+      pool: pool('vvvv'),
+      note: '2 clips weren’t checked yet, so one of them may show nothing. Draft again to check them.',
+    })
+    expect(withoutUnchecked(project, pool('vvv'), ['m2'], draft).note).toBe(
+      '1 clip wasn’t checked yet, so it may show nothing. Draft again to check it.',
+    )
+    const chosen = withoutUnchecked(project, pool('vvvvi'), ['m4'], { rerun: 'Cut again', keep: true })
+    expect(ids(chosen.pool)).toHaveLength(5)
+    expect(chosen.note).toBe('1 image wasn’t checked yet, so it may show nothing. Cut again to check it.')
+  })
+
+  it('counts media checked since as checked, and says nothing when none is left unchecked', () => {
+    const checked = {
+      ...project,
+      analysis: {
+        audio: {},
+        visual: {
+          m3: buildVisualAnalysis({
+            assetId: 'm3',
+            duration: 5,
+            sourceSize: { width: 1920, height: 1080 },
+            blankCheck: { peakLuma: 120, frames: 8 },
+          }),
+        },
+      },
+    }
+    expect(withoutUnchecked(checked, pool('vvvv'), ['m3'], draft)).toEqual({ pool: pool('vvvv') })
+    expect(withoutUnchecked(project, pool('vvvv'), ['gone'], draft)).toEqual({ pool: pool('vvvv') })
   })
 })
 
