@@ -67,7 +67,7 @@
     background-color var(--dur) var(--ease-out);
 }
 
-.kind:hover {
+.kind:hover:not(:disabled) {
   transform: translateY(-2px);
   background: #15161a;
   box-shadow:
@@ -75,16 +75,21 @@
     0 12px 32px rgb(0 0 0 / 0.35);
 }
 
-.kind:active {
+.kind:active:not(:disabled) {
   transform: translateY(0) scale(0.995);
 }
 
-.kind:hover .bars span {
+.kind:hover:not(:disabled) .bars span {
   animation-play-state: running;
 }
 
-.kind:hover .art {
+.kind:hover:not(:disabled) .art {
   background-size: 108%;
+}
+
+.kind:disabled,
+.blank:disabled {
+  opacity: 0.5;
 }
 
 .art {
@@ -253,12 +258,12 @@
     box-shadow var(--dur) var(--ease-out);
 }
 
-.blank:hover {
+.blank:hover:not(:disabled) {
   background: var(--bg-panel);
   box-shadow: 0 0 0 1px var(--border);
 }
 
-.blank:hover .blankArrow {
+.blank:hover:not(:disabled) .blankArrow {
   transform: translateX(3px);
   color: var(--text-1);
 }

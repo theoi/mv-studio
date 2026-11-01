@@ -449,7 +449,7 @@ function mediaFolders(page: Page): Promise<number> {
 
 /** The opening card's restore line ("long.wav · 1 of 3 files") and percentage. */
 async function restoreStep(page: Page): Promise<{ line: string; percent: number }> {
-  const text = await page.getByRole('region', { name: 'Opening Portable.mvstudio' }).innerText()
+  const text = await page.getByRole('region', { name: /^Opening / }).innerText()
   return { line: /Restoring (.+ files)/.exec(text)?.[1] ?? '', percent: Number(/(\d+)%/.exec(text)?.[1]) }
 }
 
@@ -459,24 +459,37 @@ test('opening a project file shows how far each file is, and a Cancel part way t
 }, testInfo) => {
   test.setTimeout(150_000)
   const { file, names } = await downloadPortable(page, testInfo)
+  const longName = `${'Portable tour cut '.repeat(6)}final.mvstudio`
+  const longFile = testInfo.outputPath(longName)
+  fs.copyFileSync(file, longFile)
   const other = await launchProfile(testInfo.outputPath('second-profile'), baseURL)
   try {
     const page2 = other.pages()[0] ?? (await other.newPage())
     await openHarness(page2)
     const writes = await holdWrites(page2)
-    const opening = page2.getByRole('region', { name: 'Opening Portable.mvstudio' })
+    const opening = page2.getByRole('region', { name: /^Opening / })
+    const openButton = page2.getByRole('button', { name: 'Open project file' })
 
-    await openProjectFileIn(page2, file)
+    await openProjectFileIn(page2, longFile)
     await expect(opening).toContainText('Restoring long.wav · 1 of 3 files')
-    await expect(page2.getByRole('button', { name: 'Open project file' })).toBeDisabled()
+    await expect(openButton).toBeDisabled()
+    // Starting another project now would be replaced by the file's project when it is in.
+    await expect(page2.getByRole('button', { name: /^Lyric video/ })).toBeDisabled()
+    await expect(page2.getByRole('button', { name: /^Blank project/ })).toBeDisabled()
+    // The cut-off title gives the whole file name on hover.
+    await opening.getByRole('heading').hover()
+    await expect(opening.getByRole('heading')).toHaveAttribute('title', `Opening ${longName}`)
     expect((await restoreStep(page2)).percent).toBe(0)
     // The song's first 8 MB are in: the percentage moves within the file.
     await writes.release()
     await expect.poll(async () => (await restoreStep(page2)).percent).toBeGreaterThan(0)
     expect((await restoreStep(page2)).line).toBe('long.wav · 1 of 3 files')
     await opening.getByRole('button', { name: 'Cancel' }).click()
+    await expect(openButton).toBeFocused()
     await writes.release()
     await expect(opening).toBeHidden()
+    await expect(openButton).toBeEnabled()
+    await expect(page2.getByRole('button', { name: /^Lyric video/ })).toBeEnabled()
     await expect(page2.getByRole('heading', { name: 'What are you making?' })).toBeVisible()
     expect(await keptCount(page2)).toBe(0)
     expect(await mediaFolders(page2)).toBe(0)
@@ -485,6 +498,10 @@ test('opening a project file shows how far each file is, and a Cancel part way t
     const steps: { line: string; percent: number }[] = []
     for (let i = 0; i < 5; i++) {
       await expect(opening).toContainText('Restoring')
+      if (i === 0) {
+        await opening.getByRole('heading').hover()
+        await expect(opening.getByRole('heading')).toHaveAttribute('title', '')
+      }
       const step = await restoreStep(page2)
       steps.push(step)
       await writes.release()
