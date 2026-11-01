@@ -19,6 +19,8 @@ export interface DirectorClipMeta {
   textRole?: 'lyric' | 'title' | 'emphasis' | 'preview'
   /** Text clips from a lyric line, including emphasis and preview clips, which are not linked to it. */
   lyricLineId?: string
+  /** Title cards shown at once each get a row (track) of their own: this card's, from 0 at the top (absent for 0). */
+  titleRow?: number
   /** Set on placeholders for AI shots that have not been generated yet. */
   pending?: { task: GenerateSource['task']; prompt: string; modelId: string; duration?: number }
 }

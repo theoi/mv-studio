@@ -137,6 +137,32 @@ describe('compilePlan', () => {
     ])
     expect(after.tracks.map((t) => t.id)).toEqual(d.p.tracks.map((t) => t.id))
 
+    // The user dragged the artist onto Titles: Titles keeps the first row, and the emptied Titles 2 the artist.
+    d = await drafted()
+    d.editor.dispatch([
+      { type: 'clip.move', moves: [{ clipId: d.artist.id, start: d.artist.start, trackId: d.titles.id }] },
+    ])
+    after = await redraft(d.editor)
+    expect(titleRows(after)).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+    ])
+    expect(after.tracks.map((t) => t.id)).toEqual(d.p.tracks.map((t) => t.id))
+
+    // The user pasted a copy of the artist on a track of its own: one row still takes the artist.
+    d = await drafted()
+    const copyTrack = createTrack('visual', 'Copy')
+    d.editor.dispatch([
+      { type: 'track.add', track: copyTrack, index: 2 },
+      { type: 'clip.add', clip: { ...d.artist, id: 'pasted-artist', trackId: copyTrack.id } },
+    ])
+    after = await redraft(d.editor)
+    expect(titleRows(after)).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+    ])
+    expect(after.tracks.map((t) => t.id)).toEqual(d.p.tracks.map((t) => t.id))
+
     // The user hid the artist's row: it stays hidden.
     d = await drafted()
     d.editor.dispatch([{ type: 'track.update', trackId: d.second.id, patch: { hidden: true } }])
@@ -148,7 +174,7 @@ describe('compilePlan', () => {
     expect(after.tracks.find((t) => t.id === d.second.id)?.hidden).toBe(true)
     expect(after.tracks).toHaveLength(d.p.tracks.length)
 
-    // The user's own text on Titles: the draft's titles move to Titles 2 and a Titles 3 below it.
+    // The user's own text on Titles: the song's title gets a new row above Titles 2, which keeps the artist.
     d = await drafted()
     d.editor.dispatch([
       {
@@ -158,8 +184,8 @@ describe('compilePlan', () => {
     ])
     expect(titleRows(await redraft(d.editor))).toEqual([
       ['Titles', 'Mine'],
-      ['Titles 2', 'Show Me'],
-      ['Titles 3', 'Josh Woodward'],
+      ['Titles 3', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
     ])
 
     // The user's own text on Titles 2: a Titles 3 goes in just below Titles.
@@ -176,14 +202,69 @@ describe('compilePlan', () => {
       ['Titles 2', 'Mine'],
     ])
 
-    // Titles locked with the earlier title on it: the new ones go on Titles 2 and a Titles 3.
+    // Titles locked with the earlier title on it: the new title gets a row of its own, the artist stays on Titles 2.
     d = await drafted()
     d.editor.dispatch([{ type: 'track.update', trackId: d.titles.id, patch: { locked: true } }])
     expect(titleRows(await redraft(d.editor))).toEqual([
       ['Titles', 'Show Me'],
-      ['Titles 2', 'Show Me'],
-      ['Titles 3', 'Josh Woodward'],
+      ['Titles 3', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
     ])
+  })
+
+  it('gives each further title row back its own track on a redraft, by row', async () => {
+    const { project, editor, plan } = await titledDraft()
+    // A language model's plan can show more than two title cards at once.
+    const withLive = (p: EditPlan): EditPlan => {
+      const artist = p.texts.find((x) => x.text === 'Josh Woodward')!
+      return { ...p, texts: [...p.texts, { ...artist, id: `${artist.id}-live`, text: 'Live', start: 1.1 }] }
+    }
+    editor.dispatch(compilePlan(withLive(plan), project).commands)
+    const p = editor.getProject()
+    expect(titleRows(p)).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+      ['Titles 3', 'Live'],
+    ])
+    // The user's text on Titles 2 keeps the artist off it; Titles 3 still takes the third card.
+    editor.dispatch([
+      {
+        type: 'clip.add',
+        clip: createTextClip({ trackId: trackNamed(p, 'Titles 2').id, text: 'Mine', start: 30, duration: 2 }),
+      },
+    ])
+    const mine = editor.getProject()
+    const again = await planLocally(await buildPlannerInput(mine, { kind: 'lyric', seed: 9 }))
+    editor.dispatch(compilePlan(withLive(again), mine).commands)
+    expect(titleRows(editor.getProject())).toEqual([
+      ['Titles', 'Show Me'],
+      ['Titles 4', 'Josh Woodward'],
+      ['Titles 2', 'Mine'],
+      ['Titles 3', 'Live'],
+    ])
+  })
+
+  it('keeps each title card on its own row on a redraft when the user hid the artist and put text on Titles', async () => {
+    const { project, editor, plan } = await titledDraft()
+    editor.dispatch(compilePlan(plan, project).commands)
+    const p = editor.getProject()
+    const second = trackNamed(p, 'Titles 2')
+    editor.dispatch([
+      { type: 'track.update', trackId: second.id, patch: { hidden: true } },
+      {
+        type: 'clip.add',
+        clip: createTextClip({ trackId: trackNamed(p, 'Titles').id, text: 'Mine', start: 0, duration: 4 }),
+      },
+    ])
+    const after = await redraft(editor)
+    expect(titleRows(after)).toEqual([
+      ['Titles', 'Mine'],
+      ['Titles 3', 'Show Me'],
+      ['Titles 2', 'Josh Woodward'],
+    ])
+    // The song's title stays in view and the artist stays hidden.
+    expect(trackNamed(after, 'Titles 3').hidden).toBe(false)
+    expect(after.tracks.find((t) => t.id === second.id)?.hidden).toBe(true)
   })
 
   it.each([
@@ -209,6 +290,25 @@ describe('compilePlan', () => {
           .filter((c) => c.trackId === trackNamed(after, added).id)
           .map((c) => (c as TextClip).text),
       ).toEqual(['Josh Woodward'])
+    },
+  )
+
+  it.each(['Titles', 'Text'])(
+    'puts the shots on a track of their own on a redraft after the user deleted every visual track but %s',
+    async (kept) => {
+      const { project, editor, plan } = await titledDraft()
+      editor.dispatch(compilePlan(plan, project).commands)
+      const p = editor.getProject()
+      editor.dispatch(
+        p.tracks
+          .filter((t) => t.kind === 'visual' && t.name !== kept)
+          .map((t): EditCommand => ({ type: 'track.remove', trackId: t.id })),
+      )
+      const after = await redraft(editor)
+      expect(after.tracks.map((t) => t.name)).toEqual(['Titles', 'Titles 2', 'Text', 'Look', 'Shots', 'Song'])
+      const shots = directorClips(after).filter((c) => directorMeta(c)!.role === 'shots')
+      expect(shots.length).toBeGreaterThan(0)
+      expect(shots.every((c) => c.trackId === trackNamed(after, 'Shots').id)).toBe(true)
     },
   )
 
