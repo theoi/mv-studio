@@ -70,9 +70,10 @@ function sameSlot(a: OutputSpec, b: OutputSpec): boolean {
 }
 
 /**
- * The dialog's starting list: the outputs saved with the project, else the suggested ones. With `teaserSection`,
- * the list's teaser (added when there is none) starts on that song section and comes first in `selected`. With
- * `preset`, the list's output of that kind (added when there is none) is turned on and selected.
+ * The dialog's starting list: the outputs saved with the project (the ones it last exported), all on; else the
+ * suggested ones, with only the full video on. With `teaserSection`, the list's teaser (added when there is none)
+ * starts on that song section and comes first in `selected`. With `preset`, the list's output of that kind (added
+ * when there is none) is turned on and selected.
  */
 export function initialItems(
   project: Project,
@@ -80,8 +81,9 @@ export function initialItems(
   preset: ExportPreset | null = null,
 ): { items: OutputItem[]; selectedId: string | undefined } {
   const saved = exportPreferences(project).outputs
-  const specs = saved?.length ? saved : suggestedOutputs(project).selected
-  const items = specs.map((spec) => ({ spec, on: true }))
+  const items = saved?.length
+    ? saved.map((spec) => ({ spec, on: true }))
+    : suggestedOutputs(project).selected.map((spec, i) => ({ spec, on: i === 0 }))
   const range = teaserSection ? sectionTeaserRange(project, teaserSection) : null
   if (!range && preset) return withPreset(project, items, preset)
   if (!range) return { items, selectedId: items[0]?.spec.id }

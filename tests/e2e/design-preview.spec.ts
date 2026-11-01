@@ -63,6 +63,7 @@ test('export runs as cancellable jobs', async ({ page }) => {
   await openEditorAt(page, '#/editor?t=73.6')
   await page.keyboard.press(`${mod}+e`)
   const dialog = page.getByRole('dialog', { name: 'Export' })
+  await dialog.getByLabel('Include Vertical').check()
   await dialog.getByRole('button', { name: 'Export 2 files' }).click()
   await expect(dialog.getByText('Exporting 2 files')).toBeVisible()
   await expect(dialog.getByRole('progressbar', { name: 'Full video progress' })).toBeVisible()

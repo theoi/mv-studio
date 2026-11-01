@@ -1,9 +1,9 @@
+/* No backdrop blur: without a GPU, the browser blurs the whole window again on every frame of the fade. */
 .overlay {
   position: fixed;
   inset: 0;
   z-index: var(--z-dialog);
   background: var(--bg-scrim);
-  backdrop-filter: blur(2px);
   animation: fadeIn var(--dur) var(--ease-out);
 }
 

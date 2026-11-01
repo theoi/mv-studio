@@ -45,7 +45,8 @@ import { JOB_KINDS, useJobs } from '../../state/jobs.ts'
 import { sectionName, sectionsOf, sectionTint, timelineDuration, useProject } from '../../state/project.ts'
 import { useExportEstimate } from '../../state/exportEstimate.ts'
 import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
-import { set, toast, useUi } from '../../state/ui.ts'
+import { get, set, toast, useUi } from '../../state/ui.ts'
+import { stagePreview } from '../editor/stage.ts'
 import {
   RATIO,
   addCandidate,
@@ -81,6 +82,19 @@ function stillKey(project: Project, planned: PlannedOutput, time: number): strin
   const { start, end } = planned.range
   return [versionOf(project), kind, aspect, reframe, `${start}-${end}`, time].join('|')
 }
+
+/**
+ * The editor's preview already shows the project at the playhead: a still of the project as edited at that moment
+ * starts from its frame, without waiting for the stills preview to start.
+ */
+const fromStage = (time: number) => () => {
+  const { playing, playhead } = get()
+  return playing || Math.abs(playhead - time) > 0.006 ? undefined : stagePreview()?.captureFrame()
+}
+
+/** Whether the output's still shows the project as edited (the full video in its own format). */
+const showsProject = (project: Project, planned: PlannedOutput) =>
+  planned.spec.kind === 'video' && planned.spec.aspect === project.settings.aspect
 
 const CLIP_MODE_NOTES = {
   auto: 'follows the subject',
@@ -140,18 +154,35 @@ function Frame({
   planned,
   time,
   onTime,
+  onAdjust,
 }: {
   project: Project
   planned: PlannedOutput
   time: number
   onTime: (time: number) => void
+  /** Called when the user changes the output's framing. */
+  onAdjust: () => void
 }) {
   const { spec } = planned
   const same = spec.aspect === project.settings.aspect
   const sourceRatio = project.settings.width / project.settings.height
   const r = RATIO[spec.aspect]
-  const output = useStill(stillKey(project, planned, time), planned.project, time, r)
-  const source = useStill(same ? null : `${versionOf(project)}|source|${time}`, project, time, sourceRatio)
+  const output = useStill(
+    stillKey(project, planned, time),
+    () => planned.project,
+    time,
+    r,
+    undefined,
+    showsProject(project, planned) ? fromStage(time) : undefined,
+  )
+  const source = useStill(
+    same ? null : `${versionOf(project)}|source|${time}`,
+    project,
+    time,
+    sourceRatio,
+    undefined,
+    fromStage(time),
+  )
   const indexing = useJobs().find(
     (j) => j.kind === JOB_KINDS.footage && (j.status === 'running' || j.status === 'queued'),
   )
@@ -172,6 +203,7 @@ function Frame({
     const x = clamp(fx, -box.left / box.width, (1 - box.left - box.width) / box.width)
     const y = clamp(fy, -box.top / box.height, (1 - box.top - box.height) / box.height)
     if (Math.abs(x) < 1e-4 && Math.abs(y) < 1e-4) return
+    onAdjust()
     adjustFraming(spec.aspect, shot.clipId, {
       offsetX: clamp((override?.offsetX ?? 0) + x, -2, 2),
       offsetY: clamp((override?.offsetY ?? 0) + y, -2, 2),
@@ -269,7 +301,9 @@ function Frame({
                 },
                 onPointerCancel: () => setDrag(null),
                 onDoubleClick: () => {
-                  if (shot && override) adjustFraming(spec.aspect, shot.clipId, null)
+                  if (!shot || !override) return
+                  onAdjust()
+                  adjustFraming(spec.aspect, shot.clipId, null)
                 },
                 onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
                   const step = e.shiftKey ? 0.1 : 0.02
@@ -498,7 +532,14 @@ function OutputRow({
   const { spec } = item
   const title = outputTitle(project, spec)
   const time = stillTime(planned, playhead)
-  const still = useStill(stillKey(project, planned, time), planned.project, time, RATIO[spec.aspect])
+  const still = useStill(
+    stillKey(project, planned, time),
+    () => planned.project,
+    time,
+    RATIO[spec.aspect],
+    undefined,
+    showsProject(project, planned) ? fromStage(time) : undefined,
+  )
   return (
     <div
       className={[styles.output, selected && styles.outputOn].filter(Boolean).join(' ')}
@@ -741,9 +782,12 @@ function ExportDialogBody() {
   if (!sel || !selPlan) return null
 
   const bytes = active.reduce((sum, p) => sum + p.estimatedBytes, 0)
+  /** Changing an output's settings includes it in the export. */
+  const include = () =>
+    setItems((list) => list.map((i) => (i.spec.id === sel.spec.id ? { ...i, on: true } : i)))
   const update = (patch: Partial<OutputSpec>) =>
     setItems((list) =>
-      list.map((i) => (i.spec.id === sel.spec.id ? { ...i, spec: { ...i.spec, ...patch } } : i)),
+      list.map((i) => (i.spec.id === sel.spec.id ? { ...i, on: true, spec: { ...i.spec, ...patch } } : i)),
     )
   const remaining = remainingCandidates(candidates, items)
   const audio = sel.spec.audio ?? sel.spec.kind !== 'loop'
@@ -764,15 +808,21 @@ function ExportDialogBody() {
         phase === 'setup' ? (
           <>
             <div className={styles.summary}>
-              <span>
-                <HardDrive /> {sizeLabel(bytes)}
-              </span>
-              <span>
-                <Clock />{' '}
-                <span className={styles.time}>
-                  <span>{timeLabel(seconds)}</span>
-                </span>
-              </span>
+              {active.length ? (
+                <>
+                  <span>
+                    <HardDrive /> {sizeLabel(bytes)}
+                  </span>
+                  <span>
+                    <Clock />{' '}
+                    <span className={styles.time}>
+                      <span>{timeLabel(seconds)}</span>
+                    </span>
+                  </span>
+                </>
+              ) : (
+                <span>Choose at least one output</span>
+              )}
               <span>
                 <Lock /> Free · rendered in your browser
               </span>
@@ -789,7 +839,7 @@ function ExportDialogBody() {
                 set({ exportPhase: 'exporting' })
               }}
             >
-              Export {plural(active.length, 'file')}
+              {active.length ? `Export ${plural(active.length, 'file')}` : 'Export'}
             </Button>
           </>
         ) : undefined
@@ -852,6 +902,7 @@ function ExportDialogBody() {
                   : stillTime(selPlan, playhead)
               }
               onTime={setViewTime}
+              onAdjust={include}
             />
             {sel.spec.kind !== 'video' && (
               <RangeLane
