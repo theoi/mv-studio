@@ -1,5 +1,5 @@
 import type { SongSection } from '../../model/index.ts'
-import { editor, sectionsOf, bpmOf, timelineDuration } from './project.ts'
+import { editor, sectionsOf, bpmOf, clampToTimeline } from './project.ts'
 import { get, select, set } from './ui.ts'
 
 /** Selects a song section and puts the playhead at its start; playback, if running, goes on from there. */
@@ -27,5 +27,5 @@ export function stepPlayhead(dir: 1 | -1, byBeat: boolean) {
     const beat = 60 / (bpmOf(p) ?? 120)
     t = (Math.round(t / beat) + dir) * beat
   } else t += dir / p.settings.fps
-  set({ playhead: Math.min(timelineDuration(p), Math.max(0, t)), playing: false })
+  set({ playhead: clampToTimeline(p, t), playing: false })
 }

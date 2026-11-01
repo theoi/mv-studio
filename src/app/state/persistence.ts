@@ -19,7 +19,7 @@ import { distinctName } from '../format.ts'
 import { isSampleAsset, sampleFile } from '../mock/sampleMedia.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { usePrefs } from './prefs.ts'
-import { dispatch, editor, loadEmptyProject } from './project.ts'
+import { clampToTimeline, dispatch, editor, loadEmptyProject } from './project.ts'
 import { thumbnailBlob } from './thumbs.ts'
 import { get, set, toast, useUi } from './ui.ts'
 
@@ -359,6 +359,8 @@ export function openFromLink(id: Id): void {
   if (editor.getProject().id === id) return
   usePersistence.setState({ restoring: true })
   void openStoredProject(id).then((ok) => {
+    // The link's time was set before the project's length was known.
+    if (ok) set({ playhead: clampToTimeline(editor.getProject(), get().playhead) })
     usePersistence.setState({ restoring: false })
     if (ok) return
     set({ screen: 'start', dialog: null })
