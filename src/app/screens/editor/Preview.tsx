@@ -108,6 +108,7 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
   const previewRef = useRef<PreviewController | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const sizeRef = useRef(size)
+  const dprRef = useRef(0)
   const [status, setStatus] = useState<StageStatus>('loading')
   // Each preview gets a fresh canvas (the canvas key): a canvas handed to a render worker that died can't draw again.
   const [generation, setGeneration] = useState(0)
@@ -224,11 +225,15 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
         ? { width: Math.round(projectWidth * zoom), height: Math.round((projectWidth * zoom) / ratio) }
         : fitStage(wrap, ratio, full ? 0 : undefined)
       const prev = sizeRef.current
-      if (next.width !== prev.width || next.height !== prev.height) {
+      const sizeChanged = next.width !== prev.width || next.height !== prev.height
+      // A browser zoom changes the pixel ratio, which the preview renders at, without changing a zoomed stage's size.
+      const dpr = globalThis.devicePixelRatio || 1
+      if (sizeChanged) {
         sizeRef.current = next
         setSize(next)
-        previewRef.current?.setViewport(next.width, next.height)
       }
+      if (sizeChanged || dpr !== dprRef.current) previewRef.current?.setViewport(next.width, next.height)
+      dprRef.current = dpr
       measureView()
     }
     layout()
