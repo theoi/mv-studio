@@ -256,8 +256,8 @@ test('the palette tells a vertical version from switching the project to vertica
     /Changes the project to 9:16$/,
   )
 
-  await input.fill('replace')
+  await input.fill('zebra')
   await expect(dialog.getByText('No matching action. Try another word.')).toBeVisible()
-  await input.fill('replace zebra')
+  await input.fill('zebra stripes')
   await expect(dialog.getByText('No matching action. Try fewer words.')).toBeVisible()
 })

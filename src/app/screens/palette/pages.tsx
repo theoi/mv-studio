@@ -331,7 +331,7 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   replaceMedia: {
     placeholder: 'Search media',
-    empty: 'No matching media. Try fewer words.',
+    empty: noMatch('media'),
     groups: () => {
       const target = replaceTarget(project(), get().selection)
       if ('why' in target) return []
