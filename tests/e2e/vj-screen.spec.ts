@@ -552,9 +552,107 @@ test('opened from the editor, VJ mode shows the frame at the playhead at once; l
   expect(problems).toEqual([])
 })
 
-test('back in the editor, the stage shows VJ mode’s last frame until its own preview draws, never “Preparing the preview”', async ({
+/** Before each paint: what VJ mode's live output and the editor's stage show (see watchStages). */
+interface StageSample {
+  /** Milliseconds since Esc was pressed, or -1 before. */
+  t: number
+  /** The live output's mean color, read from its canvas (the render worker keeps its last frame readable). */
+  live: number[] | null
+  editor: boolean
+  busy: boolean
+  note: boolean
+  /** The mean color and opacity of the frame standing in on the editor's stage. */
+  standIn: number[] | null
+  standInOpacity: number | null
+}
+
+const NO_STAND_IN_ON_THE_MAIN_THREAD =
+  'needs the render worker: a WebGL canvas drawn on the page is blank once shown, so there is no last frame to take'
+
+/** The mean color of a canvas's current frame. */
+const meanColor = (page: Page, selector: string) =>
+  page.evaluate(async (selector) => {
+    const bitmap = await createImageBitmap(document.querySelector(selector) as HTMLCanvasElement)
+    const c = new OffscreenCanvas(32, 18)
+    const g = c.getContext('2d')!
+    g.drawImage(bitmap, 0, 0, 32, 18)
+    const d = g.getImageData(0, 0, 32, 18).data
+    const sum = [0, 0, 0]
+    for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) sum[k]! += d[i + k]!
+    return sum.map((v) => v / (d.length / 4))
+  }, selector)
+
+const near = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]!) <= 12)
+
+async function watchStages(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { stages: StageSample[]; pressedAt: number; watching: boolean }
+    w.stages = []
+    w.pressedAt = 0
+    w.watching = true
+    const mean = (source: CanvasImageSource) => {
+      const c = new OffscreenCanvas(32, 18)
+      const g = c.getContext('2d')!
+      g.drawImage(source, 0, 0, 32, 18)
+      const d = g.getImageData(0, 0, 32, 18).data
+      const sum = [0, 0, 0]
+      for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) sum[k]! += d[i + k]!
+      return sum.map((v) => v / (d.length / 4))
+    }
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key === 'Escape' && !w.pressedAt) w.pressedAt = performance.now()
+      },
+      true,
+    )
+    const tick = async () => {
+      if (!w.watching) return
+      const live = document.querySelector<HTMLCanvasElement>('canvas[aria-label="Live output"]')
+      const canvas = document.querySelector('canvas[aria-label="Video preview"]')
+      const standIn = canvas?.parentElement?.querySelector<HTMLCanvasElement>('canvas[aria-hidden="true"]')
+      let liveColor: number[] | null = null
+      if (live) {
+        const bitmap = await createImageBitmap(live)
+        liveColor = mean(bitmap)
+        bitmap.close()
+      }
+      w.stages.push({
+        t: w.pressedAt ? performance.now() - w.pressedAt : -1,
+        live: liveColor,
+        editor: !!canvas,
+        busy: canvas?.getAttribute('aria-busy') === 'true',
+        note: [...document.querySelectorAll('div')].some(
+          (d) => d.textContent?.trim() === 'Preparing the preview',
+        ),
+        standIn: standIn ? mean(standIn) : null,
+        standInOpacity: standIn ? Number(getComputedStyle(standIn).opacity) : null,
+      })
+      requestAnimationFrame(() => void tick())
+    }
+    requestAnimationFrame(() => void tick())
+  })
+}
+
+const stopWatching = (page: Page) =>
+  page.evaluate(() => {
+    const w = window as unknown as { stages: StageSample[]; watching: boolean }
+    w.watching = false
+    return w.stages
+  })
+
+/** The editor's stage after Esc: never "Preparing the preview", never busy with nothing on it, and a stand-in shown. */
+function expectStandInThroughout(stages: StageSample[]) {
+  const after = stages.filter((s) => s.t >= 0)
+  expect(after.filter((s) => s.note)).toHaveLength(0)
+  expect(after.filter((s) => s.editor && s.busy && !s.standIn)).toHaveLength(0)
+  expect(after.some((s) => s.standIn)).toBe(true)
+}
+
+test('back in the editor from VJ mode, the stage shows its last frame until its own preview draws, never “Preparing the preview”', async ({
   page,
 }) => {
+  test.skip(process.env.E2E_PREVIEW_WORKER === '0', NO_STAND_IN_ON_THE_MAIN_THREAD)
   await openApp(page)
   await page.evaluate(() => {
     localStorage.setItem('mv-studio.guide-seen', '1')
@@ -568,25 +666,7 @@ test('back in the editor, the stage shows VJ mode’s last frame until its own p
   const live = page.getByRole('img', { name: 'Live output' })
   await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
 
-  // Before each paint from the press on: whether the editor's stage says it is preparing, and whether it is busy
-  // (its preview hasn't drawn) with nothing standing in for its frame.
-  await page.evaluate(() => {
-    const w = window as unknown as { back: { note: number; bare: number; standIn: number; done: boolean } }
-    w.back = { note: 0, bare: 0, standIn: 0, done: false }
-    const tick = () => {
-      if (w.back.done) return
-      const canvas = document.querySelector('canvas[aria-label="Video preview"]')
-      const standIn = canvas?.parentElement?.querySelector('canvas[aria-hidden="true"]')
-      if (
-        [...document.querySelectorAll('div')].some((d) => d.textContent?.trim() === 'Preparing the preview')
-      )
-        w.back.note++
-      if (canvas?.getAttribute('aria-busy') === 'true' && !standIn) w.back.bare++
-      if (standIn) w.back.standIn++
-      requestAnimationFrame(tick)
-    }
-    requestAnimationFrame(tick)
-  })
+  await watchStages(page)
   await page.keyboard.press('Escape')
   await expect(live).toBeHidden()
   // While the editor's own preview starts, its stage shows the live output's last frame.
@@ -600,17 +680,54 @@ test('back in the editor, the stage shows VJ mode’s last frame until its own p
   expect(busyWhenShown).toBe('true')
   await waitForPreview(page)
   await expect.poll(() => brightness(page, stage)).toBeGreaterThan(shown * 0.85)
-  await page.waitForTimeout(600)
-  const back = await page.evaluate(() => {
-    const w = window as unknown as { back: { note: number; bare: number; standIn: number; done: boolean } }
-    w.back.done = true
-    return w.back
-  })
-  expect(back.note).toBe(0)
-  expect(back.bare).toBe(0)
-  expect(back.standIn).toBeGreaterThan(0)
-  // The stand-in goes once the editor's preview has drawn.
+  // The stand-in goes 400 ms after the editor's preview has drawn, fading out over 200 ms.
   await expect(stage.locator('xpath=..').locator('canvas[aria-hidden="true"]')).toHaveCount(0)
+  expectStandInThroughout(await stopWatching(page))
+})
+
+test('leaving VJ mode while it plays a look and a pad, its stage keeps them until the editor opens on that frame, which then fades out', async ({
+  page,
+}) => {
+  test.skip(process.env.E2E_PREVIEW_WORKER === '0', NO_STAND_IN_ON_THE_MAIN_THREAD)
+  await openApp(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=60'
+  })
+  await waitForPreview(page)
+  const plain = await meanColor(page, 'canvas[aria-label="Video preview"]')
+  await page.keyboard.press('Shift+KeyV')
+  const live = page.getByRole('img', { name: 'Live output' })
+  await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+  await page.keyboard.press('Space')
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible()
+  await page.keyboard.press('Digit3')
+  await page.keyboard.press('KeyT')
+  await expect(pad(page, 'Golden hour')).toHaveAttribute('aria-pressed', 'true')
+  await expect(pad(page, 'Night city')).toHaveAttribute('aria-pressed', 'true')
+  await page.waitForTimeout(700)
+
+  await watchStages(page)
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Escape')
+  await expect(live).toBeHidden()
+  await waitForPreview(page)
+  const stage = page.getByRole('img', { name: 'Video preview' })
+  await expect(stage.locator('xpath=..').locator('canvas[aria-hidden="true"]')).toHaveCount(0)
+  const stages = await stopWatching(page)
+
+  const performing = stages.filter((s) => s.t < 0 && s.live).at(-1)?.live
+  expect(performing).toBeDefined()
+  // The look tints the whole frame.
+  expect(Math.abs(performing![0]! - plain[0]!)).toBeGreaterThan(20)
+  // VJ mode's stage keeps the performance on until the editor replaces it.
+  for (const s of stages.filter((s) => s.t >= 0 && s.live)) expect(near(s.live!, performing!)).toBe(true)
+  expectStandInThroughout(stages)
+  // The editor opens on that frame, look and pad on, and fades it out rather than cutting to its own.
+  expect(near(stages.find((s) => s.t >= 0 && s.standIn)!.standIn!, performing!)).toBe(true)
+  expect(
+    stages.some((s) => s.standInOpacity !== null && s.standInOpacity > 0.05 && s.standInOpacity < 0.95),
+  ).toBe(true)
 })
 test('the first VJ entry keeps the editor on screen until VJ mode has loaded', async ({ page }) => {
   // VJ mode's code arrives only once the test lets it, as on a first visit over a slow connection. Held, not

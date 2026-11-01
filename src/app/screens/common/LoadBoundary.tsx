@@ -70,7 +70,7 @@ export function ScreenLoadFailed({ screen, retry }: { screen: Screen; retry: () 
               Try again
             </Button>
             {vj ? (
-              <Button size="sm" onClick={leaveVj}>
+              <Button size="sm" onClick={() => leaveVj()}>
                 Back to editor
               </Button>
             ) : (

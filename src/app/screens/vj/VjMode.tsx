@@ -200,7 +200,7 @@ function useEngine(
     })
     ro.observe(stage)
     setEngine({ preview, session })
-    setActiveVjSession(session, preview)
+    setActiveVjSession(session, { preview, canvas })
     return () => {
       setActiveVjSession(null)
       ro.disconnect()
@@ -489,17 +489,18 @@ export function VjMode() {
       setMapping(false)
       return
     }
-    const kept = session && !closed.current ? session.close().kept : 0
-    closed.current = true
-    leaveVj()
-    if (kept > 0)
-      toast(`Performance added to the timeline: ${plural(kept, 'take')}, all editable`, {
-        label: 'Undo',
-        run: () => {
-          const removed = undoTakes(kept)
-          toast(removed > 0 ? `Removed ${plural(removed, 'take')} from the timeline` : 'Nothing to undo')
-        },
-      })
+    leaveVj(() => {
+      const kept = session && !closed.current ? session.close().kept : 0
+      closed.current = true
+      if (kept > 0)
+        toast(`Performance added to the timeline: ${plural(kept, 'take')}, all editable`, {
+          label: 'Undo',
+          run: () => {
+            const removed = undoTakes(kept)
+            toast(removed > 0 ? `Removed ${plural(removed, 'take')} from the timeline` : 'Nothing to undo')
+          },
+        })
+    })
   }
 
   const { engine, size, drawn, shown } = useEngine(canvasRef, stageRef, (s) => exit(s, true))
