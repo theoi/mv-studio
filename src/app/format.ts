@@ -19,6 +19,18 @@ export function formatTimecode(t: number): string {
   return `${pad(m)}:${pad(s)}.${pad(hundredths % 100)}`
 }
 
+/**
+ * A clip's times and length, as the Inspector shows them: the times to the hundredth, so the length reads as their
+ * difference, and the length rounded to the tenth like lengths elsewhere, the same wherever the clip moves.
+ */
+export function formatSpan(start: number, duration: number): string {
+  const time = (t: number) => {
+    const hundredths = Math.floor(t * 100 + 1e-6)
+    return `${formatTime(hundredths / 100)}.${String(hundredths % 100).padStart(2, '0')}`
+  }
+  return `${time(start)} – ${time(start + duration)} · ${duration.toFixed(1)} s`
+}
+
 /** Analyzed tempos are fractional (119.46); people read whole beats per minute. */
 export function formatBpm(bpm: number): string {
   return `${Math.round(bpm)} BPM`

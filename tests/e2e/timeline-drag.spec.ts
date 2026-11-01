@@ -641,3 +641,97 @@ test('the reason a drop is refused stays inside the lanes when the clip is let g
   expect(label.x + label.width).toBeLessThanOrEqual(lanes.x + lanes.width)
   await page.mouse.up()
 })
+
+test('a clip dragged straight onto another track keeps its time with a clip edge in snapping distance there, and a drag along the track still snaps to it', async ({
+  page,
+}) => {
+  await openEditor(page)
+  // Snapping to clip edges only. Spectrum bars on the Overlay track ends at 1:05.7, 0.3 s before Singer close-up
+  // starts on the Video track.
+  await page.evaluate(() => {
+    const { app } = window.mvStudio
+    app.ui.set({
+      snap: true,
+      edgeSnap: true,
+      beatSnap: false,
+      barSnap: false,
+      sectionSnap: false,
+      playheadSnap: false,
+    })
+    app.project.dispatch({ type: 'clip.trim', clipId: 'o-spec1', start: 64, duration: 1.7 })
+  })
+  const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
+  expect(0.3 * pps).toBeLessThan(8)
+  const id: string = await page.evaluate(
+    () =>
+      (
+        Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+          id: string
+          trackId: string
+          start: number
+        }[]
+      ).find((c) => c.trackId === 't-video' && Math.abs(c.start - 66) < 0.01)!.id,
+  )
+  const singer = page.locator(`[data-clip-id="${id}"]`)
+  const videoY = (await center(singer)).y
+  const overlayY = (await center(page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:05.7' }))).y
+  const drag = async (dx: number, y: number) => {
+    const from = await center(singer)
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x + dx, y, { steps: 8 })
+    await page.mouse.up()
+  }
+
+  // Straight up, and straight back down.
+  await drag(0, overlayY)
+  expect(await placed(page, id)).toEqual({ trackId: 't-overlay', start: 66, end: 68 })
+  expect(await undoLabel(page)).toBe('Move Singer close-up')
+  await drag(0, videoY)
+  expect(await placed(page, id)).toEqual({ trackId: 't-video', start: 66, end: 68 })
+
+  // Up and 4 px left: it snaps to the edge.
+  await drag(-4, overlayY)
+  expect(await placed(page, id)).toEqual({ trackId: 't-overlay', start: 65.7, end: 67.7 })
+})
+
+test('after a swap of two shots of different lengths, the Inspector’s times add up to the length it shows', async ({
+  page,
+}) => {
+  await openEditor(page)
+  await page.keyboard.press('n')
+  const pps: number = await page.evaluate(() => window.mvStudio.app.ui.get().pxPerSec)
+  /** Singer close-up and Neon grid, the Video track's 2 s clips at 1:06 and 1:08. */
+  const [singer, neon] = await page.evaluate(() => {
+    const clips = Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+      id: string
+      trackId: string
+      start: number
+    }[]
+    const at = (t: number) => clips.find((c) => c.trackId === 't-video' && Math.abs(c.start - t) < 0.01)!.id
+    return [at(66), at(68)]
+  })
+  // Times off the tenth, as a beat cut leaves them: Singer close-up 1:06.29 to 1:08 and Neon grid 1:08 to 1:09.82.
+  await page.evaluate(
+    ([singer, neon]) =>
+      window.mvStudio.app.project.dispatch([
+        { type: 'clip.trim', clipId: singer, start: 66.29, duration: 1.71 },
+        { type: 'clip.trim', clipId: neon, start: 68, duration: 1.82 },
+      ]),
+    [singer!, neon!],
+  )
+  // Neon grid onto Singer close-up: they trade places, and Neon grid starts at 1:06.29.
+  const from = await center(page.locator(`[data-clip-id="${neon}"]`))
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x - 1.5 * pps, from.y, { steps: 10 })
+  await page.mouse.up()
+  expect(await undoLabel(page)).toBe('Swap clips')
+  expect(await placed(page, neon!)).toEqual({ trackId: 't-video', start: 66.29, end: 68.11 })
+
+  const tile = page.locator(`[data-clip-id="${neon}"]`)
+  await expect(tile).toHaveAttribute('aria-label', 'Neon grid, 1:06.2 to 1:08.1')
+  await tile.click()
+  const meta = page.getByRole('tabpanel', { name: 'Inspector' }).getByText(/^(Video|Image) · /)
+  await expect(meta).toHaveText(/^(Video|Image) · 1:06\.29 – 1:08\.11 · 1\.8 s$/)
+})

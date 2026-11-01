@@ -1,6 +1,8 @@
 import type { Page } from '@playwright/test'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
+const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+
 /** Zooming the timeline: Ctrl or Mod with the wheel, and clips that follow the zoom. */
 
 async function openEditor(page: Page, hash: string) {
@@ -178,4 +180,73 @@ test('a short footage clip shows its name chip only when the name fits or the cl
   await expect(tile).not.toHaveAttribute('title')
   await zoom(96 / duration)
   await expect(label).toHaveCount(0)
+})
+
+test('the zoom buttons, keys and slider keep the playhead where it is on screen, or the middle of the view when the playhead is out of view', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=85.44')
+  const spectrum = 'Spectrum bars, 1:04.0 to 1:36.0'
+  await expect(page.getByRole('button', { name: spectrum })).toBeVisible()
+  /** Where `t` is, in px from the lanes' left edge, from the Spectrum bars clip's box as laid out (64 s to 96 s). */
+  const view = (t: number) =>
+    page.evaluate(
+      ({ label, t }) => {
+        const el = document.querySelector<HTMLElement>('[data-timeline-scroller]')!
+        const clip = el.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.getBoundingClientRect()
+        const lanes = el.getBoundingClientRect().left + 148
+        const width = el.clientWidth - 148
+        const scale = clip.width / 32
+        return {
+          x: clip.left + (t - 64) * scale - lanes,
+          middle: 64 + (lanes + width / 2 - clip.left) / scale,
+          scale,
+          width,
+          pps: window.mvStudio.app.ui.get().pxPerSec as number,
+        }
+      },
+      { label: spectrum, t },
+    )
+  const start = await view(85.44)
+  expect(start.x).toBeGreaterThan(0)
+  expect(start.x).toBeLessThan(start.width)
+  const stays = async () => {
+    const now = await view(85.44)
+    expect(Math.abs(now.x - start.x)).toBeLessThan(3)
+    return now
+  }
+
+  // Up to the closest zoom, a press at a time.
+  let at = start
+  while (at.pps < 80) {
+    await page.getByRole('button', { name: 'Zoom in' }).click()
+    const before = at.pps
+    at = await stays()
+    expect(at.pps).toBeGreaterThan(before)
+  }
+  expect(at.scale).toBeCloseTo(80, 1)
+  await page.getByRole('button', { name: 'Zoom out' }).click()
+  at = await stays()
+  expect(at.pps).toBeCloseTo(80 / 1.4, 3)
+  await page.keyboard.press(`${mod}+Equal`)
+  at = await stays()
+  expect(at.pps).toBe(80)
+  await page.keyboard.press(`${mod}+Minus`)
+  at = await stays()
+  expect(at.pps).toBeCloseTo(80 / 1.4, 3)
+  await page.getByRole('slider', { name: 'Timeline zoom' }).press('ArrowRight')
+  const slid = await stays()
+  expect(slid.pps).toBeGreaterThan(at.pps)
+
+  // The playhead 2 s past the right edge of the view: Zoom out keeps the time in the middle of the view in place.
+  await page.evaluate((s) => {
+    const el = document.querySelector<HTMLElement>('[data-timeline-scroller]')!
+    el.scrollLeft = (85.44 - s.width / s.pps - 2) * s.pps
+  }, slid)
+  const away = await view(85.44)
+  expect(away.x).toBeGreaterThan(away.width)
+  await page.getByRole('button', { name: 'Zoom out' }).click()
+  const out = await view(85.44)
+  expect(out.pps).toBeLessThan(away.pps)
+  expect(Math.abs(out.middle - away.middle) * out.scale).toBeLessThan(2)
 })
