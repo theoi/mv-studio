@@ -1,5 +1,6 @@
+import fs from 'node:fs'
 import path from 'node:path'
-import type { Page } from '@playwright/test'
+import type { Page, TestInfo } from '@playwright/test'
 import { expect, launchProfile, openApp, openHarness, test, waitForPreview } from './fixtures.ts'
 
 const FIXTURE_DIR = path.resolve(import.meta.dirname, '../fixtures/.cache')
@@ -339,6 +340,237 @@ test('a project file carries the project and its media into another browser prof
   }
 })
 
+/** A WAV file of a tone, about 21 MB, so restoring it takes several 8 MB writes. */
+function writeLongWav(file: string): void {
+  const rate = 44100
+  const samples = 120 * rate * 2
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0)
+  header.writeUInt32LE(36 + samples * 2, 4)
+  header.write('WAVEfmt ', 8)
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(1, 20)
+  header.writeUInt16LE(2, 22)
+  header.writeUInt32LE(rate, 24)
+  header.writeUInt32LE(rate * 4, 28)
+  header.writeUInt16LE(4, 32)
+  header.writeUInt16LE(16, 34)
+  header.write('data', 36)
+  header.writeUInt32LE(samples * 2, 40)
+  const data = Buffer.alloc(samples * 2)
+  for (let i = 0; i < samples; i++) data.writeInt16LE(Math.round(8000 * Math.sin((i >> 1) * 0.0627)), i * 2)
+  fs.writeFileSync(file, Buffer.concat([header, data]))
+}
+
+/** A copy of the project file `file` without the entry whose name ends with `suffix`. */
+function withoutEntry(file: string, suffix: string, out: string): void {
+  const tar = fs.readFileSync(file)
+  const text = (from: number, length: number) =>
+    tar.toString('latin1', from, from + length).replace(/\0.*$/s, '')
+  const kept: Buffer[] = []
+  let offset = 0
+  while (offset + 512 <= tar.length && tar.subarray(offset, offset + 512).some((b) => b !== 0)) {
+    const size = parseInt(text(offset + 124, 12).trim() || '0', 8)
+    const prefix = text(offset + 345, 155)
+    const name = `${prefix ? `${prefix}/` : ''}${text(offset, 100)}`
+    const end = offset + 512 + Math.ceil(size / 512) * 512
+    if (!name.endsWith(suffix)) kept.push(tar.subarray(offset, end))
+    offset = end
+  }
+  fs.writeFileSync(out, Buffer.concat([...kept, Buffer.alloc(1024)]))
+}
+
+/**
+ * Makes a project of a long song (about 21 MB), a clip and an image, in that order, and downloads its project file.
+ * Returns the file and the media's names.
+ */
+async function downloadPortable(page: Page, testInfo: TestInfo): Promise<{ file: string; names: string[] }> {
+  const wav = testInfo.outputPath('long.wav')
+  writeLongWav(wav)
+  await openBlank(page)
+  const chooser = page.waitForEvent('filechooser')
+  await page.keyboard.press(`${mod}+i`)
+  await (await chooser).setFiles(wav)
+  await expect(page.getByRole('button', { name: 'Project: long' })).toBeVisible({ timeout: 30_000 })
+  await importFiles(page, ['clip.mp4', 'image.png'])
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  await expect(page.getByLabel('clip, video')).toBeVisible()
+  await renameOpenProject(page, 'long', 'Portable')
+  await expect(saved(page)).toBeVisible()
+  const names = (await snapshot(page)).assets.map((a) => a.name)
+  await page.getByRole('button', { name: 'Project: Portable' }).click()
+  const download = page.waitForEvent('download')
+  await page.getByRole('menuitem', { name: /Download project file/ }).click()
+  const file = testInfo.outputPath('Portable.mvstudio')
+  await (await download).saveAs(file)
+  await page.keyboard.press('Escape')
+  return { file, names }
+}
+
+/** Makes each write to browser storage on `page` wait until `release()` lets it through. */
+async function holdWrites(page: Page): Promise<{ release(): Promise<void> }> {
+  await page.evaluate(() => {
+    const w = window as unknown as { held: (() => void)[] }
+    w.held = []
+    const proto = FileSystemWritableFileStream.prototype
+    const write = proto.write
+    proto.write = function (this: FileSystemWritableFileStream, ...args: Parameters<typeof write>) {
+      return new Promise<void>((resolve, reject) =>
+        w.held.push(() => write.apply(this, args).then(resolve, reject)),
+      )
+    }
+  })
+  return {
+    async release() {
+      await expect
+        .poll(() => page.evaluate(() => (window as unknown as { held: unknown[] }).held.length))
+        .toBe(1)
+      await page.evaluate(() => (window as unknown as { held: (() => void)[] }).held.shift()?.())
+    },
+  }
+}
+
+async function openProjectFileIn(page: Page, file: string) {
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Open project file' }).click()
+  await (await chooser).setFiles(file)
+}
+
+/** How many media folders the profile's browser storage holds. */
+function mediaFolders(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory()
+    const media = await root.getDirectoryHandle('media').catch(() => null)
+    let n = 0
+    if (media) for await (const _ of media.keys()) n++
+    return n
+  })
+}
+
+/** The opening card's restore line ("long.wav · 1 of 3 files") and percentage. */
+async function restoreStep(page: Page): Promise<{ line: string; percent: number }> {
+  const text = await page.getByRole('region', { name: 'Opening Portable.mvstudio' }).innerText()
+  return { line: /Restoring (.+ files)/.exec(text)?.[1] ?? '', percent: Number(/(\d+)%/.exec(text)?.[1]) }
+}
+
+test('opening a project file shows how far each file is, and a Cancel part way through a file leaves nothing behind', async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(150_000)
+  const { file, names } = await downloadPortable(page, testInfo)
+  const other = await launchProfile(testInfo.outputPath('second-profile'), baseURL)
+  try {
+    const page2 = other.pages()[0] ?? (await other.newPage())
+    await openHarness(page2)
+    const writes = await holdWrites(page2)
+    const opening = page2.getByRole('region', { name: 'Opening Portable.mvstudio' })
+
+    await openProjectFileIn(page2, file)
+    await expect(opening).toContainText('Restoring long.wav · 1 of 3 files')
+    await expect(page2.getByRole('button', { name: 'Open project file' })).toBeDisabled()
+    expect((await restoreStep(page2)).percent).toBe(0)
+    // The song's first 8 MB are in: the percentage moves within the file.
+    await writes.release()
+    await expect.poll(async () => (await restoreStep(page2)).percent).toBeGreaterThan(0)
+    expect((await restoreStep(page2)).line).toBe('long.wav · 1 of 3 files')
+    await opening.getByRole('button', { name: 'Cancel' }).click()
+    await writes.release()
+    await expect(opening).toBeHidden()
+    await expect(page2.getByRole('heading', { name: 'What are you making?' })).toBeVisible()
+    expect(await keptCount(page2)).toBe(0)
+    expect(await mediaFolders(page2)).toBe(0)
+
+    await openProjectFileIn(page2, file)
+    const steps: { line: string; percent: number }[] = []
+    for (let i = 0; i < 5; i++) {
+      await expect(opening).toContainText('Restoring')
+      const step = await restoreStep(page2)
+      steps.push(step)
+      await writes.release()
+      if (i < 4)
+        await expect.poll(async () => (await restoreStep(page2)).percent).toBeGreaterThan(step.percent)
+    }
+    await expect(page2.getByRole('button', { name: 'Project: Portable' })).toBeVisible()
+    await expect(page2.getByText('Opened “Portable”')).toBeVisible()
+    // Three writes for the song, one each for the clip and the image, with the percentage rising at every one.
+    expect(steps.slice(0, 3).map((s) => s.line)).toEqual(Array(3).fill('long.wav · 1 of 3 files'))
+    expect(steps[3]?.line).toMatch(/ · 2 of 3 files$/)
+    expect(steps[4]?.line).toMatch(/ · 3 of 3 files$/)
+    expect(
+      steps
+        .map((s) => /^(.+) · /.exec(s.line)?.[1])
+        .slice(2)
+        .sort(),
+    ).toEqual([...names].sort())
+    const percents = steps.map((s) => s.percent)
+    expect(percents[0]).toBe(0)
+    expect(percents).toEqual([...new Set(percents)].sort((a, b) => a - b))
+    expect(await storedSizes(page2)).toEqual((await snapshot(page2)).assets.map((a) => a.byteSize))
+  } finally {
+    await other.close()
+  }
+})
+
+test('a project file opens whole after a tab was closed part way through opening it', async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(150_000)
+  const { file } = await downloadPortable(page, testInfo)
+  const other = await launchProfile(testInfo.outputPath('second-profile'), baseURL)
+  try {
+    const page2 = other.pages()[0] ?? (await other.newPage())
+    await openHarness(page2)
+    const writes = await holdWrites(page2)
+    await openProjectFileIn(page2, file)
+    await writes.release()
+    await expect.poll(async () => (await restoreStep(page2)).percent).toBeGreaterThan(0)
+    // Closed while the song's second chunk is being written: the song's file stays behind, empty.
+    await page2.close()
+
+    const page3 = await other.newPage()
+    await openHarness(page3)
+    await openProjectFileIn(page3, file)
+    await expect(page3.getByRole('button', { name: 'Project: Portable' })).toBeVisible({ timeout: 30_000 })
+    expect(await storedSizes(page3)).toEqual((await snapshot(page3)).assets.map((a) => a.byteSize))
+  } finally {
+    await other.close()
+  }
+})
+
+test('a project file that lacks a media file fails to open and leaves no media of its own behind', async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(150_000)
+  const { file } = await downloadPortable(page, testInfo)
+  const broken = testInfo.outputPath('Broken.mvstudio')
+  withoutEntry(file, '/image.png', broken)
+  const missing = 'The project file is missing media for "image.png"'
+
+  const other = await launchProfile(testInfo.outputPath('second-profile'), baseURL)
+  try {
+    const page2 = other.pages()[0] ?? (await other.newPage())
+    await openHarness(page2)
+    await openProjectFileIn(page2, broken)
+    await expect(page2.getByText(missing)).toBeVisible({ timeout: 30_000 })
+    await expect(page2.getByRole('heading', { name: 'What are you making?' })).toBeVisible()
+    expect(await keptCount(page2)).toBe(0)
+    expect(await mediaFolders(page2)).toBe(0)
+  } finally {
+    await other.close()
+  }
+
+  // Where the project is kept, the failed open keeps the files that were already there.
+  await page.getByRole('button', { name: 'Project: Portable' }).click()
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('menuitem', { name: /Open project file/ }).click()
+  await (await chooser).setFiles(broken)
+  await expect(page.getByText(missing)).toBeVisible({ timeout: 30_000 })
+  expect(await storedSizes(page)).toEqual((await snapshot(page)).assets.map((a) => a.byteSize))
+  expect(await keptCount(page)).toBe(1)
+})
 test('a failed save says so, and saving again works', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {

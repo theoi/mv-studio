@@ -25,7 +25,16 @@ import { ProgressRing, Spinner } from '../../ds/Feedback.tsx'
 import { Input } from '../../ds/Fields.tsx'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
-import { jobChipLabel, jobFraction, jobLabel, openJob, runningJobs, useJobs } from '../../state/jobs.ts'
+import {
+  JOB_KINDS,
+  jobChipLabel,
+  jobFraction,
+  jobLabel,
+  openJob,
+  runningJobs,
+  useIsRunning,
+  useJobs,
+} from '../../state/jobs.ts'
 import {
   downloadProjectFile,
   duplicateCurrent,
@@ -149,6 +158,7 @@ export function TopBar() {
   useEffect(() => () => set({ renaming: false }), [])
   const vjButton = useRef<HTMLButtonElement>(null)
   const vjEntering = useVjEntering()
+  const opening = useIsRunning(JOB_KINDS.projectImport)
   // Back from VJ mode, focus returns to the button that opened it.
   useEffect(() => {
     if (takeVjButtonFocus()) vjButton.current?.focus()
@@ -198,7 +208,7 @@ export function TopBar() {
               >
                 Download project file
               </MenuItem>
-              <MenuItem icon={<Upload />} onSelect={openProjectFile}>
+              <MenuItem icon={<Upload />} onSelect={openProjectFile} disabled={opening}>
                 Open project file…
               </MenuItem>
             </MenuContent>

@@ -43,6 +43,11 @@ export function isRunning(kind: string): boolean {
   return runningJobs(jobs.list()).some((j) => j.kind === kind)
 }
 
+/** Whether a job of `kind` is running, kept current. */
+export function useIsRunning(kind: string): boolean {
+  return runningJobs(useJobs()).some((j) => j.kind === kind)
+}
+
 /** Every kind of job the app runs or follows. Each needs an entry in JOB_TARGETS, which the type checker enforces. */
 export const JOB_KINDS = {
   stems: 'analysis.stems',
