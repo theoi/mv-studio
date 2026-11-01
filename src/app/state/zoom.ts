@@ -4,8 +4,20 @@ import { get, set } from './ui.ts'
 export const MIN_PPS = 3
 export const MAX_PPS = 80
 
+let zoomer: ((pxPerSec: number) => void) | null = null
+
+/** The timeline registers how it zooms in place; returns the unregister function. */
+export function registerZoom(zoom: (pxPerSec: number) => void): () => void {
+  zoomer = zoom
+  return () => {
+    if (zoomer === zoom) zoomer = null
+  }
+}
+
 export function zoomTo(pxPerSec: number): void {
-  set({ pxPerSec: Math.min(MAX_PPS, Math.max(MIN_PPS, pxPerSec)) })
+  const next = Math.min(MAX_PPS, Math.max(MIN_PPS, pxPerSec))
+  if (zoomer) zoomer(next)
+  else set({ pxPerSec: next })
 }
 
 export function zoomBy(factor: number): void {

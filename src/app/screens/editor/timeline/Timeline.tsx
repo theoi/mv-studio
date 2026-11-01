@@ -197,7 +197,7 @@ import {
   type TrackToggle,
 } from '../../../state/tracks.ts'
 import { dropMedia, isMediaDrag, mediaDropHint, type MediaDropHint } from '../../../state/mediaDrag.ts'
-import { MAX_PPS, MIN_PPS, registerFit, zoomTo } from '../../../state/zoom.ts'
+import { MAX_PPS, MIN_PPS, registerFit, registerZoom, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { energySampler } from './energy.ts'
 import { LaneMenu } from './LaneMenu.tsx'
@@ -1905,6 +1905,24 @@ export function Timeline() {
     [],
   )
   useEffect(() => registerFit(fit), [fit])
+  useEffect(
+    () =>
+      registerZoom((next) => {
+        const el = scrollRef.current
+        const { pxPerSec, playhead } = get()
+        if (!el) return set({ pxPerSec: next })
+        if (next === pxPerSec) return
+        // The buttons, keys and slider keep the playhead where it is on screen, or the middle of the view when the
+        // playhead is out of view; the scroll lands with the zoom, as a wheel step's does.
+        const visW = el.clientWidth - HEADER_W
+        const head = playhead * pxPerSec - el.scrollLeft
+        const at = head >= 0 && head <= visW ? head : visW / 2
+        zoomScroll = { el, left: ((el.scrollLeft + at) / pxPerSec) * next - at }
+        flushSync(() => set({ pxPerSec: next }))
+        applyZoomScroll()
+      }),
+    [],
+  )
 
   const scrubFrom = (e: React.PointerEvent<HTMLDivElement>) => {
     const lane = e.currentTarget
@@ -2062,7 +2080,12 @@ export function Timeline() {
           )
           const trackFor = (c: Clip) => p.tracks[rowOf(c) + offset] as Track
           const near = othersOn(trackFor(self).id).flatMap((o) => [o.start, o.end])
-          const r = snapTime(clip.start + dt, scale, grid, near, sectionEdges)
+          // A drag straight up or down keeps the clips' time: a beat or an edge within snapping distance would move
+          // them, though the pointer did not.
+          const r =
+            Math.abs(dx) < 3
+              ? { t: clip.start, snapped: null }
+              : snapTime(clip.start + dt, scale, grid, near, sectionEdges)
           let refusal: DropRefusal | null = null
           let refusedAt = -1
           for (const [i, c] of grabbedFirst.entries()) {

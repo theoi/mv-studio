@@ -6,6 +6,7 @@ import {
   editedAgo,
   editedTimes,
   formatParam,
+  formatSpan,
   formatTime,
   formatTimecode,
   noMatch,
@@ -91,6 +92,14 @@ it('shows the hundredth the playhead was set at in the transport', () => {
   expect(formatTimecode(62.3)).toBe('01:02.30')
   expect(formatTimecode(59.999)).toBe('00:59.99')
   expect(formatTimecode(125.04)).toBe('02:05.04')
+})
+
+it('shows a clip’s times to the hundredth beside its length, which a move or a swap leaves as it was', () => {
+  // A 1.82 s shot of a beat cut: tenths would read 0:22.2 – 0:24.1 beside 1.8 s.
+  expect(formatSpan(22.29, 1.82)).toBe('0:22.29 – 0:24.11 · 1.8 s')
+  expect(formatSpan(25.94, 1.82)).toBe('0:25.94 – 0:27.76 · 1.8 s')
+  expect(formatSpan(1 + 2.8, 2)).toBe('0:03.80 – 0:05.80 · 2.0 s')
+  expect(formatSpan(59.995, 4.5)).toBe('0:59.99 – 1:04.49 · 4.5 s')
 })
 
 it('words undo labels for the tooltips: a leading verb lowered, names and features naming their step as they are', () => {
