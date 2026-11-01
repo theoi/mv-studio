@@ -161,7 +161,8 @@ export function downloadLines(
       if (shown) {
         const fraction = Math.max(bar, start + (1 - start) * DOWNLOAD_SHARE * shown.fraction)
         const { message, bytesLoaded, bytesTotal } = shown
-        show({ stage: 'download', fraction, message, bytesLoaded, bytesTotal })
+        // The job's time left does not cover the download, so it would stand still under the download's line.
+        show({ stage: 'download', fraction, message, bytesLoaded, bytesTotal, etaSeconds: undefined })
       } else {
         after = { bar, own: own.fraction ?? 0 }
         const { stage, message, bytesLoaded, bytesTotal } = own
