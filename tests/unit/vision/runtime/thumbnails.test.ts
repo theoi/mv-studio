@@ -199,6 +199,47 @@ describe('frame thumbnails', () => {
     revoked.mockRestore()
   })
 
+  it('waits for ready before each frame, so a newer hold also pauses a video that is already open', async () => {
+    let gate = Promise.resolve()
+    const { thumbs, decoded } = fakeVideos({ ready: () => gate })
+    const a = asset('a')
+    const b = asset('b')
+    thumbs.want(a, 1)
+    await flush()
+    expect(decoded).toEqual(['a@1'])
+    let release = () => {}
+    gate = new Promise<void>((resolve) => (release = resolve))
+    thumbs.want(a, 4)
+    thumbs.want(b, 2)
+    await flush()
+    expect(decoded).toEqual(['a@1'])
+    release()
+    await flush()
+    expect(decoded).toEqual(['a@1', 'a@4', 'b@2'])
+    expect(thumbs.get(a, 4)).toBe('a@4 160x90')
+  })
+
+  it('skips a frame released while it waits for ready, and makes it when it is wanted again', async () => {
+    let gate = Promise.resolve()
+    const { thumbs, decoded } = fakeVideos({ ready: () => gate })
+    const a = asset('a')
+    thumbs.want(a, 1)
+    await flush()
+    let release = () => {}
+    gate = new Promise<void>((resolve) => (release = resolve))
+    const drop4 = thumbs.want(a, 4)
+    thumbs.want(a, 5)
+    await flush()
+    drop4()
+    release()
+    await flush()
+    expect(decoded).toEqual(['a@1', 'a@5'])
+    expect(thumbs.get(a, 4)).toBeUndefined()
+    thumbs.want(a, 4)
+    await flush()
+    expect(thumbs.get(a, 4)).toBe('a@4 160x90')
+  })
+
   it('leaves images and audio to the asset thumbnail', async () => {
     const { thumbs, openAttempts } = fakeVideos()
     thumbs.want(asset('still', 'image'), 1)

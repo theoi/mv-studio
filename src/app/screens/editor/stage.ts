@@ -16,10 +16,48 @@ const reportedAudio = new Set<string>()
 
 /** The longest thumbnails wait for the preview's first frame before they decode anyway. */
 const THUMBNAIL_HOLD_MS = 3000
+/**
+ * After a draft, the longest thumbnails wait for the preview to show it. The timeline's frame thumbnails of the draft's
+ * clips would decode while the seeks for that frame run, and slow them; in 4K footage with key frames far apart those
+ * can take this long.
+ */
+const DRAFT_THUMBNAIL_HOLD_MS = 10_000
 
 let current: PreviewController | null = null
 // The project the preview was last given, so the same one is not drawn twice.
 let shown: Project | null = null
+/** Holds thumbnails until the showing preview shows the draft (see connectPreview). */
+let holdForDraft: (() => void) | null = null
+
+/**
+ * Right after a draft is dispatched: thumbnails wait until the stage preview shows it, as they wait for a project's
+ * first frame, for DRAFT_THUMBNAIL_HOLD_MS at most.
+ */
+export function holdThumbnailsForDraft(): void {
+  holdForDraft?.()
+}
+
+/**
+ * Resolves once `preview` shows its current state or can no longer draw (`rendered()`), `ms` pass, or `stop()` is
+ * called. A frame that was in flight for an earlier state, such as the project before the change, doesn't count.
+ * `rendered()` doesn't only watch: it draws a queued still and a pending settle frame at once, so a main-thread drag
+ * that starts during the wait gets its full-size frame before the settle delay.
+ */
+export function previewShown(
+  preview: Pick<PreviewController, 'rendered'>,
+  ms: number,
+): { shown: Promise<void>; stop: () => void } {
+  let stop = () => {}
+  const shown = new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    stop = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+  })
+  void preview.rendered().then(stop, stop)
+  return { shown, stop: () => stop() }
+}
 
 /** The preview drawing the editor's stage, while one is showing (for tests that read its frames). */
 export function stagePreview(): PreviewController | null {
@@ -68,31 +106,24 @@ export function connectPreview(
     reportedAudio.add(key)
     toast(audioErrorText(editor.getProject(), error))
   })
-  // Thumbnails decode once this preview shows a project's first frame, so they don't hold it up, but no longer than
-  // THUMBNAIL_HOLD_MS or past an error: a preview that never draws must not leave every thumbnail empty.
+  // Thumbnails decode once this preview shows a project (or a draft), so they don't hold up its first frame, but no
+  // longer than THUMBNAIL_HOLD_MS (DRAFT_THUMBNAIL_HOLD_MS) or past an error: a preview that never draws must not leave
+  // every thumbnail empty. A hold starts once the preview has the change, so its frame is the one waited for.
   let shownId: string | null = null
   let releaseThumbnails = () => {}
-  const holdThumbnails = () => {
+  const holdThumbnails = (ms: number) => {
     releaseThumbnails()
-    let resolve = () => {}
-    decodeThumbnailsAfter(new Promise<void>((done) => (resolve = done)))
-    const offFrame = preview.onFrame(() => releaseThumbnails())
-    const offError = preview.subscribe(() => {
-      if (preview.getSnapshot().error) releaseThumbnails()
-    })
-    const timer = setTimeout(() => releaseThumbnails(), THUMBNAIL_HOLD_MS)
-    releaseThumbnails = () => {
-      offFrame()
-      offError()
-      clearTimeout(timer)
-      resolve()
-    }
+    const hold = previewShown(preview, ms)
+    decodeThumbnailsAfter(hold.shown)
+    releaseThumbnails = hold.stop
   }
+  holdForDraft = () => holdThumbnails(DRAFT_THUMBNAIL_HOLD_MS)
   const showProject = (project: Project) => {
-    if (project.id !== shownId) holdThumbnails()
+    const opened = project.id !== shownId
     shownId = project.id
     shown = project
     preview.setProject(project)
+    if (opened) holdThumbnails(THUMBNAIL_HOLD_MS)
     forgetStemPlaybackErrors(project, preview.clock.scheduledClips)
     prepareSampleVideos(project.assets)
   }
@@ -159,6 +190,7 @@ export function connectPreview(
       if (current === preview) {
         current = null
         shown = null
+        holdForDraft = null
       }
       preview.dispose()
       if (get().playing) set({ playing: false, starting: false })
