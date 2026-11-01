@@ -846,10 +846,10 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     })
 
     it.each([
-      [1.05, 1],
-      [1.15, 0],
+      [0.85, 1],
+      [0.9, 0],
     ])(
-      'with an estimate %f × the context, sends the request %i times: only clearly over is refused',
+      'with an estimate %f × the context, sends the request %i times: the estimate is raised 15% for Qwen’s tokenizer',
       async (share, sent) => {
         const probe = fitting(65536, { loaded: true })
         await client({ [OLLAMA]: probe.handler() }, ollama).llm.callTools(long)

@@ -70,8 +70,11 @@ error says so and points to the setting.
   has loaded (`/api/ps`, `context_length`), because on a slow computer the model can write about a cut prompt for
   longer than the answer time limit, and the answer's count never arrives. When the model isn't loaded, `chat()`
   loads it first (`/api/generate` with only the model), which the request would do anyway; `onLoadingModel` lets
-  Ask and the director say "Loading the model" meanwhile. A request whose estimate is over the context by more than
-  10% gets the same `prompt-cut` error without being sent. When Ollama doesn't say (an older version without
+  Ask and the director say "Loading the model" meanwhile. A request whose estimate, raised 15% for Qwen's tokenizer
+  (`ESTIMATE_SHORTFALL`), is over the context gets the same `prompt-cut` error without being sent: at 16k, a
+  17,700-token request after a 208-shot draft is refused, and the sample's 10,800 is sent. (With Llama 3's tokenizer
+  the raised estimate errs high, so a request just under the context can be refused with the advice to raise it.)
+  When Ollama doesn't say (an older version without
   `/api/ps` or `context_length`, or a failed read), the request is sent and checked from the answer as above.
 - When a server rejects `temperature`, `max_tokens` or `reasoning_effort` with a 400, the client retries once without
   it (or with `max_completion_tokens` when the error asks for it).

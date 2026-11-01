@@ -15,6 +15,7 @@ import {
 import { extractJson, stripReasoning } from './json.ts'
 import {
   contextLengthSteps,
+  ESTIMATE_SHORTFALL,
   guessLocalRunner,
   isLocalEndpoint,
   isLoopbackHost,
@@ -107,11 +108,10 @@ const MODES: StructuredMode[] = ['tools', 'json-object', 'json-schema', 'prompt'
 const PROMPT_CUT = { charsPerToken: 4, ratio: 0.6, minTokens: 1000 } as const
 
 /**
- * A request is checked against the context of the model Ollama has loaded only from this many tokens (Ollama's
- * smallest default context), and refused only when its estimate, which errs low (see PROMPT_CUT), is over the
- * context by the margin. /api/ps answers at once; after a few seconds the request is sent unchecked.
+ * A request is checked against the context of the model Ollama has loaded only from this many tokens (half Ollama's
+ * smallest default context). /api/ps answers at once; after a few seconds the request is sent unchecked.
  */
-const OLLAMA_FIT = { minTokens: 2048, margin: 1.1, psTimeoutMs: 5000 } as const
+const OLLAMA_FIT = { minTokens: 2048, psTimeoutMs: 5000 } as const
 
 const capabilityCache = new Map<string, StructuredMode>()
 
@@ -298,7 +298,8 @@ export class OpenAICompatibleClient {
         onLoadingModel?.(false)
       }
     }
-    if (typeof context !== 'number' || tokens <= context * OLLAMA_FIT.margin) return undefined
+    // Ollama cuts only a prompt longer than its context, so the answer's room (which contextFor() adds) isn't asked for.
+    if (typeof context !== 'number' || tokens * ESTIMATE_SHORTFALL <= context) return undefined
     const count = (n: number) => n.toLocaleString('en-US')
     return this.error('prompt-cut', {
       title: 'Ollama can read only part of this request',

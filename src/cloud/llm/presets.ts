@@ -154,11 +154,15 @@ export const LOCAL_CONTEXT_TOKENS = 16384
 const CONTEXT_SIZES = [LOCAL_CONTEXT_TOKENS, 32768, 65536, 131072] as const
 
 /**
- * The smallest of CONTEXT_SIZES that holds a request estimated at `tokens` (4 characters per token, which errs low by
- * up to 15% on these requests) with room for the answer.
+ * Requests are estimated at 4 characters per token, which errs low on these JSON-heavy requests: Qwen 2.5 reads about
+ * 3.5, so its count runs up to 15% higher. (Llama 3's larger vocabulary reads about 4, so for it the raised estimate
+ * errs high.)
  */
+export const ESTIMATE_SHORTFALL = 1.15
+
+/** The smallest of CONTEXT_SIZES that holds a request estimated at `tokens` with room for the answer. */
 export function contextFor(tokens = 0): number {
-  const needed = tokens * 1.15 + 1024
+  const needed = tokens * ESTIMATE_SHORTFALL + 1024
   return CONTEXT_SIZES.find((n) => n >= needed) ?? 131072
 }
 
