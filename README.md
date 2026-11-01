@@ -4,7 +4,7 @@ MV Studio turns a song into a finished music video in your browser. Make a lyric
 
 **Open it:** https://theoi.github.io/mv-studio/ (latest desktop Google Chrome or Microsoft Edge)
 
-> **Early version.** MV Studio is in active development, so expect rough edges. Projects save automatically in your browser. To keep a copy of your own, click the project name at the top left and choose **Download project file**.
+> **Saving.** Projects save automatically in your browser. To keep a copy of your own, click the project name at the top left and choose **Download project file**. For what the automatic and AI features can get wrong, see [Known limits](#known-limits).
 
 <!-- Screenshot placeholder: the editor with a lyric video open (media library, preview, inspector, timeline). -->
 
@@ -154,12 +154,12 @@ Developer notes on the providers, error states and model choice are in [src/clou
 - On a 4-core computer without a capable GPU, stem separation (and so precise lyric timing) takes about 1.2 to 1.7 times the song's length, depending on the computer (3.5 to 9 minutes for a 3 to 5 minute song). It is a little faster once the song's analysis has finished, so right after importing a song it takes longest. It needs about 3.5 GB of memory on top of what the browser already uses, which the studio shows as about 4 GB of free memory; the whole browser uses about 4 to 5 GB while it runs (1 GB = 1,000,000,000 bytes). The studio shows an estimate before you start; after your first separation, it is based on how fast your computer was. A capable GPU is expected to make it faster, but that hasn't been measured yet.
 - Word timing can drift in dense, layered vocals and may need touching up by hand.
 - The tempo is sometimes found at half or twice the speed you feel (in testing, in about one in six songs). Half and Double next to the tempo, in Assist › Song analysis, fix it in one click.
-- Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable (in testing, for 12 of 13 such shots).
+- Subject cutout doesn't work on wide shots where people are small in the frame. The studio tells you when a shot is unsuitable (in a test on clips it had not seen, for 10 of 14 such shots).
 - Subject cutout can still take a large animal close to the camera for a person: in testing, 1 of 27 shots with no one in them was offered for text behind the subject. In a shot that also has a person, an animal can be cut out with them.
 - Section labels (intro, verse, chorus, bridge, outro) are best guesses, and the chorus isn't always found: in our tests it was mostly right in about two of three songs from the audio alone, and four of five once the lyrics were pasted. You can rename a section by double-clicking it on the timeline, or in **Inspector › Section**.
-- 3D camera moves on stills can bend or stretch edges around the subject, most visibly on large moves.
+- 3D camera moves on stills can bend or stretch edges around the subject. This is most visible on large moves, but it can happen at the default amount too (in a test on photos the studio had not seen, on 1 of 15).
 - AI images and video clips need your fal.ai key and cost money per use. The richer director and plain-language edits need an LLM endpoint, in the cloud or on your computer.
-- Not planned: AI video or image generation on your computer, accounts or cloud project storage, phone and tablet layouts, and publishing directly to video platforms.
+- Not planned: AI video or image generation on your computer, accounts or cloud project storage, phone and tablet layouts, publishing directly to video platforms, and bundled licensed music or stock footage.
 
 ## Troubleshooting
 

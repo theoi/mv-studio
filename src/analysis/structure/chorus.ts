@@ -317,8 +317,8 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
 /**
  * The chorus ranges once the lyrics' chorus is combined with the detected one, so pasted lyrics correct the detected
  * chorus without overriding a good one:
- * - A detected chorus the lyrics repeat in is confirmed and never shrinks. The lyrics extend it by at most a tenth
- *   of its length (a longer occurrence also spans a lead-in line or a neighbouring part that repeats with it).
+ * - A detected chorus section the lyrics repeat in is confirmed and never shrinks. The lyrics extend it by at most a
+ *   tenth of its length (a longer occurrence also spans a lead-in line or a neighbouring part that repeats with it).
  * - A detected chorus the lyrics do not repeat in stays only where words are sung, and only where they are mostly
  *   repeated words: an instrumental passage or a verse is not the chorus when the lyrics show where it is. When the
  *   lyrics confirm another section of its repeat group, a quarter of repeated words is enough, so a last chorus sung
