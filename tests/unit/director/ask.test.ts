@@ -9,6 +9,7 @@ import { browserFetch, PAGE_ORIGIN } from '../cloud/mocks/browser.ts'
 import { MockLlmServer } from '../cloud/mocks/llm-server.ts'
 import { CloudError } from '../../../src/cloud/errors.ts'
 import {
+  ASK_TOOLS,
   AskSession,
   compilePlan,
   buildPlannerInput,
@@ -132,6 +133,71 @@ describe('interpretRequest', () => {
     expect(error).toBeInstanceOf(JobError)
     expect((error as JobError).message).toMatch(/couldn't turn that into a valid edit/)
     expect(client.requests).toHaveLength(3)
+  })
+
+  it('accepts an edit without a summary and labels it with the request', async () => {
+    const client = scriptedClient({ name: 'edit_project', args: { operations: bigger.args.operations } })
+    const turn = await interpretRequest({
+      client,
+      project: await draft(),
+      ctx: testCtx(),
+      request: 'make the lyrics bigger',
+    })
+    if (turn.outcome.kind !== 'changes') throw new Error(turn.outcome.kind)
+    expect(turn.outcome.summary).toBe('Make the lyrics bigger')
+    expect(client.requests).toHaveLength(1)
+  })
+
+  it.each([
+    ['', 'Make the lyrics bigger'],
+    ['  \n ', 'Make the lyrics bigger'],
+    ['Made\n the lyrics\tbigger ', 'Made the lyrics bigger'],
+  ])('labels an edit whose summary is %j as %j', async (summary, expected) => {
+    const client = scriptedClient({ name: 'edit_project', args: { ...bigger.args, summary } })
+    const turn = await interpretRequest({
+      client,
+      project: await draft(),
+      ctx: testCtx(),
+      request: 'make the lyrics bigger',
+    })
+    if (turn.outcome.kind !== 'changes') throw new Error(turn.outcome.kind)
+    expect(turn.outcome.summary).toBe(expected)
+    expect(client.requests).toHaveLength(1)
+  })
+
+  it('shortens a long summary instead of rejecting the edit', async () => {
+    const long = `Made the lyrics bigger ${'and bolder '.repeat(30)}`
+    const client = scriptedClient({ name: 'edit_project', args: { ...bigger.args, summary: long } })
+    const turn = await interpretRequest({
+      client,
+      project: await draft(),
+      ctx: testCtx(),
+      request: 'make the lyrics bigger',
+    })
+    if (turn.outcome.kind !== 'changes') throw new Error(turn.outcome.kind)
+    expect(turn.outcome.summary.length).toBeLessThanOrEqual(160)
+    expect(turn.outcome.summary).toMatch(/^Made the lyrics bigger and bolder .*\S…$/)
+    expect(client.requests).toHaveLength(1)
+  })
+
+  it('still sends an edit without a summary back when its operations are invalid', async () => {
+    const client = scriptedClient({ name: 'edit_project', args: { operations: [{ op: 'explode' }] } }, bigger)
+    const turn = await interpretRequest({
+      client,
+      project: await draft(),
+      ctx: testCtx(),
+      request: 'make the lyrics bigger',
+    })
+    expect(turn.outcome.kind).toBe('changes')
+    const repair = client.requests[1]!.messages.at(-1) as { role: string; content: string }
+    expect(repair.role).toBe('tool')
+    expect(repair.content).toMatch(/^Error: operations\.0/)
+    expect(repair.content).not.toMatch(/summary/)
+  })
+
+  it('still asks the model for a summary', () => {
+    const edit = ASK_TOOLS.find((t) => t.name === 'edit_project')!
+    expect(edit.parameters.required).toContain('summary')
   })
 
   it('asks a clarifying question and continues the same conversation with the answer', async () => {
@@ -291,6 +357,19 @@ describe('AskSession', () => {
     const { ask } = session(client, project)
     expect((await ask.ask('make the text bigger')).status).toBe('question')
     expect((await ask.answer('the lyrics')).status).toBe('applied')
+  })
+
+  it('labels an edit without a summary with the request it started from, not the answer to its question', async () => {
+    const client = scriptedClient(
+      { name: 'ask_clarification', args: { question: 'Which text?' } },
+      { name: 'edit_project', args: { operations: bigger.args.operations } },
+    )
+    const { editor, ask } = session(client, await draft())
+    await ask.ask('make the text bigger')
+    const state = await ask.answer('the lyrics')
+    if (state.status !== 'applied') throw new Error(state.status)
+    expect(state.summary).toBe('Make the text bigger')
+    expect(editor.undoLabel()).toBe('Ask: Make the text bigger')
   })
 
   it('points to Settings when no model is set up', async () => {

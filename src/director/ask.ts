@@ -36,6 +36,21 @@ export const editArgsSchema = z.object({
   operations: z.array(operationSchema).min(1).max(40),
 })
 
+const SUMMARY_MAX = 160
+
+/**
+ * The summary only labels the result and the undo step, so an answer without one (small local models often leave it
+ * out) or with a long one is still a valid edit. Models still see it as required in ASK_TOOLS.
+ */
+const editAnswerSchema = editArgsSchema.extend({ summary: z.string().nullish() })
+
+function editSummary(summary: string | null | undefined, request: string): string {
+  const oneLine = (s: string) => s.trim().replace(/\s+/g, ' ')
+  const fromRequest = oneLine(request)
+  const text = oneLine(summary ?? '') || fromRequest.charAt(0).toUpperCase() + fromRequest.slice(1)
+  return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX - 1).trimEnd()}…` : text
+}
+
 const askArgsSchema = z.object({
   question: z.string().min(1).max(300),
   choices: z.array(z.string().max(80)).max(4).optional().describe('short answers the user can tap'),
@@ -121,6 +136,8 @@ export interface AskTurn {
   pendingCall?: ParsedToolCall
   /** Short ids the model saw; answers to a question keep using them. */
   ids: IdMap
+  /** The request that started this conversation (not the answer to a question). */
+  request: string
 }
 
 export interface InterpretOptions {
@@ -167,6 +184,7 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
     messages = [{ role: 'system', content: ASK_SYSTEM_PROMPT }, message]
   }
   const ids = o.previous?.pendingCall ? o.previous.ids : summary.ids
+  const request = o.previous?.pendingCall ? o.previous.request : o.request
   const maxRepairs = o.maxRepairs ?? 2
   for (let attempt = 0; ; attempt++) {
     o.ctx.progress({
@@ -187,7 +205,7 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
     let problem: string
     if (!call) {
       if (result.text)
-        return { outcome: { kind: 'reply', message: result.text.slice(0, 600) }, messages, ids }
+        return { outcome: { kind: 'reply', message: result.text.slice(0, 600) }, messages, ids, request }
       problem = `Call one of the tools: ${EDIT_TOOL}, ${ASK_TOOL} or ${REPLY_TOOL}.`
     } else if (call.error) {
       problem = `The arguments were not valid JSON (${call.error}).`
@@ -199,15 +217,17 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
           messages,
           pendingCall: call,
           ids,
+          request,
         }
       }
       problem = zodProblem(args.error)
     } else if (call.name === REPLY_TOOL) {
       const args = replyArgsSchema.safeParse(call.args)
-      if (args.success) return { outcome: { kind: 'reply', message: args.data.message }, messages, ids }
+      if (args.success)
+        return { outcome: { kind: 'reply', message: args.data.message }, messages, ids, request }
       problem = zodProblem(args.error)
     } else if (call.name === EDIT_TOOL) {
-      const args = editArgsSchema.safeParse(call.args)
+      const args = editAnswerSchema.safeParse(call.args)
       if (!args.success) {
         problem = zodProblem(args.error)
       } else {
@@ -220,7 +240,7 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
             return {
               outcome: {
                 kind: 'changes',
-                summary: args.data.summary,
+                summary: editSummary(args.data.summary, request),
                 operations: args.data.operations,
                 commands: compiled.commands,
                 items,
@@ -229,6 +249,7 @@ export async function interpretRequest(o: InterpretOptions): Promise<AskTurn> {
               },
               messages,
               ids,
+              request,
             }
           }
         } catch (error) {
