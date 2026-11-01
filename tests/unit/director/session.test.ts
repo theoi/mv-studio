@@ -76,7 +76,8 @@ describe('DirectorSession', () => {
     const planned = ready(await session.plan({ kind: 'beat-cut', seed: 4 }))
     expect(planned.cost).toBeNull()
     expect(planned.actionLabel).toBe('Make video')
-    expect(planned.preview.changes).toMatch(/^Adds \d+ clips and 2 tracks\.$/)
+    // The shots go on the new project's empty Video 1 track; the look gets a track of its own.
+    expect(planned.preview.changes).toMatch(/^Adds \d+ clips and 1 track\.$/)
     expect(editor.getProject()).toBe(project)
 
     const applied = await session.apply()

@@ -530,7 +530,7 @@ function textStyle(t: PlanText): TextStyle {
 
 const textTrackRole = (t: PlanText): DirectorTrackRole => (t.role === 'title' ? 'title' : 'text')
 
-function textClip(t: PlanText, trackId: Id, ctx: Ctx): TextClip | undefined {
+function textClip(t: PlanText, trackId: Id, ctx: Ctx, titleRow = 0): TextClip | undefined {
   const end = Math.min(t.end, ctx.plan.duration)
   const duration = end - t.start
   if (duration <= 0.01) return undefined
@@ -540,6 +540,7 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx): TextClip | undefined {
     ...(t.sectionId ? { sectionId: t.sectionId } : {}),
     ...(t.role ? { textRole: t.role } : {}),
     ...(t.lyricLineId ? { lyricLineId: t.lyricLineId } : {}),
+    ...(titleRow > 0 ? { titleRow } : {}),
   }
   const clip: TextClip = {
     ...visualBase(trackId, t.start, duration, meta),
@@ -605,18 +606,22 @@ function lookClip(look: PlanLook, trackId: Id, ctx: Ctx): VisualClip | undefined
 interface Cleanup {
   commands: EditCommand[]
   reused: Map<DirectorTrackRole, Id>
+  /** Other tracks that held only an earlier draft's title cards, by their row (`titleRow`), for titleRows to reuse. */
+  titleRows: Map<number, Id>
   removedTracks: Set<Id>
   removedClips: number
   removedIds: Set<Id>
 }
 
 /**
- * Removes earlier director clips, reusing tracks that held only one director role. Locked tracks are left alone, and
- * the `keep` tracks (a starter template's) lose the draft's clips but are never removed.
+ * Removes earlier director clips, reusing tracks that held only one director role (for title cards, of the first row;
+ * each further row's track is kept for that row). Locked tracks are left alone, and the `keep` tracks (a starter
+ * template's) lose the draft's clips but are never removed.
  */
 function cleanupPrevious(project: Project, ctx: Ctx, keep: ReadonlySet<Id>): Cleanup {
   const commands: EditCommand[] = []
   const reused = new Map<DirectorTrackRole, Id>()
+  const titleRows = new Map<number, Id>()
   const removedTracks = new Set<Id>()
   const removedIds = new Set<Id>()
   let removedClips = 0
@@ -635,9 +640,26 @@ function cleanupPrevious(project: Project, ctx: Ctx, keep: ReadonlySet<Id>): Cle
     const roles = new Set(ours.map((c) => directorMeta(c)?.role))
     const onlyOurs = ours.length === clips.length
     const role = roles.size === 1 ? ([...roles][0] as DirectorTrackRole) : undefined
+    // A track can hold title cards of more than one row (one dragged or pasted onto another's): it takes the first
+    // of their rows still free.
+    const row =
+      role === 'title'
+        ? [...new Set(ours.map((c) => directorMeta(c)?.titleRow ?? 0))]
+            .sort((a, b) => a - b)
+            .find((r) => (r === 0 ? !reused.has('title') : !titleRows.has(r)))
+        : 0
     for (const c of ours) removedIds.add(c.id)
-    if (onlyOurs && role && track.kind === 'visual' && !reused.has(role)) {
+    if (onlyOurs && role && track.kind === 'visual' && !reused.has(role) && row === 0) {
       reused.set(role, track.id)
+      commands.push({ type: 'clip.remove', clipIds: ours.map((c) => c.id) })
+    } else if (
+      onlyOurs &&
+      role === 'title' &&
+      track.kind === 'visual' &&
+      !keep.has(track.id) &&
+      row !== undefined
+    ) {
+      titleRows.set(row, track.id)
       commands.push({ type: 'clip.remove', clipIds: ours.map((c) => c.id) })
     } else if (onlyOurs && !keep.has(track.id)) {
       removedTracks.add(track.id)
@@ -649,7 +671,7 @@ function cleanupPrevious(project: Project, ctx: Ctx, keep: ReadonlySet<Id>): Cle
   }
   if (keptLocked)
     warn(ctx, 'Clips from an earlier draft on locked tracks were kept. Unlock those tracks to replace them.')
-  return { commands, reused, removedTracks, removedClips, removedIds }
+  return { commands, reused, titleRows, removedTracks, removedClips, removedIds }
 }
 
 /**
@@ -701,6 +723,24 @@ function takeTemplateTracks(
   }
 }
 
+/**
+ * A project not made from a template (`createProject`'s, with one empty "Video 1" track) gets the draft's shots on
+ * its only visual track while that is empty, unlocked and shown, as a blank template's "Video 1" does. A new track for
+ * them would leave the empty one under the draft, pushing the song down the timeline.
+ */
+function takeEmptyTrack(project: Project, needed: ReadonlySet<DirectorTrackRole>, cleanup: Cleanup) {
+  if (!needed.has('shots') || cleanup.reused.has('shots')) return
+  // Tracks the draft has kept for another role or title row (titleRows reuses or removes those) are not free.
+  const kept = new Set([...cleanup.reused.values(), ...cleanup.titleRows.values()])
+  const visual = project.tracks.filter(
+    (t) => t.kind === 'visual' && !cleanup.removedTracks.has(t.id) && !kept.has(t.id),
+  )
+  const track = visual[0]
+  if (visual.length !== 1 || !track || track.locked || track.hidden) return
+  if (clipsOnTrack(project, track.id).some((c) => !cleanup.removedIds.has(c.id))) return
+  cleanup.reused.set('shots', track.id)
+}
+
 function placeTracks(
   project: Project,
   needed: Set<DirectorTrackRole>,
@@ -714,10 +754,17 @@ function placeTracks(
   const at = (role: DirectorTrackRole) =>
     trackFor.get(role) ??
     TEMPLATE_TRACKS[role]?.map((r) => template?.tracks[r]).find((id) => !!id && order.includes(id))
+  const names = new Set(project.tracks.filter((t) => order.includes(t.id)).map((t) => t.name))
+  // When the earlier first title row can't be reused (the user's text is on it, or it is locked), the new one goes
+  // above the earlier further rows, so the rows still read in order.
+  const earlierRow = order.find((id) => [...cleanup.titleRows.values()].includes(id))
   let added = 0
   for (const [i, role] of TRACK_ORDER.entries()) {
     if (!needed.has(role) || trackFor.has(role)) continue
-    const track: Track = createTrack('visual', TRACK_NAMES[role])
+    const track: Track = createTrack(
+      'visual',
+      role === 'title' ? freeName(TRACK_NAMES.title, names, 1) : TRACK_NAMES[role],
+    )
     const below = TRACK_ORDER.slice(i + 1)
       .map(at)
       .find((id) => id !== undefined)
@@ -725,13 +772,96 @@ function placeTracks(
       .reverse()
       .map(at)
       .find((id) => id !== undefined)
-    const index = below ? order.indexOf(below) : above ? order.indexOf(above) + 1 : 0
+    const index =
+      role === 'title' && earlierRow
+        ? order.indexOf(earlierRow)
+        : below
+          ? order.indexOf(below)
+          : above
+            ? order.indexOf(above) + 1
+            : 0
     order.splice(index, 0, track.id)
     commands.push({ type: 'track.add', track, index })
     trackFor.set(role, track.id)
     added++
   }
   return { commands, trackFor, added, order }
+}
+
+/**
+ * The track and row of each title card when title cards overlap in time (a song's title and its artist): each goes on
+ * the first row that is free when it starts. A further row is the earlier draft's track for that row (so the artist
+ * stays on the row the user hid), else the empty row of that name just below the last one (whose card the user
+ * deleted), else a new track there named like the first with the first free number ("Titles 2"). Earlier rows this
+ * draft doesn't need are removed. On one track the later clip would cover the earlier one, so only one of them could
+ * be seen or clicked.
+ */
+function titleRows(
+  plan: EditPlan,
+  project: Project,
+  placed: ReturnType<typeof placeTracks>,
+  cleanup: Cleanup,
+): Map<PlanText, { trackId: Id; row: number }> {
+  const rows = new Map<PlanText, { trackId: Id; row: number }>()
+  const earlier = new Map(cleanup.titleRows)
+  const first = placed.trackFor.get('title')
+  if (first) {
+    const names = new Map(project.tracks.map((t) => [t.id, t.name]))
+    for (const c of placed.commands) if (c.type === 'track.add') names.set(c.track.id, c.track.name)
+    const base = (names.get(first) ?? TRACK_NAMES.title).replace(/ \d+$/, '')
+    const tracks: Id[] = [first]
+    const nextRow = (row: number, above: Id): Id => {
+      const reused = earlier.get(row)
+      earlier.delete(row)
+      if (reused) return reused
+      const index = placed.order.indexOf(above) + 1
+      const next = project.tracks.find((t) => t.id === placed.order[index])
+      if (
+        next &&
+        next.kind === 'visual' &&
+        !next.locked &&
+        // An earlier row kept for a later row isn't free.
+        ![...earlier.values()].includes(next.id) &&
+        next.name.startsWith(`${base} `) &&
+        /^\d+$/.test(next.name.slice(base.length + 1)) &&
+        clipsOnTrack(project, next.id).every((c) => cleanup.removedIds.has(c.id))
+      ) {
+        return next.id
+      }
+      const taken = new Set(placed.order.map((id) => names.get(id) ?? ''))
+      const track: Track = createTrack('visual', freeName(base, taken, 2))
+      placed.order.splice(index, 0, track.id)
+      placed.commands.push({ type: 'track.add', track, index })
+      placed.added++
+      names.set(track.id, track.name)
+      return track.id
+    }
+    /** When each track's last title card ends. */
+    const ends: Seconds[] = []
+    const titles = plan.texts
+      .filter((t) => textTrackRole(t) === 'title' && Math.min(t.end, plan.duration) - t.start > 0.01)
+      .sort((a, b) => a.start - b.start)
+    for (const t of titles) {
+      let row = ends.findIndex((end) => end <= t.start + 0.001)
+      if (row === -1) {
+        row = ends.length
+        if (row > 0) tracks.push(nextRow(row, tracks[row - 1] as Id))
+      }
+      ends[row] = Math.min(t.end, plan.duration)
+      rows.set(t, { trackId: tracks[row] as Id, row })
+    }
+  }
+  // After the track.add commands, whose indexes count these rows.
+  for (const trackId of earlier.values()) placed.commands.push({ type: 'track.remove', trackId })
+  return rows
+}
+
+/** `base` with the first number from `from` that makes a name no track has (1 is `base` alone). */
+function freeName(base: string, taken: ReadonlySet<string>, from: number): string {
+  let n = from
+  const name = () => (n === 1 ? base : `${base} ${n}`)
+  while (taken.has(name())) n++
+  return name()
 }
 
 /**
@@ -829,7 +959,14 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
   const keep = new Set(Object.values(template?.tracks ?? {}))
   const cleanup: Cleanup =
     options.replacePrevious === false
-      ? { commands: [], reused: new Map(), removedTracks: new Set(), removedClips: 0, removedIds: new Set() }
+      ? {
+          commands: [],
+          reused: new Map(),
+          titleRows: new Map(),
+          removedTracks: new Set(),
+          removedClips: 0,
+          removedIds: new Set(),
+        }
       : cleanupPrevious(project, ctx, keep)
   stats.removedClips = cleanup.removedClips
 
@@ -851,7 +988,9 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     cleanup.commands.push({ type: 'track.remove', trackId })
   }
   if (template) takeTemplateTracks(project, template, needed, cleanup)
+  else takeEmptyTrack(project, needed, cleanup)
   const placed = placeTracks(project, needed, cleanup, template)
+  const titleTracks = titleRows(plan, project, placed, cleanup)
   stats.addedTracks = placed.added
 
   const assetCommands: EditCommand[] = []
@@ -872,8 +1011,9 @@ export function compilePlan(plan: EditPlan, project: Project, options: CompileOp
     stats.shots++
   }
   for (const t of plan.texts) {
-    const trackId = placed.trackFor.get(textTrackRole(t))
-    const clip = trackId && textClip(t, trackId, ctx)
+    const title = titleTracks.get(t)
+    const trackId = title?.trackId ?? placed.trackFor.get(textTrackRole(t))
+    const clip = trackId && textClip(t, trackId, ctx, title?.row)
     if (!clip) continue
     clips.push(clip)
     stats.texts++
