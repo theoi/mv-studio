@@ -178,7 +178,11 @@ test('a clip is cut out when the person and face detectors cannot download, says
   await page.keyboard.press('Enter')
   await page.getByRole('tab', { name: 'Inspector' }).click()
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
-  await inspector.getByRole('button', { name: 'Layering' }).click()
+  // Layering opens by itself on a clip that is behind, unless the inspector kept it closed from before the cutout. A
+  // click on an open section closes it, and its content stays on screen while it animates closed.
+  const layering = inspector.getByRole('button', { name: 'Layering' })
+  if ((await layering.getAttribute('aria-expanded')) === 'false') await layering.click()
+  await expect(layering).toHaveAttribute('aria-expanded', 'true')
   await expect(
     inspector.getByRole('switch', { name: 'Put text and effects behind the subject' }),
   ).toBeChecked()
