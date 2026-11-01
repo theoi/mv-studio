@@ -23,7 +23,8 @@ import type { Selection } from './ui.ts'
  */
 
 export type AutoCutRange = 'all' | 'section'
-export type AutoCutClips = 'all' | 'selected'
+/** "chosen" is every clip but the ones the user left out of the panel's list (`leftOut`). */
+export type AutoCutClips = 'all' | 'selected' | 'chosen'
 /** "mood" follows the Match clips to the mood switch (matched or shuffled); "story" keeps import order. */
 export type AutoCutClipOrder = 'mood' | 'story'
 
@@ -33,6 +34,8 @@ export interface AutoCutChoices {
   matchMood: boolean
   range: AutoCutRange
   clips: AutoCutClips
+  /** Clips left out of "Choose clips". Clips imported later are in until the user leaves them out too. */
+  leftOut: Id[]
   /** More options: the grid lines cuts land on ('beats' follows the pace). */
   cutOn: AutoCutOn
   clipOrder: AutoCutClipOrder
@@ -44,6 +47,7 @@ export const DEFAULT_AUTOCUT_CHOICES: AutoCutChoices = {
   matchMood: true,
   range: 'all',
   clips: 'all',
+  leftOut: [],
   cutOn: 'beats',
   clipOrder: 'mood',
 }
@@ -60,8 +64,8 @@ export function setAutoCutChoices(patch: Partial<AutoCutChoices>): void {
   useAutoCut.setState((s) => ({ choices: { ...s.choices, ...patch } }))
 }
 
-/** The clips and stills auto-cut can use: the imported and generated ones, as src/vision's autoCutPool. */
-function poolAssets(project: Project) {
+/** The clips and stills auto-cut can use: the imported and generated ones in import order, as src/vision's autoCutPool. */
+export function autoCutAssets(project: Project) {
   return Object.values(project.assets).filter(
     (a) =>
       (a.origin.type === 'import' || a.origin.type === 'generated') &&
@@ -70,14 +74,17 @@ function poolAssets(project: Project) {
 }
 
 export function autoCutClipCount(project: Project): number {
-  return poolAssets(project).length
+  return autoCutAssets(project).length
 }
 
-const unanalyzed = (project: Project) =>
-  poolAssets(project).filter((a) => {
+const unanalyzed = (project: Project, assetIds?: readonly Id[]) => {
+  const wanted = assetIds && new Set(assetIds)
+  return autoCutAssets(project).filter((a) => {
+    if (wanted && !wanted.has(a.id)) return false
     const data = project.analysis.visual[a.id]?.data
     return !(data && typeof data === 'object' && !Array.isArray(data) && data.embedding)
   })
+}
 
 /** Clips footage analysis has not indexed for matching yet; auto-cut picks them for variety only. */
 export function unanalyzedClipCount(project: Project): number {
@@ -85,14 +92,15 @@ export function unanalyzedClipCount(project: Project): number {
 }
 
 /**
- * The clips not analyzed yet, split into those analysis will still pick up (`waiting`) and those it failed to read
- * (`unreadable`, in the order they failed), which only a retry of failed clips analyzes again.
+ * The clips not analyzed yet (of `assetIds` when given), split into those analysis will still pick up (`waiting`) and
+ * those it failed to read (`unreadable`, in the order they failed), which only a retry of failed clips analyzes again.
  */
 export function analysisBacklog(
   project: Project,
   indexing: IndexingState | null,
+  assetIds?: readonly Id[],
 ): { waiting: number; unreadable: IndexingState['failed'] } {
-  const left = unanalyzed(project)
+  const left = unanalyzed(project, assetIds)
   const ids = new Set(left.map((a) => a.id))
   const unreadable = (indexing?.failed ?? []).filter((f) => ids.has(f.assetId))
   return { waiting: left.length - unreadable.length, unreadable }
@@ -164,13 +172,40 @@ export function targetSection(project: Project, selection: Selection, playhead: 
   return sectionAt(project, playhead)
 }
 
-/** The asset of the selected video or image clip, for "Selected clips". */
-export function selectedAsset(project: Project, selection: Selection): { id: Id; name: string } | undefined {
-  if (selection.type !== 'clip') return undefined
-  const clip = project.clips[selection.id]
-  if (!clip || (clip.type !== 'video' && clip.type !== 'image')) return undefined
-  const asset = project.assets[clip.assetId]
-  return asset ? { id: asset.id, name: clip.name ?? asset.name } : undefined
+/** The media of the selected video and image clips, each once, for "Selected clips". */
+export function selectedAssets(project: Project, selection: Selection): { id: Id; name: string }[] {
+  if (selection.type !== 'clip') return []
+  const found = new Map<Id, string>()
+  for (const id of selection.ids ?? [selection.id]) {
+    const clip = project.clips[id]
+    if (!clip || (clip.type !== 'video' && clip.type !== 'image')) continue
+    const asset = project.assets[clip.assetId]
+    if (asset && !found.has(asset.id)) found.set(asset.id, clip.name ?? asset.name)
+  }
+  return [...found].map(([id, name]) => ({ id, name }))
+}
+
+/** The clips "Choose clips" cuts: every clip auto-cut can use but the ones left out. */
+export function chosenAssetIds(project: Project, leftOut: readonly Id[]): Id[] {
+  const out = new Set(leftOut)
+  return autoCutAssets(project)
+    .filter((a) => !out.has(a.id))
+    .map((a) => a.id)
+}
+
+/** The clips a cut with these choices uses, or undefined for every clip. */
+export function usedAssetIds(
+  choices: AutoCutChoices,
+  project: Project,
+  selection: Selection,
+): Id[] | undefined {
+  if (choices.clips === 'selected') {
+    const selected = selectedAssets(project, selection)
+    return selected.length ? selected.map((a) => a.id) : undefined
+  }
+  if (choices.clips !== 'chosen') return undefined
+  const chosen = chosenAssetIds(project, choices.leftOut)
+  return chosen.length === autoCutAssets(project).length ? undefined : chosen
 }
 
 /** autoCut options for the panel's choices, against the project and selection as they are now. */
@@ -181,14 +216,14 @@ export function autoCutOptions(
   playhead: number,
 ): Omit<AutoCutOptions, 'seed'> {
   const section = choices.range === 'section' ? targetSection(project, selection, playhead) : undefined
-  const asset = choices.clips === 'selected' ? selectedAsset(project, selection) : undefined
+  const assetIds = usedAssetIds(choices, project, selection)
   return {
     pace: choices.pace,
     followEnergy: choices.followEnergy,
     cutOn: choices.cutOn,
     order: choices.clipOrder === 'story' ? 'chronological' : choices.matchMood ? 'matched' : 'shuffled',
     ...(section ? { range: { start: section.start, end: section.end } } : {}),
-    ...(asset ? { assetIds: [asset.id] } : {}),
+    ...(assetIds ? { assetIds } : {}),
   }
 }
 
