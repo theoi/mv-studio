@@ -120,25 +120,25 @@ Everything works without an account or key. Two optional connections add AI feat
   - Windows: add a user environment variable `OLLAMA_ORIGINS` = `https://theoi.github.io`, then restart Ollama from the tray.
   - Linux (systemd): `sudo systemctl edit ollama`, add `Environment="OLLAMA_ORIGINS=https://theoi.github.io"` under `[Service]`, then `sudo systemctl restart ollama`.
 
-  Use the base URL `http://localhost:11434/v1`. Models with tool support (for example `qwen2.5` or `llama3.1`) work best.
+  Use the base URL `http://localhost:11434/v1`. Models with tool support (for example `qwen2.5` or `llama3.1`) work best. Also set Ollama's context length to 16k: in the Ollama app under Settings › Context length, or with `OLLAMA_CONTEXT_LENGTH=16384` set the same way as above. On most computers (less than 24 GB of graphics memory), Ollama reads only 4,096 tokens by default, and a plain-language edit sends 11,000 to 16,000. The largest edits, and edits after a long director draft (about 18,000), need 32k. When a request doesn't fit, the studio says so and names the length to set.
 
 - **LM Studio** (free, runs on your computer): start the server in the Developer tab, turn on **Enable CORS** in its settings, load a model, and use `http://localhost:1234/v1`.
 
-When connecting to Ollama or LM Studio for the first time, Chrome and Edge may ask whether this site may access devices on your local network. Choose **Allow**. If you run the studio locally with `npm run dev`, allow `http://localhost:5173` instead.
+When connecting to Ollama or LM Studio for the first time, Chrome and Edge may ask whether this site may access devices on your local network. Choose **Allow**. A copy you run locally with `npm run dev` doesn't need this, and Ollama already accepts requests from `localhost`.
 
 Developer notes on the providers, error states and model choice are in [src/cloud/README.md](./src/cloud/README.md).
 
 ### Choosing an LLM
 
-| Where            | Recommended model                                                | Notes                                                                                                                   |
-| ---------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Cloud            | `gpt-4.1-mini` (OpenAI), or `openai/gpt-4.1-mini` on OpenRouter  | Fast, inexpensive and reliable with tool calls. Preselected after Test connection. GPT-5 and o-series models also work. |
-| Local, Ollama    | `qwen2.5:7b`, or `qwen2.5:14b` and larger if you have the memory | Apache 2.0 license.                                                                                                     |
-| Local, LM Studio | `qwen2.5-7b-instruct`, or a 14B version if you have the memory   | Apache 2.0 license.                                                                                                     |
+| Where            | Recommended model                                                                                          | Notes                                                                                                                   |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Cloud            | `gpt-4.1-mini` (OpenAI), or `openai/gpt-4.1-mini` on OpenRouter                                            | Fast, inexpensive and reliable with tool calls. Preselected after Test connection. GPT-5 and o-series models also work. |
+| Local, Ollama    | `qwen2.5:7b` (about 6 GB of memory with a 16k context), or `qwen2.5:14b` and larger if you have the memory | Apache 2.0 license. Set the context length to 16k (see above).                                                          |
+| Local, LM Studio | `qwen2.5-7b-instruct`, or a 14B version if you have the memory                                             | Apache 2.0 license.                                                                                                     |
 
 - **Avoid models under 7B**, such as 3B models. In testing, Qwen2.5-3B got about half of the edit requests wrong and sometimes kept writing until it was cut off. Its license is also research-only.
-- **A local 7B model is slow without a GPU.** On a CPU-only test machine, the first answer took about 4 minutes (including loading the model), at about 2.5 tokens per second. A Mac with Apple Silicon, a GPU, or a cloud model gives a much better experience.
-- **Answer time limit.** Each answer may take up to 90 seconds with a cloud endpoint and 300 seconds with a local one, because the first local request also loads the model. You can change the limit from 20 to 600 seconds in Settings › AI and cloud. Cancel stays available while you wait.
+- **A local 7B model is too slow for comfortable use without a GPU.** On a CPU-only test machine (2 cores) with Ollama and `qwen2.5:7b`, a director plan took 6 to 10 minutes. A plain-language edit took 1 to 2 minutes when Ollama could reuse what it had already read, and 5 to 9 minutes otherwise (the first edit, and the next one after an edit was applied): Ollama read the request at 20 to 30 tokens per second and wrote 2 to 5. A Mac with Apple Silicon, a GPU, or a cloud model gives a much better experience.
+- **Answer time limit.** Each answer may take up to 90 seconds with a cloud endpoint and 5 minutes with a local one, because the first local request also loads the model. You can choose from 30 seconds to 10 minutes in Settings › AI and cloud. Cancel stays available while you wait.
 
 ## Performance
 
@@ -177,6 +177,8 @@ Developer notes on the providers, error states and model choice are in [src/clou
 
 **LLM answers time out.** Raise the answer time limit in Settings › AI and cloud, use a smaller project or a GPU, or switch to a cloud model. See [Choosing an LLM](#choosing-an-llm).
 
+**A local model says it read only part of the request.** The model's context length is too small for the request. Raise it to the length the message names (16k, or 32k for the largest edits and after a long director draft) by following the steps in the message, then try again. A larger context uses more memory.
+
 **The browser says storage is full.** Free some disk space, or remove projects and media you no longer need. Browsers give each site a share of the free disk space.
 
 ## Running locally
@@ -204,7 +206,7 @@ MV Studio is a static site, so any HTTPS host works. To publish a fork on GitHub
 4. In the same workflow, change `E2E_BASE_URL` in the smoke test job to your site's address.
 5. If you use Ollama with your copy, set `OLLAMA_ORIGINS` to your own origin, for example `https://<user>.github.io`.
 
-**Why the service worker.** AI models run on several threads only when the page is cross-origin isolated, which needs two HTTP response headers: `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy`. GitHub Pages can't send custom headers, so [public/coi-serviceworker.js](./public/coi-serviceworker.js) adds them to every response in the browser. It uses COEP `credentialless`, so files from other sites, such as models and images, load without those sites sending special headers. Keep this vendored copy rather than the upstream file, which applies `credentialless` too late on the first visit and sometimes misses the reload that turns isolation on. On a host that sends both headers itself, the service worker stays out of the way. The local dev server (`npm run dev`) sends the headers directly.
+**Why the service worker.** AI models run on several threads only when the page is cross-origin isolated, which needs two HTTP response headers: `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy`. GitHub Pages can't send custom headers, so [public/coi-serviceworker.js](./public/coi-serviceworker.js) adds them to the site's own responses in the browser. Requests to other sites that use CORS, such as model downloads and calls to a local Ollama, go straight to the network. It uses COEP `credentialless`, so files from other sites, such as models and images, load without those sites sending special headers. Keep this vendored copy rather than the upstream file, which applies `credentialless` too late on the first visit and sometimes misses the reload that turns isolation on. On a host that sends both headers itself, the service worker stays out of the way. The local dev server (`npm run dev`) sends the headers directly.
 
 ## Contributing
 
