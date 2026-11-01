@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { BARS_NOTES, type Id, type Project } from '../../model/index.ts'
+import { BARS_NOTES, type Asset, type Id, type Project } from '../../model/index.ts'
 import { jobs, type JobErrorCode, type JobHandle } from '../../shared/jobs.ts'
 import type {
   AutoCutOn,
@@ -8,6 +8,7 @@ import type {
   AutoCutResult,
   IndexingState,
 } from '../../vision/index.ts'
+import { readClipTags, readSubjectTrack } from '../../vision/analysisData.ts'
 import { plural, shortFileName } from '../format.ts'
 import { analyzeFootageAndWait, showingDownloads, useFootage, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
@@ -107,13 +108,15 @@ export function autoCutClipCount(project: Project): number {
   return autoCutAssets(project).length
 }
 
+/** Whether footage analysis has indexed the asset for matching. */
+function indexed(project: Project, assetId: Id): boolean {
+  const data = project.analysis.visual[assetId]?.data
+  return !!(data && typeof data === 'object' && !Array.isArray(data) && data.embedding)
+}
+
 const unanalyzed = (project: Project, assetIds?: readonly Id[]) => {
   const wanted = assetIds && new Set(assetIds)
-  return autoCutAssets(project).filter((a) => {
-    if (wanted && !wanted.has(a.id)) return false
-    const data = project.analysis.visual[a.id]?.data
-    return !(data && typeof data === 'object' && !Array.isArray(data) && data.embedding)
-  })
+  return autoCutAssets(project).filter((a) => (!wanted || wanted.has(a.id)) && !indexed(project, a.id))
 }
 
 /** Clips footage analysis has not indexed for matching yet; auto-cut picks them for variety only. */
@@ -267,6 +270,118 @@ const analyzingMessage = (done: number, total: number) =>
 /** Share of the job's progress spent finding bars, when they are not found yet. */
 const BARS_SHARE = 0.4
 
+/*
+ * Time left in a cut, measured on a 4-core computer without a capable GPU on 12 phone and camera clips (1080p to 4K,
+ * 24 to 60 fps) and a 3 min song. Decoding every frame dominates footage analysis, so a clip's cost grows with its
+ * length, frame size and frame rate. The estimate then follows how long this computer took for the clips analyzed so
+ * far against their prediction, so a slower or faster computer gets a longer or shorter one.
+ */
+const ANALYSIS_SECONDS_PER_SECOND = 0.55
+const ANALYSIS_SECONDS_PER_MEGAPIXEL_SECOND = 0.11
+const STILL_ANALYSIS_SECONDS = 1
+/** Finding the bars, per second of song, model download included. */
+const BARS_SECONDS_PER_SECOND = 0.15
+/** Finding the cuts and placing them once the clips are analyzed and the bars found. */
+const PLAN_SECONDS = 3
+/** How many predicted seconds of analysis the prediction's own pace counts for against the measured one. */
+const PACE_PRIOR_SECONDS = 30
+/** Share of a clip's analysis spent matching; finding its subjects takes the rest, and its tags next to nothing. */
+const MATCHING_SHARE = 0.5
+type IndexStep = NonNullable<IndexingState['current']>['step']
+const STEP_SHARE: Record<IndexStep, number> = {
+  matching: MATCHING_SHARE,
+  tags: 0,
+  subjects: 1 - MATCHING_SHARE,
+}
+
+/** Predicted seconds footage analysis takes for a clip or still, both of its steps (matching, then subjects). */
+export function clipAnalysisSeconds(asset: Asset): number {
+  if (asset.kind !== 'video') return STILL_ANALYSIS_SECONDS
+  const megapixels = ((asset.width ?? 1920) * (asset.height ?? 1080)) / 1e6
+  const rate = (asset.frameRate ?? 30) / 30
+  return (
+    (asset.duration ?? 0) *
+    (ANALYSIS_SECONDS_PER_SECOND + ANALYSIS_SECONDS_PER_MEGAPIXEL_SECOND * megapixels * rate)
+  )
+}
+
+/**
+ * How many times longer than predicted this computer takes for footage analysis, from analysis predicted to take
+ * `predictedDone` seconds that took `elapsed`. The prediction counts too, so one short clip can't set the pace alone.
+ */
+export function analysisPace(predictedDone: number, elapsed: number): number {
+  const pace = (elapsed + PACE_PRIOR_SECONDS) / (predictedDone + PACE_PRIOR_SECONDS)
+  return Math.min(4, Math.max(0.5, pace))
+}
+
+/** The analysis steps a clip still needs, in the order footage analysis runs them (as its indexer plans them). */
+function stepsLeft(project: Project, assetId: Id): IndexStep[] {
+  const visual = project.analysis.visual[assetId]
+  const steps: IndexStep[] = []
+  if (!indexed(project, assetId)) steps.push('matching')
+  if (!readClipTags(visual)) steps.push('tags')
+  if (!readSubjectTrack(visual)) steps.push('subjects')
+  return steps
+}
+
+export interface QueuedClip {
+  asset: Asset
+  /** The steps footage analysis runs for it, as planned when the cut started. */
+  steps: IndexStep[]
+}
+
+/**
+ * The clips footage analysis goes through until each of `assetIds` is matched. It analyzes the oldest first and runs
+ * every step a clip still needs before the next, so an older clip waits in front of the cut's too: one left out of
+ * the cut, or one matched earlier whose subjects were never found (analysis cancelled, or a project made before).
+ */
+export function analysisQueue(project: Project, assetIds: readonly Id[]): QueuedClip[] {
+  const ids = new Set(assetIds)
+  const queue = autoCutAssets(project)
+    .map((asset) => ({ asset, steps: stepsLeft(project, asset.id) }))
+    .filter((c) => c.steps.length > 0)
+    .sort(
+      (a, b) => a.asset.createdAt.localeCompare(b.asset.createdAt) || a.asset.id.localeCompare(b.asset.id),
+    )
+  return queue.slice(0, queue.findLastIndex((c) => ids.has(c.asset.id)) + 1)
+}
+
+/**
+ * Predicted seconds of the analysis of `queue` (from `analysisQueue`) done so far, and still to wait for: each
+ * clip's steps still missing from the project, less how far the clip being analyzed is into its step. The last
+ * clip counts only its matching, as the cut goes on once it is matched.
+ */
+export function analysisProgress(
+  project: Project,
+  queue: readonly QueuedClip[],
+  state?: IndexingState,
+): { done: number; left: number } {
+  const failed = new Set(state?.failed.map((f) => f.assetId))
+  let total = 0
+  let left = 0
+  queue.forEach(({ asset, steps }, i) => {
+    const cost = clipAnalysisSeconds(asset)
+    const counted = i === queue.length - 1 ? steps.filter((s) => s === 'matching') : steps
+    const work = (list: readonly IndexStep[]) => cost * list.reduce((sum, s) => sum + STEP_SHARE[s], 0)
+    total += work(counted)
+    if (failed.has(asset.id)) return
+    const missing = stepsLeft(project, asset.id)
+    let remaining = work(counted.filter((s) => missing.includes(s)))
+    const current = state?.current
+    if (current?.assetId === asset.id && counted.includes(current.step)) {
+      // The indexer spreads a clip's fraction evenly over its steps.
+      const within = current.fraction * steps.length - steps.indexOf(current.step)
+      remaining -= cost * STEP_SHARE[current.step] * Math.min(1, Math.max(0, within))
+    }
+    left += Math.max(0, remaining)
+  })
+  return { done: total - left, left }
+}
+
+/** Seconds left in a cut, from the predicted analysis and bar finding still to do and the measured pace. */
+export function cutSecondsLeft(analysisLeft: number, barsLeft: number, pace: number): number {
+  return Math.round((analysisLeft + barsLeft) * pace + PLAN_SECONDS)
+}
 let runs = 0
 
 /**
@@ -291,36 +406,74 @@ export function startAutoCut(
     run: showingDownloads(['tagger', 'cutout'], async (ctx) => {
       const matched = (options.order ?? 'matched') === 'matched'
       const wanted = options.assetIds && new Set(options.assetIds)
-      const waiting = unanalyzed(editor.getProject())
+      const project = editor.getProject()
+      const waiting = unanalyzed(project)
         .filter((a) => !wanted || wanted.has(a.id))
         .map((a) => a.id)
       const analyze = analyzeFirst && matched && waiting.length > 0
       // The analyzing stage takes the first half of the bar. Cuts phrase on bars, so a song whose bars are still being
       // found waits for them next; the cut takes the rest.
       const analyzed = analyze ? 0.5 : 0
-      const share = barsState().status === 'ready' ? 0 : BARS_SHARE * (1 - analyzed)
+      const findBars = barsState().status !== 'ready'
+      const share = findBars ? BARS_SHARE * (1 - analyzed) : 0
       const scale = (f: number) => analyzed + share + f * (1 - analyzed - share)
+      const song = project.songAssetId ? project.assets[project.songAssetId] : undefined
+      const barsSeconds = findBars ? BARS_SECONDS_PER_SECOND * (song?.duration ?? 0) : 0
+      // Only a cut that waits says how long. With the clips analyzed and the bars found, it is done at once.
+      const timed = analyze || findBars
+      let pace = 1
       if (analyze) {
-        ctx.progress({ fraction: 0, stage: 'analyzing', message: analyzingMessage(0, waiting.length) })
+        const queue = analysisQueue(project, waiting)
+        let first: Id | undefined
+        let from: { at: number; done: number } | undefined
+        const report = (s?: IndexingState) => {
+          const { done, left } = analysisProgress(editor.getProject(), queue, s)
+          // The first clip analyzed also waits for the models to load, so the pace counts from the next one.
+          if (s?.current) {
+            first ??= s.current.assetId
+            if (!from && s.current.assetId !== first) from = { at: performance.now(), done }
+          }
+          pace = from ? analysisPace(done - from.done, (performance.now() - from.at) / 1000) : 1
+          // Song analysis may find the bars meanwhile.
+          const barsLeft = barsState().status === 'ready' ? 0 : barsSeconds
+          const fraction = s?.total ? Math.min(1, (s.done + (s.current?.fraction ?? 0)) / s.total) : 0
+          ctx.progress({
+            fraction: fraction * analyzed,
+            stage: 'analyzing',
+            message: analyzingMessage(s?.done ?? 0, s?.total || waiting.length),
+            etaSeconds: cutSecondsLeft(left, barsLeft, pace),
+          })
+        }
+        report()
         await analyzeFootageAndWait(waiting, {
           signal: ctx.signal,
           onProgress: (s) => {
-            if (s.status !== 'indexing' || !s.total) return
-            const fraction = Math.min(1, (s.done + (s.current?.fraction ?? 0)) / s.total)
-            ctx.progress({
-              fraction: fraction * analyzed,
-              stage: 'analyzing',
-              message: analyzingMessage(s.done, s.total),
-            })
+            if (s.status === 'indexing' && s.total) report(s)
           },
         })
       }
+      const barsStarted = performance.now()
       const bars = await ensureBars({
         signal: ctx.signal,
-        progress: (f) =>
-          ctx.progress({ fraction: analyzed + f * share, stage: 'bars', message: STAGE_MESSAGES.bars }),
+        progress: (f) => {
+          const left = Math.max(
+            barsSeconds * 0.1,
+            barsSeconds - (performance.now() - barsStarted) / 1000 / pace,
+          )
+          ctx.progress({
+            fraction: analyzed + f * share,
+            stage: 'bars',
+            message: STAGE_MESSAGES.bars,
+            etaSeconds: cutSecondsLeft(0, left, pace),
+          })
+        },
       })
-      ctx.progress({ fraction: scale(0), stage: 'planning', message: STAGE_MESSAGES.planning })
+      ctx.progress({
+        fraction: scale(0),
+        stage: 'planning',
+        message: STAGE_MESSAGES.planning,
+        etaSeconds: timed ? cutSecondsLeft(0, 0, pace) : undefined,
+      })
       const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
       const cut = await v.autoCut(
         {
