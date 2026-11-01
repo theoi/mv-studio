@@ -891,7 +891,7 @@ export const actions: Action[] = [
   trackToggle('muteTrack', 'muted', 'audio', <VolumeX />),
   trackToggle('soloTrack', 'solo', 'audio', <Headphones />),
   sectionAction('sectionStart', 'Go to the start of the section', <SkipBack />, 'jump beginning', (s) =>
-    set({ playhead: s.start, playing: false }),
+    set({ playhead: s.start }),
   ),
   sectionAction(
     'sectionSelect',
