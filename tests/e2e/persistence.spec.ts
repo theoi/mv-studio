@@ -860,7 +860,7 @@ function storedClipCount(page: Page): Promise<number | null> {
   })
 }
 
-test('when the browser clears the site’s storage during an export, the export says why it failed, the open project is saved again, and a note says what went', async ({
+test('when the browser clears the site’s storage during an export, the export says why it failed, the open project is saved again, a note says what went, and a later export fails up front', async ({
   page,
 }) => {
   test.setTimeout(120_000)
@@ -923,6 +923,16 @@ test('when the browser clears the site’s storage during an export, the export 
   await page.waitForFunction(() => window.mvStudio?.ready === true)
   await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
   expect(await snapshot(page)).toEqual({ ...before, clips: before.clips + 1 })
+
+  // An export started without its media fails at once, instead of saving a file of blank frames and silence.
+  let downloads = 0
+  page.on('download', () => downloads++)
+  await page.keyboard.press(`${mod}+e`)
+  await dialog.getByRole('button', { name: /^Export \d+ files?$/ }).click()
+  await expect(page.getByText(`Export failed: ${cause}`)).toBeVisible()
+  await expect(dialog.getByText(cause, { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Nothing was saved.')).toBeVisible()
+  expect(downloads).toBe(0)
 })
 
 test('a failed save says so, and saving again works', async ({ page }) => {
