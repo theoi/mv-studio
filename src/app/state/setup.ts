@@ -251,7 +251,7 @@ export function setupAction(kind: Kind, s: Pick<SetupState, 'lyrics' | 'footage'
 function cutEveryClip(): void {
   const choices = useAutoCut.getState().choices
   const options = autoCutOptions(
-    { ...choices, range: 'all', clips: 'all' },
+    { ...choices, range: 'all', clips: 'all', leftOut: [] },
     editor.getProject(),
     { type: 'none' },
     0,

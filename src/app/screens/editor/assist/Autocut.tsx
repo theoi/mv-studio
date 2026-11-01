@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import type { Asset, Id } from '../../../../model/index.ts'
 import {
   AlertTriangle,
   Check,
@@ -6,6 +7,7 @@ import {
   ChevronRight,
   Info,
   Lock,
+  Minus,
   RotateCcw,
   Scissors,
   Undo2,
@@ -17,17 +19,21 @@ import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { Segmented, Select, Switch } from '../../../ds/Fields.tsx'
 import { formatBytes, formatTime, plural } from '../../../format.ts'
 import {
+  autoCutAssets,
   autoCutClipCount,
   autoCutOptions,
+  clipChoice,
   DEFAULT_AUTOCUT_CHOICES,
   matchesMood,
   matchingDownloadBytes,
-  selectedAsset,
+  selectedAssets,
   setAutoCutChoices,
+  setClipChoice,
   startAutoCut,
   analysisBacklog,
   targetSection,
   undoAutoCut,
+  usedAssetIds,
   useAutoCut,
 } from '../../../state/autocut.ts'
 import {
@@ -39,8 +45,9 @@ import {
 import { openImport } from '../../../state/importer.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, sectionName, useProject } from '../../../state/project.ts'
+import { useThumbnail } from '../../../state/thumbs.ts'
 import { toast, useUi } from '../../../state/ui.ts'
-import { dismiss, pct, useJob } from './jobState.ts'
+import { dismiss, pct, revealInTool, useJob } from './jobState.ts'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -55,6 +62,67 @@ export function AutocutBadge() {
 /** Bytes the matching model still needs to download when this cut starts footage analysis, else 0. */
 /** "Video track", or the name alone when it already ends in "track" ("Main track"). */
 const trackPhrase = (name: string) => (/\btrack$/i.test(name.trim()) ? name.trim() : `${name} track`)
+
+/** One clip in "Choose clips": a tick, its picture, name and length. */
+function ClipChoice({ asset, on, onChange }: { asset: Asset; on: boolean; onChange: (on: boolean) => void }) {
+  const thumb = useThumbnail(asset)
+  return (
+    <label className={styles.pickRow}>
+      <span className={styles.check}>
+        <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} />
+        <span>
+          <Check />
+        </span>
+      </span>
+      <span className={styles.pickThumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined} />
+      <span className={styles.pickName}>{asset.name}</span>
+      <span className={`${styles.pickMeta} tnum`}>
+        {asset.kind === 'image' ? 'Image' : formatTime(asset.duration ?? 0)}
+      </span>
+    </label>
+  )
+}
+
+/** "Choose clips": every clip the cut can use, ticked unless the user left it out. */
+function ClipChoices({ assets, leftOut }: { assets: Asset[]; leftOut: readonly Id[] }) {
+  const out = new Set(leftOut)
+  const chosen = assets.filter((a) => !out.has(a.id)).length
+  const all = chosen === assets.length
+  const some = chosen > 0 && !all
+  return (
+    <div className={styles.pickList} role="group" aria-label="Clips to cut">
+      <label className={styles.pickRow}>
+        <span className={styles.check}>
+          <input
+            type="checkbox"
+            checked={all}
+            ref={(el) => {
+              if (el) el.indeterminate = some
+            }}
+            onChange={() => setClipChoice({ leftOut: all ? assets.map((a) => a.id) : [] })}
+          />
+          <span>{some ? <Minus /> : <Check />}</span>
+        </span>
+        <span className={styles.pickName}>All clips</span>
+        <span className={`${styles.pickMeta} tnum`}>
+          {chosen} of {assets.length}
+        </span>
+      </label>
+      <div className={styles.pickScroll}>
+        {assets.map((a) => (
+          <ClipChoice
+            key={a.id}
+            asset={a}
+            on={!out.has(a.id)}
+            onChange={(on) =>
+              setClipChoice({ leftOut: on ? leftOut.filter((id) => id !== a.id) : [...leftOut, a.id] })
+            }
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function useMatchingDownload(needed: boolean): number {
   const [bytes, setBytes] = useState(0)
@@ -80,12 +148,18 @@ export function AutocutView() {
   const result = useAutoCut((s) => (job ? s.results[job.id] : undefined))
   const indexing = useFootage((s) => s.indexing)
   const clipCount = autoCutClipCount(project)
-  // Clips analysis could not read are not offered again here; Assist › Match retries them.
-  const unanalyzed = analysisBacklog(project, indexing).waiting
   const section = targetSection(project, selection, playhead)
-  const asset = selectedAsset(project, selection)
+  const selected = selectedAssets(project, selection)
   const range = choices.range === 'section' && section ? 'section' : 'all'
-  const clips = choices.clips === 'selected' && asset ? 'selected' : 'all'
+  const saved = clipChoice(project)
+  const clips =
+    (saved.clips === 'selected' && selected.length) || (saved.clips === 'chosen' && clipCount > 1)
+      ? saved.clips
+      : 'all'
+  const used = usedAssetIds({ clips, leftOut: saved.leftOut }, project, selection)
+  const usedCount = used?.length ?? clipCount
+  // Clips analysis could not read are not offered again here; Assist › Match retries them.
+  const unanalyzed = analysisBacklog(project, indexing, used).waiting
   const analyzing = indexing?.status === 'indexing'
   const willAnalyze = matchesMood(choices) && unanalyzed > 0 && !analyzing
   const story = choices.clipOrder === 'story'
@@ -98,11 +172,14 @@ export function AutocutView() {
   )
   const moreId = useId()
   const revealMore = useRef(false)
+  const revealClips = useRef(false)
   const cutButton = useRef<HTMLButtonElement>(null)
   const download = useMatchingDownload(willAnalyze)
   const cut = () => {
     if (willAnalyze) analyzeFootageNow()
-    startAutoCut(autoCutOptions({ ...choices, range, clips }, project, selection, playhead))
+    startAutoCut(
+      autoCutOptions({ ...choices, range, clips, leftOut: saved.leftOut }, project, selection, playhead),
+    )
   }
 
   if (phase === 'running')
@@ -216,7 +293,7 @@ export function AutocutView() {
 
   const showAnalyzing = clipCount > 0 && matchesMood(choices) && analyzing
   const which =
-    unanalyzed === clipCount
+    unanalyzed === usedCount
       ? `Your ${unanalyzed === 1 ? 'clip isn’t' : 'clips aren’t'}`
       : `${plural(unanalyzed, 'clip')} ${unanalyzed === 1 ? 'isn’t' : 'aren’t'}`
   const note = !clipCount
@@ -239,7 +316,7 @@ export function AutocutView() {
             block
             icon={<Scissors />}
             onClick={cut}
-            disabled={!clipCount}
+            disabled={!usedCount}
           >
             Cut to the beat
           </Button>
@@ -337,15 +414,40 @@ export function AutocutView() {
       <Field label="Clips">
         <Select
           value={clips}
-          onChange={(value) => setAutoCutChoices({ clips: value })}
+          onChange={(value) => {
+            revealClips.current = value === 'chosen'
+            setClipChoice({ clips: value })
+          }}
           ariaLabel="Clips to use"
           options={[
             { value: 'all', label: `All ${plural(clipCount, 'clip')} in the library` },
-            ...(asset
-              ? [{ value: 'selected' as const, label: 'Selected clips', description: asset.name }]
+            ...(selected.length
+              ? [
+                  {
+                    value: 'selected' as const,
+                    label: 'Selected clips',
+                    description: selected.length === 1 ? selected[0]!.name : plural(selected.length, 'clip'),
+                  },
+                ]
+              : []),
+            ...(clipCount > 1
+              ? [{ value: 'chosen' as const, label: 'Choose clips', description: 'Pick the ones to cut' }]
               : []),
           ]}
         />
+        {clips === 'chosen' && !usedCount && (
+          <div className={styles.fieldHint}>Pick at least one clip to cut.</div>
+        )}
+        {clips === 'chosen' && (
+          <div
+            ref={(el) => {
+              if (el && revealClips.current) revealInTool(el)
+              revealClips.current = false
+            }}
+          >
+            <ClipChoices assets={autoCutAssets(project)} leftOut={saved.leftOut} />
+          </div>
+        )}
       </Field>
       <Button
         variant="ghost"
@@ -367,7 +469,7 @@ export function AutocutView() {
           className={styles.moreFields}
           ref={(el) => {
             // The options open below the fold of the panel, so bring them into view when the user opens them.
-            if (el && revealMore.current) el.scrollIntoView({ block: 'nearest' })
+            if (el && revealMore.current) revealInTool(el)
             revealMore.current = false
           }}
         >

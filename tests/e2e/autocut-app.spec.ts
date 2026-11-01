@@ -35,6 +35,8 @@ function autoCutTrack(page: Page): Promise<{ clips: CutClip[]; beat: number }> {
   })
 }
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0
 
 const formatTime = (t: number) => {
@@ -120,28 +122,92 @@ test('Assist › Auto-cut cuts the clips to the beat, cuts again around a clip t
   expect(undone.clips.map((c) => c.id)).toEqual(edited.clips.map((c) => c.id))
 })
 
-test('Assist › Auto-cut uses only the selected clip when asked to', async ({ page }) => {
+test('Assist › Auto-cut uses every selected clip, or only the clips ticked in Choose clips', async ({
+  page,
+}) => {
   await openHarness(page)
   await page.evaluate(() => {
     localStorage.setItem('mv-studio.guide-seen', '1')
     window.location.hash = '#/editor?kind=footage&sel=clip:c-s-c1-1&assist=autocut&t=66.9'
   })
   await waitForPreview(page)
-  const assetId = await page.evaluate(
-    () => window.mvStudio.app.project.editor.getProject().clips['c-s-c1-1'].assetId as string,
-  )
+  const { first, second } = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    const firstClip = project.clips['c-s-c1-1']
+    const other = Object.values(project.clips as Record<string, Untyped>).find(
+      (c) => (c.type === 'video' || c.type === 'image') && c.assetId !== firstClip.assetId,
+    )
+    return {
+      first: firstClip.assetId as string,
+      second: {
+        name: (other.name ?? project.assets[other.assetId].name) as string,
+        asset: other.assetId as string,
+      },
+    }
+  })
+  // A clip of other media joins the selection from the timeline.
+  await page
+    .getByRole('button', { name: new RegExp(`^${escapeRegExp(second.name)}, \\d`) })
+    .first()
+    .click({ modifiers: ['ControlOrMeta'] })
   await page.getByRole('tab', { name: /Assist/ }).click()
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await assist.getByRole('switch', { name: 'Match clips to the mood' }).click()
-  await assist.getByRole('combobox', { name: 'Clips to use' }).click()
-  await page.getByRole('option', { name: /Selected clips/ }).click()
-  await assist.getByRole('button', { name: 'Cut to the beat' }).click()
-  await expect(assist.getByRole('button', { name: /^Keep \d+ cuts$/ })).toBeVisible()
-  const { clips } = await autoCutTrack(page)
-  expect(clips.length).toBeGreaterThan(20)
-  expect(new Set(clips.map((c) => c.assetId))).toEqual(new Set([assetId]))
-})
+  const clipsToUse = assist.getByRole('combobox', { name: 'Clips to use' })
+  await clipsToUse.click()
+  const selectedOption = page.getByRole('option', { name: 'Selected clips' })
+  await expect(selectedOption).toContainText('2 clips')
+  await selectedOption.click()
+  const cut = assist.getByRole('button', { name: 'Cut to the beat' })
+  await cut.click()
+  const keep = assist.getByRole('button', { name: /^Keep \d+ cuts$/ })
+  await expect(keep).toBeVisible()
+  const selected = await autoCutTrack(page)
+  expect(selected.clips.length).toBeGreaterThan(20)
+  expect(new Set(selected.clips.map((c) => c.assetId))).toEqual(new Set([first, second.asset]))
+  await keep.click()
 
+  // Choose clips lists every clip, all ticked; two are left out of the next cut.
+  const pool: { id: string; name: string }[] = await page.evaluate(() => {
+    const { autocut, project } = window.mvStudio.app
+    return autocut
+      .autoCutAssets(project.editor.getProject())
+      .map((a: Untyped) => ({ id: a.id as string, name: a.name as string }))
+  })
+  expect(pool.length).toBeGreaterThan(3)
+  await clipsToUse.click()
+  await page.getByRole('option', { name: 'Choose clips' }).click()
+  const list = assist.getByRole('group', { name: 'Clips to cut' })
+  const total = `${pool.length} of ${pool.length}`
+  await expect(list.getByRole('checkbox', { name: `All clips ${total}` })).toBeChecked()
+  await expect(list.getByRole('checkbox')).toHaveCount(pool.length + 1)
+  const out = pool.slice(0, 2)
+  for (const clip of out) {
+    const box = list.getByRole('checkbox', { name: new RegExp(`^${escapeRegExp(clip.name)} `) })
+    await expect(box).toBeChecked()
+    await box.uncheck()
+  }
+  const all = list.getByRole('checkbox', { name: /^All clips/ })
+  await expect(all).toHaveAccessibleName(`All clips ${pool.length - 2} of ${pool.length}`)
+  await expect(all).not.toBeChecked()
+  await cut.click()
+  await expect(keep).toBeVisible()
+  const chosen = await autoCutTrack(page)
+  const used = new Set(chosen.clips.map((c) => c.assetId))
+  expect(used.size).toBeGreaterThan(1)
+  for (const clip of out) expect(used.has(clip.id)).toBe(false)
+  for (const id of used) expect(pool.some((p) => p.id === id)).toBe(true)
+  await keep.click()
+
+  // The list keeps what was left out; the All box ticks every clip, then none, which leaves nothing to cut.
+  await expect(all).toHaveAccessibleName(`All clips ${pool.length - 2} of ${pool.length}`)
+  await all.check()
+  await expect(all).toHaveAccessibleName(`All clips ${total}`)
+  await all.uncheck()
+  await expect(all).toHaveAccessibleName(`All clips 0 of ${pool.length}`)
+  await expect(cut).toBeDisabled()
+  await expect(assist.getByText('Pick at least one clip to cut.')).toBeVisible()
+})
 test('with matching on, the first cut starts footage analysis (background analysis off) and a cut after it matches the clips', async ({
   page,
 }) => {
