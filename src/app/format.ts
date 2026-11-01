@@ -28,6 +28,11 @@ export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
+/** A phrase made to start a sentence: "under $0.01" → "Under $0.01". */
+export function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 /** A file name longer than `max`, shortened in the middle so its start and extension stay readable. */
 export function shortFileName(name: string, max = 23): string {
   if (name.length <= max) return name

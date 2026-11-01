@@ -333,15 +333,17 @@ test('a retry after failed AI shots shows its price and asks again; Back returns
 })
 
 /**
- * fal.ai's queue for video clips, in the shapes fal.ai documents: each request is in progress for one poll, then done
- * with a video. Submits numbered in `failing` (from 1) answer HTTP 500; the `held` one stays in progress until
- * `release()`.
+ * fal.ai's queue for video clips (or images, with `images`), in the shapes fal.ai documents: each request is in
+ * progress for one poll, then done with a video. Submits numbered in `failing` (from 1) answer HTTP 500; the `held`
+ * ones stay in progress until `release()`.
  */
 async function mockFalVideo(
   page: Page,
-  o: { failing?: number[]; held?: number; heldDownload?: number } = {},
+  o: { failing?: number[]; held?: number | number[]; heldDownload?: number; images?: boolean } = {},
 ) {
   const clip = readFileSync(path.join(FIXTURE_DIR, 'clip.mp4'))
+  const still = readFileSync(path.join(FIXTURE_DIR, 'image.png'))
+  const heldIds = [o.held ?? []].flat().map((n) => `req-${n}`)
   let released = false
   const waiting: (() => void)[] = []
   const fal = {
@@ -383,8 +385,12 @@ async function mockFalVideo(
     if (parts[at + 2] === 'status') {
       const n = polls.get(id) ?? 0
       polls.set(id, n + 1)
-      const held = id === `req-${o.held}` && !released
+      const held = heldIds.includes(id) && !released
       return json(route, 200, { status: n === 0 || held ? 'IN_PROGRESS' : 'COMPLETED', logs: [] })
+    }
+    if (o.images) {
+      const url = `https://v3.fal.media/files/mock/${id}.png`
+      return json(route, 200, { images: [{ url, width: 1280, height: 720, content_type: 'image/png' }] })
     }
     return json(route, 200, {
       video: { url: `https://v3.fal.media/files/mock/${id}.mp4`, content_type: 'video/mp4' },
@@ -392,10 +398,12 @@ async function mockFalVideo(
   })
   await page.context().route('https://v3.fal.media/**', async (route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
-    const id = /\/(req-\d+)\.mp4$/.exec(route.request().url())?.[1] ?? ''
+    const id = /\/(req-\d+)\.(mp4|png)$/.exec(route.request().url())?.[1] ?? ''
     fal.downloads.push(id)
     if (id === `req-${o.heldDownload}` && !released) await new Promise<void>((go) => waiting.push(go))
-    return route.fulfill({ status: 200, headers: CORS, contentType: 'video/mp4', body: clip })
+    return o.images
+      ? route.fulfill({ status: 200, headers: CORS, contentType: 'image/png', body: still })
+      : route.fulfill({ status: 200, headers: CORS, contentType: 'video/mp4', body: clip })
   })
   return fal
 }
@@ -495,6 +503,32 @@ test('drafts with AI video clips: priced per clip, each clip’s progress shows,
   expect(after.pending).toBe(0)
   expect(after.videos).toBeGreaterThan(first.videos)
   expect(fal.submits).toHaveLength(count + 1)
+})
+
+test('AI images say how long is left once the first ones are made', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  // The third and fourth images stay in progress until released, so the run can be read mid-way.
+  const fal = await mockFalVideo(page, { images: true, held: [3, 4] })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  const generate = page.getByRole('button', {
+    name: /^Generate \d+ shots · (about \$\d+\.\d\d|under \$0\.01)$/,
+  })
+  await expect(generate).toBeVisible({ timeout: 30_000 })
+  await generate.click()
+  await page
+    .getByRole('dialog', { name: /^Generate \d+ shots\?$/ })
+    .getByRole('button', { name: /^Generate \d+ shots · / })
+    .click()
+  await expect.poll(() => fal.downloads, { timeout: 30_000 }).toEqual(['req-1', 'req-2'])
+  await expect(page.getByText(/^Generating shot 3 of \d+$/).first()).toBeVisible()
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(assist.getByText(/^(About \d+ min|Less than a minute) left$/)).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('director-images-eta.png') })
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByText('Generation stopped. 2 shots made so far are kept.')).toBeVisible()
+  expect(fal.cancels.sort()).toEqual(['req-3', 'req-4'])
 })
 
 test('cancelling AI video clips stops the one underway at fal.ai, keeps the clips already made, and leaves focus on Generate', async ({

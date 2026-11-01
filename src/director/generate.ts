@@ -93,6 +93,8 @@ export interface GeneratePlanOptions {
   onProgress?: (counts: { done: number; failed: number; total: number }) => void
   /** Requests in flight at once (default 2). */
   concurrency?: number
+  /** Milliseconds, to measure the run's pace (default performance.now). */
+  now?: () => number
 }
 
 export interface GeneratedShots {
@@ -107,6 +109,7 @@ interface Underway {
   fraction: number
   eta?: number
   downloading: boolean
+  startedAt: number
 }
 
 function isStopError(error: JobError): boolean {
@@ -126,6 +129,9 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
   const unit = generatedUnit(o.plan)
   const workers = Math.max(1, Math.min(o.concurrency ?? 2, total))
   const typical = (r: ShotRequest) => o.provider.getModel(r.request.modelId)?.typicalSeconds
+  const now = o.now ?? (() => performance.now())
+  /** Seconds each shot made in this run took, from its request to its stored result. */
+  const took: number[] = []
   /** Shots underway: their own progress, the seconds they still need, and whether their result is downloading. */
   const underway = new Map<ShotRequest, Underway>()
   let shown = 0
@@ -141,8 +147,13 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
       o.onStopping?.([...underway.values()].filter((u) => u.downloading).length)
       return
     }
-    const waiting = queue.reduce((sum, r) => sum + (typical(r) ?? 0), 0)
-    const etas = [...underway.values()].map((u) => u.eta ?? 0)
+    // Once a shot is made, the run's own pace says how long the rest take: it counts fal.ai's line, polling, the
+    // download and saving, which the model's typical time leaves out.
+    const pace = took.length ? took.reduce((sum, s) => sum + s, 0) / took.length : undefined
+    const waiting = queue.reduce((sum, r) => sum + (pace ?? typical(r) ?? 0), 0)
+    const etas = [...underway.values()].map((u) =>
+      Math.max(u.eta ?? 0, pace === undefined ? 0 : pace - (now() - u.startedAt) / 1000),
+    )
     const etaSeconds = Math.round(Math.max(0, ...etas) + waiting / workers)
     o.ctx.progress({
       fraction: shown,
@@ -150,8 +161,9 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
       message: total
         ? `Generating ${unit} ${Math.min(total, finished + 1)} of ${total}`
         : `Using ${unit}s made earlier`,
-      // Clips take minutes each, so they say how long is left; images are done in seconds.
-      ...(unit === 'clip' && total && etaSeconds > 0 ? { etaSeconds } : {}),
+      // Clips take minutes each, so their typical time is a fair first estimate. An image's few seconds are mostly
+      // overhead, so images say how long is left only once the first is made.
+      ...((unit === 'clip' || pace !== undefined) && total && etaSeconds > 0 ? { etaSeconds } : {}),
     })
   }
   report()
@@ -166,7 +178,7 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
         throw new JobError('invalid-input', 'This shot needs a still image to animate.')
       request.image = await o.readAsset(still)
     }
-    const own: Underway = { fraction: 0, eta: typical(r), downloading: false }
+    const own: Underway = { fraction: 0, eta: typical(r), downloading: false, startedAt: now() }
     underway.set(r, own)
     // A request's progress feeds the shot's share of the bar; its message stays its own, under the shot count.
     const shotCtx: JobContext = {
@@ -193,6 +205,7 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
       name: r.shot.label ? `AI: ${r.shot.label}` : undefined,
     })
     if (!asset) throw new JobError('provider', 'The provider returned no media for this shot.')
+    took.push((now() - own.startedAt) / 1000)
     assets.set(r.shot.id, asset)
     o.onShot?.(r.shot.id, asset)
   }

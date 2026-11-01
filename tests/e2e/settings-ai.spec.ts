@@ -218,6 +218,22 @@ test('checks a fal.ai key for free before saving it, and removes it', async ({ p
   expect((await saved(page)).falKey).toBe('')
 })
 
+test('says what this month’s generations cost, as "Under $0.01" when that small', async ({ page }) => {
+  await openAiSettings(page)
+  const spending = card(page, 'Spending')
+  for (const [usd, line] of [
+    [0.003, 'Under $0.01 so far this month (estimated)'],
+    [0.51, 'About $0.51 so far this month (estimated)'],
+  ] as const) {
+    await page.evaluate((spent) => {
+      const entry = { at: new Date().toISOString(), usd: spent, label: 'Director: test' }
+      localStorage.setItem('mv-studio.cloud.spend.v1', JSON.stringify([entry]))
+    }, usd)
+    await page.reload()
+    await expect(spending.getByText(line, { exact: true })).toBeVisible()
+  }
+})
+
 test('saves the spending settings', async ({ page }) => {
   await openAiSettings(page)
   const spending = card(page, 'Spending')

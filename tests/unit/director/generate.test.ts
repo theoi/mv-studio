@@ -232,11 +232,14 @@ describe('generatePlanShots', () => {
     }
   })
 
-  it('counts images as shots, without a time estimate', async () => {
+  it('counts images as shots, and says how long is left once the first is made, at the run’s own pace', async () => {
     const { project, plan } = await aiPlan('images', 3)
+    // Each image takes 20 s from request to stored result, far longer than the model's typical 3 s.
+    let clock = 0
     const provider = fakeProvider({
       gate: (_, ctx) => {
         ctx.progress({ stage: 'generate', fraction: 0.5, etaSeconds: 2, message: 'Generating, usually 3 s' })
+        clock += 20_000
         return Promise.resolve()
       },
     })
@@ -247,10 +250,50 @@ describe('generatePlanShots', () => {
       store: memoryStore(),
       project,
       ctx: { ...testCtx(), progress: (p) => events.push(p) },
+      concurrency: 1,
+      now: () => clock,
     })
-    expect(events.length).toBeGreaterThan(3)
     expect(events[0]?.message).toBe('Generating shot 1 of 3')
-    expect(events.filter((e) => e.etaSeconds !== undefined)).toEqual([])
+    // Before the first image is made, its typical 3 s would say far too little: no estimate yet.
+    const first = events.findIndex((e) => e.message === 'Generating shot 2 of 3')
+    expect(first).toBeGreaterThan(0)
+    expect(events.slice(0, first).filter((e) => e.etaSeconds !== undefined)).toEqual([])
+    // Then 2 images left at 20 s each, and 1 at 20 s.
+    expect(events[first]?.etaSeconds).toBe(40)
+    const etas = events.slice(first).map((e) => e.etaSeconds)
+    expect(etas).toContain(20)
+    expect(etas.every((s, i) => i === 0 || (s ?? 0) <= (etas[i - 1] ?? 0))).toBe(true)
+  })
+
+  it('times the clips left by the run’s own pace once a clip is made', async () => {
+    const { project, plan } = await aiPlan('video', 3)
+    // Each clip takes 30 s; the model's typical time is 90 s, and the provider says 40 s are left in each.
+    let clock = 0
+    const provider = fakeProvider({
+      gate: (_, ctx) => {
+        ctx.progress({ stage: 'generate', fraction: 0.5, etaSeconds: 40, message: 'Generating' })
+        clock += 30_000
+        return Promise.resolve()
+      },
+    })
+    const typical = provider.getModel(shotsToGenerate(plan)[0]!.source.modelId)!.typicalSeconds
+    expect(typical).toBe(90)
+    const events: JobProgress[] = []
+    await generatePlanShots({
+      plan,
+      provider,
+      store: memoryStore(),
+      project,
+      ctx: { ...testCtx(), progress: (p) => events.push(p) },
+      concurrency: 1,
+      now: () => clock,
+    })
+    // Each count's estimate once its clip has reported progress.
+    const eta = (message: string) => events.filter((e) => e.message === message).at(-1)?.etaSeconds
+    // Before any clip is made: the first clip's 40 s, then 2 clips at their typical 90 s.
+    expect(eta('Generating clip 1 of 3')).toBe(40 + 2 * typical)
+    // After one took 30 s: the second clip's 40 s left (more than the 30 s pace), then 1 clip at 30 s.
+    expect(eta('Generating clip 2 of 3')).toBe(40 + 30)
   })
 
   it('moves the bar while each clip is made, counts clips as they finish, and says how long is left', async () => {
