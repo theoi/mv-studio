@@ -281,6 +281,29 @@ describe('startLyrics', () => {
     expect(choruses()).toEqual([[20, 40]])
   })
 
+  it('keeps a section the user renamed after timing through undo and redo of the timing', async () => {
+    load()
+    answers.push({ doc: once(), unlisted: [{ start: 61, end: 80 }] }, { doc: once(), unlisted: [] })
+    await startLyrics({ kind: 'time', text: 'lyrics' })
+    await startLyrics({ kind: 'time', text: 'lyrics' })
+    const last = editor.getProject().analysis.audio.song!.sections!.at(-1)!
+    editor.dispatch(
+      { type: 'analysis.updateSection', assetId: 'song', sectionId: last.id, patch: { label: 'Outro' } },
+      { label: 'Rename section' },
+    )
+    const renamed = structuredClone(editor.getProject().analysis.audio.song?.sections)
+    editor.undo()
+    editor.undo()
+    expect(choruses()).toEqual([
+      [20, 40],
+      [60, 80],
+    ])
+    editor.redo()
+    editor.redo()
+    expect(editor.getProject().analysis.audio.song?.sections).toEqual(renamed)
+    expect(editor.getProject().analysis.audio.song?.sections?.at(-1)?.label).toBe('Outro')
+  })
+
   it('keeps no unlisted singing with a draft', async () => {
     load()
     answers.push({ doc: once('transcribed'), language: 'en', unlisted: [{ start: 61, end: 80 }] })
