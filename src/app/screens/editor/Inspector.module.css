@@ -272,8 +272,35 @@ button.forwardAction[data-variant='ghost']:hover:not(:disabled) {
   text-underline-offset: 3px;
 }
 
-.draftAction {
+.draftActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
   margin-left: -8px;
+}
+
+/* In place of a line's check note once it is marked as checked. */
+.checkedRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+}
+
+.checked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.checked svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--success);
 }
 
 .noteDanger {

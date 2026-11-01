@@ -261,3 +261,85 @@ test('timed lines near singing the pasted lyrics leave out say so, until the mis
   await expect(summary).toHaveText('Timed 3 lines · 2 to check')
   expect(await unlisted()).toEqual([{ start: 82, end: 95 }])
 })
+
+test('Show on timeline steps through the lines to check, a lyric chip moves the playhead, and Play line plays just that line', async ({
+  page,
+}) => {
+  const shaky = (text: string): Word[] => text.split(' ').map((t) => ({ text: t, confidence: 0.04 }))
+  // The lines start at 64, 68, 72 and 76 s; each word lasts 0.5 s and the next starts 0.6 s later.
+  await openWithLyrics(page, [
+    sure('Neon lights are calling'),
+    shaky('We run until the morning'),
+    shaky('Hold on tonight'),
+    shaky('Say you will stay'),
+  ])
+  await page
+    .getByRole('textbox', { name: 'Lyrics' })
+    .fill('Neon lights are calling\nWe run until the morning\nHold on tonight\nSay you will stay')
+  await page.getByRole('button', { name: 'Time words to the vocals' }).click()
+  await expect(page.getByText(/^Timed 4 lines · /)).toHaveText('Timed 4 lines · 3 to check')
+
+  const chip = (text: string) => page.getByRole('button', { name: new RegExp(`^Lyric: ${text}`) })
+  const playhead = () => page.evaluate(() => window.mvStudio.app.ui.get().playhead as number)
+  const playing = () => page.evaluate(() => window.mvStudio.app.ui.get().playing as boolean)
+  const assist = page.getByRole('tab', { name: 'Assist' })
+  const next = page.getByRole('button', { name: 'Next line to check' })
+
+  await page.getByRole('button', { name: 'Show on timeline' }).click()
+  await expect(chip('We run until the morning')).toHaveAttribute('aria-pressed', 'true')
+  expect(await playhead()).toBe(68)
+  await assist.click()
+  await page.getByRole('button', { name: 'Show next line to check' }).click()
+  await expect(chip('Hold on tonight')).toHaveAttribute('aria-pressed', 'true')
+  expect(await playhead()).toBe(72)
+  // The inspector goes on from there, and from the first line to check again after the last.
+  await next.click()
+  await expect(chip('Say you will stay')).toHaveAttribute('aria-pressed', 'true')
+  expect(await playhead()).toBe(76)
+  await next.click()
+  await expect(chip('We run until the morning')).toHaveAttribute('aria-pressed', 'true')
+  expect(await playhead()).toBe(68)
+
+  // Selecting a line by click or Enter puts the playhead at its start, unless it is in the line already.
+  await chip('Neon lights are calling').click()
+  await expect(chip('Neon lights are calling')).toHaveAttribute('aria-pressed', 'true')
+  expect(await playhead()).toBe(64)
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 64.5 }))
+  await chip('Neon lights are calling').click()
+  expect(await playhead()).toBe(64.5)
+  await chip('Hold on tonight').focus()
+  await page.keyboard.press('Enter')
+  await expect(chip('Hold on tonight')).toHaveAttribute('aria-pressed', 'true')
+  expect(await playhead()).toBe(72)
+
+  // "We run until the morning" ends at 70.9 s; Play line plays it from 68 s and pauses half a second after its end.
+  await chip('We run until the morning').click()
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 30 }))
+  await page.getByRole('button', { name: 'Play line' }).click()
+  await expect.poll(playing).toBe(true)
+  await expect.poll(playing, { timeout: 10_000 }).toBe(false)
+  const stopped = await playhead()
+  expect(stopped).toBeGreaterThanOrEqual(71.4)
+  expect(stopped).toBeLessThan(72.4)
+
+  // While the line is to check its badge says so; once checked it turns to the timed badge, and the note to the way on.
+  const checked = page.getByRole('status').filter({ hasText: /checked/i })
+  await expect(page.getByText('5 words timed · to check')).toBeVisible()
+  await page.getByRole('button', { name: 'Mark as checked' }).click()
+  await expect(page.getByText('5 words timed to vocals')).toBeVisible()
+  await expect(checked).toHaveText('Checked Next line to check 2 left')
+  await expect(next).toBeFocused()
+  await next.click()
+  await expect(chip('Hold on tonight')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: 'Mark as checked' }).click()
+  await expect(checked).toHaveText('Checked Next line to check 1 left')
+  await next.click()
+  await expect(chip('Say you will stay')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: 'Mark as checked' }).click()
+  await expect(checked).toHaveText('All lines checked.')
+  await expect(next).toHaveCount(0)
+  // Undoing the mark brings the note back.
+  await page.evaluate(() => window.mvStudio.app.project.editor.undo())
+  await expect(page.getByRole('button', { name: 'Mark as checked' })).toBeVisible()
+  await expect(checked).toHaveCount(0)
+})
