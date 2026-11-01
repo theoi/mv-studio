@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { BARS_NOTES, type Id, type Project } from '../../model/index.ts'
 import { jobs, type JobErrorCode, type JobHandle } from '../../shared/jobs.ts'
-import { modelCache } from '../../shared/models.ts'
 import type {
   AutoCutOn,
   AutoCutOptions,
@@ -9,10 +8,10 @@ import type {
   AutoCutResult,
   IndexingState,
 } from '../../vision/index.ts'
-import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { plural, shortFileName } from '../format.ts'
 import { analyzeFootageAndWait, showingDownloads, useFootage, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
+import { visionDownloadBytes } from './models.ts'
 import { editor, sectionAt, sectionsOf } from './project.ts'
 import { barsState, ensureBars } from './songAnalysis.ts'
 import type { Selection } from './ui.ts'
@@ -190,11 +189,9 @@ export function unanalyzedWarning(
   return `${all ? 'Your clips' : plural(n, 'clip')} couldn’t be analyzed, so they were picked for variety.`
 }
 
-/** Bytes footage analysis still has to download to match clips (the matching model, once), 0 when cached. */
-export async function matchingDownloadBytes(): Promise<number> {
-  const files = Object.values(VISION_MODELS.clipB32.files)
-  const cached = await Promise.all(files.map((f) => modelCache.has(f.url).catch(() => false)))
-  return files.reduce((sum, f, i) => sum + (cached[i] ? 0 : (f.bytes ?? 0)), 0)
+/** Bytes the footage tagger still has to download on this device to match clips (once), 0 when it is cached. */
+export function matchingDownloadBytes(): Promise<number> {
+  return visionDownloadBytes('tagger')
 }
 
 /** The section "Selected section" cuts: the selected one, else the one under the playhead. */

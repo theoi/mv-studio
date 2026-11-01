@@ -3,13 +3,12 @@ import { create } from 'zustand'
 import type { Clip, EditCommand, Id, ImageClip, Project } from '../../model/index.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import { jobs, type JobHandle } from '../../shared/jobs.ts'
-import { modelCache } from '../../shared/models.ts'
 import type { CameraMoveResult, CameraMovesResult, CameraPreset, SafeAmounts } from '../../vision/index.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from '../../vision/render/cameraEffect.ts'
-import { VISION_MODELS } from '../../vision/runtime/models.ts'
 import { showingDownloads, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { appMedia } from './media.ts'
+import { visionDownloadBytes } from './models.ts'
 import { dispatch, editor } from './project.ts'
 import type { Selection } from './ui.ts'
 
@@ -68,11 +67,9 @@ export function cameraTargets(project: Project, selection: Selection): ImageClip
   return stillClips(project).filter((c) => !hasCameraMove(c))
 }
 
-/** Bytes the depth model still has to download (once), 0 when it is cached. */
-export async function depthDownloadBytes(): Promise<number> {
-  const files = Object.values(VISION_MODELS.depthAnythingSmall.files)
-  const cached = await Promise.all(files.map((f) => modelCache.has(f.url).catch(() => false)))
-  return files.reduce((sum, f, i) => sum + (cached[i] ? 0 : (f.bytes ?? 0)), 0)
+/** Bytes the depth estimator still has to download on this device (once), 0 when it is cached. */
+export function depthDownloadBytes(): Promise<number> {
+  return visionDownloadBytes('depth')
 }
 
 /** Bytes the depth model still has to download, once; 0 when it is cached or not `needed`. */

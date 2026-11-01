@@ -6,7 +6,13 @@
 import type { JobContext, JobProgress } from '../../shared/jobs.ts'
 import type { ModelFileProgress } from '../../shared/transformers.ts'
 import { downloadingModel } from '../../shared/models.ts'
-import { isVisionModelFile, VISION_MODEL_TITLES, visionModelBytes, type VisionModel } from './models.ts'
+import {
+  isVisionModelFile,
+  VISION_MODEL_TITLES,
+  visionModelBytes,
+  type VisionDtype,
+  type VisionModel,
+} from './models.ts'
 
 /** A first-time download of a model's files, as a vision worker reports it. */
 export interface ModelDownload extends JobProgress {
@@ -44,17 +50,18 @@ const STEP = 0.01
 const DOWNLOAD_SHARE = 0.5
 
 /**
- * Turns the per-file progress of loading `model` (for `withModelProgress`) into its download line for `report`:
- * how far its weights downloading in this call are, leaving out cached files, with `done` once they are in. Call
- * `end()` when the loading ends, so a download that failed is done too. Other models' files are left out: a worker
- * sends file progress to its latest call, and calls can overlap.
+ * Turns the per-file progress of loading `model` (for `withModelProgress`) into its download line for `report`, with
+ * the model's size in `dtype`: how far its weights downloading in this call are, leaving out cached files, with
+ * `done` once they are in. Call `end()` when the loading ends, so a download that failed is done too. Other models'
+ * files are left out: a worker sends file progress to its latest call, and calls can overlap.
  */
 export function modelDownloads(
   model: VisionModel,
   report: ((p: JobProgress) => void) | undefined,
+  dtype?: VisionDtype,
 ): { file(p: ModelFileProgress): void; end(): void } {
   const files = new Map<string, { loaded: number; total: number }>()
-  const message = downloadingModel(VISION_MODEL_TITLES[model], visionModelBytes(model))
+  const message = downloadingModel(VISION_MODEL_TITLES[model], visionModelBytes(model, dtype))
   let sent = -1
   let open = false
   let bytes = { bytesLoaded: 0, bytesTotal: 0 }
