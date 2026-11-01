@@ -269,10 +269,9 @@ export class OpenAICompatibleClient {
     return this.error('prompt-cut', {
       title: `${name} read only part of the request`,
       message:
-        `It read ${count(read)} tokens of a request about ${count(Math.round(sent / 1000) * 1000)} tokens long and ` +
-        'dropped the rest, because its context length is too small. An answer to part of the request would be ' +
-        'wrong, so MV Studio stopped here.',
-      steps: contextLengthSteps(runner),
+        `Its context length is too small (it read ${count(read)} of about ${count(Math.round(sent / 1000) * 1000)} ` +
+        'tokens). Nothing was changed, since an answer to part of the request would be wrong.',
+      steps: contextLengthSteps(runner, this.endpoint.model),
     })
   }
 

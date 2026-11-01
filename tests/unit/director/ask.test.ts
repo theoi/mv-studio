@@ -395,8 +395,10 @@ describe('Ask against OpenAI-compatible endpoints', () => {
     const state = await ask.ask('make the lyrics bigger')
     if (state.status !== 'error') throw new Error(state.status)
     expect(state.title).toBe('Ollama read only part of the request')
-    expect(state.message).toMatch(/^It read 2,050 tokens of a request about [\d,]+ tokens long/)
-    expect(state.steps[0]).toBe("Raise Ollama's context length to 16k, then try again.")
+    expect(state.message).toMatch(
+      /^Its context length is too small \(it read 2,050 of about [\d,]+ tokens\)\. Nothing was changed/,
+    )
+    expect(state.steps[0]).toBe('Raise Ollama’s context length to 16k, then try again:')
     expect(server.chatBodies).toHaveLength(1)
     expect(editor.getProject()).toBe(project)
   })

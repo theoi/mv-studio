@@ -301,14 +301,24 @@ test('a request Ollama cut short stops at the first answer and says how to raise
   await send(page, 'add a title at the start')
   await expect(page.getByText('Ollama read only part of the request', { exact: true })).toBeVisible()
   await expect(
-    page.getByText(/^It read 2,050 tokens of a request about [\d,]+ tokens long and dropped the rest/),
+    page.getByText(
+      /^Its context length is too small \(it read 2,050 of about [\d,]+ tokens\)\. Nothing was changed, since an answer to part of the request would be wrong\.$/,
+    ),
   ).toBeVisible()
-  await expect(page.getByText("Raise Ollama's context length to 16k, then try again.")).toBeVisible()
-  await expect(page.getByText('Ollama app (macOS, Windows): Settings › Context length › 16k.')).toBeVisible()
+  // The ways to raise it are alternatives under that step, not steps of their own.
+  const raise = page.locator('li', { hasText: /^Raise Ollama’s context length to 16k, then try again:/ })
+  await expect(raise.locator('li')).toHaveText([
+    'Ollama app (macOS, Windows): Settings › Context length › 16k.',
+    /^Linux: run sudo systemctl edit ollama/,
+    'From a terminal: OLLAMA_CONTEXT_LENGTH=16384 ollama serve',
+  ])
+  await expect(
+    page.getByText('A larger context uses more memory: about 0.7 GB more for qwen2.5:7b.'),
+  ).toBeVisible()
   expect(bodies).toHaveLength(1)
   expect((await projectState(page)).clips).toBe(before.clips)
   // Long commands wrap inside the panel instead of running past its edge.
-  const linux = page.locator('li', { hasText: 'sudo systemctl edit ollama' })
+  const linux = raise.locator('li', { hasText: 'sudo systemctl edit ollama' })
   expect(await linux.evaluate((li) => li.scrollWidth - li.clientWidth)).toBeLessThanOrEqual(0)
   await page.screenshot({ path: testInfo.outputPath('ask-prompt-cut.png') })
 

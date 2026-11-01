@@ -25,7 +25,7 @@ import { Button } from '../../ds/Button.tsx'
 import { Badge, ProgressBar } from '../../ds/Feedback.tsx'
 import { Input, Segmented, Select, SearchInput, Switch } from '../../ds/Fields.tsx'
 import { Kbd } from '../../ds/Kbd.tsx'
-import type { CloudError } from '../../../cloud/errors.ts'
+import { nestSteps, type CloudError } from '../../../cloud/errors.ts'
 import type { CloudSettings, LlmSettings } from '../../../cloud/keys.ts'
 import {
   llmPreset,
@@ -142,15 +142,25 @@ function CheckFailed({ error }: { error: CloudError }) {
   return (
     <div className={styles.hintBox} role="alert">
       <AlertTriangle />
-      <span>
+      <div>
         <strong>{error.title}</strong> {error.message}
-        {error.steps.map((s) => (
-          <Fragment key={s}>
-            <br />
-            {s.trim()}
-          </Fragment>
-        ))}
-      </span>
+        {error.steps.length > 0 && (
+          <ul className={styles.checkSteps}>
+            {nestSteps(error.steps).map((s) => (
+              <li key={s.text}>
+                {s.text}
+                {s.alternatives.length > 0 && (
+                  <ul>
+                    {s.alternatives.map((a) => (
+                      <li key={a}>{a}</li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }
@@ -237,9 +247,9 @@ const sameEndpoint = (a: LlmSettings, b: LlmSettings) =>
 function OllamaContext() {
   return (
     <>
-      Set Ollama’s context length to 16k: in the Ollama app under Settings › Context length, or with{' '}
-      <code>OLLAMA_CONTEXT_LENGTH={LOCAL_CONTEXT_TOKENS}</code>. By default it reads only 4,096 tokens on most
-      computers, and an edit sends up to 16,000.
+      Set Ollama’s context length to 16k, in the Ollama app under Settings › Context length or with{' '}
+      <code>OLLAMA_CONTEXT_LENGTH={LOCAL_CONTEXT_TOKENS}</code>. Its default on most computers, 4k, is too
+      small for Ask.
     </>
   )
 }

@@ -120,6 +120,12 @@
   margin-top: 2px;
 }
 
+.changes ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  list-style: circle;
+}
+
 .rowActions {
   display: flex;
   flex-wrap: wrap;

@@ -75,7 +75,9 @@ test('connects a model on this computer, saves it, and keeps it after a reload',
   await expect(llm.getByText('OLLAMA_ORIGINS=')).toBeHidden()
   await expect(llm.getByText('OLLAMA_CONTEXT_LENGTH=16384')).toBeVisible()
   await expect(
-    llm.getByText(/Set Ollama’s context length to 16k: in the Ollama app under Settings › Context length/),
+    llm.getByText(
+      /Set Ollama’s context length to 16k, in the Ollama app under Settings › Context length or with/,
+    ),
   ).toBeVisible()
   await llm.screenshot({ path: testInfo.outputPath('settings-ollama-connected.png') })
   expect((await saved(page)).llm).toMatchObject({
@@ -132,6 +134,22 @@ test('says how to let this site reach LM Studio when it does not answer, and sav
   await expect(llm.getByText('Not connected')).toBeVisible()
   await alert.scrollIntoViewIfNeeded()
   await dialog.screenshot({ path: testInfo.outputPath('settings-ai-lmstudio-unreachable.png') })
+})
+
+test('lists the ways to allow this site in Ollama under the step they belong to', async ({
+  page,
+}, testInfo) => {
+  await serve(page, 'http://localhost:11434/v1/models', 'refused')
+  const dialog = await openAiSettings(page)
+  const llm = card(page, 'Language model')
+  await llm.getByRole('radio', { name: 'Ollama' }).click()
+  await llm.getByRole('button', { name: 'Test connection' }).click()
+  const alert = llm.getByRole('alert')
+  await expect(alert).toContainText("Couldn't connect to Ollama on this computer")
+  const allow = alert.locator('li', { hasText: /^Allow this site: set OLLAMA_ORIGINS/ })
+  await expect(allow.locator('li')).toHaveText([/^macOS: /, /^Windows: /, /^Linux: /])
+  await alert.scrollIntoViewIfNeeded()
+  await dialog.screenshot({ path: testInfo.outputPath('settings-ai-ollama-unreachable.png') })
 })
 
 test('asks for an OpenAI key and reports a rejected one', async ({ page }) => {

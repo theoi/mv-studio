@@ -53,13 +53,15 @@ error says so and points to the setting.
 
 - fal.ai and OpenRouter send CORS headers on every response. OpenAI's wrong-key chat error has none, so the browser only reports "Failed to fetch". The client then checks `/models`, which does send CORS headers, to tell a bad key apart from a network problem.
 - Local runners: a server that isn't running looks exactly like a CORS rejection, so `local-server` errors explain both.
+- Error steps that start with two spaces are alternatives under the step before them (macOS, Windows, Linux):
+  show them as a nested list (`nestSteps()` in `errors.ts`).
 - Ollama cuts a prompt longer than its context length without an error: it keeps the end, and the model answers
   without its instructions. It reads only 4,096 tokens by default with less than 24 GB of graphics memory, and an Ask
   request is 11,000 to 16,000 tokens. Its `usage.prompt_tokens` then counts only what it kept, so `chat()` stops
   with a `prompt-cut` error when that count is under 60% of the request's size at 4 characters per token (Qwen 2.5
   reads about 3.4), for requests of 1,000 tokens or more. The error's steps (`contextLengthSteps()`) raise the
   context to 16k (`LOCAL_CONTEXT_TOKENS`). Ask shows them without a repair round, and the director falls back to the
-  built-in planner with the first step in its note. Only servers the user runs are checked: this computer
+  built-in planner with a note to raise the context length. Only servers the user runs are checked: this computer
   (`isLocalEndpoint()`) or Ollama's or LM Studio's port. Cloud APIs (OpenAI, OpenRouter, or any https API under
   Other, such as Groq or Mistral) reject a request that is too long, and their users can't change a server setting.
 - When a server rejects `temperature`, `max_tokens` or `reasoning_effort` with a 400, the client retries once without

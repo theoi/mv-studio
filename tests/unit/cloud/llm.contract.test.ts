@@ -640,11 +640,12 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     expect(error.kind).toBe('prompt-cut')
     expect(error.retryable).toBe(false)
     expect(error.title).toBe('Ollama read only part of the request')
-    expect(error.message).toMatch(
-      /^It read 2,050 tokens of a request about 10,000 tokens long and dropped the rest, because its context length is too small\./,
+    expect(error.message).toBe(
+      'Its context length is too small (it read 2,050 of about 10,000 tokens). Nothing was changed, since an answer to part of the request would be wrong.',
     )
-    expect(error.steps[0]).toBe("Raise Ollama's context length to 16k, then try again.")
+    expect(error.steps[0]).toBe('Raise Ollama’s context length to 16k, then try again:')
     expect(error.steps.join('\n')).toContain('Environment="OLLAMA_CONTEXT_LENGTH=16384"')
+    expect(error.steps.at(-1)).toBe('A larger context uses more memory: about 0.7 GB more for qwen2.5:7b.')
     // No second try in JSON mode: it would read the same cut prompt.
     expect(server.chatBodies).toHaveLength(1)
   })
@@ -706,6 +707,10 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     )
     expect(error.kind).toBe('prompt-cut')
     expect(error.title).toBe('Ollama read only part of the request')
+    // The memory figure is for qwen2.5:7b; other models get the range.
+    expect(error.steps.at(-1)).toBe(
+      'A larger context uses more memory, up to about 1.5 GB for 7B and 8B models.',
+    )
   })
 
   it('names LM Studio and other servers, each with its own step', async () => {
@@ -734,7 +739,7 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     )
     expect(otherError.title).toBe('The model read only part of the request')
     expect(otherError.steps).toEqual([
-      "Give the model a context length of at least 16384 tokens in the server's settings, then try again.",
+      'Give the model a context length of at least 16,384 tokens in the server’s settings, then try again.',
     ])
   })
 

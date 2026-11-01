@@ -115,6 +115,17 @@ export class CloudError extends JobError {
   }
 }
 
+/** Steps for display: a step that starts with two spaces is one of the alternatives under the step before it. */
+export function nestSteps(steps: readonly string[]): { text: string; alternatives: string[] }[] {
+  const out: { text: string; alternatives: string[] }[] = []
+  for (const step of steps) {
+    const parent = out.at(-1)
+    if (step.startsWith('  ') && parent) parent.alternatives.push(step.trim())
+    else out.push({ text: step.trim(), alternatives: [] })
+  }
+  return out
+}
+
 /** Reads the cloud details from a CloudError, or from a JobError/job snapshot error that came from one. */
 export function cloudErrorInfo(error: unknown): CloudErrorInfo | undefined {
   if (error instanceof CloudError) return error.info

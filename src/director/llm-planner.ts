@@ -321,7 +321,7 @@ export function createDirectorPlanner(options: LlmPlannerOptions) {
       if (err.details && typeof err.details === 'object' && 'director' in err.details) throw err
       const cloud = cloudErrorInfo(err)
       reason = `Your AI model couldn't help (${cloud?.title ?? err.message}), so the built-in planner made this draft.`
-      if (cloud?.kind === 'prompt-cut' && cloud.steps[0]) reason += ` ${cloud.steps[0]}`
+      if (cloud?.kind === 'prompt-cut') reason += ' Raise its context length to 16k, then draft again.'
     }
     const plan = await expandBrief(ruleBrief(input), input, { planner: 'local' })
     return { ...plan, warnings: [reason, ...plan.warnings] }
