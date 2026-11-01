@@ -166,6 +166,16 @@
   text-overflow: ellipsis;
 }
 
+/* Enter runs the highlighted row, so Ask Assist shows the key only while it is that row. */
+.askKey {
+  display: flex;
+  visibility: hidden;
+}
+
+.item[data-selected='true'] .askKey {
+  visibility: visible;
+}
+
 .unavailable .itemLabel,
 .unavailable .itemIcon {
   color: var(--text-3);

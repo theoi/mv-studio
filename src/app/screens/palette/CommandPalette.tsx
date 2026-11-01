@@ -245,7 +245,9 @@ export function CommandPalette() {
                           <Sparkles />
                         </span>
                         <span className={styles.itemLabel}>Ask Assist: “{search.trim()}”</span>
-                        <Kbd keys="Enter" />
+                        <span className={styles.askKey}>
+                          <Kbd keys="Enter" />
+                        </span>
                       </Command.Item>
                     </Command.Group>
                   ) : (
