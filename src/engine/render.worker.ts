@@ -1,9 +1,10 @@
 /** The render worker: compositor, decoders and encoders on their own thread (see renderHost.ts). */
 import { JobError } from '../shared/jobs.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../shared/worker.ts'
-import type { EncodeJob } from './encode.ts'
+import type { EncodeJob, ProbeJob } from './encode.ts'
 import type { BridgedVideo } from './frames.ts'
 import type { PreviewRenderRequest, WorkerPreview } from './previewWorker.ts'
+import type { MediaFileSource } from './types.ts'
 
 // The compositor and encoders load on first use: with only this module and worker.ts to evaluate first, the worker
 // takes the client's watch lock (worker.ts) moments after it starts, and its death can be noticed from then on.
@@ -15,17 +16,26 @@ function activePreview(): Promise<WorkerPreview> {
   return preview
 }
 
+/** Files through `port`, served by the page's media source (serveMedia), or without one straight from OPFS. */
+function mediaSource(port: MessagePort | undefined): Promise<MediaFileSource> {
+  return port
+    ? import('./previewWorker.ts').then(({ portMedia }) => portMedia(port))
+    : import('../media/mediaStore.ts').then(({ mediaStore }) => mediaStore)
+}
+
 const api = {
-  /** With `media`, a port served by the page's media source (serveMedia), files come from the page, else from OPFS. */
   exportVideo: async ({ job, media }: { job: EncodeJob; media?: MessagePort }, ctx: WorkerCallContext) => {
     try {
-      const [{ encodeExport }, source] = await Promise.all([
-        import('./encode.ts'),
-        media
-          ? import('./previewWorker.ts').then(({ portMedia }) => portMedia(media))
-          : import('../media/mediaStore.ts').then(({ mediaStore }) => mediaStore),
-      ])
+      const [{ encodeExport }, source] = await Promise.all([import('./encode.ts'), mediaSource(media)])
       return await encodeExport(job, ctx, { media: source })
+    } finally {
+      media?.close()
+    }
+  },
+  probeExport: async ({ job, media }: { job: ProbeJob; media?: MessagePort }, ctx: WorkerCallContext) => {
+    try {
+      const [{ measureExport }, source] = await Promise.all([import('./encode.ts'), mediaSource(media)])
+      return await measureExport(job, ctx, { media: source })
     } finally {
       media?.close()
     }
