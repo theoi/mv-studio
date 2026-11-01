@@ -6,12 +6,13 @@ import {
   addVisual,
   changeVisual,
   clickVisual,
+  currentVisuals,
   endLibraryDrag,
   isReactive,
   startLibraryDrag,
+  visualChangeItem,
   visualItems,
   visualTargetHint,
-  visualTargets,
 } from '../../../state/library.ts'
 import { useProject } from '../../../state/project.ts'
 import { previewHandlers } from '../../../state/tilePreview.ts'
@@ -25,7 +26,7 @@ function VisualMenu({ id }: { id: string }) {
   const project = useProject()
   const selection = useUi((s) => s.selection)
   const playhead = useUi((s) => s.playhead)
-  const targets = visualTargets(project, selection)
+  const change = visualChangeItem(project, selection, id)
   return (
     <>
       <ContextMenuItem
@@ -37,30 +38,30 @@ function VisualMenu({ id }: { id: string }) {
       </ContextMenuItem>
       <ContextMenuItem
         icon={<Replace />}
-        disabled={!targets || 'why' in targets}
-        description={
-          !targets ? 'Select a visual on the timeline first' : 'why' in targets ? targets.why : undefined
-        }
+        disabled={!!change.why}
+        description={change.why}
         onSelect={() => changeVisual(id)}
       >
-        {targets && !('why' in targets) ? `Change ${targets.what}` : 'Change the selected visual'}
+        {change.label}
       </ContextMenuItem>
     </>
   )
 }
 
 /**
- * A visual's tile: a click changes the selected visuals to it, or adds it at the playhead when none is selected; its
- * menu offers both. A drag drops it on a free stretch of a track.
+ * A visual's tile: a click changes the selected visuals of its group to it, or adds it at the playhead when none is
+ * selected; its menu offers both. A drag drops it on a free stretch of a track. `current` marks the visual a
+ * selected clip is now.
  */
-function visualTile(v: PluginCatalogEntry) {
+function visualTile(v: PluginCatalogEntry, current: boolean) {
   const reactive = isReactive(v)
+  const label = [v.name, reactive && 'reacts to the music', current && 'current'].filter(Boolean).join(', ')
   return (
     <ContextMenu key={v.id}>
       <ContextMenuTrigger asChild>
         <button
-          className={styles.tile}
-          aria-label={reactive ? `${v.name}, reacts to the music` : undefined}
+          className={[styles.tile, current && styles.tileOn].filter(Boolean).join(' ')}
+          aria-label={reactive || current ? label : undefined}
           draggable
           onDragStart={(e) => startLibraryDrag(e.nativeEvent, { kind: 'visual', id: v.id })}
           onDragEnd={endLibraryDrag}
@@ -75,6 +76,11 @@ function visualTile(v: PluginCatalogEntry) {
             {reactive && (
               <span className={styles.reactive} title="Reacts to the music">
                 <AudioWaveform />
+              </span>
+            )}
+            {current && (
+              <span className={styles.currentMark} aria-hidden>
+                Current
               </span>
             )}
           </span>
@@ -100,18 +106,26 @@ function visualTile(v: PluginCatalogEntry) {
 export function VisualsTab() {
   const project = useProject()
   const selection = useUi((s) => s.selection)
+  const current = currentVisuals(project, selection)
+  const tile = (v: PluginCatalogEntry) => visualTile(v, current.has(v.id))
+  const visualizers = visualItems('visualizers')
+  const shaders = visualItems('shaders')
+  const keep = (items: PluginCatalogEntry[]) => items.find((v) => current.has(v.id))?.id
   return (
-    <div className={`${styles.scroller} scroll`}>
-      <div className={styles.padded}>
+    <>
+      <div className={styles.tabHead}>
         <p className={styles.targetNote}>{visualTargetHint(project, selection)}</p>
       </div>
-      <TileGroup
-        group="visualizers"
-        name="Visualizers"
-        items={visualItems('visualizers')}
-        tile={visualTile}
-      />
-      <TileGroup group="shaders" name="Shader visuals" items={visualItems('shaders')} tile={visualTile} />
-    </div>
+      <div className={`${styles.scroller} scroll`}>
+        <TileGroup
+          group="visualizers"
+          name="Visualizers"
+          items={visualizers}
+          keep={keep(visualizers)}
+          tile={tile}
+        />
+        <TileGroup group="shaders" name="Shader visuals" items={shaders} keep={keep(shaders)} tile={tile} />
+      </div>
+    </>
   )
 }

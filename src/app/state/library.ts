@@ -16,7 +16,12 @@ import {
   type TextClip,
   type VisualClip,
 } from '../../model/index.ts'
-import { createEffectInstance, createGeneratorClip, createTransition } from '../../plugins/library.ts'
+import {
+  createEffectInstance,
+  createGeneratorClip,
+  createTransition,
+  defaultParams,
+} from '../../plugins/library.ts'
 import {
   applyLookCommands,
   currentLook,
@@ -527,26 +532,71 @@ const VISUAL_LOCKED = 'That track is locked. Unlock it to change this visual.'
 const VISUALS_LOCKED = 'Their tracks are locked. Unlock them to change these visuals.'
 
 /**
- * The selected visuals (visualizers and shader visuals) a clicked visual changes, leaving out those on locked tracks
- * (`skipped`). Null when no visual is selected, so a click adds one; `why` when every selected visual is locked.
+ * Library › Visuals' groups: visualizers lay over what is below them, shader visuals (scenes and backgrounds) fill
+ * the frame. A visual changes only to one of its own group, so a change never empties or covers the frame.
+ */
+type VisualGroup = 'visualizers' | 'shaders'
+
+const groupOf = (generatorId: string): VisualGroup =>
+  pluginRegistry.get(generatorId)?.category === 'Visualizer' ? 'visualizers' : 'shaders'
+
+const GROUP_NOUN: Record<VisualGroup, string> = { visualizers: 'visualizer', shaders: 'shader visual' }
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+const otherGroup = (group: VisualGroup): VisualGroup => (group === 'visualizers' ? 'shaders' : 'visualizers')
+
+const selectedVisuals = (project: Project, selection: Selection) =>
+  selectedClipIds(selection)
+    .map((id) => project.clips[id])
+    .filter((c): c is GeneratorClip => c?.type === 'generator')
+
+/** Names visuals for a toast or the note: "“Spectrum bars”", "2 visuals". */
+const visualsWhat = (project: Project, clips: GeneratorClip[]) =>
+  clips.length === 1 ? `“${viewOf(project, clips[0]!).name}”` : plural(clips.length, 'visual')
+
+export interface VisualTargets {
+  clipIds: Id[]
+  what: string
+  /** Selected visuals of the group left out because their tracks are locked. */
+  skipped: number
+  /** Selected visuals of the other group, which stay as they are. */
+  others: number
+}
+
+/**
+ * The selected visuals a click on `generatorId` changes: those of its group (any group without it), leaving out
+ * those on locked tracks. Null when none is selected, so a click adds it; `why` when every one is locked.
  */
 export function visualTargets(
   project: Project,
   selection: Selection,
-): { clipIds: Id[]; what: string; skipped: number } | { why: string } | null {
+  generatorId?: string,
+): VisualTargets | { why: string } | null {
   const locked = lockedTracks(project)
-  const chosen = selectedClipIds(selection)
-    .map((id) => project.clips[id])
-    .filter((c): c is GeneratorClip => c?.type === 'generator')
+  const selected = selectedVisuals(project, selection)
+  const group = generatorId === undefined ? undefined : groupOf(generatorId)
+  const chosen = group ? selected.filter((c) => groupOf(c.generatorId) === group) : selected
   if (!chosen.length) return null
   const open = chosen.filter((c) => !locked.has(c.trackId))
-  const [first] = open
-  if (!first) return { why: chosen.length === 1 ? VISUAL_LOCKED : VISUALS_LOCKED }
+  if (!open.length) return { why: chosen.length === 1 ? VISUAL_LOCKED : VISUALS_LOCKED }
   return {
     clipIds: open.map((c) => c.id),
-    what: open.length === 1 ? `“${viewOf(project, first).name}”` : plural(open.length, 'visual'),
+    what: visualsWhat(project, open),
     skipped: chosen.length - open.length,
+    others: selected.length - chosen.length,
   }
+}
+
+/** The visuals the selected clips are, which a click on a visual of their group would change: their tiles' mark. */
+export function currentVisuals(project: Project, selection: Selection): Set<string> {
+  const t = visualTargets(project, selection)
+  if (!t || 'why' in t) return new Set()
+  return new Set(
+    t.clipIds.flatMap((id) =>
+      project.clips[id]?.type === 'generator' ? [project.clips[id].generatorId] : [],
+    ),
+  )
 }
 
 /** The note at the top of Library › Visuals: what a click on a visual does with this selection, before the click. */
@@ -557,54 +607,149 @@ export function visualTargetHint(project: Project, selection: Selection): string
   const skipped = t.skipped
     ? ` ${plural(t.skipped, 'visual')} on ${t.skipped === 1 ? 'a locked track stays' : 'locked tracks stay'} as ${t.skipped === 1 ? 'it is' : 'they are'}.`
     : ''
-  return `Click a visual to change ${t.what} to it.${skipped} Right-click or drag one to add it instead.`
+  const groups = new Set(selectedVisuals(project, selection).map((c) => groupOf(c.generatorId)))
+  const [group] = groups
+  if (!group || groups.size > 1)
+    return `Click a visual to change the selected visuals of its kind to it.${skipped} Right-click or drag one to add it instead.`
+  return `Click a ${GROUP_NOUN[group]} to change ${t.what} to it.${skipped} To add a visual instead, right-click or drag it, or click a ${GROUP_NOUN[otherGroup(group)]}.`
 }
 
-/** A visual tile's click: changes the selected visuals to it, or adds it at the playhead when none is selected. */
+/**
+ * The "Change …" item in a visual tile's menu: "Change “Circle spectrum” to Orb", and `why` it is unavailable when no
+ * selected visual of its group can change to it.
+ */
+export function visualChangeItem(
+  project: Project,
+  selection: Selection,
+  generatorId: string,
+): { label: string; why?: string } {
+  const name = pluginRegistry.get(generatorId)?.name ?? generatorId
+  const t = visualTargets(project, selection, generatorId)
+  const group = groupOf(generatorId)
+  if (!t) {
+    const why = selectedVisuals(project, selection).length
+      ? `${capitalize(GROUP_NOUN[otherGroup(group)])}s change only to ${GROUP_NOUN[otherGroup(group)]}s`
+      : `Select a ${GROUP_NOUN[group]} on the timeline first`
+    return { label: `Change the selected visual to ${name}`, why }
+  }
+  if ('why' in t) return { label: `Change the selected visual to ${name}`, why: t.why }
+  const label = `Change ${t.what} to ${name}`
+  const already = t.clipIds.every((id) => {
+    const clip = project.clips[id]
+    return clip?.type === 'generator' && clip.generatorId === generatorId
+  })
+  if (!already) return { label }
+  return { label, why: t.clipIds.length === 1 ? `It’s already “${name}”` : `They’re already “${name}”` }
+}
+
+/**
+ * A visual tile's click: changes the selected visuals of its group to it, or adds it at the playhead when none is
+ * selected.
+ */
 export function clickVisual(generatorId: string): void {
-  const t = visualTargets(editor.getProject(), get().selection)
+  const t = visualTargets(editor.getProject(), get().selection, generatorId)
   if (!t) addVisual(generatorId)
   else if ('why' in t) toast(t.why)
   else changeVisual(generatorId)
 }
 
+const sameValue = (a: unknown, b: unknown) =>
+  typeof a === 'string' && typeof b === 'string' ? a.toLowerCase() === b.toLowerCase() : a === b
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+
+const roundAmount = (v: number) => Math.round(v * 1e5) / 1e5
+
 /**
- * Changes the selected visuals to another one as one undo step. Each keeps its place, length, track, transform,
- * effects and audio source, and gets the new visual's settings at their defaults in the look's colors. Colors and
- * images set on it carry over to the new visual's settings of the same name and kind, and a name that was the old
- * visual's becomes the new one's.
+ * The params a visual changed to `def` gets: the new visual's defaults in the look's colors, plus what was set on
+ * the old one that the new one has a setting for: colors and images of the same name and kind, and music reactions
+ * on numbers of the same name, scaled to the new range so they move it as much. Values the old visual would have had
+ * untouched give way to the new visual's. `dropped` names the old settings whose reactions had nowhere to go.
+ */
+function changedParams(
+  project: Project,
+  clip: GeneratorClip,
+  old: GeneratorDefinition | undefined,
+  def: GeneratorDefinition,
+): { params: GeneratorClip['params']; dropped: string[] } {
+  const params = defaultParams(def)
+  withLookColors(project, def, params)
+  const untouched = old ? defaultParams(old) : {}
+  if (old) withLookColors(project, old, untouched)
+  const dropped: string[] = []
+  for (const was of old?.params ?? []) {
+    const value = clip.params[was.key]
+    const base = untouched[was.key]
+    const spec = def.params.find((p) => p.key === was.key)
+    if (!value) continue
+    if (was.type === 'color' || was.type === 'image') {
+      const set = !!value.keyframes?.length || !sameValue(value.value, base?.value)
+      if (set && spec?.type === was.type) params[was.key] = value
+      continue
+    }
+    const reactions = value.modulation
+    if (was.type !== 'number' || !reactions?.length || sameJson(reactions, base?.modulation)) continue
+    if (spec?.type !== 'number' || spec.modulatable === false) {
+      dropped.push(was.label)
+      continue
+    }
+    const scale = (spec.max - spec.min) / (was.max - was.min)
+    params[was.key] = {
+      ...params[was.key]!,
+      modulation: reactions.map((m) => ({
+        ...m,
+        source: { ...m.source },
+        amount: m.mode === 'add' ? roundAmount(m.amount * scale) : m.amount,
+      })),
+    }
+  }
+  return { params, dropped }
+}
+
+/** For the toast: "Its music reaction on Wobble was removed", "3 music reactions were removed". */
+function droppedNote(changed: number, dropped: string[]): string | undefined {
+  if (!dropped.length) return undefined
+  if (changed > 1)
+    return `${plural(dropped.length, 'music reaction')} ${dropped.length === 1 ? 'was' : 'were'} removed`
+  const labels = [...new Set(dropped)]
+  const on = labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}`
+  return `Its music ${labels.length === 1 ? 'reaction' : 'reactions'} on ${on} ${labels.length === 1 ? 'was' : 'were'} removed`
+}
+
+/**
+ * Changes the selected visuals of `generatorId`'s group to it as one undo step. Each keeps its place, length, track,
+ * transform, effects and audio source, and gets the new visual's settings at their defaults in the look's colors,
+ * keeping the colors, images and music reactions set on it that the new visual has a setting for (see
+ * `changedParams`). A name that was the old visual's becomes the new one's.
  */
 export function changeVisual(generatorId: string): boolean {
   const def = pluginRegistry.get(generatorId)
   if (def?.kind !== 'generator') return false
   const project = editor.getProject()
-  const t = visualTargets(project, get().selection)
+  const t = visualTargets(project, get().selection, generatorId)
   if (!t) return false
   if ('why' in t) {
     toast(t.why)
     return false
   }
   const commands: EditCommand[] = []
+  const changed: GeneratorClip[] = []
+  const dropped: string[] = []
   for (const id of t.clipIds) {
     const clip = project.clips[id]
     if (clip?.type !== 'generator' || clip.generatorId === generatorId) continue
     const old = pluginRegistry.get(clip.generatorId)
-    const params = createGeneratorClip({ trackId: clip.trackId, generatorId, start: 0, duration: 1 }).params
-    withLookColors(project, def, params)
-    for (const spec of def.params) {
-      const was = old?.params.find((p) => p.key === spec.key)
-      const value = clip.params[spec.key]
-      if (value && was?.type === spec.type && (spec.type === 'color' || spec.type === 'image'))
-        params[spec.key] = value
-    }
+    const next = changedParams(project, clip, old?.kind === 'generator' ? old : undefined, def)
     commands.push(
       { type: 'clip.set', clipId: id, path: ['generatorId'], value: generatorId },
-      { type: 'clip.set', clipId: id, path: ['params'], value: params },
+      { type: 'clip.set', clipId: id, path: ['params'], value: next.params },
     )
     if (clip.name === undefined || clip.name === old?.name)
       commands.push({ type: 'clip.set', clipId: id, path: ['name'], value: def.name })
+    changed.push(clip)
+    dropped.push(...next.dropped)
   }
-  if (!commands.length) {
+  if (!changed.length) {
     toast(t.clipIds.length === 1 ? `It’s already “${def.name}”` : `They’re already “${def.name}”`)
     return false
   }
@@ -613,7 +758,16 @@ export function changeVisual(generatorId: string): boolean {
   const skipped = t.skipped
     ? `${plural(t.skipped, 'visual')} on ${t.skipped === 1 ? 'a locked track was' : 'locked tracks were'} left as is`
     : undefined
-  toast([`Changed ${t.what} to “${def.name}”`, skipped].filter(Boolean).join(' · '), undoAction(label))
+  const others = t.others
+    ? `${plural(t.others, GROUP_NOUN[otherGroup(groupOf(generatorId))])} ${t.others === 1 ? 'was' : 'were'} left as is`
+    : undefined
+  const message = [
+    `Changed ${visualsWhat(project, changed)} to “${def.name}”`,
+    skipped,
+    others,
+    droppedNote(changed.length, dropped),
+  ]
+  toast(message.filter(Boolean).join(' · '), undoAction(label))
   return true
 }
 
@@ -793,10 +947,51 @@ export function textTargets(project: Project, selection: Selection): TextTargets
 /** The note under Add text: where a clicked style would go with this selection, before the click. */
 export function textTargetHint(project: Project, selection: Selection): string {
   const t = textTargets(project, selection)
-  if ('why' in t) return t.why === NOT_TEXT ? 'Select a text or lyric line to restyle it' : t.why
-  if (t.scope === 'lyrics') return 'Click a style to use it on every lyric line'
-  const where = `Click a style to use it on ${t.what}`
-  return t.skipped ? `${where}. ${skippedNote(t.skipped)}.` : where
+  if ('why' in t) return sentence(t.why === NOT_TEXT ? 'Select a text or lyric line to restyle it' : t.why)
+  if (t.scope === 'lyrics') return 'Click a style to use it on every lyric line.'
+  const where = `Click a style to use it on ${t.what}.`
+  return t.skipped ? `${where} ${skippedNote(t.skipped)}.` : where
+}
+
+/** Notes are sentences; the reasons they share with toasts end without a period there. */
+const sentence = (s: string) => (/[.!?]$/.test(s) ? s : `${s}.`)
+
+/** Whether every setting a text style makes is still on the clip as the style made it. */
+function wearsStyle(clip: TextClip, preset: TextStylePreset): boolean {
+  const style = new Map(Object.entries(clip.style))
+  return (
+    Object.entries(preset.style).every(([key, value]) => sameJson(style.get(key), value)) &&
+    (!preset.animation || clip.animation?.presetId === preset.animation.presetId) &&
+    (!preset.karaoke || clip.karaoke?.mode === preset.karaoke.mode)
+  )
+}
+
+const styleSize = (p: TextStylePreset) =>
+  Object.keys(p.style).length + (p.animation ? 1 : 0) + (p.karaoke ? 1 : 0)
+
+/**
+ * The kinetic presets and text styles the texts a click would restyle have now: their tiles' mark. Of several styles
+ * a text still wears, the one that sets the most.
+ */
+export function currentTextItems(project: Project, selection: Selection): Set<string> {
+  const t = textTargets(project, selection)
+  const ids = new Set<string>()
+  if ('why' in t) return ids
+  const seen = new Set<string>()
+  for (const id of t.clipIds) {
+    const clip = project.clips[id]
+    if (clip?.type !== 'text') continue
+    // Lyric lines mostly look alike: match each look once.
+    const key = JSON.stringify([clip.style, clip.animation?.presetId, clip.karaoke?.mode])
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (clip.animation) ids.add(clip.animation.presetId)
+    let best: TextStylePreset | undefined
+    for (const preset of TEXT_STYLES)
+      if (wearsStyle(clip, preset) && (!best || styleSize(preset) > styleSize(best))) best = preset
+    if (best) ids.add(best.id)
+  }
+  return ids
 }
 
 /** Gives the text targets a kinetic preset as one undo step. */

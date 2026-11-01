@@ -32,11 +32,16 @@ import {
   textTargets,
   transitionTarget,
   visualPlacement,
+  currentTextItems,
+  currentVisuals,
+  visualChangeItem,
   visualTargetHint,
 } from '../../../src/app/state/library.ts'
+import { pluginRegistry } from '../../../src/engine/registry.ts'
+import { applyReaction, describeReaction } from '../../../src/plugins/reactions.ts'
 import { createGeneratorClip } from '../../../src/plugins/library.ts'
 import { editor } from '../../../src/app/state/project.ts'
-import { get, set, type Selection } from '../../../src/app/state/ui.ts'
+import { get, selectedClipIds, set, type Selection } from '../../../src/app/state/ui.ts'
 
 beforeAll(() => {
   // Toasts time out through window.setTimeout.
@@ -54,6 +59,14 @@ const asset = (id: string, kind: Asset['kind']): Asset => ({
   createdAt: new Date(0).toISOString(),
 })
 
+/** A param of a generator clip in the editor's project. */
+const paramOf = (clipId: string, key: string) => {
+  const clip = editor.getProject().clips[clipId]
+  return clip?.type === 'generator' ? clip.params[key]?.value : undefined
+}
+
+const defaultOf = (generatorId: string, key: string) =>
+  pluginRegistry.get(generatorId)?.params.find((p) => p.key === key)?.default
 /** Lyrics on top; footage cut at 4 s and 8 s with a gap before 14 s; a locked track with a clip under 2 s. */
 function scene() {
   const p: Project = createProject({ name: 'library' })
@@ -311,7 +324,7 @@ describe('adding visuals', () => {
     })
     const spectrum = editor.getProject().clips[before.id]!
     expect(visualTargetHint(editor.getProject(), get().selection)).toBe(
-      'Click a visual to change “Spectrum bars” to it. Right-click or drag one to add it instead.',
+      'Click a visualizer to change “Spectrum bars” to it. To add a visual instead, right-click or drag it, or click a shader visual.',
     )
 
     clickVisual('visualizer.circle')
@@ -361,6 +374,97 @@ describe('adding visuals', () => {
     expect(editor.getProject().clips[orb.id]).toMatchObject({ generatorId: 'visualizer.orb' })
   })
 
+  it('gives the changed visual the new one’s own settings where the old one’s were untouched', () => {
+    const s = scene()
+    editor.load(s.p)
+    addVisual('visualizer.orb')
+    const id = Object.values(editor.getProject().clips).find((c) => c.type === 'generator')!.id
+    clickVisual('visualizer.spectrum')
+    // No look: the orb's untouched purple gives way to the bars' own color.
+    expect(paramOf(id, 'color')).toBe(defaultOf('visualizer.spectrum', 'color'))
+    expect(paramOf(id, 'color')).not.toBe(defaultOf('visualizer.orb', 'color'))
+
+    chooseLook('warm')
+    set({ selection: { type: 'none' }, playhead: 20 })
+    addVisual('generator.tunnel')
+    const tunnel = selectedClipIds(get().selection)[0]!
+    clickVisual('generator.synthwave')
+    // A look colors `color`, not a scene's sky: the tunnel's untouched background gives way to the grid's.
+    expect(paramOf(tunnel, 'background')).toBe(defaultOf('generator.synthwave', 'background'))
+    expect(paramOf(tunnel, 'background')).not.toBe(defaultOf('generator.tunnel', 'background'))
+  })
+
+  it('changes a visual only to one of its group, so a click on the other group adds that visual', () => {
+    editor.load(scene().p)
+    addVisual('visualizer.spectrum')
+    const id = Object.values(editor.getProject().clips).find((c) => c.type === 'generator')!.id
+    const p = () => editor.getProject()
+    expect(currentVisuals(p(), get().selection)).toEqual(new Set(['visualizer.spectrum']))
+    expect(visualChangeItem(p(), get().selection, 'visualizer.orb')).toEqual({
+      label: 'Change “Spectrum bars” to Orb',
+    })
+    expect(visualChangeItem(p(), get().selection, 'visualizer.spectrum')).toMatchObject({
+      why: 'It’s already “Spectrum bars”',
+    })
+    expect(visualChangeItem(p(), get().selection, 'generator.synthwave')).toEqual({
+      label: 'Change the selected visual to Retro grid',
+      why: 'Visualizers change only to visualizers',
+    })
+    expect(visualChangeItem(p(), { type: 'none' }, 'generator.synthwave')).toMatchObject({
+      why: 'Select a shader visual on the timeline first',
+    })
+
+    clickVisual('generator.synthwave')
+    expect(p().clips[id]).toMatchObject({ generatorId: 'visualizer.spectrum' })
+    expect(editor.undoLabel()).toBe('Add visual: Retro grid')
+    expect(currentVisuals(p(), get().selection)).toEqual(new Set(['generator.synthwave']))
+  })
+
+  it('counts only the visuals it changed, and leaves those of the other group as they are', () => {
+    editor.load(scene().p)
+    const added = (generatorId: string, playhead: number) => {
+      set({ playhead })
+      addVisual(generatorId)
+      return selectedClipIds(get().selection)[0]!
+    }
+    const ids = [
+      added('visualizer.spectrum', 1),
+      added('visualizer.circle', 10),
+      added('generator.tunnel', 20),
+    ] as const
+    set({ selection: { type: 'clip', id: ids[2], ids: [...ids] } })
+    expect(visualTargetHint(editor.getProject(), get().selection)).toBe(
+      'Click a visual to change the selected visuals of its kind to it. Right-click or drag one to add it instead.',
+    )
+    clickVisual('visualizer.circle')
+    expect(ids.map((id) => editor.getProject().clips[id])).toMatchObject([
+      { generatorId: 'visualizer.circle' },
+      { generatorId: 'visualizer.circle' },
+      { generatorId: 'generator.tunnel' },
+    ])
+    expect(get().toasts.at(-1)?.message).toBe(
+      'Changed “Spectrum bars” to “Circle spectrum” · 1 shader visual was left as is',
+    )
+  })
+
+  it('keeps music reactions on settings the new visual has, as strong, and says which it removed', () => {
+    editor.load(scene().p)
+    addVisual('visualizer.spectrum')
+    const id = Object.values(editor.getProject().clips).find((c) => c.type === 'generator')!.id
+    applyReaction(editor, [{ clipId: id, param: 'height' }], 'beat', { amount: 0.4 })
+    clickVisual('visualizer.circle')
+    // The circle's bar height has a narrower range than the bars' height: the reaction moves it as far through it.
+    const height = describeReaction(editor.getProject(), { clipId: id, param: 'height' })
+    expect(height).toMatchObject({ kind: 'reaction', reaction: { id: 'beat' } })
+    expect(height?.kind === 'reaction' && height.amount).toBeCloseTo(0.4, 3)
+    expect(get().toasts.at(-1)?.message).toBe('Changed “Spectrum bars” to “Circle spectrum”')
+
+    applyReaction(editor, [{ clipId: id, param: 'radius' }], 'beat', { amount: 0.5 })
+    clickVisual('visualizer.orb')
+    expect(get().toasts.at(-1)?.message).toBe(
+      'Changed “Circle spectrum” to “Orb” · Its music reactions on Radius and Bar height were removed',
+    )
+  })
   it('drops a visual on a free stretch of a track, up to the next clip there, and nowhere else', () => {
     const s = scene()
     editor.load(s.p)
@@ -479,13 +583,16 @@ describe('kinetic presets and text styles', () => {
 
   it('says where a click goes before the click', () => {
     const s = textScene()
-    expect(textTargetHint(s.p, { type: 'none' })).toBe('Click a style to use it on every lyric line')
-    expect(textTargetHint(s.p, { type: 'clip', id: s.title.id })).toBe('Click a style to use it on “Title”')
+    expect(textTargetHint(s.p, { type: 'none' })).toBe('Click a style to use it on every lyric line.')
+    expect(textTargetHint(s.p, { type: 'clip', id: s.title.id })).toBe('Click a style to use it on “Title”.')
     expect(textTargetHint(s.p, { type: 'lyric', id: 'l2' })).toBe(
-      'Click a style to use it on this lyric line',
+      'Click a style to use it on this lyric line.',
     )
     expect(textTargetHint(s.p, { type: 'clip', id: s.a.id })).toBe(
-      'Select a text or lyric line to restyle it',
+      'Select a text or lyric line to restyle it.',
+    )
+    expect(textTargetHint(createProject({ name: 'empty' }), { type: 'none' })).toBe(
+      'Select a text or lyric line, or add text first.',
     )
   })
 
@@ -508,7 +615,7 @@ describe('kinetic presets and text styles', () => {
       clipIds: [s.title.id],
       what: '“Title”',
     })
-    expect(textTargetHint(s.p, several(s.line2.id, s.title.id))).toBe('Click a style to use it on 2 texts')
+    expect(textTargetHint(s.p, several(s.line2.id, s.title.id))).toBe('Click a style to use it on 2 texts.')
     expect(textTargets(s.p, several(s.a.id, s.b.id))).toEqual({ why: 'Select a text or lyric line first' })
     s.p.tracks[0] = { ...s.p.tracks[0]!, locked: true }
     // Both on the Lyrics track, or on two locked tracks.
@@ -555,6 +662,23 @@ describe('kinetic presets and text styles', () => {
     })
     applyTextAnimation('wave')
     expect(get().toasts.at(-1)?.message).toBe('“Wave” on 2 texts · 2 texts on a locked track were left as is')
+  })
+
+  it('marks the kinetic preset and text style the text a click would restyle has now', () => {
+    const s = textScene()
+    editor.load(s.p)
+    const title: Selection = { type: 'clip', id: s.title.id }
+    set({ selection: title })
+    applyLibraryTextStyle('neon')
+    expect(currentTextItems(editor.getProject(), title)).toEqual(new Set(['neon', 'flicker']))
+    applyTextAnimation('wave')
+    expect(currentTextItems(editor.getProject(), title)).toEqual(new Set(['wave']))
+    applyLibraryTextStyle('neon')
+    editor.dispatch({ type: 'clip.set', clipId: s.title.id, path: ['style', 'color'], value: '#00ff00' })
+    // Its color is no longer the style's: only the kinetic preset is still on it.
+    expect(currentTextItems(editor.getProject(), title)).toEqual(new Set(['flicker']))
+    // Nothing to restyle, nothing marked.
+    expect(currentTextItems(editor.getProject(), { type: 'clip', id: s.a.id })).toEqual(new Set())
   })
 
   it('restyles several selected texts as one undo step', () => {

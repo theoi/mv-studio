@@ -60,12 +60,22 @@
   padding-top: var(--space-3);
 }
 
-/* Under Add text: where a clicked style goes, following the selection. */
+/* Above a tab's tiles, staying put while they scroll so what a click does stays in view. */
+.tabHead {
+  flex: none;
+  padding: var(--space-3) var(--space-3) var(--space-1);
+}
+
+/* What a click on a tile does with the selection: where a style goes, what a visual changes. */
 .targetNote {
   margin: var(--space-2) 2px 0;
   color: var(--text-3);
   font-size: var(--text-xs);
   line-height: var(--lh-xs);
+}
+
+.targetNote:first-child {
+  margin-top: 0;
 }
 
 .groupLabel {
@@ -407,6 +417,22 @@ button.songRow:hover {
 .tileOn .tileArt,
 .tileOn:hover .tileArt {
   box-shadow: 0 0 0 2px var(--accent-line);
+}
+
+/* On the tile of what the selection is now, which a click on another tile changes. */
+.currentMark {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: rgb(10 10 14 / 0.7);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
 }
 
 .tilePreview {

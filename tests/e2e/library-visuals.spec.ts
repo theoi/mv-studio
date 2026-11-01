@@ -107,16 +107,31 @@ test('with a visual selected, a click on another visual changes it, and the tile
   await waitForPreview(page)
   const preview = page.getByRole('img', { name: 'Video preview' })
   const library = page.getByRole('tabpanel', { name: 'Visuals' })
+  const note = library.getByText(
+    'Click a visualizer to change “Spectrum bars” to it. To add a visual instead, right-click or drag it, or click a shader visual.',
+  )
+  await expect(note).toBeVisible()
+  // The tile of the visual a click would change is marked, and the note stays in view while the tiles scroll.
   await expect(
-    library.getByText(
-      'Click a visual to change “Spectrum bars” to it. Right-click or drag one to add it instead.',
-    ),
+    library.getByRole('button', { name: 'Spectrum bars, reacts to the music, current', exact: true }),
   ).toBeVisible()
+  await library.getByRole('button', { name: 'Show all 7' }).click()
+  const scroller = library.locator('.scroll')
+  expect(await scroller.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  await expect(note).toBeInViewport()
+  await scroller.evaluate((el) => el.scrollTo(0, 0))
   const before = await generators(page)
   const shot = await preview.screenshot()
 
   await library.getByRole('button', { name: 'Circle spectrum, reacts to the music', exact: true }).click()
   await expect(page.getByText('Changed “Spectrum bars” to “Circle spectrum”', { exact: true })).toBeVisible()
+  await expect(
+    library.getByRole('button', { name: 'Circle spectrum, reacts to the music, current', exact: true }),
+  ).toBeVisible()
+  await expect(
+    library.getByRole('button', { name: 'Spectrum bars, reacts to the music', exact: true }),
+  ).toBeVisible()
   expect(await generators(page)).toEqual(
     before.map((g) => (g.id === 'o-spec1' ? { ...g, generatorId: 'visualizer.circle' } : g)),
   )
@@ -130,7 +145,9 @@ test('with a visual selected, a click on another visual changes it, and the tile
   await library
     .getByRole('button', { name: 'Orb, reacts to the music', exact: true })
     .click({ button: 'right' })
-  await expect(page.getByRole('menuitem', { name: /^Change “Circle spectrum”/ })).toBeVisible()
+  await expect(
+    page.getByRole('menuitem', { name: 'Change “Circle spectrum” to Orb', exact: true }),
+  ).toBeVisible()
   await page.getByRole('menuitem', { name: /^Add at playhead/ }).click()
   await expect(page.getByText(/^“Orb” added from 1:13 to \d+:\d\d$/)).toBeVisible()
   const added = await generators(page)
@@ -143,7 +160,9 @@ test('with a visual selected, a click on another visual changes it, and the tile
   expect(await generators(page)).toEqual(before)
 })
 
-test('a visual added over a scene goes on a track above it, so the preview shows it', async ({ page }) => {
+test('a visualizer clicked with a scene selected is added, on a track above the scene, so the preview shows it', async ({
+  page,
+}) => {
   await openHarness(page)
   await page.evaluate(() => {
     localStorage.setItem('mv-studio.guide-seen', '1')
@@ -155,10 +174,11 @@ test('a visual added over a scene goes on a track above it, so the preview shows
   await library.getByRole('button', { name: 'Show all 7' }).click()
   await library.getByRole('button', { name: /^Retro grid\b/ }).click()
   await expect(page.getByText(/^“Retro grid” added from 1:13 to /)).toBeVisible()
-  // With nothing selected, the next click adds.
-  await page.evaluate(() => window.mvStudio.app.ui.set({ selection: { type: 'none' } }))
+  // The new scene is selected, but a scene changes only to a scene: a click on a visualizer adds one.
   await expect(
-    library.getByText('Click a visual to add it at the playhead, or drag it onto a track.'),
+    library.getByText(
+      'Click a shader visual to change “Retro grid” to it. To add a visual instead, right-click or drag it, or click a visualizer.',
+    ),
   ).toBeVisible()
   const shot = await preview.screenshot()
 
