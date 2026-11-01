@@ -66,6 +66,35 @@ test('importing a song into an empty project makes it the song and analyzes it',
   await expect(page.getByText('Start with a song')).toBeVisible()
 })
 
+test('the song row gives the song’s own length when the video runs past the song', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?project=empty&kind=blank'
+  })
+  await expect(page.getByText('Start with a song')).toBeVisible()
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Import a song' }).click()
+  await (await chooser).setFiles(path.join(FIXTURE_DIR, 'song.mp3'))
+  const media = page.getByRole('tabpanel', { name: 'Media' })
+  const songMeta = media.getByText(/^0:08 · 1[12]\d BPM · \d+ sections?$/)
+  await expect(songMeta).toBeVisible({ timeout: 30_000 })
+
+  // The 4 s clip added at 6 s runs 2 s past the 8 s song, so the timeline is 10 s long.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 6 }))
+  await page.getByLabel('Import media files').setInputFiles(path.join(FIXTURE_DIR, 'clip.mp4'))
+  const card = media.getByLabel('clip, video')
+  await card.hover()
+  await card.getByRole('button', { name: 'Add at playhead' }).click()
+  const timeline = () =>
+    page.evaluate(() => {
+      const { editor, timelineDuration } = window.mvStudio.app.project
+      return timelineDuration(editor.getProject()) as number
+    })
+  await expect.poll(timeline).toBeGreaterThan(9.5)
+  await expect(songMeta).toBeVisible()
+})
+
 test('the Import picker offers font files, and a picked font lands where a dropped one does', async ({
   page,
 }) => {
