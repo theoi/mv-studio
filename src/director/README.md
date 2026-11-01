@@ -111,7 +111,8 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   Director title card of the same song (each card records its song, `meta.director.songId`, and its row) is the
   song's title or artist for later drafts, the language model's included (`buildPlannerInput`), so the card is laid
   out again for it. It is read from the card each time: a card put back to the song's own name ends it, and one of
-  another song, or drafted before cards recorded their song, counts for nothing.
+  another song, or drafted before cards recorded their song, counts for nothing. Only each row's first card counts:
+  what the user types on a duplicated or pasted copy (which keeps the tag) is new text, not a correction.
 - **Opening and ending**: the first shot fades in from black and the last fades out, ending when the music does
   when the song has a silent tail (`musicEnd`).
 - **Clip choice** (`chooseFootage`): footage and stills come from src/vision's `chooseClips`, the chooser auto-cut

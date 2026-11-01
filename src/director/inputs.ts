@@ -3,7 +3,7 @@
  * project.analysis.audio (src/analysis); footage tags (createDirectorFootageMatcher), clip indexes and the matcher
  * that ranks clips per shot come from src/vision, whose types are used as is.
  */
-import type { AspectPreset, FeatureSeries, Id, LyricsDoc, Project, Seconds } from '../model/types.ts'
+import type { AspectPreset, Clip, FeatureSeries, Id, LyricsDoc, Project, Seconds } from '../model/types.ts'
 import { projectDuration } from '../model/queries.ts'
 import type { CostEstimate } from '../cloud/pricing.ts'
 import type { GenerationRequest, GenerationTier } from '../cloud/types.ts'
@@ -208,16 +208,24 @@ const words = (s: string) => s.replace(/\s+/g, ' ').trim()
  * file name got wrong): the first row's text where it differs from the song's own title, the second row's from its
  * artist. Compared with the song's own each time, so a correction lasts through later drafts and a card put back to
  * the song's own name ends it. Only names the song gives: an untitled song's card text is the planner's, not a fix.
+ * Only each row's first card counts: duplicated and pasted copies keep the card's tag, but what the user types on a
+ * copy ("Chapter 2", "Thanks for watching") is new text, not a correction.
  */
 function withCorrectedTitles(project: Project, song: SongInfo): SongInfo {
-  const fixed: Partial<Record<(typeof TITLE_FIELDS)[number], string>> = {}
+  const first = new Map<number, Clip>()
   for (const clip of Object.values(project.clips)) {
     const meta = directorMeta(clip)
     // Only title cards record their song.
-    if (clip.type !== 'text' || !meta || !song.assetId || meta.songId !== song.assetId) continue
-    const field = TITLE_FIELDS[meta.titleRow ?? 0]
+    if (clip.type !== 'text' || !song.assetId || meta?.songId !== song.assetId) continue
+    const row = meta.titleRow ?? 0
+    const earlier = first.get(row)
+    if (!earlier || clip.start < earlier.start) first.set(row, clip)
+  }
+  const fixed: Partial<Record<(typeof TITLE_FIELDS)[number], string>> = {}
+  for (const [row, clip] of first) {
+    const field = TITLE_FIELDS[row]
     const own = field && song[field]
-    if (!field || !own) continue
+    if (!field || !own || clip.type !== 'text') continue
     const text = words(clip.text)
     if (text && text !== words(own)) fixed[field] = text
   }

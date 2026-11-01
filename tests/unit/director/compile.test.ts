@@ -751,6 +751,40 @@ describe('a title card the user corrected', () => {
     )
   })
 
+  describe('takes nothing the user typed on a copy of the card', () => {
+    /** A copy of the card showing `text` at `start`, as duplicating or pasting it makes (keeping its tag). */
+    const copy = (editor: ProjectEditor, of: string, text: string, start: number) =>
+      editor.dispatch({
+        type: 'clip.add',
+        clip: { ...(textOf(editor.getProject(), of) as TextClip), id: `copy-${start}`, start, text },
+      })
+    const songAfter = async (editor: ProjectEditor) =>
+      (await buildPlannerInput(editor.getProject(), { kind: 'lyric' })).song
+
+    it('a duplicated title retyped as a chapter title', async () => {
+      const { project, editor, plan } = await titledDraft()
+      editor.dispatch(compilePlan(plan, project).commands)
+      const card = textOf(editor.getProject(), 'Show Me')
+      copy(editor, 'Show Me', 'Chapter 2', card.start + card.duration)
+      expect((await songAfter(editor)).title).toBe('Show Me')
+    })
+
+    it('a later copy over a real correction on the card', async () => {
+      const { project, editor, plan } = await titledDraft()
+      editor.dispatch(compilePlan(plan, project).commands)
+      setText(editor, 'Show Me', 'Show Me (Live)')
+      copy(editor, 'Show Me (Live)', 'Thanks for watching', 60)
+      expect((await songAfter(editor)).title).toBe('Show Me (Live)')
+    })
+
+    it('a retyped copy of the artist', async () => {
+      const { project, editor, plan } = await titledDraft()
+      editor.dispatch(compilePlan(plan, project).commands)
+      copy(editor, 'Josh Woodward', 'Directed by Ana Ruiz', 30)
+      expect(await songAfter(editor)).toMatchObject({ title: 'Show Me', artist: 'Josh Woodward' })
+    })
+  })
+
   it('reads a title the draft broke over two lines as the song’s own', async () => {
     const long = renamedSong(makeProject(), 'Josh Woodward - Show Me Where The Long Road Ends Tonight.mp3')
     const plan = await planLocally(await buildPlannerInput(long, { kind: 'lyric', seed: 5 }))
