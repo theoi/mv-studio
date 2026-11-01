@@ -8,6 +8,7 @@ import { CAMERA_EFFECT_ID } from '../../../../vision/render/cameraEffect.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { FieldRow, Section, Select, Slider } from '../../../ds/Fields.tsx'
 import {
+  MOTION_LABELS,
   MOTION_PRESETS,
   addedRiskNote,
   cameraMoveOf,
@@ -73,11 +74,10 @@ export function CameraSuggestion({ clip }: { clip: VisualClip }) {
   )
 }
 
-const MOTIONS: { value: CameraMotion; label: string }[] = [
-  { value: 'push', label: 'Push in' },
-  { value: 'orbit', label: 'Orbit' },
-  { value: 'drift', label: 'Drift' },
-]
+const MOTIONS = (Object.keys(MOTION_LABELS) as CameraMotion[]).map((value) => ({
+  value,
+  label: MOTION_LABELS[value],
+}))
 
 /** Label of a preset the panel does not offer (moves the director or an older project added). */
 function presetLabel(preset: CameraPreset): string {
