@@ -213,6 +213,107 @@ for (const source of ['storage', 'page'] as const)
     if (source === 'page') expect(r.videoReads).toBeGreaterThan(0)
   })
 
+test('an export renders on the page when the render worker cannot draw', async ({ page }) => {
+  test.setTimeout(120_000)
+  // Only the export's render worker gets no WebGL2, as in browsers whose workers cannot draw; the page keeps it.
+  await page.addInitScript(() => {
+    const w = window as unknown as { renderWorkerRefused: number }
+    w.renderWorkerRefused = 0
+    new BroadcastChannel('e2e-render-no-webgl2').onmessage = () => w.renderWorkerRefused++
+    const Native = window.Worker
+    window.Worker = class extends Native {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        if (options?.name === 'render') {
+          // A static import, so the worker's first messages wait until its module has run instead of being dropped.
+          const source = `import ${JSON.stringify(new URL(url, location.href).href)}
+const get = OffscreenCanvas.prototype.getContext
+OffscreenCanvas.prototype.getContext = function (type, ...rest) {
+  if (type !== 'webgl2') return get.call(this, type, ...rest)
+  new BroadcastChannel('e2e-render-no-webgl2').postMessage(type)
+  return null
+}`
+          super(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })), options)
+        } else super(url, options)
+      }
+    }
+  })
+  await openHarness(page)
+  await page.setInputFiles(
+    '#e2e-file-input',
+    ['song.mp3', 'clip.mp4'].map((f) => path.join(FIXTURE_DIR, f)),
+  )
+  const r = await page.evaluate(async () => {
+    const { model, media, engine, shared, testing } = window.mvStudio
+    const [song, video] = await Promise.all(
+      window.mvStudio.files().map((f: File) => media.mediaStore.importFile(f)),
+    )
+    const p = model.createProject({ name: 'Fallback' })
+    p.assets[song.id] = song
+    p.assets[video.id] = video
+    p.songAssetId = song.id
+    const audioTrack = p.tracks.find((t: { kind: string }) => t.kind === 'audio')
+    const visual = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    const songClip = model.createAudioClip({
+      trackId: audioTrack.id,
+      assetId: song.id,
+      start: 0,
+      duration: 2,
+    })
+    const shot = model.createVideoClip({ trackId: visual.id, assetId: video.id, start: 0, duration: 2 })
+    shot.muted = true
+    for (const c of [songClip, shot]) p.clips[c.id] = c
+    const settings = { ...engine.exporter.exportSize('16:9', '720p'), fps: 30, aspect: '16:9' }
+    let reads = 0
+    const pageMedia = {
+      getFile: (asset: unknown) => {
+        reads++
+        return media.mediaStore.getFile(asset)
+      },
+    }
+    const result = await shared.jobs.run({
+      kind: 'export.mp4',
+      title: 'Export video',
+      run: (ctx: unknown) => engine.exporter.exportProject(p, settings, ctx, { media: pageMedia }),
+    }).promise
+    const file: File = result.file
+    const exported = new engine.DecoderFrameProvider({ getFile: async () => file })
+    const asset = {
+      id: 'export',
+      kind: 'video',
+      name: file.name,
+      duration: result.durationSeconds,
+      frameRate: 30,
+    }
+    const reference = testing.createCompositor('export', settings.width, settings.height)
+    const diffs = []
+    for (const n of [10, 50]) {
+      const decoded = await exported.videoFrame(asset, n / 30, 'out')
+      const a = testing.readPixels(decoded.source, 320, 180)
+      exported.endFrame()
+      await reference.compositor.render(p, n / 30)
+      const b = testing.readPixels(reference.compositor.canvas, 320, 180)
+      let sum = 0
+      for (let i = 0; i < a.length; i += 4)
+        sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])
+      diffs.push(sum / (a.length / 4) / 3)
+    }
+    exported.dispose()
+    reference.compositor.dispose()
+    return {
+      durationSeconds: result.durationSeconds,
+      diffs,
+      reads,
+      refused: (window as unknown as { renderWorkerRefused: number }).renderWorkerRefused,
+    }
+  })
+  console.log('fallback export', JSON.stringify(r))
+  // The render worker was asked and could not draw, so the page rendered the export with the same media source.
+  expect(r.refused).toBeGreaterThan(0)
+  expect(r.durationSeconds).toBeCloseTo(2, 2)
+  expect(r.reads).toBeGreaterThan(0)
+  for (const d of r.diffs) expect(d).toBeLessThan(3)
+})
+
 test('cancelling an export stops it with a cancelled error and leaves no file behind', async ({ page }) => {
   await openHarness(page)
   const r = await page.evaluate(async () => {

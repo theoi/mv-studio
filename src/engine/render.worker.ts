@@ -30,8 +30,11 @@ const api = {
       media?.close()
     }
   },
-  /** Checks that this worker can draw before the main thread moves its canvas here (which cannot be undone). */
-  previewProbe: () => {
+  /**
+   * Checks that this worker can draw before it gets work: before the main thread moves a preview's canvas here (which
+   * cannot be undone) or sends an export, which then run on the main thread instead.
+   */
+  probe: () => {
     const gl = new OffscreenCanvas(1, 1).getContext('webgl2')
     if (!gl) throw new JobError('unsupported', 'WebGL2 is not available in workers')
     gl.getExtension('WEBGL_lose_context')?.loseContext()
