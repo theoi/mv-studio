@@ -127,17 +127,21 @@ export async function indexClip(
 export const BLANK_CHECK_FRAMES = 8
 
 /**
- * The brightest luma in `frames` frames spread evenly over the clip (away from its first and last frame, which are
- * often black), at the size the matching index decodes. One frame for a still. A clip that shows nothing is black in
- * every one, so this flags it in a second or two, long before the matching index is built.
+ * The brightest luma in the clip's first frame and `frames` frames spread evenly over it, at the size the matching
+ * index decodes. One frame for a still. A clip that shows nothing is black in every one, so this flags it long before
+ * the matching index is built.
+ *
+ * With `enough`, it stops at the first frame at least that bright: one bright frame settles that a clip shows
+ * something, and each frame after the first costs a seek that decodes from the keyframe before it (up to about a second
+ * for a 4K clip). Most clips show something in their first frame.
  */
 export async function samplePeakLuma(
   deps: Pick<ClipIndexDeps, 'toGray'>,
   source: FrameSource,
-  options: { frames?: number; signal?: AbortSignal } = {},
+  options: { frames?: number; enough?: number; signal?: AbortSignal } = {},
 ): Promise<number> {
-  const n = source.duration > 0 ? (options.frames ?? BLANK_CHECK_FRAMES) : 1
-  const times = Array.from({ length: n }, (_, i) => (source.duration * (i + 0.5)) / n)
+  const n = source.duration > 0 ? (options.frames ?? BLANK_CHECK_FRAMES) : 0
+  const times = [0, ...Array.from({ length: n }, (_, i) => (source.duration * (i + 0.5)) / n)]
   const shortSide = Math.min(source.width, source.height)
   const maxSide = Math.ceil(
     (Math.max(source.width, source.height) * Math.min(shortSide, EMBED_SHORT_SIDE)) / shortSide,
@@ -150,6 +154,7 @@ export async function samplePeakLuma(
     })) {
       max = Math.max(max, peak(deps.toGray(bitmap, { width: bitmap.width, height: bitmap.height })))
       bitmap.close()
+      if (options.enough !== undefined && max >= options.enough) break
     }
   } catch (err) {
     throw visionError(err, 'decode')

@@ -674,6 +674,7 @@ async function chooseFootage(shots: PlanShot[], ctx: Ctx): Promise<PlanShot[]> {
     ...(ctx.input.lyrics ? { lyrics: ctx.input.lyrics } : {}),
     ...(ctx.energyAt ? { energyAt: ctx.energyAt } : {}),
     ...(ctx.input.footage ? { matcher: ctx.input.footage } : {}),
+    ...(ctx.input.unanalyzedWarning ? { unanalyzedWarning: ctx.input.unanalyzedWarning } : {}),
     rerun: 'Draft again',
     seed: ctx.input.seed,
   })

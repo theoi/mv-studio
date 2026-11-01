@@ -148,57 +148,71 @@ export function analysisBacklog(
   return { waiting: left.length - unreadable.length, unreadable }
 }
 
-const TRY_AGAIN = 'Try again in Match footage, then cut again to match the mood.'
+/** What redoes the result once the clips are analyzed: a cut, or a Director draft. */
+type Redo = 'cut' | 'draft'
+
+const tryAgain = (redo: Redo) => `Try again in Match footage, then ${redo} again to match the mood.`
 
 /**
- * What stopped footage analysis, by its error's code, for the cut's note, with what the user can do about it (none
- * when `next` is empty, Try again in Match footage when it is left out).
+ * What stopped footage analysis, by its error's code, for the note, with what the user can do about it (none when
+ * `next` is empty, Try again in Match footage when it is left out).
  */
-const ANALYSIS_STOPPED: Partial<Record<JobErrorCode, { why: string; next?: string }>> = {
+const ANALYSIS_STOPPED: Partial<Record<JobErrorCode, { why: string; next?: (redo: Redo) => string }>> = {
   network: {
     why: 'couldn’t finish its download',
-    next: 'Check your connection and try again in Match footage, then cut again to match the mood.',
+    next: (redo) =>
+      `Check your connection and try again in Match footage, then ${redo} again to match the mood.`,
   },
   'model-load': { why: 'couldn’t start' },
   'out-of-memory': { why: 'ran out of memory' },
   'storage-quota': {
     why: 'ran out of browser storage',
-    next: 'Free space in Settings › Storage and try again in Match footage, then cut again to match the mood.',
+    next: (redo) =>
+      `Free space in Settings › Storage and try again in Match footage, then ${redo} again to match the mood.`,
   },
-  unsupported: { why: 'can’t run in this browser', next: '' },
+  unsupported: { why: 'can’t run in this browser', next: () => '' },
 }
 
 /**
- * The cut's note for clips it used without matching, when footage analysis says why they have no index: it stopped
- * with an error, was cancelled, or couldn’t read them. Undefined while they are only waiting for analysis.
+ * The note of a cut (or, with `draft`, a Director draft) for clips it used without matching, when footage analysis
+ * says why they have no index: it stopped with an error, was cancelled, or couldn’t read them. Undefined while they
+ * are only waiting for analysis. A draft doesn't start the analysis, so when it won't run on its own
+ * (`draft.analysisRuns`: background analysis is off and the user never asked for it) and none of the draft's clips is
+ * analyzed, the note says how to analyze them rather than promising that analysis finishes.
  */
 export function unanalyzedWarning(
   assetIds: readonly Id[],
   all: boolean,
   indexing: IndexingState | null,
+  draft?: { analysisRuns: boolean },
 ): string | undefined {
+  const redo: Redo = draft ? 'draft' : 'cut'
   const n = assetIds.length
-  if (!indexing || !n) return undefined
+  if (!n) return undefined
   const clips = all
     ? n === 1
       ? 'your clip was'
       : 'your clips were'
     : `${plural(n, 'clip')} ${n === 1 ? 'was' : 'were'}`
-  if (indexing.status === 'error') {
-    const { why, next = TRY_AGAIN } = (indexing.error && ANALYSIS_STOPPED[indexing.error.code]) ?? {
+  if (indexing?.status === 'error') {
+    const { why, next = tryAgain } = (indexing.error && ANALYSIS_STOPPED[indexing.error.code]) ?? {
       why: 'stopped',
     }
-    return `Footage analysis ${why}, so ${clips} picked for variety.${next ? ` ${next}` : ''}`
+    const then = next(redo)
+    return `Footage analysis ${why}, so ${clips} picked for variety.${then ? ` ${then}` : ''}`
   }
-  if (indexing.status === 'paused')
-    return `Footage analysis was cancelled, so ${clips} picked for variety. Analyze your footage in Match footage, then cut again to match the mood.`
+  if (indexing?.status === 'paused')
+    return `Footage analysis was cancelled, so ${clips} picked for variety. Analyze your footage in Match footage, then ${redo} again to match the mood.`
   const ids = new Set(assetIds)
-  const failed = indexing.failed.filter((f) => ids.has(f.assetId))
-  if (failed.length < n) return undefined
+  const failed = indexing?.failed.filter((f) => ids.has(f.assetId)) ?? []
   const [first] = failed
-  if (n === 1 && first)
+  if (failed.length === n && n === 1 && first)
     return `“${shortFileName(first.name)}” couldn’t be analyzed, so it was picked for variety.`
-  return `${all ? 'Your clips' : plural(n, 'clip')} couldn’t be analyzed, so they were picked for variety.`
+  if (failed.length === n)
+    return `${all ? 'Your clips' : plural(n, 'clip')} couldn’t be analyzed, so they were picked for variety.`
+  if (draft && all && !draft.analysisRuns && indexing?.status !== 'indexing')
+    return 'Your clips aren’t analyzed yet, so they were picked for variety. Analyze your footage in Match footage, then draft again to match the mood.'
+  return undefined
 }
 
 /** Bytes the footage tagger still has to download on this device to match clips (once), 0 when it is cached. */
