@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   BEAT_THIS_MODEL,
   DEMUCS_MODEL,
+  MODEL_TITLES,
   WAV2VEC2_MODEL,
   WHISPER_MODELS,
   whisperFileUrls,
@@ -40,16 +41,16 @@ async function isCached(model: LocalModel, url: string): Promise<boolean> {
 const whisper = WHISPER_MODELS.small
 
 export const LOCAL_MODELS: LocalModel[] = [
-  local('beats', 'Beat and bar tracker', 'Tempo, beats and bar starts', BEAT_THIS_MODEL),
-  local('stems', 'Stem separator', 'Vocals, drums, bass and other', DEMUCS_MODEL),
+  local('beats', MODEL_TITLES.beats, 'Tempo, beats and bar starts', BEAT_THIS_MODEL),
+  local('stems', MODEL_TITLES.stems, 'Vocals, drums, bass and other', DEMUCS_MODEL),
   {
     id: 'transcriber',
-    title: 'Lyrics transcriber',
+    title: MODEL_TITLES.transcriber,
     desc: 'Drafts lyrics from the vocals',
     urls: whisperFileUrls(whisper),
     bytes: whisper.bytes,
   },
-  local('aligner', 'Word aligner', 'Times each word to the vocals', WAV2VEC2_MODEL),
+  local('aligner', MODEL_TITLES.aligner, 'Times each word to the vocals', WAV2VEC2_MODEL),
   local(
     'cutout',
     'Person cutout',

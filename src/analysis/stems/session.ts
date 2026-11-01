@@ -1,8 +1,14 @@
 import type * as OrtWeb from 'onnxruntime-web/webgpu'
-import { DEMUCS_MODEL } from '../models.ts'
+import { DEMUCS_MODEL, MODEL_TITLES } from '../models.ts'
 import { loadOrt } from '../ort.ts'
 import { JobError, type JobProgress } from '../../shared/jobs.ts'
-import { loadModelFiles, type ModelDevice } from '../../shared/models.ts'
+import {
+  downloadingModel,
+  loadModelFiles,
+  modelBytes,
+  theModel,
+  type ModelDevice,
+} from '../../shared/models.ts'
 import { SEGMENT, type DemucsModel } from './demucs.ts'
 import { stemsOutOfMemory } from './worker-api.ts'
 
@@ -16,7 +22,11 @@ export async function createDemucsModel(options: {
   const files = await loadModelFiles(DEMUCS_MODEL, {
     signal: options.signal,
     onProgress: (p) =>
-      options.onProgress?.({ ...p, stage: 'download', message: 'Downloading the stem model (181 MB, once)' }),
+      options.onProgress?.({
+        ...p,
+        stage: 'download',
+        message: downloadingModel(MODEL_TITLES.stems, modelBytes(DEMUCS_MODEL)),
+      }),
   })
   let session: OrtWeb.InferenceSession
   try {
@@ -27,7 +37,7 @@ export async function createDemucsModel(options: {
   } catch (error) {
     throw (
       stemsOutOfMemory(error) ??
-      new JobError('model-load', 'Could not start the stem separation model', { cause: error })
+      new JobError('model-load', `Could not start ${theModel(MODEL_TITLES.stems)}`, { cause: error })
     )
   }
   const [mixName, specName] = session.inputNames as [string, string]
@@ -42,7 +52,8 @@ export async function createDemucsModel(options: {
       const tensors = Object.values(out)
       const freq = tensors.find((t) => t.dims.length === 5)
       const time = tensors.find((t) => t.dims.length === 4)
-      if (!freq || !time) throw new JobError('internal', 'Unexpected stem model outputs')
+      if (!freq || !time)
+        throw new JobError('internal', `Unexpected result from ${theModel(MODEL_TITLES.stems)}`)
       // CPU outputs are fresh arrays copied out of the WASM heap, so they stay valid after dispose. Not copying them
       // again (and reusing the spectrogram buffer) lowered the browser's peak by 0.13 to 0.22 GB on 3- to 5-minute
       // songs.

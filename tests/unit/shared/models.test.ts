@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { wasmThreadCount } from '../../../src/shared/capabilities.ts'
 import { JobError } from '../../../src/shared/jobs.ts'
-import { configureOnnxEnv, fetchModelFile } from '../../../src/shared/models.ts'
+import { configureOnnxEnv, downloadingModel, fetchModelFile } from '../../../src/shared/models.ts'
 
 function streamResponse(chunks: Uint8Array[], headers: Record<string, string> = {}) {
   const body = new ReadableStream<Uint8Array>({
@@ -139,5 +139,17 @@ describe('thread policy', () => {
     const env = { wasm: {} as { numThreads?: number; proxy?: boolean } }
     await expect(configureOnnxEnv(env, { numThreads: 3 })).resolves.toBe(3)
     expect(env.wasm).toEqual({ numThreads: 3, proxy: false })
+  })
+})
+
+describe('model names in progress lines', () => {
+  it('puts the title in a sentence with the size rounded to MB, and never says 0 MB', () => {
+    expect(downloadingModel('Stem separator', 180_534_758)).toBe(
+      'Downloading the stem separator (181 MB, once)',
+    )
+    expect(downloadingModel('Beat and bar tracker', 82_098_846)).toBe(
+      'Downloading the beat and bar tracker (82 MB, once)',
+    )
+    expect(downloadingModel('Face finder', 230_000)).toBe('Downloading the face finder (under 1 MB, once)')
   })
 })

@@ -49,8 +49,8 @@ test('Re-time line listens to the vocals once, then re-times the line as one und
         return {
           separatesStems: true,
           downloads: [
-            { name: 'HTDemucs stem separator', bytes: 180_534_758 },
-            { name: 'wav2vec2 lyrics aligner', bytes: 95_286_404 },
+            { name: 'Stem separator', bytes: 180_534_758 },
+            { name: 'Lyrics aligner', bytes: 95_286_404 },
           ],
           downloadBytes: 275_821_162,
           seconds: 230,

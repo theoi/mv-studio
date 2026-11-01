@@ -1,4 +1,6 @@
+import { DEMUCS_MODEL, MODEL_TITLES } from '../../analysis/models.ts'
 import type { Asset, StemName } from '../../model/index.ts'
+import { downloadingModel, modelBytes } from '../../shared/models.ts'
 import { showExport } from '../state/exports.ts'
 import { JOB_KINDS, isRunning, runMockJob } from '../state/jobs.ts'
 import { dispatch, editor, songAnalysis } from '../state/project.ts'
@@ -47,7 +49,7 @@ export function startStems(startAt = 0, fail = false) {
     seconds: 240,
     startAt,
     stages: [
-      { at: 0, stage: 'download', message: 'Downloading the model (180 MB, once)' },
+      { at: 0, stage: 'download', message: downloadingModel(MODEL_TITLES.stems, modelBytes(DEMUCS_MODEL)) },
       { at: 0.08, stage: 'separate', message: 'Separating the song' },
       { at: 0.96, stage: 'save', message: 'Saving stems with the project' },
     ],

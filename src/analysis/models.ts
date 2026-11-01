@@ -1,6 +1,17 @@
 import type { ModelDescriptor } from '../shared/models.ts'
 
 /**
+ * What the app calls each model analysis downloads, the same in Settings › This device, progress lines and cost
+ * lines (in sentences through `theModel` and `downloadingModel`).
+ */
+export const MODEL_TITLES = {
+  beats: 'Beat and bar tracker',
+  stems: 'Stem separator',
+  transcriber: 'Lyrics transcriber',
+  aligner: 'Lyrics aligner',
+} as const
+
+/**
  * Beat This! final0 (CPJKU, MIT), FP32 ONNX export hosted on Hugging Face. Pinned to a revision and checksum:
  * the GitHub release of the same export cannot be fetched cross-origin. Logit parity with that export was
  * verified at 3e-5.
