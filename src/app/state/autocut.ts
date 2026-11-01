@@ -214,7 +214,7 @@ export function unanalyzedWarning(
   if (!draft || draft.analysisRuns || indexing?.status === 'indexing') return undefined
   const analyze = 'Analyze your footage in Match footage, then draft again to match the mood.'
   if (all) return `Your clips aren’t analyzed yet, so they were picked for variety. ${analyze}`
-  return `${draft.media ?? plural(n, 'clip')} ${n === 1 ? 'isn’t' : 'aren’t'} analyzed yet, so ${n === 1 ? 'it was' : 'they were'} only used for variety. ${analyze}`
+  return `${draft.media || plural(n, 'clip')} ${n === 1 ? 'isn’t' : 'aren’t'} analyzed yet, so ${n === 1 ? 'it was' : 'they were'} only used for variety. ${analyze}`
 }
 
 /** Bytes the footage tagger still has to download on this device to match clips (once), 0 when it is cached. */

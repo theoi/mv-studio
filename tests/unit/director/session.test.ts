@@ -909,12 +909,12 @@ describe('DirectorSession and clips that show nothing', () => {
     expect(enough.used.has('video4')).toBe(false)
     expect(enough.used.size).toBe(3)
     expect(enough.warnings).toContain(
-      'Left out 1 clip that wasn’t checked yet, in case it shows nothing. Draft again to use it.',
+      'Left out “video4.mp4”, which wasn’t checked yet, in case it shows nothing. Draft again to use it.',
     )
     const few = await plan(['video3', 'video4'])
     expect(few.used.has('video3') && few.used.has('video4')).toBe(true)
     expect(few.warnings).toContain(
-      '2 clips weren’t checked yet, so one of them may show nothing. Draft again to check them.',
+      '2 clips weren’t checked yet, so some may show nothing. Draft again to check them.',
     )
   })
 })

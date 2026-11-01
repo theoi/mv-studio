@@ -166,7 +166,7 @@ describe('auto-cut plan', () => {
     expect(left.shots.length).toBeGreaterThan(10)
     expect(left.shots.map((s) => s.assetId)).not.toContain('misc')
     expect(left.warnings).toContain(
-      'Left out 1 clip that wasn’t checked yet, in case it shows nothing. Cut again to use it.',
+      'Left out “misc.mp4”, which wasn’t checked yet, in case it shows nothing. Cut again to use it.',
     )
     const all = ['city', 'ocean', 'crowd', 'misc']
     const chosen = await planAutoCut(project, { assetIds: all }, { matcher, unchecked: ['misc'] })

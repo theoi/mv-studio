@@ -300,7 +300,7 @@ const mediaCount = (media: readonly { kind: 'video' | 'image' }[]) => {
  * they are used. Either way the note says so and how to redo the result once they are checked (`rerun`: "Draft
  * again"). Media checked since `unchecked` was reported counts as checked.
  */
-export function withoutUnchecked<T extends { assetId: Id; kind: 'video' | 'image' }>(
+export function withoutUnchecked<T extends { assetId: Id; kind: 'video' | 'image'; name: string }>(
   project: Project,
   pool: readonly T[],
   unchecked: readonly Id[],
@@ -314,11 +314,13 @@ export function withoutUnchecked<T extends { assetId: Id; kind: 'video' | 'image
   if (!options.keep && checked >= Math.max(ENOUGH_CHECKED, risky.length))
     return {
       pool: pool.filter((m) => !left.has(m.assetId)),
-      note: `Left out ${mediaCount(risky)} that ${one ? 'wasn’t' : 'weren’t'} checked yet, in case ${one ? 'it shows' : 'they show'} nothing. ${options.rerun} to use ${one ? 'it' : 'them'}.`,
+      note: one
+        ? `Left out ${quotedFileNames(risky.map((m) => m.name))}, which wasn’t checked yet, in case it shows nothing. ${options.rerun} to use it.`
+        : `Left out ${mediaCount(risky)} that weren’t checked yet, in case they show nothing. ${options.rerun} to use them.`,
     }
   return {
     pool: [...pool],
-    note: `${mediaCount(risky)} ${one ? 'wasn’t' : 'weren’t'} checked yet, so ${one ? 'it' : 'one of them'} may show nothing. ${options.rerun} to check ${one ? 'it' : 'them'}.`,
+    note: `${mediaCount(risky)} ${one ? 'wasn’t' : 'weren’t'} checked yet, so ${one ? 'it' : 'some'} may show nothing. ${options.rerun} to check ${one ? 'it' : 'them'}.`,
   }
 }
 /**

@@ -304,6 +304,8 @@ it('words a draft’s note for a draft, and says how to analyze its clips when a
   expect(unanalyzedWarning(['a', 'b', 'c'], false, null, { ...draft, media: '2 clips and 1 image' })).toBe(
     '2 clips and 1 image aren’t analyzed yet, so they were only used for variety. Analyze your footage in Match footage, then draft again to match the mood.',
   )
+  // Clips removed since have no name: they are counted.
+  expect(unanalyzedWarning(['a'], false, null, { ...draft, media: '' })).toMatch(/^1 clip isn’t analyzed yet/)
   // Running, or about to (background analysis is on), it finishes on its own: the default note says so.
   expect(unanalyzedWarning(['a', 'b'], true, state({ status: 'indexing' }), draft)).toBeUndefined()
   expect(unanalyzedWarning(['a'], false, state({ status: 'indexing' }), draft)).toBeUndefined()
@@ -585,8 +587,9 @@ describe('the auto-cut job', () => {
     try {
       const { result } = await cut()
       expect(used(result).has(late!)).toBe(false)
+      const { name } = editor.getProject().assets[late!]!
       expect(result.warnings).toContain(
-        'Left out 1 clip that wasn’t checked yet, in case it shows nothing. Cut again to use it.',
+        `Left out “${name}”, which wasn’t checked yet, in case it shows nothing. Cut again to use it.`,
       )
     } finally {
       blankCheck.run = () => Promise.resolve([])

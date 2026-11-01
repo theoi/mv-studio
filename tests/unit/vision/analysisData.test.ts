@@ -256,6 +256,7 @@ describe('withoutUnchecked', () => {
     [...kinds].map((k, i) => ({
       assetId: `m${i}`,
       kind: k === 'i' ? ('image' as const) : ('video' as const),
+      name: `late${i}.${k === 'i' ? 'jpg' : 'mp4'}`,
     }))
   const project = createProject({ name: 'Unchecked', now: new Date(0) })
   const ids = (items: readonly { assetId: string }[]) => items.map((m) => m.assetId)
@@ -264,7 +265,7 @@ describe('withoutUnchecked', () => {
   it('leaves out media the blank check didn’t reach when at least 3 checked ones, and as many, are left', () => {
     expect(withoutUnchecked(project, pool('vvvv'), ['m3'], draft)).toEqual({
       pool: pool('vvv'),
-      note: 'Left out 1 clip that wasn’t checked yet, in case it shows nothing. Draft again to use it.',
+      note: 'Left out “late3.mp4”, which wasn’t checked yet, in case it shows nothing. Draft again to use it.',
     })
     const mixed = withoutUnchecked(project, pool('vvvviv'), ['m3', 'm4', 'm5'], draft)
     expect(ids(mixed.pool)).toEqual(['m0', 'm1', 'm2'])
@@ -276,11 +277,15 @@ describe('withoutUnchecked', () => {
   it('uses them when too few checked ones are left, or when the user chose them, and says so', () => {
     expect(withoutUnchecked(project, pool('vvvv'), ['m2', 'm3'], draft)).toEqual({
       pool: pool('vvvv'),
-      note: '2 clips weren’t checked yet, so one of them may show nothing. Draft again to check them.',
+      note: '2 clips weren’t checked yet, so some may show nothing. Draft again to check them.',
     })
     expect(withoutUnchecked(project, pool('vvv'), ['m2'], draft).note).toBe(
       '1 clip wasn’t checked yet, so it may show nothing. Draft again to check it.',
     )
+    // 3 checked ones are left, but fewer than the 4 unchecked.
+    expect(
+      ids(withoutUnchecked(project, pool('vvvvvvv'), ['m3', 'm4', 'm5', 'm6'], draft).pool),
+    ).toHaveLength(7)
     const chosen = withoutUnchecked(project, pool('vvvvi'), ['m4'], { rerun: 'Cut again', keep: true })
     expect(ids(chosen.pool)).toHaveLength(5)
     expect(chosen.note).toBe('1 image wasn’t checked yet, so it may show nothing. Cut again to check it.')
