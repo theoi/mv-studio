@@ -53,6 +53,17 @@ export function useKeepFocus(running: boolean) {
   return { keep, target }
 }
 
+/**
+ * Scrolls part of a tool's body into view when the user opens it below the fold. The footer pinned to the panel's
+ * bottom covers the end of the scroll area, so the part stops above it.
+ */
+export function revealInTool(el: HTMLElement) {
+  const footer = el.closest('.scroll')?.querySelector<HTMLElement>(':scope > [data-tool-footer]')
+  const covered = footer && getComputedStyle(footer).position === 'sticky' ? footer.offsetHeight : 0
+  el.style.scrollMarginBottom = `${covered + 8}px`
+  el.scrollIntoView({ block: 'nearest' })
+}
+
 /** Returns a finished or failed tool view to idle. */
 export function dismiss(job?: JobSnapshot) {
   if (job) set((s) => ({ dismissed: [...s.dismissed, job.id] }))

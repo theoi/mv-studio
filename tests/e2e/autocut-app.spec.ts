@@ -35,6 +35,8 @@ function autoCutTrack(page: Page): Promise<{ clips: CutClip[]; beat: number }> {
   })
 }
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0
 
 const formatTime = (t: number) => {
@@ -137,11 +139,17 @@ test('Assist › Auto-cut uses every selected clip, or only the clips ticked in 
     )
     return {
       first: firstClip.assetId as string,
-      second: { clip: other.id as string, asset: other.assetId as string },
+      second: {
+        name: (other.name ?? project.assets[other.assetId].name) as string,
+        asset: other.assetId as string,
+      },
     }
   })
-  // A second clip of other media joins the selection from the timeline.
-  await page.locator(`[data-clip-id="${second.clip}"]`).click({ modifiers: ['ControlOrMeta'] })
+  // A clip of other media joins the selection from the timeline.
+  await page
+    .getByRole('button', { name: new RegExp(`^${escapeRegExp(second.name)}, \\d`) })
+    .first()
+    .click({ modifiers: ['ControlOrMeta'] })
   await page.getByRole('tab', { name: /Assist/ }).click()
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await assist.getByRole('switch', { name: 'Match clips to the mood' }).click()
@@ -175,9 +183,7 @@ test('Assist › Auto-cut uses every selected clip, or only the clips ticked in 
   await expect(list.getByRole('checkbox')).toHaveCount(pool.length + 1)
   const out = pool.slice(0, 2)
   for (const clip of out) {
-    const box = list.getByRole('checkbox', {
-      name: new RegExp(`^${clip.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
-    })
+    const box = list.getByRole('checkbox', { name: new RegExp(`^${escapeRegExp(clip.name)} `) })
     await expect(box).toBeChecked()
     await box.uncheck()
   }
@@ -200,7 +206,7 @@ test('Assist › Auto-cut uses every selected clip, or only the clips ticked in 
   await all.uncheck()
   await expect(all).toHaveAccessibleName(`All clips 0 of ${pool.length}`)
   await expect(cut).toBeDisabled()
-  await expect(assist.getByText('Tick at least one clip to cut.')).toBeVisible()
+  await expect(assist.getByText('Pick at least one clip to cut.')).toBeVisible()
 })
 test('with matching on, the first cut starts footage analysis (background analysis off) and a cut after it matches the clips', async ({
   page,

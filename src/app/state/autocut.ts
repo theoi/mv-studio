@@ -28,14 +28,18 @@ export type AutoCutClips = 'all' | 'selected' | 'chosen'
 /** "mood" follows the Match clips to the mood switch (matched or shuffled); "story" keeps import order. */
 export type AutoCutClipOrder = 'mood' | 'story'
 
-export interface AutoCutChoices {
+/** Which clips the panel cuts. Saved with the project (`clipChoice`), unlike the other choices. */
+export interface AutoCutClipChoice {
+  clips: AutoCutClips
+  /** Clips left out of "Choose clips". Clips imported later are in until the user leaves them out too. */
+  leftOut: Id[]
+}
+
+export interface AutoCutChoices extends AutoCutClipChoice {
   pace: AutoCutPace
   followEnergy: boolean
   matchMood: boolean
   range: AutoCutRange
-  clips: AutoCutClips
-  /** Clips left out of "Choose clips". Clips imported later are in until the user leaves them out too. */
-  leftOut: Id[]
   /** More options: the grid lines cuts land on ('beats' follows the pace). */
   cutOn: AutoCutOn
   clipOrder: AutoCutClipOrder
@@ -53,24 +57,51 @@ export const DEFAULT_AUTOCUT_CHOICES: AutoCutChoices = {
 }
 
 /** Whether the cut matches clips to the song with footage analysis (not shuffled, not story order). */
-export const matchesMood = (choices: AutoCutChoices) => choices.matchMood && choices.clipOrder === 'mood'
+export const matchesMood = (choices: Pick<AutoCutChoices, 'matchMood' | 'clipOrder'>) =>
+  choices.matchMood && choices.clipOrder === 'mood'
 
-export const useAutoCut = create<{ choices: AutoCutChoices; results: Record<string, AutoCutResult> }>(() => ({
+type SessionChoices = Omit<AutoCutChoices, keyof AutoCutClipChoice>
+
+export const useAutoCut = create<{ choices: SessionChoices; results: Record<string, AutoCutResult> }>(() => ({
   choices: DEFAULT_AUTOCUT_CHOICES,
   results: {},
 }))
 
-export function setAutoCutChoices(patch: Partial<AutoCutChoices>): void {
+export function setAutoCutChoices(patch: Partial<SessionChoices>): void {
   useAutoCut.setState((s) => ({ choices: { ...s.choices, ...patch } }))
 }
 
-/** The clips and stills auto-cut can use: the imported and generated ones in import order, as src/vision's autoCutPool. */
+const CLIP_CHOICE = 'autocut.clips'
+
+/** The project's saved clip choice: every clip until the user picks otherwise. */
+export function clipChoice(project: Project): AutoCutClipChoice {
+  const saved = project.extensions?.[CLIP_CHOICE]
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return { clips: 'all', leftOut: [] }
+  const clips = saved.clips === 'selected' || saved.clips === 'chosen' ? saved.clips : 'all'
+  const leftOut = Array.isArray(saved.leftOut)
+    ? saved.leftOut.filter((id): id is string => typeof id === 'string')
+    : []
+  return { clips, leftOut }
+}
+
+/**
+ * Changes the clip choice saved with the project, so it survives a reload and another project opened in the tab
+ * starts from its own. It is a setting of the panel, not an edit of the video, so it adds no undo step.
+ */
+export function setClipChoice(patch: Partial<AutoCutClipChoice>): void {
+  const value = { ...clipChoice(editor.getProject()), ...patch }
+  editor.dispatch({ type: 'project.setExtension', key: CLIP_CHOICE, value }, { history: 'skip' })
+}
+
+/** The clips and stills auto-cut can use: the imported and generated ones, in src/vision's autoCutPool order. */
 export function autoCutAssets(project: Project) {
-  return Object.values(project.assets).filter(
-    (a) =>
-      (a.origin.type === 'import' || a.origin.type === 'generated') &&
-      (a.kind === 'image' || (a.kind === 'video' && (a.duration ?? 0) > 0)),
-  )
+  return Object.values(project.assets)
+    .filter(
+      (a) =>
+        (a.origin.type === 'import' || a.origin.type === 'generated') &&
+        (a.kind === 'image' || (a.kind === 'video' && (a.duration ?? 0) > 0)),
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name))
 }
 
 export function autoCutClipCount(project: Project): number {
@@ -195,7 +226,7 @@ export function chosenAssetIds(project: Project, leftOut: readonly Id[]): Id[] {
 
 /** The clips a cut with these choices uses, or undefined for every clip. */
 export function usedAssetIds(
-  choices: AutoCutChoices,
+  choices: AutoCutClipChoice,
   project: Project,
   selection: Selection,
 ): Id[] | undefined {
