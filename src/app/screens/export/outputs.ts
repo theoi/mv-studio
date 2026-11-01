@@ -155,10 +155,11 @@ export function stillTime(planned: PlannedOutput, playhead: number): number {
   return Math.round(t * 100) / 100
 }
 
+/** What the outputs' files can come to (estimatedBytes is a ceiling, not a prediction). */
 export function sizeLabel(bytes: number): string {
   return bytes >= 1e9
-    ? `About ${(bytes / 1e9).toFixed(1)} GB`
-    : `About ${Math.max(1, Math.round(bytes / 1e6))} MB`
+    ? `Up to about ${(bytes / 1e9).toFixed(1)} GB`
+    : `Up to about ${Math.max(1, Math.round(bytes / 1e6))} MB`
 }
 
 /**
