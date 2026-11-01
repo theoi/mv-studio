@@ -127,6 +127,7 @@ import {
   viewOf,
 } from '../../state/project.ts'
 import { changeAspect } from '../../state/reframe.ts'
+import { selectedShots, setShotsMuted } from '../../state/shotSound.ts'
 import { closeGap, gapForPalette, gapLength } from '../../state/ripple.ts'
 import { replacementAssets, replaceTarget } from '../../state/replace.ts'
 import { cutClipsToSection, sectionClipIds } from '../../state/sections.ts'
@@ -229,6 +230,23 @@ const project = () => editor.getProject()
 const needsClips = () => (selectedClipIds(get().selection).length ? undefined : 'Select clips first')
 
 const needsSong = () => (hasSong(project()) ? undefined : 'Add a song first')
+
+const needsShots = () =>
+  selectedShots().length
+    ? undefined
+    : selectedClipIds(get().selection).length
+      ? 'Select a shot with sound'
+      : 'Select a shot first'
+
+function shotsDetail(): string | undefined {
+  const shots = selectedShots()
+  if (shots.length > 1) return `${shots.length} shots`
+  const shot = shots[0]
+  return (
+    shot &&
+    `${viewOf(project(), shot).name} · ${shot.muted ? 'Muted' : `${Math.round(shot.volume.value * 100)}%`}`
+  )
+}
 
 function selectedClip(): Clip | undefined {
   const { selection } = get()
@@ -796,6 +814,37 @@ export const actions: Action[] = [
       const target = replaceTarget(project(), get().selection)
       return 'clip' in target ? viewOf(project(), target.clip).name : undefined
     },
+  },
+  {
+    id: 'shotSound',
+    group: 'Clip',
+    label: () => {
+      const shots = selectedShots()
+      return shots.length && shots.every((c) => !c.muted) ? 'Mute shot sound' : 'Unmute shot sound'
+    },
+    icon: <VolumeX />,
+    aliases: ['mute shot', 'unmute shot', 'shot sound', 'clip sound'],
+    keywords: 'audio volume hear own video footage clip silent',
+    run: () => {
+      const shots = selectedShots()
+      setShotsMuted(
+        shots.map((c) => c.id),
+        shots.every((c) => !c.muted),
+      )
+    },
+    unavailable: needsShots,
+    detail: shotsDetail,
+  },
+  {
+    id: 'shotVolume',
+    group: 'Clip',
+    label: 'Shot volume…',
+    icon: <Volume2 />,
+    aliases: ['clip volume'],
+    keywords: 'sound audio louder quieter level mute own video footage',
+    page: 'shotVolume',
+    unavailable: needsShots,
+    detail: shotsDetail,
   },
   {
     id: 'keyframe',

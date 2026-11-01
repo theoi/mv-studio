@@ -63,6 +63,7 @@ import {
   viewOf,
 } from '../../state/project.ts'
 import { replaceClipMedia, replacementAssets, replaceTarget } from '../../state/replace.ts'
+import { selectedShots, setShotsMuted, setShotsVolume } from '../../state/shotSound.ts'
 import { isBlankClip } from '../../../vision/analysisData.ts'
 import { get, set, toast, type PageId } from '../../state/ui.ts'
 import {
@@ -454,6 +455,29 @@ export const PAGES: Record<PageState['id'], PageDef> = {
             keywords: v === 0 ? ['Mute', 'silent 0%'] : [`${v * 100}%`, v === 1 ? 'full max' : ''],
             current: now === v * 100,
             run: () => setPref('previewVolume', v),
+          })),
+        },
+      ]
+    },
+  },
+  shotVolume: {
+    placeholder: 'Search volume levels',
+    empty: () => 'No matching level.',
+    groups: () => {
+      const shots = selectedShots()
+      const ids = shots.map((c) => c.id)
+      const levels = new Set(shots.map((c) => (c.muted ? 0 : Math.round(c.volume.value * 100))))
+      const now = levels.size === 1 ? [...levels][0] : undefined
+      return [
+        {
+          heading: shots.length > 1 ? `Volume of ${shots.length} shots` : 'Shot volume',
+          items: VOLUMES.map((v) => ({
+            value: String(v),
+            label: v === 0 ? 'Mute' : `${v * 100}%`,
+            icon: v === 0 ? <VolumeX /> : <Volume2 />,
+            keywords: v === 0 ? ['Mute', 'silent off 0%'] : [`${v * 100}%`, v === 1 ? 'full max' : ''],
+            current: now === v * 100,
+            run: () => (v === 0 ? setShotsMuted(ids, true) : setShotsVolume(ids, v)),
           })),
         },
       ]

@@ -3,7 +3,6 @@ import {
   createAudioClip,
   createImageClip,
   createTrack,
-  createVideoClip,
   type Asset,
   type Clip,
   type EditCommand,
@@ -22,6 +21,7 @@ import { formatTime, plural } from '../format.ts'
 import { unusedProjectName } from './persistence.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
 import { bpmOf, dispatch, editor } from './project.ts'
+import { createShot } from './shotSound.ts'
 import { analysisService, findBars, foundText, markSongPending } from './songAnalysis.ts'
 import { get, select, set, toast } from './ui.ts'
 
@@ -393,7 +393,7 @@ export function assetPlacement(
     asset.kind === 'audio'
       ? createAudioClip({ ...common, sourceStart })
       : asset.kind === 'video'
-        ? createVideoClip({ ...common, sourceStart })
+        ? createShot({ ...common, sourceStart })
         : createImageClip(common)
   const named = { ...clip, name: baseName(asset.name) }
   commands.push({ type: 'clip.add', clip: named })

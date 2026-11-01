@@ -150,6 +150,8 @@ export function objectCutoutCommands(
       type: 'clip.add',
       clip: {
         ...structuredClone(clip),
+        // It shows the shot's footage again, and the shot plays the sound.
+        ...(clip.type === 'video' ? { muted: true } : {}),
         id: crypto.randomUUID(),
         trackId: track.track.id,
         name: `${clip.name ?? asset.name} · subject`,

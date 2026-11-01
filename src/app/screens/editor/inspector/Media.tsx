@@ -9,6 +9,7 @@ import { CameraSection, CameraSuggestion } from './Camera.tsx'
 import { ColorSection, EffectsSection } from './Effects.tsx'
 import { BehindSuggestion, LayeringSection } from './Layering.tsx'
 import { CompositingSection, Header, TransformSection } from './parts.tsx'
+import { SoundSection } from './Sound.tsx'
 import styles from '../Inspector.module.css'
 
 export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string } }) {
@@ -64,6 +65,7 @@ export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string 
           </FieldRow>
         </Section>
       )}
+      {clip.type === 'video' && <SoundSection clip={clip} />}
     </>
   )
 }

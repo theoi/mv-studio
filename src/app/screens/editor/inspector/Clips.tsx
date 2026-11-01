@@ -1,9 +1,10 @@
 import { Layers } from 'lucide-react'
-import type { Clip, VisualClip } from '../../../../model/index.ts'
-import { FieldRow, Section, Select, Slider } from '../../../ds/Fields.tsx'
+import type { Clip, VideoClip, VisualClip } from '../../../../model/index.ts'
+import { FieldRow, Section, Select, Slider, Switch } from '../../../ds/Fields.tsx'
 import { keyName } from '../../../ds/keys.ts'
 import { formatTime } from '../../../format.ts'
-import { dispatch, editor, useProject } from '../../../state/project.ts'
+import { dispatch, editor, hasShotSound, useProject } from '../../../state/project.ts'
+import { setShotsMuted, setShotsVolume } from '../../../state/shotSound.ts'
 import { blendModes } from './blendModes.ts'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
@@ -22,6 +23,7 @@ export function ClipsInspector({ ids }: { ids: string[] }) {
   const start = Math.min(...clips.map((c) => c.start))
   const end = Math.max(...clips.map((c) => c.start + c.duration))
   const visual = clips.filter(isVisual)
+  const shots = clips.filter((c) => hasShotSound(project, c))
   return (
     <>
       <Header
@@ -30,6 +32,7 @@ export function ClipsInspector({ ids }: { ids: string[] }) {
         meta={`${formatTime(start)} – ${formatTime(end)}`}
       />
       {visual.length > 0 && <SharedCompositing clips={visual} />}
+      {shots.length > 0 && <SharedSound shots={shots} />}
       <p className={styles.note}>
         Shift-click or {keyName('Mod')}-click a clip to add or remove it. Drag across empty track space to
         select an area.
@@ -86,6 +89,46 @@ function SharedCompositing({ clips }: { clips: VisualClip[] }) {
           ariaLabel="Blend mode"
         />
       </FieldRow>
+    </Section>
+  )
+}
+
+/** The own sound of the selected shots whose files have sound: on or off for all, and the volume of those playing. */
+function SharedSound({ shots }: { shots: VideoClip[] }) {
+  const ids = shots.map((c) => c.id)
+  const playing = shots.filter((c) => !c.muted)
+  const allOn = playing.length === shots.length
+  const volumes = playing.map((c) => c.volume.value)
+  const sameVolume = volumes.every((v) => v === volumes[0])
+  const pct = Math.round((volumes.reduce((a, v) => a + v, 0) / Math.max(1, volumes.length)) * 100)
+  return (
+    <Section title="Sound">
+      <FieldRow label="Own sound" trailing={<span className={styles.trailSpacer} />}>
+        <Switch
+          checked={allOn}
+          onCheckedChange={(play) => setShotsMuted(ids, !play)}
+          ariaLabel="Play the shots’ own sound"
+        />
+        {playing.length > 0 && !allOn && <span className={styles.value}>Mixed</span>}
+      </FieldRow>
+      {playing.length > 0 && (
+        <FieldRow label="Volume" trailing={<span className={styles.trailSpacer} />}>
+          <Slider
+            value={pct}
+            onChange={(v) =>
+              setShotsVolume(
+                playing.map((c) => c.id),
+                v / 100,
+                { coalesceKey: `inspector:${ids.join(',')}:volume`, keepMuted: true },
+              )
+            }
+            onCommit={() => editor.endGesture()}
+            ariaLabel="Volume"
+          />
+          <span className={`${styles.value} tnum`}>{sameVolume ? `${pct}%` : 'Mixed'}</span>
+        </FieldRow>
+      )}
+      {playing.length === 0 && <p className={styles.note}>Off: only the song plays during these shots.</p>}
     </Section>
   )
 }

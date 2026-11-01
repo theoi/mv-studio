@@ -31,6 +31,7 @@ export type PageId =
   | 'effect'
   | 'transition'
   | 'volume'
+  | 'shotVolume'
   | 'previewZoom'
   | 'keyframe'
   | 'react'
