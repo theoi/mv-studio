@@ -11,7 +11,9 @@ import {
   type EditPlan,
   type LookPreset,
   type PlanShot,
+  PACES,
 } from '../../../src/director/index.ts'
+import { ideaAsks } from '../../../src/director/rules.ts'
 import { CLIPS, fakeMatcher, makeProject as visionProject } from '../vision/autocut/fixtures.ts'
 import {
   BEATS,
@@ -345,5 +347,252 @@ describe('looks', () => {
     }
     const title = p.texts.find((t) => t.role === 'title')!
     expect(title.style.letterSpacing).toBeLessThan(0.5)
+  })
+})
+
+describe('pace and brightness words in the idea', () => {
+  const none = { pace: 0, light: 0, words: [] }
+  const fast = { pace: 1, light: 0, words: ['fast'] }
+  it.each([
+    ['fast and bright in the chorus', { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } }, none],
+    [
+      'slow verses and fast choruses',
+      { verse: { pace: -1, light: 0, words: ['slow'] }, chorus: { pace: 1, light: 0, words: ['fast'] } },
+      none,
+    ],
+    [
+      'slow verse fast chorus',
+      { verse: { pace: -1, light: 0, words: ['slow'] }, chorus: { pace: 1, light: 0, words: ['fast'] } },
+      none,
+    ],
+    [
+      'punchy in the pre chorus but calm in the bridge',
+      {
+        'pre-chorus': { pace: 1, light: 0, words: ['punchy'] },
+        bridge: { pace: -1, light: 0, words: ['calm'] },
+      },
+      none,
+    ],
+    ['Very fast in the drop', { chorus: { pace: 2, light: 0, words: ['fast'] } }, none],
+    ['A dark, very slow video', {}, { pace: -2, light: -1, words: ['dark', 'slow'] }],
+    ['Not too fast in the chorus, less dark', {}, none],
+    ['a dreamy night drive through a neon city, ending at sunrise', {}, none],
+    // Each section named after "in the" ends its part, and "and" between parts starts the next one.
+    [
+      'fast in the chorus and slow in the verses',
+      { chorus: { pace: 1, light: 0, words: ['fast'] }, verse: { pace: -1, light: 0, words: ['slow'] } },
+      none,
+    ],
+    [
+      'bright in the chorus and dark in the bridge',
+      { chorus: { pace: 0, light: 1, words: ['bright'] }, bridge: { pace: 0, light: -1, words: ['dark'] } },
+      none,
+    ],
+    [
+      'keep the chorus fast and the verses slow',
+      { chorus: { pace: 1, light: 0, words: ['fast'] }, verse: { pace: -1, light: 0, words: ['slow'] } },
+      none,
+    ],
+    [
+      'fast in the chorus with slower cuts in the verses',
+      { chorus: { pace: 1, light: 0, words: ['fast'] }, verse: { pace: -1, light: 0, words: ['slower'] } },
+      none,
+    ],
+    ['In the chorus, fast and bright', { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } }, none],
+    [
+      'fast and very bright in the chorus',
+      { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } },
+      none,
+    ],
+    // A comma or "and" between two descriptions keeps them together.
+    ['a fast, bright chorus', { chorus: { pace: 1, light: 1, words: ['fast', 'bright'] } }, none],
+    ['fast, punchy cuts in the chorus', { chorus: { pace: 1, light: 0, words: ['fast', 'punchy'] } }, none],
+    [
+      'a slow build to a fast drop',
+      {
+        'pre-chorus': { pace: -1, light: 0, words: ['slow'] },
+        chorus: { pace: 1, light: 0, words: ['fast'] },
+      },
+      none,
+    ],
+    ['a fast-paced video', {}, { pace: 1, light: 0, words: ['fast-paced'] }],
+    // Negated, or contradicting itself: left out rather than turned around.
+    ["don't make it too fast", {}, none],
+    ['don’t make the chorus fast', {}, none],
+    ['nothing too fast', {}, none],
+    ['avoid anything slow', {}, none],
+    ['not so very fast', {}, none],
+    ['the verses are too slow', {}, none],
+    ['fast and slow in the chorus', {}, none],
+    ['fast in the chorus but not in the verses', { chorus: { pace: 1, light: 0, words: ['fast'] } }, none],
+    // "but" starts a new part, so the negation after it leaves the words before it alone.
+    ['a fast chorus but not too bright', { chorus: { pace: 1, light: 0, words: ['fast'] } }, none],
+    // A list of descriptions stays open for its section, even through a word the lists don't know.
+    ['slow, dreamy verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
+    ['slow and dreamy verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
+    ['slow, dreamy, hazy verses', { verse: { pace: -1, light: 0, words: ['slow'] } }, none],
+    [
+      'slow, dreamy verses and a fast, punchy chorus',
+      {
+        verse: { pace: -1, light: 0, words: ['slow'] },
+        chorus: { pace: 1, light: 0, words: ['fast', 'punchy'] },
+      },
+      none,
+    ],
+    [
+      'fast and bright, verses slow',
+      { verse: { pace: -1, light: 0, words: ['slow'] } },
+      { pace: 1, light: 1, words: ['fast', 'bright'] },
+    ],
+    ['fast video, slow chorus', { chorus: { pace: -1, light: 0, words: ['slow'] } }, fast],
+    // A part after "but" with words of its own is about its section, not an exception.
+    ['fast cuts but keep the bridge slow', { bridge: { pace: -1, light: 0, words: ['slow'] } }, fast],
+  ])('reads “%s”', (idea, roles, all) => {
+    const asks = ideaAsks(idea)
+    expect(Object.fromEntries(asks.roles)).toEqual(roles)
+    expect(asks.all).toEqual(all)
+    expect(asks.excepted).toEqual(new Map())
+  })
+
+  it.each([
+    ['everything fast apart from the bridge', {}, { bridge: none }],
+    ['fast cuts other than in the bridge', {}, { bridge: none }],
+    ['fast everywhere except the bridge', {}, { bridge: none }],
+    ['fast all the way through, aside from the intro', {}, { intro: none }],
+    ['fast cuts, but not in the verses', {}, { verse: none }],
+    ['fast cuts but not during the bridge', {}, { bridge: none }],
+    ['fast everywhere except the bridge and the outro', {}, { bridge: none, outro: none }],
+    // "but" naming only sections means "except".
+    ['fast everywhere but the bridge', {}, { bridge: none }],
+    ['everything fast but the chorus', {}, { chorus: none }],
+    ['fast cuts, but the bridge is different', {}, { bridge: none }],
+    // The part after a section left out goes to the whole video, unless it starts with "which" or the like.
+    ['Apart from the bridge, fast cuts', {}, { bridge: none }],
+    [
+      'fast everywhere except the bridge, which should be slow',
+      { bridge: { pace: -1, light: 0, words: ['slow'] } },
+      { bridge: none },
+    ],
+  ])('leaves the sections “%s” excepts out of the whole video’s words', (idea, roles, excepted) => {
+    const asks = ideaAsks(idea)
+    expect(asks.all).toEqual(fast)
+    expect(Object.fromEntries(asks.roles)).toEqual(roles)
+    expect(Object.fromEntries(asks.excepted)).toEqual(excepted)
+  })
+
+  it('leaves a section out of only the whole-video words of the sentences that except it', () => {
+    expect(Object.fromEntries(ideaAsks('bright throughout, except for the verses').excepted)).toEqual({
+      verse: none,
+    })
+    expect(Object.fromEntries(ideaAsks('fast cuts and dark colours, except the bridge').excepted)).toEqual({
+      bridge: none,
+    })
+    // A sentence with no whole-video words of its own excepts from the whole idea.
+    expect(Object.fromEntries(ideaAsks('Fast cuts. Don’t touch the bridge.').excepted)).toEqual({
+      bridge: none,
+    })
+    const asks = ideaAsks('A dark video. Fast everywhere except the bridge.')
+    expect(asks.all).toEqual({ pace: 1, light: -1, words: ['dark', 'fast'] })
+    expect(Object.fromEntries(asks.excepted)).toEqual({ bridge: { pace: 0, light: -1, words: ['dark'] } })
+  })
+
+  /** An AI video of the user's clips whose first chorus is a guess no louder than the verse, as on many songs. */
+  async function guessedChorus(prompt: string) {
+    const project = makeProject()
+    project.analysis.audio.song!.sections = SECTIONS.map((s) => ({
+      ...s,
+      confidence: 0.4,
+      ...(s.id === 's-chorus1' ? { energy: 0.45 } : {}),
+    }))
+    const input = await buildPlannerInput(project, { kind: 'ai', seed: 7, prompt })
+    const p = await planLocally(input)
+    const section = (id: string) => p.sections.find((s) => s.id === id)!
+    const shots = (id: string) => main(p).filter((s) => s.sectionId === id)
+    const brief = (id: string) => ruleBrief(input).sections.find((s) => s.sectionId === id)!
+    return { p, section, shots, brief }
+  }
+
+  it('makes the chorus the idea calls fast and bright faster and brighter, guessed or not', async () => {
+    const plain = await guessedChorus('neon city')
+    const asked = await guessedChorus('neon city, fast and bright in the chorus')
+    expect(plain.section('s-chorus1').mood).toBe('steady, grounded')
+    expect(asked.section('s-chorus1').mood).toBe('fast, bright')
+    expect(PACES.indexOf(asked.section('s-chorus1').pace)).toBe(
+      PACES.indexOf(plain.section('s-chorus1').pace) + 1,
+    )
+    expect(meanLength(asked.shots('s-chorus1'))).toBeLessThan(meanLength(plain.shots('s-chorus1')))
+    // It reacts to the music as a loud section does.
+    expect(plain.brief('s-chorus1').reactive).toBe(0)
+    expect(asked.brief('s-chorus1').intensity).toBe(0.75)
+    expect(asked.brief('s-chorus1').reactive).toBeGreaterThan(0)
+    const glows = (shots: PlanShot[]) => shots.filter((s) => s.effects?.some((e) => e.effectId === 'glow'))
+    expect(glows(plain.shots('s-chorus1'))).toEqual([])
+    expect(glows(asked.shots('s-chorus1')).length).toBeGreaterThan(0)
+    // The rest of the song is as before.
+    for (const id of ['s-intro', 's-verse', 's-bridge', 's-outro'])
+      expect(asked.section(id)).toEqual(plain.section(id))
+  })
+
+  it('keeps the whole video’s brightness in front of a section’s own words without one', async () => {
+    const { section } = await guessedChorus('a dark video, fast chorus')
+    expect(section('s-chorus1').mood).toBe('dark, fast')
+    expect(section('s-verse').mood).toBe('dark, steady, grounded')
+    const bright = await guessedChorus('a dark video, bright chorus')
+    expect(bright.section('s-chorus1').mood).toBe('bright')
+  })
+
+  it('leaves the pre-chorus out of what the idea asks of the chorus', async () => {
+    const project = makeProject()
+    project.analysis.audio.song!.sections = SECTIONS.map((s) =>
+      s.id === 's-bridge' ? { ...s, label: 'Pre-chorus', energy: 0.7 } : s,
+    )
+    const p = await planLocally(
+      await buildPlannerInput(project, { kind: 'beat-cut', seed: 7, prompt: 'fast in the chorus' }),
+    )
+    expect(p.sections.find((s) => s.id === 's-chorus2')?.mood).toBe('fast')
+    expect(p.sections.find((s) => s.id === 's-bridge')?.mood).toBe('rising, tense')
+  })
+
+  it('slows every section a step for a slow idea and leads every mood with “dark”', async () => {
+    const plain = await guessedChorus('neon city')
+    const asked = await guessedChorus('a slow, dark neon city')
+    expect(asked.p.sections).toHaveLength(SECTIONS.length)
+    for (const s of asked.p.sections) {
+      const before = plain.section(s.id)
+      expect(PACES.indexOf(s.pace)).toBe(Math.max(0, PACES.indexOf(before.pace) - 1))
+      expect(s.mood).toBe(`dark, ${before.mood}`)
+    }
+  })
+
+  it('gives a section its own pace in place of the whole video’s, and an excepted section none of it', async () => {
+    const plain = await guessedChorus('neon city')
+    const paces = (p: { p: { sections: { id: string; pace: string }[] } }) =>
+      Object.fromEntries(p.p.sections.map((s) => [s.id, s.pace]))
+    /** The plain draft's paces moved by the given steps (every other section by `rest`). */
+    const moved = (rest: number, steps: Record<string, number>) =>
+      Object.fromEntries(
+        plain.p.sections.map((s) => {
+          const i = PACES.indexOf(s.pace) + (steps[s.id] ?? rest)
+          return [s.id, PACES[Math.max(0, Math.min(PACES.length - 1, i))]]
+        }),
+      )
+    expect(paces(await guessedChorus('fast video, slow chorus'))).toEqual(
+      moved(1, { 's-chorus1': -1, 's-chorus2': -1 }),
+    )
+    expect(paces(await guessedChorus('fast video, very fast chorus'))).toEqual(
+      moved(1, { 's-chorus1': 2, 's-chorus2': 2 }),
+    )
+    expect(paces(await guessedChorus('fast in the chorus, slow elsewhere'))).toEqual(
+      moved(-1, { 's-chorus1': 1, 's-chorus2': 1 }),
+    )
+    expect(paces(await guessedChorus('everything fast apart from the bridge'))).toEqual(
+      moved(1, { 's-bridge': 0 }),
+    )
+    expect(paces(await guessedChorus('fast everywhere except the bridge, which should be slow'))).toEqual(
+      moved(1, { 's-bridge': -1 }),
+    )
+    const bright = await guessedChorus('bright throughout, except for the verses')
+    expect(bright.section('s-verse').mood).toBe(plain.section('s-verse').mood)
+    expect(bright.section('s-intro').mood).toBe(`bright, ${plain.section('s-intro').mood}`)
   })
 })
