@@ -85,6 +85,36 @@ test('Loop repeats the section under the playhead, moves with a seek to another 
   await expect(loop).toHaveAccessibleName('Loop playback')
 })
 
+test('a link to a time past the end opens on the video’s last frame, where End goes', async ({ page }) => {
+  await openEditor(page, '#/editor?t=9999')
+  const end = await page.evaluate(() => {
+    const { editor, timelineDuration } = window.mvStudio.app.project
+    return timelineDuration(editor.getProject()) as number
+  })
+  const playhead = () => page.evaluate(() => window.mvStudio.app.ui.get().playhead as number)
+  const brightness = () =>
+    page.evaluate(async () => {
+      const frame: ImageBitmap = await window.mvStudio.app.stagePreview().captureFrame()
+      const ctx = new OffscreenCanvas(frame.width, frame.height).getContext(
+        '2d',
+      ) as OffscreenCanvasRenderingContext2D
+      ctx.drawImage(frame, 0, 0)
+      const d = ctx.getImageData(0, 0, frame.width, frame.height).data
+      let sum = 0
+      for (let i = 0; i < d.length; i += 4)
+        sum += 0.2126 * (d[i] as number) + 0.7152 * (d[i + 1] as number) + 0.0722 * (d[i + 2] as number)
+      return sum / (d.length / 4)
+    })
+  expect(await playhead()).toBeCloseTo(end - 0.01, 6)
+  // At the end itself every clip has ended and the frame is black.
+  await expect.poll(brightness).toBeGreaterThan(5)
+
+  await page.keyboard.press('Home')
+  await expect.poll(playhead).toBe(0)
+  await page.keyboard.press('End')
+  await expect.poll(playhead).toBeCloseTo(end - 0.01, 6)
+})
+
 test('Volume sets the preview level, which is remembered after a reload', async ({ page }) => {
   await openEditor(page, '#/editor?t=21')
   const level = () => page.evaluate(() => window.mvStudio.app.stagePreview().clock.volume as number)

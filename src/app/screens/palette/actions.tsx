@@ -113,6 +113,7 @@ import {
   bpmOf,
   editor,
   hasSong,
+  lastFrameTime,
   redo,
   resetTransform,
   sectionAt,
@@ -120,7 +121,6 @@ import {
   sectionsOf,
   songAnalysis,
   splitAtPlayhead,
-  timelineDuration,
   undo,
   viewOf,
 } from '../../state/project.ts'
@@ -1101,7 +1101,7 @@ export const actions: Action[] = [
     label: 'Go to the end',
     icon: <ArrowRightToLine />,
     shortcut: 'end',
-    run: () => set({ playhead: timelineDuration(project()) - 0.01 }),
+    run: () => set({ playhead: lastFrameTime(project()) }),
   },
   {
     id: 'sectionBack',

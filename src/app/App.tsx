@@ -43,7 +43,7 @@ export function App() {
         <Suspense fallback={<div className="screen-loading" />}>
           {screen === 'editor' && !restoring && <Editor />}
           {screen === 'setup' && <SetupScreen />}
-          {screen === 'vj' && <VjMode />}
+          {screen === 'vj' && !restoring && <VjMode />}
         </Suspense>
       </LoadBoundary>
       <Deferred when={settingsOpen} onFail={closeWithToast('Settings', () => set({ dialog: null }))}>

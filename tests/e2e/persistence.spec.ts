@@ -146,14 +146,86 @@ test('a kept project opens at its start after a reload, and a link’s time stay
   await expect(total).toHaveText(/00:0[78]\.\d\d$/)
   await expect(now).toHaveText('00:00.00')
 
-  // From another project, a link to a time past the song's end opens the song at its end.
+  // From another project, a link to a time past the song's end opens the song on its last frame, where End goes.
   await page.evaluate(() => (window.location.hash = '#/editor?project=empty&kind=blank'))
   await expect(page.getByText('Start with a song')).toBeVisible()
   await page.evaluate((projectId) => (window.location.hash = `#/editor?project=${projectId}&t=60`), id)
   await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
-  const end = ((await total.textContent()) ?? '').replace('/', '').trim()
-  expect(end).toMatch(/^00:0[78]\.\d\d$/)
-  await expect(now).toHaveText(end)
+  const end = await page.evaluate(() => {
+    const { editor, timelineDuration } = window.mvStudio.app.project
+    return timelineDuration(editor.getProject()) as number
+  })
+  expect(end).toBeGreaterThan(7.5)
+  expect(end).toBeLessThan(8.5)
+  await expect
+    .poll(() => page.evaluate(() => window.mvStudio.app.ui.get().playhead as number))
+    .toBeCloseTo(end - 0.01, 6)
+})
+
+test('a reload in VJ mode opens the kept project again, in its own shape, once it has opened', async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(90_000)
+  await openBlank(page)
+  await importFiles(page, ['song.mp3'])
+  await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
+  // Upright, where the sample is wide: VJ mode started on the sample would keep its shape.
+  await page.evaluate(() =>
+    window.mvStudio.app.project.editor.dispatch({
+      type: 'project.updateSettings',
+      settings: { aspect: '9:16', width: 1080, height: 1920 },
+    }),
+  )
+  await expect(saved(page)).toBeVisible()
+  const { id } = await snapshot(page)
+  const live = page.getByRole('img', { name: 'Live output' })
+  const songName = page.locator('[class*="songName"]')
+  await page.keyboard.press('Shift+V')
+  await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+  await expect(songName).toHaveText('Song')
+  expect(page.url()).toContain(`#/vj?project=${id}`)
+
+  // Another tab holds the kept projects until released, so the reload's restore waits for it.
+  const other = await context.newPage()
+  await other.goto(new URL('favicon.svg', page.url()).href)
+  await other.evaluate(
+    () =>
+      new Promise<void>((started) => {
+        const open = indexedDB.open('mv-studio')
+        open.onsuccess = () => {
+          const tx = open.result.transaction('projects', 'readwrite')
+          const w = window as unknown as { release?: boolean }
+          const until = performance.now() + 20_000
+          // A transaction with no request pending commits, so keep one going.
+          const spin = () => {
+            tx.objectStore('projects').count().onsuccess = () => {
+              started()
+              if (!w.release && performance.now() < until) spin()
+            }
+          }
+          spin()
+          tx.oncomplete = () => open.result.close()
+        }
+      }),
+  )
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect(page.locator('.screen-loading').first()).toBeVisible()
+  // Long enough for VJ mode's code to load: it must still wait for the project.
+  await page.waitForTimeout(1500)
+  await expect(live).toHaveCount(0)
+  await other.evaluate(() => ((window as unknown as { release?: boolean }).release = true))
+  await other.close()
+
+  await expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+  await expect(songName).toHaveText('Song')
+  expect((await snapshot(page)).id).toBe(id)
+  const box = await live.boundingBox()
+  expect(box?.height ?? 0).toBeGreaterThan(box?.width ?? 0)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
+  expect(page.url()).toContain(`#/editor?project=${id}`)
 })
 
 test('an edit made right before a reload or closing the tab is kept, and the project keeps its thumbnail', async ({
