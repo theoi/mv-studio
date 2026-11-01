@@ -163,19 +163,25 @@ export function sizeLabel(bytes: number): string {
 }
 
 /**
- * The export time, null while it is being worked out. Rounded up, so the label is never under the estimate, and in
- * coarser steps the longer it is: to the minute up to 10 min, then 5 min, then 10 min above an hour.
+ * The export time, null while it is being worked out (`waitingForJobs` while that waits for other jobs to finish).
+ * Rounded up, so the label is never under the estimate, which already has a margin: to the minute up to an hour,
+ * then 5 min, then 10 min above two hours, so from 10 min up rounding adds at most about a tenth. A `provisional`
+ * time, timed while other work kept the device busy, reads "Up to" until it is timed again.
  */
-export function timeLabel(seconds: number | null): string {
-  if (seconds === null) return 'Working out the time…'
+export function timeLabel(
+  seconds: number | null,
+  { waitingForJobs = false, provisional = false }: { waitingForJobs?: boolean; provisional?: boolean } = {},
+): string {
+  if (seconds === null) return waitingForJobs ? 'Timing once other tasks finish…' : 'Working out the time…'
   if (seconds < 60) return 'Under a minute on this device'
   const minutes = seconds / 60
-  const step = minutes <= 10 ? 1 : minutes <= 60 ? 5 : 10
+  const step = minutes <= 60 ? 1 : minutes <= 120 ? 5 : 10
   const rounded = Math.ceil(minutes / step) * step
-  if (rounded < 60) return `About ${rounded} min on this device`
+  const about = provisional ? 'Up to' : 'About'
+  if (rounded < 60) return `${about} ${rounded} min on this device`
   const hours = Math.floor(rounded / 60)
   const rest = rounded % 60
-  return `About ${hours} h${rest ? ` ${rest} min` : ''} on this device`
+  return `${about} ${hours} h${rest ? ` ${rest} min` : ''} on this device`
 }
 
 /** What a cancelled export says, however it was cancelled: files done before the cancel are kept. */
