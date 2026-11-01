@@ -44,8 +44,17 @@ export class OpfsMediaStore implements MediaStore {
     await writeOpfsFile(asset.storageKey, data, onWritten)
   }
 
-  async has(asset: Asset): Promise<boolean> {
-    return opfsFileExists(asset.storageKey)
+  /**
+   * Whether the asset's file is stored, and with `size`, whether it is whole: a write that stopped part way (a tab
+   * closed while a project file opened) leaves an empty file behind.
+   */
+  async has(asset: Asset, size?: number): Promise<boolean> {
+    if (size === undefined) return opfsFileExists(asset.storageKey)
+    try {
+      return (await readOpfsFile(asset.storageKey)).size === size
+    } catch {
+      return false
+    }
   }
 
   private async store(

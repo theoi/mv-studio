@@ -31,7 +31,7 @@ import {
   usePersistence,
   type RecentProject,
 } from '../../state/persistence.ts'
-import { JOB_KINDS, runningJobs, useJobs } from '../../state/jobs.ts'
+import { JOB_KINDS, runningJobs, useIsRunning, useJobs } from '../../state/jobs.ts'
 import { openBlankProject, startSetup } from '../../state/setup.ts'
 import { set, toast, type Kind } from '../../state/ui.ts'
 import { Logo } from '../common/Logo.tsx'
@@ -119,6 +119,8 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
 }
 
 function RecentCard({ project }: { project: RecentProject }) {
+  // Opening a kept project while a project file opens would be replaced by the file's project when it is in.
+  const opening = useIsRunning(JOB_KINDS.projectImport)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState(false)
   // The menu traps focus while open and gives it back to its button as it closes, so the rename field takes focus
@@ -168,7 +170,7 @@ function RecentCard({ project }: { project: RecentProject }) {
           </span>
         </div>
       ) : (
-        <button className={styles.recentOpen} onClick={() => void openProject(project.id)}>
+        <button className={styles.recentOpen} onClick={() => void openProject(project.id)} disabled={opening}>
           {thumb}
           <span className={styles.recentText}>
             <span className={styles.recentName}>{project.name}</span>
@@ -297,7 +299,7 @@ function OpeningFile() {
 }
 
 export function StartScreen() {
-  const opening = runningJobs(useJobs()).some((j) => j.kind === JOB_KINDS.projectImport)
+  const opening = useIsRunning(JOB_KINDS.projectImport)
   return (
     <div className={styles.page}>
       <header className={styles.header}>

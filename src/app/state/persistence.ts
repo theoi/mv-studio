@@ -469,6 +469,8 @@ export function downloadProjectFile(id?: Id): void {
 
 /** Opens a project file: its media goes into browser storage and the project opens in the editor. */
 export async function importProjectFile(file: File): Promise<void> {
+  // Two opens at once could restore the same media, and cancelling one would delete files the other's project uses.
+  if (isRunning(JOB_KINDS.projectImport)) return
   const handle = jobs.run({
     kind: JOB_KINDS.projectImport,
     title: `Opening ${file.name}`,
@@ -493,6 +495,7 @@ export async function importProjectFile(file: File): Promise<void> {
 }
 
 export function openProjectFile(): void {
+  if (isRunning(JOB_KINDS.projectImport)) return
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = PORTABLE_EXTENSION

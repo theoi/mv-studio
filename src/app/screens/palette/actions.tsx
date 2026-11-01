@@ -1186,6 +1186,7 @@ export const actions: Action[] = [
     icon: <FolderOpen />,
     keywords: 'mvstudio restore import backup',
     run: openProjectFile,
+    unavailable: () => (isRunning(JOB_KINDS.projectImport) ? 'A project file is being opened' : undefined),
   },
   {
     id: 'save',

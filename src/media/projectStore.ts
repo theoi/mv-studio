@@ -188,13 +188,14 @@ export class IdbProjectStore implements ProjectStore {
       })
     }
     const restored: Asset[] = []
+    let saved = false
     try {
       for (const [i, asset] of assets.entries()) {
         report(i, 0)
         const data = byName.get(asset.storageKey)
         if (!data)
           throw new JobError('invalid-input', `The project file is missing media for "${asset.name}"`)
-        if (!(await this.media.has(asset))) {
+        if (!(await this.media.has(asset, data.size))) {
           restored.push(asset)
           await this.media.restore(asset, data, (written) => report(i, written))
         }
@@ -203,9 +204,14 @@ export class IdbProjectStore implements ProjectStore {
       const existing = await this.list()
       if (existing.some((s) => s.id === project.id))
         project = { ...project, id: newId(), name: `${project.name} (imported)` }
+      ctx?.throwIfCancelled()
       await this.save(project)
+      saved = true
+      // A Cancel while it saved (the card still offers one at 100%) must not leave the project kept.
+      ctx?.throwIfCancelled()
     } catch (error) {
       // No project refers to the media this open wrote, so a cancel or failure would leave it taking up storage.
+      if (saved) await this.remove(project.id).catch(() => undefined)
       await Promise.all(restored.map((a) => this.media.remove(a)))
       throw error
     }
