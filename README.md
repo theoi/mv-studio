@@ -21,7 +21,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 
 ![One frame of each kind, labelled: a lyric video, a visualizer, beat-cut footage and an AI music video](docs/screenshots/kinds.jpg)
 
-_The beat-cut frame is “Chinese fitness dancing in Haikou People's Park” by Anna Frodesiak (CC0, Wikimedia Commons), cut to the sample song. The AI music video frame comes from the built-in sample project, whose shots are drawn stand-ins: with your fal.ai key, the director generates real shots in their place._
+_The beat-cut frame is “Chinese fitness dancing in Haikou People’s Park” by Anna Frodesiak (CC0, Wikimedia Commons), cut to the sample song. The AI music video frame comes from the built-in sample project, whose shots are drawn stand-ins: with your fal.ai key, the director generates real shots in their place._
 
 ## Local-first and private
 
