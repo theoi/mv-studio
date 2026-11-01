@@ -21,7 +21,7 @@ const TRIAL_DELAY_MS = 400
 
 /** Trial estimates in seconds by `trialKey`; null where no trial could run (the render worker cannot draw). */
 const trials = new Map<string, number | null>()
-/** The latest trial estimate of each output by `outputKey`, whatever the project drew then. */
+/** The latest trial estimate of each output of a project by `latestKey`, whatever the project drew then. */
 const latest = new Map<string, number | null>()
 const listeners = new Set<() => void>()
 let version = 0
@@ -41,12 +41,12 @@ const drawnKeys = new WeakMap<Project, string>()
 /**
  * What the project draws, as a short fingerprint. Analysis results are left out: background jobs write them (the
  * export dialog itself starts footage analysis, one write per clip), and they change values a frame uses, not what
- * it costs, so they don't restart a trial.
+ * it costs, so they don't restart a trial. So is `updatedAt`, which every dispatch stamps, those writes included.
  */
-function drawnKey(project: Project): string {
+export function drawnKey(project: Project): string {
   let key = drawnKeys.get(project)
   if (key === undefined) {
-    const json = JSON.stringify({ ...project, analysis: undefined })
+    const json = JSON.stringify({ ...project, analysis: undefined, updatedAt: undefined })
     // FNV-1a.
     let hash = 0x811c9dc5
     for (let i = 0; i < json.length; i++) hash = Math.imul(hash ^ json.charCodeAt(i), 0x01000193)
@@ -66,6 +66,10 @@ function trialKey(project: Project, planned: PlannedOutput): string {
   return `${drawnKey(project)}|${outputKey(planned)}`
 }
 
+function latestKey(project: Project, planned: PlannedOutput): string {
+  return `${project.id}|${outputKey(planned)}`
+}
+
 /** The trial estimates made so far, by output: for tests and for checking estimates against real exports. */
 export function trialEstimates(): Record<string, number | null> {
   return Object.fromEntries(trials)
@@ -83,7 +87,7 @@ async function runTrials(project: Project, outputs: PlannedOutput[], signal: Abo
     }
     if (signal.aborted) return
     trials.set(key, seconds)
-    latest.set(outputKey(planned), seconds)
+    latest.set(latestKey(project, planned), seconds)
     changed()
   }
 }
@@ -115,7 +119,7 @@ export function useExportEstimate(project: Project, outputs: PlannedOutput[], op
   for (const planned of outputs) {
     const remembered = rememberedEstimate(project.id, planned)
     const key = trialKey(project, planned)
-    const trial = trials.has(key) ? trials.get(key) : latest.get(outputKey(planned))
+    const trial = trials.has(key) ? trials.get(key) : latest.get(latestKey(project, planned))
     if (typeof trial === 'number') total += Math.max(trial, remembered ?? 0)
     else if (remembered !== null) total += remembered
     // Without a trial the export would run on the main thread too; only the rough frame-rate guess is left.
