@@ -13,7 +13,7 @@ import {
   type PlanShot,
   PACES,
 } from '../../../src/director/index.ts'
-import { ideaAsks } from '../../../src/director/rules.ts'
+import { ideaAsks, visualIdea } from '../../../src/director/rules.ts'
 import { CLIPS, fakeMatcher, makeProject as visionProject } from '../vision/autocut/fixtures.ts'
 import {
   BEATS,
@@ -288,6 +288,64 @@ describe('local planner', () => {
       // Video shots never exceed what one request can return.
       expect(s.end - s.start).toBeLessThanOrEqual(generation.maxVideoDuration + 1e-3)
     }
+  })
+
+  it('sends the picture the idea describes to the image model, not what it asks of the edit', async () => {
+    const generation = generationOptionsFor(fakeProvider(), { mode: 'images', tier: 'draft' })!
+    const idea = 'Summer day outdoors: ocean waves, bees in lavender, a city at night. Use my own clips.'
+    const shots = shotsToGenerate(await plan('ai', { videos: 0 }, { generation, prompt: idea }))
+    expect(shots.length).toBeGreaterThan(0)
+    for (const s of shots) {
+      expect(s.source.prompt).toMatch(
+        /^Summer day outdoors: ocean waves, bees in lavender, a city at night\. \w/,
+      )
+      expect(s.source.prompt).not.toMatch(/clips/i)
+    }
+    // With nothing visual left, the prompts describe the kind of video instead.
+    const bare = shotsToGenerate(await plan('ai', { videos: 0 }, { generation, prompt: 'Use my own clips.' }))
+    expect(bare.length).toBeGreaterThan(0)
+    for (const s of bare)
+      expect(s.source.prompt).toMatch(/^Cinematic music video with a consistent main character/)
+  })
+
+  it('leaves what an LLM concept asks of the edit out of the prompts filled in from it', async () => {
+    const generation = generationOptionsFor(fakeProvider(), { mode: 'images', tier: 'draft' })!
+    const input = await buildPlannerInput(makeProject({ videos: 0 }), { kind: 'ai', seed: 1, generation })
+    const concept = 'A runner crosses a neon city at night. Use the user’s own clips, cut on the beat.'
+    const p = await expandBrief({ title: 'Test', concept, visual: 'generated', sections: [] }, input, {
+      planner: 'llm',
+    })
+    const shots = shotsToGenerate(p)
+    expect(shots.length).toBeGreaterThan(0)
+    for (const s of shots) {
+      expect(s.source.prompt).toMatch(/^A runner crosses a neon city at night\. \w/)
+      expect(s.source.prompt).not.toMatch(/clips|beat/i)
+    }
+  })
+
+  it.each([
+    [
+      'Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night. Use my own clips.',
+      'Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night',
+    ],
+    [
+      'Make a music video about a girl skating through Tokyo. Cut on the beat and show the lyrics.',
+      'a girl skating through Tokyo',
+    ],
+    [
+      'Waves crashing on black rocks with my own clips, fast cuts in the chorus',
+      'Waves crashing on black rocks',
+    ],
+    ['Fireworks over the harbour in the chorus; vertical 9:16 for TikTok', 'Fireworks over the harbour'],
+    ['Dancers moving to the beat in a warehouse. Make it 30 seconds long.', 'Dancers moving in a warehouse'],
+    ['Use my footage. No AI.', ''],
+    // Words that also describe pictures stay.
+    [
+      'A 1990s mall, freshly cut grass outside, a bridge over the river.',
+      'A 1990s mall, freshly cut grass outside, a bridge over the river',
+    ],
+  ])('takes the picture out of the idea %j', (idea, picture) => {
+    expect(visualIdea(idea)).toBe(picture)
   })
 })
 

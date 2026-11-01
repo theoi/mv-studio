@@ -577,6 +577,62 @@ export const DEFAULT_CONCEPT: Record<VideoKind, string> = {
   ai: 'Cinematic music video with a consistent main character and setting',
 }
 
+const MEDIA = String.raw`(clips?|footage|videos?|photos?|pictures?|images?|media|recordings?)`
+
+/**
+ * Clauses of an idea that ask something of the editor instead of describing a picture: whose media to use, how to
+ * cut, on-screen words, AI, length and format. An image or video model would try to draw them.
+ */
+const INSTRUCTION_CLAUSES = [
+  /^(please\s+)?(only\s+)?(don['’]?t\s+|do\s+not\s+)?use\b/i,
+  new RegExp(String.raw`\b(my|our|own|these|those|uploaded|imported)\s+(own\s+)?${MEDIA}\b`, 'i'),
+  /\b(ai|stock\s+(footage|clips?|videos?))\b/i,
+  /\b(cuts|edit(s|ed|ing)?|sync(s|ed|ing)?|transitions)\b|\bcut(ting)?\s+(on|to|between|every)\b/i,
+  /\b(lyrics?|subtitles?|captions?|karaoke)\b/i,
+  /\b(\d+\s*(secs?|seconds?|mins?|minutes?)|16:9|9:16|aspect\s+ratio|tiktok|instagram|youtube|export)\b/i,
+]
+
+/** Phrases about the edit inside a clause that also describes a picture ("waves crashing to the beat"). */
+const INSTRUCTION_PHRASES = [
+  new RegExp(String.raw`\s*\b(using|with|from|in)\s+(my|our)\s+(own\s+)?${MEDIA}\b`, 'gi'),
+  /\s*\b(on|to|with)\s+(the|every)\s+beats?\b/gi,
+  /\s*\b(in|during|for)\s+(the|every|each)\s+(chorus(es)?|verses?|intro|outro)\b/gi,
+]
+
+const REQUEST =
+  /^(please\s+)?((can|could|would)\s+you\s+)?(make|create|generate|produce|give\s+me|i\s+want|i['’]?d\s+like|i\s+would\s+like)\s+(me\s+)?((a|an|some)\s+)?(music\s+)?(videos?|clips?|montage|visuals?)\s+(of|about|with|showing|featuring|set\s+in|where)\s+/i
+
+const FILLER = new Set(
+  'please make do create it this that the a an me video music clip just and also so'.split(' '),
+)
+
+/**
+ * The picture an idea describes, for image and video prompts: the idea without what it asks of the editor ("Use my
+ * own clips", "cut on the beat", "show the lyrics"). Empty when nothing visual is left.
+ */
+export function visualIdea(idea: string): string {
+  const kept: string[] = []
+  for (const sentence of idea.trim().split(/(?<=[.!?])\s+|\s*\n+\s*/)) {
+    const end = /[.!?]*$/.exec(sentence)?.[0] ?? ''
+    const clauses = sentence
+      .slice(0, sentence.length - end.length)
+      .replace(REQUEST, '')
+      .split(/\s*[,;]\s*|\s+[-–—]\s+/)
+      .map((c) => INSTRUCTION_PHRASES.reduce((s, p) => s.replace(p, ''), c).trim())
+      .filter((c) => c && !INSTRUCTION_CLAUSES.some((p) => p.test(c)) && !onlyFiller(c))
+    if (clauses.length) kept.push(clauses.join(', ') + end)
+  }
+  return kept.join(' ').replace(/[\s.,;:!?]+$/, '')
+}
+
+function onlyFiller(clause: string): boolean {
+  return clause
+    .toLowerCase()
+    .split(/[^a-z0-9'’]+/)
+    .filter(Boolean)
+    .every((w) => FILLER.has(w))
+}
+
 /** A rule-based brief section, used by the local planner and to fill gaps in an LLM brief. */
 export function defaultSectionBrief(
   section: SectionInfo,

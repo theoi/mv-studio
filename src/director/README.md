@@ -10,7 +10,9 @@ draft. Everything it makes is ordinary project content created through `EditComm
    looks from the shared look registry (`src/plugins/looks.ts`) and generation settings.
 2. **Creative brief** (`brief.ts`): per-section mood, pace, look, effects, media queries and generation prompts.
    The local planner (`local-planner.ts`, rules in `rules.ts`) writes it with no keys and no network; the LLM
-   planner (`llm-planner.ts`) asks the configured model for the same schema.
+   planner (`llm-planner.ts`) asks the configured model for the same schema. Prompts the director writes from the
+   idea or the brief's concept take only the picture it describes (`visualIdea` in `rules.ts`): what it asks of the
+   edit ("Use my own clips", "cut on the beat", "show the lyrics") never reaches the image or video model.
 3. **Edit plan** (`plan.ts`, `expand.ts`): `expandBrief()` turns a brief into exact, beat-aligned shots, text,
    effects, transitions, audio-reactive bindings and a look. The look also sets the text typography and animation
    (unless the brief chooses them) and the visualizer palette. Unknown ids fall back with a warning; the result is

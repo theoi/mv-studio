@@ -12,6 +12,7 @@ import {
   defaultVisual,
   pickLook,
   scenePool,
+  visualIdea,
   visualizerPalette,
 } from './rules.ts'
 import { beatGrid, sectionsFor } from './timing.ts'
@@ -32,7 +33,7 @@ export function ruleBrief(input: PlannerInput): CreativeBrief {
   const palette = visualizerPalette(sections, input, scenePool(input))
   return {
     title: input.prompt ? input.prompt.slice(0, 60) : TITLES[input.kind],
-    concept: input.prompt || DEFAULT_CONCEPT[input.kind],
+    concept: visualIdea(input.prompt) || DEFAULT_CONCEPT[input.kind],
     lookId: look?.id,
     visual,
     text: { show: input.kind === 'lyric' },
