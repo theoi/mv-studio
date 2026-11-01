@@ -430,6 +430,11 @@ function ReadyView({ state, actionRef, onRedraft }: { state: StateOf<'ready'> } 
   const stoppedId = useId()
   const cost = paidCost(state.cost)
   const spend = useSpend(state.cost, state.confirmRequired, state.actionLabel, state.unit)
+  const charged = cost && (
+    <>
+      <Info /> Charged by fal.ai to your key&nbsp;· prices checked {cost.pricesCheckedOn}
+    </>
+  )
   return (
     <ToolView
       title="Director"
@@ -465,17 +470,14 @@ function ReadyView({ state, actionRef, onRedraft }: { state: StateOf<'ready'> } 
               Apply without AI {state.unit}s
             </Button>
           )}
-          {cost && (
-            <div className={styles.costLine}>
-              <Info /> Charged by fal.ai to your key&nbsp;· prices checked {cost.pricesCheckedOn}
-            </div>
-          )}
+          {charged && <div className={`${styles.costLine} ${styles.footerCost}`}>{charged}</div>}
         </>
       }
     >
       <p className={styles.lede}>{state.preview.summary}</p>
       <Notes warnings={state.preview.warnings} request={state.request} onRedraft={onRedraft} />
       <PlanList description={description} />
+      {charged && <p className={`${styles.costLine} ${styles.bodyCost}`}>{charged}</p>}
       <div className={styles.rowActions}>
         <Button size="sm" variant="ghost" onClick={resetDirector}>
           Start over
