@@ -272,6 +272,72 @@ test('Inspector › Motion adds, changes, strengthens and removes a still’s 3D
   await expect(select).toHaveText('None')
 })
 
+test('a still replaced with another photo keeps its move flat, and Add depth in Motion gives the new photo its depth, again after a failure', async ({
+  page,
+}) => {
+  await openWithFakeDepth(page, '#/editor?t=28', true)
+  const depthCalls = () => page.evaluate(() => (window as Untyped).depthCalls.length as number)
+  const target = (await stills(page)).clips[0]!
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?sel=clip:${id}&t=28`
+  }, target.id)
+  const camera = async () => (await stills(page)).clips.find((c) => c.id === target.id)?.camera
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await inspector.getByRole('button', { name: 'Motion', exact: true }).click()
+  await inspector.getByRole('combobox', { name: '3D camera move' }).click()
+  await page.getByRole('option', { name: 'Drift' }).click()
+  await expect.poll(depthCalls).toBe(1)
+  await page.evaluate(() => (window as Untyped).depthGate.release())
+  await expect.poll(async () => (await camera())?.preset).toBe('pan-right')
+  const added = (await camera())!
+
+  const png = await page.evaluate(async () => {
+    const c = new OffscreenCanvas(960, 540)
+    c.getContext('2d')!.fillRect(0, 0, 480, 540)
+    return Array.from(new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()))
+  })
+  await page
+    .getByLabel('Import media files')
+    .setInputFiles({ name: 'half.png', mimeType: 'image/png', buffer: Buffer.from(png) })
+  await expect(page.getByRole('tabpanel', { name: 'Media' }).getByLabel('half, image')).toBeVisible()
+  await page.locator(`[data-clip-id="${target.id}"]`).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Replace with…' }).click()
+  await page.getByRole('dialog', { name: 'Command palette' }).getByRole('combobox').fill('half')
+  await page.keyboard.press('Enter')
+
+  // The move, its timing and strength stay, without the old photo's depth.
+  await expect(
+    page
+      .locator('[data-toast]')
+      .filter({ hasText: 'Its 3D camera move is flat now: choose Add depth under Motion.' }),
+  ).toBeVisible()
+  expect(await camera()).toEqual({ ...added, depth: '' })
+  const flat = inspector.getByText(/^The move is flat: this image has no depth yet/)
+  await expect(flat).toBeVisible()
+  const addDepth = inspector.getByRole('button', { name: 'Add depth' })
+
+  // A failed estimate says so and keeps Add depth to try again.
+  await addDepth.click()
+  await expect.poll(depthCalls).toBe(2)
+  await page.evaluate(() => (window as Untyped).depthGate.fail('The depth model stopped.'))
+  await expect(inspector.getByRole('alert')).toContainText(
+    'The depth model stopped.Your project is unchanged. Choose Add depth to try again.',
+  )
+  expect((await camera())?.depth).toBe('')
+  await addDepth.click()
+  await expect.poll(depthCalls).toBe(3)
+  await page.evaluate(() => (window as Untyped).depthGate.release())
+  await expect.poll(async () => (await camera())?.depth).not.toBe('')
+  const depth = (await camera())!.depth
+  const parent = await page.evaluate((id) => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    return project.assets[project.assets[id]!.origin.parentAssetId!]!.name
+  }, depth)
+  expect(parent).toBe('half.png')
+  expect(await camera()).toMatchObject({ preset: 'pan-right', intensity: added.intensity })
+  await expect(flat).toHaveCount(0)
+})
+
 test('a still whose depth image comes from an older preparation gets it prepared again from the cached estimate', async ({
   page,
 }) => {

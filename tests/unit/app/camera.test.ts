@@ -204,7 +204,9 @@ describe('editing a move in Inspector › Motion', () => {
 
   it('reads the move wherever it sits in the effects, and maps presets back to the panel’s motions', () => {
     const clipId = withMove()
-    expect(move(clipId)).toEqual({ index: 1, preset: 'dolly-in', intensity: 0.4 })
+    expect(move(clipId)).toEqual({ index: 1, preset: 'dolly-in', intensity: 0.4, flat: false })
+    editor.dispatch({ type: 'clip.set', clipId, path: ['effects', 1, 'params', 'depth', 'value'], value: '' })
+    expect(move(clipId)?.flat).toBe(true)
     expect(motionOf('dolly-in')).toBe('push')
     expect(motionOf('orbit-right')).toBe('orbit')
     expect(motionOf('tilt-up')).toBeUndefined()

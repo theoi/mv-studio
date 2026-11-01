@@ -1,12 +1,14 @@
 import { Command } from 'cmdk'
 import { Dialog as RDialog } from 'radix-ui'
-import { useState } from 'react'
-import { Search, Sparkles } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { Check, Search, Sparkles } from 'lucide-react'
+import type { Asset } from '../../../model/index.ts'
 import { useReturnFocus } from '../../ds/focus.ts'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { ask } from '../../state/ask.ts'
 import { keysOf } from '../../state/keymap.ts'
 import { ASK_SCORE, isSentence, paletteScore } from '../../state/paletteScore.ts'
+import { useThumbnail } from '../../state/thumbs.ts'
 import { openAssist, set, useUi } from '../../state/ui.ts'
 import {
   actionScore,
@@ -76,6 +78,21 @@ function ActionItem({ action, onPick }: { action: Action; onPick: (a: Action) =>
   )
 }
 
+/** A media row's frame, its kind's icon until the frame is made; the footage in use now has a check on it. */
+function MediaThumb({ asset, icon, current }: { asset: Asset; icon: ReactNode; current: boolean }) {
+  const url = useThumbnail(asset)
+  return (
+    <span className={styles.thumb}>
+      {url ? <img src={url} alt="" draggable={false} /> : icon}
+      {current && (
+        <span className={styles.thumbCheck}>
+          <Check />
+        </span>
+      )}
+    </span>
+  )
+}
+
 function PageRow({ item, onPick }: { item: PageItem; onPick: (item: PageItem) => void }) {
   return (
     <Command.Item
@@ -86,7 +103,13 @@ function PageRow({ item, onPick }: { item: PageItem; onPick: (item: PageItem) =>
         if (!item.unavailable) onPick(item)
       }}
     >
-      <span className={styles.itemIcon}>{itemIcon(item)}</span>
+      <span className={styles.itemIcon}>
+        {item.thumb ? (
+          <MediaThumb asset={item.thumb} icon={item.icon} current={!!item.current} />
+        ) : (
+          itemIcon(item)
+        )}
+      </span>
       <span className={styles.itemLabel}>{item.label}</span>
       {item.unavailable ? (
         <span className={styles.reason}>{item.unavailable}</span>
@@ -99,14 +122,16 @@ function PageRow({ item, onPick }: { item: PageItem; onPick: (item: PageItem) =>
 
 export function CommandPalette() {
   const open = useUi((s) => s.paletteOpen)
+  /** The list the palette was opened on, as from the clip menu; Esc there closes the palette. */
+  const start = useUi((s) => s.palettePage)
   const returnFocus = useReturnFocus()
   const [search, setSearch] = useState('')
   const [pages, setPages] = useState<PageState[]>([])
   /** A list was opened or left since the palette opened, so the new list's search takes focus. */
   const [moved, setMoved] = useState(false)
-  const page = pages.at(-1)
+  const page = pages.at(-1) ?? (start ? { id: start } : undefined)
   const close = () => {
-    set({ paletteOpen: false })
+    set({ paletteOpen: false, palettePage: null })
     setSearch('')
     setPages([])
     setMoved(false)
@@ -121,7 +146,8 @@ export function CommandPalette() {
     setMoved(true)
   }
   const back = () => {
-    setPages((list) => list.slice(0, -1))
+    if (pages.length) setPages((list) => list.slice(0, -1))
+    else set({ palettePage: null })
     setSearch('')
     setMoved(true)
   }
@@ -145,7 +171,7 @@ export function CommandPalette() {
           aria-describedby={undefined}
           {...returnFocus}
           onEscapeKeyDown={(e) => {
-            if (!page) return
+            if (!pages.length) return
             e.preventDefault()
             back()
           }}
@@ -153,9 +179,10 @@ export function CommandPalette() {
           <RDialog.Title className="sr-only">Command palette</RDialog.Title>
           {/* Keyed by page, so a list starts at its top with its first item selected. */}
           <Command
-            key={pages
-              .map((p) => ('property' in p ? `${p.id}:${p.property.path.join('.')}` : p.id))
-              .join('/')}
+            key={[
+              start ?? '',
+              ...pages.map((p) => ('property' in p ? `${p.id}:${p.property.path.join('.')}` : p.id)),
+            ].join('/')}
             label="Command palette"
             className={styles.command}
             loop
@@ -238,7 +265,7 @@ export function CommandPalette() {
               </span>
               {page ? (
                 <span className={styles.footerRight}>
-                  <Kbd keys="Esc" /> to go back
+                  <Kbd keys="Esc" /> to {pages.length ? 'go back' : 'close'}
                 </span>
               ) : (
                 <span className={styles.footerRight}>Type a sentence to ask Assist</span>
