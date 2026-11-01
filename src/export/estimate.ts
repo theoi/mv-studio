@@ -6,10 +6,12 @@
  * (probeExport): spread over its range, in the looks (what is drawn, see frameLooks) that take most of its frames, at
  * its busiest look, in a transition, and for a loop in its crossfade. Each look's frames take the pace measured in it;
  * a look no run measured takes the slowest pace. After an export, its own pace is kept per project and frame size, shown at once
- * the next time and never undercut by a trial.
+ * the next time and never undercut by a trial. The same paces say where in the output its time goes
+ * (expectedFromTrial), which the export's time left starts from while its own frames are still too few to go by.
  */
 import type { ExportProbe, ProbeWindow } from '../engine/encode.ts'
 import { probeExport } from '../engine/export.ts'
+import type { ExpectedTime } from '../engine/exportTime.ts'
 import { planEdges, planFrame, type LayerPlan } from '../engine/layout.ts'
 import type { MediaFileSource } from '../engine/types.ts'
 import type { Id, Project, Seconds, VisualClip } from '../model/types.ts'
@@ -36,6 +38,8 @@ const SAME_PROJECT = 0.25
 const LOOK_RUNS = 3
 /** A transition's own cost on top of its two clips: it draws both into textures and blends them in a shader. */
 const TRANSITION_BUSYNESS = 3
+/** Points of an expected time's profile: one after each hundredth of the frames, and one at the start. */
+const PROFILE_POINTS = 101
 
 function clipBusyness(clip: VisualClip): number {
   let score = 1 + 2 * clip.effects.filter((e) => e.enabled).length
@@ -100,6 +104,8 @@ interface Look {
 
 interface FrameLooks {
   keys: string[]
+  /** Compositor renders of each frame. */
+  renders: number[]
   looks: Map<string, Look>
 }
 
@@ -159,6 +165,7 @@ function frameLooks(planned: PlannedOutput): FrameLooks {
     return look
   }
   const keys: string[] = []
+  const renders: number[] = []
   const looks = new Map<string, Look>()
   let stretch = 0
   for (let i = 0; i < frames; i++) {
@@ -166,6 +173,7 @@ function frameLooks(planned: PlannedOutput): FrameLooks {
     const drawn = times.map(lookAt)
     const key = drawn.map((d) => d.key).join(' + ')
     keys.push(key)
+    renders.push(times.length)
     let look = looks.get(key)
     if (!look) {
       const busy = Math.max(...drawn.map((d) => d.busyness))
@@ -177,7 +185,7 @@ function frameLooks(planned: PlannedOutput): FrameLooks {
     stretch = i > 0 && keys[i - 1] === key ? stretch + 1 : 1
     if (stretch > look.longest.length) look.longest = { start: i - stretch + 1, length: stretch }
   }
-  const result = { keys, looks }
+  const result = { keys, renders, looks }
   lookCache.set(planned, result)
   return result
 }
@@ -229,12 +237,14 @@ function renderCount(planned: PlannedOutput): number {
   return renders
 }
 
-/** Footage and photo clips the output cuts to after its first frame; each makes the renderer seek or load. */
-function cutCount(planned: PlannedOutput): number {
+/** The frames where the output cuts to a footage or photo clip after its first; each makes the renderer seek or load. */
+function cutFrames(planned: PlannedOutput): number[] {
   const { start, end } = planned.range
-  return Object.values(planned.project.clips).filter(
-    (c) => (c.type === 'video' || c.type === 'image') && c.enabled && c.start > start && c.start < end,
-  ).length
+  return Object.values(planned.project.clips)
+    .filter(
+      (c) => (c.type === 'video' || c.type === 'image') && c.enabled && c.start > start && c.start < end,
+    )
+    .map((c) => Math.min(planned.frames - 1, Math.round((c.start - start) * planned.spec.fps)))
 }
 
 function hasAudio(planned: PlannedOutput): boolean {
@@ -255,9 +265,12 @@ function windowPace(w: ProbeWindow): number {
   return ms / w.renders
 }
 
-/** Seconds the output takes to export, from a trial of some of its frames on this device. */
-export function estimateFromTrial(planned: PlannedOutput, trial: ExportProbe): number {
-  const { keys, looks } = frameLooks(planned)
+/**
+ * Milliseconds each output frame takes to draw and encode by a trial of some of them: its renders at the pace of its
+ * look, plus the first frame's warm-up and a seek at each cut.
+ */
+function frameCosts(planned: PlannedOutput, trial: ExportProbe): number[] {
+  const { keys, renders } = frameLooks(planned)
   // A run's frames after its first are timed; they stand for their look.
   const lookOf = (w: ExportProbe['windows'][number]) => keys[w.first + 1] ?? keys[w.first] ?? ''
   const timed = trial.windows.filter((w) => w.renders > 0)
@@ -271,16 +284,53 @@ export function estimateFromTrial(planned: PlannedOutput, trial: ExportProbe): n
   }
   const slowest = Math.max(0, ...paces.values())
   const paceOf = (key: string) => paces.get(key) ?? slowest
-  let framesMs = 0
-  for (const [key, look] of looks) framesMs += look.renders * paceOf(key)
+  const costs = keys.map((key, i) => (renders[i] ?? 1) * paceOf(key))
   const [first, ...rest] = trial.windows
+  costs[0] = (costs[0] ?? 0) + (first?.firstMs ?? 0)
   // A run's first frame costs its renders plus a seek; after the first run (which also warms up), that seek stands
   // for what each cut to another clip costs.
   const seekMs = median(rest.map((w) => Math.max(0, w.firstMs - paceOf(keys[w.first] ?? ''))))
-  const renderMs =
-    trial.setupMs + (first?.firstMs ?? 0) + framesMs + cutCount(planned) * seekMs + trial.flushMs
+  for (const i of cutFrames(planned)) costs[i] = (costs[i] ?? 0) + seekMs
+  return costs
+}
+
+/** Seconds the output takes to export, from a trial of some of its frames on this device. */
+export function estimateFromTrial(planned: PlannedOutput, trial: ExportProbe): number {
+  const framesMs = frameCosts(planned, trial).reduce((sum, ms) => sum + ms, 0)
+  const renderMs = trial.setupMs + framesMs + trial.flushMs
   const other = FIXED_SECONDS + (hasAudio(planned) ? MIX_SECONDS_PER_SECOND * planned.duration : 0)
   return TRIAL_MARGIN * (renderMs / 1000 + other)
+}
+
+/**
+ * What a trial expects of the output's frames: their part of the estimate, with its margin but without the work
+ * before and after them. The export starts its time left from it (exportTimeLeft), so its first figure is the time
+ * the dialog showed, and a quick intro does not make the rest look quick. Without the margin the figure dropped below
+ * the dialog's when the export started, then rose back as the export's own slower pace took over.
+ */
+export function expectedFromTrial(planned: PlannedOutput, trial: ExportProbe): ExpectedTime {
+  const costs = frameCosts(planned, trial)
+  const sums = [0]
+  for (const ms of costs) sums.push((sums.at(-1) ?? 0) + ms)
+  const total = sums.at(-1) ?? 0
+  const n = costs.length
+  const profile = Array.from({ length: PROFILE_POINTS }, (_, k) => {
+    const share = k / (PROFILE_POINTS - 1)
+    if (!(total > 0)) return share
+    const x = share * n
+    const i = Math.min(n - 1, Math.floor(x))
+    const a = sums[i] ?? 0
+    return (a + ((sums[i + 1] ?? a) - a) * (x - i)) / total
+  })
+  return { seconds: (TRIAL_MARGIN * total) / 1000, profile }
+}
+
+/** What is known before an export of how long an output takes on this device. */
+export interface OutputEstimate {
+  /** Seconds for the whole output, with margins: what the export dialog shows. */
+  seconds: number
+  /** What a trial expects of its frames (expectedFromTrial); missing when no trial of this output ran. */
+  expected?: ExpectedTime
 }
 
 /** A finished export's pace: its whole time per compositor render, and how busy its frames were. */
@@ -369,11 +419,11 @@ export function rememberedEstimate(
 export async function estimateOutput(
   planned: PlannedOutput,
   options: { signal: AbortSignal; media?: MediaFileSource },
-): Promise<number | null> {
+): Promise<Required<OutputEstimate> | null> {
   const trial = await probeExport(planned.project, planned.settings, trialRuns(planned), {
     media: options.media,
     frameTimes: planned.exportOptions.frameTimes,
     signal: options.signal,
   })
-  return trial && estimateFromTrial(planned, trial)
+  return trial && { seconds: estimateFromTrial(planned, trial), expected: expectedFromTrial(planned, trial) }
 }

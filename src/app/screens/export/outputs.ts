@@ -10,13 +10,15 @@ import {
   startExport,
   suggestedOutputs,
   type FramingOverride,
+  type OutputEstimate,
   type OutputSpec,
   type PlannedOutput,
 } from '../../../export/index.ts'
 import type { AspectPreset, ImageClip, Project, VideoClip } from '../../../model/index.ts'
-import { JobError, jobs } from '../../../shared/jobs.ts'
+import { JobError, jobs, type JobSnapshot } from '../../../shared/jobs.ts'
 import { readSubjectTrack } from '../../../vision/analysisData.ts'
-import { formatTime } from '../../format.ts'
+import { formatTime, timeLeft } from '../../format.ts'
+import { outputEstimate } from '../../state/exportEstimate.ts'
 import {
   downloadFile,
   exportResolution,
@@ -24,6 +26,7 @@ import {
   showExport,
   useExports,
   type ExportPreset,
+  type ExportRow,
 } from '../../state/exports.ts'
 import { JOB_KINDS, runningJobs } from '../../state/jobs.ts'
 import { appMedia } from '../../state/media.ts'
@@ -180,6 +183,49 @@ export function cancelledMessage(total: number, saved: number): string {
   return `Export cancelled. ${saved} of ${total} files ${saved === 1 ? 'was' : 'were'} saved to Downloads.`
 }
 
+export interface RowState {
+  fraction: number
+  status: string
+}
+
+/**
+ * Each file's share of the job is its share of the frames; files render in order. The job's time left counts each
+ * file after the one rendering at its estimate, so that file has the rest.
+ */
+export function rowStates(
+  job: JobSnapshot | undefined,
+  rows: ExportRow[],
+  files: Record<string, File>,
+): RowState[] {
+  const total = rows.reduce((sum, r) => sum + r.frames, 0) || 1
+  const f = job?.status === 'succeeded' ? 1 : (job?.progress.fraction ?? 0)
+  let before = 0
+  return rows.map((r, i) => {
+    const start = before / total
+    const share = r.frames / total
+    before += r.frames
+    const own = Math.min(1, Math.max(0, (f - start) / share))
+    if (files[r.id]) return { fraction: 1, status: 'Saved' }
+    if (!job) return { fraction: 0, status: 'Waiting' }
+    if (job.status === 'succeeded') return { fraction: 1, status: 'Saved' }
+    if (job.status === 'cancelled') return { fraction: own, status: 'Cancelled' }
+    if (job.status === 'failed') {
+      const current = f >= start && f < start + share
+      return {
+        fraction: own,
+        status: current ? (job.error?.message ?? 'Failed') : own >= 1 ? 'Not saved' : 'Not exported',
+      }
+    }
+    if (own <= 0) return { fraction: 0, status: 'Waiting' }
+    if (own >= 1) return { fraction: 1, status: 'Rendered' }
+    const pct = `${Math.round(own * 100)}%`
+    const eta = job.progress.etaSeconds
+    const later = rows.slice(i + 1).reduce((sum, w) => sum + (w.seconds ?? NaN), 0)
+    if (eta === undefined || Number.isNaN(later)) return { fraction: own, status: pct }
+    return { fraction: own, status: `${pct} · ${timeLeft(Math.max(0, eta - later)).toLowerCase()}` }
+  })
+}
+
 /**
  * Saves the outputs with the project and renders them one after another in one job; every file downloads when the
  * job finishes. Returns false when another export is still running.
@@ -193,10 +239,16 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
   const saved = exportPreferences(project).outputs ?? null
   if (JSON.stringify(saved) !== JSON.stringify(specs))
     dispatch(setOutputsCommand(project, specs), { label: 'Save export outputs' })
+  const estimates: Record<string, OutputEstimate> = {}
+  for (const p of planned) {
+    const estimate = outputEstimate(project, p)
+    if (estimate) estimates[p.spec.id] = estimate
+  }
   let filesSaved = 0
   let markSaved = (_count: number) => {}
   const handle = startExport(project, specs, {
     media: appMedia,
+    estimates,
     onOutput: (result) => {
       useExports.setState((s) => ({ files: { ...s.files, [result.spec.id]: result.file } }))
       downloadFile(result.file, result.file.name)
@@ -210,6 +262,7 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
       title: outputTitle(project, p.spec),
       aspect: p.spec.aspect,
       frames: p.frames,
+      seconds: estimates[p.spec.id]?.seconds,
     })),
   )
   markSaved = markExportRunning(

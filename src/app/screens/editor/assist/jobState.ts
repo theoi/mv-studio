@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { JobSnapshot } from '../../../../shared/jobs.ts'
+import { timeLeft } from '../../../format.ts'
 import { JOB_KINDS, latestJob, useJobs } from '../../../state/jobs.ts'
 import { useProject } from '../../../state/project.ts'
 import { songState, useSongPending, type SongState } from '../../../state/songAnalysis.ts'
@@ -109,7 +110,5 @@ export function jobLine(job?: JobSnapshot): string | undefined {
 
 export function etaText(job?: JobSnapshot): string | undefined {
   const s = job?.progress.etaSeconds
-  if (s === undefined) return undefined
-  if (s < 50) return 'Less than a minute left'
-  return `About ${Math.round(s / 60)} min left`
+  return s === undefined ? undefined : timeLeft(s)
 }

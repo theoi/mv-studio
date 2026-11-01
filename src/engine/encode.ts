@@ -17,6 +17,7 @@ import { createOpfsWritable } from '../media/opfs.ts'
 import type { Project, Seconds } from '../model/types.ts'
 import { JobError, type JobProgress } from '../shared/jobs.ts'
 import { WebGLCompositor } from './compositor.ts'
+import { exportTimeLeft, type ExpectedTime } from './exportTime.ts'
 import { DecoderFrameProvider } from './frames.ts'
 import type { MediaFileSource, PluginRegistry } from './types.ts'
 
@@ -40,6 +41,8 @@ export interface EncodeJob {
   frameTimes?: (readonly { time: Seconds; weight: number }[])[]
   /** OPFS path of the output file. */
   path: string
+  /** What a trial before the export expects of its frames, for the time left (exportTimeLeft). */
+  expected?: ExpectedTime
 }
 
 export interface EncodeResult {
@@ -221,6 +224,7 @@ export async function encodeExport(
         audioSent += seconds
       }
     }
+    const timeLeft = exportTimeLeft(frameCount, job.expected)
     const started = performance.now()
     for (let i = 0; i < frameCount; i++) {
       throwIfCancelled()
@@ -230,13 +234,12 @@ export async function encodeExport(
       await drawer.draw(i)
       await video.add(t, 1 / fps)
       if (i % 5 === 0 || i === frameCount - 1) {
-        const elapsed = (performance.now() - started) / 1000
-        const rate = (i + 1) / Math.max(elapsed, 1e-3)
         ctx.progress({
           stage: 'render',
           fraction: 0.02 + (0.96 * (i + 1)) / frameCount,
           message: `Rendering frame ${i + 1} of ${frameCount}`,
-          etaSeconds: Math.round((frameCount - i - 1) / rate),
+          // Undefined clears an earlier figure: progress updates are merged.
+          etaSeconds: timeLeft(i + 1, (performance.now() - started) / 1000),
         })
       }
     }

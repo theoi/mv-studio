@@ -14,6 +14,8 @@ export interface ExportRow {
   aspect: AspectPreset
   /** Frames to render: the row's share of the job's progress. */
   frames: number
+  /** The file's estimated export time, which the job's time left counts for it until it renders. */
+  seconds?: number
 }
 
 interface ExportsState {

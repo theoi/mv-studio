@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ExportProbe } from '../../../src/engine/encode.ts'
 import type * as Layout from '../../../src/engine/layout.ts'
+import { expectedShare } from '../../../src/engine/exportTime.ts'
 import {
   estimateFromTrial,
+  expectedFromTrial,
   newOutput,
   planOutput,
   rememberedEstimate,
@@ -316,6 +318,44 @@ describe('trial runs, timed frame by frame', () => {
     const ratio = 17.6 / estimateFromTrial(planned, probe)
     expect(ratio).toBeGreaterThanOrEqual(0.67)
     expect(ratio).toBeLessThanOrEqual(1.5)
+  })
+})
+
+describe('what a trial expects of the frames, for the time left while exporting', () => {
+  it("has the busy frames where they are, and is the frames' part of the estimate the dialog shows", () => {
+    const project = plain()
+    addBusy(project, 40, 3)
+    const planned = plan(project)
+    const firsts = trialRuns(planned).map((r) => r[0]!)
+    const busy = (frame: number) => frame >= 40 * 30 && frame < 43 * 30
+    const probe = (
+      setupMs: number,
+      flushMs: number,
+      ms = (f: number): number => (busy(f + 1) ? 50 : 10),
+    ) => ({
+      ...trial(firsts.map(ms), 0, firsts),
+      setupMs,
+      flushMs,
+    })
+    const expected = expectedFromTrial(planned, probe(500, 300))
+    // What the estimate adds over a trial whose frames took no time; the work before and after them is left out.
+    const framesPart =
+      estimateFromTrial(planned, probe(0, 0)) -
+      estimateFromTrial(
+        planned,
+        probe(0, 0, () => 0),
+      )
+    expect(expected.seconds).toBeCloseTo(framesPart, 6)
+    // 90 busy frames at 50 ms, the rest at 10 ms, and the first frame's own 10 ms.
+    const framesMs = 90 * 50 + (planned.frames - 90) * 10 + 10
+    expect(expectedShare(expected, 0)).toBe(0)
+    expect(expectedShare(expected, 1)).toBeCloseTo(1, 9)
+    // 5% of the frames, 21% of the time.
+    expect(expectedShare(expected, 43 / 60) - expectedShare(expected, 40 / 60)).toBeCloseTo(
+      4500 / framesMs,
+      1,
+    )
+    expect(expectedShare(expected, 40 / 60)).toBeCloseTo(12_010 / framesMs, 1)
   })
 })
 describe('the remembered pace of an earlier export', () => {

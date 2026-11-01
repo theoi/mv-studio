@@ -10,6 +10,7 @@ import {
   estimateOutput,
   estimateRenderSeconds,
   rememberedEstimate,
+  type OutputEstimate,
   type PlannedOutput,
 } from '../../export/index.ts'
 import type { Project } from '../../model/index.ts'
@@ -19,10 +20,10 @@ import { appMedia } from './media.ts'
 /** Lets quick changes to the outputs settle, and the dialog's stills render first, before a trial starts. */
 const TRIAL_DELAY_MS = 400
 
-/** Trial estimates in seconds by `trialKey`; null where no trial could run (the render worker cannot draw). */
-const trials = new Map<string, number | null>()
+/** Trial estimates by `trialKey`; null where no trial could run (the render worker cannot draw). */
+const trials = new Map<string, Required<OutputEstimate> | null>()
 /** The latest trial estimate of each output of a project by `latestKey`, whatever the project drew then. */
-const latest = new Map<string, number | null>()
+const latest = new Map<string, Required<OutputEstimate> | null>()
 const listeners = new Set<() => void>()
 let version = 0
 
@@ -72,30 +73,50 @@ function latestKey(project: Project, planned: PlannedOutput): string {
 
 /** The trial estimates made so far, by output: for tests and for checking estimates against real exports. */
 export function trialEstimates(): Record<string, number | null> {
-  return Object.fromEntries(trials)
+  return Object.fromEntries([...trials].map(([key, trial]) => [key, trial && trial.seconds]))
 }
 
 async function runTrials(project: Project, outputs: PlannedOutput[], signal: AbortSignal): Promise<void> {
   for (const planned of outputs) {
     const key = trialKey(project, planned)
-    let seconds: number | null = null
+    let estimate: Required<OutputEstimate> | null = null
     try {
-      seconds = await estimateOutput(planned, { signal, media: appMedia })
+      estimate = await estimateOutput(planned, { signal, media: appMedia })
     } catch (error) {
       if (signal.aborted) return
       console.warn('Could not time a trial of the export', error)
     }
     if (signal.aborted) return
-    trials.set(key, seconds)
-    latest.set(latestKey(project, planned), seconds)
+    trials.set(key, estimate)
+    latest.set(latestKey(project, planned), estimate)
     changed()
   }
 }
 
 /**
+ * What is known of how long the output takes to export on this device, or null while that is still being worked
+ * out. A remembered pace of an earlier export counts at once, and a trial never brings the estimate below it. What a
+ * trial expects of the frames comes only from a trial of the project as it draws now.
+ */
+export function outputEstimate(project: Project, planned: PlannedOutput): OutputEstimate | null {
+  const remembered = rememberedEstimate(project.id, planned)
+  const key = trialKey(project, planned)
+  const current = trials.has(key)
+  const trial = current ? trials.get(key) : latest.get(latestKey(project, planned))
+  if (trial)
+    return {
+      seconds: Math.max(trial.seconds, remembered ?? 0),
+      ...(current ? { expected: trial.expected } : {}),
+    }
+  if (remembered !== null) return { seconds: remembered }
+  // Without a trial the export would run on the main thread too; only the rough frame-rate guess is left.
+  if (trial === null) return { seconds: estimateRenderSeconds(planned) }
+  return null
+}
+
+/**
  * Seconds the checked outputs take to export on this device, or null while that is still being worked out. Trials
- * run while `open` (the dialog shows its outputs). A remembered pace of an earlier export shows at once, and a trial
- * never brings the estimate below it.
+ * run while `open` (the dialog shows its outputs).
  */
 export function useExportEstimate(project: Project, outputs: PlannedOutput[], open: boolean): number | null {
   useSyncExternalStore(subscribe, () => version)
@@ -117,14 +138,9 @@ export function useExportEstimate(project: Project, outputs: PlannedOutput[], op
   }, [keys, open, exporting])
   let total = 0
   for (const planned of outputs) {
-    const remembered = rememberedEstimate(project.id, planned)
-    const key = trialKey(project, planned)
-    const trial = trials.has(key) ? trials.get(key) : latest.get(latestKey(project, planned))
-    if (typeof trial === 'number') total += Math.max(trial, remembered ?? 0)
-    else if (remembered !== null) total += remembered
-    // Without a trial the export would run on the main thread too; only the rough frame-rate guess is left.
-    else if (trial === null) total += estimateRenderSeconds(planned)
-    else return null
+    const estimate = outputEstimate(project, planned)
+    if (!estimate) return null
+    total += estimate.seconds
   }
   return total
 }
