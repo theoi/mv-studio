@@ -100,7 +100,7 @@ export function ReactPanel({ target }: { target: ReactionTarget }) {
           <Button
             size="sm"
             variant="ghost"
-            className={styles.noteAction}
+            className={`${styles.forwardAction} ${styles.noteAction}`}
             onClick={() => apply(upgrade.reaction.id)}
           >
             Listen to {upgrade.listening}
