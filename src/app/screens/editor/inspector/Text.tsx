@@ -13,7 +13,7 @@ import {
   Switch,
   TextArea,
 } from '../../../ds/Fields.tsx'
-import { formatTime } from '../../../format.ts'
+import { formatSpan } from '../../../format.ts'
 import { dispatch, editor, useProject } from '../../../state/project.ts'
 import {
   fontChoice,
@@ -368,7 +368,7 @@ export function TextInspector({ clip }: { clip: Extract<Clip, { type: 'text' }> 
       <Header
         icon={<Type />}
         title={clip.name ?? 'Text'}
-        meta={`Text · ${formatTime(clip.start, true)} – ${formatTime(clip.start + clip.duration, true)}`}
+        meta={`Text · ${formatSpan(clip.start, clip.duration)}`}
       />
       <Section title="Text">
         <div className={styles.padded}>

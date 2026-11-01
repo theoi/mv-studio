@@ -3,7 +3,7 @@ import { pluginRegistry } from '../../../../engine/registry.ts'
 import { STEM_NAMES, type Clip, type StemName } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { FieldRow, Section, Select } from '../../../ds/Fields.tsx'
-import { formatTime } from '../../../format.ts'
+import { formatSpan } from '../../../format.ts'
 import { dispatch, songAnalysis, useProject } from '../../../state/project.ts'
 import { openAssist } from '../../../state/ui.ts'
 import { CompositingSection, Header } from './parts.tsx'
@@ -56,7 +56,7 @@ export function GeneratorInspector({ clip }: { clip: Extract<Clip, { type: 'gene
       <Header
         icon={<AudioWaveform />}
         title={clip.name ?? def?.name ?? 'Visual'}
-        meta={`${def?.category ?? 'Visual'} · ${formatTime(clip.start)} – ${formatTime(clip.start + clip.duration)}`}
+        meta={`${def?.category ?? 'Visual'} · ${formatSpan(clip.start, clip.duration)}`}
       />
       <Section title="Reacts to">
         <FieldRow label="Source" trailing={<span className={styles.trailSpacer} />}>

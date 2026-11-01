@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { RotateCcw } from 'lucide-react'
 import type { BlendMode, Clip, PropertyPath, VisualClip } from '../../../../model/index.ts'
 import { IconButton } from '../../../ds/Button.tsx'
@@ -9,8 +9,27 @@ import { blendModes } from './blendModes.ts'
 import styles from '../Inspector.module.css'
 
 /**
- * Top of every inspector: a thumbnail or icon, the selection's name and a one-line summary. A second line
- * (`metaBelow`) is for a summary that would not fit the narrow inspector on one line without being cut.
+ * A summary line ("Background · 1:04.00 – 1:36.00 · 32.0 s") that wraps only between its " · " parts when it doesn't
+ * fit, so a time or a length is never split or cut; only a part wider than the line alone is cut. The separator stays
+ * at the end of its part, so the text is the summary as written.
+ */
+export function MetaLine({ text, className }: { text: string; className?: string }) {
+  const parts = text.split(' · ')
+  return (
+    <div className={[styles.meta, styles.metaParts, 'tnum', className].filter(Boolean).join(' ')}>
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {i > 0 && ' '}
+          <span className={styles.metaPart}>{i < parts.length - 1 ? `${part} ·` : part}</span>
+        </Fragment>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Top of every inspector: a thumbnail or icon, the selection's name and a summary, on one line when it fits (see
+ * MetaLine). A second line (`metaBelow`) is for a summary that would not fit the narrow inspector on one line.
  */
 export function Header({
   icon,
@@ -34,8 +53,8 @@ export function Header({
       )}
       <div className={styles.headerText}>
         <div className={styles.title}>{title}</div>
-        <div className={`${styles.meta} tnum`}>{meta}</div>
-        {metaBelow && <div className={`${styles.meta} tnum`}>{metaBelow}</div>}
+        <MetaLine text={meta} />
+        {metaBelow && <MetaLine text={metaBelow} />}
       </div>
     </div>
   )

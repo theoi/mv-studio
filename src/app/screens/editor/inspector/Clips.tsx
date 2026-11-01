@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type { Clip, Project, VideoClip, VisualClip } from '../../../../model/index.ts'
 import { FieldRow, Section, Select, Slider, Switch } from '../../../ds/Fields.tsx'
 import { keyName } from '../../../ds/keys.ts'
-import { formatTime } from '../../../format.ts'
+import { formatSpan } from '../../../format.ts'
 import { dispatch, editor, hasShotSound, useProject } from '../../../state/project.ts'
 import {
   setShotsMuted,
@@ -34,11 +34,7 @@ export function ClipsInspector({ ids }: { ids: string[] }) {
   const shots = clips.filter((c) => hasShotSound(project, c))
   return (
     <>
-      <Header
-        icon={<Layers />}
-        title={`${clips.length} clips`}
-        meta={`${formatTime(start)} – ${formatTime(end)}`}
-      />
+      <Header icon={<Layers />} title={`${clips.length} clips`} meta={formatSpan(start, end - start)} />
       {visual.length > 0 && <SharedCompositing clips={visual} />}
       {shots.length > 0 && <SharedSound project={project} shots={shots} />}
       <p className={styles.note}>
