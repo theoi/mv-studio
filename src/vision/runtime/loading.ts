@@ -5,12 +5,12 @@
 import type { JobProgress } from '../../shared/jobs.ts'
 import { withModelProgress } from '../../shared/transformers.ts'
 import { modelDownloads } from './downloads.ts'
-import type { VisionDtype, VisionModel } from './models.ts'
+import { VISION_MODEL_TITLES, type VisionDtype, type VisionModel } from './models.ts'
 
 /**
  * Loads `model` inside a worker call: first-time downloads of its weights (in `dtype`, for Transformers.js models)
- * go to `report` as its download line, with a last report once `load` ends. The loaders name the model in their
- * errors (`downloadFailed`, `startFailed`).
+ * go to `report` as its download line, with a last report once `load` ends. Downloads through Transformers.js name
+ * the model in their errors, as the loaders do (`downloadFailed`, `startFailed`).
  */
 export async function loadingModel<T>(
   model: VisionModel,
@@ -20,7 +20,7 @@ export async function loadingModel<T>(
 ): Promise<T> {
   const downloads = modelDownloads(model, report, dtype)
   try {
-    return await withModelProgress(downloads.file, load)
+    return await withModelProgress(downloads.file, load, VISION_MODEL_TITLES[model])
   } finally {
     downloads.end()
   }

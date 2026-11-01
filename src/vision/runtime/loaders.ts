@@ -7,7 +7,7 @@ import { fetchModelFile, type ModelDescriptor } from '../../shared/models.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { downloadProgress } from '../../shared/transformers.ts'
 import { downloadFailed, startFailed } from '../errors.ts'
-import { MEDIAPIPE_WASM_BASE, type VisionModel } from './models.ts'
+import { MEDIAPIPE_WASM_BASE, VISION_MODEL_TITLES, type VisionModel } from './models.ts'
 import { blockTelemetry } from './telemetry.ts'
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -34,7 +34,9 @@ export async function mediapipeModel(model: ModelDescriptor, name: VisionModel):
   if (!file) throw new JobError('internal', `${model.name} has no model file`)
   const progress = downloadProgress(file.url.slice(file.url.lastIndexOf('/') + 1), file.url)
   try {
-    return new Uint8Array(await fetchModelFile(file, { onProgress: progress }))
+    return new Uint8Array(
+      await fetchModelFile(file, { onProgress: progress, title: VISION_MODEL_TITLES[name] }),
+    )
   } catch (err) {
     throw downloadFailed(name, err)
   }

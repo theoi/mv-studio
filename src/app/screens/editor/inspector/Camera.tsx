@@ -193,7 +193,7 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
               {failure}
             </span>
             Your project is unchanged.{' '}
-            {move?.flat ? 'Choose Add depth to try again.' : 'Choose a move again to retry.'}
+            {move?.flat ? 'Choose Add depth when you’re ready.' : 'Choose a move again when you’re ready.'}
           </p>
           {addDepth}
         </>

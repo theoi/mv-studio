@@ -6,6 +6,7 @@ import { downloadFailed, startFailed, visionError } from '../errors.ts'
 import {
   downloadProgress,
   loadTransformers,
+  namedMissingFile,
   pinRevision,
   registerModelFiles,
 } from '../../shared/transformers.ts'
@@ -15,6 +16,7 @@ import {
   hfRevision,
   transformersFiles,
   transformersRevisions,
+  VISION_MODEL_TITLES,
   VISION_MODELS,
   visionDtype,
   type VisionDtype,
@@ -100,10 +102,12 @@ function toUint8(values: Float32Array | number[], invert = false): Uint8Array {
 
 /**
  * Names model `name` in an error from loading it. JobErrors come from the shared loader, which Transformers.js fetches
- * through, so they are downloads that failed; anything else failed to start the model.
+ * through, so they are downloads that failed, and so is a file Transformers.js found missing (`namedMissingFile`);
+ * anything else failed to start the model.
  */
 function loadError(name: VisionModel, err: unknown) {
-  return err instanceof JobError ? downloadFailed(name, err) : startFailed(name, err)
+  const e = namedMissingFile(err, VISION_MODEL_TITLES[name])
+  return e instanceof JobError ? downloadFailed(name, e) : startFailed(name, e)
 }
 
 interface ImageModel {
@@ -194,7 +198,10 @@ async function fetchEmbeddingWeights(model: EmbeddingModel, key: string): Promis
     files.map(async (f) => {
       if (await modelCache.has(f.url).catch(() => false)) return
       const name = f.url.slice(f.url.lastIndexOf('/') + 1)
-      await fetchModelFile(f, { onProgress: downloadProgress(name, f.url) })
+      await fetchModelFile(f, {
+        onProgress: downloadProgress(name, f.url),
+        title: VISION_MODEL_TITLES.tagger,
+      })
     }),
   )
 }

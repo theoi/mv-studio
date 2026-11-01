@@ -49,13 +49,16 @@ export async function withModelProgress<T>(
 
 /**
  * For a required file that `sharedFetch` answered as missing (`NOT_FOUND`), Transformers.js throws an error of its
- * own with the file's URL. With the model's title, that becomes the loader's error for the status, naming the model.
- * Optional files never get here: Transformers.js skips them instead.
+ * own with the file's URL in quotes. With the model's title, that becomes the loader's error for the status, naming
+ * the model. Optional files never get here: Transformers.js skips them instead.
  */
-function namedMissingFile(err: unknown, title: string): unknown {
+export function namedMissingFile(err: unknown, title: string): unknown {
   if (!(err instanceof Error) || err.name !== 'ModelFileNotFoundError') return err
   const { status } = err as Error & { status?: number | null }
-  return status ? downloadStatusError(status, title, err.message, { message: err.message }) : err
+  const url = /"(https?:\/\/[^"]+)"/.exec(err.message)?.[1]
+  return status
+    ? downloadStatusError(status, title, err.message, { message: err.message, ...(url ? { url } : {}) })
+    : err
 }
 
 /** Progress callback for downloading `name` (from `url`) inside the current `withModelProgress` call. */
