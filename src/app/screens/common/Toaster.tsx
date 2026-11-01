@@ -70,6 +70,17 @@ function ToastItem({ toast: t }: { toast: Toast }) {
           Show
         </button>
       )}
+      {t.fix && (
+        <button
+          className={styles.toastAction}
+          onClick={() => {
+            t.fix!.run()
+            close()
+          }}
+        >
+          {t.fix.label}
+        </button>
+      )}
       {t.action && (
         <button
           className={styles.toastAction}

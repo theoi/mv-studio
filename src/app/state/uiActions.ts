@@ -329,6 +329,13 @@ export const UI_ACTIONS: readonly UiAction[] = [
     search: ['put lyrics behind', 'lyrics behind person'],
   },
   { area: 'Inspector', name: 'Change look', palette: 'looks', search: ['change look'] },
+  {
+    area: 'Inspector',
+    name: 'Own sound',
+    palette: 'shotSound',
+    search: ['mute shot', 'shot sound', 'hear the clip', 'original audio', 'camera sound', 'silent clip'],
+  },
+  { area: 'Inspector', name: 'Volume', palette: 'shotVolume', search: ['shot volume', 'clip volume'] },
   { area: 'Inspector', name: 'Aspect ratio', palette: 'aspect9x16', search: ['aspect ratio'] },
 
   { area: 'Assist', name: 'Ask Assist', palette: 'ask', search: ['ask assist', 'ask ai'] },

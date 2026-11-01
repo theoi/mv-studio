@@ -19,7 +19,8 @@ import {
 import { addAsset, openImport } from '../../../state/importer.ts'
 import { editor, sectionKind, sectionName, sectionsOf, useProject } from '../../../state/project.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
-import { toast } from '../../../state/ui.ts'
+import { addedToast } from '../../../state/shotSound.ts'
+import { get, toast } from '../../../state/ui.ts'
 import { CancelButton, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -85,12 +86,21 @@ function Pick({ asset, result, section }: { asset: Asset; result: FootageResult;
     )
     if (!added) return
     const label = editor.undoLabel()
-    toast(`Added ${name} to ${sectionName(section)}`, {
-      label: 'Undo',
-      run: () => {
-        if (editor.undoLabel() === label) editor.undo()
+    const { selection } = get()
+    const toastFor = addedToast(
+      `Added ${name} to ${sectionName(section)}`,
+      selection.type === 'clip' ? [selection.id] : [],
+    )
+    toast(
+      toastFor.message,
+      {
+        label: 'Undo',
+        run: () => {
+          if (editor.undoLabel() === label) editor.undo()
+        },
       },
-    })
+      { fix: toastFor.fix },
+    )
   }
   return (
     <Tooltip

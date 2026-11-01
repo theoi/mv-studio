@@ -530,6 +530,14 @@
   pointer-events: none;
 }
 
+/* A shot that plays its own sound; muted shots, the default, show nothing. */
+.soundIcon {
+  width: 10px;
+  height: 10px;
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+
 .selected,
 .selected:hover {
   z-index: 2;
