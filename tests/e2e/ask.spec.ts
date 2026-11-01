@@ -233,6 +233,52 @@ test('a slow model shows the time so far, and Cancel stops the request', async (
   expect((await projectState(page)).clips).toBe(before.clips)
 })
 
+test('the request to the model goes straight to the network, not through the isolation service worker', async ({
+  page,
+}) => {
+  await model(page, [addTitle])
+  const viaWorker: string[] = []
+  page.context().on('request', (request) => {
+    if (request.serviceWorker()) viaWorker.push(request.url())
+  })
+  await openAsk(page)
+  expect(await page.evaluate(() => window.crossOriginIsolated && !!navigator.serviceWorker.controller)).toBe(
+    true,
+  )
+
+  const answered = page.waitForResponse((r) => r.url() === CHAT && r.request().method() === 'POST')
+  await send(page, 'add a title at the start')
+  // Chrome gives a service worker about 5 minutes to answer one request, and a local model can take longer.
+  expect((await answered).fromServiceWorker()).toBe(false)
+  await expect(page.getByText('Added a title at the start', { exact: true }).first()).toBeVisible()
+  expect(viaWorker.filter((url) => url.startsWith('http://localhost:11434'))).toEqual([])
+
+  // The site's own files still come through the worker, which keeps the page isolated.
+  const own = page.waitForResponse((r) => r.url().endsWith('/favicon.svg'))
+  await page.evaluate(() => fetch('./favicon.svg', { cache: 'no-store' }))
+  expect((await own).fromServiceWorker()).toBe(true)
+})
+
+test('a model server that is not running says it could not connect', async ({ page }) => {
+  await page.context().route(CHAT, (route) => route.abort('connectionrefused'))
+  await openAsk(page)
+  await send(page, 'make the chorus more intense')
+  await expect(page.getByText("Couldn't connect to Ollama on this computer", { exact: true })).toBeVisible()
+  await expect(page.getByText(/^No answer from http:\/\/localhost:11434\/v1\./)).toBeVisible()
+})
+
+test('a model that never answers stops at the answer time limit and says it took too long', async ({
+  page,
+}) => {
+  await model(page, ['hang'])
+  await openAsk(page, { ...OLLAMA, timeoutSeconds: 20 })
+  await send(page, 'make the chorus more intense')
+  await expect(page.getByText('The model took too long to answer', { exact: true })).toBeVisible({
+    timeout: 40_000,
+  })
+  await expect(page.getByText('No answer after 20 s, so MV Studio stopped waiting.')).toBeVisible()
+})
+
 test('a sentence typed in the command palette goes to the Ask box', async ({ page }) => {
   const bodies = await model(page, [addTitle])
   await openHarness(page)
