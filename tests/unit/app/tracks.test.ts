@@ -69,7 +69,7 @@ describe('track order', () => {
     const [a, b, , x] = editor.getProject().tracks
     moveTrackBy(b!.id, 1)
     expect(moveAnnouncement(editor.getProject(), b!.id, 1, true)).toBe('Moved the B track down, to 3 of 3.')
-    expect(moveAnnouncement(editor.getProject(), a!.id, -1, false)).toBe("The A track can't move further up.")
+    expect(moveAnnouncement(editor.getProject(), a!.id, -1, false)).toBe('The A track can’t move further up.')
     moveTrackBy(x!.id, 1)
     expect(moveAnnouncement(editor.getProject(), x!.id, 1, true)).toBe('Moved the X track down, to 2 of 2.')
   })

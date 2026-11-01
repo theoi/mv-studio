@@ -80,7 +80,7 @@ describe('compileOperations', () => {
     ).toEqual(['Hold on hold on', 'tonight'])
     expect(() =>
       run(project, [{ op: 'set', clips: { section: 'x9' }, property: 'opacity', value: 0.5 }], summary.ids),
-    ).toThrow(/section x9 doesn't exist; the song sections are s\d+, s\d+/)
+    ).toThrow(/section x9 doesn’t exist; the song sections are s\d+, s\d+/)
   })
 
   it('describes a new music reaction on a color adjustment without a neutral value change', async () => {
@@ -267,13 +267,13 @@ describe('compileOperations', () => {
       { op: 'remove', clips: ['c999'] },
     ])
     expect(missing).toBeInstanceOf(OperationError)
-    expect((missing as OperationError).message).toBe("Operation 2 (remove): clip c999 doesn't exist")
+    expect((missing as OperationError).message).toBe('Operation 2 (remove): clip c999 doesn’t exist')
     expect(
       (attempt([{ op: 'set', clips: { type: 'audio' }, property: 'fontSize', value: 50 }]) as Error).message,
-    ).toMatch(/fontSize doesn't apply to that clip/)
+    ).toMatch(/fontSize doesn’t apply to that clip/)
     expect(
       (attempt([{ op: 'add_effect', clips: { type: 'video' }, effect: 'lens-flare' }]) as Error).message,
-    ).toMatch(/effect lens-flare isn't in the catalog/)
+    ).toMatch(/effect lens-flare isn’t in the catalog/)
   })
 
   it('reports a locked track instead of editing it', async () => {

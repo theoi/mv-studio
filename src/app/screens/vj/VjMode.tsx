@@ -133,7 +133,7 @@ function undoTakes(kept: number): number {
 
 function failedTakeMessage(take: VjSnapshot['takes'][number]): string {
   const why = take.error ? `: ${take.error.replace(/\.$/, '')}` : ''
-  return `Take ${take.number} could not be added${why}. The timeline is unchanged.`
+  return `Take ${take.number} couldn’t be added${why}. The timeline is unchanged.`
 }
 
 /** Runs the engine preview and the VJ session on the stage while VJ mode is open. */
@@ -164,7 +164,7 @@ function useEngine(
     try {
       preview = new PreviewController({ canvas, media: appMedia })
     } catch (error) {
-      console.error('The VJ preview could not start', error)
+      console.error('The VJ preview couldn’t start', error)
       toast('The live preview needs WebGL 2. Turn on hardware acceleration in your browser settings.')
       return
     }

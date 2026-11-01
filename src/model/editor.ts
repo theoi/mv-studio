@@ -200,7 +200,7 @@ export class ProjectEditor {
       const hit = written.find((p) => pathsOverlap(p.path, recorded.path))
       if (hit) {
         console.warn(
-          `Derived edit ${commands[0]?.type} writes ${hit.path.join('.')}, which the undo step "${entry.label}" also changes`,
+          `Derived edit ${commands[0]?.type} writes ${hit.path.join('.')}, which the undo step “${entry.label}” also changes`,
         )
         return
       }

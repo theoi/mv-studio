@@ -377,7 +377,7 @@ export function textStyleCommands(
   options: { animation?: boolean; karaoke?: boolean } = {},
 ): EditCommand[] {
   const preset = textStyle(styleId)
-  if (!preset) throw new Error(`Unknown text style "${styleId}"`)
+  if (!preset) throw new Error(`Unknown text style “${styleId}”`)
   const locked = new Set(project.tracks.filter((t) => t.locked).map((t) => t.id))
   const commands: EditCommand[] = []
   for (const id of clipIds) {

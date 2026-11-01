@@ -72,7 +72,7 @@ export function moveAnnouncement(p: Project, trackId: string, step: -1 | 1, move
   const track = p.tracks.find((t) => t.id === trackId)
   const way = step < 0 ? 'up' : 'down'
   if (!track) return ''
-  if (!moved) return `The ${track.name} track can't move further ${way}.`
+  if (!moved) return `The ${track.name} track can’t move further ${way}.`
   const { min, max } = trackMoveRange(p, trackId)
   const place = p.tracks.indexOf(track) - min + 1
   return `Moved the ${track.name} track ${way}, to ${place} of ${max - min + 1}.`

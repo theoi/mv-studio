@@ -485,7 +485,7 @@ export class PreviewController {
       .then(
         (worker): FrameRenderer => new WorkerRenderer(worker, this.frames),
         (error: unknown) => {
-          console.warn('The preview worker could not start; drawing on the main thread', error)
+          console.warn('The preview worker couldn’t start; drawing on the main thread', error)
           return onMainThread()
         },
       )

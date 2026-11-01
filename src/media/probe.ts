@@ -89,7 +89,7 @@ async function probeAv(file: Blob, guess: 'audio' | 'video'): Promise<MediaProbe
     if (error instanceof JobError) throw error
     throw new JobError(
       'decode',
-      'Could not read this media file. It may be damaged or in an unsupported format.',
+      'Couldn’t read this media file. It may be damaged or in an unsupported format.',
       { cause: error },
     )
   } finally {
@@ -104,7 +104,7 @@ async function probeImage(file: Blob): Promise<MediaProbe> {
     bitmap.close()
     return out
   } catch (error) {
-    throw new JobError('decode', 'Could not read this image', { cause: error })
+    throw new JobError('decode', 'Couldn’t read this image', { cause: error })
   }
 }
 
@@ -114,7 +114,7 @@ async function probeFont(file: Blob, name: string): Promise<MediaProbe> {
     await face.load()
     return {}
   } catch (error) {
-    throw new JobError('decode', 'Could not read this font', { cause: error })
+    throw new JobError('decode', 'Couldn’t read this font', { cause: error })
   }
 }
 

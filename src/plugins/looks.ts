@@ -77,8 +77,8 @@ export function createLookRegistry(looks: readonly LookDefinition[] = BUILTIN_LO
     get: (id) => byId.get(id),
     list: () => [...byId.values()],
     register(look) {
-      if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(look.id)) throw new Error(`Invalid look id "${look.id}"`)
-      if (look.id === ORIGINAL_LOOK.id) throw new Error(`The look id "${look.id}" is reserved`)
+      if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(look.id)) throw new Error(`Invalid look id “${look.id}”`)
+      if (look.id === ORIGINAL_LOOK.id) throw new Error(`The look id “${look.id}” is reserved`)
       byId.set(look.id, look)
       for (const listener of listeners) listener()
     },
@@ -185,7 +185,7 @@ export function applyLookCommands(
   options: ApplyLookOptions = {},
 ): EditCommand[] {
   const look = (options.looks ?? lookRegistry).get(lookId)
-  if (!look) throw new Error(`Unknown look "${lookId}"`)
+  if (!look) throw new Error(`Unknown look “${lookId}”`)
   const registry = options.registry ?? pluginRegistry
   const locked = new Set(project.tracks.filter((t) => t.locked).map((t) => t.id))
   const commands: EditCommand[] = []

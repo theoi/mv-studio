@@ -242,10 +242,10 @@ describe('refuseTrack', () => {
     expect(refusalToast(p, refuseTrack(p, clip, locked)!)).toBe(
       'That track is locked. Unlock it to drop clips there.',
     )
-    expect(refusalToast(p, refuseTrack(p, clip, lyrics)!)).toBe("Video clips can't go on the Lyrics track.")
-    expect(refusalToast(p, refuseTrack(p, title, lyrics)!)).toBe("Text clips can't go on the Lyrics track.")
+    expect(refusalToast(p, refuseTrack(p, clip, lyrics)!)).toBe('Video clips can’t go on the Lyrics track.')
+    expect(refusalToast(p, refuseTrack(p, title, lyrics)!)).toBe('Text clips can’t go on the Lyrics track.')
     expect(refusalToast(p, refuseTrack(p, clip, audio)!)).toBe(
-      `Video clips can't go on the ${audio.name} track.`,
+      `Video clips can’t go on the ${audio.name} track.`,
     )
     expect(refusalToast(p, { reason: 'room' })).toBe(
       'No room there. Drop it on an empty stretch or another track.',
@@ -291,7 +291,7 @@ describe('refuseTrack', () => {
       const { p, look, shot } = lanes()
       const refusal = refuseTrack(p, shot, look)!
       expect(refusalLabel(refusal)).toBe('Looks only')
-      expect(refusalToast(p, refusal)).toBe("Video clips can't go on the Look track.")
+      expect(refusalToast(p, refusal)).toBe('Video clips can’t go on the Look track.')
     })
 
     it('keeps looks off every track but a look lane, even an empty one', () => {
@@ -300,7 +300,7 @@ describe('refuseTrack', () => {
       for (const track of [overlay, empty, audio]) {
         const refusal = refuseTrack(p, neon, track)!
         expect(refusalLabel(refusal)).toBe('No looks here')
-        expect(refusalToast(p, refusal)).toBe(`Look clips can't go on the ${track.name} track.`)
+        expect(refusalToast(p, refusal)).toBe(`Look clips can’t go on the ${track.name} track.`)
       }
     })
 

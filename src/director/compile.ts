@@ -292,7 +292,7 @@ export function transition(
 ): Transition | undefined {
   if (!spec) return undefined
   if (!findItem(ctx.catalog.transitions, spec.kind)) {
-    warn(ctx, `Transition "${spec.kind}" isn't available, so hard cuts are used instead.`)
+    warn(ctx, `Transition “${spec.kind}” isn’t available, so hard cuts are used instead.`)
     return undefined
   }
   const duration = round3(Math.min(spec.duration, clipDuration / 2))
@@ -311,7 +311,7 @@ function clampParam(value: ParamValue, min?: number, max?: number): ParamValue {
 export function effectInstance(spec: EffectSpec, ctx: ParamContext): EffectInstance | undefined {
   const item = findItem(ctx.catalog.effects, spec.effectId)
   if (!item) {
-    warn(ctx, `Effect "${spec.effectId}" isn't available and was left out.`)
+    warn(ctx, `Effect “${spec.effectId}” isn’t available and was left out.`)
     return undefined
   }
   const known = item.params ?? []
@@ -440,7 +440,7 @@ function shotClip(
   } else if (s.type === 'generator') {
     const item = findItem(ctx.catalog.generators, s.generatorId)
     if (!item) {
-      warn(ctx, `Visualizer "${s.generatorId}" isn't available, so a plain background is used.`)
+      warn(ctx, `Visualizer “${s.generatorId}” isn’t available, so a plain background is used.`)
       clip = { ...base(), type: 'solid', color: { value: '#101018' } }
     } else {
       const params: Record<string, Animatable<ParamValue>> = {}
@@ -573,7 +573,7 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx): TextClip | undefined {
   if (t.animationPresetId) {
     if (findItem(ctx.catalog.textPresets, t.animationPresetId))
       clip.animation = { presetId: t.animationPresetId, params: {} }
-    else warn(ctx, `Text animation "${t.animationPresetId}" isn't available, so text appears without it.`)
+    else warn(ctx, `Text animation “${t.animationPresetId}” isn’t available, so text appears without it.`)
   }
   if (t.karaoke && clip.lyricLineId) {
     clip.karaoke = {

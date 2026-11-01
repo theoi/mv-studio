@@ -179,7 +179,7 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
       // The size the layout effect below measured before this ran (or a zoom level or full screen set).
       connection = connectPreview(canvas, sizeRef.current)
     } catch (error) {
-      console.error('The preview could not start', error)
+      console.error('The preview couldn’t start', error)
       void Promise.resolve().then(() => setStatus('failed'))
       return
     }

@@ -242,7 +242,7 @@ first request, also after a clarifying question), and a summary over 160 charact
   with a time `range` to highlight).
 - `reply`: the model's answer, no changes.
 - `error`: `title`, `message`, `steps`; `needsSetup` means no LLM is configured, so link to Settings. When the
-  model can't produce a valid edit after the repair rounds, the title is "Couldn't make that edit" and the steps
+  model still gives no valid edit after the repair rounds, the title is "Couldn’t make that edit" and the steps
   suggest rephrasing and, for small models, a bigger one.
 
 Pass `smallModel: () => !!modelHint(cloud.settings.get().llm)` (with `modelHint` from `src/cloud/llm/presets.ts`)

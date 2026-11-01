@@ -34,7 +34,7 @@ function bridged(getFile: (asset: Asset) => Promise<Blob>) {
 
 describe('the media port', () => {
   it.each([
-    new JobError('invalid-input', 'The media file for "clip" is missing from browser storage'),
+    new JobError('invalid-input', 'The media file for “clip” is missing from browser storage'),
     new JobError('network', 'The connection dropped'),
   ])("rejects in the worker with the page's error code, message and retryability ($code)", async (error) => {
     const media = bridged(() => Promise.reject(error))

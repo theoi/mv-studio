@@ -47,7 +47,7 @@ export function parseProject(input: unknown): Project {
     data.schemaVersion = version
   }
   for (const key of ['id', 'name', 'settings', 'assets', 'tracks', 'clips', 'markers', 'analysis'] as const) {
-    if (!(key in data)) throw new ProjectLoadError(`Project is missing "${key}"`)
+    if (!(key in data)) throw new ProjectLoadError(`Project is missing “${key}”`)
   }
   if (!Array.isArray(data.tracks) || !Array.isArray(data.markers))
     throw new ProjectLoadError('Malformed project')

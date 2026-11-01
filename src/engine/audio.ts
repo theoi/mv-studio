@@ -219,11 +219,11 @@ const decodeWithWebAudio: AudioDecodeFunction = (data, sampleRate) =>
 export function audioLoadError(asset: Pick<Asset, 'name'>, error: unknown): JobError {
   if (error instanceof JobError) return error
   if (error instanceof RangeError)
-    return new JobError('out-of-memory', `There is not enough memory to load the audio of "${asset.name}".`, {
+    return new JobError('out-of-memory', `There is not enough memory to load the audio of “${asset.name}”.`, {
       retryable: true,
       cause: error,
     })
-  return new JobError('decode', `The audio of "${asset.name}" could not be decoded.`, { cause: error })
+  return new JobError('decode', `The audio of “${asset.name}” couldn’t be decoded.`, { cause: error })
 }
 
 interface CacheEntry {
@@ -355,8 +355,8 @@ function stemExportError(cause: JobError | undefined): JobError {
   return new JobError(
     memory ? 'out-of-memory' : 'decode',
     memory
-      ? 'The stems could not be loaded for the export: not enough memory. Unmute and unsolo the stems, or try again after closing other tabs.'
-      : 'The stems could not be loaded for the export: a stem file could not be decoded. Unmute and unsolo the stems, or separate the stems again.',
+      ? 'The stems couldn’t be loaded for the export: not enough memory. Unmute and unsolo the stems, or try again after closing other tabs.'
+      : 'The stems couldn’t be loaded for the export: a stem file couldn’t be decoded. Unmute and unsolo the stems, or separate the stems again.',
     { retryable: memory, cause },
   )
 }
