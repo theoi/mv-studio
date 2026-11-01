@@ -1,6 +1,6 @@
 import type { LyricLine, LyricsDoc, LyricWord, Project } from '../../model/index.ts'
 import { dispatch, editor, lyricLines } from './project.ts'
-import { select, set } from './ui.ts'
+import { get, select, set, useUi } from './ui.ts'
 
 /*
  * Lyric lines waiting for a look: every line drafted from the vocals (check 'words'), timed lines near singing the
@@ -148,9 +148,25 @@ export function markAllChecked(): void {
   )
 }
 
-/** Selects the first line to check and brings it into view on the timeline. */
-export function showFirstToCheck(): void {
-  const line = linesToCheck(editor.getProject())[0]
+/** The line to check after line `afterId` in singing order, or the first one when none comes after it. */
+export function nextToCheck(project: Project, afterId?: string): LyricLine | undefined {
+  const lines = lyricLines(project)
+  const from = afterId === undefined ? -1 : lines.findIndex((l) => l.id === afterId)
+  return lines.slice(from + 1).find((l) => l.check) ?? lines.find((l) => l.check)
+}
+
+/** The selected lyric line, if a lyric line is selected. */
+export function selectedLyricLine(): string | undefined {
+  const s = get().selection
+  return s.type === 'lyric' ? s.id : undefined
+}
+
+/**
+ * Selects the line to check after the selected lyric line (the first one when no line is selected, and again from
+ * the first after the last) and brings it into view on the timeline, with the playhead at its start.
+ */
+export function showNextToCheck(): void {
+  const line = nextToCheck(editor.getProject(), selectedLyricLine())
   if (!line) return
   select({ type: 'lyric', id: line.id })
   if (line.start !== undefined) set({ playhead: line.start })
@@ -159,6 +175,61 @@ export function showFirstToCheck(): void {
       .querySelector(`[data-lyric-line="${CSS.escape(line.id)}"]`)
       ?.scrollIntoView({ block: 'nearest', inline: 'center' }),
   )
+}
+
+/** Moves the playhead to a lyric line's start, unless it is inside the line already, so Play plays that line. */
+export function playheadToLine(lineId: string): void {
+  const line = lyricLines(editor.getProject()).find((l) => l.id === lineId)
+  if (line?.start === undefined) return
+  const t = get().playhead
+  if (t >= line.start && t < (line.end ?? line.start)) return
+  set({ playhead: line.start })
+}
+
+/** How long Play line goes on past the line's end, so its last word is heard out. */
+export const PLAY_LINE_TAIL = 0.5
+/**
+ * A playhead step forward larger than this (seconds) is a seek, a loop or a late frame, not playback moving on. The
+ * preview reports one frame from the old position after playback starts.
+ */
+const PLAY_STEP = 0.5
+/** Play line stops watching for the line's end once this much more than the line has played (seconds). */
+const PLAY_LINE_GRACE = 2
+let stopPlayingLine: (() => void) | undefined
+
+/**
+ * Plays a lyric line from its start and pauses as playback passes just after its end. Pausing, playing another line,
+ * or a seek after which playback does not pass the line's end soon leaves playback as it is.
+ */
+export function playLine(lineId: string): void {
+  const line = lyricLines(editor.getProject()).find((l) => l.id === lineId)
+  if (line?.start === undefined || line.end === undefined) return
+  stopPlayingLine?.()
+  const end = line.end + PLAY_LINE_TAIL
+  const budget = end - line.start + PLAY_LINE_GRACE
+  // Playing from the click itself, so the browser lets audio start.
+  set({ playhead: line.start, playing: true })
+  let last = line.start
+  let played = 0
+  let unsubscribe = () => {}
+  const stop = () => {
+    unsubscribe()
+    if (stopPlayingLine === stop) stopPlayingLine = undefined
+  }
+  unsubscribe = useUi.subscribe((s) => {
+    if (!s.playing) return stop()
+    const from = last
+    last = s.playhead
+    if (s.playhead <= from || s.playhead - from > PLAY_STEP) return
+    if (from < end && s.playhead >= end) {
+      stop()
+      set({ playing: false })
+      return
+    }
+    played += s.playhead - from
+    if (played > budget) stop()
+  })
+  stopPlayingLine = stop
 }
 
 /** Languages Whisper takes as a hint (its multilingual models), by code. */

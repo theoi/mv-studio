@@ -272,7 +272,10 @@ button.forwardAction[data-variant='ghost']:hover:not(:disabled) {
   text-underline-offset: 3px;
 }
 
-.draftAction {
+.draftActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
   margin-left: -8px;
 }
 

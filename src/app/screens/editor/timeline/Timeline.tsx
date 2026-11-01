@@ -61,6 +61,7 @@ import { keyName } from '../../../ds/keys.ts'
 import { TransitionMark } from './Transitions.tsx'
 import { formatBpm, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
+import { playheadToLine } from '../../../state/lyricChecks.ts'
 import {
   lineDeltaRange,
   lineTimingCommands,
@@ -2245,7 +2246,7 @@ export function Timeline() {
 
   /**
    * Drags a lyric line (its body moves it, its edges move its start or end) or one edge of a word, as one undo step.
-   * A click without moving only selects the line.
+   * A click without moving selects the line and puts the playhead at its start, so Play plays it.
    */
   const onLyricPointerDown = (e: React.PointerEvent, lineId: string, trackId: string, drag: LyricDrag) => {
     e.stopPropagation()
@@ -2257,7 +2258,10 @@ export function Timeline() {
       drag.type === 'line'
         ? lineDeltaRange(p, lineId, drag.edge)
         : wordEdgeRange(p, lineId, drag.index, drag.edge)
-    if (!limits) return
+    if (!limits) {
+      playheadToLine(lineId)
+      return
+    }
     const track = p.tracks.find((t) => t.id === trackId)
     const key = `lyric:${e.pointerId}:${lineId}:${e.timeStamp}`
     const label = drag.type === 'line' && drag.edge === 'move' ? MOVE_LABEL : TIMING_LABEL
@@ -2274,7 +2278,7 @@ export function Timeline() {
       if (!moved && Math.abs(dx) < 3) return
       if (!moved && track?.locked) {
         toast(`The ${track.name} track is locked. Unlock it to edit.`)
-        up()
+        finish(false)
         return
       }
       moved = true
@@ -2285,15 +2289,18 @@ export function Timeline() {
           : wordEdgeCommands(p, lineId, drag.index, drag.edge, d)
       if (commands) dispatch(commands, { coalesceKey: key, label })
     }
-    const up = () => {
+    const finish = (click: boolean) => {
       if (moved) editor.endGesture()
+      else if (click) playheadToLine(lineId)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
+      window.removeEventListener('pointercancel', cancel)
     }
+    const up = () => finish(true)
+    const cancel = () => finish(false)
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', up)
+    window.addEventListener('pointercancel', cancel)
   }
 
   /** Dragging a track header's grip: a line shows where the track will go among the tracks of its kind. */
@@ -2679,7 +2686,10 @@ export function Timeline() {
                                   if (e.key !== 'Enter' || !lineId) return
                                   e.preventDefault()
                                   if (e.shiftKey || e.metaKey || e.ctrlKey) toggleInSelection(c.id)
-                                  else select({ type: 'lyric', id: lineId })
+                                  else {
+                                    select({ type: 'lyric', id: lineId })
+                                    playheadToLine(lineId)
+                                  }
                                 }}
                               >
                                 {line?.check && <span className={styles.draftDot} aria-hidden />}

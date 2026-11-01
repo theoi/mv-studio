@@ -1,14 +1,21 @@
-import { describe, expect, it } from 'vitest'
-import type { LyricLine, LyricsDoc } from '../../../src/model/index.ts'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { LyricLine, LyricsDoc, Project } from '../../../src/model/index.ts'
+import { createProject } from '../../../src/model/factory.ts'
 import {
   asDraft,
   draftLooksUnreliable,
   isUncertain,
   languageName,
   longUnlisted,
+  nextToCheck,
+  PLAY_LINE_TAIL,
+  playheadToLine,
+  playLine,
   timingLooksUncertain,
   withTimingChecks,
 } from '../../../src/app/state/lyricChecks.ts'
+import { editor } from '../../../src/app/state/project.ts'
+import { get, set } from '../../../src/app/state/ui.ts'
 
 /** A line whose words have these confidences and start at these times (one per second by default). */
 const line = (confidences: number[], starts = confidences.map((_, i) => i)): LyricLine => ({
@@ -112,5 +119,115 @@ describe('lyric checks', () => {
   it('names Whisper’s language codes, Javanese included', () => {
     expect(languageName('sv')).toBe('Swedish')
     expect(languageName('jw')).toBe('Javanese')
+  })
+})
+
+/** Lines a (10–10.5 s, to check), b (10.6–11.5 s), c (10.6–11.5 s, to check), d (untimed, to check) and e (20 s). */
+function checking(): Project {
+  const project = createProject()
+  const at = (
+    id: string,
+    start: number | undefined,
+    end: number | undefined,
+    check?: 'timing',
+  ): LyricLine => ({
+    id,
+    text: id,
+    start,
+    end,
+    words: [],
+    ...(check ? { check } : {}),
+  })
+  project.lyrics = {
+    source: 'pasted',
+    lines: [
+      at('a', 10, 10.5, 'timing'),
+      at('b', 10.6, 11.5),
+      at('c', 10.6, 11.5, 'timing'),
+      at('d', undefined, undefined, 'timing'),
+      at('e', 20, 21),
+    ],
+  }
+  return project
+}
+
+describe('stepping through and playing the lines to check', () => {
+  afterEach(() => set({ playing: false }))
+
+  it('finds the next line to check after a line, from the first again after the last', () => {
+    const project = checking()
+    expect(nextToCheck(project)?.id).toBe('a')
+    expect(nextToCheck(project, 'a')?.id).toBe('c')
+    expect(nextToCheck(project, 'b')?.id).toBe('c')
+    expect(nextToCheck(project, 'c')?.id).toBe('d')
+    expect(nextToCheck(project, 'd')?.id).toBe('a')
+    expect(nextToCheck(project, 'e')?.id).toBe('a')
+    expect(nextToCheck(project, 'gone')?.id).toBe('a')
+    project.lyrics!.lines = project.lyrics!.lines.map(({ check: _, ...l }) => l)
+    expect(nextToCheck(project, 'a')).toBeUndefined()
+  })
+
+  it('moves the playhead to a line’s start unless it is in the line already', () => {
+    editor.load(checking())
+    set({ playhead: 3 })
+    playheadToLine('c')
+    expect(get().playhead).toBe(10.6)
+    set({ playhead: 11 })
+    playheadToLine('c')
+    expect(get().playhead).toBe(11)
+    playheadToLine('d')
+    expect(get().playhead).toBe(11)
+  })
+
+  it('plays a line from its start and pauses once the playhead is past its end and the tail', () => {
+    editor.load(checking())
+    set({ playhead: 3 })
+    playLine('c')
+    expect(get()).toMatchObject({ playhead: 10.6, playing: true })
+    for (const t of [11, 11.5, 11.9]) {
+      set({ playhead: t })
+      expect(get().playing).toBe(true)
+    }
+    set({ playhead: 11.5 + PLAY_LINE_TAIL })
+    expect(get().playing).toBe(false)
+    playLine('d')
+    expect(get().playing).toBe(false)
+  })
+
+  it('pauses at the line’s end after a frame from where the playhead was before', () => {
+    editor.load(checking())
+    set({ playhead: 3 })
+    playLine('c')
+    for (const t of [3, 10.6, 11, 11.4, 11.8]) set({ playhead: t })
+    expect(get().playing).toBe(true)
+    set({ playhead: 12.1 })
+    expect(get().playing).toBe(false)
+  })
+
+  it('leaves playback alone after a pause, a seek past the end or a while playing elsewhere, and when another line is played', () => {
+    editor.load(checking())
+    playLine('a')
+    set({ playing: false })
+    set({ playing: true, playhead: 10.7 })
+    set({ playhead: 11.1 })
+    expect(get().playing).toBe(true)
+
+    playLine('a')
+    set({ playhead: 15 })
+    set({ playhead: 15.2 })
+    expect(get().playing).toBe(true)
+
+    // Line a lasts 1 s with its tail: after 3 s of playing from elsewhere, its end goes by.
+    playLine('a')
+    for (let t = 5; t <= 11.2; t += 0.2) set({ playhead: t })
+    expect(get().playing).toBe(true)
+
+    // Line a would pause at 11 s; playing c from 10.6 s goes on to 12 s.
+    playLine('a')
+    playLine('c')
+    for (const t of [11, 11.4, 11.8]) set({ playhead: t })
+    expect(get().playing).toBe(true)
+    set({ playhead: 12 })
+    expect(get().playing).toBe(false)
   })
 })

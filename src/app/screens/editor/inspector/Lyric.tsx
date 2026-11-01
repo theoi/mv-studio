@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Mic2 } from 'lucide-react'
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Mic2, Play } from 'lucide-react'
 import type { Clip, LyricLine } from '../../../../model/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
@@ -7,7 +7,13 @@ import { FieldRow, Input, NumberField, Section } from '../../../ds/Fields.tsx'
 import { Tooltip } from '../../../ds/Tooltip.tsx'
 import { aboutMinutes, formatBytes, formatTime, plural } from '../../../format.ts'
 import { JOB_KINDS, runningJobs, useJobs } from '../../../state/jobs.ts'
-import { isUncertain, markLineChecked } from '../../../state/lyricChecks.ts'
+import {
+  isUncertain,
+  linesToCheck,
+  markLineChecked,
+  playLine,
+  showNextToCheck,
+} from '../../../state/lyricChecks.ts'
 import { finishLineText, nudgeLine, setLineEdge, typeLineText } from '../../../state/lyricEdits.ts'
 import { lineTiming, retimeCost, retimeLine } from '../../../state/lyricTiming.ts'
 import {
@@ -110,9 +116,14 @@ function TimingBadge({ line }: { line: LyricLine }) {
 const UNLISTED_NOTE =
   'Singing near this line isn’t in the pasted lyrics, so some words may be timed wrong. Play the line to check, or add the missing lines in Assist\u00a0›\u00a0Lyrics and time the words again.'
 
-/** A line to check: why, its words with the uncertain ones underlined, and Mark as checked. */
+/**
+ * A line to check: why, its words with the uncertain ones underlined, then Play line, Mark as checked and Next line to
+ * check.
+ */
 function CheckNote({ line }: { line: LyricLine }) {
+  const project = useProject()
   const underlined = line.words.some(isUncertain)
+  const others = linesToCheck(project).some((l) => l.id !== line.id)
   return (
     <div className={styles.draft}>
       <p className={styles.draftText}>
@@ -137,7 +148,17 @@ function CheckNote({ line }: { line: LyricLine }) {
           ))}
         </p>
       )}
-      <span className={styles.draftAction}>
+      <div className={styles.draftActions}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className={styles.forwardAction}
+          icon={<Play />}
+          disabled={line.start === undefined || line.end === undefined}
+          onClick={() => playLine(line.id)}
+        >
+          Play line
+        </Button>
         <Button
           size="sm"
           variant="ghost"
@@ -146,7 +167,12 @@ function CheckNote({ line }: { line: LyricLine }) {
         >
           Mark as checked
         </Button>
-      </span>
+        {others && (
+          <Button size="sm" variant="ghost" className={styles.forwardAction} onClick={showNextToCheck}>
+            Next line to check
+          </Button>
+        )}
+      </div>
     </div>
   )
 }
