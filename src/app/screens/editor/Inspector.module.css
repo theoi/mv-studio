@@ -152,6 +152,19 @@
   padding: 0 var(--space-3) 0 var(--space-4);
 }
 
+/*
+ * Text (ghost) actions that move forward take the accent, like a toast's action and the Assist panels' forward text
+ * actions, so they don't read as captions. Ones that remove or cancel (Remove transition) stay grey.
+ */
+button.forwardAction[data-variant='ghost'] {
+  color: var(--accent-text);
+}
+
+button.forwardAction[data-variant='ghost']:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
 .swatches {
   display: flex;
   flex-wrap: wrap;

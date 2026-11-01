@@ -85,10 +85,20 @@ export function ProjectInspector() {
               </div>
             </div>
             <div className={styles.inlineActions}>
-              <Button size="sm" variant="ghost" onClick={() => openAssist('analysis')}>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={styles.forwardAction}
+                onClick={() => openAssist('analysis')}
+              >
                 Song analysis
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => openAssist('stems')}>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={styles.forwardAction}
+                onClick={() => openAssist('stems')}
+              >
                 Separate stems
               </Button>
             </div>
