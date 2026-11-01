@@ -445,6 +445,12 @@ describe('pace and brightness words in the idea', () => {
       { pace: 1, light: 1, words: ['fast', 'bright'] },
     ],
     ['fast video, slow chorus', { chorus: { pace: -1, light: 0, words: ['slow'] } }, fast],
+    // A list ends at its own noun, even with a section named after it.
+    [
+      'dark, grainy footage, fast chorus',
+      { chorus: { pace: 1, light: 0, words: ['fast'] } },
+      { pace: 0, light: -1, words: ['dark'] },
+    ],
     // A part after "but" with words of its own is about its section, not an exception.
     ['fast cuts but keep the bridge slow', { bridge: { pace: -1, light: 0, words: ['slow'] } }, fast],
   ])('reads “%s”', (idea, roles, all) => {
@@ -466,6 +472,10 @@ describe('pace and brightness words in the idea', () => {
     ['fast everywhere but the bridge', {}, { bridge: none }],
     ['everything fast but the chorus', {}, { chorus: none }],
     ['fast cuts, but the bridge is different', {}, { bridge: none }],
+    // Leaving a section alone leaves it out, without "but" or "except".
+    ['fast everywhere, leave the bridge alone', {}, { bridge: none }],
+    ['fast cuts and keep the outro as it is', {}, { outro: none }],
+    ['fast all the way through, the intro untouched', {}, { intro: none }],
     // The part after a section left out goes to the whole video, unless it starts with "which" or the like.
     ['Apart from the bridge, fast cuts', {}, { bridge: none }],
     [

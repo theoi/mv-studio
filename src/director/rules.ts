@@ -120,6 +120,14 @@ const NEGATORS = new Set([
 const BREAKS = new Set(['but', 'then', 'while', 'whereas', 'yet'])
 /** Words that start a part leaving sections out: "fast everywhere except the bridge" ("apart from" is one word here). */
 const EXCLUDERS = new Set(['except', 'excluding', 'apart-from', 'aside-from', 'other-than'])
+/** A part naming sections with one of these and no description leaves them out: "leave the bridge alone". */
+const KEEPERS = new Set(['alone', 'untouched', 'unchanged', 'intact', 'as-is'])
+/** Things a description list can be about besides sections: "dark, grainy footage, fast chorus" ends at "footage". */
+const LIST_NOUNS = new Set(
+  'footage clips shots visuals images pictures photos video videos scenes colors colours lighting lights look feel vibe vibes tones palette style cuts edits editing pacing transitions camera grain'.split(
+    ' ',
+  ),
+)
 /** After a section left out, a part starting with these is about that section: "except the bridge, which is slow". */
 const RELATIVES = new Set(['which', 'where', 'when', 'that', 'there'])
 /** "in the chorus" ends its part of the sentence: what follows is about something else. */
@@ -141,6 +149,7 @@ function ideaTokens(prompt: string): string[] {
     .replace(/\bbuild[\s-]+up/g, 'build-up')
     .replace(/\b(apart|aside)\s+from\b/g, '$1-from')
     .replace(/\bother\s+than\b/g, 'other-than')
+    .replace(/\bas\s+(it\s+)?is\b/g, 'as-is')
     .replace(/&/g, ' and ')
     .replace(/[.;:!?()\n]/g, ' . ')
     .replace(/,/g, ' , ')
@@ -151,7 +160,7 @@ function ideaTokens(prompt: string): string[] {
 
 /**
  * Whether the words from `from` on lead to a section through words the lists may not know, as "dreamy verses" does
- * after "slow,": an adjective list still waiting for its noun.
+ * after "slow,": an adjective list still waiting for its noun. A noun other than a section ends it.
  */
 function listGoesOn(tokens: string[], from: number): boolean {
   let adjectives = 0
@@ -160,7 +169,7 @@ function listGoesOn(tokens: string[], from: number): boolean {
     if (roleWord(word)) return adjectives > 0
     if (word === ',' || word === 'and' || LINKING.has(word)) continue
     if (word === '.' || BREAKS.has(word) || EXCLUDERS.has(word) || negates(word)) return false
-    if (PREPOSITIONS.has(word) || DETERMINERS.has(word)) return false
+    if (PREPOSITIONS.has(word) || DETERMINERS.has(word) || LIST_NOUNS.has(word)) return false
     adjectives++
   }
   return false
@@ -252,8 +261,9 @@ function tally(votes: Vote[]): IdeaAsk | undefined {
  * or to the section the part before named when this part names none ("in the chorus, fast and bright"), else to the
  * whole video. A part with "not", "don't", "no", "avoid", "too" and the like is left out entirely: a missed word only
  * leaves the draft as it would be, a misread one turns it the wrong way. A part that starts with "except" or "apart
- * from", or is negated, and names sections leaves those sections out of the whole-video words of its sentence
- * ("fast everywhere except the bridge", "fast cuts, but not in the verses"), as does a part naming only sections
+ * from", or is negated, or says to leave them alone, and names sections leaves those sections out of the whole-video
+ * words of its sentence ("fast everywhere except the bridge", "fast cuts, but not in the verses", "leave the bridge
+ * alone"), as does a part naming only sections
  * after "but" ("everything fast but the chorus") or right after such a part ("except the bridge and the outro"). In
  * a sentence with no whole-video words of its own, it reaches the whole idea ("Fast cuts. Don't touch the bridge.").
  */
@@ -272,7 +282,10 @@ export function ideaAsks(prompt: string): IdeaAsks {
       named.length > 0 &&
       (EXCLUDERS.has(words[0] ?? '') ||
         negated ||
-        (!described && (!!afterBut || (!!previous?.excluding && previous.sentence === sentence))))
+        (!described &&
+          (!!afterBut ||
+            words.some((w) => KEEPERS.has(w)) ||
+            (!!previous?.excluding && previous.sentence === sentence))))
     if (excluding) leftOut.push(...named.map(({ role }) => ({ role, sentence })))
     if (described && !negated) {
       const carried =
