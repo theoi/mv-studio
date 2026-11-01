@@ -260,7 +260,7 @@ test('Assist › Song analysis goes back from a failed run and cancels re-tracki
       })
     app.songAnalysis.setSongAnalysisServiceForTests({
       analyzeAgain: () =>
-        pending('analysis.song', 'Analyzing the song', 'This audio file could not be decoded'),
+        pending('analysis.song', 'Analyzing the song', 'This audio file couldn’t be decoded'),
       trackAtTempo: () => pending('analysis.tempo', 'Following your tempo'),
     })
     window.location.hash = '#/editor?tab=assist&assist=analysis&t=73.6'
@@ -269,7 +269,7 @@ test('Assist › Song analysis goes back from a failed run and cancels re-tracki
   await expect(panel.getByText('120 BPM · 4/4')).toBeVisible()
 
   await panel.getByRole('button', { name: 'Analyze again' }).click()
-  await expect(panel.getByRole('alert')).toContainText('This audio file could not be decoded')
+  await expect(panel.getByRole('alert')).toContainText('This audio file couldn’t be decoded')
   await expect(panel.getByRole('alert')).toContainText('Your project is unchanged.')
   // The run was started here, so focus goes to what comes next.
   await expect(panel.getByRole('button', { name: 'Try again' })).toBeFocused()

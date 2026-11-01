@@ -156,7 +156,7 @@ export function mapFalError(
         provider: 'fal',
         status,
         title: 'That model is not available on fal.ai',
-        message: 'fal.ai could not find this model. It may have been renamed or retired.',
+        message: 'fal.ai couldn’t find this model. It may have been renamed or retired.',
         steps: ['Pick another model and try again.'],
         cause: error,
       })
@@ -177,7 +177,7 @@ export function mapFalError(
         kind: 'invalid-request',
         provider: 'fal',
         status,
-        title: 'fal.ai could not use these settings',
+        title: 'fal.ai couldn’t use these settings',
         message: text || 'fal.ai rejected the request settings.',
         steps: ['Try a different length, size or model.'],
         cause: error,

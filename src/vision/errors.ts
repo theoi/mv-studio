@@ -35,7 +35,7 @@ export function visionError(err: unknown, fallback: JobErrorCode = 'internal'): 
 const named = new WeakSet<JobError>()
 
 function naming(model: VisionModel, e: JobError, verb: string, err: unknown): JobError {
-  const out = new JobError(e.code, `Could not ${verb} ${theModel(VISION_MODEL_TITLES[model])}`, {
+  const out = new JobError(e.code, `Couldn’t ${verb} ${theModel(VISION_MODEL_TITLES[model])}`, {
     cause: err,
     retryable: e.retryable,
     details: e.message,

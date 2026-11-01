@@ -57,7 +57,7 @@ export function createOpfsCache(directory = 'mv-vision-cache'): BlobCache {
         return new Uint8Array(await (await handle.getFile()).arrayBuffer())
       } catch (err) {
         if (err instanceof DOMException && err.name === 'NotFoundError') return null
-        throw new JobError('internal', `Could not read cached result ${key}`, { cause: err })
+        throw new JobError('internal', `Couldn’t read cached result ${key}`, { cause: err })
       }
     },
     async put(key, data) {
@@ -67,7 +67,7 @@ export function createOpfsCache(directory = 'mv-vision-cache'): BlobCache {
         await writable.write(data as unknown as ArrayBuffer)
         await writable.close()
       } catch (err) {
-        throw new JobError('internal', `Could not store result ${key}`, { cause: err })
+        throw new JobError('internal', `Couldn’t store result ${key}`, { cause: err })
       }
     },
     async delete(key) {

@@ -16,7 +16,7 @@ export async function createImageFrameSource(
   try {
     bitmap = await createImageBitmap(await media.getFile(asset))
   } catch (err) {
-    throw new JobError('decode', `${asset.name} could not be decoded`, { cause: err })
+    throw new JobError('decode', `${asset.name} couldn’t be decoded`, { cause: err })
   }
   return {
     mediaId: asset.id,
