@@ -6,8 +6,10 @@
  *
  * That pace is the export's own over the latest tenth of the frames. The trial samples only some frames, so it can
  * misjudge a part of the project (an opening cheaper than expected), and a device can slow down as it runs; frames
- * further back would keep the figure off for the rest of the export. Within that tenth it is the median of the pace
- * between updates, weighted by the work each covered, so a one-off stall moves the figure no more than one update.
+ * further back would keep the figure off for the rest of the export. Within that tenth it is the mean pace between
+ * updates, weighted by the work each covered, with each update capped at a few times the median: a one-off stall
+ * then counts for little, while stretches at different paces (looks the trial misjudged against each other) still
+ * average out instead of the figure jumping between them.
  */
 
 /** What a trial before an export expects its frames to take. */
@@ -30,6 +32,9 @@ const PACE_SHARE = 0.1
 /** How much of a rise in the time left shows at each update, so the figure eases up instead of jumping. */
 const RISE = 0.2
 
+/** The most an update counts at, as a multiple of the median pace between updates: more is a one-off stall. */
+const STALL_CAP = 3
+
 /** The share of the expected time done once `share` of the frames are done. */
 export function expectedShare(expected: ExpectedTime, share: number): number {
   const profile = expected.profile
@@ -49,8 +54,11 @@ interface Point {
   seconds: number
 }
 
-/** The seconds per unit of work that half the work between successive points went at or under. */
-function medianRate(points: readonly Point[]): number | undefined {
+/**
+ * Seconds per unit of work between successive points, averaged by work, each first capped at `STALL_CAP` times their
+ * weighted median.
+ */
+function paceRate(points: readonly Point[]): number | undefined {
   const steps: { rate: number; work: number }[] = []
   let prev: Point | undefined
   for (const p of points) {
@@ -58,13 +66,19 @@ function medianRate(points: readonly Point[]): number | undefined {
       steps.push({ rate: (p.seconds - prev.seconds) / (p.work - prev.work), work: p.work - prev.work })
     prev = p
   }
-  steps.sort((a, b) => a.rate - b.rate)
-  let half = steps.reduce((sum, s) => sum + s.work, 0) / 2
-  for (const s of steps) {
+  const total = steps.reduce((sum, s) => sum + s.work, 0)
+  if (!(total > 0)) return undefined
+  let half = total / 2
+  let median = 0
+  for (const s of [...steps].sort((a, b) => a.rate - b.rate)) {
     half -= s.work
-    if (half <= 0) return s.rate
+    if (half <= 0) {
+      median = s.rate
+      break
+    }
   }
-  return undefined
+  const cap = median > 0 ? STALL_CAP * median : Infinity
+  return steps.reduce((sum, s) => sum + Math.min(s.rate, cap) * s.work, 0) / total
 }
 
 /**
@@ -88,7 +102,7 @@ export function exportTimeLeft(
     if (!(f > 0)) return undefined
     while ((later[0]?.share ?? Infinity) <= f - PACE_SHARE) from = later.shift() ?? from
     later.push({ share: f, work: workAt(f), seconds: elapsedSeconds })
-    const rate = medianRate([from, ...later])
+    const rate = paceRate([from, ...later])
     let left: number
     if (expected && expects) {
       const done = expectedShare(expected, f)

@@ -85,6 +85,26 @@ describe('the time left in an export', () => {
     expect(Math.min(...ratios)).toBeGreaterThan(0.97)
   })
 
+  it('does not jump between two paces that alternate, as looks the trial misjudged against each other do', () => {
+    // Every other twentieth of the frames runs 2.3 times slower than expected.
+    const slow = (share: number) => (Math.floor(share / 0.05) % 2 ? 2.3 : 1)
+    const elapsed = [0]
+    for (let i = 1; i <= FRAMES; i++) {
+      const work = expectedShare(quietIntro, i / FRAMES) - expectedShare(quietIntro, (i - 1) / FRAMES)
+      elapsed.push((elapsed[i - 1] ?? 0) + slow((i - 0.5) / FRAMES) * quietIntro.seconds * work)
+    }
+    const timeLeft = exportTimeLeft(FRAMES, quietIntro)
+    const rises: number[] = []
+    let last: number | undefined
+    for (let done = 1; done <= 0.95 * FRAMES; done += 5) {
+      const left = timeLeft(done, elapsed[done] ?? 0)
+      if (done >= 0.2 * FRAMES && last !== undefined && left !== undefined) rises.push(left - last)
+      last = left
+    }
+    expect(rises.length).toBeGreaterThan(500)
+    expect(Math.max(...rises)).toBeLessThan(10)
+  })
+
   it('follows the pace of the latest frames without an expected time too', () => {
     // 0.1 s a frame up to halfway, then 0.2 s.
     const elapsedAt = (share: number) => (share <= 0.5 ? 540 * share : 270 + 1080 * (share - 0.5))
