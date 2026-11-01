@@ -669,12 +669,13 @@ export function olderTabsGone(now = Date.now()): boolean {
 /**
  * Deletes stored media that no kept project nor the open one uses, once it is `minAgeMs` old (see
  * `IdbProjectStore.removeUnusedMedia`), unless another tab is open: its unsaved edits and undo history can use media no
- * kept project does, and not after an edit in this tab. Returns how many media folders it deleted, or null when it
- * didn't look.
+ * kept project does, and not after an edit, undo or redo in this tab. Returns how many media folders it deleted, or
+ * null when it didn't look.
  */
 export async function removeUnusedMedia(minAgeMs = UNUSED_MEDIA_AGE_MS): Promise<number | null> {
-  // Edits made in this tab can be undone back to media they removed.
-  if (!holdingTabLock || editor.canUndo() || editor.canRedo()) return null
+  // Edits made in this tab can be undone back to media they removed before their project's record says so. Undo
+  // history that came back with a project is in its record, which the sweep reads.
+  if (!holdingTabLock || editor.editedThisSession()) return null
   try {
     const { held = [] } = await navigator.locks.query()
     if (held.filter((l) => l.name === TAB_LOCK).length > 1) return null

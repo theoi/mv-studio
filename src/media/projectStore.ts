@@ -20,10 +20,10 @@ const HISTORY = 'undoHistory'
 
 /**
  * The storage keys of the media a stored project record uses: its assets', and those of the assets its saved undo
- * history can bring back, such as media removed from it that undo would add again. Throws for a record that isn't a
- * readable project.
+ * history can bring back, such as media removed from it that undo would add again. Deleting a project and the sweep of
+ * unused media both keep what any record uses. Throws for a record that isn't a readable project.
  */
-function storageKeysOf(record: Project): string[] {
+export function storageKeysOf(record: Project): string[] {
   const keys = Object.values(record.assets).map((a) => a.storageKey)
   const history = (record as Project & { [HISTORY]?: unknown })[HISTORY]
   if (!isSavedHistory(history)) return keys
@@ -95,9 +95,9 @@ function withMediaLock<T>(mode: LockMode, run: () => Promise<T>): Promise<T> {
   return locks ? locks.request(MEDIA_LOCK, { mode }, run) : run()
 }
 
-/** The media folders a project uses. Throws for a record that isn't a readable project. */
+/** The media folders a project record uses, its saved undo history's included. Throws for a record that isn't a readable project. */
 function storageFolders(project: Project): string[] {
-  return Object.values(project.assets).map((a) => storageFolder(a.storageKey))
+  return storageKeysOf(project).map(storageFolder)
 }
 
 export class IdbProjectStore implements ProjectStore {

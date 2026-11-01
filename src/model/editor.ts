@@ -128,6 +128,8 @@ export class ProjectEditor {
   private readonly now: () => Date
   /** Rough JSON size of each step, measured once. */
   private readonly stepBytes = new WeakMap<HistoryEntry, number>()
+  /** Whether an edit, undo or redo has run since this editor was made, whatever project it was on. */
+  private edited = false
 
   constructor(project: Project, options: { historyLimit?: number; now?: () => Date } = {}) {
     this.project = project
@@ -160,6 +162,7 @@ export class ProjectEditor {
       return
     }
 
+    this.edited = true
     const last = this.undoStack[this.undoStack.length - 1]
     if (options.coalesceKey && last?.coalesceKey === options.coalesceKey && this.redoStack.length === 0) {
       last.commands.push(...list)
@@ -230,6 +233,14 @@ export class ProjectEditor {
     return this.redoStack.length > 0
   }
 
+  /**
+   * Whether an edit, undo or redo has run since this editor was made. Undo and redo steps restored with a project
+   * (load with a saved history) don't count: they are stored with it.
+   */
+  editedThisSession(): boolean {
+    return this.edited
+  }
+
   undoLabel(): string | undefined {
     return this.undoStack[this.undoStack.length - 1]?.label
   }
@@ -249,6 +260,7 @@ export class ProjectEditor {
   undo(): boolean {
     const entry = this.undoStack.pop()
     if (!entry) return false
+    this.edited = true
     delete entry.coalesceKey
     this.project = applyPatches(this.project, entry.inversePatches)
     this.redoStack.push(entry)
@@ -259,6 +271,7 @@ export class ProjectEditor {
   redo(): boolean {
     const entry = this.redoStack.pop()
     if (!entry) return false
+    this.edited = true
     this.project = applyPatches(this.project, entry.patches)
     this.undoStack.push(entry)
     this.emit({ source: 'redo', commands: [], patches: entry.patches })

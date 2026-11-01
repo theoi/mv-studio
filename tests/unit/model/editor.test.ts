@@ -428,6 +428,23 @@ describe('undo history saved with the project', () => {
     expect(reopened.canUndo()).toBe(false)
   })
 
+  it('restored with a project is no edit made this session; an edit, undo or redo is', () => {
+    const { editor, visual } = ticking()
+    editor.dispatch({
+      type: 'clip.add',
+      clip: createTextClip({ trackId: visual.id, text: 'A', start: 0, duration: 2 }),
+    })
+    const [project, history] = structuredClone([editor.getProject(), editor.savedHistory()])
+    const reopened = new ProjectEditor(createProject())
+    // Derived data written in the background isn't an edit either.
+    reopened.dispatch({ type: 'project.rename', name: 'Background' }, { history: 'skip' })
+    reopened.load(project, history)
+    expect(reopened.canUndo()).toBe(true)
+    expect(reopened.editedThisSession()).toBe(false)
+    reopened.undo()
+    expect(reopened.editedThisSession()).toBe(true)
+    expect(editor.editedThisSession()).toBe(true)
+  })
   it('keeps the most recent 100 steps, and no more than about 2 MB of them', () => {
     const { editor, visual } = ticking()
     const clip = createTextClip({ trackId: visual.id, text: 'A', start: 0, duration: 2 })
