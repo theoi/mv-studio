@@ -228,12 +228,30 @@ test('Shift Delete and the clip and lane menus close gaps, moving the later clip
   await expect.poll(starts).toEqual(closed)
   await page.keyboard.press(`${mod}+z`)
   await expect.poll(starts).toEqual(before)
+  await page.keyboard.press(`${mod}+Shift+z`)
+  await expect.poll(starts).toEqual(closed)
+  await page.keyboard.press(`${mod}+z`)
+  await expect.poll(starts).toEqual(before)
 
   // Delete leaves the gap, and says what it removed, with Undo.
   await singer.click()
   await page.keyboard.press('Delete')
   await expect.poll(starts).toEqual(gapLeft)
   await expect(toastWith('Deleted 1 clip').getByRole('button', { name: 'Undo' })).toBeVisible()
+
+  // On a locked track the clip after the gap offers Close gap before but can't run it, as the lane menu does.
+  const lock = (locked: boolean) =>
+    page.evaluate(
+      (locked) =>
+        window.mvStudio.app.project.dispatch({ type: 'track.update', trackId: 't-video', patch: { locked } }),
+      locked,
+    )
+  await lock(true)
+  await next.click({ button: 'right' })
+  await expect(menuItem(/^Close gap before/)).toBeDisabled()
+  await expect(menuItem(/^Close gap before/)).toContainText('The track is locked')
+  await page.keyboard.press('Escape')
+  await lock(false)
 
   // The clip after the gap closes it from its menu, which says how long the gap is.
   await next.click({ button: 'right' })

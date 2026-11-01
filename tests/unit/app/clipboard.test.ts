@@ -471,7 +471,61 @@ describe('ripple delete and Close gap', () => {
     expect(gapForPalette(project(), { type: 'none' }, 2)).toBeNull()
   })
 
-  it('closes nothing on a locked track', () => {
+  it('moves a clip’s cutouts for text behind the subject with it, except a cutout on a locked track', () => {
+    // Cutouts of c (8-11) and d (14-18) on a Subject track, and another cutout of d on the locked track.
+    const p = project()
+    const subject = createTrack('visual', 'Subject')
+    const cutout = (of: typeof s.c, trackId: string) => ({
+      ...of,
+      id: `cutout-${of.id}-${trackId}`,
+      trackId,
+      meta: { behindSubjectOf: of.id },
+    })
+    const ofC = cutout(s.c, subject.id)
+    const ofD = cutout(s.d, subject.id)
+    const lockedOfD = cutout(s.d, s.locked.id)
+    editor.load({
+      ...p,
+      tracks: [subject, ...p.tracks],
+      clips: {
+        ...p.clips,
+        [ofC.id]: ofC,
+        [ofD.id]: { ...ofD, start: 15, duration: 2 },
+        [lockedOfD.id]: lockedOfD,
+      },
+    })
+    const start = (id: string) => project().clips[id]?.start
+    selectClips([s.b.id])
+    rippleDeleteSelection()
+    expect([start(s.c.id), start(ofC.id), start(s.d.id), start(ofD.id)]).toEqual([4, 4, 10, 11])
+    expect(start(lockedOfD.id)).toBe(14)
+    editor.undo()
+    expect([start(ofC.id), start(ofD.id)]).toEqual([8, 15])
+    editor.redo()
+    expect([start(ofC.id), start(ofD.id)]).toEqual([4, 11])
+    editor.undo()
+    // Close gap: d moves from 14 to 11 and its cutout, a second into it, from 15 to 12.
+    closeGap(gapToClose(project(), s.footage.id, 12)!)
+    expect([start(s.d.id), start(ofD.id), start(ofC.id)]).toEqual([11, 12, 8])
+  })
+
+  it('ripple-deletes a selected cutout while its clip closes up behind the other deleted clip', () => {
+    const p = project()
+    const ofD = {
+      ...s.d,
+      id: 'cutout-d',
+      trackId: s.footage.id,
+      start: 18,
+      meta: { behindSubjectOf: s.d.id },
+    }
+    editor.load({ ...p, clips: { ...p.clips, [ofD.id]: ofD } })
+    selectClips([s.b.id, ofD.id])
+    expect(rippleDeleteSelection()).toBe(true)
+    expect(project().clips[ofD.id]).toBeUndefined()
+    expect(project().clips[s.d.id]?.start).toBe(10)
+  })
+
+  it('closes nothing on a locked track, and the palette looks for a gap only on unlocked ones', () => {
     const p = project()
     const late = createImageClip({ trackId: s.locked.id, assetId: 'i', start: 6, duration: 2 })
     editor.load({ ...p, clips: { ...p.clips, [late.id]: late } })
@@ -482,5 +536,6 @@ describe('ripple delete and Close gap', () => {
       [0, 3],
       [6, 2],
     ])
+    expect(gapForPalette(project(), { type: 'clip', id: late.id }, 4)).toBeNull()
   })
 })

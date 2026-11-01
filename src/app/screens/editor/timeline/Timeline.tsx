@@ -102,6 +102,7 @@ import {
   selectTimelineClips,
   timelineSelectionIds,
 } from '../../../state/clipboard.ts'
+import { withCutouts } from '../../../state/behind.ts'
 import { closeGap, gapBefore, gapLength, type Gap } from '../../../state/ripple.ts'
 import {
   bpmOf,
@@ -1091,6 +1092,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
   const [cut, setCut] = useState<{ clipId: string; time: number } | null>(null)
   const [transitions, setTransitions] = useState<TransitionSpot[]>([])
   const [gap, setGap] = useState<Gap | null>(null)
+  const [trackLocked, setTrackLocked] = useState(false)
   const menuTime = useRef(clip.start)
   const { width, isMedia, inW, outW, showLabel } = zoomedLook(clip, pps)
   const thumb = useFrameThumbnail(isMedia ? clip.asset : undefined, clip.sourceStart ?? 0)
@@ -1115,6 +1117,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
           setCut(cutNear(editor.getProject(), clip, menuTime.current))
           setTransitions(transitionsAtClip(editor.getProject(), clip.id))
           setGap(gapBefore(editor.getProject(), clip.id))
+          setTrackLocked(!!editor.getProject().tracks.find((t) => t.id === clip.trackId)?.locked)
         }}
       >
         <ContextMenuTrigger asChild>
@@ -1223,7 +1226,12 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
           <ContextMenuSeparator />
           {gap && (
             <ContextMenuItem
-              description={`${gapLength(gap)} before this clip · it and the later clips move left`}
+              disabled={trackLocked}
+              description={
+                trackLocked
+                  ? 'The track is locked'
+                  : `${gapLength(gap)} before this clip · it and the later clips move left`
+              }
               onSelect={() => closeGap(gap)}
             >
               Close gap before
@@ -2086,7 +2094,10 @@ export function Timeline() {
               moves.push({ clipId: id, start })
               pushed.add(id)
             }
-            dispatch({ type: 'clip.move', moves }, { coalesceKey: key, label: 'Insert clip' })
+            dispatch(
+              { type: 'clip.move', moves: withCutouts(p, moves) },
+              { coalesceKey: key, label: 'Insert clip' },
+            )
             return
           }
           if (swap) {
@@ -2101,10 +2112,10 @@ export function Timeline() {
             const commands: EditCommand[] = [
               {
                 type: 'clip.move',
-                moves: [
+                moves: withCutouts(p, [
                   { clipId: self.id, start: swap.clip.start, trackId: toTrack.id },
                   { clipId: other.id, start: swap.other.start, trackId: self.trackId },
-                ],
+                ]),
               },
             ]
             // Same-length clips trade lengths too, so the cuts stay put; after the move, so a trim keeps the in-point.
@@ -2137,11 +2148,10 @@ export function Timeline() {
           const commands: EditCommand[] = [
             {
               type: 'clip.move',
-              moves: moving.map((c) => ({
-                clipId: c.id,
-                start: c.start + shift,
-                trackId: trackFor(c).id,
-              })),
+              moves: withCutouts(
+                p,
+                moving.map((c) => ({ clipId: c.id, start: c.start + shift, trackId: trackFor(c).id })),
+              ),
             },
           ]
           if (trimTo !== undefined)

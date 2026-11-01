@@ -4,6 +4,7 @@
  * stay with the vocals, so the Lyrics track never closes up.
  */
 import { clipsOnTrack, type Clip, type Project } from '../../model/index.ts'
+import { withCutouts } from './behind.ts'
 import { closeUp, gapAt, isLyricsTrack } from './clipDrag.ts'
 import { undoAction } from './library.ts'
 import { dispatch, editor } from './project.ts'
@@ -66,16 +67,16 @@ export function gapBefore(p: Project, clipId: string): Gap | null {
  * selected clip's track, else on the first track with one there.
  */
 export function gapForPalette(p: Project, selection: Selection, playhead: number): Gap | null {
+  const unlocked = (trackId: string) => !p.tracks.find((t) => t.id === trackId)?.locked
   const selected = selectedClipIds(selection)
     .map((id) => p.clips[id])
-    .filter((c): c is Clip => !!c)
+    .filter((c): c is Clip => !!c && unlocked(c.trackId))
   for (const clip of selected) {
     const gap = gapBefore(p, clip.id)
     if (gap) return gap
   }
   const tracks = [...new Set([...selected.map((c) => c.trackId), ...p.tracks.map((t) => t.id)])]
-  for (const trackId of tracks) {
-    if (p.tracks.find((t) => t.id === trackId)?.locked) continue
+  for (const trackId of tracks.filter(unlocked)) {
     const gap = gapToClose(p, trackId, playhead)
     if (gap) return gap
   }
@@ -91,7 +92,7 @@ export function closeGap(gap: Gap): boolean {
     .map((c) => ({ clipId: c.id, start: c.start - length }))
   if (!moves.length) return false
   const label = 'Close gap'
-  if (!dispatch({ type: 'clip.move', moves }, { label })) return false
+  if (!dispatch({ type: 'clip.move', moves: withCutouts(p, moves) }, { label })) return false
   const track = p.tracks.find((t) => t.id === gap.trackId)
   toast(`Closed the ${gapLength(gap)} gap on ${track?.name ?? 'the track'}`, undoAction(label))
   return true

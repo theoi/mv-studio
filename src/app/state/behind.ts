@@ -336,6 +336,26 @@ export function cutoutsOf(project: Project, clipId: string): Clip[] {
   return Object.values(project.clips).filter((c) => c.meta?.behindSubjectOf === clipId)
 }
 
+type ClipMove = Extract<EditCommand, { type: 'clip.move' }>['moves'][number]
+
+/**
+ * `moves` with each moved clip's cutouts moving as far in time, so a cutout keeps showing the moment it was cut from
+ * when its clip moves: a drag, a swap, a ripple delete, Close gap. `project` has the clips where they were before the
+ * moves. A cutout that moves itself, or is on a locked track, stays as given.
+ */
+export function withCutouts(project: Project, moves: readonly ClipMove[]): ClipMove[] {
+  const moved = new Set(moves.map((m) => m.clipId))
+  const locked = new Set(project.tracks.filter((t) => t.locked).map((t) => t.id))
+  const follow = moves.flatMap((m) => {
+    const host = project.clips[m.clipId]
+    if (!host) return []
+    return cutoutsOf(project, host.id)
+      .filter((c) => !moved.has(c.id) && !locked.has(c.trackId))
+      .map((c) => ({ clipId: c.id, start: Math.max(0, c.start + m.start - host.start) }))
+  })
+  return [...moves, ...follow]
+}
+
 export function hasCutout(project: Project, clipId: string): boolean {
   return cutoutsOf(project, clipId).length > 0
 }

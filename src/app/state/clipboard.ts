@@ -13,6 +13,7 @@ import {
   type Track,
 } from '../../model/index.ts'
 import { plural } from '../format.ts'
+import { withCutouts } from './behind.ts'
 import { undoAction } from './library.ts'
 import { removeLyricLinesCommands } from './lyrics.ts'
 import { dispatch, editor, isLookClip } from './project.ts'
@@ -119,7 +120,8 @@ function remove(p: Project, clips: Clip[], verb: 'Cut' | 'Delete', closeGaps = f
   }
   commands.push({ type: 'clip.remove', clipIds: [...ids] })
   const moves = closeGaps ? closeUpMoves(p, clips).filter((m) => !ids.has(m.clipId)) : []
-  if (moves.length) commands.push({ type: 'clip.move', moves })
+  if (moves.length)
+    commands.push({ type: 'clip.move', moves: withCutouts(p, moves).filter((m) => !ids.has(m.clipId)) })
   const closed = moves.length ? ' and close the gap' : ''
   const label = `${verb} ${clipsNamed(clips)}${closed}`
   const ok = dispatch(commands, { label })

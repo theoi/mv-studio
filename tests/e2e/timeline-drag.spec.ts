@@ -423,19 +423,35 @@ test('a clip let go over a gap it fits fills it exactly, and one let go on its n
     await during?.()
     await page.mouse.up()
   }
+  // A cutout of Singer close-up for text behind the subject, on a Subject track at the top.
+  await page.evaluate((host) => {
+    const { editor, dispatch } = window.mvStudio.app.project
+    const track = window.mvStudio.model.createTrack('visual', 'Subject')
+    const clip = { ...structuredClone(editor.getProject().clips[host]), id: 'cutout', trackId: track.id }
+    dispatch([
+      { type: 'track.add', track, index: 0 },
+      { type: 'clip.add', clip: { ...clip, meta: { behindSubjectOf: host } } },
+    ])
+  }, ids[66]!)
+  const cutoutAt = async () => (await placed(page, 'cutout')).start
   const startLabel = await undoLabel(page)
 
   // Onto its neighbor: the pill says Swap and the neighbor shows in its place; the drop is one undo step, with a toast.
+  // The cutout moves with Singer close-up, so it keeps showing the same moment.
   await drag(66, 2, async () => {
     await expect(page.getByText('Swap', { exact: true })).toBeVisible()
     await expect.poll(() => at(68)).toEqual(span(66, 68))
   })
   expect(await at(66)).toEqual(span(68, 70))
+  expect(await cutoutAt()).toBe(68)
   expect(await undoLabel(page)).toBe('Swap clips')
   await expect(toastWith('Swapped Singer close-up and Neon grid')).toBeVisible()
   await page.keyboard.press(`${mod}+z`)
-  expect([await at(66), await at(68)]).toEqual([span(66, 68), span(68, 70)])
+  expect([await at(66), await at(68), await cutoutAt()]).toEqual([span(66, 68), span(68, 70), 66])
   expect(await undoLabel(page)).toBe(startLabel)
+  await page.keyboard.press(`${mod}+Shift+z`)
+  expect([await at(66), await at(68), await cutoutAt()]).toEqual([span(68, 70), span(66, 68), 68])
+  await page.keyboard.press(`${mod}+z`)
 
   // Onto a clip of the same length further on: they swap, and Neon grid between them stays.
   await drag(66, 4)
