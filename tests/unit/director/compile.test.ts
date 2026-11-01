@@ -212,6 +212,21 @@ describe('compilePlan', () => {
     ])
   })
 
+  it('names the draft’s title rows around a Titles track the user already has', async () => {
+    const { project, editor, plan } = await titledDraft()
+    const mine = createTrack('visual', 'Titles')
+    editor.dispatch([
+      { type: 'track.add', track: mine, index: 0 },
+      { type: 'clip.add', clip: createTextClip({ trackId: mine.id, text: 'Mine', start: 30, duration: 2 }) },
+    ])
+    editor.dispatch(compilePlan(plan, editor.getProject()).commands)
+    expect(titleRows(editor.getProject())).toEqual([
+      ['Titles 2', 'Show Me'],
+      ['Titles 3', 'Josh Woodward'],
+      ['Titles', 'Mine'],
+    ])
+  })
+
   it('gives each further title row back its own track on a redraft, by row', async () => {
     const { project, editor, plan } = await titledDraft()
     // A language model's plan can show more than two title cards at once.
