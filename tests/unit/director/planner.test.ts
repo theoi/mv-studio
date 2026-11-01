@@ -398,6 +398,8 @@ describe('local planner', () => {
     ['A storm at sea and end with my footage of the harbour', 'A storm at sea and the harbour'],
     ['Cut my clips of the concert to the beat', 'the concert'],
     ['Mix my footage of the band with AI shots of the ocean', 'the band with the ocean'],
+    ['Blend AI visuals of fire with my footage of the drummer', 'fire with the drummer'],
+    ['Rain on the window with my clips of the street', 'Rain on the window with the street'],
     // A clause that rules media out goes whole, so what it rules out is not drawn.
     ['A neon city at night. No stock footage of cities.', 'A neon city at night'],
     ["Rain on a window. Don't use my photos of the beach.", 'Rain on a window'],
@@ -438,6 +440,7 @@ describe('local planner', () => {
     'A stock trader watching screens full of numbers',
     'A street with no cars at dawn, never-ending fields',
     'A man with no photos of his family',
+    'Start with a montage of the city',
   ])('keeps an idea that only describes pictures as it is: %j', (idea) => {
     expect(visualIdea(idea)).toBe(idea)
   })

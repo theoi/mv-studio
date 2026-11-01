@@ -718,21 +718,28 @@ const RULED_OUT = [
 
 /**
  * An edit of media at the start of a clause: "Cut my clips of the concert …", "Mix my footage of the band …", "Open
- * with AI shots of the skyline". The edit goes, what the media show stays.
+ * with AI shots of the skyline". The edit goes, what the media show stays. Only media named by their source or as
+ * already there ("the clips"): "Start with a montage of the city" describes the picture.
  */
 const EDIT_OF_MEDIA = new RegExp(
-  String.raw`^(please\s+)?((cut|edit|mix|trim|splice|combine|blend|intercut)\s+|(open|begin|start|end|finish|close)\s+(with|on)\s+)(${QUANTITY}\s+)?(own\s+)?(stock\s+|${AI_SOURCE})?${SHOTS}\s+(of|showing|featuring)\s+`,
+  String.raw`^(please\s+)?((cut|edit|mix|trim|splice|combine|blend|intercut)\s+|(open|begin|start|end|finish|close)\s+(with|on)\s+)((my|our|the|these|those)\s+(own\s+)?(stock\s+|${AI_SOURCE})?|(${QUANTITY}\s+)?(stock\s+|${AI_SOURCE}))${SHOTS}\s+(of|showing|featuring)\s+`,
   'i',
 )
 
 /**
- * "A summer montage with my photos of the beach" → "A summer montage of the beach": the source goes, what it shows
- * stays. At the start of a clause the preposition goes too, and after "end with" and the like ("…and end with my
- * footage of the harbour") so do both.
+ * "with my photos of the beach" inside a clause: the source goes, what it shows stays. After a medium or a montage
+ * the photos are of it ("A summer montage with my photos of the beach" → "A summer montage of the beach"); after
+ * anything else they go with it ("fire with my footage of the drummer" → "fire with the drummer"). At the start of a
+ * clause the preposition goes too, and after "end with" and the like ("…and end with my footage of the harbour") so
+ * does the verb.
  */
 const WITH_OWN_MEDIA = new RegExp(
-  String.raw`(^|\s+)((open|begin|start|end|finish|close)(s|ing)?\s+)?(with|using|from|in)\s+(my|our)\s+(own\s+)?${MEDIA}\s+(of|showing|featuring)\s+`,
+  String.raw`(^|(\S+)\s+)((open|begin|start|end|finish|close)(s|ing)?\s+)?(with|using|from|in)\s+(my|our)\s+(own\s+)?${MEDIA}\s+(of|showing|featuring)\s+`,
   'gi',
+)
+const COMPILATION = new RegExp(
+  String.raw`^(${SHOTS}|collages?|compilations?|reels?|sequences?|slideshows?|edits?|mix(es)?)$`,
+  'i',
 )
 
 const FILLER = new Set(
@@ -763,8 +770,8 @@ export function visualIdea(idea: string): string {
         ),
       )
       .map((c) =>
-        c.replace(WITH_OWN_MEDIA, (_m, before: string, verb?: string) =>
-          !before ? '' : verb ? ' ' : ' of ',
+        c.replace(WITH_OWN_MEDIA, (_m, lead: string, before = '', verb?: string) =>
+          !lead ? '' : verb ? `${before} ` : `${before} ${COMPILATION.test(before) ? 'of' : 'with'} `,
         ),
       )
       .map((c) => INSTRUCTION_PHRASES.reduce((s, p) => s.replace(p, ''), c).trim())
