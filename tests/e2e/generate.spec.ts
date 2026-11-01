@@ -322,14 +322,14 @@ test('Show says when the new clip is on a hidden track, and Show track brings th
   expect(await hidden()).toBe(false)
   expect(await page.evaluate(() => window.mvStudio.app.project.editor.undoLabel())).toBe(`Show ${trackName}`)
 
-  // Focus came back to Show, which holds the toast. With the pointer and focus away, it gets its full time again,
-  // counted from then, and closes.
+  // Focus came back to Show, which holds the toast. With the pointer and focus away, it gets its full time again
+  // (20 s for a toast with buttons), counted from then, and closes.
   await page.waitForTimeout(Math.max(0, 6000 - (Date.now() - shownAt)))
   await page.mouse.move(0, 0)
   await page.getByRole('tab', { name: 'Assist' }).focus()
-  await page.waitForTimeout(3000)
+  await page.waitForTimeout(17_000)
   await expect(added).toBeVisible()
-  await expect(added).toBeHidden({ timeout: 4000 })
+  await expect(added).toBeHidden({ timeout: 5000 })
 })
 
 test('asks before spending when Settings says so, and Cancel stops the request at fal.ai', async ({

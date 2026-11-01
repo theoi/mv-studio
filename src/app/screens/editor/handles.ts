@@ -8,7 +8,7 @@ import {
   type Project,
   type VisualClip,
 } from '../../../model/index.ts'
-import { dispatch, editor } from '../../state/project.ts'
+import { clipsLabel, dispatch, editor } from '../../state/project.ts'
 import { valueAtCommands } from './inspector/animatable.ts'
 
 /*
@@ -34,7 +34,7 @@ export const CLICK_SLOP = 2
 /** Inspector › Transform › Scale stops at 1%. */
 const MIN_SCALE = 0.01
 const SNAP_DEGREES = 15
-const LABELS: Record<HandleMode, string> = { move: 'Move clip', scale: 'Scale clip', rotate: 'Rotate clip' }
+const VERBS: Record<HandleMode, string> = { move: 'Move', scale: 'Scale', rotate: 'Rotate' }
 
 const isTransformable = (clip: Clip | undefined): clip is DraggableClip =>
   !!clip && (clip.type === 'video' || clip.type === 'image' || clip.type === 'text')
@@ -251,6 +251,7 @@ export function startDrag(
   const pivot: Point = [start.x * frame.width, start.y * frame.height]
   const canvas = editor.getProject().settings
   const coalesceKey = `canvas:${clip.id}:${mode}`
+  const label = `${VERBS[mode]} ${clipsLabel(editor.getProject(), [clip])}`
   let active = false
   let lastAngle = angleOf(from, pivot)
   let turned = 0
@@ -260,7 +261,7 @@ export function startDrag(
   let raf = 0
   const save = () => {
     if (!unsaved) return
-    dispatch(unsaved, { coalesceKey, label: LABELS[mode] })
+    dispatch(unsaved, { coalesceKey, label })
     unsaved = null
     savedAt = performance.now()
   }

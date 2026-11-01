@@ -1,10 +1,19 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
-import { dismissToast, holdToast, releaseToast, useUi, type Toast } from '../../state/ui.ts'
+import { editor } from '../../state/project.ts'
+import {
+  dismissToast,
+  holdToast,
+  releaseToast,
+  useUi,
+  withdrawUndoOnChange,
+  type Toast,
+} from '../../state/ui.ts'
 import styles from './Common.module.css'
 
 export function Toaster() {
   const toasts = useUi((s) => s.toasts)
+  useEffect(() => withdrawUndoOnChange(editor), [])
   return (
     <div className={styles.toaster} role="status" aria-live="polite">
       {toasts.map((t) => (

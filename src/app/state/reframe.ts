@@ -54,14 +54,37 @@ type ToastAction = NonNullable<Toast['action']>
 /** The actions of the offers and results shown here, which a newer frame change makes stale. */
 const shown = new WeakSet<ToastAction>()
 
-function show(message: string, action: ToastAction): void {
+/** The offer on screen. It stays until it is taken or dismissed, or no longer applies (see below). */
+let offerShown: ToastAction | null = null
+
+function show(message: string, action: ToastAction, offer = false): void {
   shown.add(action)
-  toast(message, action)
+  if (offer) offerShown = action
+  toast(message, action, { sticky: offer })
 }
 
 /** Removes earlier offers and results with Undo: after a newer frame change they no longer apply. */
 function withdrawToasts(): void {
   set((s) => ({ toasts: s.toasts.filter((t) => !t.action || !shown.has(t.action)) }))
+  offerShown = null
+}
+
+// An offer outlives the change that made it, so it goes once the clips fit the frame by other means: the aspect change
+// undone, or the offer taken in Inspector › Project.
+editor.subscribe(() => {
+  const offer = offerShown
+  if (!offer || reframeOffer(editor.getProject())) return
+  offerShown = null
+  set((s) => ({ toasts: s.toasts.filter((t) => t.action !== offer) }))
+})
+
+/** What Inspector › Project says under Aspect while the clips are laid out for another frame, and its button. */
+export function lastingOffer(project: Project): { note: string; label: string } | null {
+  const offer = reframeOffer(project)
+  if (!offer) return null
+  return offer === 'restore'
+    ? { note: `The clips can go back to their ${project.settings.aspect} layout.`, label: OFFERS.restore }
+    : { note: `The clips are still laid out for ${layoutFrameOf(project).aspect}.`, label: OFFERS.reframe }
 }
 
 /**
@@ -106,9 +129,17 @@ export function changeAspect(aspect: AspectPreset): void {
   withdrawToasts()
   const offer = reframeOffer(editor.getProject())
   if (offer === 'restore')
-    show(`Back to ${aspect}. Restore the ${aspect} layout?`, { label: OFFERS.restore, run: reframeProject })
+    show(
+      `Back to ${aspect}. Restore the ${aspect} layout?`,
+      { label: OFFERS.restore, run: reframeProject },
+      true,
+    )
   else if (offer === 'reframe')
-    show(`Switched to ${aspect}. Keep subjects in frame?`, { label: OFFERS.reframe, run: reframeProject })
+    show(
+      `Switched to ${aspect}. Keep subjects in frame?`,
+      { label: OFFERS.reframe, run: reframeProject },
+      true,
+    )
 }
 
 /** The clip and the cutouts that put text behind its subject, which are framed like it. */

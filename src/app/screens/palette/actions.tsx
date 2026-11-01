@@ -151,10 +151,10 @@ import {
   selectClips,
   selectedClipIds,
   set,
-  toast,
+  setSnap,
   type PageId,
   type SettingsPage,
-  type UiState,
+  type SnapKey,
 } from '../../state/ui.ts'
 import { enterVj } from '../../state/vj.ts'
 import { fitTimeline, zoomBy } from '../../state/zoom.ts'
@@ -343,10 +343,8 @@ function sectionAction(
   }
 }
 
-type SnapKey = 'beatSnap' | 'barSnap' | 'sectionSnap' | 'edgeSnap' | 'playheadSnap'
-
 function snapTo(
-  id: SnapKey,
+  id: Exclude<SnapKey, 'snap'>,
   what: string,
   shortcut?: ShortcutId,
   unavailable?: () => string | undefined,
@@ -358,12 +356,8 @@ function snapTo(
     icon: <Magnet />,
     shortcut,
     keywords: 'snapping magnet',
-    run: () => {
-      const on = !get()[id]
-      set({ [id]: on } as Pick<UiState, SnapKey>)
-      toast(on ? `Snapping to ${what} on` : `Snapping to ${what} off`)
-    },
-    unavailable,
+    run: () => setSnap(id, !get()[id]),
+    unavailable: () => (get().snap ? unavailable?.() : 'Snapping is off'),
   }
 }
 
@@ -869,11 +863,7 @@ export const actions: Action[] = [
     icon: <Magnet />,
     shortcut: 'snap',
     keywords: 'snap magnet toggle',
-    run: () => {
-      const on = !get().snap
-      set({ snap: on })
-      toast(on ? 'Snapping on' : 'Snapping off')
-    },
+    run: () => setSnap('snap', !get().snap),
   },
   snapTo('beatSnap', 'beats', 'beatSnap'),
   snapTo('barSnap', 'bar starts', undefined, () => {

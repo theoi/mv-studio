@@ -4,7 +4,7 @@ import { Button } from '../../../ds/Button.tsx'
 import { ColorField, FieldRow, Section, Segmented, Select } from '../../../ds/Fields.tsx'
 import { formatBpm, plural } from '../../../format.ts'
 import { bpmOf, dispatch, editor, hasSong, sectionsOf, useProject } from '../../../state/project.ts'
-import { changeAspect } from '../../../state/reframe.ts'
+import { changeAspect, lastingOffer, reframeProject } from '../../../state/reframe.ts'
 import { SONG_STATE_TEXT } from '../../../state/songAnalysis.ts'
 import { useSongState } from '../assist/jobState.ts'
 import { openAssist } from '../../../state/ui.ts'
@@ -27,6 +27,7 @@ export function ProjectInspector() {
   const empty = !hasSong(project)
   const facts = useSongFacts()
   const { aspect, fps } = project.settings
+  const offer = lastingOffer(project)
   return (
     <>
       <Header icon={<Layers />} title="Project" meta="Settings for the whole video" />
@@ -40,6 +41,16 @@ export function ProjectInspector() {
             options={(['16:9', '9:16', '1:1', '4:5'] as const).map((v) => ({ value: v, label: v }))}
           />
         </FieldRow>
+        {offer && (
+          <>
+            <p className={styles.note}>{offer.note}</p>
+            <div className={styles.inlineActions}>
+              <Button size="sm" variant="ghost" className={styles.forwardAction} onClick={reframeProject}>
+                {offer.label}
+              </Button>
+            </div>
+          </>
+        )}
         <FieldRow label="Frame rate">
           <Select
             value={String(fps)}

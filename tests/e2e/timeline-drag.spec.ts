@@ -108,7 +108,7 @@ test('a clip drags to another track of its kind, butts up against a near neighbo
   await page.mouse.move(from.x, overlayY, { steps: 8 })
   await page.mouse.up()
   expect(await placed(page, id)).toEqual({ trackId: 't-overlay', start: 66, end: 68 })
-  expect(await undoLabel(page)).toBe('Move clip')
+  expect(await undoLabel(page)).toBe('Move Singer close-up')
   await page.keyboard.press(`${mod}+z`)
   expect(await placed(page, id)).toEqual(before)
   await page.keyboard.press(`${mod}+Shift+z`)
@@ -555,7 +555,7 @@ test('a clip let go over a gap it fits fills it exactly, and one let go on its n
   await clip(66).click()
   await page.keyboard.press('Delete')
   expect(await hasCutout()).toBe(false)
-  expect(await undoLabel(page)).toBe('Delete clip')
+  expect(await undoLabel(page)).toBe('Delete Singer close-up')
   await page.keyboard.press(`${mod}+z`)
   expect(await hasCutout()).toBe(true)
   await page.keyboard.press(`${mod}+Shift+z`)
@@ -565,7 +565,7 @@ test('a clip let go over a gap it fits fills it exactly, and one let go on its n
     await expect(noRoom).toBeHidden()
   })
   expect(await at(70)).toEqual(span(66, 68))
-  expect(await undoLabel(page)).toBe('Move clip')
+  expect(await undoLabel(page)).toBe('Move Dancer')
   await page.keyboard.press(`${mod}+z`)
 
   // A few hundredths of a second too long for the gap: it is trimmed to fill it, and the toast says by how much, with

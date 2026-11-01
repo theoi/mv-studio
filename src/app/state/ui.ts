@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { prefs } from './prefs.ts'
+import type { ProjectEditor } from '../../model/index.ts'
+import { prefs, setPref } from './prefs.ts'
 
 /*
  * UI-only state: which screen, panel, dialog and selection is showing, plus view settings such as zoom. Project
@@ -144,12 +145,12 @@ export const initialUi: UiState = {
   previewZoom: 'fit',
   pxPerSec: 12,
   tool: 'select',
-  snap: true,
+  snap: prefs().snap,
   beatSnap: prefs().beatSnap,
-  barSnap: true,
-  sectionSnap: true,
-  edgeSnap: true,
-  playheadSnap: true,
+  barSnap: prefs().barSnap,
+  sectionSnap: prefs().sectionSnap,
+  edgeSnap: prefs().edgeSnap,
+  playheadSnap: prefs().playheadSnap,
   showEnergy: true,
   showGrid: true,
   review: false,
@@ -171,6 +172,55 @@ useUi.subscribe((s, prev) => {
   }
 })
 
+export type SnapKey = 'snap' | 'beatSnap' | 'barSnap' | 'sectionSnap' | 'edgeSnap' | 'playheadSnap'
+
+const SNAP_KEYS: readonly SnapKey[] = [
+  'snap',
+  'beatSnap',
+  'barSnap',
+  'sectionSnap',
+  'edgeSnap',
+  'playheadSnap',
+]
+
+useUi.subscribe((s, prev) => {
+  for (const key of SNAP_KEYS) if (s[key] !== prev[key]) setPref(key, s[key])
+})
+
+/** The snapping choices as they are now, which a change of screen keeps like the preferences they are saved in. */
+export function snapChoices(s: UiState): Pick<UiState, SnapKey> {
+  return {
+    snap: s.snap,
+    beatSnap: s.beatSnap,
+    barSnap: s.barSnap,
+    sectionSnap: s.sectionSnap,
+    edgeSnap: s.edgeSnap,
+    playheadSnap: s.playheadSnap,
+  }
+}
+
+const SNAP_NAMES: Record<SnapKey, string> = {
+  snap: 'Snapping',
+  beatSnap: 'Snapping to beats',
+  barSnap: 'Snapping to bar starts',
+  sectionSnap: 'Snapping to sections',
+  edgeSnap: 'Snapping to clip edges',
+  playheadSnap: 'Snapping to playhead',
+}
+
+/**
+ * Turns snapping, or one thing it snaps to, on or off and says so. The choice is kept for the next visit. What it snaps
+ * to can't change while snapping is off, as in the snap menu.
+ */
+export function setSnap(key: SnapKey, on: boolean) {
+  if (key !== 'snap' && !get().snap) {
+    toast('Snapping is off. Press N to turn it on.', undefined, { key: 'snap' })
+    return
+  }
+  set({ [key]: on } as Pick<UiState, SnapKey>)
+  toast(`${SNAP_NAMES[key]} ${on ? 'on' : 'off'}`, undefined, { key: 'snap' })
+}
+
 const TOAST_MS = 5200
 
 /** The toasts that stay when another comes: sticky ones, and the two most recent of the others. */
@@ -179,6 +229,8 @@ function room(toasts: Toast[]): Toast[] {
   const dropped = new Set(others.slice(0, Math.max(0, others.length - 2)))
   return toasts.filter((t) => !dropped.has(t))
 }
+/** A toast with a button (Undo, Show) waits longer: reading it and reaching for the button takes a while. */
+const ACTION_TOAST_MS = 20000
 let toastId = 1
 const toastTimers = new Map<number, number>()
 
@@ -212,6 +264,26 @@ export function closeWithToast(name: string, close: () => void) {
   }
 }
 
+/**
+ * Takes back the Undo of toasts shown before an edit, an undo or a redo: each one undoes only while its edit is the
+ * last step. A toast that also has Show keeps it.
+ */
+export function withdrawUndo() {
+  const stale = get().toasts.filter((t) => t.action?.label === 'Undo')
+  if (!stale.length) return
+  for (const t of stale) if (!t.show) holdToast(t.id)
+  set((s) => ({
+    toasts: s.toasts.flatMap((t) => (!stale.includes(t) ? [t] : t.show ? [{ ...t, action: undefined }] : [])),
+  }))
+}
+
+/** Withdraws toasts' Undo on each edit, undo, redo or load of `editor`, not on background writes. Returns the unsubscribe. */
+export function withdrawUndoOnChange(editor: Pick<ProjectEditor, 'subscribe'>): () => void {
+  return editor.subscribe((_, change) => {
+    if (change.source !== 'derived') withdrawUndo()
+  })
+}
+
 export function dismissToast(id: number) {
   holdToast(id)
   set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
@@ -228,11 +300,12 @@ export function holdToast(id: number) {
 /** Gives a toast its full time again, counted from now. */
 export function releaseToast(id: number) {
   holdToast(id)
-  if (get().toasts.some((t) => t.id === id && !t.sticky))
-    toastTimers.set(
-      id,
-      window.setTimeout(() => dismissToast(id), TOAST_MS),
-    )
+  const t = get().toasts.find((t) => t.id === id)
+  if (!t || t.sticky) return
+  toastTimers.set(
+    id,
+    window.setTimeout(() => dismissToast(id), t.action || t.show ? ACTION_TOAST_MS : TOAST_MS),
+  )
 }
 
 export function select(selection: Selection) {
