@@ -1057,7 +1057,8 @@ test('a sample project saved again after the browser clears its storage keeps a 
     origin: new URL(page.url()).origin,
     storageTypes: 'indexeddb,file_systems,cache_storage',
   })
-  await expect.poll(() => keptCount(page)).toBe(1)
+  // A read that starts as the browser closes the database fails, and the next one opens it again.
+  await expect.poll(() => keptCount(page).catch(() => -1)).toBe(1)
   await expect.poll(thumbnailKept).toBe(true)
   await expect(saved(page)).toBeVisible()
   await expect(page.getByText('The browser cleared', { exact: false })).toHaveCount(0)
