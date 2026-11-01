@@ -419,6 +419,18 @@ describe('pace and brightness words in the idea', () => {
       expect(asked.section(id)).toEqual(plain.section(id))
   })
 
+  it('leaves the pre-chorus out of what the idea asks of the chorus', async () => {
+    const project = makeProject()
+    project.analysis.audio.song!.sections = SECTIONS.map((s) =>
+      s.id === 's-bridge' ? { ...s, label: 'Pre-chorus', energy: 0.7 } : s,
+    )
+    const p = await planLocally(
+      await buildPlannerInput(project, { kind: 'beat-cut', seed: 7, prompt: 'fast in the chorus' }),
+    )
+    expect(p.sections.find((s) => s.id === 's-chorus2')?.mood).toBe('fast')
+    expect(p.sections.find((s) => s.id === 's-bridge')?.mood).toBe('rising, tense')
+  })
+
   it('slows every section a step for a slow idea and leads every mood with “dark”', async () => {
     const plain = await guessedChorus('neon city')
     const asked = await guessedChorus('a slow, dark neon city')

@@ -140,8 +140,8 @@ export function ideaAsks(prompt: string): IdeaAsks {
 
 export function normalizedLabel(label: string): string {
   const l = label.toLowerCase()
-  if (/chorus|hook|refrain|drop/.test(l)) return 'chorus'
   if (/pre[- ]?chorus|build/.test(l)) return 'pre-chorus'
+  if (/chorus|hook|refrain|drop/.test(l)) return 'chorus'
   if (/verse/.test(l)) return 'verse'
   if (/bridge|break/.test(l)) return 'bridge'
   if (/intro/.test(l)) return 'intro'
