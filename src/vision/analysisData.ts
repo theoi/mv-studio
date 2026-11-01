@@ -1,4 +1,5 @@
 import type { Asset, Id, JsonObject, JsonValue, Project, VisualAnalysis } from '../model/types.ts'
+import { shortFileName } from '../shared/text.ts'
 import { planReframe, type ReframeOptions } from './reframe/planner.ts'
 import type {
   ClipVisionIndex,
@@ -82,6 +83,7 @@ function encodeMotion(m: MotionAnalysis): JsonObject {
     meanEnergy: round(m.meanEnergy),
     p90Energy: round(m.p90Energy),
     meanCamera: round(m.meanCamera),
+    ...(m.peakLuma === undefined ? {} : { peakLuma: m.peakLuma }),
   }
 }
 
@@ -168,11 +170,65 @@ export function readClipIndex(analysis: VisualAnalysis | undefined): ClipVisionI
 }
 
 function readMotion(m: Record<string, unknown>): MotionAnalysis | null {
-  const { fps, energy, camera, cuts, meanEnergy, p90Energy, meanCamera } = m
+  const { fps, energy, camera, cuts, meanEnergy, p90Energy, meanCamera, peakLuma } = m
   if (typeof fps !== 'number' || !isNumbers(energy) || !isNumbers(camera) || !isNumbers(cuts)) return null
   if (typeof meanEnergy !== 'number' || typeof p90Energy !== 'number' || typeof meanCamera !== 'number')
     return null
-  return { fps, energy, camera, cuts, meanEnergy, p90Energy, meanCamera }
+  return {
+    fps,
+    energy,
+    camera,
+    cuts,
+    meanEnergy,
+    p90Energy,
+    meanCamera,
+    ...(typeof peakLuma === 'number' ? { peakLuma } : {}),
+  }
+}
+
+/**
+ * Below this, no pixel of any sampled frame is brighter than the black of a video: the clip shows nothing, as when
+ * its frames are black or fully transparent (a WebM whose alpha channel is all 0 draws as black on the stage).
+ */
+const BLANK_PEAK_LUMA = 16
+
+/** Whether footage analysis found every sampled frame of the clip or image black or fully transparent. */
+export function isBlankClip(analysis: VisualAnalysis | undefined): boolean {
+  if (analysis?.version !== VISION_ANALYSIS_VERSION) return false
+  const { motion } = analysis.data
+  return isObject(motion) && typeof motion.peakLuma === 'number' && motion.peakLuma < BLANK_PEAK_LUMA
+}
+
+/** The clips and images in the project that show nothing (`isBlankClip`), in import order. */
+export function blankAssets(project: Project): Asset[] {
+  return Object.values(project.assets)
+    .filter(
+      (a) =>
+        (a.kind === 'video' || a.kind === 'image') &&
+        (a.origin.type === 'import' || a.origin.type === 'generated') &&
+        isBlankClip(project.analysis.visual[a.id]),
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name))
+}
+
+/** File names as notes quote them: “clip08.webm”, “a very long name…ar.mp4”. */
+export const quotedFileNames = (names: readonly string[]) =>
+  names.map((n) => `“${shortFileName(n)}”`).join(', ')
+
+/** Says which clips were left out because they show nothing, or undefined when none were. */
+export function blankClipsNote(names: readonly string[]): string | undefined {
+  if (!names.length) return undefined
+  if (names.length === 1)
+    return `Left out ${quotedFileNames(names)} because every frame of it is black or see-through.`
+  return `Left out ${names.length} clips because every frame of them is black or see-through: ${quotedFileNames(names)}.`
+}
+
+/** Says which chosen clips were used although they show nothing, or undefined when none were. */
+export function blankClipsUsedNote(names: readonly string[]): string | undefined {
+  if (!names.length) return undefined
+  if (names.length === 1)
+    return `Used ${quotedFileNames(names)} because you chose it, but every frame of it is black or see-through.`
+  return `Used ${names.length} clips because you chose them, but every frame of them is black or see-through: ${quotedFileNames(names)}.`
 }
 
 /**

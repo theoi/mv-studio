@@ -93,6 +93,7 @@ export const ASK_SYSTEM_PROMPT = [
   '- Use ids exactly as given. Clips you add get ids n1, n2, ... in order, and later operations may use them.',
   '- To change many clips, use a selector such as {"type":"text","section":"s3"} instead of listing ids.',
   '- Effects, transitions, visualizers and text animations must come from the catalog.',
+  '- Media with showsNothing is black or see-through in every frame: use it only when the user asks for it.',
   'Guidelines:',
   '- Do what was asked and nothing more. Keep existing content unless asked to remove it.',
   '- When a request is vague but reasonable ("make the chorus more intense"), choose sensible concrete edits rather than asking: e.g. add a beat-reactive scale pulse, raise contrast and saturation, add glow driven by the bass.',

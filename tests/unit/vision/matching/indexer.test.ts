@@ -35,6 +35,23 @@ describe('indexClip', () => {
     expect(opened.every((b) => (b as unknown as { closed: boolean }).closed)).toBe(true)
   })
 
+  it('measures the brightest pixel at the decoded size, so a small light on black still counts', async () => {
+    const run = (toGray: (b: ImageBitmap, s: Size) => ReturnType<typeof flatGray>) =>
+      indexClip(
+        { onnx: fakeOnnx({ dim: DIM }), model: 'clipB32', toGray, referenceVectors: async () => [] },
+        fakeSource({ duration: 2, width: 1920, height: 1080 }).source,
+      )
+    expect((await run((_b, s) => flatGray(s, 0))).motion.peakLuma).toBe(0)
+    // A 3 px light that the 64 px motion frame samples away.
+    const light = await run((b, s) => {
+      const gray = flatGray(s, 0)
+      if (s.width === b.width && s.height === b.height)
+        for (let y = 100; y < 103; y++) gray.data.fill(230, y * s.width + 150, y * s.width + 153)
+      return gray
+    })
+    expect(light.motion.peakLuma).toBe(230)
+  })
+
   it('round-trips through the cache format', async () => {
     const { source } = fakeSource({ duration: 3 })
     const onnx = fakeOnnx({ dim: DIM })

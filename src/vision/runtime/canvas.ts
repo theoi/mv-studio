@@ -26,6 +26,8 @@ function context(width: number, height: number): OffscreenCanvasRenderingContext
 export function toRgba(source: Drawable, size?: Size): RgbaImage {
   const { width, height } = size ?? drawableSize(source)
   const ctx = context(width, height)
+  // drawImage composites, so a transparent frame would show the last frame drawn at this size.
+  ctx.clearRect(0, 0, width, height)
   ctx.drawImage(source as CanvasImageSource, 0, 0, width, height)
   const img = ctx.getImageData(0, 0, width, height)
   return { width, height, data: img.data }

@@ -133,6 +133,20 @@ describe('local planner', () => {
     const chorus = main(preferred).filter((s) => s.sectionId === 'chorus')
     for (let i = 1; i < chorus.length; i++) expect(asset(chorus[i]!)).not.toBe(asset(chorus[i - 1]!))
   })
+
+  it('leaves clips that show nothing out of a draft and says so', async () => {
+    const asset = (s: PlanShot) => (s.source.type === 'media' ? s.source.assetId : undefined)
+    const project = visionProject({ clips: CLIPS.map((c) => (c.id === 'city' ? { ...c, blank: true } : c)) })
+    const p = await planLocally(await buildPlannerInput(project, { kind: 'beat-cut', seed: 7 }))
+    expect(main(p).length).toBeGreaterThan(5)
+    expect(main(p).map(asset)).not.toContain('city')
+    expect(p.warnings).toContain('Left out “city.mp4” because every frame of it is black or see-through.')
+    const own = await planLocally(
+      await buildPlannerInput(project, { kind: 'beat-cut', seed: 7, useMedia: false }),
+    )
+    expect(own.warnings.join(' ')).not.toMatch(/Left out/)
+  })
+
   it('places every timed lyric line with karaoke highlighting', async () => {
     const p = await plan('lyric')
     const lyricTexts = p.texts.filter((t) => t.role === 'lyric')

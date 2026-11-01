@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import type { Asset, Id } from '../../../../model/index.ts'
+import type { Asset, Project } from '../../../../model/index.ts'
+import { isBlankClip } from '../../../../vision/analysisData.ts'
 import {
   AlertTriangle,
   Check,
@@ -24,6 +25,7 @@ import {
   autoCutOptions,
   clipChoice,
   DEFAULT_AUTOCUT_CHOICES,
+  isChosen,
   matchesMood,
   matchingDownloadBytes,
   selectedAssets,
@@ -32,9 +34,11 @@ import {
   startAutoCut,
   analysisBacklog,
   targetSection,
+  tickClip,
   undoAutoCut,
   usedAssetIds,
   useAutoCut,
+  type AutoCutClipChoice,
 } from '../../../state/autocut.ts'
 import {
   analyzeFootageNow,
@@ -63,8 +67,18 @@ export function AutocutBadge() {
 /** "Video track", or the name alone when it already ends in "track" ("Main track"). */
 const trackPhrase = (name: string) => (/\btrack$/i.test(name.trim()) ? name.trim() : `${name} track`)
 
-/** One clip in "Choose clips": a tick, its picture, name and length. */
-function ClipChoice({ asset, on, onChange }: { asset: Asset; on: boolean; onChange: (on: boolean) => void }) {
+/** One clip in "Choose clips": a tick, its picture, name and length, or a badge instead when it shows nothing. */
+function ClipChoice({
+  asset,
+  on,
+  blank,
+  onChange,
+}: {
+  asset: Asset
+  on: boolean
+  blank: boolean
+  onChange: (on: boolean) => void
+}) {
   const thumb = useThumbnail(asset)
   return (
     <label className={styles.pickRow}>
@@ -75,18 +89,34 @@ function ClipChoice({ asset, on, onChange }: { asset: Asset; on: boolean; onChan
         </span>
       </span>
       <span className={styles.pickThumb} style={thumb ? { backgroundImage: `url(${thumb})` } : undefined} />
-      <span className={styles.pickName}>{asset.name}</span>
-      <span className={`${styles.pickMeta} tnum`}>
-        {asset.kind === 'image' ? 'Image' : formatTime(asset.duration ?? 0)}
+      <span className={styles.pickName} title={asset.name}>
+        {asset.name}
       </span>
+      {blank ? (
+        <Badge tone="warning">Shows nothing</Badge>
+      ) : (
+        <span className={`${styles.pickMeta} tnum`}>
+          {asset.kind === 'image' ? 'Image' : formatTime(asset.duration ?? 0)}
+        </span>
+      )}
     </label>
   )
 }
 
-/** "Choose clips": every clip the cut can use, ticked unless the user left it out. */
-function ClipChoices({ assets, leftOut }: { assets: Asset[]; leftOut: readonly Id[] }) {
-  const out = new Set(leftOut)
-  const chosen = assets.filter((a) => !out.has(a.id)).length
+/**
+ * "Choose clips": every clip the cut can use, ticked unless the user left it out. Clips that show nothing start
+ * unticked, with a badge; ticking one cuts it anyway.
+ */
+function ClipChoices({
+  project,
+  assets,
+  choice,
+}: {
+  project: Project
+  assets: Asset[]
+  choice: AutoCutClipChoice
+}) {
+  const chosen = assets.filter((a) => isChosen(project, choice, a.id)).length
   const all = chosen === assets.length
   const some = chosen > 0 && !all
   return (
@@ -99,7 +129,13 @@ function ClipChoices({ assets, leftOut }: { assets: Asset[]; leftOut: readonly I
             ref={(el) => {
               if (el) el.indeterminate = some
             }}
-            onChange={() => setClipChoice({ leftOut: all ? assets.map((a) => a.id) : [] })}
+            onChange={() =>
+              setClipChoice(
+                all
+                  ? { leftOut: assets.map((a) => a.id), kept: [] }
+                  : { leftOut: [], kept: assets.map((a) => a.id) },
+              )
+            }
           />
           <span>{some ? <Minus /> : <Check />}</span>
         </span>
@@ -113,10 +149,9 @@ function ClipChoices({ assets, leftOut }: { assets: Asset[]; leftOut: readonly I
           <ClipChoice
             key={a.id}
             asset={a}
-            on={!out.has(a.id)}
-            onChange={(on) =>
-              setClipChoice({ leftOut: on ? leftOut.filter((id) => id !== a.id) : [...leftOut, a.id] })
-            }
+            on={isChosen(project, choice, a.id)}
+            blank={isBlankClip(project.analysis.visual[a.id])}
+            onChange={(on) => setClipChoice(tickClip(choice, a.id, on))}
           />
         ))}
       </div>
@@ -156,7 +191,7 @@ export function AutocutView() {
     (saved.clips === 'selected' && selected.length) || (saved.clips === 'chosen' && clipCount > 1)
       ? saved.clips
       : 'all'
-  const used = usedAssetIds({ clips, leftOut: saved.leftOut }, project, selection)
+  const used = usedAssetIds({ ...saved, clips }, project, selection)
   const usedCount = used?.length ?? clipCount
   // Clips analysis could not read are not offered again here; Assist › Match retries them.
   const unanalyzed = analysisBacklog(project, indexing, used).waiting
@@ -177,9 +212,7 @@ export function AutocutView() {
   const download = useMatchingDownload(willAnalyze)
   const cut = () => {
     if (willAnalyze) analyzeFootageNow()
-    startAutoCut(
-      autoCutOptions({ ...choices, range, clips, leftOut: saved.leftOut }, project, selection, playhead),
-    )
+    startAutoCut(autoCutOptions({ ...choices, ...saved, range, clips }, project, selection, playhead))
   }
 
   if (phase === 'running')
@@ -445,7 +478,7 @@ export function AutocutView() {
               revealClips.current = false
             }}
           >
-            <ClipChoices assets={autoCutAssets(project)} leftOut={saved.leftOut} />
+            <ClipChoices project={project} assets={autoCutAssets(project)} choice={saved} />
           </div>
         )}
       </Field>

@@ -18,7 +18,10 @@ export {
 } from './runtime/thumbnails.ts'
 export { encodeMaskVideo, maskAssetInfo, behindSubjectMatte } from './mask/video.ts'
 export {
+  blankAssets,
+  blankClipsNote,
   buildVisualAnalysis,
+  isBlankClip,
   projectLibrary,
   readClipIndex,
   readSubjectTrack,

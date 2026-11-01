@@ -68,6 +68,7 @@ import {
   withAspect,
   type OutputItem,
 } from './outputs.ts'
+import { BlankClipsWarning } from './BlankClipsWarning.tsx'
 import { StemsWarning } from './StemsWarning.tsx'
 import { StoppedExportNote } from './StoppedExportNote.tsx'
 import styles from './ExportDialog.module.css'
@@ -1014,6 +1015,7 @@ function ExportDialogBody() {
         </div>
       )}
       {phase === 'setup' && <StoppedExportNote />}
+      {phase === 'setup' && <BlankClipsWarning />}
       {phase === 'setup' && <StemsWarning />}
     </Dialog>
   )

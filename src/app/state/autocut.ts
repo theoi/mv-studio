@@ -8,8 +8,9 @@ import type {
   AutoCutResult,
   IndexingState,
 } from '../../vision/index.ts'
-import { readClipTags, readSubjectTrack } from '../../vision/analysisData.ts'
-import { plural, shortFileName } from '../format.ts'
+import { isBlankClip, readClipTags, readSubjectTrack } from '../../vision/analysisData.ts'
+import { shortFileName } from '../../shared/text.ts'
+import { plural } from '../format.ts'
 import { analyzeFootageAndWait, showingDownloads, useFootage, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { visionDownloadBytes } from './models.ts'
@@ -33,6 +34,8 @@ export interface AutoCutClipChoice {
   clips: AutoCutClips
   /** Clips left out of "Choose clips". Clips imported later are in until the user leaves them out too. */
   leftOut: Id[]
+  /** Clips the user ticked in "Choose clips". Clips that show nothing (`isBlankClip`) are out until they are here. */
+  kept?: Id[]
 }
 
 export interface AutoCutChoices extends AutoCutClipChoice {
@@ -78,10 +81,10 @@ export function clipChoice(project: Project): AutoCutClipChoice {
   const saved = project.extensions?.[CLIP_CHOICE]
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return { clips: 'all', leftOut: [] }
   const clips = saved.clips === 'selected' || saved.clips === 'chosen' ? saved.clips : 'all'
-  const leftOut = Array.isArray(saved.leftOut)
-    ? saved.leftOut.filter((id): id is string => typeof id === 'string')
-    : []
-  return { clips, leftOut }
+  const ids = (value: unknown) =>
+    Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
+  const kept = ids(saved.kept)
+  return { clips, leftOut: ids(saved.leftOut), ...(kept.length ? { kept } : {}) }
 }
 
 /**
@@ -216,11 +219,25 @@ export function selectedAssets(project: Project, selection: Selection): { id: Id
   return [...found].map(([id, name]) => ({ id, name }))
 }
 
-/** The clips "Choose clips" cuts: every clip auto-cut can use but the ones left out. */
-export function chosenAssetIds(project: Project, leftOut: readonly Id[]): Id[] {
-  const out = new Set(leftOut)
+type TickedClips = Pick<AutoCutClipChoice, 'leftOut' | 'kept'>
+
+/** Whether "Choose clips" ticks a clip: unless the user left it out, and one that shows nothing only once ticked. */
+export function isChosen(project: Project, choice: TickedClips, id: Id): boolean {
+  if (choice.leftOut.includes(id)) return false
+  return !isBlankClip(project.analysis.visual[id]) || (choice.kept ?? []).includes(id)
+}
+
+/** The clip choice after the user ticks or unticks one clip in "Choose clips". */
+export function tickClip(choice: TickedClips, id: Id, on: boolean): Required<TickedClips> {
+  const leftOut = choice.leftOut.filter((x) => x !== id)
+  const kept = (choice.kept ?? []).filter((x) => x !== id)
+  return on ? { leftOut, kept: [...kept, id] } : { leftOut: [...leftOut, id], kept }
+}
+
+/** The clips "Choose clips" cuts: every clip auto-cut can use but the ones left out or not ticked (`isChosen`). */
+export function chosenAssetIds(project: Project, choice: TickedClips): Id[] {
   return autoCutAssets(project)
-    .filter((a) => !out.has(a.id))
+    .filter((a) => isChosen(project, choice, a.id))
     .map((a) => a.id)
 }
 
@@ -235,8 +252,12 @@ export function usedAssetIds(
     return selected.length ? selected.map((a) => a.id) : undefined
   }
   if (choices.clips !== 'chosen') return undefined
-  const chosen = chosenAssetIds(project, choices.leftOut)
-  return chosen.length === autoCutAssets(project).length ? undefined : chosen
+  const chosen = chosenAssetIds(project, choices)
+  // A cut of every clip leaves out the ones that show nothing, so it matches a choice of exactly the others.
+  const showsSomething = autoCutAssets(project).filter((a) => !isBlankClip(project.analysis.visual[a.id]))
+  return chosen.length === showsSomething.length && showsSomething.every((a) => chosen.includes(a.id))
+    ? undefined
+    : chosen
 }
 
 /** autoCut options for the panel's choices, against the project and selection as they are now. */

@@ -234,6 +234,11 @@ export interface MotionAnalysis {
   meanEnergy: number
   p90Energy: number
   meanCamera: number
+  /**
+   * Luma (0..255) of the brightest pixel in any frame decoded for matching (short side at most 224 px). A fully transparent
+   * pixel reads 0, a partly transparent one at its full colour. Missing from analyses made before it was measured.
+   */
+  peakLuma?: number
 }
 
 export interface ClipVisionIndex {

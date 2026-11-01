@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blankAssets,
+  blankClipsNote,
   buildVisualAnalysis,
+  isBlankClip,
   projectLibrary,
   readClipIndex,
   readSubjectTrack,
   reframePlanFor,
   VISION_ANALYSIS_VERSION,
 } from '../../../src/vision/analysisData.ts'
+import { createProject } from '../../../src/model/factory.ts'
+import type { Asset } from '../../../src/model/types.ts'
 import { cropAt } from '../../../src/vision/reframe/planner.ts'
 import type { ClipVisionIndex, ReframePlan, SubjectTrack } from '../../../src/vision/types.ts'
 import { createRng, randomUnit } from './matching/helpers.ts'
@@ -121,6 +126,62 @@ describe('visual analysis data', () => {
     })
     const library = projectLibrary({ analysis: { audio: {}, visual: { a, b } } })
     expect(library.map((l) => l.mediaId)).toEqual(['a'])
+  })
+
+  it('finds the clips that show nothing from the brightest pixel analysis measured, not from older analyses', () => {
+    const analyzed = (assetId: string, peakLuma?: number) => {
+      const i = index(assetId)
+      return buildVisualAnalysis({
+        assetId,
+        duration: 30,
+        sourceSize: { width: 1920, height: 1080 },
+        index: { ...i, motion: { ...i.motion, ...(peakLuma === undefined ? {} : { peakLuma }) } },
+      })
+    }
+    const stored = (a: ReturnType<typeof analyzed>) => JSON.parse(JSON.stringify(a)) as typeof a
+    expect(isBlankClip(stored(analyzed('clear', 0)))).toBe(true)
+    expect(isBlankClip(stored(analyzed('night', 60)))).toBe(false)
+    expect(isBlankClip(stored(analyzed('older')))).toBe(false)
+    expect(isBlankClip(undefined)).toBe(false)
+    expect(readClipIndex(stored(analyzed('clear', 0)))?.motion.peakLuma).toBe(0)
+
+    const asset = (id: string, createdAt: string, extra: Partial<Asset> = {}): Asset => ({
+      id,
+      kind: 'video',
+      name: `${id}.webm`,
+      mimeType: 'video/webm',
+      byteSize: 1,
+      storageKey: id,
+      origin: { type: 'import' },
+      createdAt,
+      ...extra,
+    })
+    const project = {
+      ...createProject({ name: 'Blank', now: new Date(0) }),
+      assets: {
+        later: asset('later', '2026-01-02T00:00:00.000Z'),
+        first: asset('first', '2026-01-01T00:00:00.000Z'),
+        night: asset('night', '2026-01-01T00:00:00.000Z'),
+        stem: asset('stem', '2026-01-01T00:00:00.000Z', { origin: { type: 'stem' } }),
+      },
+      analysis: {
+        audio: {},
+        visual: {
+          later: analyzed('later', 3),
+          first: analyzed('first', 0),
+          night: analyzed('night', 60),
+          stem: analyzed('stem', 0),
+        },
+      },
+    }
+    expect(blankAssets(project).map((a) => a.id)).toEqual(['first', 'later'])
+    expect(blankClipsNote([])).toBeUndefined()
+    expect(blankClipsNote(['a.webm'])).toBe(
+      'Left out “a.webm” because every frame of it is black or see-through.',
+    )
+    expect(blankClipsNote(['a.webm', 'night_drive_with_the_windows_down.webm'])).toBe(
+      'Left out 2 clips because every frame of them is black or see-through: “a.webm”, “night_drive_wi…own.webm”.',
+    )
   })
 })
 

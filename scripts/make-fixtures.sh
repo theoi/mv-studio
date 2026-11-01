@@ -21,6 +21,9 @@ ffmpeg $q -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" -c:a lib
 # 4 s 1920x1080 30 fps H.264 clip without audio (performance benchmarks)
 ffmpeg $q -f lavfi -i "testsrc2=size=1920x1080:rate=30" -t 4 -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -movflags +faststart clip1080.mp4
 ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=1" -frames:v 1 image.png
+# 3 s VP9 WebM over a test pattern whose alpha channel is 0 everywhere: it decodes, but shows nothing. It is the size of
+# clip.mp4, so its frames are drawn at the same sizes as the clip analyzed before it.
+ffmpeg $q -f lavfi -i "testsrc=size=640x360:rate=30:duration=3" -vf "format=rgba,colorchannelmixer=aa=0,format=yuva420p" -c:v libvpx-vp9 -pix_fmt yuva420p -b:v 200k clear.webm
 # clip.mp4 with container rotation (90° clockwise), like a phone clip filmed upright
 ffmpeg $q -display_rotation 90 -i clip.mp4 -c copy clip-rotated.mp4
 # 10 s of synthesized speech (flite): one phrase at about 1.2 s and one at about 6.2 s, 16 kHz mono

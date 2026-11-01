@@ -21,6 +21,7 @@ import {
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import type { Project, TextClip } from '../../../src/model/types.ts'
 import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
+import { CLIPS, makeProject as clipsProject } from '../vision/autocut/fixtures.ts'
 import { LYRICS, makeProject, testCtx } from './fixtures.ts'
 
 type Reply = { name: string; args: unknown } | { text: string }
@@ -235,6 +236,14 @@ describe('interpretRequest', () => {
       request: 'recut it',
     })
     expect(turn.outcome).toEqual({ kind: 'reply', message: 'Use the Director to re-cut the chorus.' })
+  })
+
+  it('marks the media that shows nothing', () => {
+    const project = clipsProject({ clips: CLIPS.map((c) => ({ ...c, blank: c.id === 'city' })) })
+    const summary = summarizeProject(project)
+    const media = summary.json.media as { id: string; showsNothing?: boolean }[]
+    const blank = media.filter((m) => m.showsNothing).map((m) => summary.ids.toReal.get(m.id))
+    expect(blank).toEqual(['city'])
   })
 
   it('keeps big projects compact around the playhead and the selection', async () => {

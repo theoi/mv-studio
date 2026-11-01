@@ -11,6 +11,7 @@ const REQUIRED = [
   'clip.mp4',
   'clip1080.mp4',
   'clip-rotated.mp4',
+  'clear.webm',
   'frames.mp4',
   'voice.webm',
   'image.png',
