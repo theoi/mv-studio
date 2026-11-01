@@ -142,6 +142,23 @@ describe('a Library › Media card dropped on the timeline', () => {
     }
   })
 
+  it('goes in muted when its file has sound, and the toast says so with Turn sound on', () => {
+    editor.dispatch({ type: 'asset.add', asset: video('cam', 6) })
+    const { clip } = dropCard('cam', 't-video', 20.5)
+    expect(clip).toMatchObject({ trackId: 't-video', start: 20, duration: 6, muted: true })
+    const toast = lastToast()
+    expect(toast?.message).toMatch(
+      /^Inserted “cam” at 0:20\.0\. The \d+ clips after it moved 6\.0 s later\. The video now ends 6\.0 s after the song\. Its sound is off\.$/,
+    )
+    expect(toast?.fix?.label).toBe('Turn sound on')
+    toast?.fix?.run()
+    expect(project().clips[clip!.id]).toMatchObject({ muted: false })
+    // A silent file, as the sample's are, says nothing about sound.
+    expect(dropCard('m-dancer', 't-video', 20.5).clip).toMatchObject({ muted: true })
+    expect(lastToast()?.message).not.toMatch(/sound/)
+    expect(lastToast()?.fix).toBeUndefined()
+  })
+
   it('after the last shot, goes in at its end, and the drag already says the video then runs past the song', () => {
     const { hint, clip } = dropCard('m-dancer', 't-video', 203.5)
     expect(hint).toEqual({

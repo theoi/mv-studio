@@ -379,22 +379,24 @@ export function mediaDropHint(at: MediaDropPoint): MediaDropHint | null {
 
 /**
  * What an insert's toast says: where it went in, that it was trimmed to whole bars, how many clips moved and how far,
- * and how long after the song the video now ends.
+ * how long after the song the video now ends, and, as for any shot added by hand, that its sound is off (addedToast).
  */
-function insertedMessage(name: string, plan: InsertPlan): string {
+function insertedToast(name: string, plan: InsertPlan, clipId: string) {
   const n = plan.pushes.length
   const sentences = [
     `Inserted “${name}” at ${formatTime(plan.start, true)}${plan.bars ? `, trimmed to ${plural(plan.bars, 'bar')} to stay on the beat` : ''}`,
     n && `The ${n === 1 ? 'clip' : plural(n, 'clip')} after it moved ${plan.duration.toFixed(1)} s later`,
     plan.pastSong !== undefined && `The video now ends ${plan.pastSong.toFixed(1)} s after the song`,
   ].filter(Boolean)
-  return sentences.length > 1 ? `${sentences.join('. ')}.` : (sentences[0] as string)
+  const added = addedToast(sentences.join('. '), [clipId])
+  // The sound note ends in a full stop; several sentences without it end in one too, a single one doesn't.
+  return added.fix || sentences.length < 2 ? added : { ...added, message: `${added.message}.` }
 }
 
 /**
  * Puts a card's media on the timeline as a drop at `at` puts it (by insert, in a gap, or where it fits), selects it and
  * says where it landed when that isn't plainly where it was dropped: trimmed to a gap, on another track, or by insert
- * (see insertedMessage).
+ * (see insertedToast).
  */
 export function placeCard(asset: Asset, at: MediaDropPoint): void {
   const project = editor.getProject()
@@ -409,7 +411,8 @@ export function placeCard(asset: Asset, at: MediaDropPoint): void {
     const label = `Insert ${name}`
     if (!made || !dispatch(made.commands, { label })) return
     select({ type: 'clip', id: made.clip.id })
-    toast(insertedMessage(name, insert), undoAction(label))
+    const inserted = insertedToast(name, insert, made.clip.id)
+    toast(inserted.message, undoAction(label), { fix: inserted.fix })
     return
   }
   const placed = cardPlacement(project, asset, at)
