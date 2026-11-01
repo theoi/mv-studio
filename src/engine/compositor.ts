@@ -90,6 +90,11 @@ const ADJUSTMENT_KEYS: ColorAdjustmentKey[] = [
 ]
 const BAND_UNIFORMS = 16
 const TEXTURE_IDLE_FRAMES = 300
+/**
+ * A clip's video texture is deleted once the clip has been off screen this many frames. Video frames upload again
+ * each frame anyway, and a 4K texture takes 33 MB (in system memory with a software GPU).
+ */
+const VIDEO_TEXTURE_IDLE_FRAMES = 8
 /** A staged texture no frame took within this many frames (its request failed) is deleted. */
 const STAGED_IDLE_FRAMES = 8
 const STEM_ORDER: StemName[] = ['vocals', 'drums', 'bass', 'other']
@@ -1261,6 +1266,14 @@ export class WebGLCompositor implements Compositor {
       if (this.frameIndex - staged.frame > STAGED_IDLE_FRAMES) {
         this.gl.deleteTexture(staged.texture)
         gpu.staged.delete(id)
+      }
+    for (const [key, entry] of gpu.textures)
+      if (
+        (key.startsWith('video:') || key.startsWith('matte:')) &&
+        this.frameIndex - entry.lastUsed > VIDEO_TEXTURE_IDLE_FRAMES
+      ) {
+        this.gl.deleteTexture(entry.texture)
+        gpu.textures.delete(key)
       }
     if (this.frameIndex % 60 !== 0) return
     for (const [key, entry] of gpu.textures) {
