@@ -359,6 +359,22 @@ describe('local planner', () => {
     ['Create images of a lighthouse in a storm', 'a lighthouse in a storm'],
     ['Faster in the chorus, a city at night', 'a city at night'],
     ['東京の夜。ネオンの雨。Use my own clips.', '東京の夜。ネオンの雨'],
+    // AI as the source: the request words go, the picture stays.
+    ['Make an AI video of a dragon flying over snowy mountains', 'a dragon flying over snowy mountains'],
+    ['AI visuals of a neon city in the rain', 'a neon city in the rain'],
+    ['An AI-generated dreamscape with floating islands', 'A dreamscape with floating islands'],
+    ['I want AI clips of wolves running through a forest', 'wolves running through a forest'],
+    ['Generate AI footage of a samurai in a bamboo forest', 'a samurai in a bamboo forest'],
+    ['Use AI to show a desert caravan at sunset', 'a desert caravan at sunset'],
+    ['AI images: a lighthouse in a storm, waves', 'a lighthouse in a storm, waves'],
+    ['Make an AI music video about a lonely astronaut on Mars', 'a lonely astronaut on Mars'],
+    ['Use my clips of the beach at sunset', 'the beach at sunset'],
+    ['Use stock footage of a busy market', 'a busy market'],
+    ['AI shots for the chorus, a neon alley. AI images only. Make an AI music video.', 'a neon alley'],
+    // Nothing is left of an edit instruction once its phrase goes.
+    ['Cut to the beat. Cut on the beat.', ''],
+    ['A girl in a red dress, cuts on every beat, rain', 'A girl in a red dress, rain'],
+    ['A forest at dawn, sync it to the beat', 'A forest at dawn'],
   ])('takes the picture out of the idea %j', (idea, picture) => {
     expect(visualIdea(idea)).toBe(picture)
   })
@@ -382,6 +398,9 @@ describe('local planner', () => {
     'A choir singing in the chorus of a cathedral',
     'Dancers on the beat of the drum',
     'A 1990s mall, freshly cut grass outside, a bridge over the river',
+    'The cuts of meat at a butcher shop',
+    'A gallery of AI images in a museum',
+    'use of color: neon pink and teal',
   ])('keeps an idea that only describes pictures as it is: %j', (idea) => {
     expect(visualIdea(idea)).toBe(idea)
   })

@@ -12,7 +12,8 @@ draft. Everything it makes is ordinary project content created through `EditComm
    The local planner (`local-planner.ts`, rules in `rules.ts`) writes it with no keys and no network; the LLM
    planner (`llm-planner.ts`) asks the configured model for the same schema. Prompts the director writes from the
    idea or the brief's concept, and the rule brief's title, take only the picture it describes (`visualIdea` in
-   `rules.ts`): what it asks of the edit ("Use my own clips", "cut on the beat", "show the lyrics") is left out. Each
+   `rules.ts`): what it asks of the edit ("Use my own clips", "cut on the beat", "show the lyrics") is left out, and
+   request words in front of the picture go while the picture stays ("Make an AI video of a dragon …"). Each
    pattern needs the words that make it an instruction, so a scene with the same words stays ("an AI android",
    "paper cuts"), and the patterns are English, so instructions in other languages stay in.
 3. **Edit plan** (`plan.ts`, `expand.ts`): `expandBrief()` turns a brief into exact, beat-aligned shots, text,

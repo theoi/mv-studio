@@ -577,8 +577,33 @@ export const DEFAULT_CONCEPT: Record<VideoKind, string> = {
   ai: 'Cinematic music video with a consistent main character and setting',
 }
 
-const MEDIA = String.raw`(clips?|footage|videos?|photos?|pictures?|images?|media|recordings?)`
+// Non-capturing, so AI_MADE's replacer gets its own groups.
+const MEDIA = String.raw`(?:clips?|footage|videos?|photos?|pictures?|images?|media|recordings?)`
+const SHOTS = String.raw`(?:${MEDIA}|montage|visuals?|scenes?|shots?)`
+const AI_SOURCE = String.raw`(ai[\s-]+(generated\s+|made\s+)?)`
 const DURATION = String.raw`\d+[\s-]*(secs?|seconds?|mins?|minutes?)`
+
+/** Request words in front of the picture, which stays: "Make an AI video of …", "AI visuals of …", "Use AI to show …". */
+const REQUESTS = [
+  new RegExp(
+    String.raw`^(please\s+)?((can|could|would)\s+you\s+)?(make|create|generate|produce|give\s+me|show\s+me|i\s+want|i['’]?d\s+like|i\s+would\s+like)\s+(me\s+)?((a|an|some)\s+)?${AI_SOURCE}?(music\s+)?${SHOTS}\s+(of|about|with|showing|featuring|set\s+in|where)\s+`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`^((a|an|some)\s+)?${AI_SOURCE}?(music\s+)?${SHOTS}(\s+(of|about|showing|featuring)\s+|\s*:\s*)`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`^(please\s+)?use\s+(ai\s+to\s+(show|create|make|generate|depict|render|imagine|visuali[sz]e)|((my|our|the|these|those|some)\s+)?(own\s+)?(stock\s+|${AI_SOURCE})?${MEDIA}\s+(of|showing|from))\s+`,
+    'i',
+  ),
+]
+
+/** "AI-generated" before what it describes goes, with its article fixed: "An AI-generated dreamscape" → "A dreamscape". */
+const AI_MADE = new RegExp(
+  String.raw`\b(?:(an?)\s+)?ai[\s-]+(?:generated|made)\s+(?!${SHOTS}\b)(?=(\S))`,
+  'gi',
+)
 
 /**
  * Clauses of an idea that ask something of the editor instead of describing a picture: whose media to use, how to
@@ -595,12 +620,9 @@ const INSTRUCTION_CLAUSES = [
     String.raw`\b(my|our|the\s+user['’]?s)\s+(own\s+)?${MEDIA}\b|\b(uploaded|imported)\s+${MEDIA}\b`,
     'i',
   ),
-  new RegExp(
-    String.raw`\b(no|without)\s+ai\b|\bai[\s-]+(generated|generation|${MEDIA}|shots?|visuals?)\b`,
-    'i',
-  ),
+  new RegExp(String.raw`\b(no|without)\s+ai\b|^(only\s+)?${AI_SOURCE}${SHOTS}(\s+only)?$`, 'i'),
   /\bstock\s+(footage|clips?|videos?)\b/i,
-  /\b(fast|quick|rapid|slow|hard|jump|sharp|snappy|smooth|lots\s+of|many|more|fewer)\s+(cuts|edits|editing|transitions)\b|\bthe\s+(cuts|edit|edits|editing)\b|\btransitions\b/i,
+  /\b(fast|quick|rapid|slow|hard|jump|sharp|snappy|smooth|lots\s+of|many|more|fewer)\s+(cuts|edits|editing|transitions)\b|\bthe\s+(edit|edits|editing)\b|\btransitions\b/i,
   /\bcut(s|ting)?\s+(on|to)\s+(the\s+|every\s+)?(beats?|music|rhythm|drums?|bass|bars?|downbeats?)\b|\bcut(s|ting)?\s+(between|every)\b/i,
   /\bsync(s|ed|ing)?\s+(it\s+|everything\s+)?(to|with)\s+(the\s+)?(beats?|music|song|rhythm|lyrics)\b/i,
   /\b(subtitles?|captions?|karaoke)\b|\b(show|display|add|put|include|no|with)\s+(the\s+)?(song['’]?s\s+)?lyrics?\b|\blyrics?\s+(on[\s-]screen|in\s+the\s+video|over)\b/i,
@@ -624,11 +646,10 @@ const INSTRUCTION_PHRASES = [
   ),
 ]
 
-const REQUEST =
-  /^(please\s+)?((can|could|would)\s+you\s+)?(make|create|generate|produce|give\s+me|i\s+want|i['’]?d\s+like|i\s+would\s+like)\s+(me\s+)?((a|an|some)\s+)?(music\s+)?(videos?|clips?|montage|visuals?|images?|pictures?|photos?|scenes?|shots?)\s+(of|about|with|showing|featuring|set\s+in|where)\s+/i
-
 const FILLER = new Set(
-  'please make do create it this that the a an me video music clip just and also so faster slower'.split(' '),
+  'please make do create it this that the a an me video music clip just and also so faster slower ai generated cut cuts cutting sync syncing synced edit edits editing'.split(
+    ' ',
+  ),
 )
 
 /**
@@ -640,10 +661,16 @@ export function visualIdea(idea: string): string {
   let kept = ''
   for (const sentence of idea.trim().split(/(?<=[.!?])\s+|(?<=[。！？])\s*|\s*\n+\s*/)) {
     const end = /[.!?。！？]*$/.exec(sentence)?.[0] ?? ''
-    const clauses = sentence
-      .slice(0, sentence.length - end.length)
-      .replace(REQUEST, '')
+    const clauses = REQUESTS.reduce(
+      (s, p) => s.replace(p, ''),
+      sentence.slice(0, sentence.length - end.length),
+    )
       .split(/\s*[,;]\s*|\s+[-–—]\s+/)
+      .map((c) =>
+        c.replace(AI_MADE, (_m, article?: string, next = '') =>
+          article ? `${articleFor(next, article)} ` : '',
+        ),
+      )
       .map((c) => INSTRUCTION_PHRASES.reduce((s, p) => s.replace(p, ''), c).trim())
       .filter((c) => c && !INSTRUCTION_CLAUSES.some((p) => p.test(c)) && !onlyFiller(c))
     if (!clauses.length) continue
@@ -661,6 +688,12 @@ function onlyFiller(clause: string): boolean {
     .split(/[^\p{L}\p{N}'’]+/u)
     .filter(Boolean)
   return words.length > 0 && words.every((w) => FILLER.has(w))
+}
+
+/** "a" or "an" for the word starting with `next`, capitalized like `article`. */
+function articleFor(next: string, article: string): string {
+  const fit = /[aeiou]/i.test(next) ? 'an' : 'a'
+  return article.startsWith('A') ? `A${fit.slice(1)}` : fit
 }
 /** A rule-based brief section, used by the local planner and to fill gaps in an LLM brief. */
 export function defaultSectionBrief(
