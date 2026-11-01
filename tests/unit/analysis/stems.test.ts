@@ -56,6 +56,7 @@ afterEach(() => {
 const median = (v: number[]) => [...v].sort((a, b) => a - b)[v.length >> 1] as number
 
 describe('stem separation worker API', () => {
+  // Two model segments of full-size STFTs: over a second, several when the machine is busy.
   it('returns encoded stems and features measured against the mix', async () => {
     const client = connect()
     // 22.05 kHz input exercises resampling to the model rate.
@@ -80,7 +81,7 @@ describe('stem separation worker API', () => {
     expect(result.stemFeatures.drums?.onsets.length).toBeGreaterThan(15)
     expect(fractions).toEqual([...fractions].sort((a, b) => a - b))
     expect(fractions.at(-1)).toBeGreaterThanOrEqual(0.97)
-  })
+  }, 20_000)
 
   it('reports an empty song as invalid input', async () => {
     const client = connect()

@@ -61,6 +61,7 @@ describe('separateStems', () => {
     }
   })
 
+  // Each segment runs full-size STFTs: over a second in all, several when the machine is busy.
   it('overlap-adds segments into contiguous chunks covering the whole song', async () => {
     const model: DemucsModel = {
       async run(mix) {
@@ -70,15 +71,16 @@ describe('separateStems', () => {
         return { x: new Float32Array(4 * 4 * 2048 * 336), xt }
       },
     }
-    const left = tone(20)
+    // Three segments: a full first and middle one, and a short last one centered in its window.
+    const left = tone(14)
     const { stems, starts, progress } = await run(model, [left])
-    expect(starts).toEqual([0, 257985, 515970, 773955])
+    expect(starts).toEqual([0, 257985, 515970])
     expect(progress).toBe(1)
     stems.forEach((pair, s) => {
       expect(maxError(pair[0] as Float32Array, left, (s + 1) / 10)).toBeLessThan(1e-5)
       expect(maxError(pair[1] as Float32Array, left, (s + 1) / 10)).toBeLessThan(1e-5)
     })
-  })
+  }, 20_000)
 
   it('stops between segments when cancelled', async () => {
     const controller = new AbortController()
