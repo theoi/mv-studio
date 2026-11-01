@@ -5,6 +5,7 @@
  * fail to load. The pilot measured both behaviours (see THIRD_PARTY_NOTICES.md).
  * Also reloads on "controllerchange": upstream's "updatefound" listener is attached after register() resolves and can
  * miss the event, which left about 1 in 10 first visits without isolation.
+ * Lets cross-origin requests in CORS mode go straight to the network (see the fetch handler).
  * Does not reload on "updatefound": it fires while the worker is still installing, so the reloaded document loads
  * without it. If the worker then claims that document before this script has run (it waits for this file), the
  * "controllerchange" is missed and upstream's "active but not controlling" check sees a controller, leaving the page
@@ -59,6 +60,12 @@ if (typeof window === 'undefined') {
     self.addEventListener("fetch", function (event) {
         const r = event.request;
         if (r.cache === "only-if-cached" && r.mode !== "same-origin") {
+            return;
+        }
+        // Requests to other sites in CORS mode go straight to the network: CORS already lets the isolated page read
+        // them, so they need no headers from here. Chrome also gives a service worker about 5 minutes to answer one
+        // request, which cut off local AI models that take longer to send their answer.
+        if (r.mode === "cors" && new URL(r.url).origin !== self.location.origin) {
             return;
         }
 
