@@ -66,7 +66,7 @@ describe('a required file Transformers.js finds missing', () => {
     )
 
   it.each([
-    [403, 'The server refused the file. If your network blocks huggingface.co, try another network.'],
+    [403, 'The server refused to send the file. If your network blocks huggingface.co, try another network.'],
     [404, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
   ])(
     'fails at %i as the loader’s download error naming the model, keeping Transformers.js’s message in the details',

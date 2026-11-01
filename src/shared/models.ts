@@ -125,9 +125,9 @@ export function failedMessage(title: string | undefined, hint: string, plain: st
 
 /**
  * The error for a download the server answered with error `status`, retryable when the server is in trouble (5xx,
- * 429). Its message is `failedMessage`'s; the status goes into `details` with `where` (the file's URL, say). A refusal
- * (401, 403) is most likely a network that blocks the file's host (from `where.url`); any other status most likely
- * means this build asks for a file that has moved.
+ * 429). Its message is `failedMessage`'s; the status goes into `details` with `where` (the file's URL, say). A 403 is
+ * most likely a network that blocks the file's host (from `where.url`). Any other status most likely means this build
+ * asks for a file that has moved: Hugging Face answers 401 for a repository that doesn't exist or isn't public.
  */
 export function downloadStatusError(
   status: number,
@@ -139,8 +139,8 @@ export function downloadStatusError(
   const host = typeof where.url === 'string' && URL.canParse(where.url) ? new URL(where.url).hostname : ''
   const hint = serverTrouble
     ? 'The server is having trouble. Try again in a few minutes.'
-    : status === 401 || status === 403
-      ? `The server refused the file. If your network blocks ${host || 'model downloads'}, try another network.`
+    : status === 403
+      ? `The server refused to send the file. If your network blocks ${host || 'model downloads'}, try another network.`
       : 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'
   return new JobError('model-load', failedMessage(title, hint, plain), {
     retryable: serverTrouble,

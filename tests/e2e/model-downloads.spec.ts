@@ -76,11 +76,13 @@ test('a first 3D camera move shows the depth estimator downloading, and names it
   expect(seen.chip).toEqual([...seen.chip].sort((a, b) => a - b))
 })
 
-// A network that blocks Hugging Face answers 403; a file this build asks for that has moved, 404.
+// A network that blocks Hugging Face answers 403. A file this build asks for that has moved gets 404, and one whose
+// repository has moved or gone private 401.
 const STATUS_HINTS = [
   [503, 'The server is having trouble. Try again in a few minutes.'],
-  [403, 'The server refused the file. If your network blocks huggingface.co, try another network.'],
+  [403, 'The server refused to send the file. If your network blocks huggingface.co, try another network.'],
   [404, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
+  [401, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
 ] as const
 
 for (const [status, hint] of STATUS_HINTS) {
@@ -218,8 +220,10 @@ test('putting text behind the subject names the person finder when its models ca
   const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
   await inspector.getByRole('button', { name: 'Layering' }).click()
   await inspector.getByRole('switch', { name: 'Put text and effects behind the subject' }).click()
-  await expect(
-    inspector.getByText('Couldn’t download the person finder. Check your connection and try again.').first(),
-  ).toBeVisible({ timeout: 60_000 })
+  // Said once how to retry: the failure's own advice, then how to try again here.
+  await expect(inspector.getByRole('alert').filter({ hasText: 'person finder' })).toHaveText(
+    'Couldn’t download the person finder. Check your connection and try again. Your project is unchanged. Turn it back on when you’re ready.',
+    { timeout: 60_000 },
+  )
   await expect(inspector.getByText(/https?:\/\//)).toHaveCount(0)
 })

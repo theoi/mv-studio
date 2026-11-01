@@ -321,7 +321,7 @@ test('a still replaced with another photo keeps its move flat, and Add depth in 
   await expect.poll(depthCalls).toBe(2)
   await page.evaluate(() => (window as Untyped).depthGate.fail('The depth model stopped.'))
   await expect(inspector.getByRole('alert')).toContainText(
-    'The depth model stopped.Your project is unchanged. Choose Add depth to try again.',
+    'The depth model stopped.Your project is unchanged. Choose Add depth when you’re ready.',
   )
   expect((await camera())?.depth).toBe('')
   await addDepth.click()
@@ -443,7 +443,7 @@ test('Inspector › Motion shows the chosen move while depth is estimated, cance
   await page.evaluate(() => (window as Untyped).depthGate.fail('The depth model stopped.'))
   await expect(inspector.getByRole('alert')).toContainText('The depth model stopped.')
   await expect(inspector.getByRole('alert')).toContainText(
-    'Your project is unchanged. Choose a move again to retry.',
+    'Your project is unchanged. Choose a move again when you’re ready.',
   )
   await expect(move).toHaveText('None')
 

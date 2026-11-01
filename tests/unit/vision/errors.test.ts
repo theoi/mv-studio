@@ -31,7 +31,7 @@ describe('model errors', () => {
     const refused = () =>
       new JobError(
         'model-load',
-        'Couldn’t download the depth estimator. The server refused the file. If your network blocks huggingface.co, try another network.',
+        'Couldn’t download the depth estimator. The server refused to send the file. If your network blocks huggingface.co, try another network.',
         { details: { url: URL, status: 403 } },
       )
     const depth = refused()
@@ -95,8 +95,8 @@ describe('a vision model’s download that fails', () => {
   })
 
   it.each([
-    [401, 'The server refused the file. If your network blocks huggingface.co, try another network.'],
-    [403, 'The server refused the file. If your network blocks huggingface.co, try another network.'],
+    [401, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
+    [403, 'The server refused to send the file. If your network blocks huggingface.co, try another network.'],
     [404, 'The server didn’t send the file. Reload the page to get the latest MV Studio, then try again.'],
   ])('says why the server answered %i, naming the model', async (status, hint) => {
     registerModelFiles([depth])
@@ -120,7 +120,7 @@ describe('a vision model’s download that fails', () => {
     expect(await failure('cutout', () => mediapipeModel(VISION_MODELS.selfie, 'cutout'))).toMatchObject({
       code: 'model-load',
       message:
-        'Couldn’t download the person finder. The server refused the file. If your network blocks storage.googleapis.com, try another network.',
+        'Couldn’t download the person finder. The server refused to send the file. If your network blocks storage.googleapis.com, try another network.',
       details: { url: VISION_MODELS.selfie.files.model.url, status: 403 },
     })
   })
