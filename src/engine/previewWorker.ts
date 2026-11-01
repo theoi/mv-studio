@@ -4,7 +4,7 @@
  * elements; images and fonts are read through the main thread's media source, which may generate files (sample media).
  */
 import type { Asset, Project, Seconds } from '../model/types.ts'
-import { WebGLCompositor } from './compositor.ts'
+import { videoTextureKey, WebGLCompositor } from './compositor.ts'
 import { BridgedFrameProvider, type BridgedVideo } from './frames.ts'
 import type { MediaFileSource } from './types.ts'
 
@@ -135,6 +135,24 @@ export class WorkerPreview {
   constructor(canvas: OffscreenCanvas, media: MediaFileSource, preserveDrawingBuffer: boolean) {
     this.frames = new BridgedFrameProvider(media)
     this.compositor = new WebGLCompositor({ canvas, frames: this.frames, media, preserveDrawingBuffer })
+  }
+
+  /**
+   * Takes a video frame of a render still to come (`staged`), sent as soon as its seek ended, and uploads it in turn
+   * with the frames queued before, while the page waits for the render's other frames. The render draws with exactly
+   * the frames staged for it, so a frame never mixes layers of different requests.
+   */
+  stage(video: BridgedVideo): void {
+    const { frame, key, version } = video
+    if (!frame || version === undefined) return
+    this.frames.stage(video)
+    this.queue = this.queue
+      .then(async () => {
+        await this.drawn
+        await this.compositor.gpuIdle()
+        this.compositor.stage(videoTextureKey(key), frame, version)
+      })
+      .catch(() => undefined)
   }
 
   /** Draws one frame. Requests run one at a time in arrival order, each with its own video frames. */

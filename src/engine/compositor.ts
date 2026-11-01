@@ -90,6 +90,8 @@ const ADJUSTMENT_KEYS: ColorAdjustmentKey[] = [
 ]
 const BAND_UNIFORMS = 16
 const TEXTURE_IDLE_FRAMES = 300
+/** A staged texture no frame took within this many frames (its request failed) is deleted. */
+const STAGED_IDLE_FRAMES = 8
 const STEM_ORDER: StemName[] = ['vocals', 'drums', 'bass', 'other']
 /** Texture units 0 and 1 hold a plugin's own inputs (u_input, or u_from and u_to); image params start here. */
 const FIRST_IMAGE_PARAM_UNIT = 2
@@ -155,7 +157,16 @@ interface GpuState {
   /** Compiled programs by plugin definition or effect pass; null when compilation failed. */
   plugins: WeakMap<PluginDefinition | EffectPass, Program | null>
   textures: Map<string, { texture: WebGLTexture; version: unknown; lastUsed: number }>
+  /** Textures uploaded ahead of their frame by stage(), by texture key and version. */
+  staged: Map<string, { texture: WebGLTexture; frame: number }>
 }
+
+/** The texture key of a video request's frame: `video:<clip id>` for a clip, `matte:<clip id>` for a matte. */
+export function videoTextureKey(requestKey: string): string {
+  return requestKey.startsWith('matte:') ? requestKey : `video:${requestKey}`
+}
+
+const stagedKey = (key: string, version: unknown) => `${key}@${String(version)}`
 
 /**
  * A clip's matte with the on-screen clip of its source footage, which the mask follows in time and transform. Null when
@@ -420,7 +431,24 @@ export class WebGLCompositor implements Compositor {
       finish: [],
       plugins: new WeakMap(),
       textures: new Map(),
+      staged: new Map(),
     }
+  }
+
+  /**
+   * Uploads a frame ahead of the render that draws it, into a texture of its own: frames drawn meanwhile keep theirs.
+   * The render adopts it when its frame for `key` has this `version`, else uploads as usual. Nothing happens while
+   * the GPU context is lost.
+   */
+  stage(key: string, source: TexImageSource, version: unknown): void {
+    const gpu = this.gpu
+    if (!gpu || this.disposed) return
+    const id = stagedKey(key, version)
+    if (gpu.staged.has(id)) return
+    this.gl.activeTexture(this.gl.TEXTURE0 + SCRATCH_UNIT)
+    const texture = createTexture(this.gl)
+    uploadSource(this.gl, texture, source)
+    gpu.staged.set(id, { texture, frame: this.frameIndex })
   }
 
   resize(width: number, height: number): void {
@@ -918,7 +946,7 @@ export class WebGLCompositor implements Compositor {
       case 'image': {
         const frame = s.sources.get(clip.id)
         if (!frame || frame.width === 0 || frame.height === 0) return null
-        const key = clip.type === 'image' ? `image:${clip.assetId}` : `video:${clip.id}`
+        const key = clip.type === 'image' ? `image:${clip.assetId}` : videoTextureKey(clip.id)
         const texture = this.texture(
           gpu,
           key,
@@ -1063,6 +1091,14 @@ export class WebGLCompositor implements Compositor {
   private texture(gpu: GpuState, key: string, source: TexImageSource, version: unknown): WebGLTexture {
     let entry = gpu.textures.get(key)
     const upload = !entry || version === undefined || entry.version !== version
+    const staged = upload && version !== undefined ? gpu.staged.get(stagedKey(key, version)) : undefined
+    if (staged) {
+      gpu.staged.delete(stagedKey(key, version))
+      if (entry) this.gl.deleteTexture(entry.texture)
+      entry = { texture: staged.texture, version, lastUsed: this.frameIndex }
+      gpu.textures.set(key, entry)
+      return entry.texture
+    }
     if (upload) this.gl.activeTexture(this.gl.TEXTURE0 + SCRATCH_UNIT)
     if (!entry) {
       entry = { texture: createTexture(this.gl), version: undefined, lastUsed: 0 }
@@ -1221,6 +1257,11 @@ export class WebGLCompositor implements Compositor {
   }
 
   private sweep(gpu: GpuState, project: Project): void {
+    for (const [id, staged] of gpu.staged)
+      if (this.frameIndex - staged.frame > STAGED_IDLE_FRAMES) {
+        this.gl.deleteTexture(staged.texture)
+        gpu.staged.delete(id)
+      }
     if (this.frameIndex % 60 !== 0) return
     for (const [key, entry] of gpu.textures) {
       if (this.frameIndex - entry.lastUsed > TEXTURE_IDLE_FRAMES) {
@@ -1242,7 +1283,8 @@ export class WebGLCompositor implements Compositor {
     this.fence = null
     if (gpu) {
       gpu.pool.dispose()
-      for (const entry of gpu.textures.values()) this.gl.deleteTexture(entry.texture)
+      for (const entry of [...gpu.textures.values(), ...gpu.staged.values()])
+        this.gl.deleteTexture(entry.texture)
       this.gl.deleteTexture(gpu.transparent)
       for (const p of [...Object.values(gpu.programs), ...gpu.finish]) if (p) this.gl.deleteProgram(p.program)
     }

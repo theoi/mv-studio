@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { VideoElementFrameProvider } from '../../../src/engine/frames.ts'
+import { BridgedFrameProvider, VideoElementFrameProvider } from '../../../src/engine/frames.ts'
 import type { Asset } from '../../../src/model/types.ts'
 
 type FrameCallback = (now: number, metadata: { mediaTime: number }) => void
@@ -23,6 +23,9 @@ class FakeVideo extends EventTarget {
   readonly presented: { t: number; at: number }[] = []
   private time = 0
   private callbacks: FrameCallback[] = []
+
+  /** Set once the element let go of its media. */
+  released = false
 
   set src(_url: string) {
     setTimeout(() => {
@@ -68,7 +71,9 @@ class FakeVideo extends EventTarget {
     return Promise.resolve()
   }
 
-  removeAttribute(): void {}
+  removeAttribute(name: string): void {
+    if (name === 'src') this.released = true
+  }
   load(): void {}
 }
 
@@ -225,5 +230,168 @@ describe('seeking a paused preview video', () => {
     expect(video.presented.some((p) => p.t > 4.49 && p.t < 4.51)).toBe(true)
     expect(own).toBeDefined()
     expect(resolvedAt).toBeGreaterThanOrEqual(own?.at ?? Infinity)
+  })
+})
+
+/** A paused preview's frame provider that makes a new element each time; `created` lists them in order. */
+function providerMakingElements(): { provider: VideoElementFrameProvider; created: FakeVideo[] } {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+  const created: FakeVideo[] = []
+  vi.stubGlobal('document', {
+    createElement: () => {
+      const video = new FakeVideo()
+      created.push(video)
+      return video
+    },
+  })
+  vi.stubGlobal('HTMLMediaElement', { HAVE_CURRENT_DATA: 2 })
+  const provider = new VideoElementFrameProvider({ getFile: async () => new Blob() })
+  provider.setPlaying(false)
+  return { provider, created }
+}
+
+/** Draws one paused frame of `requests` (key and source time) and returns its sources by key. */
+async function frame(provider: VideoElementFrameProvider, requests: [key: string, t: number][]) {
+  provider.beginFrame(requests.map(([key]) => key))
+  const refs = requests.map(([key, t]) => provider.videoFrame(asset, t, key))
+  await vi.advanceTimersByTimeAsync(200)
+  provider.endFrame()
+  return new Map((await Promise.all(refs)).map((ref, i) => [requests[i]![0], ref?.source]))
+}
+
+describe('keeping an element ready for a transition near the paused playhead', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('loads and seeks one ahead, which a seek into the transition then uses instead of loading another', async () => {
+    const { provider, created } = providerMakingElements()
+    await frame(provider, [['a', 1]])
+    expect(created).toHaveLength(1)
+    provider.prewarm([{ asset, sourceTime: 3.9, key: 'b' }])
+    await vi.advanceTimersByTimeAsync(200)
+    expect(created).toHaveLength(2)
+    expect(created[1]!.currentTime).toBeCloseTo(3.9, 3)
+    const shown = await frame(provider, [
+      ['a', 1.1],
+      ['b', 3.95],
+    ])
+    expect(created).toHaveLength(2)
+    expect(shown.get('b')).toBe(created[1])
+    provider.dispose()
+  })
+
+  it('lets it go once the playhead moves away, but not while the frame on screen shows it', async () => {
+    const { provider, created } = providerMakingElements()
+    provider.prewarm([{ asset, sourceTime: 3.9, key: 'b' }])
+    await vi.advanceTimersByTimeAsync(200)
+    const ready = created[0]!
+    // On screen: the playhead moved into the transition, so the element is no longer kept for it, but is in use.
+    await frame(provider, [['b', 3.95]])
+    provider.prewarm([])
+    expect(ready.released).toBe(false)
+
+    provider.prewarm([{ asset, sourceTime: 3.9, key: 'c' }])
+    await vi.advanceTimersByTimeAsync(200)
+    const other = created.at(-1)!
+    expect(other).not.toBe(ready)
+    await frame(provider, [['b', 1]])
+    provider.prewarm([])
+    expect(other.released).toBe(true)
+    expect(ready.released).toBe(false)
+    provider.dispose()
+  })
+
+  it('does not hand it to another clip of the same footage that needs an element meanwhile', async () => {
+    const { provider, created } = providerMakingElements()
+    provider.prewarm([{ asset, sourceTime: 3.9, key: 'b' }])
+    await vi.advanceTimersByTimeAsync(200)
+    const shown = await frame(provider, [['c', 2]])
+    expect(created).toHaveLength(2)
+    expect(shown.get('c')).toBe(created[1])
+    expect(created[0]!.currentTime).toBeCloseTo(3.9, 3)
+    provider.dispose()
+  })
+})
+
+describe('two clips showing the same frame of the same footage while paused', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  const seeks = (videos: FakeVideo[]) => videos.reduce((n, v) => n + v.presented.length, 0)
+
+  it('share one seek, and each keeps its own element loaded', async () => {
+    const { provider, created } = providerMakingElements()
+    const shown = await frame(provider, [
+      ['a', 3],
+      ['b', 3],
+    ])
+    expect(created).toHaveLength(2)
+    expect(created.every((v) => v.readyState === 2)).toBe(true)
+    expect(seeks(created)).toBe(1)
+    expect(shown.get('b')).toBe(shown.get('a'))
+    provider.dispose()
+  })
+
+  it('part again when their times differ, each showing its own element at its own time', async () => {
+    const { provider, created } = providerMakingElements()
+    await frame(provider, [
+      ['a', 3],
+      ['b', 3],
+    ])
+    const shown = await frame(provider, [
+      ['a', 3],
+      ['b', 5],
+    ])
+    const [a, b] = [shown.get('a') as unknown as FakeVideo, shown.get('b') as unknown as FakeVideo]
+    expect(a).not.toBe(b)
+    expect(b).toBe(created[1])
+    expect(a.currentTime).toBeCloseTo(3, 3)
+    expect(b.currentTime).toBeCloseTo(5, 3)
+    provider.dispose()
+  })
+
+  it('share only within a frame: a later frame seeks again rather than take the earlier frame’s element', async () => {
+    const { provider } = providerMakingElements()
+    const first = await frame(provider, [
+      ['a', 3],
+      ['b', 3],
+    ])
+    const shared = first.get('a') as unknown as FakeVideo
+    const shown = await frame(provider, [
+      ['a', 6],
+      ['b', 3],
+    ])
+    const b = shown.get('b') as unknown as FakeVideo
+    expect(shared.currentTime).toBeCloseTo(6, 3)
+    expect(b).not.toBe(shared)
+    expect(b.currentTime).toBeCloseTo(3, 3)
+    provider.dispose()
+  })
+})
+
+describe('the render worker’s frames of two clips that showed the same frame', () => {
+  it('closes each clip’s own frame once: when that clip gets a new one, leaves, or the preview closes', () => {
+    const frame = () => ({ close: vi.fn() }) as unknown as VideoFrame
+    const [a1, b1, a2] = [frame(), frame(), frame()]
+    const bridged = new BridgedFrameProvider({ getFile: async () => new Blob() })
+    bridged.set([
+      { key: 'a', frame: a1, width: 640, height: 360 },
+      { key: 'b', frame: b1, width: 640, height: 360 },
+    ])
+    bridged.set([
+      { key: 'a', frame: a2, width: 640, height: 360 },
+      { key: 'b', frame: null, width: 640, height: 360, same: true },
+    ])
+    expect(a1.close).toHaveBeenCalledTimes(1)
+    expect(b1.close).not.toHaveBeenCalled()
+    bridged.set([{ key: 'a', frame: null, width: 640, height: 360, same: true }])
+    expect(b1.close).toHaveBeenCalledTimes(1)
+    expect(a2.close).not.toHaveBeenCalled()
+    bridged.dispose()
+    expect([a1, b1, a2].map((f) => vi.mocked(f.close).mock.calls.length)).toEqual([1, 1, 1])
   })
 })

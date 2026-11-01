@@ -136,7 +136,7 @@ test('at 1280 wide a task with a long title gets its title cut off, keeping its 
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
   await openEditor(page)
-  const title = 'Generating 12 clips · about $3.04'
+  const title = 'Separating the vocals, drums and bass of the whole song'
   await page.evaluate((t) => {
     const w = window as unknown as { finish: (() => void)[] }
     w.finish = []
@@ -179,6 +179,55 @@ test('at 1280 wide a task with a long title gets its title cut off, keeping its 
   await page.evaluate(() => (window as unknown as { finish: (() => void)[] }).finish.forEach((f) => f()))
   await expect(chip).toHaveCount(0)
 })
+
+for (const shown of ['Generating 12 clips', 'Generating 4 images', 'Generating an image'])
+  for (const others of [0, 1, 2])
+    test(`at 1280 wide the activity indicator shows “${shown}” whole without its price${others ? ` beside +${others}` : ''}, and keeps the price in the name and the tooltip`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 1280, height: 720 })
+      await openEditor(page)
+      const title = `${shown} · about $3.04`
+      await page.evaluate(
+        ({ t, others }) => {
+          const w = window as unknown as { finish: (() => void)[] }
+          w.finish = []
+          const tasks: [string, string][] = [['cloud.generate', t]]
+          for (let i = 1; i <= others; i++) tasks.push([`test.other${i}`, `Other task ${i}`])
+          for (const [kind, title] of tasks)
+            window.mvStudio.shared.jobs.run({
+              kind,
+              title,
+              run: (ctx: { progress: (p: { fraction: number }) => void }) =>
+                new Promise<void>((resolve) => {
+                  ctx.progress({ fraction: 0.33 })
+                  w.finish.push(resolve)
+                }),
+            })
+        },
+        { t: title, others },
+      )
+      const name = others ? `${title} 33% +${others}` : `${title} 33%`
+      const chip = page.getByRole('banner').getByRole('button', { name, exact: true })
+      await expect(chip).toBeVisible()
+      await chip.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+      const text = chip.getByText(shown, { exact: true })
+      await expect(text).toBeVisible()
+      // scrollWidth is a whole number of pixels, so it misses an ellipsis that cuts a fraction of one: compare the
+      // text's own width with the box it gets.
+      const [needs, gets] = await text.evaluate((el) => {
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        return [range.getBoundingClientRect().width, el.getBoundingClientRect().width]
+      })
+      expect(needs).toBeLessThanOrEqual(gets + 0.01)
+      await expect(chip).not.toContainText('$3.04')
+      await chip.hover()
+      await expect(page.getByRole('tooltip')).toContainText(title)
+      await page.evaluate(() => (window as unknown as { finish: (() => void)[] }).finish.forEach((f) => f()))
+      await expect(chip).toHaveCount(0)
+    })
+
 test('Help › Replay the guide and Settings › General › Replay show the guide again from its first step', async ({
   page,
 }) => {

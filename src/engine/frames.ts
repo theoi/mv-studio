@@ -131,6 +131,10 @@ export class VideoElementFrameProvider implements FrameProvider {
   private active = new Set<string>()
   /** Slot ids reserved by warm() for clips about to start. */
   private upcoming = new Set<string>()
+  /** Slot ids kept loaded by prewarm() for clips of a transition near the paused playhead. */
+  private prewarmed = new Set<string>()
+  /** This frame's exact frames by footage and source time, so clips showing the same frame share one seek. */
+  private exact = new Map<string, Promise<FrameRef | null>>()
   private readonly urls = new Map<Id, Promise<string>>()
   private readonly images: ImageCache
   private readonly media: MediaFileSource
@@ -168,6 +172,7 @@ export class VideoElementFrameProvider implements FrameProvider {
 
   beginFrame(keys: string[]): void {
     this.active = new Set(keys)
+    this.exact.clear()
   }
 
   /** The slot for a clip: its own, a free one of the same footage (nearest to `t`), or a new element. */
@@ -178,7 +183,13 @@ export class VideoElementFrameProvider implements FrameProvider {
     let free: [string, VideoSlot] | null = null
     for (const entry of this.slots) {
       const [otherId, other] = entry
-      if (other.assetId !== asset.id || this.active.has(other.clipKey) || this.upcoming.has(otherId)) continue
+      if (
+        other.assetId !== asset.id ||
+        this.active.has(other.clipKey) ||
+        this.upcoming.has(otherId) ||
+        this.prewarmed.has(otherId)
+      )
+        continue
       if (!free || Math.abs(other.video.currentTime - t) < Math.abs(free[1].video.currentTime - t))
         free = entry
     }
@@ -228,46 +239,68 @@ export class VideoElementFrameProvider implements FrameProvider {
     return slot
   }
 
-  async videoFrame(asset: Asset, sourceTime: Seconds, key: string, rate = 1): Promise<FrameRef | null> {
+  videoFrame(asset: Asset, sourceTime: Seconds, key: string, rate = 1): Promise<FrameRef | null> {
     const t = clampSourceTime(asset, sourceTime)
     const slot = this.slot(asset, key, t)
     slot.lastUsed = this.frame
+    const mediaRate = rate * this.rate
+    if (this.playing && mediaRate >= MIN_MEDIA_RATE && mediaRate <= MAX_MEDIA_RATE)
+      return this.playingFrame(asset, t, slot, mediaRate)
+    // Paused, a clip showing the same frame of the same footage as another clip in this frame (a layer and a copy of
+    // it, say) takes that clip's frame: one decoder seeks instead of two. The rate doesn't change which frame shows at
+    // a source time. The clip keeps its own element, loaded, for when the two part or playback starts.
+    const id = `${asset.id}@${t}`
+    let frame = this.exact.get(id)
+    if (!frame) {
+      frame = this.exactFrame(slot, t)
+      this.exact.set(id, frame)
+    }
+    return frame
+  }
+
+  /** Paused transport, a freeze (rate 0) or a rate the element cannot play: the exact frame, seeked and waited for. */
+  private async exactFrame(slot: VideoSlot, t: Seconds): Promise<FrameRef | null> {
     if (!(await slot.ready)) return null
     const { video } = slot
-    const mediaRate = rate * this.rate
-    let version: number | undefined
-    if (this.playing && mediaRate >= MIN_MEDIA_RATE && mediaRate <= MAX_MEDIA_RATE) {
-      // Upload only frames the video presented since the last upload (a 30 fps clip in a 60 fps preview skips every
-      // other upload). Exact seeks below always upload: a seek does not reliably present a new frame callback.
-      if (slot.presented > 0) version = slot.presented
-      // Drift is measured in source time, which moves at mediaRate; allow at least two source frames.
-      const frame = 1 / (asset.frameRate ?? 30)
-      const tolerance = Math.max(PLAYBACK_DRIFT * mediaRate, 2 * frame)
-      const drift = t - video.currentTime
-      let speed = mediaRate
-      if (video.paused) {
-        // A warmed or taken-over element is usually already there; seeking anyway would stall its first frames.
-        if (Math.abs(drift) > tolerance) video.currentTime = t
-        void video.play().catch(() => undefined)
-      } else if (Math.abs(drift) > tolerance) {
-        video.currentTime = t
-      } else if (Math.abs(drift) > frame / 2) {
-        // Seeking a playing video stalls it, so smaller drift (playback start-up latency, clock skew) is steered
-        // out instead; left alone it would show frames a few frames early or late for the rest of the clip.
-        const nudge = Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / (DRIFT_CATCH_UP * mediaRate)))
-        speed = Math.min(
-          MAX_MEDIA_RATE,
-          Math.max(MIN_MEDIA_RATE, mediaRate * (1 + Math.round(nudge * 20) / 20)),
-        )
-      }
-      if (video.playbackRate !== speed) video.playbackRate = speed
-    } else {
-      // Paused transport, a freeze (rate 0) or a rate the element cannot play: show the exact frame.
-      if (!video.paused) video.pause()
-      slot.target = t
-      slot.seeking = slot.seeking.then(() => this.seek(slot))
-      await slot.seeking
+    if (!video.paused) video.pause()
+    slot.target = t
+    slot.seeking = slot.seeking.then(() => this.seek(slot))
+    await slot.seeking
+    return { source: video, width: video.videoWidth, height: video.videoHeight }
+  }
+
+  private async playingFrame(
+    asset: Asset,
+    t: Seconds,
+    slot: VideoSlot,
+    mediaRate: number,
+  ): Promise<FrameRef | null> {
+    if (!(await slot.ready)) return null
+    const { video } = slot
+    // Upload only frames the video presented since the last upload (a 30 fps clip in a 60 fps preview skips every
+    // other upload). Exact frames always upload: a seek does not reliably present a new frame callback.
+    const version = slot.presented > 0 ? slot.presented : undefined
+    // Drift is measured in source time, which moves at mediaRate; allow at least two source frames.
+    const frame = 1 / (asset.frameRate ?? 30)
+    const tolerance = Math.max(PLAYBACK_DRIFT * mediaRate, 2 * frame)
+    const drift = t - video.currentTime
+    let speed = mediaRate
+    if (video.paused) {
+      // A warmed or taken-over element is usually already there; seeking anyway would stall its first frames.
+      if (Math.abs(drift) > tolerance) video.currentTime = t
+      void video.play().catch(() => undefined)
+    } else if (Math.abs(drift) > tolerance) {
+      video.currentTime = t
+    } else if (Math.abs(drift) > frame / 2) {
+      // Seeking a playing video stalls it, so smaller drift (playback start-up latency, clock skew) is steered
+      // out instead; left alone it would show frames a few frames early or late for the rest of the clip.
+      const nudge = Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / (DRIFT_CATCH_UP * mediaRate)))
+      speed = Math.min(
+        MAX_MEDIA_RATE,
+        Math.max(MIN_MEDIA_RATE, mediaRate * (1 + Math.round(nudge * 20) / 20)),
+      )
     }
+    if (video.playbackRate !== speed) video.playbackRate = speed
     return { source: video, width: video.videoWidth, height: video.videoHeight, version }
   }
 
@@ -340,6 +373,31 @@ export class VideoElementFrameProvider implements FrameProvider {
       })
     }
   }
+  /**
+   * While paused, keeps an element loaded and seeked for each clip that a transition near the playhead shows besides
+   * the clips on screen. Without it, a seek into the transition has to load a new element for the clip it brings back,
+   * which costs more than the seek itself. Each call replaces the previous set. Elements no longer wanted are released
+   * at once, unless the frame on screen uses them.
+   */
+  prewarm(requests: { asset: Asset; sourceTime: Seconds; key: string }[]): void {
+    const wanted = new Set(requests.map(({ asset, key }) => `${key}:${asset.id}`))
+    for (const id of this.prewarmed) {
+      const slot = this.slots.get(id)
+      if (!wanted.has(id) && slot && !this.active.has(slot.clipKey) && !this.upcoming.has(id))
+        this.release(id, slot)
+    }
+    this.prewarmed = wanted
+    for (const { asset, sourceTime, key } of requests) {
+      const t = clampSourceTime(asset, sourceTime)
+      const slot = this.slot(asset, key, t)
+      slot.lastUsed = this.frame
+      slot.target = t
+      slot.seeking = slot.seeking.then(async () => {
+        if ((await slot.ready) && slot.video.paused) await this.seek(slot)
+      })
+    }
+  }
+
   /** Keeps one loaded element per asset (e.g. VJ pad footage) until the next prefetch() call. */
   prefetch(assets: Asset[]): void {
     const ids = new Set(assets.map((a) => a.id))
@@ -351,16 +409,21 @@ export class VideoElementFrameProvider implements FrameProvider {
   }
 
   endFrame(): void {
+    this.exact.clear()
     this.frame++
     for (const [key, slot] of this.slots) {
       const idle = this.frame - slot.lastUsed
       if (idle > PAUSE_AFTER_FRAMES && !slot.video.paused && !this.upcoming.has(key)) slot.video.pause()
-      if (idle > RELEASE_AFTER_FRAMES && !slot.pinned && !this.upcoming.has(key)) {
-        slot.video.removeAttribute('src')
-        slot.video.load()
-        this.slots.delete(key)
-      }
+      if (idle > RELEASE_AFTER_FRAMES && !slot.pinned && !this.upcoming.has(key) && !this.prewarmed.has(key))
+        this.release(key, slot)
     }
+  }
+
+  private release(id: string, slot: VideoSlot): void {
+    slot.video.pause()
+    slot.video.removeAttribute('src')
+    slot.video.load()
+    this.slots.delete(id)
   }
 
   dispose(): void {
@@ -370,6 +433,7 @@ export class VideoElementFrameProvider implements FrameProvider {
       slot.video.load()
     }
     this.slots.clear()
+    this.prewarmed.clear()
     for (const url of this.urls.values()) void url.then((u) => URL.revokeObjectURL(u))
     this.urls.clear()
     this.images.dispose()
@@ -585,7 +649,12 @@ export interface BridgedVideo {
   version?: number
   /** The frame is the one last sent for this key (same version), so it is not sent again. */
   same?: boolean
+  /** The frame went ahead of the request (BridgedFrameProvider.stage) with this version. */
+  staged?: boolean
 }
+
+/** A frame sent ahead is dropped when this many renders went by without one taking it (its request failed). */
+const STAGED_RENDERS = 8
 
 /**
  * Frame provider of the preview in the render worker: video frames arrive from the main thread with each render
@@ -595,18 +664,42 @@ export interface BridgedVideo {
 export class BridgedFrameProvider implements FrameProvider {
   private readonly latest = new Map<string, { frame: VideoFrame; ref: FrameRef }>()
   private current = new Map<string, FrameRef | null>()
+  /** Frames sent ahead of their render, by key and version, and the render count when each came. */
+  private readonly staged = new Map<string, { frame: VideoFrame; ref: FrameRef; at: number }>()
+  private renders = 0
   private readonly images: ImageCache
 
   constructor(media: MediaFileSource) {
     this.images = new ImageCache(media)
   }
 
+  /** Keeps a frame sent ahead of the render that will name it (`staged`) by its key and version. */
+  stage(v: BridgedVideo): void {
+    if (!v.frame) return
+    const id = `${v.key}@${String(v.version)}`
+    this.staged.get(id)?.frame.close()
+    this.staged.set(id, {
+      frame: v.frame,
+      ref: { source: v.frame, width: v.width, height: v.height, version: v.version },
+      at: this.renders,
+    })
+  }
+
   /** The video frames of the next render. Frames of keys missing from `videos` are closed. */
   set(videos: BridgedVideo[]): void {
+    this.renders++
     const current = new Map<string, FrameRef | null>()
     for (const v of videos) {
       let entry = this.latest.get(v.key)
-      if (v.frame) {
+      if (v.staged) {
+        const id = `${v.key}@${String(v.version)}`
+        const staged = this.staged.get(id)
+        this.staged.delete(id)
+        if (entry && entry.frame !== staged?.frame) entry.frame.close()
+        entry = staged && { frame: staged.frame, ref: staged.ref }
+        if (entry) this.latest.set(v.key, entry)
+        else this.latest.delete(v.key)
+      } else if (v.frame) {
         entry?.frame.close()
         entry = {
           frame: v.frame,
@@ -625,6 +718,11 @@ export class BridgedFrameProvider implements FrameProvider {
         entry.frame.close()
         this.latest.delete(key)
       }
+    for (const [id, staged] of this.staged)
+      if (this.renders - staged.at > STAGED_RENDERS) {
+        staged.frame.close()
+        this.staged.delete(id)
+      }
     this.current = current
   }
 
@@ -637,8 +735,9 @@ export class BridgedFrameProvider implements FrameProvider {
   }
 
   dispose(): void {
-    for (const entry of this.latest.values()) entry.frame.close()
+    for (const entry of [...this.latest.values(), ...this.staged.values()]) entry.frame.close()
     this.latest.clear()
+    this.staged.clear()
     this.current.clear()
     this.images.dispose()
   }

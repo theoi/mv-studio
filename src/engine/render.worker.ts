@@ -2,6 +2,7 @@
 import { JobError } from '../shared/jobs.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../shared/worker.ts'
 import type { EncodeJob } from './encode.ts'
+import type { BridgedVideo } from './frames.ts'
 import type { PreviewRenderRequest, WorkerPreview } from './previewWorker.ts'
 
 // The compositor and encoders load on first use: with only this module and worker.ts to evaluate first, the worker
@@ -42,6 +43,12 @@ const api = {
     )
     previous?.then((p) => p.dispose()).catch(() => undefined)
     await preview
+    return true
+  },
+  // A staged frame must reach the preview before the render that names it, which the page sends after it: this and
+  // previewRender wait the same way, so they reach the preview in the order they came.
+  previewStage: async (video: BridgedVideo) => {
+    ;(await activePreview()).stage(video)
     return true
   },
   previewRender: async (request: PreviewRenderRequest) => {
