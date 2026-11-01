@@ -46,6 +46,11 @@ async function startExport(page: Page, resolution: '720p' | '1080p') {
   if (await vertical.count()) await vertical.uncheck()
   await dialog.getByRole('button', { name: 'Export 1 file' }).click()
   await expect(dialog.getByText('Exporting 1 file')).toBeVisible()
+  // The export marks itself running once its lock is granted, a moment after it starts. A tab crashed before that,
+  // within milliseconds of the click, has nothing to report.
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('mv-studio.export-running')))
+    .not.toBeNull()
   return dialog
 }
 
