@@ -154,11 +154,14 @@ function Frame({
   planned,
   time,
   onTime,
+  onAdjust,
 }: {
   project: Project
   planned: PlannedOutput
   time: number
   onTime: (time: number) => void
+  /** Called when the user changes the output's framing. */
+  onAdjust: () => void
 }) {
   const { spec } = planned
   const same = spec.aspect === project.settings.aspect
@@ -200,6 +203,7 @@ function Frame({
     const x = clamp(fx, -box.left / box.width, (1 - box.left - box.width) / box.width)
     const y = clamp(fy, -box.top / box.height, (1 - box.top - box.height) / box.height)
     if (Math.abs(x) < 1e-4 && Math.abs(y) < 1e-4) return
+    onAdjust()
     adjustFraming(spec.aspect, shot.clipId, {
       offsetX: clamp((override?.offsetX ?? 0) + x, -2, 2),
       offsetY: clamp((override?.offsetY ?? 0) + y, -2, 2),
@@ -297,7 +301,9 @@ function Frame({
                 },
                 onPointerCancel: () => setDrag(null),
                 onDoubleClick: () => {
-                  if (shot && override) adjustFraming(spec.aspect, shot.clipId, null)
+                  if (!shot || !override) return
+                  onAdjust()
+                  adjustFraming(spec.aspect, shot.clipId, null)
                 },
                 onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
                   const step = e.shiftKey ? 0.1 : 0.02
@@ -776,9 +782,12 @@ function ExportDialogBody() {
   if (!sel || !selPlan) return null
 
   const bytes = active.reduce((sum, p) => sum + p.estimatedBytes, 0)
+  /** Changing an output's settings includes it in the export. */
+  const include = () =>
+    setItems((list) => list.map((i) => (i.spec.id === sel.spec.id ? { ...i, on: true } : i)))
   const update = (patch: Partial<OutputSpec>) =>
     setItems((list) =>
-      list.map((i) => (i.spec.id === sel.spec.id ? { ...i, spec: { ...i.spec, ...patch } } : i)),
+      list.map((i) => (i.spec.id === sel.spec.id ? { ...i, on: true, spec: { ...i.spec, ...patch } } : i)),
     )
   const remaining = remainingCandidates(candidates, items)
   const audio = sel.spec.audio ?? sel.spec.kind !== 'loop'
@@ -799,15 +808,21 @@ function ExportDialogBody() {
         phase === 'setup' ? (
           <>
             <div className={styles.summary}>
-              <span>
-                <HardDrive /> {sizeLabel(bytes)}
-              </span>
-              <span>
-                <Clock />{' '}
-                <span className={styles.time}>
-                  <span>{timeLabel(seconds)}</span>
-                </span>
-              </span>
+              {active.length ? (
+                <>
+                  <span>
+                    <HardDrive /> {sizeLabel(bytes)}
+                  </span>
+                  <span>
+                    <Clock />{' '}
+                    <span className={styles.time}>
+                      <span>{timeLabel(seconds)}</span>
+                    </span>
+                  </span>
+                </>
+              ) : (
+                <span>Choose at least one output</span>
+              )}
               <span>
                 <Lock /> Free · rendered in your browser
               </span>
@@ -824,7 +839,7 @@ function ExportDialogBody() {
                 set({ exportPhase: 'exporting' })
               }}
             >
-              Export {plural(active.length, 'file')}
+              {active.length ? `Export ${plural(active.length, 'file')}` : 'Export'}
             </Button>
           </>
         ) : undefined
@@ -887,6 +902,7 @@ function ExportDialogBody() {
                   : stillTime(selPlan, playhead)
               }
               onTime={setViewTime}
+              onAdjust={include}
             />
             {sel.spec.kind !== 'video' && (
               <RangeLane

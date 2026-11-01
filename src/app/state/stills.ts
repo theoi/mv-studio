@@ -14,6 +14,8 @@ import { get, set, toast, useUi } from './ui.ts'
  */
 
 const MAX_STILLS = 32
+/** How long the URL of a still replaced by a sharper one stays valid. */
+const REPLACED_URL_MS = 5000
 const urls = new Map<string, string>()
 const pending = new Set<string>()
 const listeners = new Set<() => void>()
@@ -39,7 +41,11 @@ function subscribe(listener: () => void): () => void {
 }
 
 function store(key: string, url: string): void {
+  const replaced = urls.get(key)
+  urls.delete(key)
   urls.set(key, url)
+  // Later, so an element still showing the old image keeps it until the new one has loaded.
+  if (replaced) setTimeout(() => URL.revokeObjectURL(replaced), REPLACED_URL_MS)
   if (urls.size > MAX_STILLS) {
     const [oldest] = urls
     if (oldest) {
@@ -120,13 +126,18 @@ function afterPaint(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
 }
 
-/** A frame drawn elsewhere, scaled to the still's size. */
-async function stillFrom(frame: Promise<ImageBitmap>, width: number, height: number): Promise<Blob> {
+/** A frame drawn elsewhere, scaled to the still's size; `sharp` when it had at least the still's height. */
+async function stillFrom(
+  frame: Promise<ImageBitmap>,
+  width: number,
+  height: number,
+): Promise<{ blob: Blob; sharp: boolean }> {
   const bitmap = await frame
+  const sharp = bitmap.height >= height
   const canvas = new OffscreenCanvas(width, height)
   canvas.getContext('2d')?.drawImage(bitmap, 0, 0, width, height)
   bitmap.close()
-  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 })
+  return { blob: await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 }), sharp }
 }
 
 function requestStill(
@@ -153,11 +164,17 @@ function requestStill(
         setTimeout(() => reject(new Error('No seed frame')), SEED_TIMEOUT_MS),
       ),
     ])
-  void (seeded ? seeded.catch(render) : render())
-    .then(
-      (blob) => store(key, URL.createObjectURL(blob)),
-      (error: unknown) => console.error('Still render failed', error),
-    )
+  const show = (blob: Blob) => store(key, URL.createObjectURL(blob))
+  // A seed smaller than the still (a small stage, or a lowered preview quality) shows until the still is drawn.
+  const still = seeded
+    ? seeded.then(({ blob, sharp }) => {
+        if (sharp) return blob
+        show(blob)
+        return render()
+      }, render)
+    : render()
+  void still
+    .then(show, (error: unknown) => console.error('Still render failed', error))
     .finally(() => pending.delete(key))
 }
 

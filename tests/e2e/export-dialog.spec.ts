@@ -109,6 +109,37 @@ test('the export dialog shows the editor’s frame at once, without waiting for 
   expect(difference).toBeLessThan(6)
 })
 
+test('with a stage smaller than the dialog’s frame, the editor’s frame shows first and a sharper one replaces it', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1100, height: 640 })
+  await openApp(page, './?e2e=1')
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=73.6'
+  })
+  await waitForPreview(page)
+  const stageHeight = await page.evaluate(async () => {
+    const preview = window.mvStudio.app.stagePreview()
+    await preview.rendered()
+    return preview.stats().height
+  })
+  expect(stageHeight).toBeLessThan(360)
+
+  await page.keyboard.press(`${mod}+e`)
+  const preview = page
+    .getByRole('dialog', { name: 'Export' })
+    .getByRole('img', { name: 'Preview of Full video' })
+  await expect.poll(() => backgrounds(preview)).toContain('blob:')
+  const first = await backgrounds(preview)
+  await expect
+    .poll(
+      async () => (await backgrounds(preview)) !== first && (await backgrounds(preview)).includes('blob:'),
+    )
+    .toBe(true)
+})
+
 test('the outputs of an export are saved with the project for next time', async ({ page }) => {
   const dialog = await openExport(page)
   // A project that has not exported yet offers the vertical version but leaves it off.
@@ -134,9 +165,27 @@ test('the outputs of an export are saved with the project for next time', async 
   await expect(dialog.getByLabel('Name')).toHaveValue('Square for feed')
 })
 
+test('changing an output’s settings includes it, and with nothing included the footer asks for an output', async ({
+  page,
+}) => {
+  const dialog = await openExport(page)
+  await dialog.getByRole('button', { name: /Vertical.*9:16/ }).click()
+  await expect(dialog.getByLabel('Include Vertical')).not.toBeChecked()
+  await dialog.getByRole('radio', { name: '720p' }).click()
+  await expect(dialog.getByLabel('Include Vertical')).toBeChecked()
+  await expect(dialog.getByRole('button', { name: 'Export 2 files' })).toBeVisible()
+
+  await dialog.getByLabel('Include Vertical').uncheck()
+  await dialog.getByLabel('Include Full video').uncheck()
+  await expect(dialog.getByText('Choose at least one output')).toBeVisible()
+  await expect(dialog.getByText(/About [\d.]+ (MB|GB)$/)).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Export', exact: true })).toBeDisabled()
+})
+
 test('dragging the frame adjusts the framing of the shot shown, one shot at a time', async ({ page }) => {
   const dialog = await openExport(page)
   await dialog.getByRole('button', { name: /Vertical.*9:16/ }).click()
+  await expect(dialog.getByLabel('Include Vertical')).not.toBeChecked()
   const preview = dialog.getByRole('img', { name: 'Preview of Vertical' })
   const frame = dialog.getByLabel(/^Framing of shot/)
   const shotLabel = dialog.getByText(/^Shot \d+ of \d+$/)
@@ -151,6 +200,8 @@ test('dragging the frame adjusts the framing of the shot shown, one shot at a ti
   await page.mouse.move(before.x + before.width / 2 - 60, before.y + before.height / 2, { steps: 6 })
   await page.mouse.up()
   await expect(dialog.getByText('Adjusted by hand. Double-click the frame to reset this shot.')).toBeVisible()
+  // Adjusting an output's framing includes it in the export.
+  await expect(dialog.getByLabel('Include Vertical')).toBeChecked()
   await expect.poll(async () => (await frame.boundingBox())!.x).toBeLessThan(before.x - 50)
   await expect
     .poll(
