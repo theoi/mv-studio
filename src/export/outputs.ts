@@ -18,12 +18,13 @@ import {
   exportSize,
   type ExportOptions,
 } from '../engine/export.ts'
-import type { ExportSettings } from '../engine/types.ts'
+import type { ExportSettings, MediaFileSource } from '../engine/types.ts'
+import { mediaStore } from '../media/mediaStore.ts'
 import { applyCommand, type EditCommand } from '../model/commands.ts'
 import { createSolidClip, createTrack, newId } from '../model/factory.ts'
 import { projectDuration } from '../model/queries.ts'
 import type { AspectPreset, Project, Seconds } from '../model/types.ts'
-import { jobs, type JobContext, type JobHandle } from '../shared/jobs.ts'
+import { JobError, jobs, type JobContext, type JobHandle } from '../shared/jobs.ts'
 import { rememberPace, type ExportPaceStore, type OutputEstimate } from './estimate.ts'
 import { convertToFormat, type ClipFraming, type FormatConversion, type FormatOptions } from './formats.ts'
 import {
@@ -477,6 +478,34 @@ export async function exportOutputs(
   return results
 }
 
+/**
+ * Why an export failed, when the project's media are no longer stored: the browser cleared the site's storage, as it
+ * does when the disk is nearly full, and the export then finds neither its media nor the file it was writing. The
+ * error itself only says a file couldn't be found.
+ */
+export async function exportFailure(
+  error: unknown,
+  project: Project,
+  media: MediaFileSource,
+): Promise<unknown> {
+  if (error instanceof JobError && error.code === 'cancelled') return error
+  const assets = Object.values(project.assets)
+  const stored = await Promise.all(
+    assets.map((a) =>
+      media.getFile(a).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  )
+  if (stored.every(Boolean)) return error
+  return new JobError(
+    'storage-quota',
+    'The browser cleared this project’s media, as it does when the disk is nearly full.',
+    { cause: error },
+  )
+}
+
 /** Starts the export job for the outputs. */
 export function startExport(
   project: Project,
@@ -486,6 +515,9 @@ export function startExport(
   return jobs.run({
     kind: 'export.outputs',
     title: specs.length === 1 ? 'Exporting video' : `Exporting ${specs.length} videos`,
-    run: (ctx) => exportOutputs(project, specs, ctx, options),
+    run: (ctx) =>
+      exportOutputs(project, specs, ctx, options).catch(async (error: unknown) => {
+        throw await exportFailure(error, project, options.media ?? mediaStore)
+      }),
   })
 }

@@ -850,6 +850,81 @@ test('opening a project file of a project already here asks whether to open that
   await expect(page.getByRole('button', { name: 'Project: Portable (4)' })).toBeVisible({ timeout: 30_000 })
   expect(await keptCount(page)).toBe(4)
 })
+/** How many clips the open project's stored record has, or null when it has none. */
+function storedClipCount(page: Page): Promise<number | null> {
+  return page.evaluate(async () => {
+    const { app, media } = window.mvStudio
+    const id = app.project.editor.getProject().id
+    const project = await media.projectStore.load(id).catch(() => null)
+    return project ? Object.keys(project.clips).length : null
+  })
+}
+
+test('when the browser clears the site’s storage during an export, the export says why it failed, the open project is saved again, and a note says what went', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await openBlank(page)
+  await importFiles(page, ['song.mp3', 'image.png'])
+  await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  await expect(saved(page)).toBeVisible()
+  // Another kept project, which goes with the rest.
+  await page.evaluate(async () => {
+    const { app, media, model } = window.mvStudio
+    await media.projectStore.save(model.createProject({ name: 'Other project' }))
+    await app.persistence.refreshRecents()
+  })
+  expect(await keptCount(page)).toBe(2)
+  const before = await snapshot(page)
+
+  await page.keyboard.press(`${mod}+e`)
+  const dialog = page.getByRole('dialog', { name: 'Export' })
+  await dialog.getByRole('button', { name: /^Export \d+ files?$/ }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.mvStudio.shared.jobs
+            .list()
+            .find(
+              (j: { kind: string; status: string }) => j.kind === 'export.outputs' && j.status === 'running',
+            )?.progress.stage,
+      ),
+    )
+    .toBe('render')
+  // What the browser does when the disk is nearly full and the site's storage isn't persistent.
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Storage.clearDataForOrigin', {
+    origin: new URL(page.url()).origin,
+    storageTypes: 'indexeddb,file_systems,cache_storage',
+  })
+  const cause = 'The browser cleared this project’s media, as it does when the disk is nearly full.'
+  await expect(page.getByText(`Export failed: ${cause}`)).toBeVisible({ timeout: 60_000 })
+  await expect(dialog.getByText(cause, { exact: true })).toBeVisible()
+  const note = page.getByText('The browser cleared MV Studio’s storage', { exact: false })
+  await expect(note).toHaveText(
+    'The browser cleared MV Studio’s storage, as it does when the disk is nearly full. This project’s edits are kept, but its 2 media files are gone. Your other project in this browser was cleared too. Free some disk space, then import the files again.',
+  )
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  expect(await keptCount(page)).toBe(1)
+  expect(await storedClipCount(page)).toBe(before.clips)
+  await expect(saved(page)).toBeVisible()
+  await page.waitForTimeout(6000)
+  await expect(note).toBeVisible()
+
+  // Later edits save too.
+  await page.keyboard.press('t')
+  await expect.poll(() => storedClipCount(page)).toBe(before.clips + 1)
+  await expect(saved(page)).toBeVisible()
+
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
+  expect(await snapshot(page)).toEqual({ ...before, clips: before.clips + 1 })
+})
+
 test('a failed save says so, and saving again works', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {

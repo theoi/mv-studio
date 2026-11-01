@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import { OpfsMediaStore, mediaStore } from '../../media/mediaStore.ts'
-import { IdbProjectStore, PORTABLE_EXTENSION, readPortable } from '../../media/projectStore.ts'
+import {
+  IdbProjectStore,
+  PORTABLE_EXTENSION,
+  onDatabaseClosed,
+  readPortable,
+} from '../../media/projectStore.ts'
 import {
   newId,
   projectDuration,
@@ -22,6 +27,7 @@ import { isSampleAsset, sampleFile } from '../mock/sampleMedia.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { usePrefs } from './prefs.ts'
 import { clampToLastFrame, dispatch, editor, loadEmptyProject } from './project.ts'
+import { lostMedia, storageClearedMessage, type StorageLoss } from './storageCleared.ts'
 import { thumbnailBlob } from './thumbs.ts'
 import { get, set, toast, useUi } from './ui.ts'
 
@@ -244,6 +250,57 @@ function onAutosave(state: AutosaveState) {
       label: 'Download project file',
       run: () => downloadProjectFile(),
     })
+}
+
+/**
+ * The browser cleared the site's storage: every kept project and its media are gone, but the open project is still
+ * here. Writes it again, so a reload keeps its edits, asks again for storage the browser keeps, and says what was lost.
+ */
+async function onStorageCleared(): Promise<void> {
+  const project = editor.getProject()
+  const others = [...storedIds].filter((id) => id !== project.id)
+  let saved: StorageLoss['project'] = 'not-kept'
+  if (usePersistence.getState().tracked) {
+    try {
+      await whenReopened(() => writeProject(project, false, editor.savedHistory()))
+      // A save that met the closed database failed; the next one opens it again.
+      if (autosave?.getState().status === 'error') await autosave.flush()
+      saved = autosave?.getState().status === 'error' ? 'not-saved' : 'saved'
+    } catch (error) {
+      saved = 'not-saved'
+      // Its record is gone, so it is kept as an edited project would be: Not saved, and saving again writes it.
+      edited = true
+      storedIds.delete(project.id)
+      usePersistence.setState({ status: 'error', error: saveErrorMessage(error) })
+    }
+  }
+  void mediaStore.requestPersistence().catch(() => false)
+  const [kept, lost] = await Promise.all([
+    whenReopened(() => store.list()).then(
+      (list) => new Set(list.map((s) => s.id)),
+      () => new Set<Id>(),
+    ),
+    lostMedia(project, (asset) => mediaStore.has(asset)),
+  ])
+  const message = storageClearedMessage({
+    project: saved,
+    ...lost,
+    others: others.filter((id) => !kept.has(id)).length,
+  })
+  if (message) toast(message, undefined, { key: 'storage-cleared', sticky: true })
+  await refreshRecents().catch(() => undefined)
+}
+
+/** Runs `run`, which uses the database, trying again for a few seconds: opening it fails while the browser is still deleting it. */
+async function whenReopened<T>(run: () => Promise<T>): Promise<T> {
+  for (let wait = 50; ; wait *= 2) {
+    try {
+      return await run()
+    } catch (error) {
+      if (wait > 1600) throw error
+      await new Promise((resolve) => setTimeout(resolve, wait))
+    }
+  }
 }
 
 function timing(seconds: number) {
@@ -727,6 +784,7 @@ export function initPersistence(): void {
     void refreshRecents()
   })
   window.addEventListener('beforeunload', onBeforeUnload)
+  onDatabaseClosed(() => void onStorageCleared())
   holdTabLock()
   void refreshRecents()
   const last = window.location.hash ? null : lastProjectId()
