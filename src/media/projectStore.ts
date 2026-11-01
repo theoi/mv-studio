@@ -1,7 +1,8 @@
 /** Project storage in IndexedDB, plus portable project files that bundle the project with its media. */
+import type { SavedHistory } from '../model/editor.ts'
 import { parseProject } from '../model/migrations.ts'
 import { newId } from '../model/factory.ts'
-import type { Asset, Id, Project } from '../model/types.ts'
+import { PROJECT_SCHEMA_VERSION, type Asset, type Id, type Project } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
 import { mediaStore, storageFolder, type OpfsMediaStore } from './mediaStore.ts'
 import { readTar, writeTar, type TarEntry } from './tar.ts'
@@ -11,6 +12,11 @@ const DB_NAME = 'mv-studio'
 const DB_VERSION = 1
 const PROJECTS = 'projects'
 const SUMMARIES = 'summaries'
+/**
+ * The undo history is kept in the project's record under this key, so it is written in the same transaction as the
+ * project it belongs to. Builds from before it pass it through unread.
+ */
+const HISTORY = 'undoHistory'
 
 export const PORTABLE_EXTENSION = '.mvstudio'
 const PROJECT_ENTRY = 'project.json'
@@ -83,23 +89,37 @@ export class IdbProjectStore implements ProjectStore {
   }
 
   async load(id: Id): Promise<Project> {
+    return (await this.loadWithHistory(id)).project
+  }
+
+  /**
+   * The project and the undo history saved with it. The history is left out when the project had to be migrated to
+   * this build's schema, since its steps describe the older one.
+   */
+  async loadWithHistory(id: Id): Promise<{ project: Project; history?: SavedHistory }> {
     const db = await openDb()
     const tx = db.transaction([PROJECTS, SUMMARIES])
     const [data, summary] = await Promise.all([
-      request(tx.objectStore(PROJECTS).get(id)),
+      request(tx.objectStore(PROJECTS).get(id) as IDBRequest<Record<string, unknown> | undefined>),
       request(tx.objectStore(SUMMARIES).get(id) as IDBRequest<ProjectSummary | undefined>),
     ])
     if (!data) throw new JobError('invalid-input', 'Project not found')
     this.thumbnails.set(id, summary?.thumbnail)
-    return parseProject(data)
+    const { [HISTORY]: history, ...stored } = data
+    const current = stored.schemaVersion === PROJECT_SCHEMA_VERSION
+    const project = parseProject(stored)
+    return current && history && typeof history === 'object'
+      ? { project, history: history as SavedHistory }
+      : { project }
   }
 
   /**
    * Writes the project and its summary in one transaction whose writes are all issued at once and committed right
    * away. A save started as the page closes (autosave on pagehide) then still lands: a transaction that is still
    * waiting to read something when the page goes away is aborted. The summary keeps its thumbnail when none is given.
+   * `history` is the editor's history of this very project; without it, none is kept.
    */
-  async save(project: Project, thumbnail?: Blob, kind?: string): Promise<void> {
+  async save(project: Project, thumbnail?: Blob, kind?: string, history?: SavedHistory): Promise<void> {
     const db = await openDb()
     if (!thumbnail && !this.thumbnails.has(project.id)) {
       const previous = await request(
@@ -112,7 +132,7 @@ export class IdbProjectStore implements ProjectStore {
     const kept = thumbnail ?? this.thumbnails.get(project.id)
     this.thumbnails.set(project.id, kept)
     const tx = db.transaction([PROJECTS, SUMMARIES], 'readwrite')
-    tx.objectStore(PROJECTS).put(project)
+    tx.objectStore(PROJECTS).put(history ? { ...project, [HISTORY]: history } : project)
     const summary: ProjectSummary = {
       id: project.id,
       name: project.name,

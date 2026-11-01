@@ -11,6 +11,7 @@ import {
   parseProject,
   type Asset,
   type Project,
+  type SavedHistory,
 } from '../../../src/model/index.ts'
 
 function videoAsset(): Asset {
@@ -361,5 +362,85 @@ describe('parseProject', () => {
     expect(audio.a1?.beats).toEqual([0, 0.5, 1, 1.5, 2])
     expect(audio.a2?.downbeats).toEqual([0, 2])
     expect(audio.a3?.downbeats).toEqual([0, 2])
+  })
+})
+
+describe('undo history saved with the project', () => {
+  /** An editor whose clock moves a second per edit, so every version of the project has its own updatedAt. */
+  function ticking() {
+    const project = createProject({ now: new Date(0) })
+    let t = 0
+    const editor = new ProjectEditor(project, { now: () => new Date((t += 1000)) })
+    return { editor, visual: project.tracks.find((tr) => tr.kind === 'visual')! }
+  }
+
+  it('comes back after a reload: undo and redo go on where they were', () => {
+    const { editor, visual } = ticking()
+    const a = createTextClip({ trackId: visual.id, text: 'A', start: 0, duration: 2 })
+    const b = createTextClip({ trackId: visual.id, text: 'B', start: 2, duration: 2 })
+    editor.dispatch({ type: 'clip.add', clip: a })
+    editor.dispatch({ type: 'clip.add', clip: b }, { label: 'Add B' })
+    editor.dispatch({ type: 'clip.move', moves: [{ clipId: a.id, start: 1 }] }, { label: 'Move A' })
+    editor.undo()
+    // Stored and read back as IndexedDB would.
+    const [project, history] = structuredClone([editor.getProject(), editor.savedHistory()])
+
+    const reopened = new ProjectEditor(createProject({ now: new Date(0) }))
+    reopened.load(project, history)
+    expect(reopened.history()).toEqual(editor.history())
+    expect(reopened.undo()).toBe(true)
+    expect(reopened.getProject().clips[b.id]).toBeUndefined()
+    expect(reopened.getProject().clips[a.id]?.start).toBe(0)
+    reopened.redo()
+    reopened.redo()
+    expect(reopened.getProject().clips[a.id]?.start).toBe(1)
+    expect(reopened.canRedo()).toBe(false)
+  })
+
+  it('of a project another one replaces goes to the listeners, to be saved with it', () => {
+    const { editor, visual } = ticking()
+    editor.dispatch({
+      type: 'clip.add',
+      clip: createTextClip({ trackId: visual.id, text: 'A', start: 0, duration: 2 }),
+    })
+    const left = editor.getProject()
+    let replaced: SavedHistory | undefined
+    editor.subscribe((_, change) => {
+      if (change.source === 'load') replaced = change.replaced
+    })
+    editor.load(createProject())
+    const reopened = new ProjectEditor(createProject())
+    reopened.load(left, replaced)
+    expect(reopened.history().undo).toEqual(['Add clip'])
+  })
+
+  it('is left out for any other version of the project, whose state its steps do not describe', () => {
+    const { editor, visual } = ticking()
+    editor.dispatch({
+      type: 'clip.add',
+      clip: createTextClip({ trackId: visual.id, text: 'A', start: 0, duration: 2 }),
+    })
+    const history = editor.savedHistory()
+    const changedElsewhere = { ...editor.getProject(), updatedAt: new Date(99_000).toISOString() }
+    const reopened = new ProjectEditor(createProject())
+    reopened.load(changedElsewhere, history)
+    expect(reopened.canUndo()).toBe(false)
+  })
+
+  it('keeps the most recent 100 steps, and no more than about 2 MB of them', () => {
+    const { editor, visual } = ticking()
+    const clip = createTextClip({ trackId: visual.id, text: 'A', start: 0, duration: 2 })
+    editor.dispatch({ type: 'clip.add', clip })
+    for (let i = 1; i <= 150; i++)
+      editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start: i }] }, { label: `Move ${i}` })
+    const many = editor.savedHistory().undo
+    expect(many).toHaveLength(100)
+    expect(many.at(-1)?.label).toBe('Move 150')
+
+    editor.dispatch({ type: 'project.rename', name: 'x'.repeat(2_100_000) }, { label: 'Long name' })
+    editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start: 0 }] }, { label: 'Last move' })
+    const capped = editor.savedHistory().undo.map((s) => s.label)
+    // The long name's step (2.1 MB) doesn't fit after the last move, and nothing older than it is kept.
+    expect(capped).toEqual(['Last move'])
   })
 })
