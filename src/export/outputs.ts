@@ -111,6 +111,10 @@ export interface PlannedOutput {
   framing: Record<string, ClipFraming>
   /** Footage without subject analysis; auto framing crops their centre until it exists. */
   unanalysed: string[]
+  /**
+   * The file's size at the encoders' target bitrates. A file comes near it on busy footage and well under it on easy
+   * content (a software H.264 encoder made a third of it for the sample project), so it is about the most it takes.
+   */
   estimatedBytes: number
   fileName: string
   exportOptions: Pick<ExportOptions, 'fileName' | 'frameTimes' | 'audio'>

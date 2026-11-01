@@ -70,7 +70,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 
 ### Export and perform
 
-- MP4 export (H.264 video with AAC audio) at 720p, 1080p, 1440p or 4K and 24, 25, 30 or 60 fps, in 16:9, 9:16, 1:1 or 4:5. Quality presets (High, Balanced, Small) show the estimated file size and render time before you start.
+- MP4 export (H.264 video with AAC audio) at 720p, 1080p, 1440p or 4K and 24, 25, 30 or 60 fps, in 16:9, 9:16, 1:1 or 4:5. Quality presets (High, Balanced, Small) show an upper limit for the file size and an estimate of the render time before you start.
 - Several formats from one project in one run, with auto-reframe between 16:9, 9:16, 1:1 and 4:5 that follows the subject.
 - Chorus teasers (15 to 30 second highlights) and seamless looping clips in the style of Spotify Canvas.
 - Save frame: a full-size PNG of the current frame, from the preview's right-click menu or the command palette.
