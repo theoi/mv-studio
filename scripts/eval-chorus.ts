@@ -18,6 +18,11 @@
  * one-line   the same words pasted as one line
  * aligned    the published lines timed by the app's aligner, for songs with `<file>.em.f32` or
  *            `<file>.vocals.model_quantized.em.f32` (wav2vec2 log-probabilities, as for eval-lyric-timing.ts) in --cache
+ * sheet      the same, with the lyrics written as a sheet that writes the most repeated stanza out once, as its first
+ *            line after "Chorus:", and each later repeat as a bare "Chorus" line
+ *
+ * The aligned conditions keep where the aligner took singing the lyrics don't list, as the app stores it with timed
+ * lyrics (`LyricsDoc.unlisted`).
  *
  * --src      measures another checkout's analysis and chorus code (for example main) with this harness
  *
@@ -108,6 +113,49 @@ function jaccard(a: string[], b: string[]): number {
   return common / (A.size + B.size - common || 1)
 }
 
+/** The lyrics as a sheet that writes the most repeated stanza out once, as its first line after "Chorus:", then only "Chorus". */
+function sheetText(raw: string): string {
+  const stanzas = raw
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const groups = stanzas.map(() => -1)
+  let count = 0
+  for (const [i, s] of stanzas.entries()) {
+    if (groups[i]! >= 0) continue
+    groups[i] = count++
+    for (let j = i + 1; j < stanzas.length; j++)
+      if (groups[j]! < 0 && jaccard(normalized(s), normalized(stanzas[j]!)) > 0.6) groups[j] = groups[i]!
+  }
+  const sizes = new Map<number, number>()
+  for (const g of groups) sizes.set(g, (sizes.get(g) ?? 0) + 1)
+  let group = -1
+  let most = 1
+  for (const [g, n] of sizes) if (n > most) [group, most] = [g, n]
+  let first = true
+  return stanzas
+    .map((p, i) => {
+      if (groups[i] !== group) return p
+      if (!first) return 'Chorus'
+      first = false
+      return `Chorus:\n${p.split('\n')[0]}`
+    })
+    .join('\n\n')
+}
+
+/** Unlisted singing as the app keeps it with timed lyrics: rounded to 0.01 s, merged, and stretches of 4 s or more. */
+function keptUnlisted(found: Span[]): Span[] {
+  const merged: Span[] = []
+  for (const u of found
+    .map((u) => ({ start: Math.round(u.start * 100), end: Math.round(u.end * 100) }))
+    .sort((a, b) => a.start - b.start)) {
+    const last = merged.at(-1)
+    if (last && u.start <= last.end) last.end = Math.max(last.end, u.end)
+    else merged.push(u)
+  }
+  return merged.filter((u) => u.end - u.start >= 400).map((u) => ({ start: u.start / 100, end: u.end / 100 }))
+}
+
 /** The most repeated stanza's places, each running on to the next stanza (at most twice its sung length) for to-next. */
 function referenceChorus(name: string): Span[] {
   const d = words(name)
@@ -176,7 +224,10 @@ const emFile = (name: string) =>
     .find((f) => fs.existsSync(f))
 
 let vocab: ReturnType<typeof align.ctcVocabulary> | undefined
-async function alignedLines(name: string): Promise<LyricLine[] | null> {
+async function alignedLines(
+  name: string,
+  sheet = false,
+): Promise<{ lines: LyricLine[]; unlisted: Span[] } | null> {
   const file = emFile(name)
   if (!file) return null
   vocab ??= align.ctcVocabulary(
@@ -188,8 +239,12 @@ async function alignedLines(name: string): Promise<LyricLine[] | null> {
   )
   const logProbs = f32(file)
   const em = { logProbs, vocab: 32, frames: logProbs.length / 32, frameSeconds: 0.02 }
-  const lines = text.parseLyricsText(fs.readFileSync(path.join(data, 'lyrics', `${name}.txt`), 'utf8'))
-  return align.alignLines(em, vocab, lines)
+  const raw = fs.readFileSync(path.join(data, 'lyrics', `${name}.txt`), 'utf8')
+  const found: Span[] = []
+  const lines = align.alignLines(em, vocab, text.parseLyricsText(sheet ? sheetText(raw) : raw), {
+    unlistedFound: found,
+  })
+  return { lines, unlisted: keptUnlisted(found) }
 }
 
 let beatThis:
@@ -273,7 +328,7 @@ interface Score {
   r: number
 }
 const f1 = (p: number, r: number) => (p + r ? (2 * p * r) / (p + r) : 0)
-const CONDITIONS = ['audio', 'published', 'pauses', 'one-line', 'aligned'] as const
+const CONDITIONS = ['audio', 'published', 'pauses', 'one-line', 'aligned', 'sheet'] as const
 const scores = new Map<string, Score[]>(CONDITIONS.map((c) => [c, []]))
 const tsv = ['song\tcondition\tP\tR\tchorus']
 const wanted = args.songs?.split(',')
@@ -300,14 +355,19 @@ for (const name of names) {
   score('audio', choruses(sections))
   const d = words(name)
   const pauses = d && doc.groupWordsIntoLines(d.words).map((w, i) => doc.lineFromWords(w, `p${i}`))
-  for (const [condition, lines] of [
-    ['published', publishedLines(name)],
-    ['pauses', pauses],
-    ['one-line', d && [doc.lineFromWords(d.words, 'all')]],
-    ['aligned', await alignedLines(name)],
-  ] as const) {
+  const aligned = await alignedLines(name)
+  const sheet = await alignedLines(name, true)
+  const conditions: [string, LyricLine[] | null | undefined, Span[]][] = [
+    ['published', publishedLines(name), []],
+    ['pauses', pauses, []],
+    ['one-line', d && [doc.lineFromWords(d.words, 'all')], []],
+    ['aligned', aligned?.lines, aligned?.unlisted ?? []],
+    ['sheet', sheet?.lines, sheet?.unlisted ?? []],
+  ]
+  for (const [condition, lines, unlisted] of conditions) {
     if (!lines) continue
-    const command = chorus.lyricChorusCommand(analysis, { source: 'pasted', lines })
+    const lyrics = { source: 'pasted' as const, lines, ...(unlisted.length ? { unlisted } : {}) }
+    const command = chorus.lyricChorusCommand(analysis, lyrics)
     score(
       condition,
       choruses(command?.type === 'analysis.setRefined' ? (command.refined.sections ?? []) : sections),

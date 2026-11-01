@@ -9,7 +9,6 @@ import { mixToMono } from '../dsp/resample.ts'
 import { part } from '../jobContext.ts'
 import { DEMUCS_MODEL, WAV2VEC2_MODEL, WHISPER_MODELS, whisperFileUrls, type WhisperSize } from '../models.ts'
 import { StemSeparationService, type StemStore } from '../stems/client.ts'
-import { lyricChorusCommand } from '../structure/chorus.ts'
 import { realignFrom, realignLine, type CtcVocabulary } from './align.ts'
 import type { CtcEmissions } from './ctc.ts'
 import type { TimeRange } from './vad.ts'
@@ -32,12 +31,6 @@ export interface LyricsResult {
   /** Drafts: the language sung, and the detection confidence (0..1) when it was detected. */
   language?: string
   languageProbability?: number
-  /**
-   * Pasted lyrics: relabels the song's sections so the lyrics' repeated lines are the chorus. Drafts: raises the
-   * confidence of the detected chorus when the draft repeats there too (see `lyricChorusCommand`). Null when there is
-   * nothing to change. Dispatch it with `{ history: 'skip' }` together with the lyrics.
-   */
-  chorus: EditCommand | null
   /** Pasted lyrics: where the aligner heard singing they do not list and kept the lines out of (seconds). */
   unlisted?: TimeRange[]
 }
@@ -168,7 +161,7 @@ export class LyricsService {
             vocalsId,
           })
           const doc: LyricsDoc = { audioAssetId: songId, source: 'pasted', lines: result.lines }
-          return { doc, chorus: chorusFor(deps, songId, doc), unlisted: result.unlisted }
+          return { doc, unlisted: result.unlisted }
         }
         const size = request.size ?? DRAFT_SIZE
         const result = await this.call((c) =>
@@ -195,7 +188,6 @@ export class LyricsService {
           doc,
           language: result.language,
           languageProbability: result.languageProbability,
-          chorus: chorusFor(deps, songId, doc),
         }
       },
     })
@@ -314,11 +306,6 @@ const mono = (audio: DecodedAudio): DecodedAudio =>
 
 /** Moved to the worker rather than copied: a long song and its vocals take tens of MB each, and neither is used after. */
 const buffers = (...audio: DecodedAudio[]) => audio.flatMap((a) => a.channels.map((c) => c.buffer))
-
-function chorusFor(deps: LyricsDeps, songId: Id, doc: LyricsDoc): EditCommand | null {
-  const analysis = deps.editor.getProject().analysis.audio[songId]
-  return analysis ? lyricChorusCommand(analysis, doc) : null
-}
 
 function songAsset(project: Project, songId: Id): Asset {
   const song = project.assets[songId]

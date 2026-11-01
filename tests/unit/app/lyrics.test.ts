@@ -1,14 +1,30 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createProject,
   createTextClip,
   createTrack,
   ProjectEditor,
+  type LyricLine,
   type LyricsDoc,
   type Project,
   type TextClip,
 } from '../../../src/model/index.ts'
-import { lyricsCommands, lyricsCost, removeLyricLinesCommands } from '../../../src/app/state/lyrics.ts'
+import type { LyricsResult } from '../../../src/analysis/lyrics/client.ts'
+import {
+  lyricsCommands,
+  lyricsCost,
+  removeLyricLinesCommands,
+  setLyricsServiceForTests,
+  startLyrics,
+} from '../../../src/app/state/lyrics.ts'
+import { editor } from '../../../src/app/state/project.ts'
+import type * as UiModule from '../../../src/app/state/ui.ts'
+import { jobs } from '../../../src/shared/jobs.ts'
+
+vi.mock('../../../src/app/state/ui.ts', async (original) => ({
+  ...(await original<typeof UiModule>()),
+  toast: vi.fn(),
+}))
 
 const doc: LyricsDoc = {
   source: 'pasted',
@@ -146,5 +162,121 @@ describe('removeLyricLinesCommands', () => {
     const editor = new ProjectEditor(project)
     expect(() => editor.dispatch(removeLyricLinesCommands(project, ['n1']))).toThrow('Track is locked')
     expect(editor.getProject()).toEqual(project)
+  })
+})
+
+describe('startLyrics', () => {
+  /** The stand-in's answers to the next runs, in order. */
+  const answers: LyricsResult[] = []
+  setLyricsServiceForTests({
+    estimate: async () => ({ separatesStems: false, downloads: [], downloadBytes: 0, seconds: 1 }),
+    run: () => jobs.run({ kind: 'analysis.lyrics', title: 'Lyrics', run: async () => answers.shift()! }),
+    prepareRealign: () =>
+      jobs.run({ kind: 'analysis.realign', title: 'Listening', run: async () => undefined }),
+    canRealign: () => false,
+    realignFrom: () => undefined,
+    realignLine: () => undefined,
+  })
+
+  /** A song whose detected choruses are at 20, 60 and 100 s. */
+  function load() {
+    const project = createProject({ name: 'p' })
+    project.assets.song = {
+      id: 'song',
+      kind: 'audio',
+      name: 'song.mp3',
+      mimeType: 'audio/mpeg',
+      byteSize: 1,
+      storageKey: 'media/song',
+      duration: 120,
+      origin: { type: 'import' },
+      createdAt: new Date(0).toISOString(),
+    }
+    project.songAssetId = 'song'
+    const section = (id: string, start: number, label: string, repeatGroup: number) => ({
+      id,
+      start,
+      end: start + 20,
+      label,
+      repeatGroup,
+      ...(label === 'chorus' ? { confidence: 0.4 } : {}),
+    })
+    project.analysis.audio.song = {
+      assetId: 'song',
+      version: 'test',
+      sections: ['verse', 'chorus', 'verse', 'chorus', 'verse', 'chorus'].map((label, i) =>
+        section(`s${i}`, i * 20, label, label === 'chorus' ? 1 : 0),
+      ),
+    }
+    editor.load(project)
+  }
+
+  /**
+   * Lyrics that write the chorus out once, then only "Chorus" (one word in each later chorus); their only repeat is
+   * the line that opens each verse.
+   */
+  function once(source: LyricsDoc['source'] = 'pasted'): LyricsDoc {
+    const texts: [string, number][] = [
+      ['Here we go again my friend', 2],
+      ['Woke up late on a Sunday morning', 6],
+      ['Chorus we sing all night long', 20.5],
+      ['Here we go again my friend', 42],
+      ['Streets are empty and the shops are closed', 46],
+      ['Chorus', 60.5],
+      ['Here we go again my friend', 82],
+      ['Every window shows a different face', 86],
+      ['Chorus', 100.5],
+    ]
+    const lines: LyricLine[] = texts.map(([text, start], i) => {
+      const words = text
+        .split(' ')
+        .map((w, k) => ({ text: w, start: start + k / 2, end: start + (k + 1) / 2 }))
+      return { id: `l${i}`, text, start, end: words.at(-1)!.end, words }
+    })
+    return { audioAssetId: 'song', source, lines }
+  }
+
+  const choruses = () =>
+    (editor.getProject().analysis.audio.song?.sections ?? [])
+      .filter((s) => s.label === 'chorus')
+      .map((s) => [s.start, s.end])
+
+  it('keeps the long unlisted singing with the timed lyrics, in their undo step, and finds the chorus with it', async () => {
+    load()
+    answers.push({
+      doc: once(),
+      unlisted: [
+        { start: 5.5, end: 6 },
+        { start: 61.004, end: 79.996 },
+        { start: 101, end: 120 },
+      ],
+    })
+    await startLyrics({ kind: 'time', text: 'lyrics' })
+    const first = structuredClone(editor.getProject().lyrics)
+    expect(first?.unlisted).toEqual([
+      { start: 61, end: 80 },
+      { start: 101, end: 120 },
+    ])
+    // The later choruses hold one word each: as detected, because their singing is unlisted.
+    expect(choruses()).toEqual([
+      [20, 40],
+      [60, 80],
+      [100, 120],
+    ])
+
+    answers.push({ doc: once(), unlisted: [] })
+    await startLyrics({ kind: 'time', text: 'lyrics' })
+    expect(editor.getProject().lyrics).not.toHaveProperty('unlisted')
+    expect(choruses()).toEqual([[20, 40]])
+    editor.undo()
+    expect(editor.getProject().lyrics).toEqual(first)
+  })
+
+  it('keeps no unlisted singing with a draft', async () => {
+    load()
+    answers.push({ doc: once('transcribed'), language: 'en', unlisted: [{ start: 61, end: 80 }] })
+    await startLyrics({ kind: 'draft' })
+    expect(editor.getProject().lyrics?.source).toBe('transcribed')
+    expect(editor.getProject().lyrics).not.toHaveProperty('unlisted')
   })
 })

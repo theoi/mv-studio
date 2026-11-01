@@ -101,7 +101,7 @@ async function fakeLyrics(page: Page) {
                     end: 2.5 + i * 2,
                     words: [{ text: text.trim(), start: 1 + i * 2, end: 2.5 + i * 2 }],
                   }))
-                resolve({ doc: { audioAssetId: songId, source: 'pasted', lines }, chorus: null })
+                resolve({ doc: { audioAssetId: songId, source: 'pasted', lines } })
               }
             }),
         })
