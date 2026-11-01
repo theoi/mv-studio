@@ -4,6 +4,7 @@ import {
   lyricChorusCommand,
   lyricChorusRanges,
   withChorus,
+  type ChorusSearchSteps,
   type TimeRange,
 } from '../../../src/analysis/structure/chorus.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
@@ -106,8 +107,10 @@ describe('findLyricChorus', () => {
     expect(ranges(lines)?.map((r) => r.start)).toEqual([10, 30, 50])
   })
 
+  // 300 chants stay under the pair bound and need the work bound; 2,000 need the pair bound. Unbounded, they take
+  // 2 million partner checks and 4 million pair comparisons (about 3 s). Counted, not timed, so a busy machine passes.
   it.each([300, 2000])(
-    'stays quick when one word is chanted %i times, and still finds the chorus',
+    'stays within its search bounds when one word is chanted %i times, and still finds the chorus',
     (count) => {
       const chant = Array.from({ length: count / 10 }, () => Array<string>(10).fill('oh').join(' '))
       const after = 35 + count * 0.5
@@ -118,11 +121,13 @@ describe('findLyricChorus', () => {
         ...say(chant, 30),
         ...say(CHORUS, after),
       ]
-      const started = performance.now()
-      const found = ranges(lines)
-      // About 3 s for 2,000 words before the search was bounded; a few milliseconds since.
-      expect(performance.now() - started).toBeLessThan(250)
-      expect(found?.map((r) => r.start)).toEqual([0, 20, after])
+      const steps: ChorusSearchSteps = { pairs: 0, work: 0 }
+      const found = findLyricChorus(lines, steps)
+      expect(steps.pairs).toBeGreaterThan(0)
+      expect(steps.pairs).toBeLessThanOrEqual(100_000)
+      expect(steps.work).toBeGreaterThan(0)
+      expect(steps.work).toBeLessThan(250_000)
+      expect(found?.ranges.map((r) => r.start)).toEqual([0, 20, after])
     },
   )
 

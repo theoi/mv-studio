@@ -94,6 +94,15 @@ export interface LyricChorus {
   words: (TimeRange & { repeated: boolean })[]
 }
 
+/**
+ * Steps `findLyricChorus` took, held to MAX_PAIRS and about MAX_WORK: pairs of equal words compared, and partners
+ * checked over the passage lengths tried. Unlike its running time, these do not depend on how busy the machine is.
+ */
+export interface ChorusSearchSteps {
+  pairs: number
+  work: number
+}
+
 /** Timed words in singing order; a line without word times spreads its words evenly over its time. */
 function sungWords(lines: readonly LyricLine[]): SungWord[] {
   const out: SungWord[] = []
@@ -122,9 +131,9 @@ const overlap = (a: TimeRange, b: TimeRange) =>
  * song (words times the places it recurs in, separated by other material; back-to-back repeats count a little).
  * Passages match word by word, tolerating up to two changed, added or dropped words in a row, so line breaks do not
  * matter and lyrics broken differently from one chorus to the next still match.
- * Null when nothing of six words or more is sung twice.
+ * Null when nothing of six words or more is sung twice. `steps`, when given, receives the steps the search took.
  */
-export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null {
+export function findLyricChorus(lines: readonly LyricLine[], steps?: ChorusSearchSteps): LyricChorus | null {
   const words = sungWords(lines)
   const n = words.length
   // Where each word is sung, most frequent first. Words dropped to stay within MAX_PAIRS get an id of their own.
@@ -139,9 +148,11 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
   // the match picks up again only on two words in a row, so verses sharing a few common words do not match. Only
   // equal words are compared.
   const run = new Uint16Array(n * n)
+  let compared = 0
   for (let i = n - 1; i >= 0; i--) {
     if (keys[i]! < 0) continue
     for (const j of groups[keys[i]!]!) {
+      compared++
       if (j === i) continue
       let best = 1
       for (let a = 1; a <= BRIDGE + 1; a++)
@@ -198,6 +209,7 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
   const share = Math.min(1, MAX_WORK / work)
   let best = { score: 0, starts: [] as number[], length: 0, from: 0 }
   let single = best
+  let checked = 0
   for (const { i, lengths } of candidates) {
     const partners = partnersOf[i]!
     const step = lengths.length / Math.max(1, Math.round(Math.min(lengths.length, LENGTHS_TRIED) * share))
@@ -209,6 +221,7 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
       let placed = false
       let last = -Infinity
       for (const j of partners) {
+        checked++
         if (run[i * n + j]! < k) continue
         if (!placed && j > i) {
           starts.push(i)
@@ -233,6 +246,10 @@ export function findLyricChorus(lines: readonly LyricLine[]): LyricChorus | null
       if (places >= 2 && score > best.score) best = { score, starts, length: k, from: i }
       else if (places === 1 && score > single.score) single = { score, starts, length: k, from: i }
     }
+  }
+  if (steps) {
+    steps.pairs = compared
+    steps.work = checked
   }
   if (!best.starts.length) best = single
   if (!best.starts.length) return null
