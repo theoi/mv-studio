@@ -40,7 +40,11 @@ export interface FrameThumbnailOptions {
   draw?: (frame: ImageBitmap, width: number, height: number) => Blob | string | Promise<Blob | string>
   /** Keeps frames between page loads: a frame found there shows without opening its video, and each JPEG made goes there. */
   cache?: FrameCache
-  /** Videos open only once this resolves (e.g. after the preview's first frame). Frames found in `cache` don't wait. */
+  /**
+   * Videos open, and frames decode, only once this resolves (e.g. after the preview's first frame); it is called again
+   * before each frame, so a newer hold also pauses a video that is already open. A frame released while waiting is not
+   * decoded. Frames found in `cache` don't wait.
+   */
   ready?: () => Promise<void>
 }
 
@@ -190,20 +194,25 @@ export function createFrameThumbnails(
     void (async () => {
       let url: string | null = null
       let opened = false
+      let skipped = false
       try {
         const source = await decoder.source
         opened = true
-        const maxSide = coverSide(source, width, height)
-        const bitmap = await source.frameAt(time, maxSide !== undefined ? { maxSide } : {})
-        try {
-          const image = await draw(bitmap, width, height)
-          if (typeof image === 'string') url = image
-          else {
-            url = URL.createObjectURL(image)
-            cache?.put(asset, nameOf(time), image)
+        await ready()
+        skipped = !holders.has(key)
+        if (!skipped) {
+          const maxSide = coverSide(source, width, height)
+          const bitmap = await source.frameAt(time, maxSide !== undefined ? { maxSide } : {})
+          try {
+            const image = await draw(bitmap, width, height)
+            if (typeof image === 'string') url = image
+            else {
+              url = URL.createObjectURL(image)
+              cache?.put(asset, nameOf(time), image)
+            }
+          } finally {
+            bitmap.close()
           }
-        } finally {
-          bitmap.close()
         }
       } catch {
         // A video that does not open gets no thumbnails; a frame that does not decode stays empty. Neither retries.
@@ -215,9 +224,11 @@ export function createFrameThumbnails(
       decoder.lastUsed = ++uses
       if (failed.has(asset.id)) close(asset.id)
       else if (decoders.get(asset.id) === decoder) decoder.timer = setTimeout(() => close(asset.id), idleMs)
-      made.set(key, url)
-      evict()
-      for (const listener of listeners) listener()
+      if (!skipped) {
+        made.set(key, url)
+        evict()
+        for (const listener of listeners) listener()
+      }
       pump()
     })()
   }

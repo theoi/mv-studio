@@ -40,6 +40,8 @@ export function holdThumbnailsForDraft(): void {
 /**
  * Resolves once `preview` shows its current state or can no longer draw (`rendered()`), `ms` pass, or `stop()` is
  * called. A frame that was in flight for an earlier state, such as the project before the change, doesn't count.
+ * `rendered()` doesn't only watch: it draws a queued still and a pending settle frame at once, so a main-thread drag
+ * that starts during the wait gets its full-size frame before the settle delay.
  */
 export function previewShown(
   preview: Pick<PreviewController, 'rendered'>,
