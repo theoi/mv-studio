@@ -224,8 +224,11 @@ type Box = { x: number; y: number; width: number; height: number }
 const within = (inner: Box, outer: Box) =>
   inner.y >= outer.y - 0.5 && inner.y + inner.height <= outer.y + outer.height + 0.5
 
-/** Assist › Director at its price step (Mix, with a fal.ai key whose calls fail), in a window of `size`. */
-async function openDirectorPrice(page: Page, size: { width: number; height: number }) {
+/**
+ * Assist › Director at its price step (Mix, with a fal.ai key whose calls fail), in a window of `size`, with the right
+ * panel `right` px wide (its default when not given).
+ */
+async function openDirectorPrice(page: Page, size: { width: number; height: number }, right?: number) {
   await page
     .context()
     .route(/https:\/\/(queue\.)?fal\.run\/.*/, (route) =>
@@ -235,13 +238,14 @@ async function openDirectorPrice(page: Page, size: { width: number; height: numb
     )
   await small(page, size)
   await openHarness(page)
-  await page.evaluate(() => {
+  await page.evaluate((r) => {
     localStorage.setItem('mv-studio.guide-seen', '1')
     localStorage.setItem(
       'mv-studio.cloud.v1',
       JSON.stringify({ falKey: 'key-id:key-secret', alwaysConfirmPaid: true }),
     )
-  })
+    localStorage.setItem('mv-studio.panel-sizes', JSON.stringify(r ? { right: r } : {}))
+  }, right)
   await page.reload()
   await page.waitForFunction(() => window.mvStudio?.ready === true)
   await page.evaluate(() => (window.location.hash = '#/editor?kind=ai&tab=assist&assist=director'))
@@ -253,13 +257,45 @@ async function openDirectorPrice(page: Page, size: { width: number; height: numb
   return { panel, generate, scroller: panel.locator('[class*="viewScroll"]') }
 }
 
-test('at 1280×720 the Director’s price view shows the plan first, with a fade until Tab or scrolling reaches its buttons', async ({
+/** Puts a block of `height` px above the footer's button, as a note there would. */
+const tallerFooter = (panel: Locator, height: number) =>
+  panel.locator('[data-tool-footer]').evaluate((footer, h) => {
+    const note = document.createElement('div')
+    note.style.height = `${h}px`
+    footer.prepend(note)
+  }, height)
+
+for (const right of [undefined, 272])
+  test(`at 1280×720 the Director’s price buttons stay in view under the scrolling plan${right ? ` in a ${right} px panel` : ''}`, async ({
+    page,
+  }) => {
+    const { panel, generate, scroller } = await openDirectorPrice(page, { width: 1280, height: 720 }, right)
+    const view = (await scroller.boundingBox())!
+    expect(within((await generate.boundingBox())!, view)).toBe(true)
+    const apply = panel.getByRole('button', { name: 'Apply without AI shots' })
+    expect(within((await apply.boundingBox())!, view)).toBe(true)
+    const footer = (await panel.locator('[data-tool-footer]').boundingBox())!
+    expect(footer.height).toBeLessThan(view.height / 3)
+    expect(within((await panel.getByText('Intro', { exact: true }).first().boundingBox())!, view)).toBe(true)
+
+    // Who charges the price shows under the plan instead of in the footer, and the buttons stay pinned below it.
+    await expect(panel.locator('[data-tool-footer]').getByText(/Charged by fal\.ai/)).toBeHidden()
+    await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+    const charged = panel
+      .locator('[class*="viewBody"]')
+      .getByText(/Charged by fal\.ai to your\skey\s· prices checked /)
+    await expect(charged).toBeVisible()
+    expect(within((await charged.boundingBox())!, view)).toBe(true)
+    expect(within((await generate.boundingBox())!, view)).toBe(true)
+  })
+
+test('at 1280×720 a footer too tall to pin ends the scroll, with a fade until Tab or scrolling reaches its button', async ({
   page,
 }) => {
   const { panel, generate, scroller } = await openDirectorPrice(page, { width: 1280, height: 720 })
+  await tallerFooter(panel, 80)
+  await expect(scroller).toHaveAttribute('data-footer-scrolls', '')
   const view = (await scroller.boundingBox())!
-  for (const name of ['Intro', 'Verse 1'])
-    expect(within((await panel.getByText(name, { exact: true }).first().boundingBox())!, view)).toBe(true)
   const fade = () => scroller.evaluate((el) => Number(getComputedStyle(el, '::after').opacity))
   expect(await fade()).toBe(1)
   expect(within((await generate.boundingBox())!, view)).toBe(false)
@@ -276,8 +312,35 @@ test('at 1280×720 the Director’s price view shows the plan first, with a fade
   await expect.poll(fade).toBe(0)
 })
 
-test('at 900 px tall the Director’s price footer stays pinned under the scrolling plan', async ({ page }) => {
-  const { generate, scroller } = await openDirectorPrice(page, { width: 1280, height: 900 })
+test('at 1280×720 Auto-cut and Director keep their main action pinned in view under the scrolling settings', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67&tab=assist&assist=autocut')
+  await waitForPreview(page)
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  const scroller = panel.locator('[class*="viewScroll"]')
+  for (const [view, action] of [
+    ['autocut', 'Cut to the beat'],
+    ['director', 'Draft video'],
+  ] as const) {
+    await page.evaluate((v) => window.mvStudio.app.ui.set({ rightTab: 'assist', assistView: v }), view)
+    const button = panel.getByRole('button', { name: action })
+    await expect(button).toBeVisible()
+    const box = (await scroller.boundingBox())!
+    expect(within((await button.boundingBox())!, box), view).toBe(true)
+    // The settings scroll under it, and the body keeps most of the panel.
+    expect(await scroller.evaluate((el) => el.scrollHeight > el.clientHeight), view).toBe(true)
+    await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight / 2))
+    expect(within((await button.boundingBox())!, box), view).toBe(true)
+    const footer = (await panel.locator('[data-tool-footer]').boundingBox())!
+    expect(footer.height, view).toBeLessThan(box.height / 3)
+  }
+})
+
+test('at 900 px tall the Director’s price footer stays pinned under the scrolling plan, however tall it gets', async ({
+  page,
+}) => {
+  const { panel, generate, scroller } = await openDirectorPrice(page, { width: 1280, height: 900 }, 272)
   const pinned = () =>
     scroller.evaluate((el) => {
       const footer = el.querySelector('[class*="viewFooter"]')!.getBoundingClientRect()
@@ -290,6 +353,11 @@ test('at 900 px tall the Director’s price footer stays pinned under the scroll
   expect(within((await generate.boundingBox())!, (await scroller.boundingBox())!)).toBe(true)
   await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight / 2))
   expect(await pinned()).toEqual({ overflows: true, gap: 0 })
+  // A note above the button doesn't unpin it at this height (a third of the plan's area would).
+  await tallerFooter(panel, 80)
+  await expect(scroller).not.toHaveAttribute('data-footer-scrolls')
+  expect(await pinned()).toEqual({ overflows: true, gap: 0 })
+  expect(within((await generate.boundingBox())!, (await scroller.boundingBox())!)).toBe(true)
 })
 
 test('a section’s color swatches fit one line in the narrow inspector', async ({ page }) => {

@@ -919,21 +919,20 @@ test('a Cancel while a clip downloads says it is stopping, and keeps the clip fa
   })
   await expect(again).toBeFocused()
   await expect(again).toHaveAccessibleDescription('Generation stopped. 3 clips made so far are kept.')
-  // The note sits in the footer just above Generate, and the panel is scrolled to its end: both show in full, with the
-  // focus ring clear of the fade that says more is below.
+  // The note sits in the footer just above Generate, and the footer stays pinned however tall the note makes it, so
+  // both show in full (with no fade: that shows only over a footer too tall to pin).
   const panel = (await again.evaluate((button) => {
     let s = button.parentElement
     while (s && getComputedStyle(s).overflowY !== 'auto') s = s.parentElement
     if (!s) return null
     const top = s.getBoundingClientRect().top + s.clientTop
     return {
-      atEnd: s.scrollTop + s.clientHeight >= s.scrollHeight - 1,
-      fade: getComputedStyle(s, '::after').opacity,
+      pinned: !s.hasAttribute('data-footer-scrolls'),
       top,
       bottom: top + s.clientHeight,
     }
   }))!
-  expect(panel).toMatchObject({ atEnd: true, fade: '0' })
+  expect(panel.pinned).toBe(true)
   const n = (await note.boundingBox())!
   const b = (await again.boundingBox())!
   expect(n.y).toBeGreaterThanOrEqual(panel.top)
