@@ -250,8 +250,9 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
       stage: 'generate',
       message: total ? runCount(total, made, failed.length, unit) : `Using ${unit}s made earlier`,
       // Clips take minutes each, so their typical time is a fair first estimate. An image's few seconds are mostly
-      // overhead, so images say how long is left only once the first is made.
-      ...((unit === 'clip' || pace !== undefined) && total && etaSeconds > 0 ? { etaSeconds } : {}),
+      // overhead, so images say how long is left only once the first is made. Set even when there is none: the job
+      // keeps progress fields an update leaves out, so a time left from before would stay.
+      etaSeconds: (unit === 'clip' || pace !== undefined) && total && etaSeconds > 0 ? etaSeconds : undefined,
     })
   }
   // A Cancel stops every request that is not downloading its paid result.
@@ -289,7 +290,8 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
       progress: (p) => {
         if (p.stage === 'download') own.downloading = true
         if (p.fraction !== undefined) own.fraction = Math.max(own.fraction, Math.min(0.95, p.fraction))
-        if (p.etaSeconds !== undefined) own.eta = p.etaSeconds
+        // While generating, no time left means the request is past its typical time: it can't say how long it needs.
+        if (p.etaSeconds !== undefined || p.stage === 'generate') own.eta = p.etaSeconds
         const state = p.stage === undefined ? undefined : STAGE_STATE[p.stage]
         if (state && (state === 'downloading' || !o.ctx.signal.aborted))
           setStatus(r, {
