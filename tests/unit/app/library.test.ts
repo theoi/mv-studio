@@ -403,11 +403,13 @@ describe('adding visuals', () => {
     expect(visualChangeItem(p(), get().selection, 'visualizer.orb')).toEqual({
       label: 'Change “Spectrum bars” to Orb',
     })
-    expect(visualChangeItem(p(), get().selection, 'visualizer.spectrum')).toMatchObject({
-      why: 'It’s already “Spectrum bars”',
+    expect(visualChangeItem(p(), get().selection, 'visualizer.spectrum')).toEqual({
+      label: 'It’s already “Spectrum bars”',
+      disabled: true,
     })
     expect(visualChangeItem(p(), get().selection, 'generator.synthwave')).toEqual({
       label: 'Change the selected visual to Retro grid',
+      disabled: true,
       why: 'Visualizers change only to visualizers',
     })
     expect(visualChangeItem(p(), { type: 'none' }, 'generator.synthwave')).toMatchObject({
@@ -434,7 +436,7 @@ describe('adding visuals', () => {
     ] as const
     set({ selection: { type: 'clip', id: ids[2], ids: [...ids] } })
     expect(visualTargetHint(editor.getProject(), get().selection)).toBe(
-      'Click a visual to change the selected visuals of its kind to it. Right-click or drag one to add it instead.',
+      'Click a visualizer to change 2 visuals to it, or a shader visual to change “Tunnel” to it. Right-click or drag one to add it instead.',
     )
     clickVisual('visualizer.circle')
     expect(ids.map((id) => editor.getProject().clips[id])).toMatchObject([

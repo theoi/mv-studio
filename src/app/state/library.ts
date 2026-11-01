@@ -607,22 +607,27 @@ export function visualTargetHint(project: Project, selection: Selection): string
   const skipped = t.skipped
     ? ` ${plural(t.skipped, 'visual')} on ${t.skipped === 1 ? 'a locked track stays' : 'locked tracks stay'} as ${t.skipped === 1 ? 'it is' : 'they are'}.`
     : ''
+  const open = t.clipIds.flatMap((id) => (project.clips[id]?.type === 'generator' ? [project.clips[id]] : []))
+  const changes = (['visualizers', 'shaders'] as const).flatMap((group) => {
+    const clips = open.filter((c) => groupOf(c.generatorId) === group)
+    return clips.length ? [`a ${GROUP_NOUN[group]} to change ${visualsWhat(project, clips)} to it`] : []
+  })
   const groups = new Set(selectedVisuals(project, selection).map((c) => groupOf(c.generatorId)))
   const [group] = groups
-  if (!group || groups.size > 1)
-    return `Click a visual to change the selected visuals of its kind to it.${skipped} Right-click or drag one to add it instead.`
-  return `Click a ${GROUP_NOUN[group]} to change ${t.what} to it.${skipped} To add a visual instead, right-click or drag it, or click a ${GROUP_NOUN[otherGroup(group)]}.`
+  if (changes.length === 1 && group && groups.size === 1)
+    return `Click ${changes[0]}.${skipped} To add a visual instead, right-click or drag it, or click a ${GROUP_NOUN[otherGroup(group)]}.`
+  return `Click ${changes.join(', or ')}.${skipped} Right-click or drag one to add it instead.`
 }
 
 /**
- * The "Change …" item in a visual tile's menu: "Change “Circle spectrum” to Orb", and `why` it is unavailable when no
- * selected visual of its group can change to it.
+ * The "Change …" item in a visual tile's menu: "Change “Circle spectrum” to Orb"; disabled, saying `why`, when no
+ * selected visual of its group can change to it, and "It’s already “Orb”" on the tile of what they are.
  */
 export function visualChangeItem(
   project: Project,
   selection: Selection,
   generatorId: string,
-): { label: string; why?: string } {
+): { label: string; disabled?: boolean; why?: string } {
   const name = pluginRegistry.get(generatorId)?.name ?? generatorId
   const t = visualTargets(project, selection, generatorId)
   const group = groupOf(generatorId)
@@ -630,16 +635,18 @@ export function visualChangeItem(
     const why = selectedVisuals(project, selection).length
       ? `${capitalize(GROUP_NOUN[otherGroup(group)])}s change only to ${GROUP_NOUN[otherGroup(group)]}s`
       : `Select a ${GROUP_NOUN[group]} on the timeline first`
-    return { label: `Change the selected visual to ${name}`, why }
+    return { label: `Change the selected visual to ${name}`, disabled: true, why }
   }
-  if ('why' in t) return { label: `Change the selected visual to ${name}`, why: t.why }
-  const label = `Change ${t.what} to ${name}`
+  if ('why' in t) return { label: `Change the selected visual to ${name}`, disabled: true, why: t.why }
   const already = t.clipIds.every((id) => {
     const clip = project.clips[id]
     return clip?.type === 'generator' && clip.generatorId === generatorId
   })
-  if (!already) return { label }
-  return { label, why: t.clipIds.length === 1 ? `It’s already “${name}”` : `They’re already “${name}”` }
+  if (!already) return { label: `Change ${t.what} to ${name}` }
+  return {
+    label: t.clipIds.length === 1 ? `It’s already “${name}”` : `They’re already “${name}”`,
+    disabled: true,
+  }
 }
 
 /**

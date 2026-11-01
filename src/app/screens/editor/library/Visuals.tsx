@@ -38,7 +38,7 @@ function VisualMenu({ id }: { id: string }) {
       </ContextMenuItem>
       <ContextMenuItem
         icon={<Replace />}
-        disabled={!!change.why}
+        disabled={change.disabled}
         description={change.why}
         onSelect={() => changeVisual(id)}
       >
