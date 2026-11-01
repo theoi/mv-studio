@@ -197,9 +197,16 @@ test('Settings › Shortcuts lists the keys that work, from the shortcut table',
   ])
     await expect(dialog.getByText(label, { exact: true })).toBeVisible()
 
-  await dialog.getByRole('textbox', { name: 'Search shortcuts' }).fill('zoom')
+  const search = dialog.getByRole('textbox', { name: 'Search shortcuts' })
+  await search.fill('zoom')
   await expect(dialog.getByText(/^Zoom /)).toHaveCount(3)
   await expect(dialog.getByText('Redo', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('status')).toHaveCount(0)
+
+  await search.fill('replace')
+  await expect(dialog.getByRole('status')).toHaveText('No matching shortcut. Try another word.')
+  await search.fill('replace clip')
+  await expect(dialog.getByRole('status')).toHaveText('No matching shortcut. Try fewer words.')
 })
 
 test('the palette applies a look, walks the edit history and opens Song analysis and settings pages', async ({

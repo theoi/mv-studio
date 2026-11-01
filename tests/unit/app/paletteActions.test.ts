@@ -95,6 +95,15 @@ describe('command palette coverage', () => {
     )
   })
 
+  it('finds the vertical export before the switch of the whole project for TikTok', () => {
+    expect(
+      paletteResults('tiktok')
+        .slice(0, 2)
+        .map((a) => a.id),
+    ).toEqual(['exportVertical', 'aspect9x16'])
+    expect(paletteResults('make a vertical version for tiktok')[0]?.id).toBe('exportVertical')
+  })
+
   it('finds the action whose shortcut the search types, and nothing by its letters', () => {
     expect(paletteResults('ctrl+v').map((a) => a.id)).toEqual(['paste'])
     expect(paletteResults('cmd+shift+z').map((a) => a.id)).toEqual(['redo'])

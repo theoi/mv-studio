@@ -223,7 +223,7 @@ test('the palette renames the project, switches the aspect ratio, drafts lyrics 
   await input.fill('landscape')
   await expect(selected).toHaveText(/^Switch to landscape 16:9\s*Current aspect ratio$/)
   await input.fill('square')
-  await expect(selected).toHaveText(/^Switch to square 1:1$/)
+  await expect(selected).toHaveText(/^Switch to square 1:1\s*Changes the project’s frame$/)
   await page.keyboard.press('Enter')
   await expect(dialog).toBeHidden()
   expect(await page.evaluate(() => window.mvStudio.app.project.editor.getProject().settings.aspect)).toBe(
@@ -241,4 +241,23 @@ test('the palette renames the project, switches the aspect ratio, drafts lyrics 
   await page.keyboard.press('Enter')
   const exportDialog = page.getByRole('dialog', { name: 'Export' })
   await expect(exportDialog.getByLabel('Include Loop for Canvas')).toBeChecked()
+})
+
+test('the palette tells a vertical version from switching the project to vertical, and words its empty note by the number of words', async ({
+  page,
+}) => {
+  await openEditor(page)
+  const { dialog, input, selected, open } = palette(page)
+
+  await open()
+  await input.fill('tiktok')
+  await expect(selected).toHaveText(/^Export a vertical version…\s*Keeps the project 16:9$/)
+  await expect(dialog.getByRole('option', { name: /^Switch to vertical 9:16/ })).toHaveText(
+    /Changes the project’s frame$/,
+  )
+
+  await input.fill('replace')
+  await expect(dialog.getByText('No matching action. Try another word.')).toBeVisible()
+  await input.fill('replace zebra')
+  await expect(dialog.getByText('No matching action. Try fewer words.')).toBeVisible()
 })

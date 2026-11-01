@@ -275,6 +275,13 @@
   font-weight: var(--weight-medium);
 }
 
+.scEmpty {
+  margin: 0;
+  padding: var(--space-8) var(--space-4);
+  color: var(--text-2);
+  text-align: center;
+}
+
 .scRow {
   display: flex;
   align-items: center;
