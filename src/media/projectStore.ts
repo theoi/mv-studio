@@ -203,10 +203,13 @@ export class IdbProjectStore implements ProjectStore {
     return writeTar(entries)
   }
 
-  /** Imports a portable project file. Media keeps its asset ids; the project gets a new id if one already exists. */
-  async importPortable(file: File, ctx?: JobContext): Promise<Project> {
+  /**
+   * Imports a portable project file, under `name` when given. Media keeps its asset ids; the project gets a new id if
+   * one already exists.
+   */
+  async importPortable(file: File, ctx?: JobContext, name?: string): Promise<Project> {
     const read = await readPortable(file)
-    let project = read.project
+    let project = name === undefined ? read.project : { ...read.project, name }
     const byName = read.files
     const assets = Object.values(project.assets)
     const total = assets.reduce((sum, a) => sum + (byName.get(a.storageKey)?.size ?? 0), 0)
@@ -242,8 +245,7 @@ export class IdbProjectStore implements ProjectStore {
           before += data.size
         }
         const existing = await this.list()
-        if (existing.some((s) => s.id === project.id))
-          project = { ...project, id: newId(), name: importedName(project.name) }
+        if (existing.some((s) => s.id === project.id)) project = { ...project, id: newId() }
         ctx?.throwIfCancelled()
         await this.save(project)
         saved = true
@@ -258,11 +260,6 @@ export class IdbProjectStore implements ProjectStore {
       return project
     })
   }
-}
-
-/** The name a project file's project opens under when the project is already kept. */
-export function importedName(name: string): string {
-  return `${name} (imported)`
 }
 
 /**

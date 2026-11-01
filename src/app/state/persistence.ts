@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { OpfsMediaStore, mediaStore } from '../../media/mediaStore.ts'
-import { IdbProjectStore, PORTABLE_EXTENSION, importedName, readPortable } from '../../media/projectStore.ts'
+import { IdbProjectStore, PORTABLE_EXTENSION, readPortable } from '../../media/projectStore.ts'
 import {
   newId,
   projectDuration,
@@ -560,12 +560,25 @@ export async function importProjectFile(file: File): Promise<void> {
     toast(JobError.from(error).message)
     return
   }
-  const kept = (await store.list().catch(() => [])).find((s) => s.id === incoming.id)
+  const list = await store.list().catch(() => null)
+  if (!list) {
+    // Without the kept projects there is no telling whether this one is here, and opening it could make a copy unasked.
+    toast(
+      `Couldn’t open ${file.name}: the projects kept in this browser can’t be read. Reload the page and try again.`,
+    )
+    return
+  }
+  // Like a new project or a duplicate, it never opens under a kept project's name: "Portable (2)".
+  const name = distinctName(
+    incoming.name,
+    list.map((s) => s.name),
+  )
+  const kept = list.find((s) => s.id === incoming.id)
   if (kept) {
     const choice = await askSameProject({
       name: kept.name,
       fileName: file.name,
-      copyName: importedName(incoming.name),
+      copyName: name,
       keptAt: kept.updatedAt,
       fileAt: incoming.updatedAt,
     })
@@ -580,7 +593,7 @@ export async function importProjectFile(file: File): Promise<void> {
   const handle = jobs.run({
     kind: JOB_KINDS.projectImport,
     title: `Opening ${file.name}`,
-    run: (ctx) => store.importPortable(file, ctx),
+    run: (ctx) => store.importPortable(file, ctx, name),
   })
   try {
     const project = await handle.promise
