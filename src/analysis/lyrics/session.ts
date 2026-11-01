@@ -1,4 +1,4 @@
-import { WAV2VEC2_MODEL } from '../models.ts'
+import { theModel, WAV2VEC2_MODEL } from '../models.ts'
 import { loadOrt } from '../ort.ts'
 import { JobError, type JobProgress } from '../../shared/jobs.ts'
 import { loadModelFiles } from '../../shared/models.ts'
@@ -25,7 +25,7 @@ export async function createCtcModel(
       graphOptimizationLevel: 'all',
     })
   } catch (error) {
-    throw new JobError('model-load', 'Could not start the lyrics aligner', { cause: error })
+    throw new JobError('model-load', `Could not start ${theModel('aligner')}`, { cause: error })
   }
   const inputName = session.inputNames[0] as string
   const model: CtcModel = {

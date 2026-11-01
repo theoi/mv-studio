@@ -15,8 +15,8 @@ test('lyrics are timed as one job and land on the Lyrics track as one undo step'
         return {
           separatesStems: true,
           downloads: [
-            { name: 'HTDemucs stem separator', bytes: 180_534_758 },
-            { name: 'wav2vec2 lyrics aligner', bytes: 95_286_404 },
+            { name: 'Stem separator', bytes: 180_534_758 },
+            { name: 'Lyrics aligner', bytes: 95_286_404 },
           ],
           downloadBytes: 275_821_162,
           seconds: 230,
@@ -136,13 +136,13 @@ test('while the estimate for drafting is still being worked out, the cost line s
     const drafted = new Promise<void>((resolve) => {
       w.finishEstimate = resolve
     })
-    const aligner = { name: 'wav2vec2 lyrics aligner', bytes: 95_286_404 }
+    const aligner = { name: 'Lyrics aligner', bytes: 95_286_404 }
     app.lyrics.setLyricsServiceForTests({
       async estimate(_project: unknown, _songId: string, request: { kind: 'time' | 'draft' }) {
         if (request.kind === 'time')
           return { separatesStems: false, downloads: [aligner], downloadBytes: aligner.bytes, seconds: 100 }
         await drafted
-        const whisper = { name: 'Whisper small', bytes: 252_000_000 }
+        const whisper = { name: 'Lyrics transcriber', bytes: 252_000_000 }
         return {
           separatesStems: false,
           downloads: [aligner, whisper],

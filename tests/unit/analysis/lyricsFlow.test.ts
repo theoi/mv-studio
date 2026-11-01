@@ -286,18 +286,18 @@ describe('LyricsService.estimate', () => {
 
     expect(time.separatesStems).toBe(true)
     expect(time.downloads).toEqual([
-      { name: 'HTDemucs stem separator', bytes: STEM_MODEL_BYTES },
-      { name: 'wav2vec2 lyrics aligner', bytes: expect.any(Number) },
+      { name: 'Stem separator', bytes: STEM_MODEL_BYTES },
+      { name: 'Lyrics aligner', bytes: expect.any(Number) },
     ])
     expect(draft.downloads.map((d) => d.name)).toEqual([
-      'HTDemucs stem separator',
-      'wav2vec2 lyrics aligner',
-      'Whisper small',
+      'Stem separator',
+      'Lyrics aligner',
+      'Lyrics transcriber',
     ])
     expect(draft.downloadBytes).toBeGreaterThan(time.downloadBytes + 200e6)
     expect(draft.seconds).toBeGreaterThan(time.seconds)
     expect(timeWithStems.separatesStems).toBe(false)
-    expect(timeWithStems.downloads.map((d) => d.name)).toEqual(['wav2vec2 lyrics aligner'])
+    expect(timeWithStems.downloads.map((d) => d.name)).toEqual(['Lyrics aligner'])
     expect(timeWithStems.seconds).toBeGreaterThan(0)
     expect(timeWithStems.seconds).toBeLessThan(time.seconds)
   })

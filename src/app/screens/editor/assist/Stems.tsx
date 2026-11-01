@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, Lock, RotateCcw } from 'lucide-react'
+import { theModel } from '../../../../analysis/models.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { aboutMinutes, formatBytes } from '../../../format.ts'
@@ -80,7 +81,9 @@ export function StemsView() {
         <RunCard job={job} label="Stem separation progress" />
         <Steps
           steps={[
-            download ? `Download the model (${formatBytes(download)}, once)` : 'Load the model',
+            download
+              ? `Download ${theModel('stems')} (${formatBytes(download)}, once)`
+              : `Load ${theModel('stems')}`,
             'Separate the song',
             'Save stems with the project',
           ]}

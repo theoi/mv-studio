@@ -108,6 +108,24 @@ it('rounds the time of timing that separates the vocals up, like the stems estim
   expect(cost.text).toBe('Separates the vocals first · about 7 min on this device')
 })
 
+it('names the downloads as Settings › This device does, in a sentence', async () => {
+  const { LyricsService } = await import('../../../src/analysis/lyrics/client.ts')
+  const project = createProject({ name: 'p' })
+  project.assets.song = {
+    id: 'song',
+    kind: 'audio',
+    name: 'song.mp3',
+    duration: 180,
+  } as Project['assets'][string]
+  const estimate = await new LyricsService().estimate(project, 'song', { kind: 'draft' })
+  expect(lyricsCost(estimate).detail).toBe(
+    'Downloads the stem separator (181 MB), the lyrics aligner (95 MB) and the lyrics transcriber (252 MB)',
+  )
+  expect(lyricsCost({ ...estimate, downloads: estimate.downloads.slice(1, 2) }).detail).toBe(
+    'Downloads the lyrics aligner (95 MB)',
+  )
+})
+
 describe('removeLyricLinesCommands', () => {
   /** Lines n1 and n2 with their clips on a Lyrics track, and a director's emphasized word for each line. */
   function withLines(locked = false, wordsLocked = false) {

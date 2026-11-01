@@ -45,7 +45,7 @@ test('Assist › Stems separates the imported song on this device and shows its 
 
   await panel.getByRole('button', { name: 'Separate stems' }).click()
   await expect(panel.getByRole('progressbar', { name: 'Stem separation progress' })).toBeVisible()
-  await expect(panel.getByText('Download the model (181 MB, once)')).toBeVisible()
+  await expect(panel.getByText('Download the stem separator (181 MB, once)')).toBeVisible()
   await shot(page, 'stems-running')
 
   await expect(panel.getByText('Ready · shown under the song track')).toBeVisible({ timeout: 300_000 })

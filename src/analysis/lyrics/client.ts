@@ -7,7 +7,15 @@ import type { DecodedAudio } from '../beats/fast.ts'
 import { decodeAudioFile } from '../decode.ts'
 import { mixToMono } from '../dsp/resample.ts'
 import { part } from '../jobContext.ts'
-import { DEMUCS_MODEL, WAV2VEC2_MODEL, WHISPER_MODELS, whisperFileUrls, type WhisperSize } from '../models.ts'
+import {
+  DEMUCS_MODEL,
+  MODEL_TITLES,
+  modelBytes,
+  WAV2VEC2_MODEL,
+  WHISPER_MODELS,
+  whisperFileUrls,
+  type WhisperSize,
+} from '../models.ts'
 import { StemSeparationService, type StemStore } from '../stems/client.ts'
 import { realignFrom, realignLine, type CtcVocabulary } from './align.ts'
 import type { CtcEmissions } from './ctc.ts'
@@ -39,7 +47,7 @@ export interface LyricsResult {
 export interface LyricsEstimate {
   /** The song has no stems yet, so they are separated first (and kept). */
   separatesStems: boolean
-  /** Models still to download; cached ones are left out. */
+  /** Models still to download, by their `MODEL_TITLES` name; cached ones are left out. */
   downloads: { name: string; bytes: number }[]
   downloadBytes: number
   /** Processing time on this device once the models are downloaded, in seconds. */
@@ -109,10 +117,10 @@ export class LyricsService {
     const separatesStems = !vocalsAsset(project, songId)
     const whisper = WHISPER_MODELS[request.kind === 'draft' ? (request.size ?? DRAFT_SIZE) : DRAFT_SIZE]
     const models = [
-      ...(separatesStems ? [modelFiles(DEMUCS_MODEL)] : []),
-      modelFiles(WAV2VEC2_MODEL),
+      ...(separatesStems ? [modelFiles(DEMUCS_MODEL, MODEL_TITLES.stems)] : []),
+      modelFiles(WAV2VEC2_MODEL, MODEL_TITLES.aligner),
       ...(request.kind === 'draft'
-        ? [{ name: whisper.name, bytes: whisper.bytes, urls: whisperFileUrls(whisper) }]
+        ? [{ name: MODEL_TITLES.transcriber, bytes: whisper.bytes, urls: whisperFileUrls(whisper) }]
         : []),
     ]
     const cached = await Promise.all(
@@ -330,13 +338,8 @@ export function lyricsSeconds(duration: number, kind: LyricsRequest['kind'], slo
   return Math.ceil(SETUP_SECONDS + duration * lyricsRate(kind) * slowdown)
 }
 
-function modelFiles(model: ModelDescriptor) {
-  const files = Object.values(model.files)
-  return {
-    name: model.name,
-    bytes: files.reduce((sum, f) => sum + (f.bytes ?? 0), 0),
-    urls: files.map((f) => f.url),
-  }
+function modelFiles(model: ModelDescriptor, name: string) {
+  return { name, bytes: modelBytes(model), urls: Object.values(model.files).map((f) => f.url) }
 }
 
 const isCached = (url: string) => modelCache.has(url)

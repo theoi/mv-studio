@@ -73,7 +73,7 @@ test('times pasted lyrics on the vocals stem, re-aligns a dragged word and draft
   })
   // The song has a vocals stem, so nothing is separated; once both runs downloaded their models, none is left.
   expect(r.estimate.separatesStems).toBe(false)
-  expect(r.estimate.downloads.map((d) => d.name)).not.toContain('HTDemucs stem separator')
+  expect(r.estimate.downloads.map((d) => d.name)).not.toContain('Stem separator')
   expect(r.estimate.seconds).toBeGreaterThan(5)
   expect(r.estimateAfter.downloads).toEqual([])
   expect(r.estimateAfter.seconds).toBe(r.estimate.seconds)

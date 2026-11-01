@@ -68,7 +68,8 @@ export function lyricsCost(e: LyricsEstimate | null | undefined): { text: string
     ...(e.downloadBytes ? [`${formatBytes(e.downloadBytes)} download, once`] : []),
     `${aboutMinutes(e.seconds).toLowerCase()} on this device`,
   ]
-  const detail = e.downloads.map((d) => `${d.name} (${formatBytes(d.bytes)})`).join(', ')
+  const names = e.downloads.map((d) => `the ${d.name.toLowerCase()} (${formatBytes(d.bytes)})`)
+  const detail = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]
   return { text: parts.join(' · '), ...(detail ? { detail: `Downloads ${detail}` } : {}) }
 }
 

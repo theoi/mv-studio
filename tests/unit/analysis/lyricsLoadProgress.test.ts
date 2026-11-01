@@ -81,7 +81,7 @@ describe('Whisper load progress', () => {
     const reports = await loadWhisper(false)
     const downloads = reports.filter((p) => p.stage === 'download')
     expect(new Set(downloads.map((p) => p.message))).toEqual(
-      new Set(['Downloading the transcription model (1 MB, once)']),
+      new Set(['Downloading the lyrics transcriber (1 MB, once)']),
     )
     const fractions = downloads.map((p) => p.fraction ?? NaN)
     expect(fractions[0]).toBe(0)
@@ -92,7 +92,7 @@ describe('Whisper load progress', () => {
     expect(reports.at(-1)).toEqual({
       stage: 'load',
       fraction: 1,
-      message: 'Starting the transcription model',
+      message: 'Starting the lyrics transcriber',
     })
     expect(reports.filter((p) => p.stage === 'load')).toHaveLength(1)
     // About one report per 1% instead of one per chunk (about 260 chunks here, tens of thousands in a browser).
@@ -103,7 +103,7 @@ describe('Whisper load progress', () => {
     serve()
     cache([config, encoder, decoder])
     expect(await loadWhisper(true)).toEqual([
-      { stage: 'load', fraction: 1, message: 'Starting the transcription model' },
+      { stage: 'load', fraction: 1, message: 'Starting the lyrics transcriber' },
     ])
   })
 })

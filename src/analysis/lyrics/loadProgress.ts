@@ -1,14 +1,19 @@
 import type { JobProgress } from '../../shared/jobs.ts'
 import type { ModelFileProgress } from '../../shared/transformers.ts'
-import { WAV2VEC2_MODEL, whisperFileUrls, type WhisperModelSpec } from '../models.ts'
+import {
+  downloadingModel,
+  modelBytes,
+  theModel,
+  WAV2VEC2_MODEL,
+  whisperFileUrls,
+  type WhisperModelSpec,
+} from '../models.ts'
 
 /**
  * How far the fraction moves before a download reports again. A model streams in thousands of chunks, and a progress
  * message for each piled up on the main thread faster than it re-rendered, so the line showed one from seconds ago.
  */
 const STEP = 0.01
-
-const megabytes = (bytes: number) => Math.round(bytes / 1e6)
 
 /** Passes on reports that change the progress line: a new message, or a fraction at least `STEP` further or done. */
 function throttled(report: (p: JobProgress) => void): (p: JobProgress) => void {
@@ -36,14 +41,14 @@ export function whisperLoadProgress(
 ): (p: ModelFileProgress) => void {
   const send = throttled(report)
   const graphs = whisperFileUrls(spec).map((url) => url.slice(url.lastIndexOf('/') + 1))
-  const message = `Downloading the transcription model (${megabytes(spec.bytes)} MB, once)`
+  const message = downloadingModel('transcriber', spec.bytes)
   const loaded = new Map<string, number>()
   const done = new Set<string>()
   let fraction = 0
   let starting = false
   const start = () => {
     starting = true
-    send({ stage: 'load', fraction: 1, message: 'Starting the transcription model' })
+    send({ stage: 'load', fraction: 1, message: `Starting ${theModel('transcriber')}` })
   }
   if (cached) start()
   else send({ stage: 'download', fraction: 0, message })
@@ -61,8 +66,7 @@ export function whisperLoadProgress(
 /** Progress of loading the lyrics aligner's files, for `loadModelFiles`: nothing for files read from the cache. */
 export function alignerLoadProgress(report: (p: JobProgress) => void): (p: JobProgress) => void {
   const send = throttled(report)
-  const bytes = Object.values(WAV2VEC2_MODEL.files).reduce((sum, f) => sum + (f.bytes ?? 0), 0)
-  const message = `Downloading the lyrics aligner (${megabytes(bytes)} MB, once)`
+  const message = downloadingModel('aligner', modelBytes(WAV2VEC2_MODEL))
   return (p) => {
     if (p.stage !== 'cached') send({ ...p, stage: 'download', message })
   }
@@ -72,5 +76,5 @@ export function alignerLoadProgress(report: (p: JobProgress) => void): (p: JobPr
 export const ALIGNER_STARTING: JobProgress = {
   stage: 'load',
   fraction: 1,
-  message: 'Starting the lyrics aligner',
+  message: `Starting ${theModel('aligner')}`,
 }

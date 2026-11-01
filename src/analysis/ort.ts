@@ -4,7 +4,7 @@ import type * as OrtWeb from 'onnxruntime-web/webgpu'
 import ortMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url'
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url'
 import type { BeatThisModel } from './beats/beatThis.ts'
-import { BEAT_THIS_MODEL } from './models.ts'
+import { BEAT_THIS_MODEL, downloadingModel, modelBytes, theModel } from './models.ts'
 import { configureOnnxEnv, loadModelFiles } from '../shared/models.ts'
 import { JobError, type JobProgress } from '../shared/jobs.ts'
 
@@ -42,7 +42,7 @@ export function beatThisModel(
         options.onProgress?.({
           ...p,
           stage: 'download',
-          message: 'Downloading the beat model (82 MB, once)',
+          message: downloadingModel('beats', modelBytes(BEAT_THIS_MODEL)),
         }),
     })
     let s: OrtWeb.InferenceSession
@@ -52,7 +52,7 @@ export function beatThisModel(
         graphOptimizationLevel: 'all',
       })
     } catch (error) {
-      throw new JobError('model-load', 'Could not start the beat model', { cause: error })
+      throw new JobError('model-load', `Could not start ${theModel('beats')}`, { cause: error })
     }
     const input = s.inputNames[0]
     return {
