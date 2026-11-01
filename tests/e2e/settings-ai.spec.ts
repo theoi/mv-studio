@@ -62,6 +62,7 @@ test('connects a model on this computer, saves it, and keeps it after a reload',
   await llm.getByRole('radio', { name: 'Ollama' }).click()
   await expect(llm.getByRole('textbox', { name: 'Endpoint URL' })).toHaveValue('http://localhost:11434/v1')
   await expect(llm.getByText('OLLAMA_ORIGINS=')).toBeVisible()
+  await expect(llm.getByText('OLLAMA_CONTEXT_LENGTH=16384')).toBeVisible()
 
   await llm.getByRole('button', { name: 'Test connection' }).click()
   await expect(llm.getByText('3 models found')).toBeVisible()
@@ -69,8 +70,16 @@ test('connects a model on this computer, saves it, and keeps it after a reload',
   // The recommended local model is preselected and saved.
   await expect(llm.getByRole('combobox', { name: 'Model' })).toHaveText('qwen2.5:7b')
   await expect(llm.getByText('Recommended: qwen2.5:7b.')).toBeVisible()
-  // Once it works, the setup hint for local runners goes away.
+  // Once it works, the setup hint for local runners goes away, except the context length: Ollama connects with its
+  // default context but cuts Ask's requests short.
   await expect(llm.getByText('OLLAMA_ORIGINS=')).toBeHidden()
+  await expect(llm.getByText('OLLAMA_CONTEXT_LENGTH=16384')).toBeVisible()
+  await expect(
+    llm.getByText(
+      /Set Ollama’s context length to 16k, in the Ollama app under Settings › Context length or with/,
+    ),
+  ).toBeVisible()
+  await llm.screenshot({ path: testInfo.outputPath('settings-ollama-connected.png') })
   expect((await saved(page)).llm).toMatchObject({
     preset: 'ollama',
     baseUrl: 'http://localhost:11434/v1',
@@ -125,6 +134,22 @@ test('says how to let this site reach LM Studio when it does not answer, and sav
   await expect(llm.getByText('Not connected')).toBeVisible()
   await alert.scrollIntoViewIfNeeded()
   await dialog.screenshot({ path: testInfo.outputPath('settings-ai-lmstudio-unreachable.png') })
+})
+
+test('lists the ways to allow this site in Ollama under the step they belong to', async ({
+  page,
+}, testInfo) => {
+  await serve(page, 'http://localhost:11434/v1/models', 'refused')
+  const dialog = await openAiSettings(page)
+  const llm = card(page, 'Language model')
+  await llm.getByRole('radio', { name: 'Ollama' }).click()
+  await llm.getByRole('button', { name: 'Test connection' }).click()
+  const alert = llm.getByRole('alert')
+  await expect(alert).toContainText("Couldn't connect to Ollama on this computer")
+  const allow = alert.locator('li', { hasText: /^Allow this site: set OLLAMA_ORIGINS/ })
+  await expect(allow.locator('li')).toHaveText([/^macOS: /, /^Windows: /, /^Linux: /])
+  await alert.scrollIntoViewIfNeeded()
+  await dialog.screenshot({ path: testInfo.outputPath('settings-ai-ollama-unreachable.png') })
 })
 
 test('asks for an OpenAI key and reports a rejected one', async ({ page }) => {

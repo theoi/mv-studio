@@ -4,18 +4,18 @@ Optional cloud features with the user's own keys: fal.ai image and video generat
 
 ## Entry points
 
-| Module                   | What it gives the app                                                                                                                                                           |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `services.ts`            | `CloudServices`: `status()`, `generation()`, `transcription()`, `llm()`, `models()`. Providers are pluggable via `registerGenerationProvider()`.                                |
-| `keys.ts`                | `CloudSettingsStore` (localStorage, or sessionStorage when "forget on close" is on), `KEY_STORAGE_NOTICE` copy for Settings. `useCloudSettings()` in `react.ts`.                |
-| `types.ts`               | Provider interfaces: `MediaGenerationProvider`, `TranscriptionProvider`, `GenerationRequest`, `GenerationResult`, `KeyCheck`.                                                   |
-| `fal/catalog.ts`         | Curated fal.ai models (draft and quality tiers), input builders, price table (`PRICES_CHECKED_ON`), `snapDuration()`.                                                           |
-| `fal/provider.ts`        | `FalProvider`: queue submit, status polling with progress, cancel at fal.ai, uploads, result download, `validateKey()` (free), `transcribe()`.                                  |
-| `media.ts`               | `generateKeepingPaid()`: a request a cancel stops at once only until it is billed. `storeGeneratedMedia()`: store results via `MediaStore.storeBlob`.                           |
-| `llm/client.ts`          | `OpenAICompatibleClient`: `validate()` (GET /models), `callTools()` with tool calling → JSON mode → JSON schema → plain-text JSON fallbacks, cached per endpoint and model.     |
-| `llm/presets.ts`         | Presets, `pickDefaultModel()`, `localSetupSteps()` (OLLAMA_ORIGINS, LM Studio CORS, Chrome's local network prompt), `RECOMMENDED_MODELS`, `modelHint()`, `llmTimeoutSeconds()`. |
-| `pricing.ts`, `spend.ts` | `CostEstimate`, `formatUsd()`, `needsSpendConfirmation()`, monthly `SpendLedger`.                                                                                               |
-| `errors.ts`              | `CloudError` (a `JobError`), `cloudErrorInfo()`, `redactSecrets()`.                                                                                                             |
+| Module                   | What it gives the app                                                                                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `services.ts`            | `CloudServices`: `status()`, `generation()`, `transcription()`, `llm()`, `models()`. Providers are pluggable via `registerGenerationProvider()`.                                                        |
+| `keys.ts`                | `CloudSettingsStore` (localStorage, or sessionStorage when "forget on close" is on), `KEY_STORAGE_NOTICE` copy for Settings. `useCloudSettings()` in `react.ts`.                                        |
+| `types.ts`               | Provider interfaces: `MediaGenerationProvider`, `TranscriptionProvider`, `GenerationRequest`, `GenerationResult`, `KeyCheck`.                                                                           |
+| `fal/catalog.ts`         | Curated fal.ai models (draft and quality tiers), input builders, price table (`PRICES_CHECKED_ON`), `snapDuration()`.                                                                                   |
+| `fal/provider.ts`        | `FalProvider`: queue submit, status polling with progress, cancel at fal.ai, uploads, result download, `validateKey()` (free), `transcribe()`.                                                          |
+| `media.ts`               | `generateKeepingPaid()`: a request a cancel stops at once only until it is billed. `storeGeneratedMedia()`: store results via `MediaStore.storeBlob`.                                                   |
+| `llm/client.ts`          | `OpenAICompatibleClient`: `validate()` (GET /models), `callTools()` with tool calling → JSON mode → JSON schema → plain-text JSON fallbacks, cached per endpoint and model.                             |
+| `llm/presets.ts`         | Presets, `pickDefaultModel()`, `localSetupSteps()` (OLLAMA_ORIGINS, LM Studio CORS, Chrome's local network prompt), `contextLengthSteps()`, `RECOMMENDED_MODELS`, `modelHint()`, `llmTimeoutSeconds()`. |
+| `pricing.ts`, `spend.ts` | `CostEstimate`, `formatUsd()`, `needsSpendConfirmation()`, monthly `SpendLedger`.                                                                                                                       |
+| `errors.ts`              | `CloudError` (a `JobError`), `cloudErrorInfo()`, `redactSecrets()`.                                                                                                                                     |
 
 ## States the UI can show
 
@@ -24,7 +24,7 @@ Optional cloud features with the user's own keys: fal.ai image and video generat
 - **Cost before spending:** `provider.estimate(request)` returns `{ usd, breakdown, approximate, pricesCheckedOn }`. Put `formatUsd()` on the button ("Generate · about $0.20"), and ask first when `needsSpendConfirmation()` is true.
 - **Running:** generation runs as a job. Progress `stage` is `upload` → `submit` → `queue` (message includes the queue position) → `generate` (fraction and `etaSeconds` estimated from the model's typical time) → `download` → `store`. fal.ai bills at COMPLETED, so `download` starts there, before the result is fetched. Show `FAL_CANCEL_NOTICE` next to Cancel until a Cancel is taken. Run paid requests through `generateKeepingPaid()`: after a cancel, a request already at `download` gets `PAID_RESULT_GRACE_MS` (30 s) to return its result, which you keep. `onBilled` counts a request when it settles: returned, or failed after `download`, unless the error is `uncharged` (fal.ai's own 5xx result, which it doesn't charge).
 - **Done:** `storeGeneratedMedia()` returns the stored `Asset`s. Add them with `asset.add`, plus any `clip.add`, as one undo step.
-- **Failed:** the job snapshot's `error.details.cloud` (read it with `cloudErrorInfo()`) has `kind`, `title`, `steps[]` and `helpUrl`. Kinds: `missing-key`, `bad-key`, `insufficient-credit`, `rate-limit`, `network`, `local-server`, `insecure-endpoint`, `model-not-found`, `invalid-request`, `content-policy`, `server`, `timeout`, `cancelled`, `bad-response`, `unsupported`. `retryable` says whether to offer Retry.
+- **Failed:** the job snapshot's `error.details.cloud` (read it with `cloudErrorInfo()`) has `kind`, `title`, `steps[]` and `helpUrl`. Kinds: `missing-key`, `bad-key`, `insufficient-credit`, `rate-limit`, `network`, `local-server`, `insecure-endpoint`, `model-not-found`, `invalid-request`, `content-policy`, `server`, `timeout`, `cancelled`, `bad-response`, `unsupported`, `prompt-cut`. `retryable` says whether to offer Retry.
 
 ## Choosing a model
 
@@ -53,6 +53,17 @@ error says so and points to the setting.
 
 - fal.ai and OpenRouter send CORS headers on every response. OpenAI's wrong-key chat error has none, so the browser only reports "Failed to fetch". The client then checks `/models`, which does send CORS headers, to tell a bad key apart from a network problem.
 - Local runners: a server that isn't running looks exactly like a CORS rejection, so `local-server` errors explain both.
+- Error steps that start with two spaces are alternatives under the step before them (macOS, Windows, Linux):
+  show them as a nested list (`nestSteps()` in `errors.ts`).
+- Ollama cuts a prompt longer than its context length without an error: it keeps the end, and the model answers
+  without its instructions. It reads only 4,096 tokens by default with less than 24 GB of graphics memory, and an Ask
+  request is 11,000 to 16,000 tokens. Its `usage.prompt_tokens` then counts only what it kept, so `chat()` stops
+  with a `prompt-cut` error when that count is under 60% of the request's size at 4 characters per token (Qwen 2.5
+  reads about 3.4), for requests of 1,000 tokens or more. The error's steps (`contextLengthSteps()`) raise the
+  context to 16k (`LOCAL_CONTEXT_TOKENS`). Ask shows them without a repair round, and the director falls back to the
+  built-in planner with a note to raise the context length. Only servers the user runs are checked: this computer
+  (`isLocalEndpoint()`) or Ollama's or LM Studio's port. Cloud APIs (OpenAI, OpenRouter, or any https API under
+  Other, such as Groq or Mistral) reject a request that is too long, and their users can't change a server setting.
 - When a server rejects `temperature`, `max_tokens` or `reasoning_effort` with a 400, the client retries once without
   it (or with `max_completion_tokens` when the error asks for it).
 - With exactly one tool, a named tool choice is sent as `required`, because llama.cpp's server ignores the object

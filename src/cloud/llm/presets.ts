@@ -144,6 +144,35 @@ export function localSetupSteps(runner: 'ollama' | 'lmstudio' | 'other', origin 
   ]
 }
 
+/** A context length that holds Ask's prompts, which measured 11,000 to 16,000 tokens on a sample project. */
+export const LOCAL_CONTEXT_TOKENS = 16384
+
+/**
+ * Steps for giving a local runner a context length that holds the whole request. Steps starting with two spaces are
+ * alternatives under the step before them (see nestSteps()).
+ */
+export function contextLengthSteps(runner: 'ollama' | 'lmstudio' | 'other', model = ''): string[] {
+  const n = LOCAL_CONTEXT_TOKENS
+  if (runner === 'ollama') {
+    return [
+      'Raise Ollama’s context length to 16k, then try again:',
+      '  Ollama app (macOS, Windows): Settings › Context length › 16k.',
+      `  Linux: run sudo systemctl edit ollama, add Environment="OLLAMA_CONTEXT_LENGTH=${n}" under [Service], then sudo systemctl restart ollama.`,
+      `  From a terminal: OLLAMA_CONTEXT_LENGTH=${n} ollama serve`,
+      // KV cache for 12k more tokens: Qwen2.5 7B 56 KB per token, Llama 3.1 8B and Mistral 7B 128 KB.
+      model.startsWith('qwen2.5:7b')
+        ? 'A larger context uses more memory: about 0.7 GB more for qwen2.5:7b.'
+        : 'A larger context uses more memory, up to about 1.5 GB for 7B and 8B models.',
+    ]
+  }
+  if (runner === 'lmstudio') {
+    return [`In LM Studio, load the model again with Context Length set to ${n} or more, then try again.`]
+  }
+  return [
+    `Give the model a context length of at least ${n.toLocaleString('en-US')} tokens in the server’s settings, then try again.`,
+  ]
+}
+
 /**
  * Answer time limits in seconds. Local models get much longer by default: the first request also loads the model, and
  * a 7B model on a CPU without a GPU needs minutes for a correct answer. Cancel stays visible while waiting.

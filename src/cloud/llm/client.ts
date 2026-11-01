@@ -14,7 +14,9 @@ import {
 } from '../errors.ts'
 import { extractJson, stripReasoning } from './json.ts'
 import {
+  contextLengthSteps,
   guessLocalRunner,
+  isLocalEndpoint,
   isLoopbackHost,
   llmPreset,
   llmTimeoutSeconds,
@@ -92,6 +94,15 @@ export type LlmValidation =
   { ok: true; models: string[]; baseUrl: string; message: string } | { ok: false; error: CloudError }
 
 const MODES: StructuredMode[] = ['tools', 'json-object', 'json-schema', 'prompt']
+
+/**
+ * Ollama cuts a prompt longer than its context length without an error (it keeps the end) and counts only the kept
+ * tokens in usage.prompt_tokens, so the model answers without its instructions. 4 characters per token is more than
+ * tokenizers average on these JSON-heavy requests (Qwen 2.5: about 3.4), so the estimate errs low, and a count under
+ * 60% of it means a cut, not a different tokenizer.
+ */
+const PROMPT_CUT = { charsPerToken: 4, ratio: 0.6, minTokens: 1000 } as const
+
 const capabilityCache = new Map<string, StructuredMode>()
 
 /** Forgets which structured-output mode each endpoint supports (for tests and after settings change). */
@@ -221,17 +232,47 @@ export class OpenAICompatibleClient {
     const model = this.requireModel()
     let payload: Record<string, unknown> = { model, ...adaptForModel(body, model, this.isOpenAi()) }
     for (let attempt = 0; ; attempt++) {
+      let response: Record<string, unknown>
       try {
-        return (await this.send('/chat/completions', { method: 'POST', body: payload, signal })) as Record<
-          string,
-          unknown
-        >
+        response = (await this.send('/chat/completions', {
+          method: 'POST',
+          body: payload,
+          signal,
+        })) as Record<string, unknown>
       } catch (error) {
         const next = attempt < 3 ? withoutRejectedParam(payload, error) : undefined
         if (!next) throw error
         payload = next
+        continue
       }
+      const cut = this.promptCut(payload, response)
+      if (cut) throw cut
+      return response
     }
+  }
+
+  /** An error when the server answered a prompt it cut short (see PROMPT_CUT). */
+  private promptCut(
+    payload: Record<string, unknown>,
+    response: Record<string, unknown>,
+  ): CloudError | undefined {
+    // Only servers the user runs can be given a longer context, and cloud APIs reject a request that is too long.
+    const runner = guessLocalRunner(this.baseUrl, this.endpoint.preset)
+    if (runner === 'other' && !isLocalEndpoint({ preset: this.endpoint.preset, baseUrl: this.baseUrl }))
+      return undefined
+    const read = (response.usage as { prompt_tokens?: unknown } | undefined)?.prompt_tokens
+    if (typeof read !== 'number' || !(read > 0)) return undefined
+    const sent = JSON.stringify(payload).length / PROMPT_CUT.charsPerToken
+    if (sent < PROMPT_CUT.minTokens || read >= sent * PROMPT_CUT.ratio) return undefined
+    const name = runner === 'ollama' ? 'Ollama' : runner === 'lmstudio' ? 'LM Studio' : 'The model'
+    const count = (n: number) => n.toLocaleString('en-US')
+    return this.error('prompt-cut', {
+      title: `${name} read only part of the request`,
+      message:
+        `Its context length is too small (it read ${count(read)} of about ${count(Math.round(sent / 1000) * 1000)} ` +
+        'tokens). Nothing was changed, since an answer to part of the request would be wrong.',
+      steps: contextLengthSteps(runner, this.endpoint.model),
+    })
   }
 
   private isOpenAi(): boolean {

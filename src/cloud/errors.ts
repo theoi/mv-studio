@@ -32,6 +32,8 @@ export type CloudErrorKind =
   | 'bad-response'
   /** The endpoint lacks a needed feature (for example tool calling and JSON output). */
   | 'unsupported'
+  /** A local runner cut the prompt to fit its context length and answered anyway (Ollama does this silently). */
+  | 'prompt-cut'
 
 export interface CloudErrorInfo {
   kind: CloudErrorKind
@@ -61,6 +63,7 @@ const JOB_CODE: Record<CloudErrorKind, JobErrorCode> = {
   cancelled: 'cancelled',
   'bad-response': 'provider',
   unsupported: 'unsupported',
+  'prompt-cut': 'invalid-input',
 }
 
 const RETRYABLE = new Set<CloudErrorKind>(['rate-limit', 'network', 'local-server', 'server', 'timeout'])
@@ -110,6 +113,17 @@ export class CloudError extends JobError {
   get info(): CloudErrorInfo {
     return (this.details as { cloud: CloudErrorInfo }).cloud
   }
+}
+
+/** Steps for display: a step that starts with two spaces is one of the alternatives under the step before it. */
+export function nestSteps(steps: readonly string[]): { text: string; alternatives: string[] }[] {
+  const out: { text: string; alternatives: string[] }[] = []
+  for (const step of steps) {
+    const parent = out.at(-1)
+    if (step.startsWith('  ') && parent) parent.alternatives.push(step.trim())
+    else out.push({ text: step.trim(), alternatives: [] })
+  }
+  return out
 }
 
 /** Reads the cloud details from a CloudError, or from a JobError/job snapshot error that came from one. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CloudError, cloudErrorInfo, redactSecrets } from '../../../src/cloud/errors.ts'
+import { CloudError, cloudErrorInfo, nestSteps, redactSecrets } from '../../../src/cloud/errors.ts'
 import { CloudSettingsStore, MemoryStorage } from '../../../src/cloud/keys.ts'
 import { extractJson } from '../../../src/cloud/llm/json.ts'
 import { formatEstimate, formatUsd, needsSpendConfirmation, sumCosts } from '../../../src/cloud/pricing.ts'
@@ -140,5 +140,22 @@ describe('cost helpers', () => {
     expect(new SpendLedger({ storage, now: () => now }).monthTotal()).toBe(4.5)
     now = new Date('2026-11-02T12:00:00Z')
     expect(ledger.monthTotal()).toBe(0)
+  })
+})
+
+describe('error steps', () => {
+  it('puts a step that starts with two spaces under the step before it', () => {
+    expect(
+      nestSteps([
+        'Raise it, then try again:',
+        '  App: Settings.',
+        '  Linux: systemctl.',
+        'It uses more memory.',
+      ]),
+    ).toEqual([
+      { text: 'Raise it, then try again:', alternatives: ['App: Settings.', 'Linux: systemctl.'] },
+      { text: 'It uses more memory.', alternatives: [] },
+    ])
+    expect(nestSteps(['  No step before it.'])).toEqual([{ text: 'No step before it.', alternatives: [] }])
   })
 })

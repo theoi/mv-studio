@@ -15,7 +15,8 @@ const CORS = {
 const OLLAMA = { preset: 'ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'qwen2.5:7b' }
 const CHAT = 'http://localhost:11434/v1/chat/completions'
 
-type Answer = { tool: string; args: Record<string, unknown> } | 'hang'
+/** `promptTokens` is the usage Ollama reports: the tokens it read, fewer than sent when it cut the prompt. */
+type Answer = { tool: string; args: Record<string, unknown>; promptTokens?: number } | 'hang'
 
 /** Answers each chat request with the next tool call in `answers`; returns the request bodies seen. */
 async function model(page: Page, answers: Answer[]) {
@@ -50,6 +51,15 @@ async function model(page: Page, answers: Answer[]) {
             },
           },
         ],
+        ...(answer.promptTokens
+          ? {
+              usage: {
+                prompt_tokens: answer.promptTokens,
+                completion_tokens: 40,
+                total_tokens: answer.promptTokens + 40,
+              },
+            }
+          : {}),
       }),
     })
   })
@@ -277,6 +287,46 @@ test('a model that never answers stops at the answer time limit and says it took
     timeout: 40_000,
   })
   await expect(page.getByText('No answer after 20 s, so MV Studio stopped waiting.')).toBeVisible()
+})
+
+test('a request Ollama cut short stops at the first answer and says how to raise the context length', async ({
+  page,
+}, testInfo) => {
+  const bodies = await model(page, [
+    { ...addTitle, promptTokens: 2050 },
+    { ...addTitle, promptTokens: 11_000 },
+  ])
+  await openAsk(page)
+  const before = await projectState(page)
+  await send(page, 'add a title at the start')
+  await expect(page.getByText('Ollama read only part of the request', { exact: true })).toBeVisible()
+  await expect(
+    page.getByText(
+      /^Its context length is too small \(it read 2,050 of about [\d,]+ tokens\)\. Nothing was changed, since an answer to part of the request would be wrong\.$/,
+    ),
+  ).toBeVisible()
+  // The ways to raise it are alternatives under that step, not steps of their own.
+  const raise = page.locator('li', { hasText: /^Raise Ollama’s context length to 16k, then try again:/ })
+  await expect(raise.locator('li')).toHaveText([
+    'Ollama app (macOS, Windows): Settings › Context length › 16k.',
+    /^Linux: run sudo systemctl edit ollama/,
+    'From a terminal: OLLAMA_CONTEXT_LENGTH=16384 ollama serve',
+  ])
+  await expect(
+    page.getByText('A larger context uses more memory: about 0.7 GB more for qwen2.5:7b.'),
+  ).toBeVisible()
+  expect(bodies).toHaveLength(1)
+  expect((await projectState(page)).clips).toBe(before.clips)
+  // Long commands wrap inside the panel instead of running past its edge.
+  const linux = raise.locator('li', { hasText: 'sudo systemctl edit ollama' })
+  expect(await linux.evaluate((li) => li.scrollWidth - li.clientWidth)).toBeLessThanOrEqual(0)
+  await page.screenshot({ path: testInfo.outputPath('ask-prompt-cut.png') })
+
+  // Once the context holds the request, the count matches and the edit applies.
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.getByText('Added a title at the start', { exact: true }).first()).toBeVisible()
+  expect(await projectState(page)).toMatchObject({ clips: before.clips + 1, titles: 1 })
+  expect(bodies).toHaveLength(2)
 })
 
 test('a sentence typed in the command palette goes to the Ask box', async ({ page }) => {

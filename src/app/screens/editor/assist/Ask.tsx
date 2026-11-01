@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { AlertTriangle, ArrowUp, Check, Cpu, Eye, Undo2, X } from 'lucide-react'
+import { nestSteps } from '../../../../cloud/errors.ts'
 import { isLocalEndpoint } from '../../../../cloud/llm/presets.ts'
 import type { AskState, ChangeItem, ReviewReason } from '../../../../director/index.ts'
 import { Button, IconButton } from '../../../ds/Button.tsx'
@@ -78,8 +79,17 @@ function Notes({ notes }: { notes: string[] }) {
   if (!notes.length) return null
   return (
     <ul className={styles.changes}>
-      {notes.map((n) => (
-        <li key={n}>{n}</li>
+      {nestSteps(notes).map((n) => (
+        <li key={n.text}>
+          {n.text}
+          {n.alternatives.length > 0 && (
+            <ul>
+              {n.alternatives.map((a) => (
+                <li key={a}>{a}</li>
+              ))}
+            </ul>
+          )}
+        </li>
       ))}
     </ul>
   )

@@ -205,6 +205,18 @@
   color: var(--text-1);
 }
 
+.checkSteps {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  overflow-wrap: anywhere;
+}
+
+.checkSteps ul {
+  margin: 0;
+  padding-left: 16px;
+  list-style: circle;
+}
+
 /* Pages are flex columns in a scroller: without flex: none a row shrinks to its min-height and its text spills out. */
 .row {
   display: flex;

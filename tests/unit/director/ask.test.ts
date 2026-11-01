@@ -449,6 +449,38 @@ describe('Ask against OpenAI-compatible endpoints', () => {
     expect((await ask.ask('make the lyrics bigger')).status).toBe('applied')
     expect(texts(editor.getProject()).every((t) => t.style.fontSize === 150)).toBe(true)
   })
+
+  it('stops when Ollama cut the request short, without a repair round, and says how to fix it', async () => {
+    const server = new MockLlmServer({ flavor: 'ollama', allowedOrigins: ['*'], contextTokens: 4096 }).reply({
+      content: null,
+      tool_calls: [
+        {
+          id: 't1',
+          type: 'function',
+          function: { name: 'edit_project', arguments: JSON.stringify(bigger.args) },
+        },
+      ],
+    })
+    const client = new OpenAICompatibleClient(
+      { baseUrl: 'http://localhost:11434/v1', model: 'model-a', preset: 'ollama' },
+      {
+        fetch: browserFetch({ 'http://localhost:11434': server.handler() }).fetch,
+        pageOrigin: PAGE_ORIGIN,
+        pageProtocol: 'https:',
+      },
+    )
+    const project = await draft()
+    const { editor, ask } = session(client, project)
+    const state = await ask.ask('make the lyrics bigger')
+    if (state.status !== 'error') throw new Error(state.status)
+    expect(state.title).toBe('Ollama read only part of the request')
+    expect(state.message).toMatch(
+      /^Its context length is too small \(it read 2,050 of about [\d,]+ tokens\)\. Nothing was changed/,
+    )
+    expect(state.steps[0]).toBe('Raise Ollama’s context length to 16k, then try again:')
+    expect(server.chatBodies).toHaveLength(1)
+    expect(editor.getProject()).toBe(project)
+  })
 })
 
 describe('AskSession feedback and review', () => {
