@@ -3,7 +3,13 @@ import type { MediaStore } from '../media/types.ts'
 import type { Asset } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
 import { CloudError } from './errors.ts'
-import type { GenerationRequest, GenerationResult, GenerationTask, MediaGenerationProvider } from './types.ts'
+import type {
+  GenerationContext,
+  GenerationRequest,
+  GenerationResult,
+  GenerationTask,
+  MediaGenerationProvider,
+} from './types.ts'
 
 export type GeneratedMediaStore = Pick<MediaStore, 'storeBlob'>
 
@@ -62,7 +68,7 @@ export interface PaidRequestOptions {
 export async function generateKeepingPaid(
   provider: MediaGenerationProvider,
   request: GenerationRequest,
-  ctx: JobContext,
+  ctx: GenerationContext,
   options: PaidRequestOptions = {},
 ): Promise<GenerationResult> {
   const abort = new AbortController()

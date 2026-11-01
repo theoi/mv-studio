@@ -6,7 +6,12 @@
 import { CloudError } from '../cloud/errors.ts'
 import { DEFAULT_FAL_MODELS } from '../cloud/fal/catalog.ts'
 import { generateKeepingPaid, storeGeneratedMedia, type GeneratedMediaStore } from '../cloud/media.ts'
-import type { GenerationModel, GenerationTier, MediaGenerationProvider } from '../cloud/types.ts'
+import type {
+  GenerationContext,
+  GenerationModel,
+  GenerationTier,
+  MediaGenerationProvider,
+} from '../cloud/types.ts'
 import type { Asset, Id, Project } from '../model/types.ts'
 import { JobError, type JobContext } from '../shared/jobs.ts'
 import { planRequests, type ShotRequest } from './cost.ts'
@@ -91,6 +96,8 @@ export interface GeneratePlanOptions {
   onStopping?: (keeping: number) => void
   /** After each shot settles: how many are finished (made or failed) and how many failed, of `total`. */
   onProgress?: (counts: { done: number; failed: number; total: number }) => void
+  /** Whenever a shot's status changes: every shot of the run, in the order they are made. */
+  onShots?: (shots: ShotStatus[]) => void
   /** Requests in flight at once (default 2). */
   concurrency?: number
   /** Milliseconds, to measure the run's pace (default performance.now). */
@@ -103,6 +110,30 @@ export interface GeneratedShots {
   failed: { shotId: string; label: string; error: JobError }[]
   /** Estimated spend of the requests the provider finished (and billed) in this run. */
   spentUsd: number
+}
+
+/** Where one AI shot of a run stands. */
+export interface ShotStatus {
+  shotId: string
+  label: string
+  state: 'waiting' | 'sending' | 'queued' | 'generating' | 'downloading' | 'done' | 'failed' | 'stopped'
+  /** 'queued': requests ahead of it in the provider's queue, when the provider says. */
+  ahead?: number
+  /** 'generating': the request's own progress, 0..1, in whole percents. */
+  fraction?: number
+  /** 'failed': why, in its source's words. */
+  reason?: string
+}
+
+type StatusUpdate = Pick<ShotStatus, 'state' | 'ahead' | 'fraction' | 'reason'>
+
+/** The shot state each request stage shows. */
+const STAGE_STATE: Partial<Record<string, ShotStatus['state']>> = {
+  upload: 'sending',
+  submit: 'sending',
+  queue: 'queued',
+  generate: 'generating',
+  download: 'downloading',
 }
 
 interface Underway {
@@ -122,6 +153,24 @@ function median(values: number[]): number {
   return sorted.length % 2 ? (sorted[mid] ?? 0) : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
 }
 
+/** Why a shot failed, in its source's words: "fal.ai said: …" when fal.ai said it. */
+export function failureReason(error: JobError): string {
+  return error instanceof CloudError && error.provider === 'fal'
+    ? `fal.ai said: ${error.message}`
+    : error.message
+}
+
+/**
+ * "12 clips · 1 done · 6 failed": what is finished of the run the top bar names ("Generating 12 clips"). Shots are
+ * made two at a time, so "clip 7 of 12" would name one shot while the list shows two others underway. Short enough
+ * for one line in the narrowest panel; the no-break spaces keep a "·" from starting a line if it ever wraps.
+ */
+function runCount(total: number, made: number, failed: number, unit: string): string {
+  const parts = [`${total} ${unit}${total === 1 ? '' : 's'}`, `${made} done`]
+  if (failed) parts.push(`${failed} failed`)
+  return parts.join('\u00a0· ')
+}
+
 export async function generatePlanShots(o: GeneratePlanOptions): Promise<GeneratedShots> {
   const assets = new Map(o.done ?? [])
   const all = planRequests(o.plan, o.project)
@@ -131,8 +180,42 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
   const failed: GeneratedShots['failed'] = []
   let spentUsd = 0
   let finished = 0
+  let made = 0
   let stop: JobError | undefined
   const unit = generatedUnit(o.plan)
+  const statuses: ShotStatus[] = queue.map((r) => ({
+    shotId: r.shot.id,
+    label: r.shot.label ?? `AI ${unit}`,
+    state: 'waiting',
+  }))
+  const slot = new Map(queue.map((r, i) => [r, i]))
+  /** Applies a shot's new status; true when it changed. */
+  const update = (r: ShotRequest, next: StatusUpdate): boolean => {
+    const i = slot.get(r) ?? -1
+    const prev = statuses[i]
+    if (!prev) return false
+    // Polls move a generating shot's progress a little every second; only its whole percent shows.
+    const fraction = next.fraction === undefined ? undefined : Math.floor(next.fraction * 100) / 100
+    if (
+      prev.state === next.state &&
+      prev.ahead === next.ahead &&
+      prev.fraction === fraction &&
+      prev.reason === next.reason
+    )
+      return false
+    statuses[i] = {
+      shotId: prev.shotId,
+      label: prev.label,
+      state: next.state,
+      ...(next.ahead !== undefined ? { ahead: next.ahead } : {}),
+      ...(fraction !== undefined ? { fraction } : {}),
+      ...(next.reason ? { reason: next.reason } : {}),
+    }
+    return true
+  }
+  const setStatus = (r: ShotRequest, next: StatusUpdate) => {
+    if (update(r, next)) o.onShots?.([...statuses])
+  }
   const workers = Math.max(1, Math.min(o.concurrency ?? 2, total))
   const typical = (r: ShotRequest) => o.provider.getModel(r.request.modelId)?.typicalSeconds
   const now = o.now ?? (() => performance.now())
@@ -165,16 +248,26 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
     o.ctx.progress({
       fraction: shown,
       stage: 'generate',
-      message: total
-        ? `Generating ${unit} ${Math.min(total, finished + 1)} of ${total}`
-        : `Using ${unit}s made earlier`,
+      message: total ? runCount(total, made, failed.length, unit) : `Using ${unit}s made earlier`,
       // Clips take minutes each, so their typical time is a fair first estimate. An image's few seconds are mostly
       // overhead, so images say how long is left only once the first is made.
       ...((unit === 'clip' || pace !== undefined) && total && etaSeconds > 0 ? { etaSeconds } : {}),
     })
   }
+  // A Cancel stops every request that is not downloading its paid result.
+  const onAbort = () => {
+    let changed = false
+    for (const [r, i] of slot) {
+      const state = statuses[i]?.state
+      if (state !== 'downloading' && state !== 'done' && state !== 'failed')
+        changed = update(r, { state: 'stopped' }) || changed
+    }
+    if (changed) o.onShots?.([...statuses])
+    report()
+  }
+  o.onShots?.([...statuses])
   report()
-  o.ctx.signal.addEventListener('abort', report, { once: true })
+  o.ctx.signal.addEventListener('abort', onAbort, { once: true })
 
   const runOne = async (r: ShotRequest) => {
     const request = { ...r.request }
@@ -187,15 +280,24 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
     }
     const own: Underway = { fraction: 0, eta: typical(r), downloading: false, startedAt: now() }
     underway.set(r, own)
-    // A request's progress feeds the shot's share of the bar; its message stays its own, under the shot count.
-    const shotCtx: JobContext = {
+    setStatus(r, { state: 'sending' })
+    // A request's progress feeds the shot's share of the bar and its own status; its message stays its own, under
+    // the shot count.
+    const shotCtx: GenerationContext = {
       signal: o.ctx.signal,
       throwIfCancelled: () => o.ctx.throwIfCancelled(),
       progress: (p) => {
         if (p.stage === 'download') own.downloading = true
-        if (p.fraction === undefined && p.etaSeconds === undefined) return
         if (p.fraction !== undefined) own.fraction = Math.max(own.fraction, Math.min(0.95, p.fraction))
         if (p.etaSeconds !== undefined) own.eta = p.etaSeconds
+        const state = p.stage === undefined ? undefined : STAGE_STATE[p.stage]
+        if (state && (state === 'downloading' || !o.ctx.signal.aborted))
+          setStatus(r, {
+            state,
+            ...(state === 'queued' && p.queuePosition !== undefined ? { ahead: p.queuePosition } : {}),
+            ...(state === 'generating' ? { fraction: own.fraction } : {}),
+          })
+        if (p.fraction === undefined && p.etaSeconds === undefined) return
         report()
       },
     }
@@ -214,6 +316,8 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
     if (!asset) throw new JobError('provider', 'The provider returned no media for this shot.')
     took.push((now() - own.startedAt) / 1000)
     assets.set(r.shot.id, asset)
+    made++
+    setStatus(r, { state: 'done' })
     o.onShot?.(r.shot.id, asset)
   }
 
@@ -231,8 +335,13 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
         const err = o.ctx.signal.aborted
           ? new JobError('cancelled', 'Cancelled', { cause: error })
           : JobError.from(error)
-        if (isStopError(err)) stop ??= err
-        else failed.push({ shotId: r.shot.id, label: r.shot.label ?? `AI ${unit}`, error: err })
+        if (isStopError(err)) {
+          stop ??= err
+          setStatus(r, { state: 'stopped' })
+        } else {
+          failed.push({ shotId: r.shot.id, label: r.shot.label ?? `AI ${unit}`, error: err })
+          setStatus(r, { state: 'failed', reason: failureReason(err) })
+        }
       }
       underway.delete(r)
       finished++
@@ -243,7 +352,7 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
   try {
     await Promise.all(Array.from({ length: workers }, worker))
   } finally {
-    o.ctx.signal.removeEventListener('abort', report)
+    o.ctx.signal.removeEventListener('abort', onAbort)
   }
   if (stop) throw stop
   if (total > 0 && failed.length === total) throw failed[0]?.error

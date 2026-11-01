@@ -8,6 +8,8 @@ import { json, PAGE_ORIGIN, type MockHandler } from './browser.ts'
 export interface FalScript {
   /** Statuses returned by successive status polls; the last one repeats. */
   statuses?: ('IN_QUEUE' | 'IN_PROGRESS' | 'COMPLETED')[]
+  /** `queue_position` of successive IN_QUEUE polls (default: 0). */
+  queuePositions?: number[]
   result?: unknown
   submitError?: { status: number; body: unknown }
   resultError?: { status: number; body: unknown }
@@ -105,7 +107,12 @@ export class MockFalServer {
         {
           ...this.urls(app, id),
           status,
-          ...(status === 'IN_QUEUE' ? { queue_position: Math.max(0, 1 - queued.polls) } : { logs }),
+          ...(status === 'IN_QUEUE'
+            ? {
+                queue_position:
+                  queued.script.queuePositions?.[queued.polls - 1] ?? Math.max(0, 1 - queued.polls),
+              }
+            : { logs }),
         },
         200,
         cors,

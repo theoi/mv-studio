@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CloudError, cloudErrorInfo } from '../../../src/cloud/errors.ts'
 import { FalProvider } from '../../../src/cloud/fal/provider.ts'
+import type { GenerationProgress } from '../../../src/cloud/types.ts'
 import { JobError, JobRunner, type JobContext, type JobProgress } from '../../../src/shared/jobs.ts'
 import { browserFetch } from './mocks/browser.ts'
 import { FAL_TEST_KEY, MockFalServer } from './mocks/fal-server.ts'
@@ -49,6 +50,7 @@ describe('fal.ai adapter against a mock fal queue', () => {
     const url = server.file('out.jpg', new Blob(['jpeg-bytes'], { type: 'image/jpeg' }))
     server.script('fal-ai/flux/schnell', {
       statuses: ['IN_QUEUE', 'IN_QUEUE', 'IN_PROGRESS', 'COMPLETED'],
+      queuePositions: [3, 1],
       result: {
         images: [{ url, width: 1280, height: 720, content_type: 'image/jpeg' }],
         seed: 42,
@@ -91,6 +93,10 @@ describe('fal.ai adapter against a mock fal queue', () => {
     )
     const fractions = progress.map((p) => p.fraction ?? 0)
     expect([...fractions].sort((a, b) => a - b)).toEqual(fractions)
+    // Each poll in line says how many requests are ahead.
+    expect(
+      progress.filter((p) => p.stage === 'queue').map((p) => (p as GenerationProgress).queuePosition),
+    ).toEqual([3, 1])
   })
 
   it('uploads a Blob image for image-to-video and sends the documented input fields', async () => {

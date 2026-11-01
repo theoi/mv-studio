@@ -3,7 +3,7 @@
  * without touching the director or the UI. Every long call takes a JobContext (progress, cancel, typed errors).
  */
 import type { AspectPreset, LyricWord, Seconds } from '../model/types.ts'
-import type { JobContext } from '../shared/jobs.ts'
+import type { JobContext, JobProgress } from '../shared/jobs.ts'
 import type { CloudError } from './errors.ts'
 import type { CostEstimate } from './pricing.ts'
 
@@ -73,6 +73,16 @@ export interface GenerationResult {
   estimate: CostEstimate
 }
 
+/** A generation request's progress: a job's, plus its place in the provider's queue while it waits there. */
+export interface GenerationProgress extends JobProgress {
+  /** Stage 'queue': requests ahead of this one (0 when it is next), when the provider says. */
+  queuePosition?: number
+}
+
+export interface GenerationContext extends JobContext {
+  progress(update: GenerationProgress): void
+}
+
 export type KeyCheck = { ok: true; message: string; models?: string[] } | { ok: false; error: CloudError }
 
 export interface MediaGenerationProvider {
@@ -83,7 +93,7 @@ export interface MediaGenerationProvider {
   /** Estimated cost of one request, before any call is made. */
   estimate(request: GenerationRequest): CostEstimate
   /** Runs one generation. Throws CloudError. Cancelling stops waiting and asks the provider to cancel. */
-  generate(request: GenerationRequest, ctx: JobContext): Promise<GenerationResult>
+  generate(request: GenerationRequest, ctx: GenerationContext): Promise<GenerationResult>
   /** Checks the key without spending money. */
   validateKey(signal?: AbortSignal): Promise<KeyCheck>
 }

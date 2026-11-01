@@ -282,6 +282,8 @@ describe('local planner', () => {
     const generation = generationOptionsFor(provider, { mode: 'video', tier: 'draft', maxShots: 3 })!
     const p = await plan('ai', { videos: 0 }, { generation })
     expect(shotsToGenerate(p)).toHaveLength(3)
+    // Named with the word the run counts them by ("Generating 3 clips").
+    for (const s of shotsToGenerate(p)) expect(s.label).toMatch(/ · clip \d+$/)
     expect(p.warnings.some((w) => w.includes('Limited to 3'))).toBe(true)
     for (const s of main(p)) {
       expect(s.source.type).toBe('generate')
