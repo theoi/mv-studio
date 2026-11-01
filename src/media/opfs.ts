@@ -12,12 +12,28 @@ async function dirFor(
   return { dir, name }
 }
 
-export async function writeOpfsFile(path: string, data: Blob | BufferSource): Promise<void> {
+/** Bytes written at a time when the caller follows a write's progress. */
+const WRITE_CHUNK = 8 * 1024 * 1024
+
+/**
+ * Writes a file. With `onWritten`, a Blob is written in chunks and `onWritten` gets the bytes written so far after
+ * each one. It may throw (a cancel), which stops the write and discards what it wrote.
+ */
+export async function writeOpfsFile(
+  path: string,
+  data: Blob | BufferSource,
+  onWritten?: (bytes: number) => void,
+): Promise<void> {
   const { dir, name } = await dirFor(path, true)
   const handle = await dir.getFileHandle(name, { create: true })
   const writable = await handle.createWritable()
   try {
-    await writable.write(data)
+    if (onWritten && data instanceof Blob) {
+      for (let offset = 0; offset < data.size; offset += WRITE_CHUNK) {
+        await writable.write(data.slice(offset, offset + WRITE_CHUNK))
+        onWritten(Math.min(data.size, offset + WRITE_CHUNK))
+      }
+    } else await writable.write(data)
     await writable.close()
   } catch (error) {
     await writable.abort().catch(() => undefined)

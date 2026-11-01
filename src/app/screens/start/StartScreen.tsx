@@ -31,9 +31,11 @@ import {
   usePersistence,
   type RecentProject,
 } from '../../state/persistence.ts'
+import { JOB_KINDS, runningJobs, useIsRunning, useJobs } from '../../state/jobs.ts'
 import { openBlankProject, startSetup } from '../../state/setup.ts'
 import { set, toast, type Kind } from '../../state/ui.ts'
 import { Logo } from '../common/Logo.tsx'
+import { CancelButton, RunCard } from '../editor/assist/ToolView.tsx'
 import styles from './Start.module.css'
 
 const kinds: { id: Exclude<Kind, 'blank'>; title: string; description: string }[] = [
@@ -122,6 +124,8 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
 }
 
 function RecentCard({ project }: { project: RecentProject }) {
+  // Opening a kept project while a project file opens would be replaced by the file's project when it is in.
+  const opening = useIsRunning(JOB_KINDS.projectImport)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState(false)
   // The menu traps focus while open and gives it back to its button as it closes, so the rename field takes focus
@@ -175,7 +179,7 @@ function RecentCard({ project }: { project: RecentProject }) {
           </span>
         </div>
       ) : (
-        <button className={styles.recentOpen} onClick={() => void openProject(project.id)}>
+        <button className={styles.recentOpen} onClick={() => void openProject(project.id)} disabled={opening}>
           {thumb}
           <span className={styles.recentText}>
             <span className={styles.recentName}>{project.name}</span>
@@ -283,13 +287,34 @@ function RecentProjects() {
     </section>
   )
 }
+/** The project file being opened, with how far its media has got into this browser's storage. */
+function OpeningFile() {
+  const job = runningJobs(useJobs()).find((j) => j.kind === JOB_KINDS.projectImport)
+  if (!job) return null
+  return (
+    <section className={styles.opening} aria-label={job.title}>
+      <div className={styles.openingHeader}>
+        <h2 className={styles.openingTitle}>{job.title}</h2>
+        <CancelButton job={job} inline />
+      </div>
+      <RunCard
+        job={job}
+        label="Opening progress"
+        placeholder="Reading the project file"
+        note="Its media goes into this browser’s storage, so this takes a moment."
+      />
+    </section>
+  )
+}
+
 export function StartScreen() {
+  const opening = useIsRunning(JOB_KINDS.projectImport)
   return (
     <div className={styles.page}>
       <header className={styles.header}>
         <Logo />
         <div className={styles.headerActions}>
-          <Button variant="ghost" icon={<FileUp />} onClick={openProjectFile}>
+          <Button variant="ghost" icon={<FileUp />} onClick={openProjectFile} disabled={opening}>
             Open project file
           </Button>
           <IconButton
@@ -303,6 +328,7 @@ export function StartScreen() {
       </header>
 
       <main className={styles.main}>
+        <OpeningFile />
         <div className={styles.hero}>
           <h1 className={styles.title}>What are you making?</h1>
           <p className={styles.subtitle}>Pick a starting point. You can mix everything later.</p>
