@@ -52,6 +52,7 @@ import { prefs, setPref } from '../../state/prefs.ts'
 import { PREVIEW_ZOOMS, zoomLabel } from '../../state/previewControls.ts'
 import { dispatch, editor, redo, undo, viewOf } from '../../state/project.ts'
 import { replaceClipMedia, replacementAssets, replaceTarget } from '../../state/replace.ts'
+import { isBlankClip } from '../../../vision/analysisData.ts'
 import { get, set, toast, type PageId } from '../../state/ui.ts'
 import {
   animatableRow,
@@ -178,7 +179,11 @@ function mediaItems(remove: boolean): PageItem[] {
       keywords: [name, asset.kind, asset.origin.type],
       unavailable: removal && 'why' in removal ? removal.why : undefined,
       detail:
-        removal && 'clips' in removal && removal.clips ? `With ${plural(removal.clips, 'clip')}` : undefined,
+        removal && 'clips' in removal && removal.clips
+          ? `With ${plural(removal.clips, 'clip')}`
+          : !remove && isBlankClip(p.analysis.visual[asset.id])
+            ? 'Shows nothing'
+            : undefined,
       run: () => (remove ? removeMedia(asset.id) : addAssetAtPlayhead(asset.id)),
     }
   })
@@ -186,7 +191,8 @@ function mediaItems(remove: boolean): PageItem[] {
 
 /** The library's videos and images the selected clip can show instead, the one it shows checked. */
 function replacementItems(clip: Clip): PageItem[] {
-  return replacementAssets(project()).map((asset) => {
+  const p = project()
+  return replacementAssets(p).map((asset) => {
     const name = asset.name.replace(/\.[^.]+$/, '')
     return {
       value: asset.id,
@@ -195,7 +201,13 @@ function replacementItems(clip: Clip): PageItem[] {
       thumb: asset,
       keywords: [name, asset.kind, asset.origin.type],
       current: 'assetId' in clip && clip.assetId === asset.id,
-      detail: asset.kind === 'image' ? 'Image' : asset.duration ? formatTime(asset.duration) : undefined,
+      detail: isBlankClip(p.analysis.visual[asset.id])
+        ? 'Shows nothing'
+        : asset.kind === 'image'
+          ? 'Image'
+          : asset.duration
+            ? formatTime(asset.duration)
+            : undefined,
       run: () => replaceClipMedia(clip.id, asset.id),
     }
   })
