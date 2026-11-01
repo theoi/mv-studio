@@ -22,7 +22,7 @@ function backgrounds(locator: Locator): Promise<string> {
 }
 
 function megabytes(text: string | null): number {
-  const m = /About ([\d.]+) (MB|GB)/.exec(text ?? '')
+  const m = /Up to about ([\d.]+) (MB|GB)/.exec(text ?? '')
   return m ? Number(m[1]) * (m[2] === 'GB' ? 1000 : 1) : Number.NaN
 }
 
@@ -40,7 +40,7 @@ test('the export dialog plans every output from the project', async ({ page }) =
     .toContain('blob:')
 
   // The size estimate follows the output's resolution.
-  const size = dialog.getByText(/About [\d.]+ (MB|GB)$/)
+  const size = dialog.getByText(/Up to about [\d.]+ (MB|GB)$/)
   const at1080 = megabytes(await size.textContent())
   await dialog.getByRole('radio', { name: '4K' }).click()
   await expect.poll(async () => megabytes(await size.textContent())).toBeGreaterThan(at1080 * 2)
@@ -178,7 +178,7 @@ test('changing an output’s settings includes it, and with nothing included the
   await dialog.getByLabel('Include Vertical').uncheck()
   await dialog.getByLabel('Include Full video').uncheck()
   await expect(dialog.getByText('Choose at least one output')).toBeVisible()
-  await expect(dialog.getByText(/About [\d.]+ (MB|GB)$/)).toHaveCount(0)
+  await expect(dialog.getByText(/Up to about [\d.]+ (MB|GB)$/)).toHaveCount(0)
   await expect(dialog.getByRole('button', { name: 'Export', exact: true })).toBeDisabled()
 })
 
