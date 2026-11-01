@@ -144,31 +144,53 @@ export function localSetupSteps(runner: 'ollama' | 'lmstudio' | 'other', origin 
   ]
 }
 
-/** A context length that holds Ask's prompts, which measured 11,000 to 16,000 tokens on a sample project. */
+/**
+ * A context length that holds Ask's prompts on most projects: 11,000 to 16,000 tokens on the sample project. A long
+ * draft makes them longer (17,700 tokens with 208 shots), and contextFor() then asks for more.
+ */
 export const LOCAL_CONTEXT_TOKENS = 16384
 
-/** "Raise Ollama’s context length to 16k": the fix for a request a local runner cut short. */
-export function raiseContextLength(runner: 'ollama' | 'lmstudio' | 'other'): string {
+/** Context lengths the Ollama app offers in Settings › Context length, from LOCAL_CONTEXT_TOKENS up. */
+const CONTEXT_SIZES = [LOCAL_CONTEXT_TOKENS, 32768, 65536, 131072] as const
+
+/**
+ * The smallest of CONTEXT_SIZES that holds a request estimated at `tokens` (4 characters per token, which errs low by
+ * up to 15% on these requests) with room for the answer.
+ */
+export function contextFor(tokens = 0): number {
+  const needed = tokens * 1.15 + 1024
+  return CONTEXT_SIZES.find((n) => n >= needed) ?? 131072
+}
+
+const kTokens = (n: number) => `${n / 1024}k`
+
+/** "Raise Ollama’s context length to 16k": the fix for a request of about `tokens` that a local runner cut short. */
+export function raiseContextLength(runner: 'ollama' | 'lmstudio' | 'other', tokens?: number): string {
   const owner = runner === 'ollama' ? 'Ollama’s' : runner === 'lmstudio' ? 'LM Studio’s' : 'the model’s'
-  return `Raise ${owner} context length to 16k`
+  return `Raise ${owner} context length to ${kTokens(contextFor(tokens))}`
 }
 
 /**
- * Steps for giving a local runner a context length that holds the whole request. Steps starting with two spaces are
- * alternatives under the step before them (see nestSteps()).
+ * Steps for giving a local runner a context length that holds the whole request of about `tokens`. Steps starting
+ * with two spaces are alternatives under the step before them (see nestSteps()).
  */
-export function contextLengthSteps(runner: 'ollama' | 'lmstudio' | 'other', model = ''): string[] {
-  const n = LOCAL_CONTEXT_TOKENS
+export function contextLengthSteps(
+  runner: 'ollama' | 'lmstudio' | 'other',
+  model = '',
+  tokens?: number,
+): string[] {
+  const n = contextFor(tokens)
   if (runner === 'ollama') {
+    // KV cache over Ollama's 4k default: Qwen2.5 7B 56 KB per token, Llama 3.1 8B and Mistral 7B 128 KB.
+    const gb = (perToken: number) => (((n - 4096) * perToken) / 1024 ** 2).toFixed(1)
     return [
-      `${raiseContextLength(runner)}, then try again:`,
-      '  Ollama app (macOS, Windows): Settings › Context length › 16k.',
+      `${raiseContextLength(runner, tokens)}, then try again:`,
+      `  Ollama app (macOS, Windows): Settings › Context length › ${kTokens(n)}.`,
       `  Linux: run sudo systemctl edit ollama, add Environment="OLLAMA_CONTEXT_LENGTH=${n}" under [Service], then sudo systemctl restart ollama.`,
       `  From a terminal: OLLAMA_CONTEXT_LENGTH=${n} ollama serve`,
-      // KV cache for 12k more tokens: Qwen2.5 7B 56 KB per token, Llama 3.1 8B and Mistral 7B 128 KB.
       model.startsWith('qwen2.5:7b')
-        ? 'A larger context uses more memory: about 0.7 GB more for qwen2.5:7b.'
-        : 'A larger context uses more memory, up to about 1.5 GB for 7B and 8B models.',
+        ? `A larger context uses more memory: about ${gb(56)} GB more for qwen2.5:7b.`
+        : `A larger context uses more memory, up to about ${gb(128)} GB for 7B and 8B models.`,
     ]
   }
   if (runner === 'lmstudio') {

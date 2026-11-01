@@ -57,10 +57,12 @@ error says so and points to the setting.
   show them as a nested list (`nestSteps()` in `errors.ts`).
 - Ollama cuts a prompt longer than its context length without an error: it keeps the end, and the model answers
   without its instructions. It reads only 4,096 tokens by default with less than 24 GB of graphics memory, and an Ask
-  request is 11,000 to 16,000 tokens. Its `usage.prompt_tokens` then counts only what it kept, so `chat()` stops
-  with a `prompt-cut` error when that count is under 60% of the request's size at 4 characters per token (Qwen 2.5
-  reads about 3.4), for requests of 1,000 tokens or more. The error's steps (`contextLengthSteps()`) raise the
-  context to 16k (`LOCAL_CONTEXT_TOKENS`). Ask shows them without a repair round, and the director falls back to the
+  request is 11,000 to 16,000 tokens on the sample project (17,700 after a 208-shot draft). Its `usage.prompt_tokens`
+  then counts only what it kept, so `chat()` stops with a `prompt-cut` error when that count is under 60% of the
+  request's size at 4 characters per token (Qwen 2.5 reads about 3.4), for requests of 1,000 tokens or more. The
+  error's steps (`contextLengthSteps()`) raise the context to 16k (`LOCAL_CONTEXT_TOKENS`), or to the smallest of
+  32k, 64k and 128k that holds the request with room for the answer (`contextFor()`), so a user already at 16k isn't
+  told to set 16k again. Ask shows them without a repair round, and the director falls back to the
   built-in planner with a note to raise the context length. Only servers the user runs are checked: this computer
   (`isLocalEndpoint()`) or Ollama's or LM Studio's port. Cloud APIs (OpenAI, OpenRouter, or any https API under
   Other, such as Groq or Mistral) reject a request that is too long, and their users can't change a server setting.

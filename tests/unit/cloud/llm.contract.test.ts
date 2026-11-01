@@ -8,6 +8,7 @@ import {
   type ToolDefinition,
 } from '../../../src/cloud/llm/client.ts'
 import {
+  contextFor,
   LLM_TIMEOUT,
   llmTimeoutSeconds,
   modelHint,
@@ -745,6 +746,39 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
     expect(otherError.info.action).toBe('Raise the model’s context length to 16k')
   })
 
+  // About 20,000 tokens, as an Ask request on a long draft (17,700 measured with 208 shots).
+  const longer = {
+    ...long,
+    messages: [{ role: 'user' as const, content: 'Make the chorus brighter. '.repeat(3000) }],
+  }
+
+  it('asks for a context that holds the request when 16k already cut it', async () => {
+    const error = await failure(
+      client({ [OLLAMA]: ollamaServer(16384).handler() }, ollama).llm.callTools(longer),
+    )
+    expect(error.message).toBe(
+      'Its context length is too small (it read 8,194 of about 20,000 tokens). Nothing was changed, since an answer to part of the request would be wrong.',
+    )
+    expect(error.steps).toEqual([
+      'Raise Ollama’s context length to 32k, then try again:',
+      '  Ollama app (macOS, Windows): Settings › Context length › 32k.',
+      '  Linux: run sudo systemctl edit ollama, add Environment="OLLAMA_CONTEXT_LENGTH=32768" under [Service], then sudo systemctl restart ollama.',
+      '  From a terminal: OLLAMA_CONTEXT_LENGTH=32768 ollama serve',
+      'A larger context uses more memory: about 1.5 GB more for qwen2.5:7b.',
+    ])
+    expect(error.info.action).toBe('Raise Ollama’s context length to 32k')
+  })
+
+  it.each([
+    [0, 16384],
+    [13300, 16384],
+    [13400, 32768],
+    [28000, 65536],
+    [200000, 131072],
+  ])('takes a request estimated at %i tokens to need a context of %i', (tokens, context) => {
+    expect(contextFor(tokens)).toBe(context)
+  })
+
   it('trusts answers without a token count, and short requests', async () => {
     for (const usage of [undefined, { prompt_tokens: 0, completion_tokens: 0 }]) {
       const { llm } = client({ [OLLAMA]: counting(() => usage) }, ollama)
@@ -778,6 +812,17 @@ describe('OpenAI-compatible client: prompts cut to fit a small context', () => {
       expect(error.steps[0]).toBe('Raise Ollama’s context length to 16k, then try again:')
       expect(error.info.action).toBe('Raise Ollama’s context length to 16k')
       expect(paths(net)).toEqual(['GET /api/ps'])
+      expect(server.chatBodies).toHaveLength(0)
+    })
+
+    it('asks for the context that holds the request, over the one Ollama has', async () => {
+      const server = fitting(16384, { loaded: true })
+      const error = await failure(client({ [OLLAMA]: server.handler() }, ollama).llm.callTools(longer))
+      expect(error.message).toBe(
+        'Its context length is 16,384 tokens and this request is about 20,000, so Ollama would drop its start. Nothing was sent or changed.',
+      )
+      expect(error.steps[0]).toBe('Raise Ollama’s context length to 32k, then try again:')
+      expect(error.info.action).toBe('Raise Ollama’s context length to 32k')
       expect(server.chatBodies).toHaveLength(0)
     })
 

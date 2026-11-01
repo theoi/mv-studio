@@ -305,8 +305,8 @@ export class OpenAICompatibleClient {
       message:
         `Its context length is ${count(context)} tokens and this request is about ${count(Math.round(tokens / 1000) * 1000)}, ` +
         'so Ollama would drop its start. Nothing was sent or changed.',
-      steps: contextLengthSteps('ollama', model),
-      action: raiseContextLength('ollama'),
+      steps: contextLengthSteps('ollama', model, tokens),
+      action: raiseContextLength('ollama', tokens),
     })
   }
 
@@ -374,8 +374,8 @@ export class OpenAICompatibleClient {
       message:
         `Its context length is too small (it read ${count(read)} of about ${count(Math.round(sent / 1000) * 1000)} ` +
         'tokens). Nothing was changed, since an answer to part of the request would be wrong.',
-      steps: contextLengthSteps(runner, this.endpoint.model),
-      action: raiseContextLength(runner),
+      steps: contextLengthSteps(runner, this.endpoint.model, sent),
+      action: raiseContextLength(runner, sent),
     })
   }
 
