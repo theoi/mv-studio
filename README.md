@@ -124,7 +124,7 @@ Everything works without an account or key. Two optional connections add AI feat
 
 - **LM Studio** (free, runs on your computer): start the server in the Developer tab, turn on **Enable CORS** in its settings, load a model, and use `http://localhost:1234/v1`.
 
-When connecting to Ollama or LM Studio for the first time, Chrome and Edge may ask whether this site may access devices on your local network. Choose **Allow**. If you run the studio locally with `npm run dev`, allow `http://localhost:5173` instead.
+When connecting to Ollama or LM Studio for the first time, Chrome and Edge may ask whether this site may access devices on your local network. Choose **Allow**. A copy you run locally with `npm run dev` doesn't need this, and Ollama already accepts requests from `localhost`.
 
 Developer notes on the providers, error states and model choice are in [src/cloud/README.md](./src/cloud/README.md).
 
@@ -137,8 +137,8 @@ Developer notes on the providers, error states and model choice are in [src/clou
 | Local, LM Studio | `qwen2.5-7b-instruct`, or a 14B version if you have the memory                                             | Apache 2.0 license.                                                                                                     |
 
 - **Avoid models under 7B**, such as 3B models. In testing, Qwen2.5-3B got about half of the edit requests wrong and sometimes kept writing until it was cut off. Its license is also research-only.
-- **A local 7B model is slow without a GPU.** On a CPU-only test machine, the first answer took about 4 minutes (including loading the model), at about 2.5 tokens per second. A Mac with Apple Silicon, a GPU, or a cloud model gives a much better experience.
-- **Answer time limit.** Each answer may take up to 90 seconds with a cloud endpoint and 300 seconds with a local one, because the first local request also loads the model. You can change the limit from 20 to 600 seconds in Settings › AI and cloud. Cancel stays available while you wait.
+- **A local 7B model is too slow for comfortable use without a GPU.** On a CPU-only test machine (2 cores) with Ollama and `qwen2.5:7b`, a director plan took 6 to 10 minutes. A plain-language edit took 1 to 2 minutes when Ollama could reuse what it had already read, and 5 to 9 minutes otherwise (the first edit, and the next one after an edit was applied): Ollama read the request at 20 to 30 tokens per second and wrote 2 to 5. A Mac with Apple Silicon, a GPU, or a cloud model gives a much better experience.
+- **Answer time limit.** Each answer may take up to 90 seconds with a cloud endpoint and 5 minutes with a local one, because the first local request also loads the model. You can choose from 30 seconds to 10 minutes in Settings › AI and cloud. Cancel stays available while you wait.
 
 ## Performance
 
@@ -206,7 +206,7 @@ MV Studio is a static site, so any HTTPS host works. To publish a fork on GitHub
 4. In the same workflow, change `E2E_BASE_URL` in the smoke test job to your site's address.
 5. If you use Ollama with your copy, set `OLLAMA_ORIGINS` to your own origin, for example `https://<user>.github.io`.
 
-**Why the service worker.** AI models run on several threads only when the page is cross-origin isolated, which needs two HTTP response headers: `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy`. GitHub Pages can't send custom headers, so [public/coi-serviceworker.js](./public/coi-serviceworker.js) adds them to every response in the browser. It uses COEP `credentialless`, so files from other sites, such as models and images, load without those sites sending special headers. Keep this vendored copy rather than the upstream file, which applies `credentialless` too late on the first visit and sometimes misses the reload that turns isolation on. On a host that sends both headers itself, the service worker stays out of the way. The local dev server (`npm run dev`) sends the headers directly.
+**Why the service worker.** AI models run on several threads only when the page is cross-origin isolated, which needs two HTTP response headers: `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy`. GitHub Pages can't send custom headers, so [public/coi-serviceworker.js](./public/coi-serviceworker.js) adds them to the site's own responses in the browser. Requests to other sites that use CORS, such as model downloads and calls to a local Ollama, go straight to the network. It uses COEP `credentialless`, so files from other sites, such as models and images, load without those sites sending special headers. Keep this vendored copy rather than the upstream file, which applies `credentialless` too late on the first visit and sometimes misses the reload that turns isolation on. On a host that sends both headers itself, the service worker stays out of the way. The local dev server (`npm run dev`) sends the headers directly.
 
 ## Contributing
 
