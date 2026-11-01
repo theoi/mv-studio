@@ -190,7 +190,7 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
       {failure ? (
         <p className={styles.note} role="alert">
           {sentence(failure)} Your project is unchanged.{' '}
-          {objectFailure ? 'Pick the object again to retry.' : 'Turn it on again to retry.'}
+          {objectFailure ? 'Pick the object again when you’re ready.' : 'Turn it back on when you’re ready.'}
         </p>
       ) : behind && object && host ? (
         <ObjectTracking host={host} pick={object} disabled={busy} />
