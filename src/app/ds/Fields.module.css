@@ -434,6 +434,13 @@
   transition: background-color var(--dur) var(--ease-out);
 }
 
+/* Takes clicks over 24 px of height around the 18 px track. */
+.switch::before {
+  content: '';
+  position: absolute;
+  inset: -3px 0;
+}
+
 .switch[data-state='checked'] {
   background: var(--accent);
 }

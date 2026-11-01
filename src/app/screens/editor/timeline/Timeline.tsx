@@ -1088,6 +1088,12 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
     clip.kind === 'look' && clip.amount !== undefined
       ? `${clip.name} · ${Math.round(clip.amount * 100)}%`
       : clip.name
+  const name = !isMedia && (
+    <span className={styles.clipLabel}>
+      {clip.kind === 'text' ? <Type /> : clip.kind === 'look' ? <Palette /> : <AudioWaveform />}
+      <span className={styles.clipName}>{label}</span>
+    </span>
+  )
   return (
     <>
       <ContextMenu
@@ -1140,12 +1146,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
               else select({ type: 'clip', id: clip.id })
             }}
           >
-            {!isMedia && (
-              <span className={styles.clipLabel}>
-                {clip.kind === 'text' ? <Type /> : clip.kind === 'look' ? <Palette /> : <AudioWaveform />}
-                <span className={styles.clipName}>{label}</span>
-              </span>
-            )}
+            {clip.kind === 'look' ? <span className={styles.lookName}>{name}</span> : name}
             {isMedia && (showLabel || !(inW || outW)) && (
               <span
                 className={styles.mediaLabel}
@@ -1910,6 +1911,8 @@ export function Timeline() {
       const y0 = e.clientY
       let moved = false
       let rows: TrackRow[] = []
+      /** Moves a press outside the grabbed clip's row (a look clip takes clicks past its lane) into that row. */
+      let grabDy = 0
       let refused: DropRefusal | null = null
       // Mod held during the drag inserts: the clips go in at the drop point and push the later clips right.
       let modHeld = false
@@ -1938,14 +1941,17 @@ export function Timeline() {
         const scale = get().pxPerSec
         const dt = dx / scale
         if (mode === 'move') {
+          const top = contentRef.current?.getBoundingClientRect().top ?? 0
           if (!rows.length) {
             // Lane heights stay as they were until the drop, so a clip changing tracks never moves the lanes under
             // the pointer.
             const kinds = new Map(p.tracks.map((t) => [t.id, laneKind(p, t)]))
             setFrozenKinds(kinds)
             rows = trackRows(p, !hasSong(p), kinds)
+            const row = rows[rowOf(self)]
+            if (row) grabDy = Math.min(Math.max(y0 - top, row.top), row.top + row.height - 1) - (y0 - top)
           }
-          const y = ev.clientY - (contentRef.current?.getBoundingClientRect().top ?? 0)
+          const y = ev.clientY - top + grabDy
           const under = rows.findIndex((r) => y < r.top + r.height)
           const offset = Math.min(
             maxRows,
