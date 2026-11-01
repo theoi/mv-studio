@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { BAND_EDGES_HZ } from '../../../src/analysis/features/features.ts'
 import { evaluateNumber } from '../../../src/engine/animation.ts'
 import { createAudioSampler } from '../../../src/engine/audioFeatures.ts'
@@ -20,18 +20,23 @@ import {
   applyReaction,
   availableReactions,
   describeReaction,
+  followStems,
   pluginReactionTargets,
   reactionCommands,
   removeReaction,
   setReactionAmount,
   upgradeReactionCommands,
+  type ReactionId,
   type ReactionTarget,
 } from '../../../src/plugins/reactions.ts'
 
 const RATE = 50
 const DURATION = 8
 
-/** Stem features of a 120 BPM groove: kick on the beat (band 1), snare on the off-beat (band 4), steady hats. */
+/**
+ * Stem features of a 120 BPM groove: kick on the beat (band 1), snare on the off-beat (band 4), steady hats, a slow
+ * bassline, vocals from 1 to 3 s and the other instruments from 4 to 6 s.
+ */
 function stemFeatures(stem: StemName): AudioFeatures {
   const loudness: number[] = []
   const bands: number[][] = []
@@ -41,7 +46,15 @@ function stemFeatures(stem: StemName): AudioFeatures {
     const snare = Math.exp(-((t + 0.25) % 0.5) * 14)
     const hat = Math.exp(-(t % 0.125) * 30)
     const sung = t > 1 && t < 3 ? 0.8 : 0.1
-    const level = stem === 'drums' ? 0.5 * (kick + snare) : stem === 'bass' ? 0.5 + 0.4 * Math.sin(t) : sung
+    const played = t > 4 && t < 6 ? 0.8 : 0.1
+    const level =
+      stem === 'drums'
+        ? 0.5 * (kick + snare)
+        : stem === 'bass'
+          ? 0.5 + 0.4 * Math.sin(t)
+          : stem === 'other'
+            ? played
+            : sung
     loudness.push(level)
     bands.push(
       stem === 'drums'
@@ -189,6 +202,22 @@ describe('choosing what to listen to', () => {
       'the low end (sub bass), where the kick sits',
     )
   })
+  it('offers Follow the instruments once the other instruments stem is separated, or while a target uses it', () => {
+    const offered = (p: Project, active?: ReactionId) =>
+      availableReactions(p, undefined, active).map((a) => a.reaction.id)
+    const s = scene('stems')
+    expect(offered(s.p)).not.toContain('instruments')
+    expect(offered(s.p, 'instruments')).toContain('instruments')
+    expect(offered(scene('mix').p, 'instruments')).toContain('instruments')
+    s.p.analysis.audio[PREVIEW_SONG_ID]!.stemFeatures!.other = stemFeatures('other')
+    expect(availableReactions(s.p).find((a) => a.reaction.id === 'instruments')).toMatchObject({
+      listensTo: 'Other instruments stem',
+      listening: 'the other instruments stem',
+      betterWithStems: false,
+      ready: true,
+    })
+  })
+
   it('keeps the default band layout in step with the analysis', () => {
     expect(DEFAULT_BAND_EDGES_HZ).toEqual(BAND_EDGES_HZ)
   })
@@ -346,6 +375,48 @@ describe('applying and removing', () => {
     expect(describeReaction(editor.getProject(), custom)?.kind).toBe('custom')
     expect(upgradeReactionCommands(editor.getProject())).toEqual([])
   })
+
+  it('follows the stems as soon as they arrive, without an undo step, and again after undo and redo', async () => {
+    // The editor's development check reports each move: it writes a path the earlier undo step also changed.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    onTestFinished(() => warn.mockRestore())
+    const s = scene('mix')
+    const editor = new ProjectEditor(s.p)
+    const stop = followStems(editor)
+    const kick: ReactionTarget = { clipId: s.gen.id, param: 'height' }
+    applyReaction(editor, [kick], 'kick', { amount: 0.55 })
+    editor.dispatch(
+      {
+        type: 'analysis.setStems',
+        assetId: PREVIEW_SONG_ID,
+        stems: { drums: 'drums-stem' },
+        stemFeatures: { drums: stemFeatures('drums') },
+      },
+      { history: 'skip' },
+    )
+    await Promise.resolve()
+    expect(describeReaction(editor.getProject(), kick)).toMatchObject({
+      listensTo: 'Drums stem',
+      summary: 'Kick · 55%',
+    })
+    expect(editor.history()).toEqual({ undo: ['React to music: Pulse with kick'], redo: [] })
+
+    // Redo restores the mapping its step recorded before the stems arrived.
+    editor.undo()
+    editor.redo()
+    expect(describeReaction(editor.getProject(), kick)).toMatchObject({ listensTo: 'Sub bass' })
+    await Promise.resolve()
+    expect(describeReaction(editor.getProject(), kick)).toMatchObject({
+      listensTo: 'Drums stem',
+      canUpgrade: false,
+    })
+
+    stop()
+    editor.undo()
+    editor.redo()
+    await Promise.resolve()
+    expect(describeReaction(editor.getProject(), kick)).toMatchObject({ listensTo: 'Sub bass' })
+  })
 })
 
 describe('reacting in the rendered values', () => {
@@ -376,5 +447,46 @@ describe('reacting in the rendered values', () => {
     applyReaction(editor, [{ clipId: s.gen.id, param: 'height' }], 'vocals', { amount: 0.5 })
     const p = editor.getProject()
     expect(valueAt(p, s.gen.id, 2.5) - valueAt(p, s.gen.id, 5)).toBeGreaterThan(0.2)
+  })
+
+  it('with stems, the bass rides the bassline', () => {
+    const s = scene('stems')
+    const editor = new ProjectEditor(s.p)
+    applyReaction(editor, [{ clipId: s.gen.id, param: 'height' }], 'bass', { amount: 0.5 })
+    const p = editor.getProject()
+    // The bassline peaks at π/2 s and is lowest at 3π/2 s.
+    expect(valueAt(p, s.gen.id, 1.6) - valueAt(p, s.gen.id, 4.7)).toBeGreaterThan(0.25)
+  })
+
+  // The mix's hats fall between the beats, and the highs move less there than a stem does.
+  it.each([
+    ['stems', 2, 2.1, 0.2],
+    ['mix', 2.25, 2, 0.03],
+  ] as const)('%s: the hi-hats flicker on each hat, not on the kick', (state, hat, kick, least) => {
+    const s = scene(state)
+    const editor = new ProjectEditor(s.p)
+    applyReaction(editor, [{ clipId: s.gen.id, param: 'height' }], 'hats', { amount: 0.5 })
+    const p = editor.getProject()
+    expect(valueAt(p, s.gen.id, hat + 0.01) - valueAt(p, s.gen.id, kick)).toBeGreaterThan(least)
+  })
+
+  it('without stems, the snare hits on every onset in the mix', () => {
+    const s = scene('mix')
+    // Onsets on the off-beats only: what follows them is the onsets, not a band that also moves on the beat.
+    const features = s.p.analysis.audio[PREVIEW_SONG_ID]!.features!
+    features.onsets = features.onsets.filter((t) => t % 0.5 !== 0)
+    const editor = new ProjectEditor(s.p)
+    applyReaction(editor, [{ clipId: s.gen.id, param: 'height' }], 'snare', { amount: 0.5 })
+    const p = editor.getProject()
+    expect(valueAt(p, s.gen.id, 2.26) - valueAt(p, s.gen.id, 2.01)).toBeGreaterThan(0.2)
+  })
+
+  it('with stems, the instruments reaction follows the other instruments', () => {
+    const s = scene('stems')
+    s.p.analysis.audio[PREVIEW_SONG_ID]!.stemFeatures!.other = stemFeatures('other')
+    const editor = new ProjectEditor(s.p)
+    applyReaction(editor, [{ clipId: s.gen.id, param: 'height' }], 'instruments', { amount: 0.5 })
+    const p = editor.getProject()
+    expect(valueAt(p, s.gen.id, 5) - valueAt(p, s.gen.id, 2.5)).toBeGreaterThan(0.2)
   })
 })

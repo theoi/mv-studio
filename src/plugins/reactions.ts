@@ -23,7 +23,8 @@ import type {
   StemName,
 } from '../model/types.ts'
 
-export type ReactionId = 'kick' | 'snare' | 'hats' | 'bass' | 'vocals' | 'loudness' | 'beat' | 'downbeat'
+export type ReactionId =
+  'kick' | 'snare' | 'hats' | 'bass' | 'vocals' | 'instruments' | 'loudness' | 'beat' | 'downbeat'
 
 /** A feature a reaction can listen to: of a stem, of the full mix, or the song's beat grid. */
 export type Listen =
@@ -45,6 +46,8 @@ export interface Reaction {
   defaultAmount: number
   /** The stem that makes this reaction precise, so pickers can suggest separating stems. */
   bestWithStem?: StemName
+  /** Offered only once this stem is separated: the full mix has no stand-in for it. */
+  needsStem?: StemName
   /** Where the instrument is in the full mix, for "Listens to: the low end (sub bass), where the kick sits." */
   inMix?: string
 }
@@ -116,6 +119,16 @@ export const REACTIONS: Reaction[] = [
     defaultAmount: 0.3,
     bestWithStem: 'vocals',
     inMix: 'where most of the voice sits',
+  },
+  {
+    id: 'instruments',
+    name: 'Follow the instruments',
+    label: 'Instruments',
+    description: 'Rises and falls with the guitars, keys and synths.',
+    listen: [{ feature: 'loudness', stem: 'other' }],
+    smoothing: 0.45,
+    defaultAmount: 0.35,
+    needsStem: 'other',
   },
   {
     id: 'loudness',
@@ -331,11 +344,21 @@ export interface ReactionAvailability {
   ready: boolean
 }
 
-/** Every reaction with what it would listen to in this project, on `clip` when given, for the picker. */
-export function availableReactions(project: Project, clip?: Clip): ReactionAvailability[] {
+/**
+ * Every reaction the picker offers in this project, with what it would listen to, on `clip` when given. A reaction
+ * that needs a stem is left out until that stem is separated, unless it is `active` already.
+ */
+export function availableReactions(
+  project: Project,
+  clip?: Clip,
+  active?: ReactionId,
+): ReactionAvailability[] {
   const analysis = songAnalysis(project)
   const followed = followedStem(project, clip)
-  return REACTIONS.map((r) => {
+  const offered = REACTIONS.filter(
+    (r) => !r.needsStem || analysis?.stemFeatures?.[r.needsStem] || r.id === active,
+  )
+  return offered.map((r) => {
     const listen = chooseListen(project, r)
     return {
       reaction: r,
@@ -723,7 +746,7 @@ export function reactionTargetsOf(
 
 /**
  * Commands that move reactions to a better source that became available, such as the drums stem for "Pulse with
- * kick" after stem separation, keeping each reaction's amount. Dispatch them after stems or analysis arrive.
+ * kick" after stem separation, keeping each reaction's amount. `followStems()` dispatches them when stems arrive.
  */
 export function upgradeReactionCommands(project: Project, options: ReactionOptions = {}): EditCommand[] {
   const registry = options.registry ?? pluginRegistry
@@ -734,4 +757,25 @@ export function upgradeReactionCommands(project: Project, options: ReactionOptio
     commands.push(...reactionCommands(project, [target], active.reaction.id, active.amount, options))
   }
   return commands
+}
+
+/**
+ * Moves reactions picked before stem separation to their stem once the song's stems arrive (`analysis.setStems`),
+ * without an undo step: like the stems, they follow the analysis rather than an edit. Undoing or redoing an edit made
+ * before the stems brings back its mix mapping, so that moves them again. Returns the unsubscribe.
+ */
+export function followStems(editor: ProjectEditor, options: ReactionOptions = {}): () => void {
+  return editor.subscribe((project, change) => {
+    const arrived = change.commands.some((c) => c.type === 'analysis.setStems')
+    const restored =
+      (change.source === 'undo' || change.source === 'redo') &&
+      !!songAnalysis(project)?.stemFeatures &&
+      change.patches.some((p) => p.path[0] === 'clips')
+    if (!arrived && !restored) return
+    // After the change that triggered it has reached every listener.
+    queueMicrotask(() => {
+      const commands = upgradeReactionCommands(editor.getProject(), options)
+      if (commands.length) editor.dispatch(commands, { history: 'skip' })
+    })
+  })
 }

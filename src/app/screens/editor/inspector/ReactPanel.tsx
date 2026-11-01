@@ -1,3 +1,4 @@
+import { Button } from '../../../ds/Button.tsx'
 import { FieldRow, Select, Slider } from '../../../ds/Fields.tsx'
 import {
   availableReactions,
@@ -29,8 +30,9 @@ function run(commands: EditCommand[], options: { label: string } | { coalesceKey
 export function ReactPanel({ target }: { target: ReactionTarget }) {
   const project = useProject()
   const active = describeReaction(project, target)
-  const choices = availableReactions(project, project.clips[target.clipId])
-  const value = active?.kind === 'reaction' ? active.reaction.id : active ? CUSTOM : NONE
+  const activeId = active?.kind === 'reaction' ? active.reaction.id : undefined
+  const choices = availableReactions(project, project.clips[target.clipId], activeId)
+  const value = activeId ?? (active ? CUSTOM : NONE)
   const chosen = choices.find((c) => c.reaction.id === value)
   const options = [
     { value: NONE, label: 'Not reacting', description: 'Keeps its own value' },
@@ -43,8 +45,7 @@ export function ReactPanel({ target }: { target: ReactionTarget }) {
       description: `${c.reaction.description} Listens to: ${c.listening}.`,
     })),
   ]
-  const choose = (id: string) => {
-    if (id === value || id === CUSTOM) return
+  const apply = (id: string) => {
     const p = editor.getProject()
     if (id === NONE) {
       run(removeReactionCommands(p, [target]), { label: 'Stop reacting to music' })
@@ -55,15 +56,23 @@ export function ReactPanel({ target }: { target: ReactionTarget }) {
     const amount = active?.kind === 'reaction' ? active.amount : undefined
     run(reactionCommands(p, [target], r.id, amount), { label: `React to music: ${r.name}` })
   }
+  const choose = (id: string) => {
+    if (id !== value && id !== CUSTOM) apply(id)
+  }
   const amount = active?.kind === 'reaction' ? Math.round(active.amount * 100) : 0
+  const waitsFor = chosen?.reaction.needsStem
+    ? 'It starts moving once stems are separated in Assist › Stems.'
+    : 'It starts moving once the song is analyzed.'
   const hints =
     active?.kind === 'reaction'
       ? [
           `Listens to: ${active.listening}.`,
           chosen?.betterWithStems ? 'Separate stems in Assist › Stems to follow the instrument alone.' : '',
-          chosen && !chosen.ready ? 'It starts moving once the song is analyzed.' : '',
+          chosen && !chosen.ready ? waitsFor : '',
         ].filter(Boolean)
       : []
+  // Still on the mix although its stem is separated, e.g. in a project saved before reactions followed the stems.
+  const upgrade = active?.kind === 'reaction' && active.canUpgrade ? chosen : undefined
   return (
     <>
       <FieldRow label="Reaction">
@@ -85,6 +94,13 @@ export function ReactPanel({ target }: { target: ReactionTarget }) {
         </FieldRow>
       )}
       {hints.length > 0 && <p className={styles.note}>{hints.join(' ')}</p>}
+      {upgrade && (
+        <div className={styles.padded}>
+          <Button size="sm" variant="ghost" onClick={() => apply(upgrade.reaction.id)}>
+            Listen to {upgrade.listening}
+          </Button>
+        </div>
+      )}
     </>
   )
 }
