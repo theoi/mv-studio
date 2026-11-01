@@ -192,6 +192,7 @@ describe('songTitleFromName', () => {
     ['my song (feat. jay).mp3', { title: 'My Song (feat. Jay)' }],
     ['what are you waiting for.mp3', { title: 'What Are You Waiting For' }],
     ['mv_2024-05-01.wav', { title: 'Mv 2024-05-01' }],
+    ['part 1: the beginning.mp3', { title: 'Part 1: The Beginning' }],
   ])('%s', (name, expected) => {
     expect(songTitleFromName(name)).toEqual(expected)
   })
@@ -237,6 +238,13 @@ describe('songTitle', () => {
     ['the title in its file name', { artist: 'Josh Woodward' }, 'Song Show Me Josh Woodward'],
   ])('names the song by %s', (_, tags, expected) => {
     expect(songName({ name: 'song_show-me_josh-woodward.mp3', tags })).toBe(expected)
+  })
+
+  it.each([
+    ['dna.mp3', 'DNA'],
+    ['iphone.mp3', 'iPhone'],
+  ])('keeps a title tag that is %s’s name only in other capitals', (name, title) => {
+    expect(songName({ name, tags: { title } })).toBe(title)
   })
 
   it('reads tags from a saved project, and the file name from one saved before tags were read', () => {

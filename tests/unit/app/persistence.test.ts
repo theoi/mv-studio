@@ -52,6 +52,13 @@ it('numbers a copy from (2) even when no project has the name without the number
   expect((await duplicateProject(copy.id)).name).toBe('Neon Skyline (3)')
 })
 
+it('keeps a year in parentheses as part of the name', async () => {
+  const live = keep('Live (2019)')
+  editor.load(createProject({ name: 'Untitled video' }))
+  await refreshRecents()
+  expect((await duplicateProject(live.id)).name).toBe('Live (2019) (2)')
+})
+
 it('takes no name the open project has, kept or not', async () => {
   const kept = keep('Neon Skyline (2)')
   editor.load(createProject({ name: 'Neon Skyline (3)' }))

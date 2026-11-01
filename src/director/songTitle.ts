@@ -34,7 +34,7 @@ function titleCase(text: string): string {
   return words
     .map((word, i) => {
       const bare = word.replace(/^\(/, '').replace(/[),!?]+$/, '')
-      const edge = i === 0 || i === words.length - 1 || word.startsWith('(')
+      const edge = i === 0 || i === words.length - 1 || word.startsWith('(') || !!words[i - 1]?.endsWith(':')
       if (i > 0 && CREDIT_WORDS.has(bare)) return word
       if (!edge && MINOR_WORDS.has(bare)) return word
       return word.replace(/^(\(?)(\p{L})/u, (_, open: string, c: string) => open + c.toUpperCase())
@@ -62,15 +62,17 @@ export function songTitleFromName(name: string): { title?: string; artist?: stri
     : { title: titleCase(base) }
 }
 
-/** Title tags that name no song ("Track 01", "Untitled", "Unknown"), or that hold the file's own name. */
+/**
+ * Title tags that name no song ("Track 01", "Untitled", "Unknown", a file name), or that hold the file's own name as
+ * written: a tag "DNA" on dna.mp3 is the real title.
+ */
 function placeholderTitle(title: string, fileName: string): boolean {
-  const t = title.trim().toLowerCase()
-  const file = fileName.toLowerCase()
+  const t = title.trim()
   return (
-    /^(?:(?:audio )?track ?\d*|untitled(?: \d+)?|unknown(?: title)?|no title)$/.test(t) ||
-    /\.(?:mp3|wav|flac|m4a|aac|ogg|opus|aiff?)$/.test(t) ||
-    t === file ||
-    t === file.replace(/\.[a-z0-9]{2,5}$/, '')
+    /^(?:(?:audio )?track ?\d*|untitled(?: \d+)?|unknown(?: title)?|no title)$/i.test(t) ||
+    /\.(?:mp3|wav|flac|m4a|aac|ogg|opus|aiff?)$/i.test(t) ||
+    t === fileName ||
+    t === fileName.replace(/\.[a-z0-9]{2,5}$/i, '')
   )
 }
 
