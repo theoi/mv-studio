@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Asset } from '../../../../src/model/types.ts'
 import {
   createFrameThumbnails,
+  type FrameCache,
   type FrameThumbnailOptions,
 } from '../../../../src/vision/runtime/thumbnails.ts'
 
@@ -204,5 +205,84 @@ describe('frame thumbnails', () => {
     thumbs.want(asset('song', 'audio'), 1)
     await flush()
     expect(openAttempts).toEqual([])
+  })
+})
+
+describe('frame thumbnails kept between page loads', () => {
+  type Labeled = Blob & { label: string }
+  const labeled = (label: string): Labeled => Object.assign(new Blob([label]), { label })
+  const draw = (frame: ImageBitmap) => labeled((frame as unknown as { label: string }).label)
+
+  /** A cache holding `kept` (by asset id and frame name), and every frame put into it from then on. */
+  function memoryCache(kept: Record<string, string> = {}) {
+    const put: string[] = []
+    const cache: FrameCache = {
+      get: async (a, name) => {
+        const label = kept[`${a.id}/${name}`]
+        return label ? labeled(label) : null
+      },
+      put: (a, name, jpeg) => {
+        put.push(`${a.id}/${name}`)
+        kept[`${a.id}/${name}`] = (jpeg as Labeled).label
+      },
+    }
+    return { cache, put }
+  }
+
+  beforeEach(() => {
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((b) => `blob:${(b as Labeled).label}`)
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('shows a frame found in the cache without opening its video, and puts each frame it makes there', async () => {
+    const { cache, put } = memoryCache({ 'a/frame-160x90-1000': 'kept a@1' })
+    const { thumbs, decoded, openAttempts } = fakeVideos({ cache, draw })
+    const a = asset('a')
+    thumbs.want(a, 1)
+    await flush()
+    expect(thumbs.get(a, 1)).toBe('blob:kept a@1')
+    expect(openAttempts).toEqual([])
+    thumbs.want(a, 2)
+    await flush()
+    expect(decoded).toEqual(['a@2'])
+    expect(thumbs.get(a, 2)).toBe('blob:a@2')
+    expect(put).toEqual(['a/frame-160x90-2000'])
+  })
+
+  it('opens videos only once ready resolves, while frames found in the cache show at once', async () => {
+    const { cache } = memoryCache({ 'a/frame-160x90-1000': 'kept a@1' })
+    let start = () => {}
+    const ready = new Promise<void>((resolve) => (start = resolve))
+    const { thumbs, decoded, openAttempts } = fakeVideos({ cache, draw, ready: () => ready })
+    const a = asset('a')
+    thumbs.want(a, 1)
+    thumbs.want(a, 2)
+    await flush()
+    expect(thumbs.get(a, 1)).toBe('blob:kept a@1')
+    expect(openAttempts).toEqual([])
+    start()
+    await flush()
+    expect(decoded).toEqual(['a@2'])
+    expect(thumbs.get(a, 2)).toBe('blob:a@2')
+  })
+
+  it('looks a frame dropped from memory up in the cache again instead of decoding it again', async () => {
+    const { cache } = memoryCache()
+    const { thumbs, decoded } = fakeVideos({ cache, draw, maxEntries: 1 })
+    const a = asset('a')
+    const release1 = thumbs.want(a, 1)
+    await flush()
+    release1()
+    thumbs.want(a, 2)
+    await flush()
+    expect(thumbs.get(a, 1)).toBeUndefined()
+    thumbs.want(a, 1)
+    await flush()
+    expect(thumbs.get(a, 1)).toBe('blob:a@1')
+    expect(decoded).toEqual(['a@1', 'a@2'])
   })
 })
