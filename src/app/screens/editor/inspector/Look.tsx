@@ -8,7 +8,7 @@ import { revealLooks } from '../../../state/library.ts'
 import { isLookClip, useProject } from '../../../state/project.ts'
 import { useAnimatable } from './animatable.ts'
 import { ColorSection, EffectsSection } from './Effects.tsx'
-import { Header } from './parts.tsx'
+import { Header, MetaLine } from './parts.tsx'
 import styles from '../Inspector.module.css'
 
 /** Where the look layer applies: everywhere, or the part of the video it was trimmed to. */
@@ -56,7 +56,7 @@ export function LookSection() {
           <div className={styles.lookName}>
             {layer ? (look?.name ?? layer.name ?? 'Custom look') : ORIGINAL_LOOK.name}
           </div>
-          <div className={styles.meta}>{layer ? lookSpan(project, layer) : 'No look'}</div>
+          <MetaLine text={layer ? lookSpan(project, layer) : 'No look'} />
         </div>
         <Button size="sm" variant="secondary" onClick={revealLooks}>
           Change
