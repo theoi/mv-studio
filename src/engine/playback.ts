@@ -233,6 +233,15 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     return this.anchorTime + Math.max(0, heard - this.anchorContext)
   }
 
+  /**
+   * Makes the audio context ahead of the first play(), which then only resumes it. The first context of a page takes
+   * tens of milliseconds to make (the audio output starts up), which Play would otherwise spend before the browser
+   * shows that it was pressed. A context made outside a click or key press starts suspended until play() resumes it.
+   */
+  prepare(): void {
+    this.ensureContext()
+  }
+
   private ensureContext(): AudioContext {
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' })

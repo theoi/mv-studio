@@ -72,6 +72,12 @@ export function connectPreview(
   }
   showProject(editor.getProject())
   preview.setVolume(prefs().previewVolume)
+  // Play then only resumes the audio context, instead of making it while the click waits for its frame.
+  const prepareAudio = () => preview.clock.prepare()
+  const idle =
+    typeof requestIdleCallback === 'function'
+      ? requestIdleCallback(prepareAudio, { timeout: 3000 })
+      : window.setTimeout(prepareAudio, 1000)
   applyLoop(get().playhead)
   if (get().playing) set({ playing: false })
   const unsubscribe = [
@@ -119,6 +125,8 @@ export function connectPreview(
   return {
     preview,
     dispose() {
+      if (typeof cancelIdleCallback === 'function') cancelIdleCallback(idle)
+      else window.clearTimeout(idle)
       for (const u of unsubscribe) u()
       prepareSampleVideos(null)
       if (current === preview) {
