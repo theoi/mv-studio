@@ -136,6 +136,7 @@ import {
 import { exportSectionTeaser } from '../../../state/exports.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
 import { addMarkerAtPlayhead } from '../../../state/markers.ts'
+import { goToSection } from '../../../state/playback.ts'
 import {
   EASINGS,
   groupMarks,
@@ -2395,7 +2396,7 @@ export function Timeline() {
                 <span className={styles.trackName}>Song map</span>
                 <Tooltip
                   label="Sections, chorus and energy were found automatically"
-                  description="Double-click a section to rename it. Drag its edges to adjust."
+                  description="Click a section to go to its start. Double-click to rename it. Drag its edges to adjust."
                 >
                   <span className={styles.autoBadge}>
                     <Sparkles />
@@ -2425,7 +2426,12 @@ export function Timeline() {
                           }}
                           onPointerDown={(e) => {
                             e.stopPropagation()
-                            if (e.button === 0) select({ type: 'section', id: s.id })
+                            if (e.button === 0) goToSection(s)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+                            e.preventDefault()
+                            goToSection(s)
                           }}
                           onDoubleClick={() => setRenaming(s.id)}
                           role="button"

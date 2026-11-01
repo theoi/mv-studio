@@ -711,6 +711,19 @@
   margin-top: 1px;
 }
 
+/* Grows with pasted lyrics from four lines until it would push the setup button below the window, then
+   scrolls inside. In short windows min-height wins over max-height, so it never drops below four lines. */
+.lyricsBox {
+  field-sizing: content;
+  min-height: calc(4lh + 2 * var(--space-2) + 2px);
+  max-height: calc(100dvh - 500px);
+}
+
+/* The song's drop zone is about 130 px taller than its card. */
+.setupMain:has(.drop) .lyricsBox {
+  max-height: calc(100dvh - 630px);
+}
+
 .setupFooter {
   display: flex;
   flex-wrap: wrap;

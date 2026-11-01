@@ -376,6 +376,7 @@ export function SetupScreen() {
                   'Paste the lyrics here, one line per line.\nNo lyrics handy? Assist can draft them from the vocals.'
                 }
                 rows={4}
+                className={styles.lyricsBox}
                 aria-label="Lyrics"
                 value={lyrics}
                 onChange={(e) => setSetup({ lyrics: e.target.value })}

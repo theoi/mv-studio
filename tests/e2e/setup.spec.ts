@@ -534,3 +534,29 @@ test('the Start cards are named by their title and description, not by their pre
   ])
     await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
 })
+
+test('the lyrics box grows with pasted lyrics until the button would leave the window, then scrolls inside', async ({
+  page,
+}) => {
+  const lyrics = Array.from({ length: 33 }, (_, i) => `Line ${i + 1} of the song`).join('\n')
+  const fit = async () => {
+    const box = page.getByRole('textbox', { name: 'Lyrics' })
+    const lines = await box.evaluate(
+      (el: HTMLTextAreaElement) => (el.clientHeight - 16) / parseFloat(getComputedStyle(el).lineHeight),
+    )
+    const button = (await page.getByRole('button', { name: 'Time my lyrics' }).boundingBox())!
+    return { lines, buttonInView: button.y + button.height <= page.viewportSize()!.height }
+  }
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await startKind(page, /^Lyric video/)
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.getByRole('textbox', { name: 'Lyrics' }).fill(lyrics)
+  const big = await fit()
+  expect(big.lines).toBeGreaterThan(24)
+  expect(big.buttonInView).toBe(true)
+
+  await page.setViewportSize({ width: 1280, height: 720 })
+  const small = await fit()
+  expect(small.lines).toBeGreaterThan(8)
+  expect(small.buttonInView).toBe(true)
+})
