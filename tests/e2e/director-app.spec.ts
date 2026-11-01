@@ -359,6 +359,38 @@ test('a retry after failed AI shots shows its price and asks again; Back returns
   expect(fal).toHaveLength(sent)
 })
 
+test('AI shot prompts carry the picture the idea describes, not what it asks of the edit', async ({
+  page,
+}) => {
+  const prompts: string[] = []
+  await page.context().route(/https:\/\/(queue\.)?fal\.run\/.*/, (route) => {
+    const request = route.request()
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+    if (request.method() === 'POST') prompts.push((request.postDataJSON() as { prompt: string }).prompt)
+    return route.fulfill({ status: 500, headers: CORS, body: '{}' })
+  })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page
+    .getByRole('textbox', { name: 'Idea for the video' })
+    .fill(
+      'Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night. Use my own clips.',
+    )
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await page.getByRole('button', { name: /^Generate \d+ shots? · about/ }).click()
+  await page
+    .getByRole('dialog', { name: /^Generate \d+ shots?\?$/ })
+    .getByRole('button', { name: /^Generate \d+ shots? · about/ })
+    .click()
+  await expect(page.getByRole('button', { name: /^Retry · about/ })).toBeVisible({ timeout: 30_000 })
+  expect(prompts.length).toBeGreaterThan(0)
+  for (const prompt of prompts) {
+    expect(prompt).toMatch(
+      /^Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night\. \w/,
+    )
+    expect(prompt).not.toContain('clips')
+  }
+})
 /**
  * fal.ai's queue for video clips (or images, with `images`), in the shapes fal.ai documents: each request is in
  * progress for one poll, then done with a video. Submits numbered in `failing` (from 1) answer HTTP 500; the `held`

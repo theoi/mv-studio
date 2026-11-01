@@ -577,6 +577,136 @@ export const DEFAULT_CONCEPT: Record<VideoKind, string> = {
   ai: 'Cinematic music video with a consistent main character and setting',
 }
 
+// Non-capturing, so AI_MADE's replacer gets its own groups.
+const MEDIA = String.raw`(?:clips?|footage|videos?|photos?|pictures?|images?|media|recordings?)`
+const SHOTS = String.raw`(?:${MEDIA}|montage|visuals?|scenes?|shots?)`
+const AI_SOURCE = String.raw`(ai[\s-]+(generated\s+|made\s+)?)`
+const DURATION = String.raw`\d+[\s-]*(secs?|seconds?|mins?|minutes?)`
+
+/**
+ * Request words in front of the picture, which stays: "Make an AI video of …", "AI visuals of …", "my footage of …",
+ * "Edit my clips into …", "Use AI to show …". Each runs on what the one before left.
+ */
+const REQUESTS = [
+  new RegExp(
+    String.raw`^(please\s+)?((can|could|would)\s+you\s+)?(make|create|generate|produce|give\s+me|show\s+me|i\s+want|i['’]?d\s+like|i\s+would\s+like)\s+(me\s+)?((a|an|some)\s+)?${AI_SOURCE}?(music\s+)?${SHOTS}\s+(of|about|with|showing|featuring|set\s+in|where)\s+`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`^(please\s+)?(edit|cut|turn|make)\s+((my|our|the|these|those)\s+)?(own\s+)?${SHOTS}\s+into\s+`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`^((a|an|some|my|our)\s+)?(own\s+)?(stock\s+|${AI_SOURCE})?(music\s+)?${SHOTS}(\s+(of|about|showing|featuring)\s+|\s*:\s*)`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`^(please\s+)?use\s+(ai\s+to\s+(show|create|make|generate|depict|render|imagine|visuali[sz]e)|((my|our|the|these|those|some)\s+)?(own\s+)?(stock\s+|${AI_SOURCE})?${MEDIA}\s+(of|showing|from))\s+`,
+    'i',
+  ),
+]
+
+/**
+ * "AI-generated" before what it describes goes, with its article fixed: "An AI-generated dreamscape" → "A dreamscape".
+ * Not when it's the verb ("The AI generated a storm").
+ */
+const AI_MADE = new RegExp(
+  String.raw`\b(?:(an?)\s+)?ai[\s-]+(?:generated|made)\s+(?!(?:${SHOTS}|a|an|the|this|that|these|those|some|every|it|its|them|my|our|his|her|their)\b)(?=(\S))`,
+  'gi',
+)
+
+/**
+ * Clauses of an idea that ask something of the editor instead of describing a picture: whose media to use, how to
+ * cut, on-screen words, AI as a source, length and format. An image or video model would try to draw them. Each
+ * pattern needs the words around it that make it an instruction, so a scene with the same words stays ("an AI
+ * android", "paper cuts", "a woman editing photos"): an instruction left in costs less than a picture dropped.
+ */
+const INSTRUCTION_CLAUSES = [
+  new RegExp(
+    String.raw`^(please\s+)?(only\s+)?(don['’]?t\s+|do\s+not\s+)?use\s+(only\s+)?((my|our|their|the|these|those|some|more|less|no|the\s+user['’]?s)\s+)?(own\s+)?(${MEDIA}|stock|ai)\b`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`\b(my|our|the\s+user['’]?s)\s+(own\s+)?${MEDIA}\b|\b(uploaded|imported)\s+${MEDIA}\b`,
+    'i',
+  ),
+  new RegExp(String.raw`\b(no|without)\s+ai\b|^(only\s+)?${AI_SOURCE}${SHOTS}(\s+only)?$`, 'i'),
+  /\bstock\s+(footage|clips?|videos?)\b/i,
+  /\b(fast|quick|rapid|slow|hard|jump|sharp|snappy|smooth|lots\s+of|many|more|fewer)\s+(cuts|edits|editing|transitions)\b|\bthe\s+(edit|edits|editing)\b|\btransitions\b/i,
+  /\bcut(s|ting)?\s+(on|to)\s+(the\s+|every\s+)?(beats?|music|rhythm|drums?|bass|bars?|downbeats?)\b|\bcut(s|ting)?\s+(between|every)\b/i,
+  /\bsync(s|ed|ing)?\s+(it\s+|everything\s+)?(to|with)\s+(the\s+)?(beats?|music|song|rhythm|lyrics)\b/i,
+  /\b(subtitles?|captions?|karaoke)\b|\b(show|display|add|put|include|no|with)\s+(the\s+)?(song['’]?s\s+)?lyrics?\b|\blyrics?\s+(on[\s-]screen|in\s+the\s+video|over)\b/i,
+  new RegExp(
+    String.raw`\b(make|keep)\s+it\s+((under|about|around)\s+\d|short(er)?\b|long(er)?\b|${DURATION})|\b(under|at\s+most|max(imum)?|no\s+longer\s+than|less\s+than)\s+${DURATION}\b|\b${DURATION}\s+(long|video|clip|edit|max)\b`,
+    'i',
+  ),
+  /\b(16:9|9:16|4:5|1:1|aspect\s+ratio|export)\b|\bfor\s+(tiktok|instagram|youtube|reels|shorts)\b|\b(tiktok|instagram|youtube)\s+(format|reels?|shorts|ratio)\b/i,
+]
+
+/** Only where the clause ends or goes on with another place or action, so "a choir in the chorus of a cathedral" stays. */
+const PHRASE_END = String.raw`(?=\s*$|\s+(in|at|on|with|under|over|through|across|by|near|and|while|as)\b)`
+
+/** Phrases about the edit inside a clause that also describes a picture ("waves crashing to the beat"). */
+const INSTRUCTION_PHRASES = [
+  new RegExp(String.raw`\s*\b(using|with|from|in)\s+(my|our)\s+(own\s+)?${MEDIA}\b${PHRASE_END}`, 'gi'),
+  new RegExp(String.raw`\s*\b(on|to|with)\s+(the|every)\s+beats?\b${PHRASE_END}`, 'gi'),
+  new RegExp(
+    String.raw`\s*\b(in|during|for)\s+(the|every|each)\s+(chorus(es)?|verses?|intro|outro)\b${PHRASE_END}`,
+    'gi',
+  ),
+  // "…and AI shots of the ocean": the source words go, what they show stays.
+  new RegExp(String.raw`\b${AI_SOURCE}${SHOTS}\s+(of|showing|featuring)\s+`, 'gi'),
+]
+
+const FILLER = new Set(
+  'please make do create it this that the a an me video music clip just and also so faster slower ai generated cut cuts cutting sync syncing synced edit edits editing'.split(
+    ' ',
+  ),
+)
+
+/**
+ * The picture an idea describes, for image and video prompts: the idea without what it asks of the editor ("Use my
+ * own clips", "cut on the beat", "show the lyrics"). Empty when nothing visual is left. The patterns are English, so
+ * instructions in other languages stay in.
+ */
+export function visualIdea(idea: string): string {
+  let kept = ''
+  for (const sentence of idea.trim().split(/(?<=[.!?])\s+|(?<=[。！？])\s*|\s*\n+\s*/)) {
+    const end = /[.!?。！？]*$/.exec(sentence)?.[0] ?? ''
+    const clauses = REQUESTS.reduce(
+      (s, p) => s.replace(p, ''),
+      sentence.slice(0, sentence.length - end.length),
+    )
+      .split(/\s*[,;]\s*|\s+[-–—]\s+/)
+      .map((c) =>
+        c.replace(AI_MADE, (_m, article?: string, next = '') =>
+          article ? `${articleFor(next, article)} ` : '',
+        ),
+      )
+      .map((c) => INSTRUCTION_PHRASES.reduce((s, p) => s.replace(p, ''), c).trim())
+      .filter((c) => c && !INSTRUCTION_CLAUSES.some((p) => p.test(c)) && !onlyFiller(c))
+    if (!clauses.length) continue
+    // Sentences after a full-width stop follow without a space, as they were written.
+    if (kept) kept += /[。！？]$/.test(kept) ? '' : ' '
+    kept += clauses.join(', ') + end
+  }
+  return kept.replace(/[\s.,;:!?。！？、]+$/, '')
+}
+
+/** A clause whose words are all filler ("make it", "and also"); one with no words at all is not. */
+function onlyFiller(clause: string): boolean {
+  const words = clause
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}'’]+/u)
+    .filter(Boolean)
+  return words.length > 0 && words.every((w) => FILLER.has(w))
+}
+
+/** "a" or "an" for the word starting with `next`, capitalized like `article`. */
+function articleFor(next: string, article: string): string {
+  const fit = /[aeiou]/i.test(next) ? 'an' : 'a'
+  return article.startsWith('A') ? `A${fit.slice(1)}` : fit
+}
 /** A rule-based brief section, used by the local planner and to fill gaps in an LLM brief. */
 export function defaultSectionBrief(
   section: SectionInfo,
