@@ -95,7 +95,7 @@ function LyricsResult({ onPaste }: { onPaste: () => void }) {
       {toCheck > 0 && (
         <div className={styles.linkRow}>
           <Button size="sm" variant="ghost" onClick={showNextToCheck}>
-            {stepping ? 'Show next on timeline' : 'Show on timeline'}
+            {stepping ? 'Show next line to check' : 'Show on timeline'}
           </Button>
           {!unreliable && (
             <Button size="sm" variant="ghost" onClick={markAllChecked}>

@@ -105,6 +105,7 @@ function TimingBadge({ line }: { line: LyricLine }) {
   const timing = lineTiming(line)
   if (timing === 'untimed') return <Badge>Not timed yet</Badge>
   if (timing === 'edited') return <Badge tone="warning">Text changed since timing</Badge>
+  if (line.check) return <Badge tone="warning">{plural(line.words.length, 'word')} timed · to check</Badge>
   return (
     <Badge tone="success" icon={<Check />}>
       {plural(line.words.length, 'word')} timed to vocals
@@ -120,7 +121,7 @@ const UNLISTED_NOTE =
  * A line to check: why, its words with the uncertain ones underlined, then Play line, Mark as checked and Next line to
  * check.
  */
-function CheckNote({ line }: { line: LyricLine }) {
+function CheckNote({ line, onChecked }: { line: LyricLine; onChecked: () => void }) {
   const project = useProject()
   const underlined = line.words.some(isUncertain)
   const others = linesToCheck(project).some((l) => l.id !== line.id)
@@ -163,7 +164,10 @@ function CheckNote({ line }: { line: LyricLine }) {
           size="sm"
           variant="ghost"
           className={styles.forwardAction}
-          onClick={() => markLineChecked(line.id)}
+          onClick={() => {
+            markLineChecked(line.id)
+            onChecked()
+          }}
         >
           Mark as checked
         </Button>
@@ -177,9 +181,49 @@ function CheckNote({ line }: { line: LyricLine }) {
   )
 }
 
+/**
+ * In place of a line's check note once it is marked as checked: on to the next line to check, with how many are left,
+ * or that none are. Focus moves to Next line to check, as Mark as checked is gone.
+ */
+function CheckedNote() {
+  const project = useProject()
+  const left = linesToCheck(project).length
+  const next = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (document.activeElement === document.body) next.current?.focus()
+  }, [])
+  return (
+    <div className={styles.draft}>
+      <div className={styles.checkedRow} role="status">
+        <span className={styles.checked}>
+          <Check aria-hidden />
+          {left ? 'Checked' : 'All lines checked.'}
+        </span>
+        {left > 0 && (
+          <>
+            {/* Spaces between the parts read them as words; a flex row lays them out with its gap. */}{' '}
+            <Button
+              ref={next}
+              size="sm"
+              variant="ghost"
+              className={styles.forwardAction}
+              onClick={showNextToCheck}
+            >
+              Next line to check
+            </Button>{' '}
+            <span>{left} left</span>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** A lyric line's words and timing. */
 function WordsSection({ line }: { line: LyricLine }) {
   const project = useProject()
+  // The line marked as checked here, which shows the way on to the next one in place of its check note.
+  const [checked, setChecked] = useState<string | null>(null)
   const { phase } = useJob(JOB_KINDS.realign)
   const running = runningJobs(useJobs())
   const lyricsRunning = running.some((j) => j.kind === JOB_KINDS.lyrics)
@@ -235,7 +279,11 @@ function WordsSection({ line }: { line: LyricLine }) {
           )}
         </div>
       </div>
-      {line.check && <CheckNote line={line} />}
+      {line.check ? (
+        <CheckNote line={line} onChecked={() => setChecked(line.id)} />
+      ) : (
+        checked === line.id && <CheckedNote />
+      )}
       <RetimeNote line={line} cost={cost} busy={busy} onCancel={() => (cancelled.current = true)} />
       <FieldRow label="Start">
         <NumberField
