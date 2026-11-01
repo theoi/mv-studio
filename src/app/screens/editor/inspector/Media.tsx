@@ -1,6 +1,6 @@
 import type { VisualClip } from '../../../../model/index.ts'
 import { FieldRow, NumberField, Section, Select } from '../../../ds/Fields.tsx'
-import { formatTime } from '../../../format.ts'
+import { formatSpan } from '../../../format.ts'
 import { dispatch, editor, useProject } from '../../../state/project.ts'
 import { clipReframeMode, framingHint, setClipReframe } from '../../../state/reframe.ts'
 import { useFrameThumbnail } from '../../../state/thumbs.ts'
@@ -16,8 +16,7 @@ export function MediaInspector({ clip }: { clip: VisualClip & { assetId: string 
   const asset = project.assets[clip.assetId]
   const thumb = useFrameThumbnail(asset, clip.type === 'video' ? clip.sourceStart : 0)
   const isImage = clip.type === 'image'
-  const end = clip.start + clip.duration
-  const meta = `${isImage ? 'Image' : 'Video'} · ${formatTime(clip.start, true)} – ${formatTime(end, true)} · ${clip.duration.toFixed(1)} s`
+  const meta = `${isImage ? 'Image' : 'Video'} · ${formatSpan(clip.start, clip.duration)}`
   return (
     <>
       <Header thumb={thumb} title={clip.name ?? asset?.name ?? 'Clip'} meta={meta} />
