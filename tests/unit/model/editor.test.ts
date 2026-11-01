@@ -7,6 +7,7 @@ import {
   createProject,
   createTextClip,
   createVideoClip,
+  isSavedHistory,
   newId,
   parseProject,
   type Asset,
@@ -442,5 +443,40 @@ describe('undo history saved with the project', () => {
     const capped = editor.savedHistory().undo.map((s) => s.label)
     // The long name's step (2.1 MB) doesn't fit after the last move, and nothing older than it is kept.
     expect(capped).toEqual(['Last move'])
+  })
+
+  it('measures a step again once a gesture adds to it', () => {
+    const { editor, visual } = ticking()
+    const clip = createTextClip({ trackId: visual.id, text: 'A', start: 0, duration: 2 })
+    editor.dispatch({ type: 'clip.add', clip })
+    editor.dispatch({ type: 'project.rename', name: 'a' }, { coalesceKey: 'typing' })
+    expect(editor.savedHistory().undo).toHaveLength(2)
+    editor.dispatch({ type: 'project.rename', name: 'x'.repeat(2_100_000) }, { coalesceKey: 'typing' })
+    editor.dispatch({ type: 'clip.move', moves: [{ clipId: clip.id, start: 1 }] }, { label: 'Move' })
+    // The typing step has grown to 2.1 MB, so it no longer fits after the move.
+    expect(editor.savedHistory().undo.map((s) => s.label)).toEqual(['Move'])
+  })
+
+  it('is read back only in its own shape', () => {
+    const { editor, visual } = ticking()
+    editor.dispatch({
+      type: 'clip.add',
+      clip: createTextClip({ trackId: visual.id, text: 'A', start: 0, duration: 2 }),
+    })
+    editor.undo()
+    const saved = structuredClone(editor.savedHistory())
+    expect(isSavedHistory(saved)).toBe(true)
+    const step = saved.redo[0]!
+    for (const broken of [
+      null,
+      'history',
+      { ...saved, updatedAt: 5 },
+      { ...saved, undo: undefined },
+      { ...saved, redo: [{ ...step, label: undefined }] },
+      { ...saved, redo: [{ ...step, patches: undefined }] },
+      { ...saved, redo: [{ ...step, inversePatches: [{ op: 'move', path: [] }] }] },
+      { ...saved, redo: [{ ...step, patches: [{ op: 'add', value: 1 }] }] },
+    ])
+      expect(isSavedHistory(broken), JSON.stringify(broken)?.slice(0, 120)).toBe(false)
   })
 })

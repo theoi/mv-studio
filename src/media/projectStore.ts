@@ -1,5 +1,5 @@
 /** Project storage in IndexedDB, plus portable project files that bundle the project with its media. */
-import type { SavedHistory } from '../model/editor.ts'
+import { isSavedHistory, type SavedHistory } from '../model/editor.ts'
 import { parseProject } from '../model/migrations.ts'
 import { newId } from '../model/factory.ts'
 import { PROJECT_SCHEMA_VERSION, type Asset, type Id, type Project } from '../model/types.ts'
@@ -17,6 +17,36 @@ const SUMMARIES = 'summaries'
  * project it belongs to. Builds from before it pass it through unread.
  */
 const HISTORY = 'undoHistory'
+
+/**
+ * The storage keys of the media a stored project record uses: its assets', and those of the assets its saved undo
+ * history can bring back, such as media removed from it that undo would add again. Throws for a record that isn't a
+ * readable project.
+ */
+function storageKeysOf(record: Project): string[] {
+  const keys = Object.values(record.assets).map((a) => a.storageKey)
+  const history = (record as Project & { [HISTORY]?: unknown })[HISTORY]
+  if (!isSavedHistory(history)) return keys
+  for (const step of [...history.undo, ...history.redo]) {
+    for (const patch of [...step.patches, ...step.inversePatches]) {
+      if (patch.path[0] !== 'assets') continue
+      const value: unknown = patch.value
+      if (patch.path.length === 3 && patch.path[2] === 'storageKey' && typeof value === 'string')
+        keys.push(value)
+      const assets =
+        patch.path.length === 1 && typeof value === 'object' && value !== null
+          ? Object.values(value)
+          : patch.path.length === 2
+            ? [value]
+            : []
+      for (const asset of assets) {
+        const key = (asset as Partial<Asset> | null)?.storageKey
+        if (typeof key === 'string') keys.push(key)
+      }
+    }
+  }
+  return keys
+}
 
 export const PORTABLE_EXTENSION = '.mvstudio'
 const PROJECT_ENTRY = 'project.json'
@@ -108,9 +138,7 @@ export class IdbProjectStore implements ProjectStore {
     const { [HISTORY]: history, ...stored } = data
     const current = stored.schemaVersion === PROJECT_SCHEMA_VERSION
     const project = parseProject(stored)
-    return current && history && typeof history === 'object'
-      ? { project, history: history as SavedHistory }
-      : { project }
+    return current && isSavedHistory(history) ? { project, history } : { project }
   }
 
   /**
@@ -149,7 +177,7 @@ export class IdbProjectStore implements ProjectStore {
     }
   }
 
-  /** Deletes the project and any media that no other saved project uses. */
+  /** Deletes the project and any media that no other saved project uses, nor can bring back with its undo history. */
   async remove(id: Id): Promise<void> {
     const db = await openDb()
     const project = (await request(db.transaction(PROJECTS).objectStore(PROJECTS).get(id))) as
@@ -161,7 +189,7 @@ export class IdbProjectStore implements ProjectStore {
     this.thumbnails.delete(id)
     if (!project) return
     const others = (await request(db.transaction(PROJECTS).objectStore(PROJECTS).getAll())) as Project[]
-    const inUse = new Set(others.flatMap((p) => Object.values(p.assets).map((a) => a.storageKey)))
+    const inUse = new Set(others.flatMap(storageKeysOf))
     for (const asset of Object.values(project.assets)) {
       if (!inUse.has(asset.storageKey)) await this.media.remove(asset)
     }
@@ -296,7 +324,11 @@ export async function readPortable(file: Blob): Promise<{ project: Project; file
   const json = entries.find((e) => e.name === PROJECT_ENTRY)
   if (!json) throw new JobError('invalid-input', 'This is not an MV Studio project file')
   try {
-    const project = parseProject(JSON.parse(await json.data.text()))
+    const data: unknown = JSON.parse(await json.data.text())
+    // A file from a build that kept a stored project's undo history unread carries it; its steps may bring back
+    // media the file doesn't hold.
+    if (typeof data === 'object' && data !== null) delete (data as Record<string, unknown>)[HISTORY]
+    const project = parseProject(data)
     return { project, files: new Map(entries.map((e) => [e.name, e.data])) }
   } catch (error) {
     throw new JobError('invalid-input', error instanceof Error ? error.message : 'Invalid project file', {

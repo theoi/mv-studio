@@ -1,4 +1,6 @@
+import path from 'node:path'
 import type { Page } from '@playwright/test'
+import { FIXTURE_DIR } from './global-setup.ts'
 import { expect, openApp, openHarness, test, waitForPreview } from './fixtures.ts'
 
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
@@ -63,4 +65,38 @@ test('the undo history comes back with the project after a reload and after the 
   await next.keyboard.press(`${mod}+z`)
   await next.keyboard.press(`${mod}+z`)
   await expect(next.getByRole('button', { name: 'Project: Neon Skyline' })).toBeVisible()
+})
+
+test('deleting a project keeps the media whose removal another project can still undo', async ({ page }) => {
+  await openHarness(page)
+  await page.setInputFiles('#e2e-file-input', [path.join(FIXTURE_DIR, 'image.png')])
+  const kept = await page.evaluate(async () => {
+    const { model, media } = window.mvStudio
+    const image = await media.mediaStore.importFile(window.mvStudio.files()[0])
+    const editor = new model.ProjectEditor(model.createProject({ name: 'Original' }))
+    editor.dispatch({ type: 'asset.add', asset: image })
+    // A duplicate shares the media of the project it was made from.
+    const copy = { ...model.createProject({ name: 'Copy' }), assets: editor.getProject().assets }
+    await media.projectStore.save(copy)
+    editor.dispatch({ type: 'asset.remove', assetId: image.id })
+    await media.projectStore.save(editor.getProject(), undefined, undefined, editor.savedHistory())
+    await media.projectStore.remove(copy.id)
+    return media.mediaStore.has(image) as Promise<boolean>
+  })
+  expect(kept).toBe(true)
+})
+
+test('a project file that carries an undo history opens without it', async ({ page }) => {
+  await openHarness(page)
+  const history = await page.evaluate(async () => {
+    const { model, media } = window.mvStudio
+    const editor = new model.ProjectEditor(model.createProject({ name: 'Made elsewhere' }))
+    editor.dispatch({ type: 'project.rename', name: 'Renamed elsewhere' })
+    // As written by a build that passed the stored history through unread.
+    const project = { ...editor.getProject(), undoHistory: editor.savedHistory() }
+    const file = new File([await media.projectStore.exportPortable(project)], 'elsewhere.mvstudio')
+    const imported = await media.projectStore.importPortable(file)
+    return (await media.projectStore.loadWithHistory(imported.id)).history ?? null
+  })
+  expect(history).toBeNull()
 })

@@ -66,6 +66,39 @@ export interface SavedHistory {
 const SAVED_STEPS = 100
 const SAVED_BYTES = 2_000_000
 
+const PATCH_OPS: readonly unknown[] = ['add', 'remove', 'replace']
+
+function isPatch(value: unknown): value is Patch {
+  if (typeof value !== 'object' || value === null) return false
+  const { op, path } = value as Partial<Record<keyof Patch, unknown>>
+  return PATCH_OPS.includes(op) && Array.isArray(path)
+}
+
+function isSavedStep(value: unknown): value is SavedStep {
+  if (typeof value !== 'object' || value === null) return false
+  const { label, patches, inversePatches } = value as Partial<Record<keyof SavedStep, unknown>>
+  return (
+    typeof label === 'string' &&
+    Array.isArray(patches) &&
+    patches.every(isPatch) &&
+    Array.isArray(inversePatches) &&
+    inversePatches.every(isPatch)
+  )
+}
+
+/** Whether a history read back from storage has the shape of a SavedHistory, which only then is restored. */
+export function isSavedHistory(value: unknown): value is SavedHistory {
+  if (typeof value !== 'object' || value === null) return false
+  const { updatedAt, undo, redo } = value as Partial<Record<keyof SavedHistory, unknown>>
+  return (
+    typeof updatedAt === 'string' &&
+    Array.isArray(undo) &&
+    undo.every(isSavedStep) &&
+    Array.isArray(redo) &&
+    redo.every(isSavedStep)
+  )
+}
+
 type Listener = (project: Project, change: EditChange) => void
 
 /**
@@ -132,6 +165,7 @@ export class ProjectEditor {
       last.commands.push(...list)
       last.patches.push(...patches)
       last.inversePatches = [...inversePatches, ...last.inversePatches]
+      this.stepBytes.delete(last)
     } else {
       this.undoStack.push({
         label: options.label ?? describeCommand(list[0] as EditCommand),
