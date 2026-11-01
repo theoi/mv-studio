@@ -27,7 +27,7 @@ import {
   reactionCommands,
   removeReactionCommands,
 } from '../../../plugins/reactions.ts'
-import { formatTime, plural } from '../../format.ts'
+import { formatTime, plural, noMatch } from '../../format.ts'
 import { addAssetAtPlayhead } from '../../state/importer.ts'
 import {
   addEffect,
@@ -90,7 +90,8 @@ export interface PageGroup {
 
 interface PageDef {
   placeholder: string
-  empty: string
+  /** The note for a search that matches nothing. */
+  empty: (search: string) => string
   groups: (state: PageState) => PageGroup[]
 }
 
@@ -295,7 +296,7 @@ function reactionItems(property: ClipProperty): PageItem[] {
 export const PAGES: Record<PageState['id'], PageDef> = {
   looks: {
     placeholder: 'Search looks',
-    empty: 'No matching look. Try fewer words.',
+    empty: noMatch('look'),
     groups: () => {
       const chosen = chosenLookId(project())
       return [
@@ -313,20 +314,24 @@ export const PAGES: Record<PageState['id'], PageDef> = {
       ]
     },
   },
-  history: { placeholder: 'Search edits', empty: 'No edits to undo or redo yet', groups: historyGroups },
+  history: {
+    placeholder: 'Search edits',
+    empty: () => 'No edits to undo or redo yet.',
+    groups: historyGroups,
+  },
   addMedia: {
     placeholder: 'Search media',
-    empty: 'No matching media. Try fewer words.',
+    empty: noMatch('media'),
     groups: () => [{ heading: `Add at ${formatTime(get().playhead, true)}`, items: mediaItems(false) }],
   },
   removeMedia: {
     placeholder: 'Search media',
-    empty: 'No matching media. Try fewer words.',
+    empty: noMatch('media'),
     groups: () => [{ heading: 'Remove from the project', items: mediaItems(true) }],
   },
   replaceMedia: {
     placeholder: 'Search media',
-    empty: 'No matching media. Try fewer words.',
+    empty: noMatch('media'),
     groups: () => {
       const target = replaceTarget(project(), get().selection)
       if ('why' in target) return []
@@ -340,7 +345,7 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   textStyle: {
     placeholder: 'Search text styles',
-    empty: 'No matching style. Try fewer words.',
+    empty: noMatch('style'),
     groups: () => [
       {
         heading: 'Karaoke styles',
@@ -354,14 +359,14 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   kinetic: {
     placeholder: 'Search kinetic presets',
-    empty: 'No matching preset. Try fewer words.',
+    empty: noMatch('preset'),
     groups: () => [
       { heading: 'Kinetic presets', items: pluginItems(textAnimationItems(), <Type />, applyTextAnimation) },
     ],
   },
   visualizer: {
     placeholder: 'Search visuals',
-    empty: 'No matching visual. Try fewer words.',
+    empty: noMatch('visual'),
     groups: () => [
       {
         heading: 'Visualizers',
@@ -372,7 +377,7 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   effect: {
     placeholder: 'Search effects',
-    empty: 'No matching effect. Try fewer words.',
+    empty: noMatch('effect'),
     groups: () => [
       { heading: 'Effects', items: pluginItems(effectItems('effects'), <Wand2 />, addEffect) },
       { heading: 'Filters', items: pluginItems(effectItems('filters'), <Wand2 />, addEffect) },
@@ -380,14 +385,14 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   transition: {
     placeholder: 'Search transitions',
-    empty: 'No matching transition. Try fewer words.',
+    empty: noMatch('transition'),
     groups: () => [
       { heading: 'Transitions', items: pluginItems(transitionItems(), <Repeat />, addTransition) },
     ],
   },
   volume: {
     placeholder: 'Search volume levels',
-    empty: 'No matching level',
+    empty: () => 'No matching level.',
     groups: () => {
       const now = Math.round(prefs().previewVolume * 100)
       return [
@@ -407,7 +412,7 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   previewZoom: {
     placeholder: 'Search zoom levels',
-    empty: 'No matching zoom level',
+    empty: () => 'No matching zoom level.',
     groups: () => {
       const now = get().previewZoom
       return [
@@ -427,19 +432,19 @@ export const PAGES: Record<PageState['id'], PageDef> = {
   },
   keyframe: {
     placeholder: 'Search properties',
-    empty: 'No matching property. Try fewer words.',
+    empty: noMatch('property'),
     groups: () => [
       { heading: `Add a keyframe at ${formatTime(get().playhead, true)}`, items: keyframeItems() },
     ],
   },
   react: {
     placeholder: 'Search properties',
-    empty: 'No matching property. Try fewer words.',
+    empty: noMatch('property'),
     groups: () => [{ heading: 'What reacts to the music', items: reactItems() }],
   },
   reactions: {
     placeholder: 'Search reactions',
-    empty: 'No matching reaction. Try fewer words.',
+    empty: noMatch('reaction'),
     groups: (state) =>
       state.id === 'reactions'
         ? [

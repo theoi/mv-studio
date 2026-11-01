@@ -37,7 +37,7 @@ import {
   RECOMMENDED_MODELS,
 } from '../../../cloud/llm/presets.ts'
 import { formatEstimate, formatUsd } from '../../../cloud/pricing.ts'
-import { capitalize, formatBytes, plural } from '../../format.ts'
+import { capitalize, formatBytes, noMatch, plural } from '../../format.ts'
 import {
   choiceOf,
   cloudSettings,
@@ -596,13 +596,20 @@ function GeneralPage() {
 function ShortcutsPage() {
   const [q, setQ] = useState('')
   const query = q.trim().toLowerCase()
+  const groups = SHORTCUT_GROUPS.map((group) => ({
+    group,
+    items: [...SHORTCUTS, ...GESTURES].filter(
+      (s) => s.group === group && [s.label, ...s.keys].join(' ').toLowerCase().includes(query),
+    ),
+  }))
   return (
     <>
       <SearchInput value={q} onChange={setQ} placeholder="Search shortcuts" />
-      {SHORTCUT_GROUPS.map((group) => {
-        const items = [...SHORTCUTS, ...GESTURES].filter(
-          (s) => s.group === group && [s.label, ...s.keys].join(' ').toLowerCase().includes(query),
-        )
+      {/* Mounted while empty: a live region that appears already filled is often not announced. */}
+      <p className={styles.scEmpty} role="status">
+        {groups.every((g) => !g.items.length) ? noMatch('shortcut')(q) : ''}
+      </p>
+      {groups.map(({ group, items }) => {
         if (!items.length) return null
         return (
           <div key={group} className={styles.scGroup}>

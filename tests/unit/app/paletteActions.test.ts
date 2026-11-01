@@ -6,6 +6,8 @@ import {
   paletteResults,
 } from '../../../src/app/screens/palette/actions.tsx'
 import { SHORTCUTS } from '../../../src/app/state/keymap.ts'
+import { editor } from '../../../src/app/state/project.ts'
+import { settingsForAspect } from '../../../src/model/index.ts'
 import { ASK_SCORE, isSentence } from '../../../src/app/state/paletteScore.ts'
 import { SHORTCUTS_NOT_IN_PALETTE, UI_ACTIONS } from '../../../src/app/state/uiActions.ts'
 
@@ -93,6 +95,40 @@ describe('command palette coverage', () => {
     expect(actionScore(actionsById.get('selectAll')!, 'select all clips in this section')).toBeLessThan(
       ASK_SCORE,
     )
+  })
+
+  it('finds the vertical export before the switch of the whole project for TikTok', () => {
+    expect(
+      paletteResults('tiktok')
+        .slice(0, 2)
+        .map((a) => a.id),
+    ).toEqual(['exportVertical', 'aspect9x16'])
+    expect(paletteResults('make a vertical version for tiktok')[0]?.id).toBe('exportVertical')
+    expect(paletteResults('youtube shorts')[0]?.id).toBe('exportVertical')
+  })
+
+  it('reads an aspect ratio as one word: “9:16” is the vertical switch, not 16:9', () => {
+    for (const [search, id, other] of [
+      ['9:16', 'aspect9x16', 'aspect16x9'],
+      ['9/16', 'aspect9x16', 'aspect16x9'],
+      ['16:9', 'aspect16x9', 'aspect9x16'],
+    ] as const) {
+      const ids = paletteResults(search).map((a) => a.id)
+      expect(ids[0], search).toBe(id)
+      expect(ids, search).not.toContain(other)
+    }
+  })
+
+  it('says what an aspect switch changes the project to, and keeps the vertical export’s note for other frames', () => {
+    expect(actionsById.get('aspect4x5')?.detail?.()).toBe('Changes the project to 4:5')
+    const exportVertical = actionsById.get('exportVertical')
+    expect(exportVertical?.detail?.()).toBe('Keeps the project 16:9')
+    editor.dispatch({ type: 'project.updateSettings', settings: settingsForAspect('9:16', 30) })
+    try {
+      expect(exportVertical?.detail?.()).toBeUndefined()
+    } finally {
+      editor.undo()
+    }
   })
 
   it('finds the action whose shortcut the search types, and nothing by its letters', () => {

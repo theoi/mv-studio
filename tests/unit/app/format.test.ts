@@ -7,6 +7,7 @@ import {
   formatParam,
   formatTime,
   formatTimecode,
+  noMatch,
   shortFileName,
   undoAction,
 } from '../../../src/app/format.ts'
@@ -91,4 +92,10 @@ it.each([
 ])('names a project "Show Me" next to %j as %s, which exports under its own file name', (taken, name) => {
   expect(distinctName('Show Me', taken)).toBe(name)
   if (taken.length) expect(exportFileName(name)).not.toBe(exportFileName(taken[0]!))
+})
+
+it('words the note for a search that finds nothing by how many words it has', () => {
+  expect(noMatch('action')('replace')).toBe('No matching action. Try another word.')
+  expect(noMatch('action')('  replace  ')).toBe('No matching action. Try another word.')
+  expect(noMatch('shortcut')('replace clip')).toBe('No matching shortcut. Try fewer words.')
 })
