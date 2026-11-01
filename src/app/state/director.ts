@@ -254,6 +254,16 @@ export function resetDirector(): void {
   void directorSession().then((s) => s.reset())
 }
 
+/** Drafts the same video again with AI shots, as the setup screen does once fal.ai is connected. The price shows first. */
+export function draftWithAiShots(request: DirectorRequest): void {
+  useDirector.setState({ shots: 'mix' })
+  void draftVideo({
+    ...request,
+    useMedia: true,
+    generate: { mode: useDirector.getState().aiShots, tier: 'draft' },
+  })
+}
+
 /** From the setup screen: drafts with the idea, with AI shots when fal.ai is connected (the price is shown first). */
 export function draftFromSetup(idea: string): void {
   const shots: ShotSource = cloudSettings.get().falKey ? 'mix' : 'mine'

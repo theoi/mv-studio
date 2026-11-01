@@ -27,6 +27,9 @@ interface Fal {
   submits: { endpoint: string; input: Record<string, unknown> }[]
   cancels: string[]
   uploads: string[]
+  /** Bodies of fal.ai storage upload initiations, and the Content-Type of each upload. */
+  initiated: { file_name: string; content_type: string }[]
+  uploadTypes: string[]
   /** Result downloads started (GETs of fal.ai's media host). */
   downloads: number
   /** With `holdDownload`, lets the held downloads finish. */
@@ -53,6 +56,8 @@ async function mockFal(
     submits: [],
     cancels: [],
     uploads: [],
+    initiated: [],
+    uploadTypes: [],
     downloads: 0,
     release: () => {
       holdDownload = false
@@ -113,7 +118,8 @@ async function mockFal(
   await context.route('https://rest.fal.ai/**', async (route) => {
     const request = route.request()
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
-    const body = request.postDataJSON() as { file_name: string }
+    const body = request.postDataJSON() as { file_name: string; content_type: string }
+    fal.initiated.push({ file_name: body.file_name, content_type: body.content_type })
     return json(route, 200, {
       upload_url: 'https://v3.fal.media/upload/up1?sig=x',
       file_url: `https://v3.fal.media/files/up1/${body.file_name}`,
@@ -124,6 +130,7 @@ async function mockFal(
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
     if (request.method() === 'PUT') {
       fal.uploads.push(request.url())
+      fal.uploadTypes.push((await request.headerValue('content-type')) ?? '')
       return route.fulfill({ status: 200, headers: CORS, body: '' })
     }
     fal.downloads++
@@ -525,6 +532,34 @@ test('a video from one of your images uploads the image and lands as a video cli
     },
   ])
   await expect(timelineClip(page, 'AI video: Clouds drift past the sun', '0:12.0')).toHaveCount(1)
+})
+
+test('a video from an AI image uploads the image as a PNG file named for it, not as an untyped file', async ({
+  page,
+}) => {
+  const fal = await mockFal(page)
+  await openGenerate(page, { falKey: KEY })
+  await page.getByRole('radio', { name: 'Image' }).click()
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Rain on a window')
+  await page.getByRole('button', { name: /^Generate · / }).click()
+  await expect(page.getByText('Added AI image: Rain on a window', { exact: true })).toBeVisible({
+    timeout: 20_000,
+  })
+
+  // Browser storage gives the image back untyped, under its stored name, which has no extension.
+  fal.output = 'video'
+  await page.getByRole('button', { name: 'Generate another' }).click()
+  await page.getByRole('radio', { name: 'Video clip' }).click()
+  await page.getByRole('combobox', { name: 'Start image' }).click()
+  await page.getByRole('option', { name: 'AI image: Rain on a window (image)' }).click()
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('The rain runs down')
+  await page.getByRole('button', { name: /^Generate · / }).click()
+  await expect(page.getByText('Added AI video: The rain runs down', { exact: true })).toBeVisible({
+    timeout: 20_000,
+  })
+  expect(fal.initiated).toEqual([{ file_name: 'AI_image_Rain_on_a_window.png', content_type: 'image/png' }])
+  expect(fal.uploadTypes).toEqual(['image/png'])
+  expect(fal.submits[1]?.input.image_url).toMatch(/\/AI_image_Rain_on_a_window\.png$/)
 })
 
 /** Opens the sample project at `hash` with the e2e harness, with a saved fal.ai key unless `key` is false. */

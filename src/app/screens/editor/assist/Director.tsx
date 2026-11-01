@@ -16,7 +16,14 @@ import {
 } from 'lucide-react'
 import { isLocalEndpoint } from '../../../../cloud/llm/presets.ts'
 import { formatEstimate } from '../../../../cloud/pricing.ts'
-import type { DirectorState, GeneratedUnit, PlanCost, PlanDescription } from '../../../../director/index.ts'
+import type {
+  DirectorRequest,
+  DirectorState,
+  GeneratedUnit,
+  PlanCost,
+  PlanDescription,
+} from '../../../../director/index.ts'
+import { NO_AI_SHOTS } from '../../../../director/notes.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Dialog } from '../../../ds/Dialog.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
@@ -30,6 +37,7 @@ import {
   draftLocally,
   draftProgress,
   draftVideo,
+  draftWithAiShots,
   paidCost,
   resetDirector,
   showTracks,
@@ -42,7 +50,7 @@ import {
 import { useJobs } from '../../../state/jobs.ts'
 import { sectionName, sectionsOf, useProject } from '../../../state/project.ts'
 import { set } from '../../../state/ui.ts'
-import { pct, useFocusAfterCancel } from './jobState.ts'
+import { pct, useKeepFocus } from './jobState.ts'
 import { CancelButton, Elapsed, Field, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -68,14 +76,49 @@ function sentence(text: string): string {
   return /[.!?…]$/.test(t) ? t : `${t}.`
 }
 
-function Notes({ warnings }: { warnings: string[] }) {
-  if (!warnings.length) return null
+function Notes({
+  warnings,
+  request,
+  onRedraft,
+}: {
+  warnings: string[]
+  request: DirectorRequest
+  onRedraft: () => void
+}) {
+  // The draft was made without fal.ai, or with My clips. Once fal.ai is connected, the next step is drafting with AI shots.
+  const offerAi = Boolean(useCloud().falKey) && warnings.includes(NO_AI_SHOTS)
+  const shown = offerAi ? warnings.filter((w) => w !== NO_AI_SHOTS) : warnings
   return (
-    <ul className={styles.tips}>
-      {warnings.map((w) => (
-        <li key={w}>{w}</li>
-      ))}
-    </ul>
+    <>
+      {shown.length > 0 && (
+        <ul className={styles.tips}>
+          {shown.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+      {offerAi && (
+        <div className={styles.callout}>
+          <Sparkles />
+          <div>
+            <div>
+              This draft uses your media or visuals. With fal.ai connected, the director can add AI shots.
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className={styles.calloutBtn}
+              onClick={() => {
+                onRedraft()
+                draftWithAiShots(request)
+              }}
+            >
+              Draft again with AI shots
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -327,14 +370,13 @@ function PlanningView({ state }: { state: StateOf<'planning'> | StateOf<'ready'>
   )
 }
 
-function ReadyView({
-  state,
-  actionRef,
-}: {
-  state: StateOf<'ready'>
-  /** The Generate button, which takes focus after a Cancel. */
+/** `actionRef` is the view's main action, which takes focus after a Cancel or a redraft; `onRedraft` keeps it. */
+interface FocusProps {
   actionRef: RefObject<HTMLButtonElement | null>
-}) {
+  onRedraft: () => void
+}
+
+function ReadyView({ state, actionRef, onRedraft }: { state: StateOf<'ready'> } & FocusProps) {
   const description = useDirector((s) => s.description)
   const stoppedId = useId()
   const cost = paidCost(state.cost)
@@ -382,7 +424,7 @@ function ReadyView({
       }
     >
       <p className={styles.lede}>{state.preview.summary}</p>
-      <Notes warnings={state.preview.warnings} />
+      <Notes warnings={state.preview.warnings} request={state.request} onRedraft={onRedraft} />
       <PlanList description={description} />
       <div className={styles.rowActions}>
         <Button size="sm" variant="ghost" onClick={resetDirector}>
@@ -453,7 +495,7 @@ function HiddenTracks({ ids }: { ids: string[] }) {
   )
 }
 
-function DoneView({ state }: { state: StateOf<'applied'> }) {
+function DoneView({ state, actionRef, onRedraft }: { state: StateOf<'applied'> } & FocusProps) {
   const description = useDirector((s) => s.description)
   const builtIn = !llmLabel(useCloud().llm)
   const [refine, setRefine] = useState('')
@@ -477,6 +519,7 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
             Undo draft
           </Button>
           <Button
+            ref={actionRef}
             variant="primary"
             onClick={() => set({ selection: { type: 'none' }, playhead: 0, playing: true })}
             className={styles.grow}
@@ -497,7 +540,7 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
           </div>
         </div>
       </div>
-      <Notes warnings={state.warnings} />
+      <Notes warnings={state.warnings} request={state.request} onRedraft={onRedraft} />
       {state.failedShots > 0 && (
         <div className={styles.rowActions}>
           <Button
@@ -537,7 +580,15 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
       </Field>
       {builtIn && (
         <div className={styles.rowActions}>
-          <Button size="sm" variant="subtle" icon={<Shuffle />} onClick={() => void tryAnotherVersion()}>
+          <Button
+            size="sm"
+            variant="subtle"
+            icon={<Shuffle />}
+            onClick={() => {
+              onRedraft()
+              void tryAnotherVersion()
+            }}
+          >
             Try another version
           </Button>
         </div>
@@ -547,7 +598,13 @@ function DoneView({ state }: { state: StateOf<'applied'> }) {
   )
 }
 
-function ErrorView({ state }: { state: StateOf<'error'> }) {
+function ErrorView({
+  state,
+  actionRef,
+}: {
+  state: StateOf<'error'>
+  actionRef: RefObject<HTMLButtonElement | null>
+}) {
   const cost = paidCost(state.cost)
   const retryLabel = cost ? `Retry · ${formatEstimate(cost)}` : 'Retry'
   const spend = useSpend(state.cost, state.confirmRequired, retryLabel, state.unit)
@@ -566,7 +623,13 @@ function ErrorView({ state }: { state: StateOf<'error'> }) {
           <Button variant="secondary" onClick={state.plan ? backToPlan : resetDirector}>
             {state.plan ? 'Back to the plan' : 'Back'}
           </Button>
-          <Button variant="primary" icon={<RotateCcw />} className={styles.grow} onClick={retry}>
+          <Button
+            ref={actionRef}
+            variant="primary"
+            icon={<RotateCcw />}
+            className={styles.grow}
+            onClick={retry}
+          >
             {retryLabel}
           </Button>
         </div>
@@ -605,18 +668,24 @@ function ErrorView({ state }: { state: StateOf<'error'> }) {
 export function DirectorView() {
   const state = useDirector((s) => s.state)
   const applying = useDirector((s) => s.applying)
-  const focus = useFocusAfterCancel(state.status === 'generating')
+  const focus = useKeepFocus(
+    state.status === 'planning' || state.status === 'generating' || (state.status === 'ready' && applying),
+  )
   switch (state.status) {
     case 'planning':
       return <PlanningView state={state} />
     case 'ready':
-      return applying ? <PlanningView state={state} /> : <ReadyView state={state} actionRef={focus.target} />
+      return applying ? (
+        <PlanningView state={state} />
+      ) : (
+        <ReadyView state={state} actionRef={focus.target} onRedraft={focus.keep} />
+      )
     case 'generating':
-      return <GeneratingView state={state} onCancel={focus.cancelled} />
+      return <GeneratingView state={state} onCancel={focus.keep} />
     case 'applied':
-      return <DoneView state={state} />
+      return <DoneView state={state} actionRef={focus.target} onRedraft={focus.keep} />
     case 'error':
-      return <ErrorView state={state} />
+      return <ErrorView state={state} actionRef={focus.target} />
     default:
       return <IdleView />
   }

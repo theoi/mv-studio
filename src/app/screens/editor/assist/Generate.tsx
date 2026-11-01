@@ -43,7 +43,7 @@ import { JOB_KINDS } from '../../../state/jobs.ts'
 import { useProject } from '../../../state/project.ts'
 import { showClips } from '../../../state/reveal.ts'
 import { set, toast } from '../../../state/ui.ts'
-import { dismiss, pct, useFocusAfterCancel, useJob } from './jobState.ts'
+import { dismiss, pct, useJob, useKeepFocus } from './jobState.ts'
 import { CancelButton, Field, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -59,8 +59,8 @@ export function GenerateBadge() {
 
 export function GenerateView() {
   const { job, phase } = useJob(JOB_KINDS.generate)
-  const focus = useFocusAfterCancel(phase === 'running')
-  if (phase === 'running') return <Running job={job} onCancel={focus.cancelled} />
+  const focus = useKeepFocus(phase === 'running')
+  if (phase === 'running') return <Running job={job} onCancel={focus.keep} />
   if (phase === 'done') return <Done job={job} />
   if (phase === 'failed') return <Failed job={job} />
   return <Setup actionRef={focus.target} />
