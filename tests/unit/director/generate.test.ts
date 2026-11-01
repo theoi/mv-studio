@@ -326,6 +326,30 @@ describe('generatePlanShots', () => {
     expect(eta('3 clips\u00a0· 1 done')).toBe(40 + 30)
   })
 
+  it('keeps a clip’s typical time while it waits in fal.ai’s line, which gives no time left of its own', async () => {
+    const { project, plan } = await aiPlan('video', 1)
+    const events: JobProgress[] = []
+    /** The run's time left once the clip has reported that it is waiting in line. */
+    let waiting: number | undefined
+    const provider = fakeProvider({
+      gate: (_, ctx) => {
+        ctx.progress({ stage: 'queue', fraction: 0.06, message: 'Waiting in line at fal.ai' })
+        waiting = events.at(-1)?.etaSeconds
+        return Promise.resolve()
+      },
+    })
+    const typical = provider.getModel(shotsToGenerate(plan)[0]!.source.modelId)!.typicalSeconds
+    await generatePlanShots({
+      plan,
+      provider,
+      store: memoryStore(),
+      project,
+      ctx: { ...testCtx(), progress: (p) => events.push(p) },
+      concurrency: 1,
+      now: () => 0,
+    })
+    expect(waiting).toBe(typical)
+  })
   it('drops the time left while its last clip runs past the typical time, instead of keeping the last figure', async () => {
     const { project, plan } = await aiPlan('video', 1)
     expect(shotsToGenerate(plan)).toHaveLength(1)

@@ -339,11 +339,15 @@ test('a request past the model’s typical time says it is taking longer than us
   await openGenerate(page, { falKey: KEY })
   await page.getByRole('radio', { name: 'Image' }).click()
   await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Neon city skyline at night')
+  // The page's clock stands still until the test moves it, so the request stays within the image model's typical
+  // 3 s for as long as the checks take, however slow the machine.
+  const started = Date.now()
+  await page.clock.setFixedTime(started)
   await page.getByRole('button', { name: 'Generate · under $0.01' }).click()
-  // The image model usually takes 3 s.
   await expect(page.getByText('Generating, usually a few seconds')).toBeVisible()
   await expect(page.getByText('Less than a minute left')).toBeVisible()
-  await expect(page.getByText('Generating, taking longer than usual')).toBeVisible({ timeout: 10_000 })
+  await page.clock.setFixedTime(started + 10_000)
+  await expect(page.getByText('Generating, taking longer than usual')).toBeVisible()
   await expect(page.getByText('Less than a minute left')).toHaveCount(0)
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect.poll(() => fal.cancels).toEqual(['req-1'])
