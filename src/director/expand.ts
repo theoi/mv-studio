@@ -602,7 +602,7 @@ async function shotsForSection(
           source,
           ...(g.mode === 'images' ? { motion: nextMotion(sb, ctx) } : {}),
           ...(i > 0 && crossfade ? { transitionIn: crossfade } : {}),
-          label: `${section.label} · shot ${i + 1}`,
+          label: `${section.label} · ${g.mode === 'video' ? 'clip' : 'shot'} ${i + 1}`,
         }),
       )
       ctx.shotIndex++

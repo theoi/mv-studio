@@ -8,6 +8,7 @@ import { CloudError } from '../errors.ts'
 import { PRICES_CHECKED_ON, roundUsd, type CostEstimate } from '../pricing.ts'
 import type {
   GeneratedMedia,
+  GenerationContext,
   GenerationRequest,
   GenerationResult,
   KeyCheck,
@@ -148,7 +149,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
     }
   }
 
-  async generate(request: GenerationRequest, ctx: JobContext): Promise<GenerationResult> {
+  async generate(request: GenerationRequest, ctx: GenerationContext): Promise<GenerationResult> {
     const model = this.requireModel(request)
     const key = this.requireKey()
     const estimate = model.estimate(request)
@@ -302,7 +303,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
     endpointId: string,
     input: Record<string, unknown>,
     typicalSeconds: number,
-    ctx: JobContext,
+    ctx: GenerationContext,
     key: string,
   ): Promise<{ data: unknown; requestId: string }> {
     const { signal } = ctx
@@ -349,6 +350,7 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
               typeof position === 'number' && position > 0
                 ? `Waiting in line at fal.ai (${position} ahead)`
                 : 'Waiting in line at fal.ai',
+            ...(typeof position === 'number' && position >= 0 ? { queuePosition: position } : {}),
           })
         } else {
           generatingSince ??= this.options.now()

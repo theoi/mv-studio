@@ -3,9 +3,9 @@
  * change preview and the generation cost, waits for the user to confirm any spend, generates AI shots as a job,
  * then applies everything as one undo step. React: useSyncExternalStore(session.subscribe, session.getState).
  */
-import { CloudError, cloudErrorInfo } from '../cloud/errors.ts'
+import { cloudErrorInfo } from '../cloud/errors.ts'
 import type { GeneratedMediaStore } from '../cloud/media.ts'
-import { formatEstimate } from '../cloud/pricing.ts'
+import { formatEstimate, roundUsd } from '../cloud/pricing.ts'
 import type { MediaGenerationProvider } from '../cloud/types.ts'
 import type { MediaFileSource } from '../engine/types.ts'
 import type { ProjectEditor } from '../model/editor.ts'
@@ -23,7 +23,13 @@ import { compilePlan, type CompiledPlan } from './compile.ts'
 import { estimatePlanCost, requiresConfirmation, type PlanCost, type SpendPolicy } from './cost.ts'
 import { previewCommands, type ChangeItem } from './diff.ts'
 import { DirectorError, summaryLeft } from './expand.ts'
-import { generatePlanShots, generationOptionsFor, type GenerationChoice } from './generate.ts'
+import {
+  failureReason,
+  generatePlanShots,
+  generationOptionsFor,
+  type GenerationChoice,
+  type ShotStatus,
+} from './generate.ts'
 import {
   buildPlannerInput,
   type FootageMatcher,
@@ -173,6 +179,12 @@ export type DirectorState =
       fraction: number
       message: string
       unit: GeneratedUnit
+      /** Every AI shot of the run and where it stands, in the order they are made. */
+      shots: ShotStatus[]
+      /** Estimated spend of the requests fal.ai finished (and billed) in this run so far. */
+      spentUsd: number
+      /** What the run was estimated to cost when it started. */
+      usd: number
       /** Set once Cancel was pressed while results fal.ai already made are downloading: how many are kept. */
       stopping?: { keeping: number }
     }
@@ -186,8 +198,8 @@ export type DirectorState =
       warnings: string[]
       /** AI shots that failed and show as placeholders; apply again to retry just those. */
       failedShots: number
-      /** The first failure in its source's words, for a tooltip ("fal.ai said: …" when from fal.ai); the warning stays plain. */
-      failedReason?: string
+      /** Why the failed shots failed: each distinct reason once, in its source's words ("fal.ai said: …"). The warning stays plain. */
+      failedReasons?: string[]
       /** What retrying the failed shots costs, and whether that needs the user's OK first. */
       cost: PlanCost | null
       confirmRequired: boolean
@@ -527,11 +539,12 @@ export class DirectorSession {
     }
 
     let failed = 0
-    let failedReason: string | undefined
+    let failedReasons: string[] = []
     const warnings: string[] = []
     if (needsGeneration && provider && this.deps.store) {
       const store = this.deps.store
       const total = cost?.count ?? 0
+      let spent = 0
       const handle = this.deps.jobs.run({
         kind: 'director.generate',
         title: total
@@ -550,10 +563,19 @@ export class DirectorSession {
               done.set(shotId, asset)
               this.keep(asset)
             },
-            onBilled: (usd) => this.deps.ledger?.record(usd, `Director: ${plan.title}`),
+            onBilled: (billed) => {
+              this.deps.ledger?.record(billed, `Director: ${plan.title}`)
+              spent = roundUsd(spent + billed)
+              if (this.job === handle && this.state.status === 'generating')
+                this.set({ ...this.state, spentUsd: spent })
+            },
             onProgress: (counts) => {
               if (this.job === handle && this.state.status === 'generating')
                 this.set({ ...this.state, done: counts.done, failed: counts.failed })
+            },
+            onShots: (shots) => {
+              if (this.job === handle && this.state.status === 'generating')
+                this.set({ ...this.state, shots })
             },
             onStopping: (keeping) => {
               if (this.job === handle && this.state.status === 'generating')
@@ -581,17 +603,17 @@ export class DirectorSession {
         fraction: 0,
         message: 'Starting',
         unit,
+        shots: [],
+        spentUsd: 0,
+        usd,
       })
       try {
         const result = await handle.promise
         for (const [id, asset] of result.assets) done.set(id, asset)
         failed = result.failed.length
-        const first = result.failed[0]?.error
-        if (first?.message)
-          failedReason =
-            first instanceof CloudError && first.provider === 'fal'
-              ? `fal.ai said: ${first.message}`
-              : first.message
+        failedReasons = [
+          ...new Set(result.failed.filter((f) => f.error.message).map((f) => failureReason(f.error))),
+        ]
         if (failed) {
           // The no-break space keeps "place" from ending up alone on the note's last line in the narrow panel.
           warnings.push(
@@ -642,7 +664,7 @@ export class DirectorSession {
       summary: plan.summary,
       warnings: [...new Set([...plan.warnings, ...compiled.warnings, ...warnings])],
       failedShots: failed,
-      ...(failed && failedReason ? { failedReason } : {}),
+      ...(failed && failedReasons.length ? { failedReasons } : {}),
       cost: retry.cost,
       confirmRequired: retry.confirmRequired,
       hiddenTracks: compiled.stats.hiddenTracks,

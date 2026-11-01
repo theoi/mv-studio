@@ -18,6 +18,7 @@ import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
 import {
   analysis,
   badKey,
+  contentPolicy,
   DOWNBEATS,
   SECTIONS,
   fakeProvider,
@@ -160,6 +161,35 @@ describe('DirectorSession', () => {
     expect(provider.calls.length - callsBefore).toBe(total - kept)
   })
 
+  it('shows what the run has spent so far, against its estimate, and where each shot stands', async () => {
+    // The first two requests finish; the next two stay underway until the user cancels.
+    const provider = fakeProvider({
+      gate: (i) => (i < 2 ? Promise.resolve() : new Promise<void>(() => undefined)),
+    })
+    const { session } = setup({ provider, videos: 0, confirmAboveUsd: 5 })
+    const planned = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    const applying = session.apply()
+    const generating = () => {
+      const s = session.getState()
+      return s.status === 'generating' ? s : undefined
+    }
+    for (let i = 0; i < 50 && (generating()?.done ?? 0) < 2; i++) await new Promise((r) => setTimeout(r, 0))
+    const state = generating()!
+    expect(state.usd).toBe(planned.cost!.usd)
+    const billed = provider.calls.slice(0, 2).reduce((sum, call) => sum + provider.estimate(call).usd, 0)
+    expect(billed).toBeGreaterThan(0)
+    expect(state.spentUsd).toBeCloseTo(billed, 6)
+    expect(state.shots.map((s) => s.state)).toEqual([
+      'done',
+      'done',
+      'sending',
+      'sending',
+      ...Array<string>(planned.cost!.count - 4).fill('waiting'),
+    ])
+    session.cancel()
+    await applying
+  })
+
   it('keeps and records a clip fal.ai finished when Cancel lands during its download', async () => {
     const downloading: (() => void)[] = []
     const provider = fakeProvider({
@@ -230,6 +260,18 @@ describe('DirectorSession', () => {
     expect(provider.calls).toHaveLength(calls)
   })
 
+  it('gives each distinct reason the failed shots failed for once', async () => {
+    const provider = fakeProvider({
+      failOn: (i) => (i < 2 ? providerDown() : i === 2 ? contentPolicy() : undefined),
+    })
+    const { session } = setup({ provider, videos: 0, confirmAboveUsd: 100 })
+    ready(await session.plan({ kind: 'ai', seed: 2, generate: { mode: 'images', tier: 'draft' } }))
+    const applied = await session.apply()
+    if (applied.status !== 'applied') throw new Error(`expected applied, got ${applied.status}`)
+    expect(applied.failedShots).toBe(3)
+    expect(applied.failedReasons).toEqual(['fal.ai said: HTTP 500', 'fal.ai said: Prompt was blocked'])
+  })
+
   it('goes back from a failed generation to the plan with its price', async () => {
     const provider = fakeProvider({ failOn: () => providerDown() })
     const { session } = setup({ provider, videos: 0, confirmAboveUsd: 0.001 })
@@ -263,12 +305,12 @@ describe('DirectorSession', () => {
     if (applied.status !== 'applied') throw new Error(`expected applied, got ${applied.status}`)
     expect(applied.unit).toBe('clip')
     expect(applied.failedShots).toBe(1)
-    // One note for the failure, pointing at Retry; fal.ai's own words go to the Retry button's tooltip.
+    // One note for the failure, pointing at Retry; fal.ai's own words go under the Retry button.
     expect(applied.warnings).toContain(
       '1 clip couldn’t be generated. Retry it below; a dark placeholder marks its\u00a0place.',
     )
     expect(applied.warnings.filter((w) => w.includes('placeholder'))).toHaveLength(1)
-    expect(applied.failedReason).toBe('fal.ai said: HTTP 500')
+    expect(applied.failedReasons).toEqual(['fal.ai said: HTTP 500'])
     const done = [...new Set(seen.map((s) => s.done))]
     expect(done).toEqual(Array.from({ length: count + 1 }, (_, i) => i))
     expect(seen.at(-1)).toEqual({ done: count, failed: 1 })
@@ -291,7 +333,7 @@ describe('DirectorSession', () => {
     )
   })
 
-  it('gives a failure on this device its own words in the tooltip, without "fal.ai said"', async () => {
+  it('gives a failure on this device its own words, without "fal.ai said"', async () => {
     const provider = fakeProvider()
     const generate = provider.generate.bind(provider)
     provider.generate = async (request, ctx) => {
@@ -304,7 +346,7 @@ describe('DirectorSession', () => {
     const applied = await session.apply()
     if (applied.status !== 'applied') throw new Error(`expected applied, got ${applied.status}`)
     expect(applied.failedShots).toBe(1)
-    expect(applied.failedReason).toBe('The provider returned no media for this shot.')
+    expect(applied.failedReasons).toEqual(['The provider returned no media for this shot.'])
   })
 
   it('records nothing for a clip fal.ai failed itself, so its retry is the only charge for it', async () => {

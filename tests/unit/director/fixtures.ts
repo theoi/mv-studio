@@ -2,6 +2,7 @@ import type { GeneratedMediaStore } from '../../../src/cloud/media.ts'
 import { falModel, FAL_MODELS } from '../../../src/cloud/fal/catalog.ts'
 import { CloudError } from '../../../src/cloud/errors.ts'
 import type {
+  GenerationContext,
   GenerationRequest,
   GenerationResult,
   MediaGenerationProvider,
@@ -134,7 +135,7 @@ export interface FakeProvider extends MediaGenerationProvider {
   /** Return a CloudError for the n-th call (0-based) or every call. */
   failOn?: (index: number, request: GenerationRequest) => CloudError | undefined
   /** Holds the n-th generate call until the promise resolves or the job is cancelled; may report its progress. */
-  gate?: (index: number, ctx: JobContext) => Promise<void>
+  gate?: (index: number, ctx: GenerationContext) => Promise<void>
 }
 
 /** Behaves like FalProvider with real fal prices, without any network. */
@@ -151,7 +152,7 @@ export function fakeProvider(overrides: Partial<Pick<FakeProvider, 'failOn' | 'g
       if (!model) throw new Error(`unknown model ${request.modelId}`)
       return model.estimate(request)
     },
-    async generate(request: GenerationRequest, ctx: JobContext): Promise<GenerationResult> {
+    async generate(request: GenerationRequest, ctx: GenerationContext): Promise<GenerationResult> {
       const index = provider.calls.length
       provider.calls.push(request)
       if (provider.gate) {

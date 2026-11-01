@@ -164,12 +164,22 @@ removes clips whose line is gone or no longer has their words.
   model writes the plan (`plansWithModel`), since its time is unknown.
 - `ready`: `preview.summary`, `preview.changes`, `preview.items` behind "Show changes", `preview.warnings` as
   notes, sections with mood and pace, "Try another version" (`tryAnother()`), and the main button labeled
-  `actionLabel` ("Make video" or "Generate 12 shots · about $2.40"). When `confirmRequired` is true the button opens
+  `actionLabel` ("Make video" or "Generate 12 shots · about $2.40"; in a panel under 288 px wide the price goes on a
+  line of its own, without the "·", so it always shows in full). When `confirmRequired` is true the button opens
   a cost confirmation listing `cost.items`, then calls `apply({ confirmSpend: true })`. "Apply without AI shots"
   calls `apply({ skipGeneration: true })` and leaves dark placeholders.
-- `generating`: "Generating shot 3 of 12" with a progress bar and Cancel; `failed` counts shots that could not be
-  made while the rest go on. Cancel returns to `ready` with `stopped` set to its note ("Generation stopped. 3 clips
-  made so far are kept."), keeps the shots already made, and lowers the cost. While
+- `generating`: subtitle "Generating the AI clips", and in the card "12 clips · 1 done · 6 failed" with a progress
+  bar and Cancel (what is finished of the run the top bar names; shots are made two at a time); `failed` counts
+  shots that could not be made while the rest go on. Under the bar, "Spent about $0.51 of an estimated $3.38"
+  (`spentUsd`, what fal.ai has billed in this run, against the run's estimate `usd`), then a row for each shot
+  underway from `shots`: its label ("Intro · clip 1": AI shots of a video plan are named clips) and "Sending", "In
+  line · 2 ahead" (its place in fal.ai's queue), "Next in line", "Generating · 40%" or "Downloading". All failed
+  shots share one row, "6 failed · retry when the run ends": a button that opens the reasons below it, each
+  reason once with the shots it stopped. Shots done or still waiting have no row: the bar counts them, and rows for
+  every shot would push Cancel out of a 720 px window. Each of these lines fits on one line at the default panel
+  width, and the footer with Cancel stays pinned in this view even in a short panel (`ToolView`'s `pinFooter`). Cancel
+  returns to `ready` with `stopped` set to its note ("Generation stopped. 3 clips made so far are kept."), keeps the
+  shots already made, and lowers the cost. While
   results fal.ai already made are still downloading after Cancel, `stopping` is set: the subtitle and the progress
   line say "Stopping…", "Keeping 2 clips that are downloading" goes under the bar, the cancel note hides, and Cancel
   is disabled but keeps focus. When the run ends, the `ready` view shows the `stopped` note in its footer just above
@@ -180,7 +190,8 @@ removes clips whose line is gone or no longer has their words.
 - Every state with a plan has `unit`: `'clip'` when all its AI shots are videos ("Generate 12 clips", "Retry 1
   failed clip"), else `'shot'`.
 - `applied`: summary, warnings, Undo (`undo()`; only while the draft is still the latest change) and, when
-  `failedShots > 0`, "Retry failed shots" (`apply()` again generates only those).
+  `failedShots > 0`, "Retry failed shots" (`apply()` again generates only those), with `failedReasons` (each
+  distinct reason once, "fal.ai said: …") listed under it and describing the button.
 - `error`: `title`, `message` and `steps` in place, with the plan kept so the user can retry.
 
 ## LLM planner
