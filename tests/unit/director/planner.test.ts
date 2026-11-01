@@ -370,6 +370,10 @@ describe('local planner', () => {
     ['Make an AI music video about a lonely astronaut on Mars', 'a lonely astronaut on Mars'],
     ['Use my clips of the beach at sunset', 'the beach at sunset'],
     ['Use stock footage of a busy market', 'a busy market'],
+    ['Make a music video with my footage of the band', 'the band'],
+    ['Edit my clips into a dreamy montage of summer', 'a dreamy montage of summer'],
+    ['A neon city at night and AI shots of the ocean', 'A neon city at night and the ocean'],
+    ['The AI-generated city glows', 'The city glows'],
     ['AI shots for the chorus, a neon alley. AI images only. Make an AI music video.', 'a neon alley'],
     // Nothing is left of an edit instruction once its phrase goes.
     ['Cut to the beat. Cut on the beat.', ''],
@@ -400,6 +404,7 @@ describe('local planner', () => {
     'A 1990s mall, freshly cut grass outside, a bridge over the river',
     'The cuts of meat at a butcher shop',
     'A gallery of AI images in a museum',
+    'The AI generated a storm',
     'use of color: neon pink and teal',
   ])('keeps an idea that only describes pictures as it is: %j', (idea) => {
     expect(visualIdea(idea)).toBe(idea)

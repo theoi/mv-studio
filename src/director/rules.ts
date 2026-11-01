@@ -583,14 +583,21 @@ const SHOTS = String.raw`(?:${MEDIA}|montage|visuals?|scenes?|shots?)`
 const AI_SOURCE = String.raw`(ai[\s-]+(generated\s+|made\s+)?)`
 const DURATION = String.raw`\d+[\s-]*(secs?|seconds?|mins?|minutes?)`
 
-/** Request words in front of the picture, which stays: "Make an AI video of …", "AI visuals of …", "Use AI to show …". */
+/**
+ * Request words in front of the picture, which stays: "Make an AI video of …", "AI visuals of …", "my footage of …",
+ * "Edit my clips into …", "Use AI to show …". Each runs on what the one before left.
+ */
 const REQUESTS = [
   new RegExp(
     String.raw`^(please\s+)?((can|could|would)\s+you\s+)?(make|create|generate|produce|give\s+me|show\s+me|i\s+want|i['’]?d\s+like|i\s+would\s+like)\s+(me\s+)?((a|an|some)\s+)?${AI_SOURCE}?(music\s+)?${SHOTS}\s+(of|about|with|showing|featuring|set\s+in|where)\s+`,
     'i',
   ),
   new RegExp(
-    String.raw`^((a|an|some)\s+)?${AI_SOURCE}?(music\s+)?${SHOTS}(\s+(of|about|showing|featuring)\s+|\s*:\s*)`,
+    String.raw`^(please\s+)?(edit|cut|turn|make)\s+((my|our|the|these|those)\s+)?(own\s+)?${SHOTS}\s+into\s+`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`^((a|an|some|my|our)\s+)?(own\s+)?(stock\s+|${AI_SOURCE})?(music\s+)?${SHOTS}(\s+(of|about|showing|featuring)\s+|\s*:\s*)`,
     'i',
   ),
   new RegExp(
@@ -599,9 +606,12 @@ const REQUESTS = [
   ),
 ]
 
-/** "AI-generated" before what it describes goes, with its article fixed: "An AI-generated dreamscape" → "A dreamscape". */
+/**
+ * "AI-generated" before what it describes goes, with its article fixed: "An AI-generated dreamscape" → "A dreamscape".
+ * Not when it's the verb ("The AI generated a storm").
+ */
 const AI_MADE = new RegExp(
-  String.raw`\b(?:(an?)\s+)?ai[\s-]+(?:generated|made)\s+(?!${SHOTS}\b)(?=(\S))`,
+  String.raw`\b(?:(an?)\s+)?ai[\s-]+(?:generated|made)\s+(?!(?:${SHOTS}|a|an|the|this|that|these|those|some|every|it|its|them|my|our|his|her|their)\b)(?=(\S))`,
   'gi',
 )
 
@@ -644,6 +654,8 @@ const INSTRUCTION_PHRASES = [
     String.raw`\s*\b(in|during|for)\s+(the|every|each)\s+(chorus(es)?|verses?|intro|outro)\b${PHRASE_END}`,
     'gi',
   ),
+  // "…and AI shots of the ocean": the source words go, what they show stays.
+  new RegExp(String.raw`\b${AI_SOURCE}${SHOTS}\s+(of|showing|featuring)\s+`, 'gi'),
 ]
 
 const FILLER = new Set(
