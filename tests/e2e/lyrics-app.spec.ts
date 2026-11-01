@@ -124,3 +124,43 @@ test('timing waits while stems are being separated, so two separations never run
   await expect(time).toBeEnabled()
   await expect(page.getByText('Separates the vocals first · about 4 min on this device')).toBeVisible()
 })
+
+test('while the estimate for drafting is still being worked out, the cost line says so instead of a stand-in', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    const { app } = window.mvStudio
+    const w = window as unknown as { finishEstimate?: () => void }
+    const drafted = new Promise<void>((resolve) => {
+      w.finishEstimate = resolve
+    })
+    const aligner = { name: 'wav2vec2 lyrics aligner', bytes: 95_286_404 }
+    app.lyrics.setLyricsServiceForTests({
+      async estimate(_project: unknown, _songId: string, request: { kind: 'time' | 'draft' }) {
+        if (request.kind === 'time')
+          return { separatesStems: false, downloads: [aligner], downloadBytes: aligner.bytes, seconds: 100 }
+        await drafted
+        const whisper = { name: 'Whisper small', bytes: 252_000_000 }
+        return {
+          separatesStems: false,
+          downloads: [aligner, whisper],
+          downloadBytes: aligner.bytes + whisper.bytes,
+          seconds: 156,
+        }
+      },
+      run() {
+        throw new Error('unused')
+      },
+    })
+    window.location.hash = '#/editor?tab=assist&assist=lyrics&t=73.6'
+  })
+  await waitForPreview(page)
+  await expect(page.getByText('95 MB download, once · about 2 min on this device')).toBeVisible()
+
+  await page.getByRole('radio', { name: 'Draft from vocals' }).click()
+  await expect(page.getByText('Working out the download and time…')).toBeVisible()
+  await page.evaluate(() => (window as unknown as { finishEstimate: () => void }).finishEstimate())
+  await expect(page.getByText('347 MB download, once · about 3 min on this device')).toBeVisible()
+})

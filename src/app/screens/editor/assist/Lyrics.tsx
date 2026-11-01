@@ -160,21 +160,22 @@ export function LyricsView() {
     setText('')
     requestAnimationFrame(() => textRef.current?.focus())
   }
-  const [estimate, setEstimate] = useState<{
-    mode: LyricsMode
-    value: Awaited<ReturnType<typeof estimateLyrics>>
-  }>()
+  // Both modes at once, so switching between them shows the line at once instead of a stand-in.
+  const [estimates, setEstimates] = useState<
+    Partial<Record<LyricsMode, Awaited<ReturnType<typeof estimateLyrics>>>>
+  >({})
   const stemsReady = !!songAnalysis(project)?.stems
   useEffect(() => {
     let live = true
-    estimateLyrics(lyricsKind(mode)).then(
-      (value) => live && setEstimate({ mode, value }),
-      () => undefined,
-    )
+    for (const m of ['paste', 'draft'] as const)
+      estimateLyrics(lyricsKind(m)).then(
+        (value) => live && setEstimates((e) => ({ ...e, [m]: value })),
+        () => live && setEstimates((e) => ({ ...e, [m]: null })),
+      )
     return () => {
       live = false
     }
-  }, [mode, project.songAssetId, stemsReady, phase])
+  }, [project.songAssetId, stemsReady, phase])
   // The highlight is a setting of a line's clip: open the first chorus line that has one, else the first such line.
   const shown = new Set(
     Object.values(project.clips).flatMap((c) => (c.type === 'text' && c.lyricLineId ? [c.lyricLineId] : [])),
@@ -241,9 +242,7 @@ export function LyricsView() {
     )
   }
 
-  const cost = separating
-    ? { text: 'Waiting for the stems to finish…' }
-    : lyricsCost(estimate?.mode === mode ? estimate.value : null)
+  const cost = separating ? { text: 'Waiting for the stems to finish…' } : lyricsCost(estimates[mode])
   const canRun = hasSong(project) && !separating && (mode === 'draft' || text.trim().length > 0)
   return (
     <ToolView

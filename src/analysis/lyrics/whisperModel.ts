@@ -1,5 +1,6 @@
 /** Whisper through Transformers.js as a `Transcriber`. */
-import { loadTransformers } from '../../shared/transformers.ts'
+import type * as Transformers from '@huggingface/transformers'
+import { loadTransformers, pinRevision } from '../../shared/transformers.ts'
 import type { ModelDevice } from '../../shared/models.ts'
 import type { WhisperModelSpec } from '../models.ts'
 import type { TranscriptSegment, Transcriber } from './whisper.ts'
@@ -15,6 +16,20 @@ function asChunks(out: unknown, seconds: number): AsrChunk[] {
   return typeof result?.text === 'string' ? [{ timestamp: [0, seconds], text: result.text }] : []
 }
 
+/** The speech recognition pipeline for `spec`, every file of it at its pinned revision. */
+export function loadWhisperPipeline(
+  T: typeof Transformers,
+  spec: WhisperModelSpec,
+  device: Transformers.DeviceType,
+) {
+  pinRevision(spec.repo, spec.revision)
+  return T.pipeline('automatic-speech-recognition', spec.repo, {
+    revision: spec.revision,
+    device,
+    dtype: spec.dtype,
+  })
+}
+
 /**
  * Loads a Whisper model. Each chunk gets a token budget proportional to its length, which stops the repetition
  * loops Whisper can fall into on singing well before its 448-token limit.
@@ -24,11 +39,7 @@ export async function createWhisperTranscriber(
   device: ModelDevice,
 ): Promise<Transcriber & { dispose(): Promise<unknown> }> {
   const T = await loadTransformers()
-  const asr = await T.pipeline('automatic-speech-recognition', spec.repo, {
-    revision: spec.revision,
-    device,
-    dtype: spec.dtype,
-  })
+  const asr = await loadWhisperPipeline(T, spec, device)
   const config = asr.model.generation_config as unknown as {
     decoder_start_token_id: number
     lang_to_id: Record<string, number>
