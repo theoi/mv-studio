@@ -2,7 +2,7 @@ import type { ModelDescriptor } from '../shared/models.ts'
 
 /**
  * What the app calls each model analysis downloads, the same in Settings › This device, progress lines and cost
- * lines.
+ * lines (in sentences through `theModel` and `downloadingModel`).
  */
 export const MODEL_TITLES = {
   beats: 'Beat and bar tracker',
@@ -10,19 +10,6 @@ export const MODEL_TITLES = {
   transcriber: 'Lyrics transcriber',
   aligner: 'Lyrics aligner',
 } as const
-
-export type AnalysisModel = keyof typeof MODEL_TITLES
-
-/** A model's name inside a sentence: "the stem separator". */
-export const theModel = (model: AnalysisModel) => `the ${MODEL_TITLES[model].toLowerCase()}`
-
-/** The progress line while a model downloads, the first time: "Downloading the stem separator (181 MB, once)". */
-export const downloadingModel = (model: AnalysisModel, bytes: number) =>
-  `Downloading ${theModel(model)} (${Math.round(bytes / 1e6)} MB, once)`
-
-/** Total size of a model's files. */
-export const modelBytes = (model: ModelDescriptor) =>
-  Object.values(model.files).reduce((sum, f) => sum + (f.bytes ?? 0), 0)
 
 /**
  * Beat This! final0 (CPJKU, MIT), FP32 ONNX export hosted on Hugging Face. Pinned to a revision and checksum:

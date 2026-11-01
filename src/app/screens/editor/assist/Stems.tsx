@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, Lock, RotateCcw } from 'lucide-react'
-import { theModel } from '../../../../analysis/models.ts'
+import { MODEL_TITLES } from '../../../../analysis/models.ts'
+import { theModel } from '../../../../shared/models.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { aboutMinutes, formatBytes } from '../../../format.ts'
@@ -82,8 +83,8 @@ export function StemsView() {
         <Steps
           steps={[
             download
-              ? `Download ${theModel('stems')} (${formatBytes(download)}, once)`
-              : `Load ${theModel('stems')}`,
+              ? `Download ${theModel(MODEL_TITLES.stems)} (${formatBytes(download)}, once)`
+              : `Load ${theModel(MODEL_TITLES.stems)}`,
             'Separate the song',
             'Save stems with the project',
           ]}

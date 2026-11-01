@@ -1,13 +1,7 @@
 import type { JobProgress } from '../../shared/jobs.ts'
+import { downloadingModel, modelBytes, theModel } from '../../shared/models.ts'
 import type { ModelFileProgress } from '../../shared/transformers.ts'
-import {
-  downloadingModel,
-  modelBytes,
-  theModel,
-  WAV2VEC2_MODEL,
-  whisperFileUrls,
-  type WhisperModelSpec,
-} from '../models.ts'
+import { MODEL_TITLES, WAV2VEC2_MODEL, whisperFileUrls, type WhisperModelSpec } from '../models.ts'
 
 /**
  * How far the fraction moves before a download reports again. A model streams in thousands of chunks, and a progress
@@ -41,14 +35,14 @@ export function whisperLoadProgress(
 ): (p: ModelFileProgress) => void {
   const send = throttled(report)
   const graphs = whisperFileUrls(spec).map((url) => url.slice(url.lastIndexOf('/') + 1))
-  const message = downloadingModel('transcriber', spec.bytes)
+  const message = downloadingModel(MODEL_TITLES.transcriber, spec.bytes)
   const loaded = new Map<string, number>()
   const done = new Set<string>()
   let fraction = 0
   let starting = false
   const start = () => {
     starting = true
-    send({ stage: 'load', fraction: 1, message: `Starting ${theModel('transcriber')}` })
+    send({ stage: 'load', fraction: 1, message: `Starting ${theModel(MODEL_TITLES.transcriber)}` })
   }
   if (cached) start()
   else send({ stage: 'download', fraction: 0, message })
@@ -66,7 +60,7 @@ export function whisperLoadProgress(
 /** Progress of loading the lyrics aligner's files, for `loadModelFiles`: nothing for files read from the cache. */
 export function alignerLoadProgress(report: (p: JobProgress) => void): (p: JobProgress) => void {
   const send = throttled(report)
-  const message = downloadingModel('aligner', modelBytes(WAV2VEC2_MODEL))
+  const message = downloadingModel(MODEL_TITLES.aligner, modelBytes(WAV2VEC2_MODEL))
   return (p) => {
     if (p.stage !== 'cached') send({ ...p, stage: 'download', message })
   }
@@ -76,5 +70,5 @@ export function alignerLoadProgress(report: (p: JobProgress) => void): (p: JobPr
 export const ALIGNER_STARTING: JobProgress = {
   stage: 'load',
   fraction: 1,
-  message: `Starting ${theModel('aligner')}`,
+  message: `Starting ${theModel(MODEL_TITLES.aligner)}`,
 }

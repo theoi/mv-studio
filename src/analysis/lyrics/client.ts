@@ -1,7 +1,7 @@
 import type { ProjectEditor } from '../../model/editor.ts'
 import type { Asset, EditCommand, Id, LyricsDoc, Project } from '../../model/index.ts'
 import { JobError, jobs, type JobContext, type JobHandle, type JobRunner } from '../../shared/jobs.ts'
-import { modelCache, type ModelDescriptor } from '../../shared/models.ts'
+import { modelBytes, modelCache, type ModelDescriptor } from '../../shared/models.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../../shared/worker.ts'
 import type { DecodedAudio } from '../beats/fast.ts'
 import { decodeAudioFile } from '../decode.ts'
@@ -10,7 +10,6 @@ import { part } from '../jobContext.ts'
 import {
   DEMUCS_MODEL,
   MODEL_TITLES,
-  modelBytes,
   WAV2VEC2_MODEL,
   WHISPER_MODELS,
   whisperFileUrls,

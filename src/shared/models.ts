@@ -37,6 +37,22 @@ export interface ModelLoadOptions {
 
 export type ModelDevice = 'webgpu' | 'wasm'
 
+/**
+ * A model's name inside a sentence, from its title in Settings › This device ("Stem separator" gives "the stem
+ * separator"). Titles are sentence case with no proper nouns, so lowercasing them is safe.
+ */
+export const theModel = (title: string) => `the ${title.toLowerCase()}`
+
+/** A model's progress line while it downloads, the first time: "Downloading the stem separator (181 MB, once)". */
+export function downloadingModel(title: string, bytes: number): string {
+  const size = bytes < 1e6 ? 'under 1 MB' : `${Math.round(bytes / 1e6)} MB`
+  return `Downloading ${theModel(title)} (${size}, once)`
+}
+
+/** Total size of a model's files. */
+export const modelBytes = (model: ModelDescriptor) =>
+  Object.values(model.files).reduce((sum, f) => sum + (f.bytes ?? 0), 0)
+
 const CACHE_NAME = 'mv-studio-models-v1'
 
 /** Resolves a self-hosted model path against the app base, e.g. modelUrl('models/beat-this/model.onnx'). */

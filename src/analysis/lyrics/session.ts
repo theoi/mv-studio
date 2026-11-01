@@ -1,7 +1,7 @@
-import { theModel, WAV2VEC2_MODEL } from '../models.ts'
+import { MODEL_TITLES, WAV2VEC2_MODEL } from '../models.ts'
 import { loadOrt } from '../ort.ts'
 import { JobError, type JobProgress } from '../../shared/jobs.ts'
-import { loadModelFiles } from '../../shared/models.ts'
+import { loadModelFiles, theModel } from '../../shared/models.ts'
 import { ctcVocabulary, type CtcVocabulary } from './align.ts'
 import { ALIGNER_STARTING, alignerLoadProgress } from './loadProgress.ts'
 import type { CtcModel } from './wav2vec2.ts'
@@ -25,7 +25,7 @@ export async function createCtcModel(
       graphOptimizationLevel: 'all',
     })
   } catch (error) {
-    throw new JobError('model-load', `Could not start ${theModel('aligner')}`, { cause: error })
+    throw new JobError('model-load', `Could not start ${theModel(MODEL_TITLES.aligner)}`, { cause: error })
   }
   const inputName = session.inputNames[0] as string
   const model: CtcModel = {
