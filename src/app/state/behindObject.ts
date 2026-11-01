@@ -15,7 +15,7 @@ import {
   type ObjectPick,
   type VideoClip,
 } from './behind.ts'
-import { visionService } from './footage.ts'
+import { showingDownloads, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { startPick } from './pick.ts'
@@ -174,7 +174,7 @@ export function cutOutObject(
   const handle = jobs.run({
     kind: JOB_KINDS.cutout,
     title: 'Cutting out the object',
-    run: async (ctx) => {
+    run: showingDownloads(['picker'], async (ctx) => {
       const gone = () => new JobError('invalid-input', 'The clip is no longer on the timeline.')
       const start = editor.getProject()
       const footage = footageOf(start, start.clips[hostId])
@@ -228,7 +228,7 @@ export function cutOutObject(
       } finally {
         source.dispose()
       }
-    },
+    }),
   })
   jobId = handle.id
   useBehind.setState((s) => ({ requests: { ...s.requests, [jobId]: { clips: [hostId], object: true } } }))

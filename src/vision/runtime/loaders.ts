@@ -6,9 +6,10 @@ import { FilesetResolver } from '@mediapipe/tasks-vision'
 import { fetchModelFile, type ModelDescriptor } from '../../shared/models.ts'
 import { JobError } from '../../shared/jobs.ts'
 import { downloadProgress } from '../../shared/transformers.ts'
-import { visionError } from '../errors.ts'
-import { MEDIAPIPE_WASM_BASE } from './models.ts'
+import { downloadFailed, startFailed } from '../errors.ts'
+import { MEDIAPIPE_WASM_BASE, type VisionModel } from './models.ts'
 import { blockTelemetry } from './telemetry.ts'
+
 // ---------------------------------------------------------------------------------------------------------------
 // MediaPipe
 
@@ -22,32 +23,45 @@ function loadMediaPipeRuntime(): Promise<{ fileset: WasmFileset; factory: unknow
     return { fileset, factory: mod.default }
   })().catch((err: unknown) => {
     mediapipeRuntime = null
-    throw visionError(err, 'model-load')
+    throw err
   })
   return mediapipeRuntime
 }
 
-/** Model bytes through the shared loader (Cache Storage, progress), for MediaPipe's `modelAssetBuffer`. */
-export async function mediapipeModel(model: ModelDescriptor): Promise<Uint8Array> {
+/** Model bytes of `name` through the shared loader (Cache Storage, progress), for MediaPipe's `modelAssetBuffer`. */
+export async function mediapipeModel(model: ModelDescriptor, name: VisionModel): Promise<Uint8Array> {
   const file = model.files.model
   if (!file) throw new JobError('internal', `${model.name} has no model file`)
-  return new Uint8Array(await fetchModelFile(file, { onProgress: downloadProgress(model.name) }))
+  const progress = downloadProgress(file.url.slice(file.url.lastIndexOf('/') + 1))
+  try {
+    return new Uint8Array(await fetchModelFile(file, { onProgress: progress }))
+  } catch (err) {
+    throw downloadFailed(name, err)
+  }
 }
 
 /**
- * Creates a MediaPipe task from the ES-module WASM build (works in module workers).
+ * Creates a MediaPipe task of model `name` from the ES-module WASM build (works in module workers).
  * MediaPipe clears `self.ModuleFactory` after creating each task, and re-importing the
  * loader is a cached no-op, so the factory is restored before every creation.
  * Every task logs its usage to Google through this context's `fetch` (see telemetry.ts), so that is blocked first.
  */
-export async function createMediaPipeTask<T>(create: (fileset: WasmFileset) => Promise<T>): Promise<T> {
+export async function createMediaPipeTask<T>(
+  name: VisionModel,
+  create: (fileset: WasmFileset) => Promise<T>,
+): Promise<T> {
   blockTelemetry()
-  const { fileset, factory } = await loadMediaPipeRuntime()
-  const g = globalThis as { ModuleFactory?: unknown }
-  g.ModuleFactory ??= factory
+  let runtime: { fileset: WasmFileset; factory: unknown }
   try {
-    return await create(fileset)
+    runtime = await loadMediaPipeRuntime()
   } catch (err) {
-    throw visionError(err, 'model-load')
+    throw downloadFailed(name, err)
+  }
+  const g = globalThis as { ModuleFactory?: unknown }
+  g.ModuleFactory ??= runtime.factory
+  try {
+    return await create(runtime.fileset)
+  } catch (err) {
+    throw startFailed(name, err)
   }
 }

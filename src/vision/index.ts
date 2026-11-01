@@ -31,9 +31,10 @@ export {
   type DirectorFootageMatch,
   type FootageInfo,
 } from './director.ts'
-export { VISION_MODELS } from './runtime/models.ts'
+export { VISION_MODELS, type VisionModel } from './runtime/models.ts'
 export { resolveMood } from './matching/prompts.ts'
 export { fromJob, type TaskOptions } from './runtime/tasks.ts'
+export { withDownloadLines, type ModelDownload } from './runtime/downloads.ts'
 export {
   appendFrame,
   createPackedTrack,

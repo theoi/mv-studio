@@ -2,19 +2,16 @@
 import type * as Transformers from '@huggingface/transformers'
 import type { EmbeddingModel } from '../backends.ts'
 import { JobError } from '../../shared/jobs.ts'
-import { visionError } from '../errors.ts'
-import {
-  loadTransformers,
-  pinRevision,
-  registerModelFiles,
-  withModelProgress,
-} from '../../shared/transformers.ts'
+import { downloadFailed, startFailed, visionError } from '../errors.ts'
+import { loadTransformers, pinRevision, registerModelFiles } from '../../shared/transformers.ts'
+import { loadingModel } from '../runtime/loading.ts'
 import {
   hfRepo,
   hfRevision,
   transformersFiles,
   transformersRevisions,
   VISION_MODELS,
+  type VisionModel,
 } from '../runtime/models.ts'
 import { exposeWorker, transfer, type WorkerCallContext } from '../../shared/worker.ts'
 import { detectCapabilities } from '../../shared/capabilities.ts'
@@ -90,6 +87,14 @@ function toUint8(values: Float32Array | number[], invert = false): Uint8Array {
 
 // --- models -----------------------------------------------------------------
 
+/**
+ * Names model `name` in an error from loading it. JobErrors come from the shared loader, which Transformers.js fetches
+ * through, so they are downloads that failed; anything else failed to start the model.
+ */
+function loadError(name: VisionModel, err: unknown) {
+  return err instanceof JobError ? downloadFailed(name, err) : startFailed(name, err)
+}
+
 interface ImageModel {
   processor: Transformers.Processor
   model: Transformers.PreTrainedModel
@@ -101,6 +106,7 @@ function imageModel(
   key: string,
   descriptor: ModelDescriptor,
   cls: 'auto' | 'clipVision' | 'siglipVision',
+  name: VisionModel,
 ): Promise<ImageModel> {
   let p = imageModels.get(key)
   if (!p) {
@@ -120,7 +126,7 @@ function imageModel(
       return { processor, model: loaded.model, device: loaded.device }
     })().catch((err: unknown) => {
       imageModels.delete(key)
-      throw visionError(err, 'model-load')
+      throw loadError(name, err)
     })
     imageModels.set(key, p)
   }
@@ -148,7 +154,7 @@ function textModel(key: EmbeddingModel): Promise<TextModel> {
       return { tokenizer, model: loaded.model }
     })().catch((err: unknown) => {
       textModels.delete(key)
-      throw visionError(err, 'model-load')
+      throw loadError('tagger', err)
     })
     textModels.set(key, p)
   }
@@ -191,8 +197,8 @@ const api = {
       try {
         if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
         const Tx = await loadTransformers()
-        const m = await withModelProgress(ctx.progress, () =>
-          imageModel('depth', VISION_MODELS.depthAnythingSmall, 'auto'),
+        const m = await loadingModel('depth', ctx.progress, () =>
+          imageModel('depth', VISION_MODELS.depthAnythingSmall, 'auto', 'depth'),
         )
         // DPT resizes so the short side matches and keeps aspect (multiple of 14).
         setSize(m.processor, { height: input.shortSide, width: input.shortSide })
@@ -220,8 +226,8 @@ const api = {
       try {
         if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
         const Tx = await loadTransformers()
-        const m = await withModelProgress(ctx.progress, () =>
-          imageModel('modnet', VISION_MODELS.modnet, 'auto'),
+        const m = await loadingModel('matte', ctx.progress, () =>
+          imageModel('modnet', VISION_MODELS.modnet, 'auto', 'matte'),
         )
         setSize(m.processor, { shortest_edge: input.shortSide })
         const inputs = await m.processor(rawImage(Tx, bitmap))
@@ -252,11 +258,12 @@ const api = {
         if (!input.bitmaps.length) return { dim: 0, data: new Float32Array(0) }
         const Tx = await loadTransformers()
         const isClip = input.model === 'clipB32'
-        const m = await withModelProgress(ctx.progress, () =>
+        const m = await loadingModel('tagger', ctx.progress, () =>
           imageModel(
             `${input.model}:vision`,
             EMBEDDING_MODELS[input.model],
             isClip ? 'clipVision' : 'siglipVision',
+            'tagger',
           ),
         )
         const inputs = await m.processor(input.bitmaps.map((b) => rawImage(Tx, b)))
@@ -280,7 +287,7 @@ const api = {
       try {
         if (ctx.signal.aborted) throw new JobError('cancelled', 'The task was cancelled.')
         if (!input.texts.length) return { dim: 0, data: new Float32Array(0) }
-        const m = await withModelProgress(ctx.progress, () => textModel(input.model))
+        const m = await loadingModel('tagger', ctx.progress, () => textModel(input.model))
         const isClip = input.model === 'clipB32'
         const tokens = m.tokenizer(
           input.texts,

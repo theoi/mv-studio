@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import type { Id, Project } from '../../model/index.ts'
-import { JobError } from '../../shared/jobs.ts'
+import { JobError, type JobContext } from '../../shared/jobs.ts'
 import type {
   AssetIndexStatus,
   DirectorFootageMatcher,
@@ -10,6 +10,7 @@ import type {
   FootageResult,
   FootageService,
   IndexingState,
+  VisionModel,
   VisionService,
   VisionServiceOptions,
 } from '../../vision/index.ts'
@@ -76,6 +77,20 @@ export function visionService(): Promise<VisionService> {
     return vision
   })
   return visionLoading
+}
+
+/**
+ * A vision job's `run` that shows the first-time downloads of `models` as its progress line ("Downloading the depth
+ * estimator (27 MB, once)") while they last.
+ */
+export function showingDownloads<T>(
+  models: readonly VisionModel[],
+  run: (ctx: JobContext) => Promise<T>,
+): (ctx: JobContext) => Promise<T> {
+  return async (ctx) => {
+    const [v, vision] = await Promise.all([import('../../vision/index.ts'), visionService()])
+    return v.withDownloadLines(vision, models, run)(ctx)
+  }
 }
 
 export function footageService(): Promise<FootageService> {

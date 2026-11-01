@@ -25,6 +25,7 @@ import {
   type VisualAnalysisParts,
 } from '../analysisData.ts'
 import { visionError } from '../errors.ts'
+import { withDownloadLines } from '../runtime/downloads.ts'
 import { createAssetFrameSource } from '../runtime/assetSource.ts'
 import type { FrameSource } from '../runtime/frames.ts'
 import { describeClips, tagWords } from '../matching/tags.ts'
@@ -105,7 +106,8 @@ export interface FootageService {
 
 export interface FootageServiceDeps {
   editor: Pick<ProjectEditor, 'getProject' | 'dispatch' | 'subscribe'>
-  vision: Pick<VisionService, 'indexClip' | 'matcher' | 'subjects'>
+  vision: Pick<VisionService, 'indexClip' | 'matcher' | 'subjects'> &
+    Partial<Pick<VisionService, 'watchDownloads'>>
   media: MediaFileSource
   jobs?: Pick<JobRunner, 'run'>
   /** Frames to analyze for an asset (default: the export decoder for clips, the image itself for stills). */
@@ -222,7 +224,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
     const handle = runner.run<void>({
       kind: FOOTAGE_INDEX_JOB,
       title: 'Analyzing footage',
-      run: async (ctx) => {
+      run: withDownloadLines(vision, ['tagger', 'cutout'], async (ctx) => {
         const report = () => {
           const fraction = total ? (done + (current?.fraction ?? 0)) / total : 0
           ctx.progress({
@@ -329,7 +331,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
           current = undefined
           report()
         }
-      },
+      }),
     })
     running = { handle, token }
     emit()
