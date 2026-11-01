@@ -73,17 +73,19 @@ jobs:
           echo "run=$run" >> "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.run == 'true'
         uses: ./.github/actions/node-deps
-      - name: Let apt retry failed downloads
+      - name: Give apt download retries and timeouts
         if: steps.scope.outputs.run == 'true'
-        run: echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/80-retries
+        run: printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/80-retries
       - name: Install Chromium for Playwright
         if: steps.scope.outputs.run == 'true'
-        timeout-minutes: 12
-        run: for attempt in 1 2 3; do npx playwright install --with-deps chromium && exit 0; sleep $((attempt * 20)); done; exit 1
+        # apt-get update can hang silently on a stalled mirror. `timeout` ends a stuck attempt so the next one retries: it
+        # signals its whole process group, and sudo passes the signal on to apt-get, so no apt-get is left holding the lock.
+        timeout-minutes: 15
+        run: for attempt in 1 2 3; do timeout -k 10 240 npx playwright install --with-deps chromium && exit 0; sleep $((attempt * 20)); done; exit 1
       - name: Install ffmpeg (test fixtures and export verification)
         if: steps.scope.outputs.run == 'true'
-        timeout-minutes: 12
-        run: for attempt in 1 2 3; do sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg && exit 0; sleep $((attempt * 20)); done; exit 1
+        timeout-minutes: 15
+        run: for attempt in 1 2 3; do sudo timeout -k 10 120 apt-get update && sudo timeout -k 10 480 apt-get install -y --no-install-recommends ffmpeg && exit 0; sleep $((attempt * 20)); done; exit 1
       - if: steps.scope.outputs.run == 'true'
         run: npm run build
       - if: steps.scope.outputs.run == 'true' && matrix.preview == 'worker'
