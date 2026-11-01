@@ -158,7 +158,7 @@ export async function chooseSampleSong(): Promise<void> {
   await loadDraft(asset, title, analysis)
 }
 
-/** Adds clips and images for a beat-cut video: copies them into browser storage. */
+/** Adds clips and images for a beat-cut or AI video: copies them into browser storage. */
 export async function addFootage(files: File[]): Promise<void> {
   const visual = files.filter(isVisualFile)
   const skipped = files.filter((f) => !isVisualFile(f))
@@ -172,7 +172,18 @@ export async function addFootage(files: File[]): Promise<void> {
   })
   if (!visual.length) return
   update((s) => ({ adding: s.adding + visual.length }))
-  const { assets, failed } = await storeFiles(visual)
+  let stored: Awaited<ReturnType<typeof storeFiles>>
+  try {
+    stored = await storeFiles(visual)
+  } catch {
+    // Only the storage code failing to load gets here; a file that can't be stored is in `failed`.
+    update((s) => ({
+      adding: Math.max(0, s.adding - visual.length),
+      footageError: 'The files couldn’t be added. Check your connection and try again.',
+    }))
+    return
+  }
+  const { assets, failed } = stored
   update((s) => ({
     adding: Math.max(0, s.adding - visual.length),
     footage: [...s.footage, ...assets.filter((a) => !s.footage.some((f) => f.id === a.id))],
@@ -276,7 +287,7 @@ export async function openFromSetup(withSong = true): Promise<void> {
     ...(analysis ? { analysis } : {}),
     ...(song?.sample && kind === 'lyric' ? { timedLyrics: sampleSong().lyrics } : {}),
     ...(kind === 'lyric' ? { lyrics: s.lyrics } : {}),
-    ...(kind === 'footage' ? { footage: s.footage } : {}),
+    ...(kind === 'footage' || kind === 'ai' ? { footage: s.footage } : {}),
     ...(kind === 'ai' ? { idea: s.idea } : {}),
     ...(kind === 'visualizer' ? { visualizerStyle: s.visualizerStyle } : {}),
   }
