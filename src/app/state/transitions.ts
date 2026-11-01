@@ -77,6 +77,19 @@ export function transitionSpots(project: Project, trackId: Id): TransitionSpot[]
   return spots
 }
 
+/** The cut without a transition at either end of a clip, the one nearer `time`; `clipId` is the clip after it. */
+export function cutNear(
+  project: Project,
+  clip: { trackId: Id; start: number; end: number },
+  time: number,
+): { clipId: Id; time: number } | null {
+  const cuts = bareCuts(project, clip.trackId).filter(
+    (c) => Math.abs(c.time - clip.start) < 1e-3 || Math.abs(c.time - clip.end) < 1e-3,
+  )
+  cuts.sort((a, b) => Math.abs(a.time - time) - Math.abs(b.time - time))
+  return cuts[0] ?? null
+}
+
 /** Cuts without a transition: one clip ends where the next starts. `clipId` is the clip after the cut. */
 export function bareCuts(project: Project, trackId: Id): { clipId: Id; time: number }[] {
   const clips = byStart(project, trackId)

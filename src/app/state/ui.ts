@@ -33,6 +33,8 @@ export type LibraryTab = 'media' | 'text' | 'visuals' | 'effects'
 export type SettingsPage = 'general' | 'editing' | 'ai' | 'local' | 'shortcuts' | 'vj' | 'storage' | 'about'
 export type ExportPhase = 'setup' | 'exporting'
 export type TimelineTool = 'select' | 'split'
+/** Assist › Lyrics: time pasted words, or draft the words from the vocals. */
+export type LyricsMode = 'paste' | 'draft'
 /** The preview fitted to its area, or at a fraction of the project's pixels (1 = 100%). */
 export type PreviewZoom = 'fit' | number
 
@@ -56,6 +58,9 @@ export interface UiState {
   settingsPage: SettingsPage
   exportPhase: ExportPhase
   paletteOpen: boolean
+  /** The top bar shows the project name as a field to rename it. */
+  renaming: boolean
+  lyricsMode: LyricsMode
   guideStep: number | null
   libraryTab: LibraryTab
   libraryOpen: boolean
@@ -105,6 +110,8 @@ export const initialUi: UiState = {
   settingsPage: 'ai',
   exportPhase: 'setup',
   paletteOpen: false,
+  renaming: false,
+  lyricsMode: 'paste',
   guideStep: null,
   libraryTab: 'media',
   libraryOpen: storedLibraryOpen(),
@@ -219,6 +226,13 @@ export function selectClips(ids: readonly string[]) {
 
 export function openAssist(view: AssistView = 'home') {
   set({ rightTab: 'assist', assistView: view })
+}
+
+const DOCS_URL = 'https://github.com/theoi/mv-studio#readme'
+
+/** Help › Documentation, in a new tab. */
+export function openDocs() {
+  window.open(DOCS_URL, '_blank', 'noopener,noreferrer')
 }
 
 const GUIDE_SEEN_KEY = 'mv-studio.guide-seen'

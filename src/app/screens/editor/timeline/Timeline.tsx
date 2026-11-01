@@ -74,7 +74,7 @@ import {
 import { lineTiming } from '../../../state/lyricTiming.ts'
 import {
   addTransitionAtCut,
-  bareCuts,
+  cutNear,
   placeTransitionMarks,
   transitionMarkWidth,
   transitionName,
@@ -175,7 +175,14 @@ import {
   type StemMix,
   type UnplayableStem,
 } from '../../../state/stems.ts'
-import { moveAnnouncement, moveTrack, moveTrackBy, trackMoveRange } from '../../../state/tracks.ts'
+import {
+  moveAnnouncement,
+  moveTrack,
+  moveTrackBy,
+  toggleTrack,
+  trackMoveRange,
+  type TrackToggle,
+} from '../../../state/tracks.ts'
 import { dropMedia, isMediaDrag, mediaDropHint, type MediaDropHint } from '../../../state/mediaDrag.ts'
 import { MAX_PPS, MIN_PPS, registerFit, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
@@ -646,9 +653,6 @@ const Toolbar = memo(function Toolbar({
             <MenuCheckItem checked={showGrid} onCheckedChange={(v) => set({ showGrid: v })}>
               Beat grid
             </MenuCheckItem>
-            <MenuCheckItem checked>Clip thumbnails</MenuCheckItem>
-            <MenuSeparator />
-            <MenuCheckItem checked={false}>Large tracks</MenuCheckItem>
           </MenuContent>
         </Menu>
         <span className={styles.tbDivider} />
@@ -1068,15 +1072,6 @@ const ClipBlock = memo(
     (a.pps === b.pps || (!b.marks && !b.clip.transitionIn && !b.clip.transitionOut)),
 )
 
-/** The cut without a transition at either end of a clip, the one nearer `time`; `clipId` is the clip after it. */
-function cutNear(clip: ClipView, time: number): { clipId: string; time: number } | null {
-  const cuts = bareCuts(editor.getProject(), clip.trackId).filter(
-    (c) => Math.abs(c.time - clip.start) < 1e-3 || Math.abs(c.time - clip.end) < 1e-3,
-  )
-  cuts.sort((a, b) => Math.abs(a.time - time) - Math.abs(b.time - time))
-  return cuts[0] ?? null
-}
-
 function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDown }: ClipBlockProps) {
   const [canPaste, setCanPaste] = useState(false)
   const [cut, setCut] = useState<{ clipId: string; time: number } | null>(null)
@@ -1102,7 +1097,7 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
           // The menu acts on the selection, so a clip outside it becomes the selection.
           if (!selectedClipIds(get().selection).includes(clip.id)) select({ type: 'clip', id: clip.id })
           setCanPaste(hasClipboard())
-          setCut(cutNear(clip, menuTime.current))
+          setCut(cutNear(editor.getProject(), clip, menuTime.current))
           setTransitions(transitionsAtClip(editor.getProject(), clip.id))
         }}
       >
@@ -1225,14 +1220,6 @@ function ClipBlockView({ clip, pps, unit, selected, marks, overChip, onPointerDo
 
 /* ---------- headers ---------- */
 
-/** What turning a track setting on and off is called. */
-const TRACK_TOGGLES = {
-  muted: ['Mute', 'Unmute'],
-  solo: ['Solo', 'Unsolo'],
-  locked: ['Lock', 'Unlock'],
-  hidden: ['Hide', 'Show'],
-} as const
-
 const TrackHeader = memo(function TrackHeader({
   track,
   height,
@@ -1253,12 +1240,7 @@ const TrackHeader = memo(function TrackHeader({
   /** The stem the preview could not decode, so it plays the full song. */
   fallback?: UnplayableStem | null
 }) {
-  // Undo names the action and the track: "Undid: Hide Video".
-  const toggle = (key: keyof typeof TRACK_TOGGLES) =>
-    dispatch(
-      { type: 'track.update', trackId: track.id, patch: { [key]: !track[key] } },
-      { label: `${TRACK_TOGGLES[key][track[key] ? 1 : 0]} ${track.name}` },
-    )
+  const toggle = (key: TrackToggle) => toggleTrack(track.id, key)
   const isAudio = track.kind === 'audio'
   const badge = stems && stemBadge(stems, fallback)
   const grip = useRef<HTMLButtonElement>(null)

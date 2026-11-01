@@ -41,6 +41,26 @@ export function moveTrack(trackId: string, toIndex: number): boolean {
 
 const sameOrder = (a: Track[], b: Track[]) => a.length === b.length && a.every((t, i) => t.id === b[i]?.id)
 
+/** What turning a track setting on and off is called. */
+export const TRACK_TOGGLES = {
+  muted: ['Mute', 'Unmute'],
+  solo: ['Solo', 'Unsolo'],
+  locked: ['Lock', 'Unlock'],
+  hidden: ['Hide', 'Show'],
+} as const
+
+export type TrackToggle = keyof typeof TRACK_TOGGLES
+
+/** Turns a track setting on or off as one undo step, named for the action and the track: "Undid: Hide Video". */
+export function toggleTrack(trackId: string, key: TrackToggle): void {
+  const track = editor.getProject().tracks.find((t) => t.id === trackId)
+  if (!track) return
+  dispatch(
+    { type: 'track.update', trackId, patch: { [key]: !track[key] } },
+    { label: `${TRACK_TOGGLES[key][track[key] ? 1 : 0]} ${track.name}` },
+  )
+}
+
 /** Moves a track one place up (-1) or down (1). */
 export function moveTrackBy(trackId: string, step: -1 | 1): boolean {
   const from = editor.getProject().tracks.findIndex((t) => t.id === trackId)

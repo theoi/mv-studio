@@ -23,18 +23,29 @@ interface ExportsState {
   files: Record<string, File>
   /** The song section the export dialog opens with a teaser of (Section › Export as a teaser). */
   teaserSection: string | null
+  /** The output the export dialog opens with, added and selected (the palette's Export a vertical version…). */
+  preset: ExportPreset | null
 }
+
+export type ExportPreset = 'vertical' | 'teaser' | 'loop'
 
 export const useExports = create<ExportsState>(() => ({
   jobId: null,
   rows: [],
   files: {},
   teaserSection: null,
+  preset: null,
 }))
 
 /** Opens the export dialog with a chorus teaser that starts on a song section, selected. */
 export function exportSectionTeaser(sectionId: string): void {
   useExports.setState({ teaserSection: sectionId })
+  set({ dialog: 'export', exportPhase: 'setup' })
+}
+
+/** Opens the export dialog with an output of this kind in its list, turned on and selected. */
+export function exportWithOutput(preset: ExportPreset): void {
+  useExports.setState({ preset })
   set({ dialog: 'export', exportPhase: 'setup' })
 }
 

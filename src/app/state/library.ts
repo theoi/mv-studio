@@ -6,6 +6,7 @@ import { pluginRegistry } from '../../engine/registry.ts'
 import type { GeneratorDefinition, PluginCatalogEntry } from '../../engine/types.ts'
 import {
   createTrack,
+  type Asset,
   type Clip,
   type EditCommand,
   type Id,
@@ -505,6 +506,19 @@ function putVisual(
     `“${def.name}” added from ${formatTime(place.start)} to ${formatTime(place.start + place.duration)}`,
     undoAction(label),
   )
+}
+
+/** The project's media in the library: everything but the song, masks, stems and fonts, newest imports first. */
+export function libraryAssets(project: Project): Asset[] {
+  return Object.values(project.assets)
+    .filter(
+      (a) =>
+        a.id !== project.songAssetId &&
+        a.origin.type !== 'derived' &&
+        a.origin.type !== 'stem' &&
+        a.kind !== 'font',
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 /** Clips that show or play a file from the library. */

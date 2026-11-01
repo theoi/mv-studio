@@ -1,9 +1,12 @@
 import { createElement } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { evaluate } from '../../../../engine/animation.ts'
+import { pluginRegistry } from '../../../../engine/registry.ts'
+import type { ParamSpec } from '../../../../engine/types.ts'
 import type {
   Animatable,
   Clip,
+  ColorAdjustmentKey,
   EditCommand,
   ParamValue,
   Project,
@@ -18,8 +21,9 @@ import {
   type ReactionTarget,
   type ReactiveClipProperty,
 } from '../../../../plugins/reactions.ts'
+import { CAMERA_EFFECT_ID } from '../../../../vision/render/cameraEffect.ts'
 import { formatTime } from '../../../format.ts'
-import { dispatch, editor, useProject } from '../../../state/project.ts'
+import { dispatch, editor, isLookClip, useProject } from '../../../state/project.ts'
 import { get, toast, useUi } from '../../../state/ui.ts'
 import { ReactPanel } from './ReactPanel.tsx'
 
@@ -265,4 +269,76 @@ export function useAnimatable(
   const value = useUi(useShallow((s) => shownValue(anim, fallback, keyTime(clip, s.playhead))))
   const keyAtPlayhead = useUi((s) => !!keyframeAt(anim, keyTime(clip, s.playhead)))
   return { ...row, value, buttons: { ...row.buttons, keyAtPlayhead } }
+}
+
+/** The color adjustments (-1..1, neutral 0) the Inspector's Color section shows. */
+export const ADJUSTMENTS: readonly { key: ColorAdjustmentKey; label: string }[] = [
+  { key: 'exposure', label: 'Exposure' },
+  { key: 'brightness', label: 'Brightness' },
+  { key: 'contrast', label: 'Contrast' },
+  { key: 'saturation', label: 'Saturation' },
+  { key: 'temperature', label: 'Temperature' },
+  { key: 'tint', label: 'Tint' },
+  { key: 'hue', label: 'Hue' },
+]
+/** Shown on every clip; the others only once the clip has them, as a look's temperature. */
+export const ALWAYS: ReadonlySet<ColorAdjustmentKey> = new Set(['exposure', 'contrast', 'saturation'])
+
+/** A property with keyframe and react buttons in the Inspector, as animatableRow() takes it. */
+export interface ClipProperty {
+  path: PropertyPath
+  /** Its name in the Inspector's buttons: "Opacity", "RGB split amount". */
+  name: string
+  fallback?: ParamValue
+  options: Omit<RowOptions, 'project' | 'playhead'>
+}
+
+const keyable = (spec: ParamSpec) => spec.type === 'number' && spec.animatable !== false
+
+function paramProperties(base: PropertyPath, specs: readonly ParamSpec[], owner?: string): ClipProperty[] {
+  return specs.filter(keyable).map((spec) => ({
+    path: [...base, spec.key],
+    name: owner ? settingName(spec.label, owner) : spec.label,
+    fallback: spec.default,
+    options: { label: spec.label, owner },
+  }))
+}
+
+/**
+ * The properties of a clip that have keyframe and react buttons in its Inspector, in the Inspector's order, for the
+ * command palette's Add a keyframe… and React to music….
+ */
+export function clipProperties(clip: Clip): ClipProperty[] {
+  if (clip.type === 'audio' || (clip.type === 'text' && clip.lyricLineId)) return []
+  const transform: ClipProperty[] = [
+    { path: ['transform', 'x'], name: 'Position', options: { linked: [['transform', 'y']] } },
+    {
+      path: ['transform', 'scaleX'],
+      name: 'Scale',
+      options: { label: 'Scale', linked: [['transform', 'scaleY']] },
+    },
+    { path: ['transform', 'rotation'], name: 'Rotation', options: {} },
+  ]
+  if (clip.type === 'text') return transform
+  const opacity = (name: string): ClipProperty => ({ path: ['opacity'], name, options: { label: name } })
+  if (clip.type === 'generator') {
+    const params = pluginRegistry.get(clip.generatorId)?.params ?? []
+    return [...paramProperties(['params'], params), opacity('Opacity')]
+  }
+  const color = ADJUSTMENTS.filter((a) => ALWAYS.has(a.key) || clip.adjustments?.[a.key]).map(
+    (a): ClipProperty => ({
+      path: ['adjustments', a.key],
+      name: a.label,
+      fallback: 0,
+      options: { label: a.label },
+    }),
+  )
+  const effects = clip.effects.flatMap((fx, index) => {
+    const def = pluginRegistry.get(fx.effectId)
+    if (fx.effectId === CAMERA_EFFECT_ID || !def) return []
+    return paramProperties(['effects', index, 'params'], def.params, def.name)
+  })
+  if (clip.type === 'adjustment')
+    return [opacity(isLookClip(clip) ? 'Look intensity' : 'Intensity'), ...color, ...effects]
+  return [...transform, opacity('Opacity'), ...color, ...effects]
 }
