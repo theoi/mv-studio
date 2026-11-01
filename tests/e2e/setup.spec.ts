@@ -557,7 +557,7 @@ test('the lyrics box takes the height the other steps leave, so the setup button
   await page.setViewportSize({ width: 1280, height: 720 })
   await startKind(page, /^Lyric video/)
   await page.getByRole('textbox', { name: 'Lyrics' }).fill(lyrics)
-  // Before a song is chosen, its drop zone takes about 130 px more than the song card will.
+  // Before a song is chosen, its drop zone takes more height than the song card will.
   const dropZone = await fit()
   expect(dropZone.lines).toBeGreaterThanOrEqual(4)
   expect(dropZone.scrolls).toBe(true)
@@ -565,7 +565,7 @@ test('the lyrics box takes the height the other steps leave, so the setup button
   expect(dropZone.room).toBeLessThan(24)
 
   // Too short for four lines: the box keeps them and the page scrolls to the button.
-  await page.setViewportSize({ width: 1280, height: 560 })
+  await page.setViewportSize({ width: 1280, height: 480 })
   const short = await fit()
   expect(short.lines).toBeGreaterThan(3.9)
   expect(short.buttonInView).toBe(false)
@@ -585,4 +585,34 @@ test('the lyrics box takes the height the other steps leave, so the setup button
   expect(small.lines).toBeGreaterThan(8)
   expect(small.buttonInView).toBe(true)
   expect(small.room).toBeLessThan(24)
+})
+
+test('the AI music video setup fits a short window before a song is added, so Skip for now needs no scroll', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await startKind(page, /^AI music video/)
+  const buttons = [
+    page.getByRole('button', { name: 'Draft my video' }),
+    page.getByRole('button', { name: 'Skip for now' }),
+  ]
+  for (const [width, height] of [
+    [1280, 720],
+    [1366, 768],
+    [1280, 800],
+  ] as const) {
+    await page.setViewportSize({ width, height })
+    for (const button of buttons) {
+      const box = (await button.boundingBox())!
+      expect(box.y + box.height, `${width}×${height}`).toBeLessThanOrEqual(height)
+    }
+    const below = await page
+      .locator('main')
+      .evaluate((main) => main.parentElement!.scrollHeight - main.parentElement!.clientHeight)
+    expect(below, `${width}×${height}`).toBeLessThanOrEqual(0)
+  }
+  // The compact drop zone still says what to drop and offers both ways to add a song.
+  await expect(page.getByText('Drop your song here')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Choose file', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Use a sample song' })).toBeVisible()
 })
