@@ -464,11 +464,23 @@
 
 /* Setup step */
 .setupMain {
+  display: flex;
+  flex-direction: column;
+  /* Holds the column to the window's height, so the lyrics box can take what is left. */
+  min-height: 0;
   width: min(600px, calc(100% - 64px));
   padding-top: clamp(0px, 2vh, 24px);
+  padding-bottom: 0;
+}
+
+/* Only the lyrics box gives up height: a control with a set height would shrink to its content too. */
+.setupMain > *,
+.stepFit > :not(.lyricsBox) {
+  flex-shrink: 0;
 }
 
 .back {
+  align-self: flex-start;
   margin-left: -8px;
   margin-bottom: var(--space-4);
 }
@@ -480,8 +492,14 @@
   letter-spacing: -0.015em;
 }
 
-.step {
+.step,
+.stepFit > .stepLabel {
   margin-top: clamp(16px, 3.4vh, 28px);
+}
+
+/* Its label, box and note join the page's column, where only the lyrics box can shrink. */
+.stepFit {
+  display: contents;
 }
 
 .stepLabel {
@@ -716,17 +734,11 @@
   margin-top: 1px;
 }
 
-/* Grows with pasted lyrics from four lines until it would push the setup button below the window, then
-   scrolls inside. In short windows min-height wins over max-height, so it never drops below four lines. */
+/* Grows with pasted lyrics until the setup button reaches the bottom of the window, then scrolls inside. It never
+   drops below four lines: a window too short for that scrolls the page instead. */
 .lyricsBox {
   field-sizing: content;
   min-height: calc(4lh + 2 * var(--space-2) + 2px);
-  max-height: calc(100dvh - 500px);
-}
-
-/* The song's drop zone is about 130 px taller than its card. */
-.setupMain:has(.drop) .lyricsBox {
-  max-height: calc(100dvh - 630px);
 }
 
 .setupFooter {
@@ -735,6 +747,8 @@
   align-items: center;
   gap: var(--space-2);
   margin-top: clamp(20px, 4vh, 32px);
+  /* The page's bottom margin, inside the footer: it still counts when a short window scrolls the page. */
+  padding-bottom: var(--space-6);
 }
 
 .setupCost {
