@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { ModelFile } from '../../../../src/shared/models.ts'
 import {
   hfRepo,
   hfRevision,
+  MEDIAPIPE_VERSION,
   MEDIAPIPE_WASM_BASE,
   transformersFiles,
   VISION_MODELS,
@@ -29,6 +31,11 @@ describe('vision model downloads', () => {
       expect(file.bytes, file.url).toBeGreaterThan(0)
     }
     expect(MEDIAPIPE_WASM_BASE).toMatch(/@\d+\.\d+\.\d+\/wasm$/)
+  })
+
+  it('load MediaPipe’s runtime at the version that is installed, which its JS expects', () => {
+    const installed = readFileSync('node_modules/@mediapipe/tasks-vision/package.json', 'utf8')
+    expect(MEDIAPIPE_VERSION).toBe((JSON.parse(installed) as { version: string }).version)
   })
 
   it('pin every file Transformers.js loads, for WASM (q8) and WebGPU (fp16 or fp32)', () => {
