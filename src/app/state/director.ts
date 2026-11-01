@@ -21,6 +21,7 @@ import { appMedia } from './media.ts'
 import { songAnalysisRunning } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
 import { plural } from '../format.ts'
+import { holdThumbnailsForDraft } from '../screens/editor/stage.ts'
 import { editor } from './project.ts'
 import { ensureBars } from './songAnalysis.ts'
 import { dismissToast, get as getUi, set as setUi, toast, type Kind } from './ui.ts'
@@ -318,6 +319,8 @@ export async function applyDraft(options: { confirmSpend?: boolean; skipGenerati
       if (getUi().playhead === moved.to) setUi({ playhead: moved.from })
       return
     }
+    // Straight after the dispatch, before the timeline's frame thumbnails of the draft's clips start decoding.
+    holdThumbnailsForDraft()
     toast('Your draft is on the timeline', { label: 'Undo', run: () => void undoDraft() })
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error))
