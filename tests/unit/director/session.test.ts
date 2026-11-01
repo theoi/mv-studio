@@ -915,6 +915,30 @@ describe('DirectorSession and clips that show nothing', () => {
     await plan(unused, REQUEST, makeProject({ videos: 0 })).planned
     expect(unused).not.toHaveBeenCalled()
   })
+
+  it('leaves out clips the check didn’t reach when enough others were checked, and else uses them and says so', async () => {
+    const plan = async (unchecked: string[]) => {
+      const state = await new DirectorSession({
+        editor: new ProjectEditor(makeProject()),
+        jobs: new JobRunner(),
+        checkClips: async () => unchecked,
+      }).plan(REQUEST)
+      const { plan } = ready(state)
+      const used = new Set(plan.shots.flatMap((s) => (s.source.type === 'media' ? [s.source.assetId] : [])))
+      return { used, warnings: plan.warnings }
+    }
+    const enough = await plan(['video4'])
+    expect(enough.used.has('video4')).toBe(false)
+    expect(enough.used.size).toBe(3)
+    expect(enough.warnings).toContain(
+      'Left out “video4.mp4”, which wasn’t checked yet, in case it shows nothing. Draft again to use it.',
+    )
+    const few = await plan(['video3', 'video4'])
+    expect(few.used.has('video3') && few.used.has('video4')).toBe(true)
+    expect(few.warnings).toContain(
+      '2 clips weren’t checked yet, so some may show nothing. Draft again to check them.',
+    )
+  })
 })
 
 describe('DirectorSession and clips footage analysis hasn’t reached', () => {

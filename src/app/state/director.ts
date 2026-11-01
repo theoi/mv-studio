@@ -93,8 +93,13 @@ function directorSession(): Promise<DirectorSession> {
       ensureBars,
       waitForSong,
       checkClips: checkClipsForBlank,
-      unanalyzedWarning: (ids, all) =>
-        unanalyzedWarning(ids, all, useFootage.getState().indexing, { analysisRuns: footageAnalysisRuns() }),
+      unanalyzedWarning: (ids, all) => {
+        const assets = editor.getProject().assets
+        return unanalyzedWarning(ids, all, useFootage.getState().indexing, {
+          analysisRuns: footageAnalysisRuns(),
+          media: clipsNoun(ids.flatMap((id) => assets[id] ?? [])),
+        })
+      },
       planner: d.createDirectorPlanner({
         client: () => cloud.llm(),
         model: () => cloudSettings.get().llm?.model,

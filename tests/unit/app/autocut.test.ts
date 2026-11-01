@@ -27,11 +27,11 @@ import type { Asset, Project } from '../../../src/model/index.ts'
 import { barsState, setSongAnalysisServiceForTests } from '../../../src/app/state/songAnalysis.ts'
 import type * as Footage from '../../../src/app/state/footage.ts'
 import { JobError, jobs, type JobErrorCode } from '../../../src/shared/jobs.ts'
-import type { IndexingState } from '../../../src/vision/index.ts'
+import type { AutoCutResult, IndexingState } from '../../../src/vision/index.ts'
 
 /** The fast blank check, which decodes frames: done at once unless a test says otherwise. */
 const blankCheck = vi.hoisted(() => ({
-  run: (_options: Parameters<typeof Footage.checkClipsForBlank>[0]): Promise<void> => Promise.resolve(),
+  run: (_options: Parameters<typeof Footage.checkClipsForBlank>[0]): Promise<string[]> => Promise.resolve([]),
 }))
 
 vi.mock('../../../src/app/state/footage.ts', async (original) => ({
@@ -297,12 +297,21 @@ it('words a draft’s note for a draft, and says how to analyze its clips when a
   expect(unanalyzedWarning(['a'], true, state({ failed }), draft)).toBe(
     '“beach.mp4” couldn’t be analyzed, so it was picked for variety.',
   )
-  // Running, or about to (background analysis is on), it finishes on its own; and with some clips analyzed, the
-  // default note says how many weren't.
+  // So too when only some of its clips aren't analyzed.
+  expect(unanalyzedWarning(['a'], false, state({}), draft)).toBe(
+    '1 clip isn’t analyzed yet, so it was only used for variety. Analyze your footage in Match footage, then draft again to match the mood.',
+  )
+  expect(unanalyzedWarning(['a', 'b', 'c'], false, null, { ...draft, media: '2 clips and 1 image' })).toBe(
+    '2 clips and 1 image aren’t analyzed yet, so they were only used for variety. Analyze your footage in Match footage, then draft again to match the mood.',
+  )
+  // Clips removed since have no name: they are counted.
+  expect(unanalyzedWarning(['a'], false, null, { ...draft, media: '' })).toMatch(/^1 clip isn’t analyzed yet/)
+  // Running, or about to (background analysis is on), it finishes on its own: the default note says so.
   expect(unanalyzedWarning(['a', 'b'], true, state({ status: 'indexing' }), draft)).toBeUndefined()
+  expect(unanalyzedWarning(['a'], false, state({ status: 'indexing' }), draft)).toBeUndefined()
   expect(unanalyzedWarning(['a', 'b'], true, state({}), { analysisRuns: true })).toBeUndefined()
   expect(unanalyzedWarning(['a', 'b'], true, null, { analysisRuns: true })).toBeUndefined()
-  expect(unanalyzedWarning(['a'], false, state({}), draft)).toBeUndefined()
+  expect(unanalyzedWarning(['a'], false, null, { analysisRuns: true })).toBeUndefined()
 })
 
 it('passes the More options through: where cuts land, and story order over the mood switch', () => {
@@ -539,7 +548,7 @@ describe('the auto-cut job', () => {
     blankCheck.run = (options) => {
       asked.push(options)
       options?.progress?.(0.5)
-      return new Promise<void>((resolve) => {
+      return new Promise<string[]>((resolve) => {
         finish = () => {
           editor.dispatch(
             {
@@ -552,7 +561,7 @@ describe('the auto-cut job', () => {
             },
             { history: 'skip' },
           )
-          resolve()
+          resolve([])
         }
       })
     }
@@ -565,7 +574,25 @@ describe('the auto-cut job', () => {
       expect(asked).toHaveLength(1)
       expect(result.warnings.join(' ')).toContain(`Left out “${black!.name}” because every frame`)
     } finally {
-      blankCheck.run = () => Promise.resolve()
+      blankCheck.run = () => Promise.resolve([])
+    }
+  })
+
+  it('leaves out a clip the blank check didn’t reach in time, and says so', async () => {
+    refine = () => Promise.resolve(found)
+    const used = (result: AutoCutResult) => new Set(result.plan.shots.map((s) => s.assetId))
+    const first = (await cut()).result
+    const [late] = [...used(first)]
+    blankCheck.run = () => Promise.resolve([late!])
+    try {
+      const { result } = await cut()
+      expect(used(result).has(late!)).toBe(false)
+      const { name } = editor.getProject().assets[late!]!
+      expect(result.warnings).toContain(
+        `Left out “${name}”, which wasn’t checked yet, in case it shows nothing. Cut again to use it.`,
+      )
+    } finally {
+      blankCheck.run = () => Promise.resolve([])
     }
   })
 
