@@ -29,7 +29,9 @@ import styles from './Assist.module.css'
 /** Status on the Behind the subject row of Assist's tool list. */
 export function BehindBadge() {
   const { job, phase } = useJob(JOB_KINDS.cutout)
+  const remake = useJob(JOB_KINDS.cutoutRemake)
   if (phase === 'running') return <Badge tone="accent">{pct(job)}%</Badge>
+  if (remake.phase === 'running') return <Badge tone="accent">{pct(remake.job)}%</Badge>
   if (phase === 'failed') return <Badge tone="danger">Failed</Badge>
   return null
 }
@@ -62,6 +64,7 @@ function SuitRow({ asset, suitability, clips }: Omit<FootageRow, 'key'>) {
 
 export function BehindView() {
   const { job, phase } = useJob(JOB_KINDS.cutout)
+  const remake = useJob(JOB_KINDS.cutoutRemake)
   const project = useProject()
   const checks = useBehind((s) => s.checks)
   const result = useBehind((s) => (job ? s.results[job.id] : undefined))
@@ -85,6 +88,19 @@ export function BehindView() {
       <ToolView title="Behind the subject" subtitle="Cutting out" footer={<CancelButton job={job} />}>
         <RunCard job={job} label="Cutout progress" />
         <p className={styles.muted}>Nothing changes on the timeline until every cutout is ready.</p>
+      </ToolView>
+    )
+
+  // Its done and failed states are left to the user's own cutout: a re-make that fails is tried again later.
+  if (remake.phase === 'running')
+    return (
+      <ToolView
+        title="Behind the subject"
+        subtitle="Checking for people"
+        footer={<CancelButton job={remake.job} />}
+      >
+        <RunCard job={remake.job} label="Check progress" />
+        <p className={styles.muted}>Cutouts made offline keep only the people once this is done.</p>
       </ToolView>
     )
 

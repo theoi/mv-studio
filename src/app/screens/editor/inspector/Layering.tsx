@@ -9,6 +9,8 @@ import {
   bringToFront,
   canTryCutout,
   checkFootage,
+  cutoutNote,
+  cutoutRemaking,
   cutoutsOf,
   hasCutout,
   objectOf,
@@ -37,13 +39,17 @@ function useBehindState(clip: MediaClip) {
   const project = useProject()
   const checks = useBehind((s) => s.checks)
   const requests = useBehind((s) => s.requests)
+  const remaking = useBehind((s) => s.remaking)
   const { job, phase } = useJob(JOB_KINDS.cutout)
+  const remake = useJob(JOB_KINDS.cutoutRemake)
   const cutoutOf = typeof clip.meta?.behindSubjectOf === 'string' ? clip.meta.behindSubjectOf : undefined
   const hostId = cutoutOf ?? clip.id
   const host = project.clips[hostId]
   const suitability = suitabilityOf(project, host, checks)
   const request = job ? requests[job.id] : undefined
   const asked = !!request?.clips.includes(hostId)
+  const checkingPeople =
+    remake.phase === 'running' && cutoutRemaking(project, hostId, remaking) ? remake.job : undefined
   return {
     hostId,
     host: host?.type === 'video' ? host : undefined,
@@ -51,6 +57,8 @@ function useBehindState(clip: MediaClip) {
     behind: !!cutoutOf || hasCutout(project, clip.id),
     object: objectOf(cutoutsOf(project, hostId)[0]),
     suitability,
+    maskNote: cutoutNote(project, hostId, !!checkingPeople),
+    checkingPeople,
     busy: phase === 'running',
     cutting: asked && phase === 'running' ? job : undefined,
     failure: asked && phase === 'failed' ? job?.error?.message : undefined,
@@ -126,9 +134,21 @@ function ObjectTracking({ host, pick, disabled }: { host: VideoClip; pick: Objec
 }
 
 export function LayeringSection({ clip }: { clip: MediaClip }) {
-  const { hostId, host, assetId, behind, object, suitability, busy, cutting, failure, objectFailure } =
-    useBehindState(clip)
-  const text = suitabilityText(suitability)
+  const {
+    hostId,
+    host,
+    assetId,
+    behind,
+    object,
+    suitability,
+    maskNote,
+    checkingPeople,
+    busy,
+    cutting,
+    failure,
+    objectFailure,
+  } = useBehindState(clip)
+  const text = suitabilityText(suitability, !!checkingPeople)
   // Flicker is known only once the cutout exists, so its warning stays while the clip is behind, as does the note
   // that no one was looked for.
   const warns =
@@ -149,6 +169,8 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
         />
         {cutting ? (
           <Badge tone="accent">Cutting out… {pct(cutting)}%</Badge>
+        ) : checkingPeople ? (
+          <Badge tone="accent">Checking… {pct(checkingPeople)}%</Badge>
         ) : behind ? (
           <Badge tone="success" icon={<Check />}>
             {object ? 'Object picked' : 'Person found'}
@@ -164,8 +186,10 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
         </p>
       ) : behind && object && host ? (
         <ObjectTracking host={host} pick={object} disabled={busy} />
+      ) : (!behind || warns) && text.why ? (
+        <p className={styles.note}>{text.why}</p>
       ) : (
-        (!behind || warns) && text.why && <p className={styles.note}>{text.why}</p>
+        behind && maskNote && <p className={styles.note}>{maskNote}</p>
       )}
       {host && (
         <div className={styles.inlineActions}>
