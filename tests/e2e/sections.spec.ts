@@ -25,7 +25,10 @@ test('a section label guessed from the audio is muted and says "Probably the cho
   })
   const guessed = page.getByRole('button', { name: 'Section Chorus, 1:04 to 1:36' })
   await expect(guessed).toBeVisible()
-  await expect(guessed).toHaveAttribute('title', 'Probably the chorus. Double-click to rename.')
+  await expect(guessed).toHaveAttribute(
+    'title',
+    'Probably the chorus. Click to go to its start, double-click to rename.',
+  )
   const muted = await guessed
     .getByText('Chorus', { exact: true })
     .evaluate((el) => getComputedStyle(el).color)

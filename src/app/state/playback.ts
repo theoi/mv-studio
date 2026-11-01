@@ -1,5 +1,12 @@
+import type { SongSection } from '../../model/index.ts'
 import { editor, sectionsOf, bpmOf, timelineDuration } from './project.ts'
-import { get, set } from './ui.ts'
+import { get, select, set } from './ui.ts'
+
+/** Selects a song section and puts the playhead at its start; playback, if running, goes on from there. */
+export function goToSection(s: SongSection) {
+  select({ type: 'section', id: s.id })
+  set({ playhead: s.start })
+}
 
 export function jumpSection(dir: 1 | -1) {
   const t = get().playhead
