@@ -571,7 +571,7 @@ function GeneralPage() {
           ariaLabel="Reduce motion"
         />
       </Row>
-      <Row title="Default frame rate" desc="For new projects. Change a project's own rate in the inspector.">
+      <Row title="Default frame rate" desc="For new projects. Change a project’s own rate in the inspector.">
         <Select
           value={String(fps)}
           onChange={(v) => setPref('defaultFps', Number(v))}

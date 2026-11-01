@@ -302,7 +302,7 @@ export class TextRenderer {
       await face.load()
       set.add(face)
     } catch (error) {
-      console.warn(`Font "${asset.name}" could not be loaded; using a fallback font`, error)
+      console.warn(`Font “${asset.name}” couldn’t be loaded; using a fallback font`, error)
     }
   }
 

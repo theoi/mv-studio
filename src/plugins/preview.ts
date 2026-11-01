@@ -225,7 +225,7 @@ function addScene(
   duration: Seconds,
   what: string,
 ) {
-  if (!image) throw new Error(`Previewing "${what}" needs an image`)
+  if (!image) throw new Error(`Previewing “${what}” needs an image`)
   p.assets[image.id] = image
   const clip = createImageClip({ trackId: p.tracks[0]?.id as Id, assetId: image.id, start, duration })
   p.clips[clip.id] = clip
@@ -288,7 +288,7 @@ function zoomStyle(style: TextStyle, k: number): TextStyle {
 export function pluginPreview(pluginId: string, options: PreviewOptions = {}): PluginPreview {
   const registry = options.registry ?? pluginRegistry
   const def = registry.get(pluginId)
-  if (!def) throw new Error(`Unknown plugin "${pluginId}"`)
+  if (!def) throw new Error(`Unknown plugin “${pluginId}”`)
   const p = previewBase(def.name)
   const trackId = p.tracks[0]?.id as Id
   switch (def.kind) {

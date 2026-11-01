@@ -207,7 +207,7 @@ export class WebAudioPlaybackClock implements PlaybackClock {
     const memory = failure.code === 'out-of-memory'
     const error = new JobError(
       memory ? 'out-of-memory' : 'decode',
-      memory ? 'There is not enough memory to play the stems separately.' : 'A stem could not be decoded.',
+      memory ? 'There is not enough memory to play the stems separately.' : 'A stem couldn’t be decoded.',
       { retryable: memory, cause: failure, details: { assetId } },
     )
     for (const listener of this.errorListeners) listener(error)

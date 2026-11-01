@@ -89,7 +89,7 @@ function toJobError(error: unknown): JobError {
   if (error instanceof JobError) return error
   const name = (error as { name?: string })?.name
   if (name === 'EncodingError' || name === 'NotSupportedError')
-    return new JobError('encode', 'The browser could not encode the video. Try a lower resolution.', {
+    return new JobError('encode', 'The browser couldn’t encode the video. Try a lower resolution.', {
       cause: error,
     })
   return JobError.from(error)

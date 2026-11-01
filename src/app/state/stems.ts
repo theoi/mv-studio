@@ -317,5 +317,5 @@ export function stemFallbackNote(stem: UnplayableStem): string {
 function stemFailureText({ name, failure }: UnplayableStem): string {
   return failure === 'out-of-memory'
     ? `There is not enough memory to play ${stemList([name])} separately`
-    : `The ${STEM_LABELS[name].toLowerCase()} stem could not be decoded`
+    : `The ${STEM_LABELS[name].toLowerCase()} stem couldn’t be decoded`
 }

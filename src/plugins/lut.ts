@@ -34,10 +34,10 @@ export function parseCubeLut(text: string): Lut3D {
     const parts = line.split(/\s+/)
     const key = parts[0] as string
     if (/^[-+.\d]/.test(key)) {
-      if (parts.length < 3) throw invalid(`Malformed LUT row "${line}"`)
+      if (parts.length < 3) throw invalid(`Malformed LUT row “${line}”`)
       for (let i = 0; i < 3; i++) {
         const v = Number(parts[i])
-        if (!Number.isFinite(v)) throw invalid(`Malformed LUT row "${line}"`)
+        if (!Number.isFinite(v)) throw invalid(`Malformed LUT row “${line}”`)
         values.push(v)
       }
     } else if (key === 'TITLE') {

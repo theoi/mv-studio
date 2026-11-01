@@ -593,7 +593,7 @@ test('a project file that lacks a media file fails to open and leaves no media o
   const { file } = await downloadPortable(page, testInfo)
   const broken = testInfo.outputPath('Broken.mvstudio')
   withoutEntry(file, '/image.png', broken)
-  const missing = 'The project file is missing media for "image.png"'
+  const missing = 'The project file is missing media for “image.png”'
 
   const other = await launchProfile(testInfo.outputPath('second-profile'), baseURL)
   try {

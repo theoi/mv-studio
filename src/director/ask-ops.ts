@@ -91,7 +91,7 @@ const targetSchema = z
   .meta({ id: 'Clips', description: 'clip ids, or a selector' })
 
 const keyframeSchema = z.object({
-  time: time.describe("seconds from each clip's start"),
+  time: time.describe('seconds from each clip’s start'),
   value: z.number(),
   easing: z.enum(['linear', 'hold', 'ease-in', 'ease-out', 'ease-in-out']).optional(),
 })
@@ -273,7 +273,7 @@ function realId(ctx: OpCtx, short: string): Id | undefined {
 function trackOf(ctx: OpCtx, short: string): Track {
   const realTrack = realId(ctx, short)
   const track = project(ctx).tracks.find((t) => t.id === realTrack)
-  if (!track) fail(ctx, `track ${short} doesn't exist`)
+  if (!track) fail(ctx, `track ${short} doesn’t exist`)
   return track
 }
 
@@ -282,7 +282,7 @@ function resolveClips(ctx: OpCtx, target: Target): Clip[] {
   if (Array.isArray(target)) {
     return target.map((short) => {
       const clip = p.clips[realId(ctx, short) ?? '']
-      if (!clip) fail(ctx, `clip ${short} doesn't exist`)
+      if (!clip) fail(ctx, `clip ${short} doesn’t exist`)
       return clip
     })
   }
@@ -303,8 +303,8 @@ function resolveClips(ctx: OpCtx, target: Target): Clip[] {
       fail(
         ctx,
         known.length
-          ? `section ${target.section} doesn't exist; the song sections are ${known.join(', ')}`
-          : `section ${target.section} doesn't exist; the song has no sections, so use from and to instead`,
+          ? `section ${target.section} doesn’t exist; the song sections are ${known.join(', ')}`
+          : `section ${target.section} doesn’t exist; the song has no sections, so use from and to instead`,
       )
     }
     from = Math.max(from, span.start)
@@ -495,9 +495,9 @@ function applicable(ctx: OpCtx, clips: Clip[], property: Property) {
     .map((clip) => ({ clip, target: propertyTarget(clip, property) }))
     .filter((p): p is { clip: Clip; target: PropertyTarget } => !!p.target)
   if (pairs.length === 0)
-    fail(ctx, `${property} doesn't apply to ${clips.length === 1 ? 'that clip' : 'those clips'}`)
+    fail(ctx, `${property} doesn’t apply to ${clips.length === 1 ? 'that clip' : 'those clips'}`)
   if (pairs.length < clips.length) {
-    ctx.warnings.push(`${property} was skipped for ${clips.length - pairs.length} clips it doesn't apply to.`)
+    ctx.warnings.push(`${property} was skipped for ${clips.length - pairs.length} clips it doesn’t apply to.`)
   }
   return pairs
 }
@@ -703,7 +703,7 @@ function addTextOp(ctx: OpCtx, op: Extract<Operation, { op: 'add_text' }>) {
   if (op.y !== undefined) clip.transform.y = { value: r3(op.y) }
   if (op.animation) {
     if (!findItem(ctx.catalog.textPresets, op.animation))
-      fail(ctx, `text animation ${op.animation} isn't in the catalog`)
+      fail(ctx, `text animation ${op.animation} isn’t in the catalog`)
     clip.animation = { presetId: op.animation, params: {} }
   }
   remember(ctx, clip.id)
@@ -712,7 +712,7 @@ function addTextOp(ctx: OpCtx, op: Extract<Operation, { op: 'add_text' }>) {
 
 function addVisualizerOp(ctx: OpCtx, op: Extract<Operation, { op: 'add_visualizer' }>) {
   const item = findItem(ctx.catalog.generators, op.visualizer)
-  if (!item) fail(ctx, `visualizer ${op.visualizer} isn't in the catalog`)
+  if (!item) fail(ctx, `visualizer ${op.visualizer} isn’t in the catalog`)
   if (op.end - op.start < 0.1) fail(ctx, 'end must be after start')
   const { trackId, commands } = trackFor(ctx, op.start, op.end, op.track, 'Visualizer')
   const params: Record<string, Animatable<ParamValue>> = {}
@@ -744,7 +744,7 @@ function effectClips(ctx: OpCtx, target: Target): VisualClip[] {
 
 function addEffectOp(ctx: OpCtx, op: Extract<Operation, { op: 'add_effect' }>) {
   const item = findItem(ctx.catalog.effects, op.effect)
-  if (!item) fail(ctx, `effect ${op.effect} isn't in the catalog`)
+  if (!item) fail(ctx, `effect ${op.effect} isn’t in the catalog`)
   const known = new Set((item.params ?? []).map((p) => p.key))
   for (const key of [...Object.keys(op.params ?? {}), ...(op.react ? [op.react.param] : [])]) {
     if (!known.has(key))
@@ -755,7 +755,7 @@ function addEffectOp(ctx: OpCtx, op: Extract<Operation, { op: 'add_effect' }>) {
       { effectId: item.id, params: op.params, ...(op.react ? { react: [op.react] } : {}) },
       ctx.params,
     )
-    if (!effect) fail(ctx, `effect ${op.effect} isn't available`)
+    if (!effect) fail(ctx, `effect ${op.effect} isn’t available`)
     return { type: 'effect.add', clipId: clip.id, effect }
   })
   return apply(ctx, commands)
@@ -799,7 +799,7 @@ function removeEffectOp(ctx: OpCtx, op: Extract<Operation, { op: 'remove_effect'
 function transitionOp(ctx: OpCtx, op: Extract<Operation, { op: 'transition' }>) {
   const none = op.kind === 'none' || op.kind === 'cut'
   if (!none && !findItem(ctx.catalog.transitions, op.kind))
-    fail(ctx, `transition ${op.kind} isn't in the catalog`)
+    fail(ctx, `transition ${op.kind} isn’t in the catalog`)
   const sides =
     op.side === 'both'
       ? (['transitionIn', 'transitionOut'] as const)
@@ -858,7 +858,7 @@ function runOperation(ctx: OpCtx): EditCommand[] {
     case 'remove_marker': {
       const markerId = realId(ctx, op.marker)
       if (!markerId || !project(ctx).markers.some((m) => m.id === markerId))
-        fail(ctx, `marker ${op.marker} doesn't exist`)
+        fail(ctx, `marker ${op.marker} doesn’t exist`)
       return apply(ctx, [{ type: 'marker.remove', markerId }])
     }
     case 'track': {
@@ -879,7 +879,7 @@ function runOperation(ctx: OpCtx): EditCommand[] {
     case 'edit_lyric': {
       const lineId = realId(ctx, op.line)
       if (!lineId || !project(ctx).lyrics?.lines.some((l) => l.id === lineId))
-        fail(ctx, `lyric line ${op.line} doesn't exist`)
+        fail(ctx, `lyric line ${op.line} doesn’t exist`)
       return apply(ctx, [
         ...lyricTextCommands(project(ctx), lineId, op.text),
         { type: 'lyrics.updateLine', lineId, patch: { text: op.text } },

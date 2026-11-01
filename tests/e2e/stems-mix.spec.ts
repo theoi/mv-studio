@@ -235,7 +235,7 @@ test('stem solo and mute show in Assist, the stem lanes, the song header and the
   await expect(lane('bass').locator('canvas')).toHaveCount(1)
 })
 
-const WHY = 'The vocals stem could not be decoded, so the preview plays the full song.'
+const WHY = 'The vocals stem couldn’t be decoded, so the preview plays the full song.'
 
 test('the song header and Assist › Stems say the full song plays while a heard stem cannot be decoded', async ({
   page,
@@ -255,7 +255,7 @@ test('the song header and Assist › Stems say the full song plays while a heard
 
   await row('Vocals').getByRole('button', { name: 'Solo' }).click()
   await expect(
-    page.getByText('The vocals stem could not be decoded. Playing the full song instead.'),
+    page.getByText('The vocals stem couldn’t be decoded. Playing the full song instead.'),
   ).toBeVisible()
   await expectBadge(badge, 'Full song plays', `Stems: full song plays · vocals solo. ${WHY}`)
   await expect(note).toHaveText(`${WHY} The export tries the stem again.`)

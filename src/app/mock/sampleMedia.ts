@@ -40,7 +40,7 @@ function sceneCanvas(scene: SceneId, keep = true): HTMLCanvasElement {
 
 function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
   return new Promise((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not encode the image'))), type, quality),
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Couldn’t encode the image'))), type, quality),
   )
 }
 

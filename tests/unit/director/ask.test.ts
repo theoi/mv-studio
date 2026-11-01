@@ -120,7 +120,7 @@ describe('interpretRequest', () => {
     expect(turn.outcome.kind).toBe('changes')
     const repair = client.requests[1]!.messages.at(-1)!
     expect(repair).toMatchObject({ role: 'tool', tool_call_id: 'call_1' })
-    expect((repair as { content: string }).content).toContain("Operation 1 (remove): clip c999 doesn't exist")
+    expect((repair as { content: string }).content).toContain('Operation 1 (remove): clip c999 doesn’t exist')
   })
 
   it('gives up with a clear error after repeated invalid answers', async () => {
@@ -131,7 +131,7 @@ describe('interpretRequest', () => {
       (e: unknown) => e,
     )
     expect(error).toBeInstanceOf(JobError)
-    expect((error as JobError).message).toMatch(/couldn't turn that into a valid edit/)
+    expect((error as JobError).message).toMatch(/couldn’t turn that into a valid edit/)
     expect(client.requests).toHaveLength(3)
   })
 
@@ -589,7 +589,7 @@ describe('AskSession feedback and review', () => {
     expect(reviewed).toMatchObject({ status: 'review', reason: 'small-model' })
     const failed = await ask.ask('do it')
     if (failed.status !== 'error') throw new Error(failed.status)
-    expect(failed.title).toBe("Couldn't make that edit")
+    expect(failed.title).toBe('Couldn’t make that edit')
     expect(failed.steps.join(' ')).toMatch(/7B or larger model, or a cloud model/)
   })
 })

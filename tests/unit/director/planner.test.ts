@@ -153,7 +153,7 @@ describe('local planner', () => {
     const texts = p.texts.filter((t) => t.role === 'lyric')
     expect(texts).toHaveLength(untimed.length)
     expect(texts.every((t) => !t.karaoke)).toBe(true)
-    expect(p.warnings.some((w) => w.includes("Lyrics aren't timed"))).toBe(true)
+    expect(p.warnings.some((w) => w.includes('Lyrics aren’t timed'))).toBe(true)
   })
 
   it('asks for lyrics when a lyric video has none', async () => {

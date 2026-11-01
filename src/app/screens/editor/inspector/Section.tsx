@@ -129,7 +129,7 @@ export function SectionInspector({ id }: { id: string }) {
           >
             <Tooltip
               label={`Auto: ${colorNames[sectionKind(sec)]} color`}
-              description="From the section's name"
+              description="From the section’s name"
             >
               <ToggleGroup.Item value="auto" className={styles.swatchAuto} aria-label="Auto">
                 Auto

@@ -692,7 +692,7 @@ export class VjSession {
     if (this.preview.clock.state === 'playing') this.preview.pause()
     else
       this.preview.play().catch((error: unknown) => {
-        this.error = error instanceof Error ? error.message : 'Playback could not start'
+        this.error = error instanceof Error ? error.message : 'Playback couldn’t start'
         this.emit()
       })
   }
@@ -918,7 +918,7 @@ export class VjSession {
     } catch (error) {
       record.status = 'failed'
       record.error = error instanceof Error ? error.message : String(error)
-      this.error = `Take ${record.number} could not be added to the timeline: ${record.error}`
+      this.error = `Take ${record.number} couldn’t be added to the timeline: ${record.error}`
     }
     this.takes.push(record)
   }

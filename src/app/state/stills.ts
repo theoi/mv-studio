@@ -237,7 +237,7 @@ async function downloadFrame(time: Seconds): Promise<void> {
   } catch (error) {
     console.error('Save frame failed', error)
     dismiss()
-    toast('The frame could not be drawn, so nothing was downloaded. Try again in a moment.')
+    toast('The frame couldn’t be drawn, so nothing was downloaded. Try again in a moment.')
   } finally {
     if (get().dialog !== 'export') releaseStills()
   }

@@ -237,7 +237,7 @@ export class IdbProjectStore implements ProjectStore {
           report(i, 0)
           const data = byName.get(asset.storageKey)
           if (!data)
-            throw new JobError('invalid-input', `The project file is missing media for "${asset.name}"`)
+            throw new JobError('invalid-input', `The project file is missing media for “${asset.name}”`)
           if (!(await this.media.has(asset, data.size))) {
             restored.push(asset)
             await this.media.restore(asset, data, (written) => report(i, written))

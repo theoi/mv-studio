@@ -184,7 +184,7 @@ describe('LLM planner', () => {
     expect(client.lastMessages.at(-1)).toMatchObject({ role: 'tool', tool_call_id: 'call_1' })
     expect(plan.planner).toBe('local')
     expect(plan.warnings[0]).toBe(
-      "Your AI model's answer couldn't be used, so the built-in planner made this draft.",
+      'Your AI model’s answer couldn’t be used, so the built-in planner made this draft.',
     )
   })
 
@@ -198,7 +198,7 @@ describe('LLM planner', () => {
     const plan = await createDirectorPlanner({ client: () => toolClient(offline) })(await input(), testCtx())
     expect(plan.planner).toBe('local')
     expect(plan.warnings[0]).toBe(
-      "Your AI model couldn't help (Can't reach Ollama), so the built-in planner made this draft.",
+      "Your AI model couldn’t help (Can't reach Ollama), so the built-in planner made this draft.",
     )
     expect(plan.shots.length).toBeGreaterThan(0)
   })
@@ -297,7 +297,7 @@ describe('LLM planner against OpenAI-compatible endpoints', () => {
     const plan = await createDirectorPlanner({ client: () => client })(await input(), testCtx())
     expect(plan.planner).toBe('local')
     expect(plan.warnings[0]).toBe(
-      "Your AI model couldn't help (Ollama read only part of the request), so the built-in planner made this draft. Raise Ollama’s context length to 16k, then draft again.",
+      'Your AI model couldn’t help (Ollama read only part of the request), so the built-in planner made this draft. Raise Ollama’s context length to 16k, then draft again.',
     )
     expect(server.chatBodies).toHaveLength(1)
   })

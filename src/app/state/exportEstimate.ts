@@ -83,7 +83,7 @@ async function runTrials(project: Project, outputs: PlannedOutput[], signal: Abo
       seconds = await estimateOutput(planned, { signal, media: appMedia })
     } catch (error) {
       if (signal.aborted) return
-      console.warn('Could not time a trial of the export', error)
+      console.warn('Couldn’t time a trial of the export', error)
     }
     if (signal.aborted) return
     trials.set(key, seconds)

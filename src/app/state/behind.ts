@@ -938,7 +938,7 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
       if (count && !dispatch(commands, { label: CUTOUT_LABEL }))
         throw new JobError(
           'invalid-input',
-          'The cutout could not be added. Unlock the Subject track and try again.',
+          'The cutout couldn’t be added. Unlock the Subject track and try again.',
         )
       useBehind.setState((s) => ({ results: { ...s.results, [jobId]: result } }))
       return result

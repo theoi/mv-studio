@@ -34,7 +34,7 @@ function definition<K extends PluginDefinition['kind']>(
   kind: K,
 ): Extract<PluginDefinition, { kind: K }> {
   const def = registry.get(id)
-  if (def?.kind !== kind) throw new Error(`No ${kind} plugin "${id}"`)
+  if (def?.kind !== kind) throw new Error(`No ${kind} plugin “${id}”`)
   return def as Extract<PluginDefinition, { kind: K }>
 }
 
