@@ -35,6 +35,7 @@ import {
   type FootageMatcher,
   type FootageRanker,
   type PlannerInput,
+  type UnanalyzedWarning,
   type VideoKind,
 } from './inputs.ts'
 import { planLocally } from './local-planner.ts'
@@ -68,6 +69,8 @@ export interface DirectorDeps {
   matcher?: () => FootageMatcher | undefined
   /** src/vision's footage matcher, `() => vision.matcher`, for choosing a clip per shot. */
   footage?: () => FootageRanker | undefined
+  /** Wording for the note about clips used without matching (`PlannerInput.unanalyzedWarning`). */
+  unanalyzedWarning?: UnanalyzedWarning
   catalog?: () => DirectorCatalog
   spendPolicy?: () => SpendPolicy
   ledger?: SpendLedgerLike
@@ -407,6 +410,7 @@ export class DirectorSession {
           catalog: this.catalog(),
           matcher: this.deps.matcher?.(),
           footage: this.deps.footage?.(),
+          ...(this.deps.unanalyzedWarning ? { unanalyzedWarning: this.deps.unanalyzedWarning } : {}),
           ...(this.deps.media ? { media: this.deps.media } : {}),
           generation:
             provider && request.generate ? generationOptionsFor(provider, request.generate) : undefined,

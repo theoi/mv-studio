@@ -218,7 +218,7 @@ test('with footage analysis stuck on the first clip, a clip that shows nothing i
   expect(await matched()).toHaveLength(0)
 })
 
-test('with background analysis off, a draft checks the clips first and leaves out the one that shows nothing', async ({
+test('with background analysis off, a draft checks the clips first, leaves out the one that shows nothing, and says how to analyze the rest', async ({
   page,
 }) => {
   await openHarness(page)
@@ -228,6 +228,12 @@ test('with background analysis off, a draft checks the clips first and leaves ou
   const assist = page.getByRole('tabpanel', { name: 'Assist' })
   await expect(page.getByText(/^Placed \d+ (shots|scenes)/)).toBeVisible({ timeout: 60_000 })
   await expect(assist.getByText(LEFT_OUT)).toBeVisible()
+  // No analysis is running or will start on its own, so the draft doesn't promise that it finishes.
+  await expect(
+    assist.getByText(
+      'Your clips aren’t analyzed yet, so they were picked for variety. Analyze your footage in Match footage, then draft again to match the mood.',
+    ),
+  ).toBeVisible()
   expect(await usedNames(page, 'director')).toEqual(['clip.mp4'])
   await expect(
     page.getByRole('button', { name: 'clear, video, shows nothing' }).getByText('Shows nothing'),

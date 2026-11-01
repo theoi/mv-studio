@@ -31,7 +31,11 @@ export interface VisualAnalysisParts {
   personMask?: { assetId: Id; quality: string; fps: number }
   /** Words describing the clip (`readClipTags`), from its matching index. */
   tags?: readonly string[]
-  /** The fast blank check (`samplePeakLuma`): the brightest luma in a few frames spread over the clip. */
+  /**
+   * The fast blank check (`samplePeakLuma`): the brightest luma it saw in the clip's first frame and `frames` frames
+   * spread over it. It stops at the first frame of at least `BLANK_PEAK_LUMA`, so a value at or above that is only a
+   * lower bound.
+   */
   blankCheck?: { peakLuma: number; frames: number }
 }
 
@@ -194,7 +198,7 @@ function readMotion(m: Record<string, unknown>): MotionAnalysis | null {
  * Below this, no pixel of any sampled frame is brighter than the black of a video: the clip shows nothing, as when
  * its frames are black or fully transparent (a WebM whose alpha channel is all 0 draws as black on the stage).
  */
-const BLANK_PEAK_LUMA = 16
+export const BLANK_PEAK_LUMA = 16
 
 /**
  * The brightest luma footage analysis saw in the clip: from the matching index, which samples 4 frames a second, else

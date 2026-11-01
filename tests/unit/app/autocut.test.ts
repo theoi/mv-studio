@@ -265,6 +265,46 @@ it('says why clips were cut without matching when footage analysis stopped, was 
   expect(unanalyzedWarning(['a'], true, null)).toBeUndefined()
 })
 
+it('words a draft’s note for a draft, and says how to analyze its clips when analysis won’t run on its own', () => {
+  const state = (patch: Partial<IndexingState>): IndexingState => ({
+    status: 'idle',
+    total: 0,
+    done: 0,
+    failed: [],
+    ...patch,
+  })
+  const draft = { analysisRuns: false }
+  expect(
+    unanalyzedWarning(
+      ['a'],
+      true,
+      state({ status: 'error', error: { code: 'network', message: 'x' } }),
+      draft,
+    ),
+  ).toBe(
+    'Footage analysis couldn’t finish its download, so your clip was picked for variety. Check your connection and try again in Match footage, then draft again to match the mood.',
+  )
+  expect(unanalyzedWarning(['a', 'b'], true, state({ status: 'paused' }), draft)).toBe(
+    'Footage analysis was cancelled, so your clips were picked for variety. Analyze your footage in Match footage, then draft again to match the mood.',
+  )
+  // A draft doesn't start footage analysis: with background analysis off, it would never finish.
+  const analyzeFirst =
+    'Your clips aren’t analyzed yet, so they were picked for variety. Analyze your footage in Match footage, then draft again to match the mood.'
+  expect(unanalyzedWarning(['a', 'b'], true, state({}), draft)).toBe(analyzeFirst)
+  expect(unanalyzedWarning(['a'], true, null, draft)).toBe(analyzeFirst)
+  const failed = [{ assetId: 'a', name: 'beach.mp4', message: 'Couldn’t read this media file.' }]
+  expect(unanalyzedWarning(['a', 'b'], true, state({ failed }), draft)).toBe(analyzeFirst)
+  expect(unanalyzedWarning(['a'], true, state({ failed }), draft)).toBe(
+    '“beach.mp4” couldn’t be analyzed, so it was picked for variety.',
+  )
+  // Running, or about to (background analysis is on), it finishes on its own; and with some clips analyzed, the
+  // default note says how many weren't.
+  expect(unanalyzedWarning(['a', 'b'], true, state({ status: 'indexing' }), draft)).toBeUndefined()
+  expect(unanalyzedWarning(['a', 'b'], true, state({}), { analysisRuns: true })).toBeUndefined()
+  expect(unanalyzedWarning(['a', 'b'], true, null, { analysisRuns: true })).toBeUndefined()
+  expect(unanalyzedWarning(['a'], false, state({}), draft)).toBeUndefined()
+})
+
 it('passes the More options through: where cuts land, and story order over the mood switch', () => {
   const project = editor.getProject()
   expect(autoCutOptions(choices, project, { type: 'none' }, 0)).toMatchObject({

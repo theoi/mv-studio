@@ -18,6 +18,7 @@ import {
 } from '../../shared/jobs.ts'
 import {
   analyzableMedia,
+  BLANK_PEAK_LUMA,
   buildVisualAnalysis,
   hasBlankVerdict,
   readClipIndex,
@@ -110,8 +111,9 @@ export interface FootageService {
    * Runs the fast blank check on these clips and stills (default: all of them) where footage analysis can't yet say
    * whether they show anything, and resolves when each is checked, so a draft or a cut can leave out the ones that show
    * nothing. It needs no model, so it also runs where background analysis is off. A clip it can't decode stays
-   * unchecked. A check that hangs (no answer within 25 s) ends the wait, leaving the clips after it unchecked; the next
-   * call checks them again, and the clip that hung once more at most. `progress` gets the share of them checked so far.
+   * unchecked. It resolves within 25 s whatever happens: the clips not checked by then stay unchecked for this call (a
+   * check already running carries on and is kept), and the next call checks them. A check that hangs (no answer within
+   * 25 s) is checked once more at most. `progress` gets the share of them checked so far.
    */
   checkBlank(
     assetIds?: readonly Id[],
@@ -134,8 +136,10 @@ export interface FootageServiceDeps {
   showsSomething?: (asset: Asset) => boolean
 }
 
-/** A 20 s 4K clip takes about 2 s; a check still running after this has hung (a decoder that never answers). */
+/** A clip's check takes a few seconds at most; one still running after this has hung (a decoder that never answers). */
 const BLANK_CHECK_STALL_MS = 25_000
+/** The longest a draft or a cut waits for the blank check of all its clips, however many there are. */
+const BLANK_CHECK_WAIT_MS = 25_000
 /** Checks of a clip that may hang before it stays unchecked until the project is opened again: one retry. */
 const BLANK_CHECK_TRIES = 2
 
@@ -220,7 +224,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
         src = await frameSource(asset)
         if (stalled) return
         const frames = asset.kind === 'image' ? 1 : BLANK_CHECK_FRAMES
-        const peakLuma = await vision.peakLuma!(src, { frames })
+        const peakLuma = await vision.peakLuma!(src, { frames, enough: BLANK_PEAK_LUMA })
         write(asset, src, { duration: src.duration, blankCheck: { peakLuma, frames } })
       } catch {
         // Letting go of the frames of a check that hung can fail it; that says nothing about the clip.
@@ -266,14 +270,23 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       .filter((a) => !wanted || wanted.has(a.id))
       .filter((a) => needsBlankCheck(project, a, true))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
-    // One at a time, as the background pass does, so the two share each check instead of decoding a clip twice.
-    for (const [i, asset] of todo.entries()) {
-      options.progress?.(i / todo.length)
-      // The background pass or another caller may have checked it meanwhile, or the user removed it.
-      const now = editor.getProject()
-      if (!now.assets[asset.id] || !needsBlankCheck(now, asset, true)) continue
-      // A check that hangs would hold the draft or the cut for good: it goes on with the clips left unchecked.
-      if (!(await untilChecked(checkOne(asset), options.signal))) return
+    if (!todo.length) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeUp = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), BLANK_CHECK_WAIT_MS)
+    })
+    try {
+      // One at a time, as the background pass does, so the two share each check instead of decoding a clip twice.
+      for (const [i, asset] of todo.entries()) {
+        options.progress?.(i / todo.length)
+        // The background pass or another caller may have checked it meanwhile, or the user removed it.
+        const now = editor.getProject()
+        if (!now.assets[asset.id] || !needsBlankCheck(now, asset, true)) continue
+        // A check that hangs, or many slow ones, would hold the draft or the cut: it goes on with the rest unchecked.
+        if (!(await Promise.race([untilChecked(checkOne(asset), options.signal), timeUp]))) return
+      }
+    } finally {
+      clearTimeout(timer)
     }
   }
 

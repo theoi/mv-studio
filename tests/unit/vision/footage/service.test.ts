@@ -386,7 +386,8 @@ describe('fast blank check', () => {
     for (const id of ['city', 'ocean', 'crowd', 'misc']) await release(id)
     expect(indexed()).toHaveLength(4)
     expect(peakLuma).toHaveBeenCalledTimes(4)
-    expect(peakLuma.mock.calls.map(([, o]) => o?.frames)).toEqual([8, 8, 8, 8])
+    // Each clip's check stops at its first frame bright enough to show something.
+    expect(peakLuma.mock.calls.map(([, o]) => o)).toEqual(Array(4).fill({ frames: 8, enough: 16 }))
   })
 
   it('checks on request where background analysis is off, once per clip, and shares a check already running', async () => {
@@ -518,6 +519,28 @@ describe('a blank check that hangs', () => {
       // Not marked unreadable, so the next request tries it once more.
       expect(await settlesWithin(service.checkBlank(['ocean']), 30)).toBe(true)
       expect(peakLuma.mock.calls.filter(([s]) => s.mediaId === 'ocean')).toHaveLength(2)
+    }))
+
+  it('ends the wait after 25 s however slow each clip is, keeping the check still running for the next request', () =>
+    withFakeTime(async () => {
+      const { editor, service, peakLuma } = setup(undefined, {
+        // 10 s a clip: none hangs, but four of them take 40 s.
+        peakLuma: (id) => sleep(10_000).then(() => (id === 'crowd' ? 3 : 120)),
+      })
+      const checked = () =>
+        Object.keys(editor.getProject().analysis.visual).filter((id) =>
+          hasBlankVerdict(editor.getProject().analysis.visual[id]),
+        )
+      const wait = service.checkBlank()
+      expect(await settlesWithin(wait, 24_999)).toBe(false)
+      expect(await settlesWithin(wait, 1)).toBe(true)
+      expect(checked()).toEqual(['city', 'ocean'])
+      // The third clip's check carries on and is kept; the fourth is left for the next request.
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(checked()).toEqual(['city', 'ocean', 'crowd'])
+      expect(isBlankClip(editor.getProject().analysis.visual.crowd)).toBe(true)
+      expect(await settlesWithin(service.checkBlank(), 10_000)).toBe(true)
+      expect(peakLuma.mock.calls.map(([s]) => s.mediaId)).toEqual(['city', 'ocean', 'crowd', 'misc'])
     }))
 
   it('stops the wait, leaving the clips after it unchecked, and the next request checks them afresh', async () => {

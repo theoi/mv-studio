@@ -17,6 +17,7 @@ import { BARS_NOTES } from '../../../src/model/queries.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import { JobError, JobRunner } from '../../../src/shared/jobs.ts'
 import { buildVisualAnalysis } from '../../../src/vision/analysisData.ts'
+import { CLIPS, fakeMatcher, makeProject as visionProject } from '../vision/autocut/fixtures.ts'
 import {
   analysis,
   badKey,
@@ -890,5 +891,31 @@ describe('DirectorSession and clips that show nothing', () => {
     await plan(unused, { ...REQUEST, useMedia: false }).planned
     await plan(unused, REQUEST, makeProject({ videos: 0 })).planned
     expect(unused).not.toHaveBeenCalled()
+  })
+})
+
+describe('DirectorSession and clips footage analysis hasn’t reached', () => {
+  it('words its note about clips used without matching as the app says, which knows whether analysis is running', async () => {
+    const project = visionProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) })
+    const plan = (deps: Partial<DirectorDeps>) =>
+      new DirectorSession({
+        editor: new ProjectEditor(project),
+        jobs: new JobRunner(),
+        footage: () => fakeMatcher(),
+        ...deps,
+      }).plan(REQUEST)
+    const asked: [readonly string[], boolean][] = []
+    const told = await plan({
+      unanalyzedWarning: (ids, all) => {
+        asked.push([ids, all])
+        return 'Analyze your footage first.'
+      },
+    })
+    expect(ready(told).plan.warnings).toContain('Analyze your footage first.')
+    expect(ready(told).plan.warnings.join(' ')).not.toMatch(/once analysis finishes/)
+    expect(asked).toEqual([[['city', 'ocean', 'crowd', 'misc'], true]])
+    expect(ready(await plan({})).plan.warnings).toContain(
+      'Your clips aren’t analyzed yet, so they were picked for variety. Draft again once analysis finishes.',
+    )
   })
 })

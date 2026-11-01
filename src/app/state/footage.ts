@@ -132,6 +132,14 @@ export function backgroundAnalysisOn(): boolean {
 
 let started = false
 
+/**
+ * Whether footage analysis reaches the project's clips without another click: background analysis is on (it may not
+ * have started yet), or the user started it once (it then watches for new clips too).
+ */
+export function footageAnalysisRuns(): boolean {
+  return started || backgroundAnalysisOn()
+}
+
 /** Analyzes the project's clips and stills in the background, and every clip imported later. */
 export function startFootageAnalysis(): void {
   if (started || !backgroundAnalysisOn()) return
