@@ -116,6 +116,12 @@ function isStopError(error: JobError): boolean {
   return error.code === 'cancelled' || (error instanceof CloudError && STOP_KINDS.has(error.kind))
 }
 
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? (sorted[mid] ?? 0) : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
+}
+
 export async function generatePlanShots(o: GeneratePlanOptions): Promise<GeneratedShots> {
   const assets = new Map(o.done ?? [])
   const all = planRequests(o.plan, o.project)
@@ -148,8 +154,9 @@ export async function generatePlanShots(o: GeneratePlanOptions): Promise<Generat
       return
     }
     // Once a shot is made, the run's own pace says how long the rest take: it counts fal.ai's line, polling, the
-    // download and saving, which the model's typical time leaves out.
-    const pace = took.length ? took.reduce((sum, s) => sum + s, 0) / took.length : undefined
+    // download and saving, which the model's typical time leaves out. The median, because fal.ai's first request of
+    // a run is often much slower (a cold start), and a mean would hold the estimate up long after.
+    const pace = took.length ? median(took) : undefined
     const waiting = queue.reduce((sum, r) => sum + (pace ?? typical(r) ?? 0), 0)
     const etas = [...underway.values()].map((u) =>
       Math.max(u.eta ?? 0, pace === undefined ? 0 : pace - (now() - u.startedAt) / 1000),

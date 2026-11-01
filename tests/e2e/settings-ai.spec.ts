@@ -222,8 +222,8 @@ test('says what this month’s generations cost, as "Under $0.01" when that smal
   await openAiSettings(page)
   const spending = card(page, 'Spending')
   for (const [usd, line] of [
-    [0.003, 'Under $0.01 so far this month (estimated)'],
-    [0.51, 'About $0.51 so far this month (estimated)'],
+    [0.003, 'Under $0.01 so far this month'],
+    [0.51, 'About $0.51 so far this month'],
   ] as const) {
     await page.evaluate((spent) => {
       const entry = { at: new Date().toISOString(), usd: spent, label: 'Director: test' }

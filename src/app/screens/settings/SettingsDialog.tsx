@@ -491,11 +491,8 @@ function SpendingCard({ settings }: { settings: CloudSettings }) {
       </Row>
       <Row
         title="Remind me when this month’s spending passes"
-        desc={
-          month > 0
-            ? `${capitalize(formatEstimate({ usd: month }))} so far this month (estimated)`
-            : undefined
-        }
+        // formatEstimate already says "About" or "Under", so the line needs no "(estimated)".
+        desc={month > 0 ? `${capitalize(formatEstimate({ usd: month }))} so far this month` : undefined}
       >
         <Select
           value={String(settings.monthlyReminderUsd)}

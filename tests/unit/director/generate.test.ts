@@ -265,6 +265,35 @@ describe('generatePlanShots', () => {
     expect(etas.every((s, i) => i === 0 || (s ?? 0) <= (etas[i - 1] ?? 0))).toBe(true)
   })
 
+  it('takes the run’s pace from its median shot, so a slow first request doesn’t hold the estimate up', async () => {
+    const { project, plan } = await aiPlan('images', 5)
+    expect(shotsToGenerate(plan)).toHaveLength(5)
+    // fal.ai's first request takes 200 s (a cold start); the others take 10 s each.
+    let clock = 0
+    const provider = fakeProvider({
+      gate: (i, ctx) => {
+        ctx.progress({ stage: 'generate', fraction: 0.5, etaSeconds: 2, message: 'Generating, usually 3 s' })
+        clock += i === 0 ? 200_000 : 10_000
+        return Promise.resolve()
+      },
+    })
+    const events: JobProgress[] = []
+    await generatePlanShots({
+      plan,
+      provider,
+      store: memoryStore(),
+      project,
+      ctx: { ...testCtx(), progress: (p) => events.push(p) },
+      concurrency: 1,
+      now: () => clock,
+    })
+    const eta = (message: string) => events.filter((e) => e.message === message).at(-1)?.etaSeconds
+    // After 200 s and 10 s, the middle of the two: 105 s for each of the 3 left.
+    expect(eta('Generating shot 3 of 5')).toBe(3 * 105)
+    // After 200, 10 and 10 s: 10 s for each of the 2 left, where the mean (about 73 s) would say 147 s.
+    expect(eta('Generating shot 4 of 5')).toBe(2 * 10)
+  })
+
   it('times the clips left by the run’s own pace once a clip is made', async () => {
     const { project, plan } = await aiPlan('video', 3)
     // Each clip takes 30 s; the model's typical time is 90 s, and the provider says 40 s are left in each.

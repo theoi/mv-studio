@@ -152,7 +152,8 @@ removes clips whose line is gone or no longer has their words.
   is disabled but keeps focus. When the run ends, the `ready` view shows the `stopped` note in its footer just above
   Generate, which takes focus and is described by the note; the panel scrolls to its end so both show. The time
   left under the bar starts from the model's typical time for clips; once a shot of the run is made it follows the
-  run's own pace (fal.ai's line, polling, download and saving included), and image runs show it only from then.
+  run's own pace (the median time its shots took, fal.ai's line, polling, download and saving included, so a slow
+  first request doesn't hold it up), and image runs show it only from then.
 - Every state with a plan has `unit`: `'clip'` when all its AI shots are videos ("Generate 12 clips", "Retry 1
   failed clip"), else `'shot'`.
 - `applied`: summary, warnings, Undo (`undo()`; only while the draft is still the latest change) and, when
