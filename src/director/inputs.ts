@@ -23,6 +23,12 @@ export type FootageMatch = DirectorFootageMatch
 export type FootageMatcher = DirectorFootageMatcher
 /** src/vision's own footage matcher (`vision.matcher`): ranks clips shot by shot against the line sung then. */
 export type FootageRanker = Pick<ClipMatcher, 'model' | 'rankAll'>
+/**
+ * Wording for the draft's note about clips it used without a matching index (`all` when none has one), from the app,
+ * which knows whether footage analysis is running, stopped or couldn't read them. Undefined keeps "…aren’t analyzed
+ * yet".
+ */
+export type UnanalyzedWarning = (assetIds: readonly Id[], all: boolean) => string | undefined
 
 export type VideoKind = 'lyric' | 'visualizer' | 'beat-cut' | 'ai'
 
@@ -94,6 +100,7 @@ export interface PlannerInput {
   blank?: string[]
   matcher?: FootageMatcher
   footage?: FootageRanker
+  unanalyzedWarning?: UnanalyzedWarning
   settings: { aspect: AspectPreset; width: number; height: number; fps: number }
   catalog: DirectorCatalog
   /** Present only when a generation provider is configured and the user chose to generate. */
@@ -254,6 +261,7 @@ export interface BuildInputOptions {
   catalog?: DirectorCatalog
   matcher?: FootageMatcher
   footage?: FootageRanker
+  unanalyzedWarning?: UnanalyzedWarning
   generation?: GenerationOptions
   pace?: Pace
   seed?: number
@@ -284,6 +292,7 @@ export async function buildPlannerInput(project: Project, options: BuildInputOpt
     ...(blank.length ? { blank } : {}),
     matcher: options.matcher,
     ...(options.footage ? { footage: options.footage } : {}),
+    ...(options.unanalyzedWarning ? { unanalyzedWarning: options.unanalyzedWarning } : {}),
     settings: {
       aspect: project.settings.aspect,
       width: project.settings.width,

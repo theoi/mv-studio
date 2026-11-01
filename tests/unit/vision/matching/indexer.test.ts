@@ -89,7 +89,7 @@ describe('samplePeakLuma', () => {
   const closed = (bitmaps: ImageBitmap[]) =>
     bitmaps.every((b) => (b as unknown as { closed: boolean }).closed)
 
-  it('reads 8 frames spread over the clip at the matching size, so a light in any of them counts', async () => {
+  it('reads the first frame and 8 spread over the clip at the matching size, so a light in any of them counts', async () => {
     const { source, opened } = fakeSource({ duration: 10, width: 3840, height: 2160 })
     const sizes: Size[] = []
     // Black except a 2 px light in the frame at 6.875 s, the sixth of the 8.
@@ -100,10 +100,26 @@ describe('samplePeakLuma', () => {
       return gray
     }
     expect(await samplePeakLuma({ toGray }, source)).toBe(200)
-    expect(opened.map(timeOf)).toEqual([0.625, 1.875, 3.125, 4.375, 5.625, 6.875, 8.125, 9.375])
+    expect(opened.map(timeOf)).toEqual([0, 0.625, 1.875, 3.125, 4.375, 5.625, 6.875, 8.125, 9.375])
     expect(sizes[0]).toEqual({ width: 399, height: 224 })
     expect(closed(opened)).toBe(true)
     expect(await samplePeakLuma({ toGray }, fakeSource({ duration: 10 }).source, { frames: 4 })).toBe(4)
+  })
+
+  it('stops at the first frame bright enough, so a clip that shows something costs a frame or two', async () => {
+    // Fades in from black: the first frame is dark, the rest bright.
+    const toGray = (b: ImageBitmap, s: Size) => flatGray(s, timeOf(b) === 0 ? 2 : 90)
+    const fading = fakeSource({ duration: 10 })
+    expect(await samplePeakLuma({ toGray }, fading.source, { enough: 16 })).toBe(90)
+    expect(fading.opened.map(timeOf)).toEqual([0, 0.625])
+    expect(closed(fading.opened)).toBe(true)
+    const bright = fakeSource({ duration: 10 })
+    await samplePeakLuma({ toGray: (_b, s) => flatGray(s, 60) }, bright.source, { enough: 16 })
+    expect(bright.opened).toHaveLength(1)
+    // A clip that shows nothing is read in full.
+    const black = fakeSource({ duration: 10 })
+    expect(await samplePeakLuma({ toGray: (_b, s) => flatGray(s, 3) }, black.source, { enough: 16 })).toBe(3)
+    expect(black.opened).toHaveLength(9)
   })
 
   it('reads a still once', async () => {

@@ -15,7 +15,8 @@ import { templateState } from '../../plugins/templates.ts'
 import { JobError, jobs, type JobSnapshot } from '../../shared/jobs.ts'
 import { isBlankClip } from '../../vision/analysisData.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
-import { checkClipsForBlank, directorFootage } from './footage.ts'
+import { unanalyzedWarning } from './autocut.ts'
+import { checkClipsForBlank, directorFootage, footageAnalysisRuns, useFootage } from './footage.ts'
 import { appMedia } from './media.ts'
 import { songAnalysisRunning } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
@@ -92,6 +93,8 @@ function directorSession(): Promise<DirectorSession> {
       ensureBars,
       waitForSong,
       checkClips: checkClipsForBlank,
+      unanalyzedWarning: (ids, all) =>
+        unanalyzedWarning(ids, all, useFootage.getState().indexing, { analysisRuns: footageAnalysisRuns() }),
       planner: d.createDirectorPlanner({
         client: () => cloud.llm(),
         model: () => cloudSettings.get().llm?.model,
