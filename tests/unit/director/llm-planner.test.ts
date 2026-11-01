@@ -87,6 +87,25 @@ describe('LLM planner', () => {
     expect(plan.warnings).toEqual([])
   })
 
+  it('says the model is loading while Ollama loads it, then that it is asking', async () => {
+    const inner = toolClient(brief(SECTIONS.length))
+    const ctx = testCtx()
+    await createDirectorPlanner({
+      client: () => ({
+        callTools: (request) => {
+          request.onLoadingModel?.(true)
+          request.onLoadingModel?.(false)
+          return inner.callTools(request)
+        },
+      }),
+    })(await input(), ctx)
+    expect(ctx.updates.slice(0, 3)).toEqual([
+      'Asking your AI model for ideas',
+      'Loading your AI model',
+      'Asking your AI model for ideas',
+    ])
+  })
+
   it('uses the model generation prompts with the look style', async () => {
     const provider = fakeProvider()
     const generation = generationOptionsFor(provider, { mode: 'images', tier: 'draft' })!

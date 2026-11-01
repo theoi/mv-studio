@@ -144,31 +144,92 @@ export function localSetupSteps(runner: 'ollama' | 'lmstudio' | 'other', origin 
   ]
 }
 
-/** A context length that holds Ask's prompts, which measured 11,000 to 16,000 tokens on a sample project. */
+/**
+ * A context length that holds Ask's prompts on most projects: 11,000 to 16,000 tokens on the sample project. A long
+ * draft makes them longer (17,700 tokens with 208 shots), and contextFor() then asks for more.
+ */
 export const LOCAL_CONTEXT_TOKENS = 16384
 
-/** "Raise Ollama’s context length to 16k": the fix for a request a local runner cut short. */
-export function raiseContextLength(runner: 'ollama' | 'lmstudio' | 'other'): string {
-  const owner = runner === 'ollama' ? 'Ollama’s' : runner === 'lmstudio' ? 'LM Studio’s' : 'the model’s'
-  return `Raise ${owner} context length to 16k`
+/** Context lengths the Ollama app offers in Settings › Context length, from LOCAL_CONTEXT_TOKENS up. */
+const CONTEXT_SIZES = [LOCAL_CONTEXT_TOKENS, 32768, 65536, 131072] as const
+
+/**
+ * A request's tokens as Qwen 2.5 counts them, from its JSON: about 4.4 characters per token for words and JSON, 1.35
+ * tokens per digit (Qwen reads each digit as a token of its own, and numbers bring their points and commas), and a
+ * token or more for each character outside ASCII (wideTokens()). On the Ask and director requests measured
+ * (llm.contract.test.ts) it is 0.3 to 1.8% over Qwen's count, and 1 to 6% under when the clips are UUIDs or short
+ * phrases (see ESTIMATE_MARGIN); a flat 4 characters per token was 4% over on director requests and 17 to 20% under on
+ * Ask requests after a long draft, whose shots bring thousands of digits. Llama 3 groups digits in threes, so for it
+ * this errs high.
+ */
+export function estimateTokens(text: string): number {
+  let ascii = 0
+  let digits = 0
+  let wide = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    if (c >= 48 && c <= 57) digits++
+    else if (c > 127) wide += wideTokens(c)
+    else ascii++
+  }
+  return ascii / 4.4 + digits * 1.35 + wide
 }
 
 /**
- * Steps for giving a local runner a context length that holds the whole request. Steps starting with two spaces are
- * alternatives under the step before them (see nestSteps()).
+ * Qwen 2.5's tokens for a character outside ASCII, measured on lyric lines. Hangul, Georgian, Armenian and the Indic
+ * scripts take more than one (Hangul 1 to 1.36 depending on the syllables, Georgian and Armenian 1.1 to 1.17,
+ * Devanagari, Bengali and Tamil 1.2 to 1.32, the other Indic scripts and Sinhala 1.47 to 1.85); Greek, CJK, emoji and
+ * typographic quotes about one or less, and Cyrillic, Arabic, Hebrew and Thai about half, which errs high.
  */
-export function contextLengthSteps(runner: 'ollama' | 'lmstudio' | 'other', model = ''): string[] {
-  const n = LOCAL_CONTEXT_TOKENS
+function wideTokens(c: number): number {
+  if ((c >= 0x0900 && c <= 0x09ff) || (c >= 0x0b80 && c <= 0x0bff)) return 1.35
+  if (c >= 0x0a00 && c <= 0x0dff) return 1.9
+  if ((c >= 0x0530 && c <= 0x058f) || (c >= 0x10a0 && c <= 0x10ff)) return 1.25
+  if ((c >= 0x1100 && c <= 0x11ff) || (c >= 0xac00 && c <= 0xd7af)) return 1.3
+  return 1
+}
+
+/**
+ * How far over its estimate a request may run. Measured requests came out 0.94 to 1.02 of Qwen's count, the lowest a
+ * shot list made of short phrases ("label": "Chorus, clip", "mood": "euphoric, peak, neon night drive").
+ */
+export const ESTIMATE_MARGIN = 1.08
+
+/** The smallest of CONTEXT_SIZES that holds a request estimated at `tokens` with room for the answer. */
+export function contextFor(tokens = 0): number {
+  const needed = tokens * ESTIMATE_MARGIN + 1024
+  return CONTEXT_SIZES.find((n) => n >= needed) ?? 131072
+}
+
+const kTokens = (n: number) => `${n / 1024}k`
+
+/** "Raise Ollama’s context length to 16k": the fix for a request of about `tokens` that a local runner cut short. */
+export function raiseContextLength(runner: 'ollama' | 'lmstudio' | 'other', tokens?: number): string {
+  const owner = runner === 'ollama' ? 'Ollama’s' : runner === 'lmstudio' ? 'LM Studio’s' : 'the model’s'
+  return `Raise ${owner} context length to ${kTokens(contextFor(tokens))}`
+}
+
+/**
+ * Steps for giving a local runner a context length that holds the whole request of about `tokens`. Steps starting
+ * with two spaces are alternatives under the step before them (see nestSteps()).
+ */
+export function contextLengthSteps(
+  runner: 'ollama' | 'lmstudio' | 'other',
+  model = '',
+  tokens?: number,
+): string[] {
+  const n = contextFor(tokens)
   if (runner === 'ollama') {
+    // KV cache over Ollama's 4k default: Qwen2.5 7B 56 KB per token, Llama 3.1 8B and Mistral 7B 128 KB.
+    const gb = (perToken: number) => (((n - 4096) * perToken) / 1024 ** 2).toFixed(1)
     return [
-      `${raiseContextLength(runner)}, then try again:`,
-      '  Ollama app (macOS, Windows): Settings › Context length › 16k.',
+      `${raiseContextLength(runner, tokens)}, then try again:`,
+      `  Ollama app (macOS, Windows): Settings › Context length › ${kTokens(n)}.`,
       `  Linux: run sudo systemctl edit ollama, add Environment="OLLAMA_CONTEXT_LENGTH=${n}" under [Service], then sudo systemctl restart ollama.`,
       `  From a terminal: OLLAMA_CONTEXT_LENGTH=${n} ollama serve`,
-      // KV cache for 12k more tokens: Qwen2.5 7B 56 KB per token, Llama 3.1 8B and Mistral 7B 128 KB.
       model.startsWith('qwen2.5:7b')
-        ? 'A larger context uses more memory: about 0.7 GB more for qwen2.5:7b.'
-        : 'A larger context uses more memory, up to about 1.5 GB for 7B and 8B models.',
+        ? `A larger context uses more memory: about ${gb(56)} GB more for qwen2.5:7b.`
+        : `A larger context uses more memory, up to about ${gb(128)} GB for 7B and 8B models.`,
     ]
   }
   if (runner === 'lmstudio') {
