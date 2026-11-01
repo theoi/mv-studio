@@ -458,14 +458,17 @@ test('a retry after failed AI shots shows its price and asks again; Back returns
   expect(fal).toHaveLength(sent)
 })
 
-for (const [idea, picture] of [
+for (const [idea, picture, absent] of [
   [
     'Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night. Use my own clips.',
     'Summer day outdoors: ocean waves, skaters at night, bees in lavender, a city at night',
+    /clips/,
   ],
   // The source words go wherever they are in the idea, and what they show stays.
-  ['Use my footage of the city and stock footage of the sea.', 'the city and the sea'],
-])
+  ['Use my footage of the city and stock footage of the sea.', 'the city and the sea', /footage/],
+  // What the idea rules out is not drawn.
+  ['A neon city at night. No stock footage of cities.', 'A neon city at night', /footage|cities/],
+] as const)
   test(`AI shot prompts carry the picture the idea describes, not what it asks of the edit: ${idea}`, async ({
     page,
   }) => {
@@ -489,7 +492,7 @@ for (const [idea, picture] of [
     expect(prompts.length).toBeGreaterThan(0)
     for (const prompt of prompts) {
       expect(prompt.startsWith(`${picture}. `), prompt).toBe(true)
-      expect(prompt).not.toMatch(/clips|footage/)
+      expect(prompt).not.toMatch(absent)
     }
   })
 

@@ -391,6 +391,22 @@ describe('local planner', () => {
       'A gritty rock video of the band playing live',
     ],
     ['Skaters at night and my clips showing the harbour', 'Skaters at night and the harbour'],
+    ['A city at night, a few AI scenes of the crowd', 'A city at night, the crowd'],
+    // An edit of the media goes with them.
+    ['Open with my footage of the skyline', 'the skyline'],
+    ['Begin with my clips of the crowd, then fireworks', 'the crowd, then fireworks'],
+    ['A storm at sea and end with my footage of the harbour', 'A storm at sea and the harbour'],
+    ['Cut my clips of the concert to the beat', 'the concert'],
+    ['Mix my footage of the band with AI shots of the ocean', 'the band with the ocean'],
+    // A clause that rules media out goes whole, so what it rules out is not drawn.
+    ['A neon city at night. No stock footage of cities.', 'A neon city at night'],
+    ["Rain on a window. Don't use my photos of the beach.", 'Rain on a window'],
+    ['A desert road, avoid my footage of the crowd', 'A desert road'],
+    ['A lake at dawn, not stock footage of the sea', 'A lake at dawn'],
+    ['Instead of AI images of people, empty streets at night', 'empty streets at night'],
+    ['Skip my clips of the crowd. A quiet forest.', 'A quiet forest'],
+    ['Leave out the AI shots of the ocean, a mountain lake', 'a mountain lake'],
+    ['Without AI images of people, a foggy pier', 'a foggy pier'],
   ])('takes the picture out of the idea %j', (idea, picture) => {
     expect(visualIdea(idea)).toBe(picture)
   })
@@ -420,6 +436,8 @@ describe('local planner', () => {
     'use of color: neon pink and teal',
     'Kids looking at old photos of their grandparents',
     'A stock trader watching screens full of numbers',
+    'A street with no cars at dawn, never-ending fields',
+    'A man with no photos of his family',
   ])('keeps an idea that only describes pictures as it is: %j', (idea) => {
     expect(visualIdea(idea)).toBe(idea)
   })

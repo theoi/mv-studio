@@ -622,6 +622,8 @@ const MEDIA = String.raw`(?:clips?|footage|videos?|photos?|pictures?|images?|med
 const SHOTS = String.raw`(?:${MEDIA}|montage|visuals?|scenes?|shots?)`
 const AI_SOURCE = String.raw`(ai[\s-]+(generated\s+|made\s+)?)`
 const DURATION = String.raw`\d+[\s-]*(secs?|seconds?|mins?|minutes?)`
+/** How many of a medium: "the", "some", "a few", "two" AI scenes of … */
+const QUANTITY = String.raw`(the|these|those|some|my|our|an?|a\s+few|a\s+couple(\s+of)?|several|many|more|lots\s+of|a\s+lot\s+of|\d+|one|two|three|four|five|six|seven|eight|nine|ten)`
 
 /**
  * Request words in front of the picture, which stays: "Make an AI video of …", "AI visuals of …", "my footage of …",
@@ -695,19 +697,41 @@ const INSTRUCTION_PHRASES = [
     'gi',
   ),
   // "…and AI shots of the ocean", "The AI generated images of a storm", "…and stock footage of the sea", "…and my
-  // photos of the beach": the source words go, what they show stays.
+  // photos of the beach", "a few AI scenes of the crowd": the source words go, what they show stays.
   new RegExp(
-    String.raw`\b((the|these|those|some|my|our)\s+)?(own\s+)?(stock\s+|${AI_SOURCE})${SHOTS}\s+(of|showing|featuring)\s+|\b(my|our)\s+(own\s+)?${MEDIA}\s+(of|showing|featuring)\s+`,
+    String.raw`\b(${QUANTITY}\s+)?(own\s+)?(stock\s+|${AI_SOURCE})${SHOTS}\s+(of|showing|featuring)\s+|\b(my|our)\s+(own\s+)?${MEDIA}\s+(of|showing|featuring)\s+`,
     'gi',
   ),
 ]
 
 /**
+ * A clause that rules media out ("No stock footage of cities", "Don't use my photos of the beach", "Instead of AI
+ * images of people") goes whole: without its source words, what it rules out would read as the picture.
+ */
+const RULED_OUT = [
+  /\b(no|not|never|without|don['’]?t|do\s+not|avoid(ing)?|skip(ping)?|exclud(e|ing)|except|instead\s+of|leave\s+out|leaving\s+out|rather\s+than|other\s+than)\b/i,
+  new RegExp(
+    String.raw`\b((my|our|the\s+user['’]?s)\s+(own\s+)?${MEDIA}|(stock\s+|${AI_SOURCE})${SHOTS})\b`,
+    'i',
+  ),
+]
+
+/**
+ * An edit of media at the start of a clause: "Cut my clips of the concert …", "Mix my footage of the band …", "Open
+ * with AI shots of the skyline". The edit goes, what the media show stays.
+ */
+const EDIT_OF_MEDIA = new RegExp(
+  String.raw`^(please\s+)?((cut|edit|mix|trim|splice|combine|blend|intercut)\s+|(open|begin|start|end|finish|close)\s+(with|on)\s+)(${QUANTITY}\s+)?(own\s+)?(stock\s+|${AI_SOURCE})?${SHOTS}\s+(of|showing|featuring)\s+`,
+  'i',
+)
+
+/**
  * "A summer montage with my photos of the beach" → "A summer montage of the beach": the source goes, what it shows
- * stays. At the start of a clause, the preposition goes too.
+ * stays. At the start of a clause the preposition goes too, and after "end with" and the like ("…and end with my
+ * footage of the harbour") so do both.
  */
 const WITH_OWN_MEDIA = new RegExp(
-  String.raw`(^|\s+)(with|using|from|in)\s+(my|our)\s+(own\s+)?${MEDIA}\s+(of|showing|featuring)\s+`,
+  String.raw`(^|\s+)((open|begin|start|end|finish|close)(s|ing)?\s+)?(with|using|from|in)\s+(my|our)\s+(own\s+)?${MEDIA}\s+(of|showing|featuring)\s+`,
   'gi',
 )
 
@@ -731,12 +755,18 @@ export function visualIdea(idea: string): string {
       sentence.slice(0, sentence.length - end.length),
     )
       .split(/\s*[,;]\s*|\s+[-–—]\s+/)
+      .filter((c) => !RULED_OUT.every((p) => p.test(c)))
+      .map((c) => c.replace(EDIT_OF_MEDIA, ''))
       .map((c) =>
         c.replace(AI_MADE, (_m, article?: string, next = '') =>
           article ? `${articleFor(next, article)} ` : '',
         ),
       )
-      .map((c) => c.replace(WITH_OWN_MEDIA, (_m, before: string) => (before ? ' of ' : '')))
+      .map((c) =>
+        c.replace(WITH_OWN_MEDIA, (_m, before: string, verb?: string) =>
+          !before ? '' : verb ? ' ' : ' of ',
+        ),
+      )
       .map((c) => INSTRUCTION_PHRASES.reduce((s, p) => s.replace(p, ''), c).trim())
       .filter((c) => c && !INSTRUCTION_CLAUSES.some((p) => p.test(c)) && !onlyFiller(c))
     if (!clauses.length) continue
