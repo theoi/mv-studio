@@ -63,18 +63,17 @@ describe('a camera move whose preset bends straight lines even at the lowest aut
 })
 
 describe('the alternatives that keep a still clean at the lowest automatic amount', () => {
-  it('are the other presets under both limits at that amount, the one that can move the most first', async () => {
+  it('are the other presets under both limits at that amount, with how much each can take, the most first', async () => {
     const { cleanAlternatives: clean } = await predict(wideEdge, 'dolly-in', MOTIONS)
     const own = await Promise.all(
       (['orbit-right', 'pan-right'] as const).map(async (p) => {
         const { safe } = await predict(wideEdge, p)
-        return { preset: p, amount: Math.min(safe.smear, safe.bend) }
+        return { preset: p, safeIntensity: Math.min(safe.smear, safe.bend) }
       }),
     )
     const expected = own
-      .filter((o) => o.amount >= 0.25)
-      .sort((a, b) => b.amount - a.amount)
-      .map((o) => o.preset)
+      .filter((o) => o.safeIntensity >= 0.25)
+      .sort((a, b) => b.safeIntensity - a.safeIntensity)
     expect(expected.length).toBeGreaterThan(0)
     expect(clean).toEqual(expected)
   })
@@ -104,7 +103,11 @@ describe('the alternatives that keep a still clean at the lowest automatic amoun
         ],
         0.25,
       ),
-    ).toEqual(['pan-right', 'orbit-right', 'tilt-up'])
+    ).toEqual([
+      { preset: 'pan-right', safeIntensity: 0.45 },
+      { preset: 'orbit-right', safeIntensity: 0.3 },
+      { preset: 'tilt-up', safeIntensity: 0.3 },
+    ])
     expect(
       cleanAlternatives(
         [
@@ -113,6 +116,9 @@ describe('the alternatives that keep a still clean at the lowest automatic amoun
         ],
         0.25,
       ),
-    ).toEqual(['orbit-right', 'pan-right'])
+    ).toEqual([
+      { preset: 'orbit-right', safeIntensity: 0.5 },
+      { preset: 'pan-right', safeIntensity: 0.5 },
+    ])
   })
 })

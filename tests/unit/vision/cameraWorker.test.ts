@@ -54,7 +54,7 @@ const prediction = {
   focus: 0.4,
   safe: { smear: 0.35, bend: 0.2 },
   alwaysBends: false,
-  cleanAlternatives: ['pan-right'],
+  cleanAlternatives: [{ preset: 'pan-right', safeIntensity: 0.3 }],
 }
 
 beforeAll(() => {
@@ -157,7 +157,7 @@ describe('the camera-move prediction', () => {
       safeIntensity: 0.2,
       bendRisk: true,
       alwaysBends: false,
-      cleanAlternatives: ['pan-right'],
+      cleanAlternatives: [{ preset: 'pan-right', safeIntensity: 0.3 }],
     })
     const effect = editor.getProject().clips[clip.id]!
     expect('effects' in effect && effect.effects[0]!.params.focus!.value).toBe(0.4)

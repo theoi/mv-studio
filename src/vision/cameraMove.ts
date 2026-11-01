@@ -6,6 +6,7 @@ import { JobError } from '../shared/jobs.ts'
 import {
   predictCameraMove,
   type CameraPrediction,
+  type CleanAlternative,
   type PredictionRequest,
   type PredictionSource,
 } from './cameraPrediction.ts'
@@ -79,9 +80,10 @@ export interface CameraMoveResult {
   alwaysBends: boolean
   /**
    * Where this preset bends the still's straight lines even at 0.25: the `alternatives` predicted neither to bend them
-   * nor to smear at 0.25, the one that can move the most first. Empty otherwise, and without alternatives.
+   * nor to smear at 0.25, each with its `safeIntensity`, the one that can move the most first. Empty otherwise, and
+   * without alternatives.
    */
-  cleanAlternatives: CameraPreset[]
+  cleanAlternatives: CleanAlternative[]
 }
 
 export interface CameraMovesResult {

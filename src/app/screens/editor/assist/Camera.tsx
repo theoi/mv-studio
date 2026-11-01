@@ -134,6 +134,7 @@ export function CameraView() {
         alwaysBends: r.move.alwaysBends,
         cleanAlternatives: r.move.cleanAlternatives,
       })),
+      chosenIntensity(),
     )
     const riskRows = risky.flatMap((r) => {
       const clip = project.clips[r.move.clipId]

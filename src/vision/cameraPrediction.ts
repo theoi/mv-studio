@@ -45,9 +45,15 @@ export interface CameraPrediction {
    * Where `preset` bends the still's straight lines below `floor`: the `alternatives` predicted neither to bend them
    * nor to smear up to `floor`, the one with the largest safe amount first (`cleanAlternatives`). Empty otherwise.
    */
-  cleanAlternatives: CameraPreset[]
+  cleanAlternatives: CleanAlternative[]
   /** For a fresh estimate: the estimate prepared for the parallax renderer, which the move renders and stores. */
   prepared?: DepthMap
+}
+
+/** A preset the user could pick instead, with the largest amount predicted neither to smear nor to bend with it. */
+export interface CleanAlternative {
+  preset: CameraPreset
+  safeIntensity: number
 }
 
 export async function predictCameraMove(request: PredictionRequest): Promise<CameraPrediction> {
@@ -87,12 +93,11 @@ export async function predictCameraMove(request: PredictionRequest): Promise<Cam
 export function cleanAlternatives(
   candidates: readonly { preset: CameraPreset; safe: SafeAmounts }[],
   floor: number,
-): CameraPreset[] {
-  const amount = (s: SafeAmounts) => Math.min(s.smear, s.bend)
+): CleanAlternative[] {
   return candidates
-    .filter((c) => amount(c.safe) >= floor)
-    .sort((a, b) => amount(b.safe) - amount(a.safe))
-    .map((c) => c.preset)
+    .map((c) => ({ preset: c.preset, safeIntensity: Math.min(c.safe.smear, c.safe.bend) }))
+    .filter((c) => c.safeIntensity >= floor)
+    .sort((a, b) => b.safeIntensity - a.safeIntensity)
 }
 
 function sceneOf(depth: DepthField, gray: GrayImage): SmearScene {

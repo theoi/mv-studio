@@ -48,14 +48,11 @@ export function CameraSuggestion({ clip }: { clip: VisualClip }) {
       id={`camera-${clip.id}`}
       action="Add 3D camera"
       onAction={() => {
-        const handle = startCameraMoves(
-          [clip.id],
-          MOTION_PRESETS[useCamera.getState().motion],
-          chosenIntensity(),
-        )
+        const intensity = chosenIntensity()
+        const handle = startCameraMoves([clip.id], MOTION_PRESETS[useCamera.getState().motion], intensity)
         handle?.promise.then(
           (result) => {
-            const risk = addedRiskNote(result)
+            const risk = addedRiskNote(result, intensity)
             toast(risk ? `3D camera move added. ${risk}` : '3D camera move added', {
               label: 'Undo',
               run: () => undoCameraMoves(result),

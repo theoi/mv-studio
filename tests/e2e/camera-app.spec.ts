@@ -685,7 +685,12 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
   await expect(detail).toBeVisible()
   // The fake depths make a still that smears or one that bends, never both, so the move's safe amounts are set to
   // each case the row puts into words.
-  const setSafe = (smear: number, bend: number, alwaysBends = false, cleanAlternatives: string[] = []) =>
+  const setSafe = (
+    smear: number,
+    bend: number,
+    alwaysBends = false,
+    cleanAlternatives: { preset: string; safeIntensity: number }[] = [],
+  ) =>
     page.evaluate(
       ([s, b, always, clean]) => {
         const { useCamera } = window.mvStudio.app.camera
@@ -742,9 +747,19 @@ test('every wording of a still’s row in Assist › 3D camera stays inside its 
     'Straight lines in this image may bend with any Motion. A lower Strength bends them less.',
   )
   await expect(detail).toHaveText('Strength 100% · may bend lines above 10%')
-  // Where another Motion keeps the lines straight at the lowest automatic strength, the note names it.
-  await setSafe(1, 0.1, false, ['orbit-right', 'pan-right'])
-  await expect(note).toHaveText('This image may bend straight lines at this strength. Try Orbit instead.')
+  // Where another Motion keeps the lines straight at the lowest automatic strength, the note names it, but at the
+  // Strength set here (100%) only a Motion that can take it.
+  const orbit = (safeIntensity: number) => [
+    { preset: 'orbit-right', safeIntensity },
+    { preset: 'pan-right', safeIntensity: 0.25 },
+  ]
+  await setSafe(1, 0.1, false, orbit(0.3))
+  await expect(note).toHaveText('This image may bend straight lines at this strength. Try a lower Strength.')
+  await setSafe(1, 0.1, false, orbit(1))
+  await expect(note).toHaveText('This image may bend straight lines at this strength. Set Motion to Orbit.')
+  await setSafe(1, 0.1, false, orbit(0.3))
+  await page.evaluate(() => window.mvStudio.app.camera.resetStrength())
+  await expect(note).toHaveText('This image may bend straight lines at this strength. Set Motion to Orbit.')
   await expect(detail).toHaveText('Strength 100% · may bend lines above 10%')
 })
 
