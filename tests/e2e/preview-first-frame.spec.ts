@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, openHarness, test } from './fixtures.ts'
+import { expect, openApp, openHarness, test, waitForPreview } from './fixtures.ts'
 
 /** Mean luminance (0..255) of a PNG, decoded in the page. */
 async function meanLuma(page: Page, png: Buffer): Promise<number> {
@@ -44,4 +44,65 @@ test('the editor preview shows its first frame as soon as "Preparing the preview
   expect(ready.length).toBeGreaterThan(2)
   // The scene at 1:06.9, not the black canvas behind it.
   expect(ready.filter((s) => s.luma < 12).map((s) => s.luma.toFixed(1))).toEqual([])
+})
+
+/** Starts (once) or restarts recording, before each paint, the editor preview's box, or null while it is not there. */
+async function recordPaints(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { paints: ({ width: number; height: number } | null)[]; recording?: true }
+    w.paints = []
+    if (w.recording) return
+    w.recording = true
+    const tick = () => {
+      const r = document.querySelector('canvas[aria-label="Video preview"]')?.getBoundingClientRect()
+      w.paints.push(r ? { width: r.width, height: r.height } : null)
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+}
+
+async function expectFirstPaintAtSize(page: Page, from: string): Promise<void> {
+  await waitForPreview(page)
+  const { paints, settled } = await page.evaluate(() => {
+    const r = document.querySelector('canvas[aria-label="Video preview"]')!.getBoundingClientRect()
+    return {
+      paints: (window as unknown as { paints: ({ width: number; height: number } | null)[] }).paints,
+      settled: { width: r.width, height: r.height },
+    }
+  })
+  const first = paints.findIndex((p) => p !== null)
+  // Recorded from before the editor opened.
+  expect(first, `paints ${from}`).toBeGreaterThan(0)
+  expect(paints[first], `the editor's first paint ${from}`).toEqual(settled)
+  expect(settled.width).toBeGreaterThan(100)
+}
+
+test("the editor's first paint has the preview at its size, from a link, from VJ mode and from the start screen", async ({
+  page,
+}) => {
+  await openApp(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await recordPaints(page)
+  await page.evaluate(() => (window.location.hash = '#/editor?t=60'))
+  await expectFirstPaintAtSize(page, 'from a link')
+
+  await page.getByRole('button', { name: 'VJ', exact: true }).click()
+  await expect(page.getByRole('img', { name: 'Live output' })).toHaveAttribute('aria-busy', 'false', {
+    timeout: 30_000,
+  })
+  await recordPaints(page)
+  await page.getByRole('button', { name: 'Back to editor' }).click()
+  await expectFirstPaintAtSize(page, 'from VJ mode')
+
+  // Kept, so the start screen lists it.
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.getByText('Saved in this browser')).toBeVisible()
+  await page.getByRole('button', { name: 'Home' }).click()
+  const recent = page.getByRole('region', { name: 'Recent projects' })
+  const project = recent.getByRole('button', { name: /^Neon Skyline/ })
+  await project.waitFor()
+  await recordPaints(page)
+  await project.click()
+  await expectFirstPaintAtSize(page, 'from the start screen')
 })
