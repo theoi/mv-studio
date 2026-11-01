@@ -95,6 +95,12 @@ const PAUSE_AFTER_FRAMES = 2
 /** warm() starts an upcoming clip's element playing this long before the cut. */
 const PREROLL = 0.3
 const RELEASE_AFTER_FRAMES = 900
+/**
+ * Elements no clip on screen uses (and not warmed, prewarmed or pinned) stay loaded for reuse up to this many pixels of
+ * footage in all, the most recently used first. A loaded 4K element holds about 200 MB of decoder and frames, so this
+ * keeps two of them, or eight 1080p ones.
+ */
+const IDLE_PIXEL_BUDGET = 2 * 3840 * 2160
 /** Longest time between two frames of a video that a seek's frame check allows for, in seconds. */
 const MAX_FRAME_SPACING = 1
 /** A seek starting this soon (ms) after its element was paused while playing looks at its frame one animation frame late. */
@@ -439,11 +445,20 @@ export class VideoElementFrameProvider implements FrameProvider {
   endFrame(): void {
     this.exact.clear()
     this.frame++
+    const idleSlots: [string, VideoSlot][] = []
     for (const [key, slot] of this.slots) {
       const idle = this.frame - slot.lastUsed
       if (idle > PAUSE_AFTER_FRAMES && !this.upcoming.has(key)) this.pause(slot)
-      if (idle > RELEASE_AFTER_FRAMES && !slot.pinned && !this.upcoming.has(key) && !this.prewarmed.has(key))
-        this.release(key, slot)
+      if (idle <= PAUSE_AFTER_FRAMES || slot.pinned || this.upcoming.has(key) || this.prewarmed.has(key))
+        continue
+      if (idle > RELEASE_AFTER_FRAMES) this.release(key, slot)
+      else idleSlots.push([key, slot])
+    }
+    idleSlots.sort((a, b) => b[1].lastUsed - a[1].lastUsed)
+    let pixels = 0
+    for (const [key, slot] of idleSlots) {
+      pixels += slot.video.videoWidth * slot.video.videoHeight
+      if (pixels > IDLE_PIXEL_BUDGET) this.release(key, slot)
     }
   }
 
@@ -572,18 +587,28 @@ interface Decoder {
   colorSpace: VideoColorSpaceInit | null
 }
 
+/** A decode cursor over one footage and the request key (clip) it serves, with its rotation canvas. */
+interface DecoderSlot {
+  key: string
+  assetId: Id
+  decoder: Promise<Decoder | null>
+  canvas?: OffscreenCanvas
+}
+
 export class DecoderFrameProvider implements FrameProvider {
   private readonly tracks = new Map<
     Id,
     Promise<{ track: InputVideoTrack; colorSpace: VideoColorSpaceInit | null } | null>
   >()
-  private readonly decoders = new Map<string, Promise<Decoder | null>>()
+  /** By request key and asset id. */
+  private readonly slots = new Map<string, DecoderSlot>()
   private readonly images: ImageCache
   private readonly media: MediaFileSource
   private readonly openInputs: Input[] = []
   /** Frames handed out for the current render; closed in endFrame(). */
   private pending: VideoFrame[] = []
-  private canvases = new Map<string, OffscreenCanvas>()
+  /** Request keys of the frame being rendered (beginFrame), or null when the caller does not name them. */
+  private frameKeys: Set<string> | null = null
 
   constructor(media: MediaFileSource) {
     this.media = media
@@ -608,16 +633,40 @@ export class DecoderFrameProvider implements FrameProvider {
     return track
   }
 
-  async videoFrame(asset: Asset, sourceTime: Seconds, key: string): Promise<FrameRef | null> {
-    const cacheKey = `${key}:${asset.id}`
-    let pending = this.decoders.get(cacheKey)
-    if (!pending) {
-      pending = this.track(asset).then(
+  beginFrame(keys: string[]): void {
+    this.frameKeys = new Set(keys)
+  }
+
+  /**
+   * The slot for a clip: its own, the slot of a clip of the same footage that left the frame (a contiguous piece
+   * decodes on from where that one stopped, and a jump restarts at a key frame), or a new one.
+   */
+  private slot(asset: Asset, key: string): DecoderSlot {
+    const id = `${key}:${asset.id}`
+    let slot = this.slots.get(id)
+    if (slot) return slot
+    if (this.frameKeys)
+      for (const [otherId, other] of this.slots) {
+        if (other.assetId !== asset.id || this.frameKeys.has(other.key)) continue
+        this.slots.delete(otherId)
+        other.key = key
+        this.slots.set(id, other)
+        return other
+      }
+    slot = {
+      key,
+      assetId: asset.id,
+      decoder: this.track(asset).then(
         (t) => t && { cursor: new DecodeCursor(t.track), colorSpace: t.colorSpace },
-      )
-      this.decoders.set(cacheKey, pending)
+      ),
     }
-    const decoder = await pending
+    this.slots.set(id, slot)
+    return slot
+  }
+
+  async videoFrame(asset: Asset, sourceTime: Seconds, key: string): Promise<FrameRef | null> {
+    const slot = this.slot(asset, key)
+    const decoder = await slot.decoder
     const sample = await decoder?.cursor.at(clampSourceTime(asset, sourceTime))
     if (!decoder || !sample) return null
     let frame = sample.toVideoFrame()
@@ -629,10 +678,10 @@ export class DecoderFrameProvider implements FrameProvider {
     // VideoFrame uploads ignore container rotation; apply it like <video> does in preview.
     const w = sample.displayWidth
     const h = sample.displayHeight
-    let canvas = this.canvases.get(cacheKey)
+    let canvas = slot.canvas
     if (!canvas || canvas.width !== w || canvas.height !== h) {
       canvas = new OffscreenCanvas(w, h)
-      this.canvases.set(cacheKey, canvas)
+      slot.canvas = canvas
     }
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
@@ -648,16 +697,26 @@ export class DecoderFrameProvider implements FrameProvider {
   endFrame(): void {
     for (const frame of this.pending) frame.close()
     this.pending = []
+    const keys = this.frameKeys
+    this.frameKeys = null
+    if (!keys) return
+    // A cursor holds a decoder and a few decoded frames (over 100 MB at 4K). Kept for every clip of a beat-cut export
+    // until the end, they ran a 4K project out of memory; a clip that leaves and comes back starts a new one.
+    for (const [id, slot] of this.slots)
+      if (!keys.has(slot.key)) {
+        this.slots.delete(id)
+        void slot.decoder.then((d) => d?.cursor.close())
+      }
   }
 
   dispose(): void {
+    this.frameKeys = null
     this.endFrame()
-    for (const decoder of this.decoders.values()) void decoder.then((d) => d?.cursor.close())
-    this.decoders.clear()
+    for (const slot of this.slots.values()) void slot.decoder.then((d) => d?.cursor.close())
+    this.slots.clear()
     for (const input of this.openInputs) input.dispose()
     this.openInputs.length = 0
     this.tracks.clear()
-    this.canvases.clear()
     this.images.dispose()
   }
 }
