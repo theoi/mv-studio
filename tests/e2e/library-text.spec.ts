@@ -203,16 +203,28 @@ test('the note under Add text says where a click goes, and a click on a video cl
   await to('#/editor?lib=text&t=73.6')
   await waitForPreview(page)
   const library = page.getByRole('tabpanel', { name: 'Text' })
-  await expect(library.getByText('Click a style to use it on every lyric line')).toBeVisible()
+  await expect(
+    library.getByText('Click a style to use it on every lyric line.', { exact: true }),
+  ).toBeVisible()
   await to('#/editor?lib=text&sel=clip:o-title&t=3')
-  await expect(library.getByText('Click a style to use it on “Title”')).toBeVisible()
+  await expect(library.getByText('Click a style to use it on “Title”.', { exact: true })).toBeVisible()
   await to('#/editor?lib=text&sel=lyric:l-c1-2&t=70.4')
   await expect(library.getByText('Click a style to use it on this lyric line')).toBeVisible()
   await library.getByRole('button', { name: 'Neon sign' }).first().click()
   await expect(page.getByRole('status').getByText('“Neon sign” on this lyric line')).toBeVisible()
+  // The tiles of the style and kinetic preset the line has now are marked, and the note stays in view while the
+  // tiles scroll.
+  await expect(library.getByRole('button', { name: 'Neon sign, current', exact: true })).toBeVisible()
+  await expect(library.getByRole('button', { name: 'Neon flicker, current', exact: true })).toBeAttached()
+  const scroller = library.locator('.scroll')
+  expect(await scroller.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  await expect(
+    library.getByText('Click a style to use it on this lyric line.', { exact: true }),
+  ).toBeInViewport()
 
   await to('#/editor?lib=text&sel=clip:c-s-c1-1&t=67.2')
-  await expect(library.getByText('Select a text or lyric line to restyle it')).toBeVisible()
+  await expect(library.getByText('Select a text or lyric line to restyle it.', { exact: true })).toBeVisible()
   const styles = () =>
     page.evaluate(() => {
       const project: Project = window.mvStudio.app.project.editor.getProject()
