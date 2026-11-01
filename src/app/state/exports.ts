@@ -90,11 +90,19 @@ export interface ExportProject {
   kept: boolean
 }
 
+/** Of an export of several files, how many were saved to Downloads before it stopped. */
+export interface SavedFiles {
+  saved: number
+  total: number
+}
+
 /** An export whose tab died while it ran. */
 export interface StoppedExport {
   /** Null for a mark that doesn't name it. */
   project: ExportProject | null
   resolution: number
+  /** Null unless some files of several were saved. */
+  files: SavedFiles | null
 }
 
 /** The export found stopped at start (findStoppedExport), until the next export starts. */
@@ -104,6 +112,7 @@ interface RunningMark {
   resolution?: unknown
   lock?: unknown
   project?: unknown
+  files?: unknown
 }
 
 /**
@@ -116,12 +125,19 @@ export function exportResolution(sizes: readonly { width: number; height: number
 
 /**
  * Says that an export didn't finish because its tab died, with what may help at its resolution, and names its
- * project when that isn't the one showing.
+ * project when that isn't the one showing. Files it saved before are counted, so they aren't exported again.
  */
-export function exportStoppedMessage(resolution: number, projectName?: string): string {
+export function exportStoppedMessage(
+  resolution: number,
+  projectName?: string,
+  files?: SavedFiles | null,
+): string {
   const which = projectName === undefined ? 'The last export' : `The export of “${projectName}”`
+  const saved = files
+    ? ` ${files.saved} of ${files.total} files ${files.saved === 1 ? 'was' : 'were'} saved to Downloads.`
+    : ''
   const advice = resolution > 720 ? 'Try a lower resolution.' : 'Close other tabs and try again.'
-  return `${which} didn’t finish. The browser may have run out of memory. ${advice}`
+  return `${which} didn’t finish.${saved} The browser may have run out of memory. ${advice}`
 }
 
 /** Web Locks, without which a tab can't tell an export running in another tab from one that stopped. */
@@ -153,6 +169,15 @@ function clearMark(lock?: string): void {
   }
 }
 
+function markedFiles(mark: RunningMark): SavedFiles | null {
+  const f = mark.files as Partial<Record<keyof SavedFiles, unknown>> | null | undefined
+  const saved = Number(f?.saved)
+  const total = Number(f?.total)
+  return Number.isInteger(saved) && Number.isInteger(total) && saved > 0 && saved < total
+    ? { saved, total }
+    : null
+}
+
 function markedProject(mark: RunningMark): ExportProject | null {
   const p = mark.project as Partial<Record<keyof ExportProject, unknown>> | null | undefined
   return p && typeof p.id === 'string' && typeof p.name === 'string'
@@ -161,30 +186,52 @@ function markedProject(mark: RunningMark): ExportProject | null {
 }
 
 /**
- * Marks an export as running until `done` settles. A tab that dies first (a crash, or the browser running out of
- * memory) fires no event, so the mark stays and the next visit finds the export stopped (findStoppedExport). A page
- * closed or reloaded on purpose clears it.
+ * Marks an export of `total` files as running until `done` settles. A tab that dies first (a crash, or the browser
+ * running out of memory) fires no event, so the mark stays and the next visit finds the export stopped
+ * (findStoppedExport). A page closed or reloaded on purpose clears it. Returns what to call with the number of files
+ * saved so far, each time one is.
  */
-export function markExportRunning(resolution: number, project: ExportProject, done: Promise<unknown>): void {
+export function markExportRunning(
+  resolution: number,
+  project: ExportProject,
+  done: Promise<unknown>,
+  total = 1,
+): (saved: number) => void {
   useStoppedExport.setState({ stopped: null })
   const manager = locks()
-  if (!manager) return
+  if (!manager) return () => undefined
   const lock = `${EXPORT_LOCK}${crypto.randomUUID()}`
+  let saved = 0
+  let marked = false
+  const write = () => {
+    try {
+      localStorage.setItem(
+        RUNNING_KEY,
+        JSON.stringify({ resolution, lock, project, files: { saved, total } }),
+      )
+      return true
+    } catch {
+      return false
+    }
+  }
   const onPageHide = () => clearMark(lock)
   // Marked only while the lock is held, and cleared before it is released, so another tab never sees the mark of a
   // running export without its lock.
   const run = async () => {
-    try {
-      localStorage.setItem(RUNNING_KEY, JSON.stringify({ resolution, lock, project }))
-    } catch {
-      return
-    }
+    if (!write()) return
+    marked = true
     window.addEventListener('pagehide', onPageHide)
     await done.catch(() => undefined)
     window.removeEventListener('pagehide', onPageHide)
+    marked = false
     clearMark(lock)
   }
   manager.request(lock, run).catch(() => undefined)
+  return (count) => {
+    saved = count
+    // Before the lock is granted, the mark is first written with the count. A later export may have marked instead.
+    if (marked && readMark()?.lock === lock) write()
+  }
 }
 
 /**
@@ -205,7 +252,11 @@ export async function findStoppedExport(): Promise<StoppedExport | null> {
         if (readMark()?.lock !== mark.lock) return null
       }
       clearMark()
-      const stopped = { project: markedProject(mark), resolution: Number(mark.resolution) || 0 }
+      const stopped = {
+        project: markedProject(mark),
+        resolution: Number(mark.resolution) || 0,
+        files: markedFiles(mark),
+      }
       useStoppedExport.setState({ stopped })
       return stopped
     })

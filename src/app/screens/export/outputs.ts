@@ -193,11 +193,14 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
   const saved = exportPreferences(project).outputs ?? null
   if (JSON.stringify(saved) !== JSON.stringify(specs))
     dispatch(setOutputsCommand(project, specs), { label: 'Save export outputs' })
+  let filesSaved = 0
+  let markSaved = (_count: number) => {}
   const handle = startExport(project, specs, {
     media: appMedia,
     onOutput: (result) => {
       useExports.setState((s) => ({ files: { ...s.files, [result.spec.id]: result.file } }))
       downloadFile(result.file, result.file.name)
+      markSaved(++filesSaved)
     },
   })
   showExport(
@@ -209,10 +212,11 @@ export function startOutputs(project: Project, planned: PlannedOutput[]): boolea
       frames: p.frames,
     })),
   )
-  markExportRunning(
+  markSaved = markExportRunning(
     exportResolution(planned.map((p) => p.settings)),
     { id: project.id, name: project.name, kept: isStored(project.id) },
     handle.promise,
+    planned.length,
   )
   handle.promise.then(
     (results) => {
