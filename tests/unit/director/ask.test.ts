@@ -148,6 +148,23 @@ describe('interpretRequest', () => {
     expect(client.requests).toHaveLength(1)
   })
 
+  it.each([
+    ['', 'Make the lyrics bigger'],
+    ['  \n ', 'Make the lyrics bigger'],
+    ['Made\n the lyrics\tbigger ', 'Made the lyrics bigger'],
+  ])('labels an edit whose summary is %j as %j', async (summary, expected) => {
+    const client = scriptedClient({ name: 'edit_project', args: { ...bigger.args, summary } })
+    const turn = await interpretRequest({
+      client,
+      project: await draft(),
+      ctx: testCtx(),
+      request: 'make the lyrics bigger',
+    })
+    if (turn.outcome.kind !== 'changes') throw new Error(turn.outcome.kind)
+    expect(turn.outcome.summary).toBe(expected)
+    expect(client.requests).toHaveLength(1)
+  })
+
   it('shortens a long summary instead of rejecting the edit', async () => {
     const long = `Made the lyrics bigger ${'and bolder '.repeat(30)}`
     const client = scriptedClient({ name: 'edit_project', args: { ...bigger.args, summary: long } })
