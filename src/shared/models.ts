@@ -115,6 +115,14 @@ async function movedFormerCopy(cache: Cache, file: ModelFile): Promise<ArrayBuff
  */
 const STALL_SECONDS = 30
 
+/**
+ * A failed download's message: with the model's title, a sentence naming it followed by `hint`, the file's URL left
+ * to the error's details; without one, `plain`, which callers that name the model keep in their own details.
+ */
+function failedMessage(title: string | undefined, hint: string, plain: string): string {
+  return title ? `Couldn’t download ${theModel(title)}. ${hint}` : plain
+}
+
 /** The error for a download that stopped arriving: a network error, so the job's Try again applies. */
 function notArriving(file: ModelFile, title: string | undefined): JobError {
   const download = title ? `The download of ${theModel(title)}` : 'The model download'
@@ -159,7 +167,15 @@ export async function fetchModelFile(
   const failed = (error: unknown) => {
     if (signal?.aborted) return new JobError('cancelled', 'Cancelled', { cause: error })
     if (stall.signal.aborted) return notArriving(file, options.title)
-    return new JobError('network', `Couldn’t download model file ${file.url}`, { cause: error })
+    return new JobError(
+      'network',
+      failedMessage(
+        options.title,
+        'Check your connection, then try again.',
+        `Couldn’t download model file ${file.url}`,
+      ),
+      { cause: error, details: { url: file.url } },
+    )
   }
 
   const chunks: Uint8Array[] = []
@@ -177,9 +193,19 @@ export async function fetchModelFile(
     }
     quiet = 0
     if (!response.ok) {
-      throw new JobError('model-load', `Model download failed (${response.status}) for ${file.url}`, {
-        retryable: response.status >= 500 || response.status === 429,
-      })
+      const { status } = response
+      const serverTrouble = status >= 500 || status === 429
+      throw new JobError(
+        'model-load',
+        failedMessage(
+          options.title,
+          serverTrouble
+            ? 'The server is having trouble. Try again in a few minutes.'
+            : 'The server didn’t send the file.',
+          `Model download failed (${status}) for ${file.url}`,
+        ),
+        { retryable: serverTrouble, details: { url: file.url, status } },
+      )
     }
 
     const total = Number(response.headers.get('content-length')) || file.bytes
@@ -222,9 +248,15 @@ export async function fetchModelFile(
   if (file.sha256) {
     const actual = await sha256Hex(buffer)
     if (actual !== file.sha256.toLowerCase())
-      throw new JobError('model-load', `Checksum mismatch for ${file.url}`, {
-        details: { expected: file.sha256, actual },
-      })
+      throw new JobError(
+        'model-load',
+        failedMessage(
+          options.title,
+          'The file that arrived was damaged. Try again.',
+          `Checksum mismatch for ${file.url}`,
+        ),
+        { details: { url: file.url, expected: file.sha256, actual } },
+      )
   }
   if (cache) await writeCache(cache, file.url, buffer)
   return buffer

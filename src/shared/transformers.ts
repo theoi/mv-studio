@@ -76,6 +76,9 @@ function pinnedUrl(url: string): string {
   return revision ? url.replace('/resolve/main/', `/resolve/${revision}/`) : url
 }
 
+/** The statuses Transformers.js reads as a file that doesn't exist (its hub's `NOT_FOUND_STATUSES`). */
+const NOT_FOUND = new Set([401, 403, 404])
+
 /** Files Transformers.js may request that this realm knows more about (checksum, former cache keys), by URL. */
 const knownFiles = new Map<string, ModelFile>()
 
@@ -86,9 +89,10 @@ export function registerModelFiles(files: Iterable<ModelFile>): void {
 
 /**
  * `fetch` for Transformers.js that goes through the shared model loader, at pinned revisions (`pinRevision`). Its
- * optional-file probing relies on real HTTP statuses, so loader errors that carry one become responses with that
- * status. Registered files (`registerModelFiles`) exist, so for them an error status is a download that failed and
- * the loader's error is thrown, where Transformers.js would turn the status into an error of its own.
+ * optional-file probing relies on real HTTP statuses, so a status it reads as a missing file (`NOT_FOUND`) becomes
+ * a response with that status. Any other status (a server in trouble), and any status for a registered file
+ * (`registerModelFiles`), which exists, is a download that failed: the loader's error is thrown, naming the model
+ * when the call has its title, where Transformers.js would turn the status into an error of its own with the URL.
  */
 export async function sharedFetch(input: string | URL): Promise<Response> {
   const url = pinnedUrl(String(input))
@@ -100,8 +104,9 @@ export async function sharedFetch(input: string | URL): Promise<Response> {
     })
     return new Response(buf, { status: 200, headers: { 'content-length': String(buf.byteLength) } })
   } catch (err) {
-    const status = !known && err instanceof JobError ? /\((\d{3})\)/.exec(err.message)?.[1] : undefined
-    if (status) return new Response(null, { status: Number(status) })
+    const status =
+      !known && err instanceof JobError ? (err.details as { status?: number } | undefined)?.status : undefined
+    if (status && NOT_FOUND.has(status)) return new Response(null, { status })
     throw err
   }
 }

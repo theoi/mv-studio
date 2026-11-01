@@ -25,18 +25,34 @@ describe('sharedFetch', () => {
     expect((await sharedFetch(`${base}other.json`)).status).toBe(200)
   })
 
-  it('answers an error status with that status, but throws it as a failed download for a registered file', async () => {
+  it('answers a missing file with its status, but throws it as a failed download for a registered file', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(null, { status: 503 })),
+      vi.fn(async () => new Response(null, { status: 404 })),
     )
     const revision = '89abcdef0123456789abcdef0123456789abcdef'
     const base = `https://huggingface.co/x/z/resolve/${revision}/`
     registerModelFiles([{ url: `${base}onnx/model.onnx`, sha256: '00'.repeat(32) }])
-    expect((await sharedFetch(`${base}tokenizer.json`)).status).toBe(503)
+    expect((await sharedFetch(`${base}tokenizer.json`)).status).toBe(404)
     await expect(sharedFetch(`${base}onnx/model.onnx`)).rejects.toMatchObject({
       code: 'model-load',
+      retryable: false,
+    })
+  })
+
+  it('throws a server in trouble as a failed download naming the model, for any file', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 503 })),
+    )
+    const url = 'https://huggingface.co/x/v/resolve/main/config.json'
+    const load = withModelProgress(undefined, () => sharedFetch(url), 'Lyrics transcriber')
+    await expect(load).rejects.toMatchObject({
+      code: 'model-load',
       retryable: true,
+      message:
+        'Couldn’t download the lyrics transcriber. The server is having trouble. Try again in a few minutes.',
+      details: { url, status: 503 },
     })
   })
 })

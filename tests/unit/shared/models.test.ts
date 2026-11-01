@@ -64,6 +64,65 @@ describe('fetchModelFile', () => {
   })
 })
 
+describe('a model download that fails, given the model’s title', () => {
+  const url = 'https://huggingface.co/x/resolve/abc/model.onnx'
+  const failure = (file: { url: string; sha256?: string }, title?: string) =>
+    fetchModelFile(file, { title }).catch((e: unknown) => e) as Promise<JobError>
+
+  it('names the model instead of the file’s URL, which stays in the details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+    expect(await failure({ url }, 'Lyrics aligner')).toMatchObject({
+      code: 'network',
+      retryable: true,
+      message: 'Couldn’t download the lyrics aligner. Check your connection, then try again.',
+      details: { url },
+    })
+    // Without a title the message keeps the URL, for callers that name the model and keep it in their details.
+    expect((await failure({ url })).message).toContain(url)
+  })
+
+  it('says whether the server is in trouble or did not send the file, and keeps the status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('busy', { status: 503 })),
+    )
+    expect(await failure({ url }, 'Stem separator')).toMatchObject({
+      code: 'model-load',
+      retryable: true,
+      message:
+        'Couldn’t download the stem separator. The server is having trouble. Try again in a few minutes.',
+      details: { url, status: 503 },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 403 })),
+    )
+    expect(await failure({ url }, 'Stem separator')).toMatchObject({
+      retryable: false,
+      message: 'Couldn’t download the stem separator. The server didn’t send the file.',
+      details: { url, status: 403 },
+    })
+  })
+
+  it('names the model when the file that arrived fails its checksum', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => streamResponse([new Uint8Array([1, 2, 3])])),
+    )
+    const error = await failure({ url, sha256: '00'.repeat(32) }, 'Beat and bar tracker')
+    expect(error).toMatchObject({
+      code: 'model-load',
+      message: 'Couldn’t download the beat and bar tracker. The file that arrived was damaged. Try again.',
+      details: { url },
+    })
+  })
+})
+
 /** A fetch that never answers, and fails as the browser's does when its request is aborted. */
 function silentFetch() {
   return vi.fn(
