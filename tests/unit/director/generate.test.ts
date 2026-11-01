@@ -13,7 +13,7 @@ import { CloudError } from '../../../src/cloud/errors.ts'
 import { FalProvider } from '../../../src/cloud/fal/provider.ts'
 import { PAID_RESULT_GRACE_MS } from '../../../src/cloud/media.ts'
 import type { Asset, Project } from '../../../src/model/types.ts'
-import { JobError, type JobProgress } from '../../../src/shared/jobs.ts'
+import { JobError, JobRunner, type JobHandle, type JobProgress } from '../../../src/shared/jobs.ts'
 import { browserFetch } from '../cloud/mocks/browser.ts'
 import { FAL_TEST_KEY, MockFalServer } from '../cloud/mocks/fal-server.ts'
 import { badKey, contentPolicy, fakeProvider, makeProject, memoryStore, testCtx } from './fixtures.ts'
@@ -324,6 +324,47 @@ describe('generatePlanShots', () => {
     expect(eta('3 clips\u00a0· 0 done')).toBe(40 + 2 * typical)
     // After one took 30 s: the second clip's 40 s left (more than the 30 s pace), then 1 clip at 30 s.
     expect(eta('3 clips\u00a0· 1 done')).toBe(40 + 30)
+  })
+
+  it('drops the time left while its last clip runs past the typical time, instead of keeping the last figure', async () => {
+    const { project, plan } = await aiPlan('video', 1)
+    expect(shotsToGenerate(plan)).toHaveLength(1)
+    let clock = 0
+    const run: { job?: JobHandle<unknown> } = {}
+    /** The job's time left after each progress report of the clip. */
+    const shown: (number | undefined)[] = []
+    const provider = fakeProvider({
+      gate: (_, ctx) => {
+        ctx.progress({
+          stage: 'generate',
+          fraction: 0.5,
+          etaSeconds: 40,
+          message: 'Generating, usually about 2 min',
+        })
+        shown.push(run.job?.snapshot().progress.etaSeconds)
+        clock += 200_000
+        // Past the model's typical time the provider gives no time left.
+        ctx.progress({ stage: 'generate', fraction: 0.8, message: 'Generating, taking longer than usual' })
+        shown.push(run.job?.snapshot().progress.etaSeconds)
+        return Promise.resolve()
+      },
+    })
+    run.job = new JobRunner().run({
+      kind: 'test',
+      title: 'Generating',
+      run: (ctx) =>
+        generatePlanShots({
+          plan,
+          provider,
+          store: memoryStore(),
+          project,
+          ctx,
+          concurrency: 1,
+          now: () => clock,
+        }),
+    })
+    await run.job.promise
+    expect(shown).toEqual([40, undefined])
   })
 
   it('moves the bar while each clip is made, counts clips as they finish, and says how long is left', async () => {

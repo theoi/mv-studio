@@ -332,6 +332,23 @@ test('Show says when the new clip is on a hidden track, and Show track brings th
   await expect(added).toBeHidden({ timeout: 5000 })
 })
 
+test('a request past the model’s typical time says it is taking longer than usual, with no time left', async ({
+  page,
+}) => {
+  const fal = await mockFal(page, { statuses: ['IN_PROGRESS'] })
+  await openGenerate(page, { falKey: KEY })
+  await page.getByRole('radio', { name: 'Image' }).click()
+  await page.getByRole('textbox', { name: 'Describe the shot' }).fill('Neon city skyline at night')
+  await page.getByRole('button', { name: 'Generate · under $0.01' }).click()
+  // The image model usually takes 3 s.
+  await expect(page.getByText('Generating, usually a few seconds')).toBeVisible()
+  await expect(page.getByText('Less than a minute left')).toBeVisible()
+  await expect(page.getByText('Generating, taking longer than usual')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('Less than a minute left')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect.poll(() => fal.cancels).toEqual(['req-1'])
+})
+
 test('asks before spending when Settings says so, and Cancel stops the request at fal.ai', async ({
   page,
 }, testInfo) => {

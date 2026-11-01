@@ -380,11 +380,16 @@ export class FalProvider implements MediaGenerationProvider, TranscriptionProvid
         } else {
           generatingSince ??= this.options.now()
           const elapsed = (this.options.now() - generatingSince) / 1000
+          // Past its typical time a request can need any time more, so it says it is late instead of a time left
+          // that would stay at 0 ("Less than a minute left") for as long as it runs.
+          const late = elapsed >= typicalSeconds
           ctx.progress({
             stage: 'generate',
             fraction: 0.1 + 0.8 * (1 - Math.exp(-elapsed / Math.max(1, typicalSeconds))),
-            etaSeconds: Math.max(0, Math.round(typicalSeconds - elapsed)),
-            message: `Generating, usually ${humanDuration(typicalSeconds)}`,
+            etaSeconds: late ? undefined : Math.round(typicalSeconds - elapsed),
+            message: late
+              ? 'Generating, taking longer than usual'
+              : `Generating, usually ${humanDuration(typicalSeconds)}`,
           })
         }
         await sleep(this.options.pollIntervalMs, signal)
