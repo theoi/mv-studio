@@ -6,7 +6,7 @@ import { useReturnFocus } from '../../ds/focus.ts'
 import { Kbd } from '../../ds/Kbd.tsx'
 import { ask } from '../../state/ask.ts'
 import { keysOf } from '../../state/keymap.ts'
-import { ASK_SCORE, paletteScore } from '../../state/paletteScore.ts'
+import { ASK_SCORE, isSentence, paletteScore } from '../../state/paletteScore.ts'
 import { openAssist, set, useUi } from '../../state/ui.ts'
 import {
   actionScore,
@@ -133,7 +133,7 @@ export function CommandPalette() {
     if (item.open) openPage(item.open)
     else if (item.run) run(item.run)
   }
-  const sentence = !page && search.trim().split(/\s+/).length >= 3
+  const sentence = !page && isSentence(search)
   const def = page && PAGES[page.id]
 
   return (

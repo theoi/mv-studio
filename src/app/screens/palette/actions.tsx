@@ -96,11 +96,11 @@ import { exportSectionTeaser, exportWithOutput } from '../../state/exports.ts'
 import { animateImage } from '../../state/generate.ts'
 import { openImport } from '../../state/importer.ts'
 import { isRunning, JOB_KINDS } from '../../state/jobs.ts'
-import { askAssist, type ShortcutId } from '../../state/keymap.ts'
+import { askAssist, SHORTCUTS, type ShortcutId } from '../../state/keymap.ts'
 import { effectTarget, libraryAssets, textTargets, transitionTarget } from '../../state/library.ts'
 import { retimeLine } from '../../state/lyricTiming.ts'
 import { addMarkerAtPlayhead } from '../../state/markers.ts'
-import { paletteScore } from '../../state/paletteScore.ts'
+import { ASK_SCORE, isSentence, keyCombo, paletteScore, wordMatches } from '../../state/paletteScore.ts'
 import { downloadProjectFile, duplicateCurrent, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { jumpSection } from '../../state/playback.ts'
 import { prefs } from '../../state/prefs.ts'
@@ -119,6 +119,7 @@ import {
   splitAtPlayhead,
   timelineDuration,
   undo,
+  viewOf,
 } from '../../state/project.ts'
 import { changeAspect } from '../../state/reframe.ts'
 import { cutClipsToSection, sectionClipIds } from '../../state/sections.ts'
@@ -300,7 +301,7 @@ function moveTrack(step: -1 | 1): Action {
     group: 'Timeline',
     label: step < 0 ? 'Move track up' : 'Move track down',
     icon: step < 0 ? <ArrowUp /> : <ArrowDown />,
-    keywords: 'reorder layer order above below',
+    keywords: step < 0 ? 'reorder layer order above raise higher' : 'reorder layer order below lower',
     run: () => {
       const track = selectedTrack()
       if (track) moveTrackBy(track.id, step)
@@ -424,7 +425,7 @@ function tempoLevel(factor: 2 | 0.5): Action {
     group: 'Assist',
     label: factor === 2 ? 'Double tempo' : 'Half tempo',
     icon: <Gauge />,
-    keywords: factor === 2 ? 'bpm double time twice as fast' : 'bpm half time half as fast',
+    keywords: factor === 2 ? 'bpm double time twice as fast' : 'bpm half time half as fast halve',
     run: () => setTempoLevel(factor),
     unavailable: () => tempoLevelReason(factor),
     detail: () => {
@@ -482,7 +483,7 @@ export const actions: Action[] = [
     label: 'Export video…',
     icon: <Upload />,
     aliases: ['render', 'export in several formats'],
-    keywords: 'sizes formats aspect',
+    keywords: 'sizes formats aspect mp4 final',
     shortcut: 'export',
     run: () => set({ dialog: 'export', exportPhase: 'setup' }),
   },
@@ -525,7 +526,7 @@ export const actions: Action[] = [
     group: 'Assist',
     label: 'Cut clips to the beat',
     icon: <Scissors />,
-    keywords: 'auto-cut autocut edit rhythm',
+    keywords: 'auto-cut autocut edit rhythm music',
     run: () => openAssist('autocut'),
   },
   {
@@ -567,7 +568,7 @@ export const actions: Action[] = [
     label: 'Find matching footage',
     icon: <Search />,
     aliases: ['find similar clips'],
-    keywords: 'tags search clips',
+    keywords: 'tags search clips similar like related',
     run: () => openAssist('match'),
   },
   {
@@ -636,6 +637,7 @@ export const actions: Action[] = [
     label: 'Undo',
     icon: <Undo2 />,
     shortcut: 'undo',
+    keywords: 'last change mistake',
     run: undo,
     unavailable: () => (editor.canUndo() ? undefined : 'Nothing to undo'),
   },
@@ -645,6 +647,7 @@ export const actions: Action[] = [
     label: 'Redo',
     icon: <Redo2 />,
     shortcut: 'redo',
+    keywords: 'again undid',
     run: redo,
     unavailable: () => (editor.canRedo() ? undefined : 'Nothing to redo'),
   },
@@ -672,6 +675,7 @@ export const actions: Action[] = [
     label: 'Copy',
     icon: <Copy />,
     shortcut: 'copy',
+    keywords: 'selected selection',
     run: () => void copySelection(),
     unavailable: needsClips,
   },
@@ -681,6 +685,7 @@ export const actions: Action[] = [
     label: 'Cut',
     icon: <ScissorsLineDashed />,
     shortcut: 'cut',
+    keywords: 'selected selection',
     run: () => void cutSelection(),
     unavailable: needsClips,
   },
@@ -710,6 +715,7 @@ export const actions: Action[] = [
     label: 'Delete',
     icon: <Trash2 />,
     shortcut: 'delete',
+    aliases: ['remove clip'],
     keywords: 'remove clip',
     run: () => void deleteSelection(),
     unavailable: needsClips,
@@ -729,7 +735,7 @@ export const actions: Action[] = [
     label: 'Add text',
     icon: <Type />,
     shortcut: 'text',
-    keywords: 'title caption',
+    keywords: 'title caption playhead',
     run: addTextAtPlayhead,
   },
 
@@ -756,7 +762,7 @@ export const actions: Action[] = [
     group: 'Clip',
     label: 'Add a keyframe…',
     icon: <Diamond />,
-    keywords: 'animate keyframes property',
+    keywords: 'animate keyframes property playhead',
     page: 'keyframe',
     unavailable: () => clipWithProperties(false),
   },
@@ -803,6 +809,7 @@ export const actions: Action[] = [
     group: 'Clip',
     label: 'Animate with AI',
     icon: <WandSparkles />,
+    aliases: ['image to video'],
     keywords: 'image to video fal still',
     run: () => {
       const clip = selectedClip()
@@ -840,7 +847,7 @@ export const actions: Action[] = [
     label: 'Add marker',
     icon: <Flag />,
     shortcut: 'marker',
-    keywords: 'bookmark note cue',
+    keywords: 'bookmark note cue playhead',
     run: () => void addMarkerAtPlayhead(),
   },
   {
@@ -982,7 +989,7 @@ export const actions: Action[] = [
     group: 'Library',
     label: 'Add a visualizer…',
     icon: <ChartNoAxesColumn />,
-    keywords: 'audio bars spectrum waveform shader visual background particles',
+    keywords: 'audio bars spectrum waveform shader visual background particles browse',
     page: 'visualizer',
   },
   {
@@ -990,18 +997,21 @@ export const actions: Action[] = [
     group: 'Library',
     label: 'Add an effect…',
     icon: <Wand2 />,
-    keywords: 'filter glitch blur glow color',
+    keywords: 'filter glitch blur glow color browse',
     page: 'effect',
     unavailable: () =>
       effectTarget(project(), get().selection, get().playhead) ? undefined : 'Select a clip first',
-    detail: () => effectTarget(project(), get().selection, get().playhead)?.name,
+    detail: () => {
+      const clip = effectTarget(project(), get().selection, get().playhead)
+      return clip && viewOf(project(), clip).name
+    },
   },
   {
     id: 'transition',
     group: 'Library',
     label: 'Add a transition…',
     icon: <Repeat />,
-    keywords: 'crossfade dissolve wipe cut fade',
+    keywords: 'crossfade dissolve wipe cut fade browse',
     page: 'transition',
     unavailable: () =>
       transitionTarget(project(), get().selection, get().playhead) ? undefined : 'Select a clip first',
@@ -1012,7 +1022,7 @@ export const actions: Action[] = [
     label: 'Apply a look…',
     icon: <Palette />,
     aliases: ['change look'],
-    keywords: 'style grade filter restyle color',
+    keywords: 'style grade filter restyle color browse',
     page: 'looks',
   },
   {
@@ -1031,6 +1041,7 @@ export const actions: Action[] = [
     label: 'Play / pause',
     icon: <Play />,
     shortcut: 'play',
+    aliases: ['start playback', 'stop playback', 'resume playback'],
     run: () => set((s) => ({ playing: !s.playing })),
   },
   {
@@ -1076,7 +1087,8 @@ export const actions: Action[] = [
     label: 'Loop playback',
     icon: <Repeat />,
     shortcut: 'loop',
-    keywords: 'repeat section',
+    aliases: ['repeat'],
+    keywords: 'section',
     run: toggleLoop,
   },
   {
@@ -1113,7 +1125,7 @@ export const actions: Action[] = [
     label: 'Open VJ mode',
     icon: <Disc3 />,
     shortcut: 'vj',
-    keywords: 'live perform midi',
+    keywords: 'live perform midi record',
     run: enterVj,
   },
 
@@ -1130,7 +1142,7 @@ export const actions: Action[] = [
     group: 'Project',
     label: 'Rename project',
     icon: <PencilLine />,
-    keywords: 'name title change',
+    keywords: 'name title change new',
     // After the palette has closed, so the name field keeps the focus it takes.
     run: () => requestAnimationFrame(() => set({ renaming: true })),
   },
@@ -1139,7 +1151,7 @@ export const actions: Action[] = [
     group: 'Project',
     label: 'Duplicate project',
     icon: <CopyPlus />,
-    keywords: 'copy save as',
+    aliases: ['copy project', 'save a copy', 'save as'],
     run: () => void duplicateCurrent(),
   },
   {
@@ -1155,7 +1167,7 @@ export const actions: Action[] = [
     group: 'Project',
     label: 'Open a recent project…',
     icon: <FolderClock />,
-    keywords: 'projects',
+    keywords: 'projects earlier previous last old past before',
     run: () => set({ screen: 'start' }),
   },
   aspect('16:9', 'Switch to landscape 16:9', <RectangleHorizontal />, 'widescreen youtube horizontal'),
@@ -1194,7 +1206,7 @@ export const actions: Action[] = [
     icon: <Save />,
     shortcut: 'save',
     aliases: ['save project'],
-    keywords: 'store browser',
+    keywords: 'store browser work changes',
     run: () => void saveNow(),
   },
 
@@ -1236,7 +1248,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Set up an LLM (Ollama, LM Studio, OpenAI)',
     icon: <Wand2 />,
-    keywords: 'api key local model settings',
+    keywords: 'api key local model connect settings',
     run: settingsPage('ai'),
   },
   {
@@ -1294,7 +1306,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'About MV Studio',
     icon: <Info />,
-    keywords: 'version licenses notices settings',
+    keywords: 'version info licenses notices settings',
     run: settingsPage('about'),
   },
 
@@ -1329,8 +1341,85 @@ export const labelOf = (a: Action): string => (typeof a.label === 'function' ? a
 
 export const actionsById = new Map(actions.map((a) => [a.id, a]))
 
-export const actionScore = (a: Action, search: string): number =>
-  paletteScore(labelOf(a), a.keywords ? [a.keywords] : [], search, a.aliases)
+const keywordsOf = (a: Action): string[] => (a.keywords ? [a.keywords] : [])
+
+/** What the actions of a group act on without naming it: Copy acts on clips. */
+const GROUP_OBJECTS: Partial<Record<Group, string>> = { Edit: 'clip', Clip: 'clip' }
+
+const shortcutKeys = (id: ShortcutId): readonly string[] => SHORTCUTS.find((s) => s.id === id)?.keys ?? []
+
+const contextOf = (a: Action): string => `${a.group} ${GROUP_OBJECTS[a.group] ?? ''}`
+
+const weights = new Map<string, number>()
+
+/**
+ * How telling a typed word is: a word few actions have ("ollama") says more about which one a search means than one
+ * many have ("add"). Kept per word; the names that follow the state change too little to matter.
+ */
+function wordWeight(word: string): number {
+  let weight = weights.get(word)
+  if (weight === undefined) {
+    const having = actions.filter((a) => wordMatches(labelOf(a), keywordsOf(a), a.aliases ?? [], word)).length
+    // A word no action has weighs like the rarest one, so a typo doesn't hide the words that match.
+    weight = Math.log((actions.length + 1) / (Math.max(having, 1) + 1))
+    weights.set(word, weight)
+  }
+  return weight
+}
+
+/**
+ * The scores for the last search: ordering the groups and their actions asks for each one many times per keystroke.
+ * Keyed by the name too, which can follow the state.
+ */
+let last = { search: '', scores: new Map<string, number>() }
+
+function remember(key: string, search: string, score: () => number): number {
+  if (last.search !== search) last = { search, scores: new Map() }
+  let value = last.scores.get(key)
+  if (value === undefined) {
+    value = score()
+    last.scores.set(key, value)
+  }
+  return value
+}
+
+/** How well the search names the action with all of its words, or 0. */
+function fullScore(a: Action, search: string): number {
+  const label = labelOf(a)
+  return remember(`${a.id}\n${label}`, search, () =>
+    paletteScore(label, keywordsOf(a), search, a.aliases, {
+      weight: wordWeight,
+      strict: true,
+      context: contextOf(a),
+    }),
+  )
+}
+
+const aboveAsk = (group: Group, search: string): boolean =>
+  remember(group, search, () =>
+    Number(actions.some((a) => a.group === group && fullScore(a, search) > ASK_SCORE)),
+  ) === 1
+
+/**
+ * An action a sentence names with only some of its words is listed below Ask Assist; a shorter search has no Ask
+ * Assist row to come first, so it lists none ("dark mode" isn't Open VJ mode). It is left out of a group that has an
+ * action ranked above Ask Assist, where it would come first: "add an effect" listed every Add action of the Library.
+ */
+export function actionScore(a: Action, search: string): number {
+  const keys = keyCombo(search)
+  if (keys) return a.shortcut && shortcutKeys(a.shortcut).some((k) => keyCombo(k) === keys) ? 1 : 0
+  const full = fullScore(a, search)
+  if (full > 0 || !isSentence(search) || aboveAsk(a.group, search)) return full
+  const label = labelOf(a)
+  return remember(`${a.id}\n${label}\npartial`, search, () =>
+    paletteScore(label, keywordsOf(a), search, a.aliases, {
+      weight: wordWeight,
+      partial: true,
+      strict: true,
+      context: contextOf(a),
+    }),
+  )
+}
 
 /** A group's best score for a search: where cmdk would show the group. */
 export function groupScore(group: Group, search: string): number {

@@ -55,6 +55,7 @@ import { get, set, toast } from '../../state/ui.ts'
 import {
   animatableRow,
   clipProperties,
+  lowerFirst,
   reactionTarget,
   type ClipProperty,
 } from '../editor/inspector/animatable.ts'
@@ -407,7 +408,12 @@ export const PAGES: Record<PageState['id'], PageDef> = {
     empty: 'No matching reaction. Try fewer words.',
     groups: (state) =>
       state.id === 'reactions'
-        ? [{ heading: `What ${state.property.name} reacts to`, items: reactionItems(state.property) }]
+        ? [
+            {
+              heading: `What ${lowerFirst(state.property.name)} reacts to`,
+              items: reactionItems(state.property),
+            },
+          ]
         : [],
   },
 }
