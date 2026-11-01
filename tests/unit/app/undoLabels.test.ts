@@ -8,7 +8,7 @@ import {
   type Project,
 } from '../../../src/model/index.ts'
 import { dispatch, editor, splitAtPlayhead, undo } from '../../../src/app/state/project.ts'
-import { get, set } from '../../../src/app/state/ui.ts'
+import { get, set, toast } from '../../../src/app/state/ui.ts'
 
 beforeAll(() => {
   // Toasts time out through window.setTimeout.
@@ -93,5 +93,29 @@ describe('undo labels of clip edits', () => {
     expect(editor.undoLabel()).toBe('Split clip04_16x9_bee-lavender')
     undo()
     expect(get().toasts.at(-1)?.message).toBe('Undid: Split clip04_16x9_bee-lavender')
+  })
+})
+
+describe('a toast’s Undo', () => {
+  const noop = () => {}
+  const shown = () => get().toasts.map((t) => ({ message: t.message, undo: !!t.action, show: !!t.show }))
+
+  it('goes once another edit, an undo or a redo makes its edit no longer the last; Show stays', () => {
+    dispatch({ type: 'clip.move', moves: [{ clipId: s.a.id, start: 0.5 }] })
+    toast('Moved the clip', { label: 'Undo', run: noop })
+    toast('Made 2 images', { label: 'Undo', run: noop }, { show: noop })
+    // A background write leaves no undo step, so the edit is still the last.
+    dispatch({ type: 'project.rename', name: 'Analyzed' }, { history: 'skip' })
+    expect(shown()).toEqual([
+      { message: 'Moved the clip', undo: true, show: false },
+      { message: 'Made 2 images', undo: true, show: true },
+    ])
+
+    dispatch({ type: 'clip.remove', clipIds: [s.b.id] })
+    expect(shown()).toEqual([{ message: 'Made 2 images', undo: false, show: true }])
+
+    toast('Deleted Intro shot', { label: 'Undo', run: noop })
+    undo()
+    expect(shown().map((t) => t.message)).toEqual(['Made 2 images', 'Undid: Delete Intro shot'])
   })
 })

@@ -241,6 +241,19 @@
   min-width: 0;
 }
 
+/* A choice that belongs to the row above: indented under it, with no line between them. */
+.rowSub {
+  padding-left: var(--space-5);
+}
+
+.row:has(+ .rowSub) {
+  border-bottom-color: transparent;
+}
+
+.row[data-disabled] .rowTitle {
+  color: var(--text-disabled);
+}
+
 .rowTitle {
   font-size: var(--text-md);
   font-weight: var(--weight-medium);

@@ -97,9 +97,25 @@ const pages: { id: SettingsPage; label: string; icon: ReactNode }[] = [
   { id: 'about', label: 'About', icon: <Info /> },
 ]
 
-function Row({ title, desc, children }: { title: string; desc?: ReactNode; children: ReactNode }) {
+/** `sub`: a choice that belongs to the row above, indented under it; `disabled` dims it while that row is off. */
+function Row({
+  title,
+  desc,
+  sub,
+  disabled,
+  children,
+}: {
+  title: string
+  desc?: ReactNode
+  sub?: boolean
+  disabled?: boolean
+  children: ReactNode
+}) {
   return (
-    <div className={styles.row}>
+    <div
+      className={[styles.row, sub && styles.rowSub].filter(Boolean).join(' ')}
+      data-disabled={disabled ? '' : undefined}
+    >
       <div className={styles.rowText}>
         <div className={styles.rowTitle}>{title}</div>
         {desc && <div className={styles.rowDesc}>{desc}</div>}
@@ -1016,14 +1032,21 @@ function EditingPage() {
   const textBars = usePrefs((p) => p.textBars)
   return (
     <>
-      <Row
-        title="Snapping"
-        desc="Clips snap as you drag them. The timeline’s snap menu picks what they snap to."
-      >
+      <Row title="Snapping" desc="Clips snap as you drag them.">
         <Switch checked={snap} onCheckedChange={(v) => set({ snap: v })} ariaLabel="Snapping" />
       </Row>
-      <Row title="Snap to beats">
-        <Switch checked={beatSnap} onCheckedChange={(v) => set({ beatSnap: v })} ariaLabel="Snap to beats" />
+      <Row
+        title="Snap to beats"
+        desc="Bar starts, sections, clip edges and the playhead are in the timeline’s snap menu."
+        sub
+        disabled={!snap}
+      >
+        <Switch
+          checked={beatSnap}
+          onCheckedChange={(v) => set({ beatSnap: v })}
+          disabled={!snap}
+          ariaLabel="Snap to beats"
+        />
       </Row>
       <Row title="Default image duration">
         <Select

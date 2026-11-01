@@ -621,10 +621,11 @@ const Toolbar = memo(function Toolbar({
               </button>
             </MenuTrigger>
             <MenuContent width={220}>
-              <MenuLabel>Snap to</MenuLabel>
+              <MenuLabel>{snap ? 'Snap to' : 'Snapping is off'}</MenuLabel>
               <MenuCheckItem
                 checked={beatSnap}
                 onCheckedChange={(v) => setSnap('beatSnap', v)}
+                disabled={!snap}
                 shortcut="Shift N"
               >
                 Beats
@@ -632,18 +633,30 @@ const Toolbar = memo(function Toolbar({
               <MenuCheckItem
                 checked={barSnap && !waiting}
                 onCheckedChange={(v) => setSnap('barSnap', v)}
-                disabled={waiting}
+                disabled={!snap || waiting}
                 description={barsShort}
               >
                 Bar starts
               </MenuCheckItem>
-              <MenuCheckItem checked={sectionSnap} onCheckedChange={(v) => setSnap('sectionSnap', v)}>
+              <MenuCheckItem
+                checked={sectionSnap}
+                onCheckedChange={(v) => setSnap('sectionSnap', v)}
+                disabled={!snap}
+              >
                 Sections
               </MenuCheckItem>
-              <MenuCheckItem checked={edgeSnap} onCheckedChange={(v) => setSnap('edgeSnap', v)}>
+              <MenuCheckItem
+                checked={edgeSnap}
+                onCheckedChange={(v) => setSnap('edgeSnap', v)}
+                disabled={!snap}
+              >
                 Clip edges
               </MenuCheckItem>
-              <MenuCheckItem checked={playheadSnap} onCheckedChange={(v) => setSnap('playheadSnap', v)}>
+              <MenuCheckItem
+                checked={playheadSnap}
+                onCheckedChange={(v) => setSnap('playheadSnap', v)}
+                disabled={!snap}
+              >
                 Playhead
               </MenuCheckItem>
             </MenuContent>

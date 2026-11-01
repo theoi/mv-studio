@@ -358,7 +358,7 @@ function snapTo(
     shortcut,
     keywords: 'snapping magnet',
     run: () => setSnap(id, !get()[id]),
-    unavailable,
+    unavailable: () => (get().snap ? unavailable?.() : 'Snapping is off'),
   }
 }
 

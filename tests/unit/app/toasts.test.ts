@@ -50,10 +50,14 @@ describe('snapping', () => {
       setItem: (key: string, value: string) => stored.set(key, value),
       removeItem: (key: string) => stored.delete(key),
     })
-    setSnap('snap', false)
-    expect(messages()).toEqual(['Snapping off'])
     setSnap('edgeSnap', false)
     expect(messages()).toEqual(['Snapping to clip edges off'])
+    setSnap('snap', false)
+    expect(messages()).toEqual(['Snapping off'])
+    // What it snaps to waits while snapping is off.
+    setSnap('beatSnap', false)
+    expect(messages()).toEqual(['Snapping is off. Press N to turn it on.'])
+    expect(get().beatSnap).toBe(true)
     // Changed anywhere else (Settings › Editing), the choice is kept too.
     set({ barSnap: false })
 

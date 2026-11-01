@@ -186,17 +186,36 @@ useUi.subscribe((s, prev) => {
   for (const key of SNAP_KEYS) if (s[key] !== prev[key]) setPref(key, s[key])
 })
 
+/** The snapping choices as they are now, which a change of screen keeps like the preferences they are saved in. */
+export function snapChoices(s: UiState): Pick<UiState, SnapKey> {
+  return {
+    snap: s.snap,
+    beatSnap: s.beatSnap,
+    barSnap: s.barSnap,
+    sectionSnap: s.sectionSnap,
+    edgeSnap: s.edgeSnap,
+    playheadSnap: s.playheadSnap,
+  }
+}
+
 const SNAP_NAMES: Record<SnapKey, string> = {
   snap: 'Snapping',
   beatSnap: 'Snapping to beats',
   barSnap: 'Snapping to bar starts',
   sectionSnap: 'Snapping to sections',
   edgeSnap: 'Snapping to clip edges',
-  playheadSnap: 'Snapping to the playhead',
+  playheadSnap: 'Snapping to playhead',
 }
 
-/** Turns snapping, or one thing it snaps to, on or off and says so. The choice is kept for the next visit. */
+/**
+ * Turns snapping, or one thing it snaps to, on or off and says so. The choice is kept for the next visit. What it snaps
+ * to can't change while snapping is off, as in the snap menu.
+ */
 export function setSnap(key: SnapKey, on: boolean) {
+  if (key !== 'snap' && !get().snap) {
+    toast('Snapping is off. Press N to turn it on.', undefined, { key: 'snap' })
+    return
+  }
   set({ [key]: on } as Pick<UiState, SnapKey>)
   toast(`${SNAP_NAMES[key]} ${on ? 'on' : 'off'}`, undefined, { key: 'snap' })
 }
@@ -242,6 +261,19 @@ export function closeWithToast(name: string, close: () => void) {
     toastLoadFailed(name)
     close()
   }
+}
+
+/**
+ * Takes back the Undo of toasts shown before an edit, an undo or a redo: each one undoes only while its edit is the
+ * last step. A toast that also has Show keeps it.
+ */
+export function withdrawUndo() {
+  const stale = get().toasts.filter((t) => t.action?.label === 'Undo')
+  if (!stale.length) return
+  for (const t of stale) if (!t.show) holdToast(t.id)
+  set((s) => ({
+    toasts: s.toasts.flatMap((t) => (!stale.includes(t) ? [t] : t.show ? [{ ...t, action: undefined }] : [])),
+  }))
 }
 
 export function dismissToast(id: number) {

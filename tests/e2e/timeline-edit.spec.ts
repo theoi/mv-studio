@@ -770,17 +770,33 @@ test('lyric chips join Shift and Mod click and marquee selections; Delete takes 
   expect(await selectedIds(page)).toEqual(picked)
 })
 
-test('turning snapping off says so, and the snapping choices are kept after a reload', async ({ page }) => {
+test('turning snapping off says so, and the snapping choices are kept after browser Back and a reload', async ({
+  page,
+}) => {
   await openEditor(page, '#/editor?t=67')
   const toasts = page.getByRole('status')
-  await page.getByRole('button', { name: 'Snapping on' }).click()
-  await expect(toasts.getByText('Snapping off', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Snapping options' }).click()
   await page.getByRole('menuitemcheckbox', { name: 'Clip edges' }).click()
-  // One toast, saying the latest change.
   await expect(toasts.getByText('Snapping to clip edges off')).toBeVisible()
-  await expect(toasts.getByText('Snapping off', { exact: true })).toHaveCount(0)
   await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Snapping on' }).click()
+  // One toast, saying the latest change.
+  await expect(toasts.getByText('Snapping off', { exact: true })).toBeVisible()
+  await expect(toasts.getByText('Snapping to clip edges off')).toHaveCount(0)
+
+  // While snapping is off, what it snaps to waits: the menu's choices are disabled, and Shift N says why.
+  await page.getByRole('button', { name: 'Snapping options' }).click()
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Beats' })).toHaveAttribute('aria-disabled', 'true')
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await page.keyboard.press('Shift+N')
+  await expect(toasts.getByText('Snapping is off. Press N to turn it on.')).toBeVisible()
+
+  // Leaving the editor and coming back with the browser's Back keeps the choice.
+  await page.evaluate(() => (window.location.hash = '#/start'))
+  await expect(page.getByRole('button', { name: 'Snapping off' })).toHaveCount(0)
+  await page.goBack()
+  await expect(page.getByRole('button', { name: 'Snapping off' })).toBeVisible()
 
   await page.reload()
   await openEditor(page, '#/editor?t=67')

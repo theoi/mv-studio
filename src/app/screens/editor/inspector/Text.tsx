@@ -53,7 +53,7 @@ export function SizeRow({ clip }: { clip: TextClip }) {
         onChange={(v) =>
           dispatch(
             { type: 'clip.set', clipId: clip.id, path: ['style', 'fontSize'], value: v },
-            { coalesceKey: `inspector:${clip.id}:size` },
+            { label: 'Change text size', coalesceKey: `inspector:${clip.id}:size` },
           )
         }
         onCommit={() => editor.endGesture()}
@@ -84,7 +84,10 @@ export function TextColor({
       onChange={(hex) =>
         dispatch(
           { type: 'clip.set', clipId: clip.id, path, value: hex },
-          { coalesceKey: `inspector:${clip.id}:${path.join('.')}` },
+          {
+            label: `Change ${ariaLabel.toLowerCase()}`,
+            coalesceKey: `inspector:${clip.id}:${path.join('.')}`,
+          },
         )
       }
       onCommit={() => editor.endGesture()}
@@ -374,7 +377,7 @@ export function TextInspector({ clip }: { clip: Extract<Clip, { type: 'text' }> 
             onChange={(e) =>
               dispatch(
                 { type: 'clip.set', clipId: clip.id, path: ['text'], value: e.target.value },
-                { coalesceKey: `inspector:${clip.id}:text` },
+                { label: 'Edit text', coalesceKey: `inspector:${clip.id}:text` },
               )
             }
             onBlur={() => editor.endGesture()}
