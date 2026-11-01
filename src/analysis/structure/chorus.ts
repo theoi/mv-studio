@@ -488,8 +488,8 @@ export function withChorus(
  * out short and partial. When their chorus mostly lies inside the detected chorus they confirm it instead, raising
  * its confidence. Chorus edges go to downbeats, or to beats while bars are not found. Null when there is nothing to
  * change. Pasted lyrics' `unlisted` singing counts only where no timed line lies, so a line the user timed into it
- * takes that part back. A background result: dispatch with `{ history: 'skip' }`; it applies only if the sections
- * are still the ones it was computed from.
+ * takes that part back. Dispatch it in the undo step that changes the lyrics, or with `{ history: 'skip' }` when the
+ * sections change in the background; it applies only if the sections are still the ones it was computed from.
  */
 export function lyricChorusCommand(analysis: AudioAnalysis, lyrics: LyricsDoc): EditCommand | null {
   const sections = analysis.sections

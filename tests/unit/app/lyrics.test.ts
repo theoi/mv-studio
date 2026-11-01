@@ -241,7 +241,7 @@ describe('startLyrics', () => {
       .filter((s) => s.label === 'chorus')
       .map((s) => [s.start, s.end])
 
-  it('keeps the long unlisted singing with the timed lyrics, in their undo step, and finds the chorus with it', async () => {
+  it('keeps the long unlisted singing with the timed lyrics and finds the chorus with it, both in their undo step', async () => {
     load()
     answers.push({
       doc: once(),
@@ -268,8 +268,40 @@ describe('startLyrics', () => {
     await startLyrics({ kind: 'time', text: 'lyrics' })
     expect(editor.getProject().lyrics).not.toHaveProperty('unlisted')
     expect(choruses()).toEqual([[20, 40]])
+    expect(editor.undoLabel()).toBe('Time lyrics')
     editor.undo()
     expect(editor.getProject().lyrics).toEqual(first)
+    expect(choruses()).toEqual([
+      [20, 40],
+      [60, 80],
+      [100, 120],
+    ])
+    editor.redo()
+    expect(editor.getProject().lyrics).not.toHaveProperty('unlisted')
+    expect(choruses()).toEqual([[20, 40]])
+  })
+
+  it('keeps a section the user renamed after timing through undo and redo of the timing', async () => {
+    load()
+    answers.push({ doc: once(), unlisted: [{ start: 61, end: 80 }] }, { doc: once(), unlisted: [] })
+    await startLyrics({ kind: 'time', text: 'lyrics' })
+    await startLyrics({ kind: 'time', text: 'lyrics' })
+    const last = editor.getProject().analysis.audio.song!.sections!.at(-1)!
+    editor.dispatch(
+      { type: 'analysis.updateSection', assetId: 'song', sectionId: last.id, patch: { label: 'Outro' } },
+      { label: 'Rename section' },
+    )
+    const renamed = structuredClone(editor.getProject().analysis.audio.song?.sections)
+    editor.undo()
+    editor.undo()
+    expect(choruses()).toEqual([
+      [20, 40],
+      [60, 80],
+    ])
+    editor.redo()
+    editor.redo()
+    expect(editor.getProject().analysis.audio.song?.sections).toEqual(renamed)
+    expect(editor.getProject().analysis.audio.song?.sections?.at(-1)?.label).toBe('Outro')
   })
 
   it('keeps no unlisted singing with a draft', async () => {
