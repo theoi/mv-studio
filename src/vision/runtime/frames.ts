@@ -22,6 +22,23 @@ export interface FrameSource {
   ): AsyncIterable<{ t: number; bitmap: ImageBitmap }>
 }
 
+/**
+ * Resolves once `ready()` does, or as soon as `signal` aborts: a hold can last seconds (a minute while a draft is
+ * planned), and a cancelled task must end at once, or a new one of its kind can't start meanwhile.
+ */
+async function readyOrAborted(ready: () => Promise<void>, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return ready()
+  if (signal.aborted) return
+  let stop: () => void = () => undefined
+  const aborted = new Promise<void>((resolve) => (stop = resolve))
+  signal.addEventListener('abort', stop, { once: true })
+  try {
+    await Promise.race([ready(), aborted])
+  } finally {
+    signal.removeEventListener('abort', stop)
+  }
+}
+
 /** Frames of `source` at `times`, each decoded once `ready` resolves (see `TaskOptions.ready`). */
 export async function* iterateFrames(
   source: FrameSource,
@@ -30,18 +47,18 @@ export async function* iterateFrames(
 ): AsyncIterable<{ t: number; bitmap: ImageBitmap }> {
   const { ready, ...rest } = options
   if (source.frames) {
-    if (ready) await ready()
+    if (ready) await readyOrAborted(ready, rest.signal)
     if (rest.signal?.aborted) return
     for await (const frame of source.frames(times, rest)) {
       yield frame
       // The source decodes the next frame only when asked for it.
-      if (ready) await ready()
+      if (ready) await readyOrAborted(ready, rest.signal)
       if (rest.signal?.aborted) return
     }
     return
   }
   for (const t of times) {
-    if (ready) await ready()
+    if (ready) await readyOrAborted(ready, rest.signal)
     if (rest.signal?.aborted) return
     const bitmap = await source.frameAt(t, rest.maxSide !== undefined ? { maxSide: rest.maxSide } : {})
     yield { t, bitmap }

@@ -33,7 +33,7 @@ import {
 import { mediaById } from '../mock/media.ts'
 import { maskStorageKey, sceneOf } from '../mock/demoProject.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
-import { showingDownloads, visionService } from './footage.ts'
+import { analysisReady, showingDownloads, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { dispatch, editor } from './project.ts'
@@ -790,7 +790,8 @@ export function cutoutCommands(
 
 /**
  * Looks for a person in each imported clip's footage, in the background of the panel or inspector that asked. A
- * clip checked before is not checked again.
+ * clip checked before is not checked again. Like footage analysis, it decodes no frame while analysis is held
+ * (`analysisReady`): a paused frame the stage waits for decodes the same files.
  */
 export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefined {
   const { checks } = useBehind.getState()
@@ -817,6 +818,7 @@ export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefin
         try {
           const report = await vision.checkSuitability(source, {
             signal: ctx.signal,
+            ready: analysisReady,
             onProgress: (p) => ctx.progress({ fraction: (i + (p.fraction ?? 0)) / n, message }),
           })
           setCheck(id, { ...fromReport(report), quick: true })

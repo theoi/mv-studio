@@ -10,8 +10,8 @@ export interface TaskOptions {
   onProgress?: (progress: JobProgress) => void
   /**
    * Awaited before each frame the task decodes, so a caller can make it yield to work that needs the decoder and the
-   * cores more (background footage analysis waits while the preview shows a draft). Tasks that decode no frames
-   * ignore it.
+   * cores more (background footage analysis waits while the preview shows a draft). A cancelled task stops waiting at
+   * once. Tasks that decode no frames ignore it.
    */
   ready?: () => Promise<void>
 }
