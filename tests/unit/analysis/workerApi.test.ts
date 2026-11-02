@@ -24,11 +24,13 @@ const fakeBeatThis: BeatThisModel = {
 }
 
 let channel: MessageChannel | undefined
+const opened: MessageChannel[] = []
 let modelLoads = 0
 
 function connect() {
   modelLoads = 0
   channel = new MessageChannel()
+  opened.push(channel)
   const api = createAnalysisApi({
     beatThisModel: async () => {
       modelLoads++
@@ -40,8 +42,10 @@ function connect() {
 }
 
 afterEach(() => {
-  channel?.port1.close()
-  channel?.port2.close()
+  for (const c of [channel, ...opened.splice(0)]) {
+    c?.port1.close()
+    c?.port2.close()
+  }
 })
 
 const song = (seed: number) => {
@@ -157,6 +161,37 @@ describe('analysis worker API', () => {
     await client.call('release', { assetId: 'a' })
     await client.call('refineBeats', { assetId: 'a', audio: song(4).audio })
     expect(modelLoads).toBe(1)
+  })
+
+  it('takes a song’s Beat This! output from an earlier worker, so a fresh one finds the same bars without it', async () => {
+    const earlier = connect()
+    const refined = await earlier.call('refineBeats', { assetId: 'a', audio: song(4).audio })
+    const tracked = await earlier.call('trackAtTempo', { assetId: 'a', bpm: 121 })
+    const logits = await earlier.call('logitsOf', { assetId: 'a' })
+    expect(tracked.downbeats?.length).toBeGreaterThan(3)
+    expect(logits).not.toBeNull()
+    const output = logits ?? undefined
+    // Section ids are new on every run.
+    const sameAsRefined = {
+      ...refined,
+      sections: refined.sections?.map((s) => ({ ...s, id: expect.any(String) })),
+    }
+
+    for (const analyzedFirst of [false, true]) {
+      const refining = connect()
+      if (analyzedFirst) await refining.call('analyzeFast', { assetId: 'a', audio: song(4).audio })
+      const audio = analyzedFirst ? undefined : song(4).audio
+      expect(await refining.call('refineBeats', { assetId: 'a', audio, logits: output })).toEqual(
+        sameAsRefined,
+      )
+      expect(modelLoads).toBe(0)
+
+      const tracking = connect()
+      if (analyzedFirst) await tracking.call('analyzeFast', { assetId: 'a', audio: song(4).audio })
+      expect(await tracking.call('trackAtTempo', { assetId: 'a', bpm: 121, audio, logits: output })).toEqual(
+        tracked,
+      )
+    }
   })
 
   it('forgets released songs and keeps at most two', async () => {

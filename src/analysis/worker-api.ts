@@ -40,7 +40,7 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
     // Two songs at most: each state holds ~20 MB of PCM and spectra.
     while (states.size > 2) states.delete(states.keys().next().value as string)
   }
-  const remember = (assetId: string, state: SongState) => {
+  const remember = (assetId: string, state: Pick<SongState, 'logits'>) => {
     if (!state.logits) return
     logits.delete(assetId)
     logits.set(assetId, state.logits)
@@ -60,15 +60,17 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
     },
 
     async refineBeats(
-      args: { assetId: string; audio?: DecodedAudio },
+      args: { assetId: string; audio?: DecodedAudio; logits?: BeatThisLogits },
       ctx: WorkerCallContext,
     ): Promise<RefinedFields> {
+      if (args.logits) remember(args.assetId, { logits: args.logits })
       let state = states.get(args.assetId)
       if (!state) {
         if (!args.audio) throw new JobError('invalid-input', 'Song audio is needed to refine beats')
         state = analyzeSongFast(args.assetId, args.audio, { signal: ctx.signal }).state
         keep(args.assetId, state)
       }
+      state.logits ??= logits.get(args.assetId)
       ctx.progress({ stage: 'downbeats', fraction: 0, message: 'Finding bars and refining beats' })
       let downloaded = false
       const download = {
@@ -100,9 +102,10 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
     },
 
     async trackAtTempo(
-      args: { assetId: string; bpm: number; audio?: DecodedAudio },
+      args: { assetId: string; bpm: number; audio?: DecodedAudio; logits?: BeatThisLogits },
       ctx: WorkerCallContext,
     ): Promise<Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'>> {
+      if (args.logits) remember(args.assetId, { logits: args.logits })
       let state = states.get(args.assetId)
       if (!state) {
         if (!args.audio) throw new JobError('invalid-input', 'Song audio is needed to follow a tempo')
@@ -110,6 +113,7 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
         state = analyzeSongFast(args.assetId, args.audio, { signal: ctx.signal }).state
         keep(args.assetId, state)
       }
+      state.logits ??= logits.get(args.assetId)
       ctx.progress({ stage: 'beats', fraction: 0.8, message: 'Following your tempo' })
       return trackSongAtTempo(state, args.bpm, ctx.signal)
     },
@@ -120,6 +124,11 @@ export function createAnalysisApi(deps: AnalysisWorkerDeps) {
 
     release(args: { assetId: string }): boolean {
       return states.delete(args.assetId)
+    },
+
+    /** Beat This! output for a song, so a later worker can be given it instead of running the network again. */
+    logitsOf(args: { assetId: string }): BeatThisLogits | null {
+      return logits.get(args.assetId) ?? null
     },
   }
 }

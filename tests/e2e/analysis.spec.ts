@@ -9,16 +9,36 @@ test('analyzes a song in a worker, then refines beats with the Beat This! model'
 
   const fast = await page.evaluate(async () => {
     const { analysis, files } = window.mvStudio
-    const audio = await analysis.decodeAudioFile(files()[0])
-    const service = new analysis.SongAnalysisService()
-    const t0 = performance.now()
-    const result = await service.analyze('song', audio).promise
-    const ms = performance.now() - t0
-    const t1 = performance.now()
-    const refined = await service.refine('song').promise
-    const refineMs = performance.now() - t1
-    service.dispose()
-    return { result, ms, refined, refineMs }
+    const workers: { name?: string; terminated: boolean }[] = []
+    const NativeWorker = window.Worker
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        const seen = { name: options?.name, terminated: false }
+        workers.push(seen)
+        const terminate = this.terminate.bind(this)
+        this.terminate = () => {
+          seen.terminated = true
+          terminate()
+        }
+      }
+    }
+    try {
+      const audio = await analysis.decodeAudioFile(files()[0])
+      const service = new analysis.SongAnalysisService()
+      const t0 = performance.now()
+      const result = await service.analyze('song', audio).promise
+      const ms = performance.now() - t0
+      const t1 = performance.now()
+      const refined = await service.refine('song').promise
+      const refineMs = performance.now() - t1
+      const afterRefine = workers.map((w) => ({ ...w }))
+      const tracked = await service.trackAtTempo('song', 120, async () => files()[0]).promise
+      service.dispose()
+      return { result, ms, refined, refineMs, afterRefine, tracked, workers: workers.length }
+    } finally {
+      window.Worker = NativeWorker
+    }
   })
 
   const { result, refined } = fast
@@ -42,4 +62,12 @@ test('analyzes a song in a worker, then refines beats with the Beat This! model'
   expect(refined.tempo.bpm).toBeLessThan(122)
   expect(refined.beats.length).toBeGreaterThan(12)
   expect(refined.downbeats.length).toBeGreaterThan(2)
+
+  // The worker is let go once the refinement ends, its ONNX Runtime memory with it; a tempo tapped later runs in a
+  // fresh one, which reads the song again.
+  expect(fast.afterRefine).toEqual([{ name: 'audio-analysis', terminated: true }])
+  expect(fast.workers).toBe(2)
+  expect(fast.tracked.tempo?.bpm).toBeGreaterThan(118)
+  expect(fast.tracked.tempo?.bpm).toBeLessThan(122)
+  expect(fast.tracked.beats?.length).toBeGreaterThan(12)
 })
