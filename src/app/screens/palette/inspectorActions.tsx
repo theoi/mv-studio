@@ -2439,6 +2439,7 @@ export const inspectorActions: Action[] = [
     icon: <Trash2 />,
     aliases: ['delete project', 'remove project'],
     keywords: 'delete remove project trash',
+    destructive: true,
     run: () => set({ screen: 'start', dialog: null, deletingProject: project().id }),
     unavailable: () => (isStored(project().id) ? undefined : 'Not kept in this browser yet'),
   },

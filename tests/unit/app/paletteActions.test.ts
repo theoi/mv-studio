@@ -3,6 +3,7 @@ import {
   actions,
   actionsById,
   actionScore,
+  labelOf,
   paletteResults,
 } from '../../../src/app/screens/palette/actions.tsx'
 import { PAGES } from '../../../src/app/screens/palette/pages.tsx'
@@ -299,6 +300,107 @@ describe('command palette coverage', () => {
       expect(rid).toContain('delete')
       expect(rid).not.toContain('showGrid')
     }))
+
+  it('lists Delete this project… only for a search that names the project, even with nothing selected', () => {
+    const before = get().selection
+    try {
+      set({ selection: { type: 'none' } })
+      expect(paletteResults('delete').map((a) => a.id)).not.toContain('deleteProject')
+      expect(paletteResults('delete project')[0]?.id).toBe('deleteProject')
+    } finally {
+      set({ selection: before })
+    }
+  })
+
+  describe.each([
+    ['nothing selected', () => set({ selection: { type: 'none' } })],
+    ['a video clip selected', () => select({ type: 'clip', id: firstVideo().id })],
+  ])('with %s', (_, choose) => {
+    const ids = (search: string) => paletteResults(search).map((a) => a.id)
+    const withSelection = (check: () => void) => () => {
+      const before = get().selection
+      choose()
+      try {
+        check()
+      } finally {
+        set({ selection: before })
+      }
+    }
+
+    // Enter runs the first row: one that can't run does nothing and says why, where another would do what the search
+    // didn't ask for.
+    it(
+      'lists every action on the selection first for its own name, whether or not it can run',
+      withSelection(() => {
+        const named = actions.filter((a) => a.idle && typeof a.label === 'string')
+        expect(named.length).toBeGreaterThan(20)
+        for (const a of named) {
+          const first = paletteResults(labelOf(a))[0]
+          expect(first && labelOf(first), a.id).toBe(labelOf(a))
+        }
+      }),
+    )
+
+    it.each([
+      ['delete', 'delete'],
+      ['copy', 'copy'],
+      ['duplicate', 'duplicate'],
+      ['cut', 'cut'],
+      ['close gap', 'closeGap'],
+    ])('“%s” lists %s first', (search, id) => withSelection(() => expect(ids(search)[0]).toBe(id))())
+
+    it(
+      'lists Close gap first with no gap to close, and never Delete and close gap for it',
+      withSelection(() => {
+        expect(actionsById.get('closeGap')!.unavailable?.()).toBe(
+          'No gap at the playhead or before the selected clip',
+        )
+        expect(ids('close gap')).toEqual(['closeGap'])
+        expect(ids('gap')).not.toContain('rippleDelete')
+      }),
+    )
+
+    it(
+      'lists an action that deletes only for a search that names it in full',
+      withSelection(() => {
+        for (const search of ['close gap', 'gap', 'ripple', 'clip', 'delete', 'project', 'remove'])
+          expect(ids(search), search).not.toContain(
+            search === 'delete' || search === 'remove' ? 'deleteProject' : 'rippleDelete',
+          )
+        for (const search of ['clip', 'project']) expect(ids(search), search).not.toContain('delete')
+        expect(ids('ripple delete')[0]).toBe('rippleDelete')
+        expect(ids('delete and close gap')[0]).toBe('rippleDelete')
+        expect(ids('remove this clip')[0]).toBe('delete')
+        expect(ids('delete this project')[0]).toBe('deleteProject')
+      }),
+    )
+  })
+
+  it('lists the track move the search names first on a track that can’t move that way', () => {
+    const before = get().selection
+    const { tracks, clips } = editor.getProject()
+    const clipOn = (track: (typeof tracks)[number]) =>
+      Object.values(clips).find((c) => c.trackId === track.id)!
+    try {
+      select({ type: 'clip', id: clipOn(tracks.at(-1)!).id })
+      expect(actionsById.get('trackDown')!.unavailable?.()).toBeDefined()
+      expect(paletteResults('move track down')[0]?.id).toBe('trackDown')
+      select({ type: 'clip', id: clipOn(tracks[0]!).id })
+      expect(actionsById.get('trackUp')!.unavailable?.()).toBeDefined()
+      expect(paletteResults('move track up')[0]?.id).toBe('trackUp')
+      set({ selection: { type: 'none' } })
+      expect(paletteResults('move track down')[0]?.id).toBe('trackDown')
+    } finally {
+      set({ selection: before })
+    }
+  })
+
+  it('ranks the director above every new project of a kind for a sentence that names no kind', () => {
+    const ids = paletteResults('make a video for me').map((a) => a.id)
+    expect(ids).toContain('director')
+    expect(ids.slice(0, ids.indexOf('director')).filter((id) => id.startsWith('newProject.'))).toEqual([])
+    expect(paletteResults('new lyric video')[0]?.id).toBe('newProject.lyric')
+  })
 
   it('leaves actions that match only some words out of a group whose best match ranks above Ask Assist', () => {
     // Add media, Add a visualizer… and Add a transition… match "add" alone.

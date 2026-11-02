@@ -1880,7 +1880,7 @@ export const UI_ACTIONS: readonly UiAction[] = [
     area: 'Settings',
     name: 'Autosave',
     palette: 'settings',
-    search: ['autosave'],
+    search: ['autosave', 'how often to autosave', 'autosave every minute'],
     controls: ['Autosave interval'],
   },
   {
@@ -1921,7 +1921,7 @@ export const UI_ACTIONS: readonly UiAction[] = [
     area: 'Settings',
     name: 'Default image and text duration',
     palette: 'editingSettings',
-    search: ['default durations'],
+    search: ['default durations', 'default image length'],
     controls: ['Default image duration', 'Default text duration'],
   },
   {
@@ -1957,7 +1957,7 @@ export const UI_ACTIONS: readonly UiAction[] = [
     area: 'Settings',
     name: 'Spending: Ask before generating, Monthly reminder',
     palette: 'fal',
-    search: ['spending'],
+    search: ['spending', 'confirm before paying', 'warn before spending money'],
     controls: ['Ask before every paid generation', 'Spending reminder'],
   },
   {

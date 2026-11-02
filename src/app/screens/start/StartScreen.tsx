@@ -124,32 +124,34 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   )
 }
 
-/** Asks before deleting a kept project, which can’t be undone. */
+/** Asks before deleting a kept project, which can’t be undone. Escape and a click outside cancel too. */
 function DeleteProjectDialog({
   project,
   open,
-  onOpenChange,
+  onCancel,
+  onDelete,
 }: {
   project: RecentProject
   open: boolean
-  onOpenChange: (open: boolean) => void
+  onCancel: () => void
+  onDelete: () => void
 }) {
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(o) => !o && onCancel()}
       title={`Delete “${project.name}”?`}
       width={440}
       footer={
         <>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
           <Button
             variant="danger"
             icon={<Trash2 />}
             onClick={() => {
-              onOpenChange(false)
+              onDelete()
               void deleteProject(project.id)
             }}
           >
@@ -272,7 +274,12 @@ function RecentCard({ project }: { project: RecentProject }) {
           </MenuItem>
         </MenuContent>
       </Menu>
-      <DeleteProjectDialog project={project} open={confirming} onOpenChange={setConfirming} />
+      <DeleteProjectDialog
+        project={project}
+        open={confirming}
+        onCancel={() => setConfirming(false)}
+        onDelete={() => setConfirming(false)}
+      />
     </div>
   )
 }
@@ -281,7 +288,8 @@ function RecentCard({ project }: { project: RecentProject }) {
 function RecentProjects() {
   const recents = usePersistence((s) => s.recents)
   const [all, setAll] = useState(false)
-  // Asked from the palette's Delete this project…, whose card may be beyond the ones shown.
+  // Asked from the palette's Delete this project…, whose card may be beyond the ones shown. Cancel goes back to the
+  // project in the editor, which the palette was open over.
   const deleting = useUi((s) => s.deletingProject)
   const asked = recents?.find((p) => p.id === deleting)
   if (!recents?.length) return null
@@ -307,7 +315,8 @@ function RecentProjects() {
         <DeleteProjectDialog
           project={asked}
           open
-          onOpenChange={(open) => !open && set({ deletingProject: null })}
+          onCancel={() => set({ screen: 'editor', deletingProject: null })}
+          onDelete={() => set({ deletingProject: null })}
         />
       )}
     </section>

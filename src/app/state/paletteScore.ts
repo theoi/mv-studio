@@ -578,6 +578,21 @@ export function paletteScore(
   return total > 0 ? (PARTIAL_SCORE * got) / total + bonus / 4 : 0
 }
 
+/** Whether a word of the search, other than the small ones, is or starts one of `needed`. */
+export function namesOneOf(needed: readonly string[], search: string): boolean {
+  return words(search).some((typed) => !FILLER.has(typed) && needed.some((w) => startsWord(w, typed)))
+}
+
+/**
+ * Whether the search has every word of `label`, or of one of `aliases`, itself or as another word for it: "remove this
+ * clip" names Delete, "close gap" doesn't name Delete and close gap.
+ */
+export function namesInFull(label: string, aliases: readonly string[], search: string): boolean {
+  if (keyCombo(search)) return false
+  const { typed, match } = searchWords(search)
+  return [label, ...aliases].some((name) => coverage(words(name), typed, match) === 1)
+}
+
 /** Whether a typed word matches an action at all (its name, other names or keywords, or another word for it). */
 export function wordMatches(
   label: string,

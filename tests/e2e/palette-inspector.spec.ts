@@ -65,8 +65,11 @@ test('a value with common choices opens a page of them for the selection, and th
   const id = await select(page, 'video')
   await run('slow motion')
   await expect(input).toHaveAttribute('placeholder', 'Search speeds')
-  // The speed it has now is marked.
+  // The speed it has now is marked, and the page opens on it, so the arrows step to the next speed up or down.
   await expect(dialog.locator('[cmdk-item]', { hasText: /^100%/ }).locator('.lucide-check')).toBeVisible()
+  await expect(selected).toHaveText(/^100%/)
+  await page.keyboard.press('ArrowDown')
+  await expect(selected).toHaveText(/^150%/)
   await input.fill('half')
   await expect(selected).toContainText('50%')
   await page.keyboard.press('Enter')
@@ -101,7 +104,7 @@ test('a value without common choices puts focus on its Inspector control and mar
   }
 })
 
-test('the palette opens VJ mode with Record on, and the start screen asking to delete the project', async ({
+test('the palette opens VJ mode with Record on, and the start screen asking to delete the project, whose Cancel goes back to it', async ({
   page,
 }) => {
   await openEditor(page)
@@ -122,9 +125,17 @@ test('the palette opens VJ mode with Record on, and the start screen asking to d
   await run('delete this project')
   const confirm = page.getByRole('dialog', { name: `Delete “${name}”?` })
   await expect(confirm).toBeVisible()
+  expect(await page.evaluate(() => window.mvStudio.app.ui.get().screen)).toBe('start')
   await confirm.getByRole('button', { name: 'Cancel' }).click()
   await expect(confirm).toBeHidden()
-  await expect(page.getByText(name, { exact: true }).first()).toBeVisible()
+  await waitForPreview(page)
+  await expect(page.getByRole('banner').getByText(name, { exact: true })).toBeVisible()
+  // Escape cancels too.
+  await run('delete this project')
+  await expect(confirm).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(confirm).toBeHidden()
+  await waitForPreview(page)
 })
 
 test('Record and the mapping view last the one visit the palette opened: Back into VJ mode later is a rehearsal', async ({
@@ -165,7 +176,7 @@ test('Record and the mapping view last the one visit the palette opened: Back in
   await expect(mapping).toHaveCount(0)
 })
 
-test('Delete this project… asks even when the project’s card is beyond the ones the start screen shows, and once', async ({
+test('Delete this project… asks even when the project’s card is beyond the ones the start screen shows, once, and deletes it there', async ({
   page,
 }) => {
   await openEditor(page)
@@ -187,7 +198,20 @@ test('Delete this project… asks even when the project’s card is beyond the o
   await expect(card).toHaveCount(0)
   await confirm.getByRole('button', { name: 'Cancel' }).click()
   await expect(confirm).toBeHidden()
+  await waitForPreview(page)
+  await page.getByRole('button', { name: 'Home' }).click()
   await page.getByRole('button', { name: /^Show all \d+$/ }).click()
   await expect(card).toBeVisible()
   await expect(confirm).toHaveCount(0)
+
+  // Deleting stays on the start screen, without the project.
+  await page.getByText(name, { exact: true }).first().click()
+  await waitForPreview(page)
+  await run('delete this project')
+  await confirm.getByRole('button', { name: 'Delete project' }).click()
+  await expect(confirm).toBeHidden()
+  await expect(page.getByRole('heading', { name: 'Recent projects' })).toBeVisible()
+  // The six copies left are all shown.
+  await expect(page.getByRole('button', { name: /^Show all/ })).toHaveCount(0)
+  await expect(card).toHaveCount(0)
 })

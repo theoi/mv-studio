@@ -107,7 +107,15 @@ import { effectTarget, libraryAssets, textTargets, transitionTarget } from '../.
 import { retimeLine } from '../../state/lyricTiming.ts'
 import { addMarkerAtPlayhead } from '../../state/markers.ts'
 import { insertSpot, insertTarget } from '../../state/mediaDrag.ts'
-import { ASK_SCORE, isSentence, keyCombo, paletteScore, wordMatches } from '../../state/paletteScore.ts'
+import {
+  ASK_SCORE,
+  isSentence,
+  keyCombo,
+  namesInFull,
+  namesOneOf,
+  paletteScore,
+  wordMatches,
+} from '../../state/paletteScore.ts'
 import { downloadProjectFile, duplicateCurrent, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { jumpSection } from '../../state/playback.ts'
 import { prefs } from '../../state/prefs.ts'
@@ -233,6 +241,16 @@ export interface Action {
    * ranks below the actions that can run then, and just below an equal match otherwise.
    */
   idle?: () => boolean
+  /**
+   * Words the search must have one of, for an action told apart from its neighbors by what it makes: "make a video
+   * for me" isn't New lyric video….
+   */
+  needs?: readonly string[]
+  /**
+   * Deletes something, so it is listed only for a search that names it in full: Enter must not delete what a search
+   * only half names ("close gap" isn't Delete and close gap).
+   */
+  destructive?: boolean
 }
 
 const settingsPage = (page: SettingsPage) => () => set({ dialog: 'settings', settingsPage: page })
@@ -398,14 +416,25 @@ function snapTo(
   }
 }
 
-/** Starts a project of a kind, as its card on the Start screen does: on the setup screen, or as an empty timeline. */
-function newProjectOf(kind: Kind, label: string, keywords: string): Action {
+/**
+ * Starts a project of a kind, as its card on the Start screen does: on the setup screen, or as an empty timeline. Only
+ * a search that names the kind lists it, so "make a video for me" is the director, not five new projects.
+ */
+function newProjectOf(
+  kind: Kind,
+  label: string,
+  needs: string[],
+  keywords: string,
+  aliases?: string[],
+): Action {
   return {
     id: `newProject.${kind}`,
     group: 'Project',
     label,
     icon: <FilePlus2 />,
-    keywords: `new project start ${keywords}`,
+    aliases,
+    keywords: `new project start ${needs.join(' ')} ${keywords}`,
+    needs,
     run: () => (kind === 'blank' ? void openBlankProject() : startSetup(kind)),
     unavailable: () => (isRunning(JOB_KINDS.projectImport) ? 'A project file is being opened' : undefined),
   }
@@ -782,6 +811,7 @@ export const actions: Action[] = [
     shortcut: 'delete',
     aliases: ['remove clip'],
     keywords: 'remove clip',
+    destructive: true,
     run: () => void deleteSelection(),
     ...onSelection(needsClips),
   },
@@ -791,7 +821,9 @@ export const actions: Action[] = [
     label: 'Delete and close gap',
     icon: <Trash2 />,
     shortcut: 'rippleDelete',
+    aliases: ['ripple delete'],
     keywords: 'ripple remove clip later clips move left',
+    destructive: true,
     run: () => void rippleDeleteSelection(),
     ...onSelection(needsClips),
   },
@@ -1371,11 +1403,18 @@ export const actions: Action[] = [
     keywords: 'start video',
     run: () => set({ screen: 'start' }),
   },
-  newProjectOf('lyric', 'New lyric video…', 'karaoke kinetic type words timed vocals'),
-  newProjectOf('visualizer', 'New visualizer…', 'visualizer video beat bass vocals reactive visuals'),
-  newProjectOf('footage', 'New beat-cut footage…', 'clips cut to the beat sections montage'),
-  newProjectOf('ai', 'New AI music video…', 'director draft idea'),
-  newProjectOf('blank', 'New blank project', 'empty timeline scratch'),
+  newProjectOf('lyric', 'New lyric video…', ['lyric', 'karaoke'], 'kinetic type words timed vocals'),
+  newProjectOf(
+    'visualizer',
+    'New visualizer…',
+    ['visualizer', 'visualiser'],
+    'video beat bass vocals reactive',
+  ),
+  newProjectOf('footage', 'New beat-cut video…', ['beat', 'cut', 'footage', 'clips', 'montage'], 'sections', [
+    'beat-cut footage',
+  ]),
+  newProjectOf('ai', 'New AI music video…', ['ai', 'director', 'idea'], 'draft'),
+  newProjectOf('blank', 'New blank project', ['blank', 'empty', 'scratch'], 'timeline'),
   {
     id: 'openRecent',
     group: 'Project',
@@ -1473,7 +1512,8 @@ export const actions: Action[] = [
     label: 'Connect fal.ai',
     icon: <KeyRound />,
     aliases: ['ask before every paid generation', 'spending reminder'],
-    keywords: 'api key cloud settings spending reminder ask before paid generation remove',
+    keywords:
+      'api key cloud settings spending reminder ask before paid generation remove confirm warn paying money cost',
     run: settingsPage('ai'),
   },
   {
@@ -1493,7 +1533,7 @@ export const actions: Action[] = [
     icon: <Settings />,
     aliases: ['preferences', 'options', 'autosave interval'],
     shortcut: 'settings',
-    keywords: 'general autosave suggestions motion default frame rate',
+    keywords: 'general autosave interval every minutes often suggestions motion default frame rate',
     run: settingsPage('general'),
   },
   {
@@ -1501,7 +1541,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Editing settings: snapping and durations',
     icon: <Pencil />,
-    keywords: 'still image text default duration bars',
+    keywords: 'still image text default duration length bars',
     run: settingsPage('editing'),
   },
   {
@@ -1691,6 +1731,12 @@ function fullScore(a: Action, search: string): number {
   )
 }
 
+/** Whether the search has every word of the action's name or of one of its other names. */
+const namedInFull = (a: Action, search: string): boolean =>
+  remember(`${a.id}\n${labelOf(a)}\nnamed`, search, () =>
+    Number(namesInFull(labelOf(a), aliasesOf(a), search)),
+  ) === 1
+
 const aboveAsk = (group: Group, search: string): boolean =>
   remember(group, search, () =>
     Number(actions.some((a) => a.group === group && fullScore(a, search) > ASK_SCORE)),
@@ -1704,6 +1750,8 @@ const aboveAsk = (group: Group, search: string): boolean =>
 function matchScore(a: Action, search: string): number {
   const keys = keyCombo(search)
   if (keys) return a.shortcut && shortcutKeys(a.shortcut).some((k) => keyCombo(k) === keys) ? 1 : 0
+  if (a.needs && !namesOneOf(a.needs, search)) return 0
+  if (a.destructive && !namedInFull(a, search)) return 0
   const full = fullScore(a, search)
   if (full > 0 || !isSentence(search) || aboveAsk(a.group, search)) return full
   const label = labelOf(a)
@@ -1724,7 +1772,9 @@ function matchScore(a: Action, search: string): number {
 const SELECTION_FACTOR = 0.99
 /**
  * One with nothing to act on ranks below the actions that can run, even those only its keywords name: "version" lists
- * About MV Studio before Try another version when there is no draft.
+ * About MV Studio before Try another version when there is no draft. Not when the search names it in full: it stays
+ * first, saying why it can't run, so Enter does nothing rather than run another action ("close gap" with no gap isn't
+ * Delete and close gap, "move track down" on the bottom track isn't Move track up).
  */
 const IDLE_FACTOR = 0.6
 
@@ -1732,7 +1782,7 @@ const IDLE_FACTOR = 0.6
 export function actionScore(a: Action, search: string): number {
   const score = matchScore(a, search)
   if (!score || !a.idle) return score
-  const idle = remember(`${a.id}\nidle`, search, () => Number(a.idle!())) === 1
+  const idle = remember(`${a.id}\nidle`, search, () => Number(a.idle!() && !namedInFull(a, search))) === 1
   return score * (idle ? IDLE_FACTOR : SELECTION_FACTOR)
 }
 
