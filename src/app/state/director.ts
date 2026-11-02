@@ -147,14 +147,7 @@ function leaveProject(project: Project, change: EditChange): void {
   openProject = project.id
   autoApply = false
   loaded?.reset()
-  useDirector.setState({
-    state: { status: 'idle' },
-    description: null,
-    idea: '',
-    applying: false,
-    planJobId: undefined,
-    clipsAtDraft: undefined,
-  })
+  useDirector.setState({ idea: '', applying: false, planJobId: undefined, clipsAtDraft: undefined })
 }
 
 editor.subscribe(leaveProject)

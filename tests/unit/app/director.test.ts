@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  applyDraft,
   clipsNoun,
   clipsSinceDraft,
   directorRequest,
   draftProgress,
+  draftVideo,
   useDirector,
   videoKindFor,
 } from '../../../src/app/state/director.ts'
@@ -14,7 +16,7 @@ import type { DirectorState } from '../../../src/director/index.ts'
 import { createProject } from '../../../src/model/factory.ts'
 import type { Asset, AssetOrigin, Project } from '../../../src/model/types.ts'
 import { createFromTemplate } from '../../../src/plugins/templates.ts'
-import type { JobSnapshot } from '../../../src/shared/jobs.ts'
+import { jobs, type JobSnapshot } from '../../../src/shared/jobs.ts'
 import { CLIPS, makeProject, type ClipSpec } from '../vision/autocut/fixtures.ts'
 
 const job = (
@@ -175,13 +177,12 @@ describe('clips imported after a draft', () => {
 })
 
 describe('another project opening', () => {
-  const applied = { status: 'applied', request: { kind: 'ai', useMedia: true } } as unknown as DirectorState
-
   beforeEach(() => {
     vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => undefined })
     loadDemoProject()
+    setUi({ toasts: [] })
     useDirector.setState({
-      state: applied,
+      state: { status: 'idle' },
       idea: 'neon night drive',
       shots: 'mix',
       aiShots: 'video',
@@ -190,27 +191,39 @@ describe('another project opening', () => {
     })
   })
 
-  it('starts the Director over at once, keeping where shots come from and whether AI shots are images or video', () => {
-    editor.load(createProject({ name: 'Other', fps: 30 }))
+  const openAnother = () => editor.load(createProject({ name: 'Other', fps: 30 }))
+  const plans = () => jobs.list().filter((j) => j.kind === 'director.plan').length
+
+  it('clears the idea and the last draft at once, keeping where shots come from and whether AI shots are images or video', () => {
+    openAnother()
     const ui = useDirector.getState()
-    expect(ui).toMatchObject({
-      state: { status: 'idle' },
-      description: null,
-      idea: '',
-      applying: false,
-      shots: 'mix',
-      aiShots: 'video',
-    })
+    expect(ui).toMatchObject({ idea: '', applying: false, shots: 'mix', aiShots: 'video' })
     expect(ui.planJobId).toBeUndefined()
     expect(ui.clipsAtDraft).toBeUndefined()
   })
 
   it('keeps everything when the same project loads again', () => {
     editor.load(structuredClone(editor.getProject()))
-    expect(useDirector.getState()).toMatchObject({
-      state: applied,
-      idea: 'neon night drive',
-      planJobId: 'plan-1',
-    })
+    expect(useDirector.getState()).toMatchObject({ idea: 'neon night drive', planJobId: 'plan-1' })
+  })
+
+  it('drops a draft asked for in the project that was open when the Director started loading', async () => {
+    const before = plans()
+    const drafting = draftVideo(directorRequest('', 'mine'))
+    openAnother()
+    await drafting
+    expect(plans()).toBe(before)
+    expect(useDirector.getState().clipsAtDraft).toBeUndefined()
+  })
+
+  it('says there is no plan to apply when Apply is pressed without one', async () => {
+    await applyDraft()
+    expect(getUi().toasts.map((t) => t.message)).toEqual(['Make a plan first.'])
+  })
+  it('says nothing when Apply was pressed in the project open before another opened', async () => {
+    const applying = applyDraft()
+    openAnother()
+    await applying
+    expect(getUi().toasts.map((t) => t.message)).toEqual([])
   })
 })

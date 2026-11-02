@@ -43,7 +43,6 @@ editor.subscribe((project, change) => {
   if (change.source !== 'load' || project.id === openProject) return
   openProject = project.id
   loaded?.reset()
-  useAsk.setState({ state: { status: 'idle' } })
 })
 
 function toastApplied(state: AskState) {
