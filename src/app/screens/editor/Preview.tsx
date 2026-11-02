@@ -79,7 +79,7 @@ import { clearVjReturnFrame, SHOWN_AFTER_MS, subscribeVjReturnFrame, vjReturnFra
 import { PickOverlay } from './PickOverlay.tsx'
 import type { Rect } from './handles.ts'
 import { SelectionOverlay } from './SelectionOverlay.tsx'
-import { connectPreview, fitStage } from './stage.ts'
+import { connectPreview, fitStage, stageUpdating, subscribeStill } from './stage.ts'
 import styles from './Preview.module.css'
 
 const aspects: { value: AspectPreset; desc: string; icon: ReactNode; ratio: number }[] = [
@@ -139,6 +139,7 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
   const returnFrame = useSyncExternalStore(subscribeVjReturnFrame, vjReturnFrame)
   const returnBitmap = returnFrame === 'pending' ? null : returnFrame
   const [returnFading, setReturnFading] = useState(false)
+  const updating = useSyncExternalStore(subscribeStill, stageUpdating)
   const drawReturn = useCallback(
     (canvas: HTMLCanvasElement | null) => {
       if (!canvas || !returnBitmap) return
@@ -279,6 +280,11 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
             className={[styles.returnFrame, returnFading && styles.returnFrameOut].filter(Boolean).join(' ')}
             aria-hidden
           />
+        )}
+        {status === 'ready' && updating && (
+          <div className={styles.updating} role="status">
+            <Spinner size={10} /> Updating…
+          </div>
         )}
         {status === 'loading' && !returnBitmap && (
           <div className={styles.stageNote}>

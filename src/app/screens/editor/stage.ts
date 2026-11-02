@@ -22,6 +22,7 @@ const THUMBNAIL_HOLD_MS = 3000
  * can take this long.
  */
 const DRAFT_THUMBNAIL_HOLD_MS = 10_000
+const POINTER_EVENTS = ['pointerdown', 'pointerup', 'pointercancel'] as const
 
 let current: PreviewController | null = null
 // The project the preview was last given, so the same one is not drawn twice.
@@ -62,6 +63,96 @@ export function previewShown(
 /** The preview drawing the editor's stage, while one is showing (for tests that read its frames). */
 export function stagePreview(): PreviewController | null {
   return current
+}
+
+/** A pending paused still waits this long for its frame before the stage says it's updating. */
+export const UPDATING_AFTER_MS = 150
+/** Once shown, the note stays up at least this long, so a frame that comes just after doesn't make it flicker. */
+export const UPDATING_MIN_MS = 300
+
+/**
+ * When the stage says it's updating: once a pending paused still (PreviewSnapshot.pending) has waited
+ * UPDATING_AFTER_MS, and then for UPDATING_MIN_MS at least. Never while a pointer is down, as a drag shows its frames
+ * as they come. Calls `onChange` with each change.
+ */
+export function createUpdatingCue(onChange: (shown: boolean) => void): {
+  update(pending: boolean, pointerDown: boolean): void
+  dispose(): void
+} {
+  let pending = false
+  let pointerDown = false
+  let shown = false
+  let held = false
+  let showTimer: ReturnType<typeof setTimeout> | undefined
+  let holdTimer: ReturnType<typeof setTimeout> | undefined
+  const show = (next: boolean) => {
+    if (next === shown) return
+    shown = next
+    onChange(next)
+  }
+  const apply = () => {
+    if (pointerDown || !pending) {
+      clearTimeout(showTimer)
+      showTimer = undefined
+      if (pointerDown || !held) show(false)
+      return
+    }
+    if (shown || showTimer !== undefined) return
+    showTimer = setTimeout(() => {
+      showTimer = undefined
+      held = true
+      clearTimeout(holdTimer)
+      holdTimer = setTimeout(() => {
+        held = false
+        apply()
+      }, UPDATING_MIN_MS)
+      show(true)
+    }, UPDATING_AFTER_MS)
+  }
+  return {
+    update(nextPending, nextPointerDown) {
+      pending = nextPending
+      pointerDown = nextPointerDown
+      apply()
+    },
+    dispose() {
+      clearTimeout(showTimer)
+      clearTimeout(holdTimer)
+    },
+  }
+}
+
+/** The stage preview's pending still and "Updating…" note (see connectPreview). */
+const still = { pending: false, updating: false, listeners: new Set<() => void>() }
+
+function setStill(next: { pending?: boolean; updating?: boolean }): void {
+  const pending = next.pending ?? still.pending
+  const updating = next.updating ?? still.updating
+  if (pending === still.pending && updating === still.updating) return
+  still.pending = pending
+  still.updating = updating
+  for (const listener of [...still.listeners]) listener()
+}
+
+/**
+ * Whether the stage preview waits to show a paused frame (PreviewSnapshot.pending): a slow seek, a drag's next step.
+ * Work that can wait, such as footage analysis, can hold off meanwhile.
+ */
+export function stillPending(): boolean {
+  return still.pending
+}
+
+/** Whether the stage shows its "Updating…" note (createUpdatingCue). */
+export function stageUpdating(): boolean {
+  return still.updating
+}
+
+/** Calls `listener` when stillPending() or stageUpdating() changes. Returns stop. */
+export function subscribeStill(listener: () => void): () => void {
+  still.listeners.add(listener)
+  return () => {
+    still.listeners.delete(listener)
+  }
 }
 
 /** Shows a project the editor does not have yet, such as a drag in progress; null goes back to the editor's. */
@@ -137,6 +228,17 @@ export function connectPreview(
       : window.setTimeout(prepareAudio, 1000)
   applyLoop(get().playhead)
   if (get().playing) set({ playing: false })
+  // Any pointer held down, on the timeline, the stage or a slider, is taken for a drag.
+  let pointerDown = false
+  const cue = createUpdatingCue((updating) => {
+    if (current === preview) setStill({ updating })
+  })
+  const onPointer = (event: Event) => {
+    pointerDown = event.type === 'pointerdown'
+    cue.update(preview.getSnapshot().pending, pointerDown)
+  }
+  for (const type of POINTER_EVENTS) window.addEventListener(type, onPointer, true)
+  window.addEventListener('blur', onPointer)
   const unsubscribe = [
     offAudioError,
     editor.subscribe((project) => {
@@ -178,7 +280,20 @@ export function connectPreview(
       fromClock = time
       set({ playhead: time })
     }),
+    preview.subscribe(() => {
+      const { pending } = preview.getSnapshot()
+      if (current === preview) setStill({ pending })
+      cue.update(pending, pointerDown)
+    }),
+    () => {
+      for (const type of POINTER_EVENTS) window.removeEventListener(type, onPointer, true)
+      window.removeEventListener('blur', onPointer)
+      cue.dispose()
+    },
   ]
+  // The preview asked for its first still before this subscribed.
+  setStill({ pending: preview.getSnapshot().pending })
+  cue.update(preview.getSnapshot().pending, pointerDown)
   return {
     preview,
     dispose() {
@@ -191,6 +306,7 @@ export function connectPreview(
         current = null
         shown = null
         holdForDraft = null
+        setStill({ pending: false, updating: false })
       }
       preview.dispose()
       if (get().playing) set({ playing: false, starting: false })

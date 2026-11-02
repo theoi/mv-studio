@@ -223,6 +223,24 @@
   flex-direction: column;
 }
 
+/* A paused frame on its way (a slow seek): the frame shown is the one before. In a corner, so the picture stays clear. */
+.updating {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-0) var(--space-2);
+  border-radius: var(--radius-full);
+  background: rgb(14 14 18 / 0.72);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 18px;
+  pointer-events: none;
+  animation: note-in var(--dur) var(--ease-out) both;
+}
+
 @keyframes note-in {
   from {
     opacity: 0;

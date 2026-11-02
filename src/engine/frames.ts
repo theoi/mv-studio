@@ -203,8 +203,8 @@ export class VideoElementFrameProvider implements FrameProvider {
   private readonly onLateFrame: (() => void) | undefined
 
   /**
-   * `onLateFrame` is called when a seek that a paused frame stopped waiting for ends, for a clip of the latest frame:
-   * that frame was drawn without it, so it needs drawing again.
+   * `onLateFrame` is called when a seek that a paused frame stopped waiting for ends (or fails), for a clip of the
+   * latest frame: that frame was drawn without it, so it needs drawing again.
    */
   constructor(media: MediaFileSource, options: { onLateFrame?: () => void } = {}) {
     this.media = media
@@ -233,6 +233,13 @@ export class VideoElementFrameProvider implements FrameProvider {
       this.urls.set(asset.id, url)
     }
     return url
+  }
+
+  /** Whether a clip of the latest frame was drawn without its seek (SEEK_WAIT_MS), and that seek hasn't ended yet. */
+  lateSeekPending(): boolean {
+    for (const slot of this.slots.values())
+      if (slot.pending?.late && this.active.has(slot.clipKey)) return true
+    return false
   }
 
   beginFrame(keys: string[]): void {
@@ -457,7 +464,7 @@ export class VideoElementFrameProvider implements FrameProvider {
         return
       }
       slot.pending = null
-      if (pending.late && event === 'seeked' && this.active.has(slot.clipKey)) this.onLateFrame?.()
+      if (pending.late && this.active.has(slot.clipKey)) this.onLateFrame?.()
     })
     return pending
   }
