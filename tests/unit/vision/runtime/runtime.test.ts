@@ -145,6 +145,42 @@ describe('frames helpers', () => {
       expect(opened).toHaveLength(2)
     }
   })
+
+  it('iterateFrames ends at once when cancelled while ready() still holds it', async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const late = () => new Promise<'late'>((resolve) => setTimeout(() => resolve('late'), 200))
+    for (const sequential of [false, true])
+      for (const heldFrom of [0, 1])
+        for (const abortFirst of [false, true]) {
+          const { source, opened } = fakeSource({ duration: 1, frameRate: 4 })
+          const from: FrameSource = sequential
+            ? {
+                ...source,
+                async *frames(times) {
+                  for (const t of times) yield { t, bitmap: await source.frameAt(t) }
+                },
+              }
+            : source
+          // Lets `heldFrom` frames through, then holds for good.
+          let waits = 0
+          const ready = () => (waits++ < heldFrom ? Promise.resolve() : new Promise<void>(() => undefined))
+          const stop = new AbortController()
+          const frames = iterateFrames(from, [0, 0.25, 0.5], { ready, signal: stop.signal })[
+            Symbol.asyncIterator
+          ]()
+          if (heldFrom) expect((await frames.next()).value?.t).toBe(0)
+          // Cancelled while it waits, or before the next frame is asked for (while the last one is still in use).
+          if (abortFirst) stop.abort()
+          const held = frames.next()
+          await tick()
+          if (!abortFirst) {
+            expect(waits).toBe(heldFrom + 1)
+            stop.abort()
+          }
+          expect(await Promise.race([held, late()])).toEqual({ done: true, value: undefined })
+          expect(opened).toHaveLength(heldFrom)
+        }
+  })
 })
 
 describe('progress', () => {

@@ -667,6 +667,24 @@ test('Behind the subject’s person check waits while the stage waits for a paus
   await expect.poll(() => personFrames(page), { timeout: 30_000 }).toBeGreaterThan(0)
 })
 
+test('leaving a project stops its person check at once, also while analysis is held', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await countPersonFrames(page)
+  await holdAnalysis(page)
+  await page.evaluate(() => (window.location.hash = '#/editor?t=10'))
+  await waitForPreview(page)
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  await expect.poll(() => personChecks(page)).toEqual(['running'])
+  await page.evaluate(() => window.mvStudio.app.footage.visionService())
+  await page.waitForTimeout(500)
+  // Opening another project cancels the open project's jobs. The hold lasts 100 s; the check must not wait it out.
+  await page.evaluate(() => (window.location.hash = '#/editor?project=empty&kind=blank'))
+  await expect.poll(() => personChecks(page), { timeout: 2_000 }).toEqual(['cancelled'])
+  expect(await personFrames(page)).toBe(0)
+})
+
 test('a clip name cut short in Behind the subject’s list shows in full on hover', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
   await open(page, '#/editor?tab=assist&assist=behind&t=10')
