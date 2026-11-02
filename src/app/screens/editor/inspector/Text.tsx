@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { AlignCenter, AlignLeft, AlignRight, Type } from 'lucide-react'
+import { titleCardCommands } from '../../../../director/titleCard.ts'
 import type { ParamSpec } from '../../../../engine/types.ts'
-import type { Clip, ParamValue, TextClip, TextStyle } from '../../../../model/index.ts'
+import type { Clip, Id, ParamValue, TextClip, TextStyle } from '../../../../model/index.ts'
 import {
   ColorField,
   FieldRow,
@@ -363,6 +364,16 @@ export function PresetSettings({
 }
 
 export function TextInspector({ clip }: { clip: Extract<Clip, { type: 'text' }> }) {
+  const typedIn = useRef<{ id: Id; before: string } | undefined>(undefined)
+  // Leaving the field lays out a retyped director title card again, in the same undo step as the typing.
+  const leaveText = () => {
+    const typed = typedIn.current
+    typedIn.current = undefined
+    const relaid = typed ? titleCardCommands(editor.getProject(), typed.id, typed.before) : []
+    if (typed && relaid.length)
+      dispatch(relaid, { label: 'Edit text', coalesceKey: `inspector:${typed.id}:text` })
+    editor.endGesture()
+  }
   return (
     <>
       <Header
@@ -374,13 +385,14 @@ export function TextInspector({ clip }: { clip: Extract<Clip, { type: 'text' }> 
         <div className={styles.padded}>
           <TextArea
             value={clip.text}
-            onChange={(e) =>
+            onChange={(e) => {
+              if (typedIn.current?.id !== clip.id) typedIn.current = { id: clip.id, before: clip.text }
               dispatch(
                 { type: 'clip.set', clipId: clip.id, path: ['text'], value: e.target.value },
                 { label: 'Edit text', coalesceKey: `inspector:${clip.id}:text` },
               )
-            }
-            onBlur={() => editor.endGesture()}
+            }}
+            onBlur={leaveText}
             rows={2}
             aria-label="Text content"
           />

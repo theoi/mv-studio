@@ -535,6 +535,7 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx, titleRow = 0): TextClip | 
   const duration = end - t.start
   if (duration <= 0.01) return undefined
   const songId = ctx.plan.songAssetId ?? ctx.project.songAssetId
+  const style = textStyle(t)
   const meta: DirectorClipMeta = {
     planId: ctx.plan.id,
     role: textTrackRole(t),
@@ -543,12 +544,15 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx, titleRow = 0): TextClip | 
     ...(t.lyricLineId ? { lyricLineId: t.lyricLineId } : {}),
     ...(titleRow > 0 ? { titleRow } : {}),
     ...(t.role === 'title' && songId ? { songId } : {}),
+    ...(t.role === 'title' && t.baseFontSize
+      ? { titleLayout: { base: t.baseFontSize, fitted: style.fontSize, y: t.position.y } }
+      : {}),
   }
   const clip: TextClip = {
     ...visualBase(trackId, t.start, duration, meta),
     type: 'text',
     text: t.text,
-    style: textStyle(t),
+    style,
   }
   const enter = t.enter
   const settle = (from: number | undefined, to: number): Animatable =>

@@ -1010,9 +1010,92 @@ test('a tagged song names the project, and the title card shows its title and ar
   expect(tracks.filter((t) => t.clips === 0)).toEqual([])
   expect(tracks.map((t) => t.name).slice(-2)).toEqual(['Video 1', 'Song'])
 
-  // The user corrects the title on its card in the inspector: another version keeps the correction.
+  // The user corrects the title on its card in the inspector. Leaving the field lays the card out again, so the longer
+  // title breaks into rows that clear the artist, in the same undo step as the typing.
+  const card = () =>
+    page.evaluate(
+      (ids) => {
+        const project = window.mvStudio.app.project.editor.getProject()
+        return ids.map((id) => {
+          const c = project.clips[id] as {
+            text: string
+            style: { fontSize: number; lineHeight: number }
+            transform: { y: { value: number } }
+          }
+          const half = (c.text.split('\n').length * c.style.lineHeight * c.style.fontSize) / 1080 / 2
+          return { text: c.text, top: c.transform.y.value - half, bottom: c.transform.y.value + half }
+        })
+      },
+      titles.map((t) => t.id),
+    )
+  const drafted = await card()
   await page.locator(`[data-clip-id="${titles[0]!.id}"]`).click()
-  await page.getByRole('textbox', { name: 'Text content' }).fill('Neon Skyline (Night Mix)')
+  const field = page.getByRole('textbox', { name: 'Text content' })
+  await field.fill('Neon Skyline (Night Mix)')
+  await field.blur()
+  const relaid = await card()
+  expect(relaid[0]!.text).toContain('\n')
+  expect(relaid[0]!.bottom).toBeLessThan(relaid[1]!.top)
+  await page.keyboard.press('ControlOrMeta+z')
+  expect(await card()).toEqual(drafted)
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  expect(await card()).toEqual(relaid)
+
+  // A title too long for two rows even at 70% gets a third and smaller type: the preview draws each row on one line,
+  // so the card's outline holds as many lines as the title has rows, and the artist stays clear below it.
+  const preview = page.getByRole('img', { name: 'Video preview' })
+  const linesShown = async (id: string) => {
+    await page.evaluate((clipId) => {
+      window.location.hash = `#/editor?sel=clip:${clipId}&t=2`
+    }, id)
+    const outline = preview.locator('xpath=..').locator('svg polygon')
+    await expect(outline).toHaveCount(1)
+    const [box, frame] = [(await outline.boundingBox())!, (await preview.boundingBox())!]
+    const style = await page.evaluate(
+      (clipId) =>
+        (
+          window.mvStudio.app.project.editor.getProject().clips[clipId] as {
+            style: { fontSize: number; lineHeight: number }
+          }
+        ).style,
+      id,
+    )
+    // The outline is the text's lines plus a padding of 0.2 of the font size on each side.
+    const fontPx = (style.fontSize * frame.height) / 1080
+    return (box.height / fontPx - 0.4) / style.lineHeight
+  }
+  await linesShown(titles[0]!.id)
+  await field.fill('Neon Skyline (The Extended Midnight Club Remix Version)')
+  await field.blur()
+  const long = await card()
+  const rows = long[0]!.text.split('\n').length
+  expect(rows).toBe(3)
+  expect(long[0]!.bottom).toBeLessThan(long[1]!.top)
+  expect(await linesShown(titles[0]!.id)).toBeCloseTo(rows, 0)
+  expect(await linesShown(titles[1]!.id)).toBeCloseTo(1, 0)
+  await page.keyboard.press('ControlOrMeta+z')
+  expect(await card()).toEqual(relaid)
+
+  // Moved further down on its own, the artist stays where the user put it: the retyped title keeps its bottom edge
+  // and grows away from the artist.
+  await page.evaluate((id) => {
+    const { editor } = window.mvStudio.app.project
+    const y = (editor.getProject().clips[id] as { transform: { y: { value: number } } }).transform.y.value
+    editor.dispatch({ type: 'clip.set', clipId: id, path: ['transform', 'y', 'value'], value: y + 0.03 })
+  }, titles[1]!.id)
+  const apart = await card()
+  await page.locator(`[data-clip-id="${titles[0]!.id}"]`).click()
+  await field.fill('Neon Skyline (The Extended Midnight Club Remix Version)')
+  await field.blur()
+  const grown = await card()
+  expect(grown[0]!.text.split('\n')).toHaveLength(3)
+  expect(grown[0]!.bottom).toBeCloseTo(apart[0]!.bottom, 2)
+  expect(grown[1]).toEqual(apart[1])
+  await page.keyboard.press('ControlOrMeta+z')
+  await page.keyboard.press('ControlOrMeta+z')
+  expect(await card()).toEqual(relaid)
+
+  // Another version keeps the correction.
   await page.evaluate(() => {
     window.location.hash = '#/editor?tab=assist&assist=director'
   })
