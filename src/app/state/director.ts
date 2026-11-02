@@ -27,6 +27,7 @@ import {
 import { appMedia } from './media.ts'
 import { songAnalysisRunning } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
+import { holdDrafts, type HeldDraft } from './leaveDraft.ts'
 import { plural } from '../format.ts'
 import { holdThumbnailsForDraft } from '../screens/editor/stage.ts'
 import { editor } from './project.ts'
@@ -119,6 +120,8 @@ function directorSession(): Promise<DirectorSession> {
     })
     s.subscribe(() => {
       const state = s.getState()
+      if (state.status === 'ready' || state.status === 'applied')
+        rememberSeed(editor.getProject().id, state.request.seed ?? 1)
       useDirector.setState({
         state,
         ...(state.status === 'planning' ? { planJobId: state.jobId } : {}),
@@ -283,6 +286,43 @@ async function applyIfFreeOnceDone(plan: Promise<DirectorState>): Promise<void> 
   await done
 }
 
+const SEEDS_KEY = 'mv-studio.director.seeds.v1'
+const SEEDS_KEPT = 50
+
+function savedSeeds(): Record<string, number> {
+  try {
+    const seeds: unknown = JSON.parse(localStorage.getItem(SEEDS_KEY) ?? '{}')
+    return seeds && typeof seeds === 'object' ? (seeds as Record<string, number>) : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * The seed of the project's last plan. A new draft plans with it, so after a reload (which starts the Director over) the
+ * same request plans the same version, and its prompts find the AI shots already made for it in Media instead of
+ * paying again.
+ */
+export function lastSeed(projectId: Id): number | undefined {
+  const seed = savedSeeds()[projectId]
+  return Number.isInteger(seed) && seed >= 1 ? seed : undefined
+}
+
+/** Keeps the latest seeds of the last SEEDS_KEPT projects. */
+export function rememberSeed(projectId: Id, seed: number): void {
+  const seeds = savedSeeds()
+  if (seeds[projectId] === seed) return
+  delete seeds[projectId]
+  seeds[projectId] = seed
+  const ids = Object.keys(seeds)
+  for (const id of ids.slice(0, Math.max(0, ids.length - SEEDS_KEPT))) delete seeds[id]
+  try {
+    localStorage.setItem(SEEDS_KEY, JSON.stringify(seeds))
+  } catch {
+    // Storage blocked or full: a new draft starts from the first version, as before.
+  }
+}
+
 /** Plans a draft; one that costs nothing goes on the timeline right away. */
 export async function draftVideo(request: DirectorRequest): Promise<void> {
   const projectId = editor.getProject().id
@@ -291,7 +331,8 @@ export async function draftVideo(request: DirectorRequest): Promise<void> {
   if (!stillOpen(projectId)) return
   autoApply = true
   useDirector.setState({ clipsAtDraft: clipsNow() })
-  await applyIfFreeOnceDone(s.plan(request))
+  const seed = request.seed ?? lastSeed(projectId)
+  await applyIfFreeOnceDone(s.plan(seed === undefined ? request : { ...request, seed }))
 }
 
 /** Plans again with another seed: different clips, prompts and camera moves. */
@@ -412,6 +453,31 @@ export function showTracks(trackIds: Id[]): void {
     { label: 'Show your tracks' },
   )
 }
+
+/**
+ * What leaving the open project would lose of the Director's draft: AI shots made for a draft that isn't on the
+ * timeline, or failed shots of one that is, waiting for Retry. Null when nothing would be lost.
+ */
+export function heldDraftOf(state: DirectorState): HeldDraft | null {
+  if (state.status === 'applied')
+    return state.failedShots > 0 ? { kind: 'failed', unit: state.unit, failed: state.failedShots } : null
+  if ((state.status === 'ready' || state.status === 'error') && state.plan && state.generatedShots > 0) {
+    // Shots still to make, the ones media made earlier would cover included: applying now skips generation.
+    const missing = state.cost ? state.cost.count + state.cost.reused : 0
+    return { kind: 'unapplied', unit: state.unit, made: state.generatedShots, missing }
+  }
+  return null
+}
+
+holdDrafts({
+  held: () => heldDraftOf(useDirector.getState().state),
+  generating: () => useDirector.getState().state.status === 'generating',
+  apply: async () => {
+    await applyDraft({ skipGeneration: true })
+    return useDirector.getState().state.status === 'applied'
+  },
+  show: () => setUi({ screen: 'editor', rightTab: 'assist', assistView: 'director' }),
+})
 
 /** Back to the start of the panel. AI shots already made stay in the project's media and are reused. */
 export function resetDirector(): void {

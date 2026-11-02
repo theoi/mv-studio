@@ -25,6 +25,7 @@ import { JobError, jobs, type JobErrorCode } from '../../shared/jobs.ts'
 import { distinctName } from '../format.ts'
 import { isSampleAsset, sampleFile } from '../mock/sampleMedia.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
+import { leaveDraftOk, leaveDraftThen } from './leaveDraft.ts'
 import { usePrefs } from './prefs.ts'
 import { clampToLastFrame, dispatch, editor, loadDemoProject, loadEmptyProject } from './project.ts'
 import {
@@ -417,6 +418,7 @@ export async function openStoredProject(id: Id): Promise<boolean> {
 
 /** Opens a kept project from the start screen or a toast. */
 export async function openProject(id: Id): Promise<void> {
+  if (id !== editor.getProject().id && !(await leaveDraftOk())) return
   if (await openStoredProject(id)) {
     set(editorUi)
     return
@@ -556,10 +558,12 @@ export async function duplicateCurrent(): Promise<void> {
 
 /** Replaces an empty project with the sample project, keeping the current workspace. */
 export function loadSample(): void {
-  leaveProjectJobs()
-  loadDemoProject()
-  set({ playhead: 0, playing: false, selection: { type: 'none' } })
-  toast(`Sample project loaded: “${editor.getProject().name}”`)
+  leaveDraftThen(() => {
+    leaveProjectJobs()
+    loadDemoProject()
+    set({ playhead: 0, playing: false, selection: { type: 'none' } })
+    toast(`Sample project loaded: “${editor.getProject().name}”`)
+  })
 }
 
 /** Deletes a kept project, and its media unless another kept project uses it. */
@@ -686,8 +690,8 @@ export async function importProjectFile(file: File): Promise<void> {
       else toast(`“${kept.name}” is already open`)
       return
     }
-    if (isRunning(JOB_KINDS.projectImport)) return
   }
+  if (!(await leaveDraftOk()) || isRunning(JOB_KINDS.projectImport)) return
   const handle = jobs.run({
     kind: JOB_KINDS.projectImport,
     title: `Opening ${file.name}`,

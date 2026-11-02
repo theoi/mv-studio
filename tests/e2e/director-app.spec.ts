@@ -1507,3 +1507,285 @@ test('a draft from the setup screen goes on the timeline after the Director was 
   await expect(placed(page)).toBeVisible({ timeout: 30_000 })
   expect((await draftState(page)).undo).toBe('Director: a rainy city at dawn')
 })
+
+/** Generate in a priced plan, confirmed: returns how many AI shots the plan makes. */
+async function generateShots(page: Page) {
+  const generate = page.getByRole('button', {
+    name: /^Generate \d+ shots · (about \$\d+\.\d\d|under \$0\.01)$/,
+  })
+  await expect(generate).toBeVisible({ timeout: 30_000 })
+  const count = Number(/\d+/.exec((await generate.textContent()) ?? '')?.[0])
+  await generate.click()
+  await page
+    .getByRole('dialog', { name: /^Generate \d+ shots\?$/ })
+    .getByRole('button', { name: /^Generate \d+ shots · / })
+    .click()
+  return count
+}
+
+/** Until autosave has written every change, so a reload asks nothing on its account. */
+const allSaved = (page: Page) =>
+  page.waitForFunction(() => {
+    const { status, tracked } = window.mvStudio.app.persistence.usePersistence.getState()
+    return !tracked || status === 'saved' || status === 'idle'
+  })
+
+/** AI shots of AI images stopped after two were made, with another kept project to open. */
+async function stopAfterTwoShots(page: Page) {
+  const fal = await mockFalVideo(page, { images: true, held: [3, 4] })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  const otherId = await keepCopy(page, 'Other project')
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  const count = await generateShots(page)
+  await expect.poll(() => fal.downloads, { timeout: 30_000 }).toEqual(['req-1', 'req-2'])
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByText('Generation stopped. 2 shots made so far are kept.')).toBeVisible()
+  return { count, otherId, fal }
+}
+
+const leaveQuestion = (page: Page) =>
+  page.getByRole('dialog', { name: 'Your draft isn’t on the timeline yet' })
+
+test('a draft holding AI shots asks before the page reloads or another project opens: Back to the draft keeps it, Leave anyway drops it', async ({
+  page,
+}, testInfo) => {
+  const { count, otherId } = await stopAfterTwoShots(page)
+  const stopped = page.getByText('Generation stopped. 2 shots made so far are kept.')
+
+  // With everything saved, only the draft makes the browser ask; dismissing its question stays on the page.
+  await allSaved(page)
+  const dialogs: string[] = []
+  page.once('dialog', (dialog) => {
+    dialogs.push(dialog.type())
+    void dialog.dismiss()
+  })
+  await page.evaluate(() => window.location.reload())
+  expect(dialogs).toEqual(['beforeunload'])
+  await expect(stopped).toBeVisible()
+
+  // A link to another project asks first; Back to the draft keeps the draft and puts the address back.
+  const here = page.url()
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?project=${id}&tab=assist&assist=director`
+  }, otherId)
+  const ask = leaveQuestion(page)
+  await expect(ask).toContainText(
+    `If you leave, the Director’s draft is gone. Its 2 AI shots stay in Media, but drafting again may mean paying for new ones. Apply and leave puts it on the timeline, with placeholders for the ${count - 2} shots not made yet.`,
+  )
+  await page.screenshot({ path: testInfo.outputPath('leave-draft-unapplied.png'), animations: 'disabled' })
+  await ask.getByRole('button', { name: 'Back to the draft' }).click()
+  await expect(ask).toBeHidden()
+  await expect.poll(() => page.url()).toBe(here)
+  await expect(stopped).toBeVisible()
+
+  // From Home, Leave anyway opens the other project, where the Director starts over.
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByText('Other project', { exact: true }).first().click()
+  await ask.getByRole('button', { name: 'Leave anyway' }).click()
+  await page.waitForFunction(() => window.mvStudio.app.project.editor.getProject().name === 'Other project')
+  await showAssist(page, 'director')
+  await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
+  expect((await draftState(page)).director).toBe(0)
+})
+
+test('Back to the draft from Home returns to the editor on the Director, with the draft of a project never kept intact', async ({
+  page,
+}) => {
+  await stopAfterTwoShots(page)
+  const project = () =>
+    page.evaluate(() => {
+      const { app } = window.mvStudio
+      const open = app.project.editor.getProject()
+      return { id: open.id as string, kept: app.persistence.isStored(open.id) as boolean }
+    })
+  const before = await project()
+  // The sample with a stopped draft: not kept yet, so Home's recent projects can't reopen it.
+  expect(before.kept).toBe(false)
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByText('Other project', { exact: true }).first().click()
+  await leaveQuestion(page).getByRole('button', { name: 'Back to the draft' }).click()
+  await expect(leaveQuestion(page)).toBeHidden()
+  await expect(page.getByRole('tabpanel', { name: 'Assist' })).toBeVisible()
+  await expect(page.getByText('Generation stopped. 2 shots made so far are kept.')).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Generate \d+ shots · / })).toBeVisible()
+  expect((await project()).id).toBe(before.id)
+})
+
+test('Apply and leave puts the draft on the timeline, with placeholders for the shots not made, before the other project opens', async ({
+  page,
+}) => {
+  const { count, fal } = await stopAfterTwoShots(page)
+  const submits = fal.submits.length
+  const name = await page.evaluate(() => window.mvStudio.app.project.editor.getProject().name as string)
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByText('Other project', { exact: true }).first().click()
+  await leaveQuestion(page).getByRole('button', { name: 'Apply and leave' }).click()
+  await page.waitForFunction(() => window.mvStudio.app.project.editor.getProject().name === 'Other project')
+
+  // Nothing is held in the other project, so going back asks nothing; the draft was kept with its project.
+  await openFromHome(page, name)
+  await expect(leaveQuestion(page)).toHaveCount(0)
+  const shots = await page.evaluate(() => {
+    const project = window.mvStudio.app.project.editor.getProject()
+    type C = {
+      type: string
+      assetId?: string
+      meta?: { director?: { pending?: { task: string } } }
+    }
+    const ours = (Object.values(project.clips) as C[]).filter((c) => c.meta?.director)
+    const assets = project.assets as Record<string, { origin: { type: string } }>
+    const made = ours.filter(
+      (c) => c.type === 'image' && assets[c.assetId ?? '']?.origin.type === 'generated',
+    )
+    // A shot can fill more than one clip (a chorus that comes back), so made shots are counted by their media.
+    return {
+      made: new Set(made.map((c) => c.assetId)).size,
+      placeholders: ours.filter((c) => c.meta?.director?.pending?.task === 'text-to-image').length,
+    }
+  })
+  expect(shots.made).toBe(2)
+  expect(shots.placeholders).toBeGreaterThanOrEqual(count - 2)
+  // Applying paid for nothing more.
+  expect(fal.submits).toHaveLength(submits)
+})
+
+test('Apply and leave for a new video takes back the draft’s Undo, which would undo it in the project still open behind the setup screen', async ({
+  page,
+}) => {
+  await stopAfterTwoShots(page)
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByRole('button', { name: /^AI music video/ }).click()
+  await leaveQuestion(page).getByRole('button', { name: 'Apply and leave' }).click()
+  await expect(page.getByRole('textbox', { name: 'Describe your video' })).toBeVisible()
+  const applied = await page.evaluate(() => {
+    type C = { meta?: { director?: unknown } }
+    const clips = window.mvStudio.app.project.editor.getProject().clips as Record<string, C>
+    return Object.values(clips).some((c) => c.meta?.director)
+  })
+  expect(applied).toBe(true)
+  // Undo there would hold the draft's AI shots again, and the setup's project would drop them without asking.
+  await expect(page.getByRole('button', { name: 'Undo' })).toHaveCount(0)
+})
+
+test('a reload while AI shots are being made asks first, since the page would drop the ones fal.ai made but not sent yet', async ({
+  page,
+}) => {
+  const fal = await mockFalVideo(page, { images: true, held: [3, 4] })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await generateShots(page)
+  await expect.poll(() => fal.downloads, { timeout: 30_000 }).toEqual(['req-1', 'req-2'])
+  await allSaved(page)
+  const dialogs: string[] = []
+  page.once('dialog', (dialog) => {
+    dialogs.push(dialog.type())
+    void dialog.dismiss()
+  })
+  await page.evaluate(() => window.location.reload())
+  expect(dialogs).toEqual(['beforeunload'])
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
+})
+
+test('failed AI shots waiting for Retry ask before another project opens, with no apply', async ({
+  page,
+}, testInfo) => {
+  await mockFalVideo(page, { images: true, failing: [2] })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  await keepCopy(page, 'Other project')
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await generateShots(page)
+  await expect(page.getByRole('button', { name: /^Retry 1 failed shot/ })).toBeVisible({ timeout: 30_000 })
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByText('Other project', { exact: true }).first().click()
+  const ask = page.getByRole('dialog', { name: '1 AI shot still needs a retry' })
+  await expect(ask).toContainText(
+    'If you leave, you can’t retry it later: making it then means drafting again, which may mean paying for new shots. The shots already made stay on the timeline and in Media.',
+  )
+  await expect(ask.getByRole('button', { name: 'Apply and leave' })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('leave-draft-failed.png'), animations: 'disabled' })
+  // Back to the draft leads to Retry.
+  await ask.getByRole('button', { name: 'Back to the draft' }).click()
+  await expect(page.getByRole('button', { name: /^Retry 1 failed shot/ })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByText('Other project', { exact: true }).first().click()
+  await ask.getByRole('button', { name: 'Leave anyway' }).click()
+  await page.waitForFunction(() => window.mvStudio.app.project.editor.getProject().name === 'Other project')
+})
+
+test('a new draft after a reload plans the version drafted last, so its AI shots are reused instead of paid again', async ({
+  page,
+}) => {
+  const fal = await mockFalVideo(page, { images: true })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  // The first version goes on without AI shots, so only the second version's shots are made.
+  await page.getByRole('button', { name: 'Apply without AI shots' }).click()
+  await page.getByRole('button', { name: 'Try another version' }).click()
+  await generateShots(page)
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  const paid = fal.submits.length
+  expect(paid).toBeGreaterThan(0)
+
+  await allSaved(page)
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  // Every shot is in Media already, so the draft costs nothing and goes on the timeline at once.
+  await expect(page.getByText('Your draft is on the timeline')).toBeVisible({ timeout: 30_000 })
+  expect(fal.submits).toHaveLength(paid)
+})
+
+test('Reload and try again after stems run out of memory waits for a draft holding AI shots, and Back to the draft leads to it', async ({
+  page,
+}) => {
+  await stopAfterTwoShots(page)
+  await page.evaluate(() => {
+    const { app, shared } = window.mvStudio
+    app.stems.setStemsServiceForTests({
+      async estimate() {
+        return { downloadBytes: 0, seconds: 230, memoryBytes: 4e9, device: 'wasm' }
+      },
+      separateSong() {
+        return shared.jobs.run({
+          kind: 'analysis.stems',
+          title: 'Separating stems',
+          run: () =>
+            Promise.reject(
+              new shared.JobError(
+                'out-of-memory',
+                'This computer ran out of memory while separating stems.',
+                {
+                  retryable: true,
+                },
+              ),
+            ),
+        })
+      },
+    })
+    app.ui.set({ rightTab: 'assist', assistView: 'stems' })
+  })
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  await panel.getByRole('button', { name: 'Separate stems' }).click()
+  await expect(panel.getByRole('alert')).toContainText('ran out of memory')
+  // The reload would drop the draft, so it waits, saying why, instead of the browser asking "Leave site?".
+  const reload = panel.getByRole('button', { name: 'Reload and try again' })
+  await expect(reload).toBeDisabled()
+  await expect(
+    panel.getByText('Your Director draft isn’t on the timeline yet, and a reload would drop it.'),
+  ).toBeVisible()
+
+  await panel.getByRole('button', { name: 'Back to the draft' }).click()
+  await expect(page.getByText('Generation stopped. 2 shots made so far are kept.')).toBeVisible()
+  await page.getByRole('button', { name: 'Apply without AI shots' }).click()
+  await expect(page.getByText('Your draft is on the timeline')).toBeVisible()
+  await page.evaluate(() => window.mvStudio.app.ui.set({ rightTab: 'assist', assistView: 'stems' }))
+  await expect(reload).toBeEnabled()
+  await expect(panel.getByRole('button', { name: 'Back to the draft' })).toHaveCount(0)
+})

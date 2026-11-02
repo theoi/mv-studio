@@ -196,6 +196,13 @@
   color: var(--text-1);
 }
 
+.leaveDraft {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
 /* The screen while a linked or last-visited project loads (RestoringScreen). */
 .restoring {
   display: flex;

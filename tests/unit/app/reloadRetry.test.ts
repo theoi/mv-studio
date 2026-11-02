@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useDirector } from '../../../src/app/state/director.ts'
 import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
-import { reloadBlockers, takePendingRetry } from '../../../src/app/state/reloadRetry.ts'
+import { reloadBlockers, reloadHeldBack, takePendingRetry } from '../../../src/app/state/reloadRetry.ts'
+import type { DirectorState } from '../../../src/director/index.ts'
 import type * as Stems from '../../../src/app/state/stems.ts'
 import type { JobSnapshot, JobStatus } from '../../../src/shared/jobs.ts'
 
@@ -80,6 +82,19 @@ describe('jobs a reload would stop', () => {
       job(JOB_KINDS.export, 'succeeded'),
     ]
     expect(reloadBlockers(list)).toEqual([])
+  })
+})
+
+describe('the Director’s draft holding the reload back', () => {
+  afterEach(() => useDirector.setState({ state: { status: 'idle' } }))
+
+  it('waits while the draft holds AI shots a reload would drop, with no job running', () => {
+    expect(reloadHeldBack([])).toBe(false)
+    const failed = { status: 'applied', plan: {}, failedShots: 1, unit: 'shot' } as unknown as DirectorState
+    useDirector.setState({ state: failed })
+    expect(reloadHeldBack([])).toBe(true)
+    useDirector.setState({ state: { ...failed, failedShots: 0 } as DirectorState })
+    expect(reloadHeldBack([])).toBe(false)
   })
 })
 

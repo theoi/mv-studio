@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Clip, GeneratorClip, Project } from '../../../src/model/types.ts'
 import { currentLook } from '../../../src/plugins/looks.ts'
 import { sampleSong } from '../../../src/app/mock/demoProject.ts'
@@ -11,12 +11,22 @@ vi.mock('../../../src/app/state/persistence.ts', () => ({
 vi.mock('../../../src/app/state/importer.ts', () => ({ analyzeSong: vi.fn(), storeFiles: vi.fn() }))
 vi.mock('../../../src/app/state/director.ts', () => ({ draftFromSetup: vi.fn() }))
 
-const { addFootage, buildSetupProject, chooseSong, isAudioFile, isVisualFile, openFromSetup, useSetup } =
-  await import('../../../src/app/state/setup.ts')
+const {
+  addFootage,
+  buildSetupProject,
+  chooseSong,
+  isAudioFile,
+  isVisualFile,
+  openBlankProject,
+  openFromSetup,
+  startSetup,
+  useSetup,
+} = await import('../../../src/app/state/setup.ts')
+const { answerLeaveDraft, holdDrafts, useLeaveDraft } = await import('../../../src/app/state/leaveDraft.ts')
 const { storeFiles } = await import('../../../src/app/state/importer.ts')
 const { startProject } = await import('../../../src/app/state/persistence.ts')
 const { draftFromSetup } = await import('../../../src/app/state/director.ts')
-const { set: setUi } = await import('../../../src/app/state/ui.ts')
+const { get: getUi, set: setUi } = await import('../../../src/app/state/ui.ts')
 
 const onTrack = (p: Project, name: string): Clip[] => {
   const track = p.tracks.find((t) => t.name === name)
@@ -132,5 +142,43 @@ describe('the files the setup screen takes', () => {
       footage: [],
       footageError: 'The files couldn’t be added. Check your connection and try again.',
     })
+  })
+})
+
+describe('with a Director draft that leaving the project would lose', () => {
+  const holding = (held: boolean) =>
+    holdDrafts({
+      held: () => (held ? { kind: 'failed', unit: 'clip', failed: 1 } : null),
+      generating: () => false,
+      apply: async () => false,
+      show: () => undefined,
+    })
+  beforeEach(() => holding(true))
+  afterEach(() => {
+    holding(false)
+    useLeaveDraft.setState({ ask: null, applying: false })
+  })
+
+  it('asks before the setup screen opens for a new video, and opens it on Leave anyway', async () => {
+    setUi({ screen: 'editor', kind: 'lyric' })
+    startSetup('ai')
+    expect(useLeaveDraft.getState().ask).not.toBeNull()
+    expect(getUi().screen).toBe('editor')
+    await answerLeaveDraft('leave')
+    expect(getUi()).toMatchObject({ screen: 'setup', kind: 'ai' })
+  })
+
+  it('asks before Blank project replaces the open project, and makes none when the user stays', async () => {
+    vi.mocked(startProject).mockClear()
+    const staying = openBlankProject()
+    expect(useLeaveDraft.getState().ask).not.toBeNull()
+    await answerLeaveDraft('stay')
+    await staying
+    expect(startProject).not.toHaveBeenCalled()
+
+    const leaving = openBlankProject()
+    await answerLeaveDraft('leave')
+    await leaving
+    expect(startProject).toHaveBeenCalledOnce()
   })
 })
