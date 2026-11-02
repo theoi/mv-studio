@@ -77,27 +77,34 @@ export function findReusableAsset(
   )
 }
 
-export function planRequests(plan: EditPlan, project?: Project): ShotRequest[] {
-  const used = new Set<Id>()
+/**
+ * Each AI shot's request, with media in the project that already answers it. `made` (by shot id): shots already
+ * generated, which keep their own media, so a shot not made yet (a failed one being retried, say) never takes the
+ * picture of a made shot with the same prompt. Pricing and generation both go through here, so they always agree.
+ */
+export function planRequests(
+  plan: EditPlan,
+  project?: Project,
+  made?: ReadonlyMap<string, Asset>,
+): ShotRequest[] {
+  const used = new Set<Id>(Array.from(made?.values() ?? [], (a) => a.id))
   return shotsToGenerate(plan).map((shot, i) => {
     const request = generationRequest(plan, shot, i)
+    if (made?.has(shot.id)) return { shot, request }
     const reuse = findReusableAsset(project, request, used)
     if (reuse) used.add(reuse.id)
     return { shot, request, ...(reuse ? { reuse } : {}) }
   })
 }
 
-/**
- * `made`: the plan's shots already generated, left out of the price. They still claim their matching media first, as
- * in generatePlanShots(), so a shot that shares a prompt with a made one is paid for, not reused.
- */
+/** `made`: the plan's shots already generated (see planRequests()), left out of the price. */
 export function estimatePlanCost(
   plan: EditPlan,
   provider: Pick<MediaGenerationProvider, 'estimate'> & Partial<Pick<MediaGenerationProvider, 'getModel'>>,
   project?: Project,
-  made?: ReadonlySet<string>,
+  made?: ReadonlyMap<string, Asset>,
 ): PlanCost {
-  const all = planRequests(plan, project).filter((r) => !made?.has(r.shot.id))
+  const all = planRequests(plan, project, made).filter((r) => !made?.has(r.shot.id))
   const requests = all.filter((r) => !r.reuse)
   const items = requests.map((r) => ({
     label: r.shot.label ?? r.request.prompt.slice(0, 40),

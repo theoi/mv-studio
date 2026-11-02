@@ -5,6 +5,7 @@ import type {
   DirectorState,
   PlanCost,
   PlanDescription,
+  SeenPrice,
   VideoKind,
 } from '../../director/index.ts'
 import type { EditChange } from '../../model/editor.ts'
@@ -231,9 +232,15 @@ export function paidCost(cost: PlanCost | null | undefined): PlanCost | null {
   return cost && cost.count > 0 ? cost : null
 }
 
+/** The price a button or the cost dialog shows for `cost`, which applyDraft() holds the spend to. */
+export function seenPrice(cost: PlanCost | null | undefined): SeenPrice {
+  return { usd: cost?.usd ?? 0, count: cost?.count ?? 0 }
+}
+
 async function applyIfFree(state: DirectorState) {
   try {
-    if (state.status === 'ready' && !paidCost(state.cost)) await applyDraft()
+    if (state.status === 'ready' && !paidCost(state.cost))
+      await applyDraft({ shownPrice: seenPrice(state.cost) })
   } finally {
     autoApply = false
     useDirector.setState({ applying: false })
@@ -385,7 +392,9 @@ export async function draftLocally(): Promise<void> {
 }
 
 /** Applies the plan: generates AI shots first unless skipped (the panel has asked about the cost). */
-export async function applyDraft(options: { confirmSpend?: boolean; skipGeneration?: boolean } = {}) {
+export async function applyDraft(
+  options: { confirmSpend?: SeenPrice; shownPrice?: SeenPrice; skipGeneration?: boolean } = {},
+) {
   const projectId = editor.getProject().id
   const s = await directorSession()
   try {

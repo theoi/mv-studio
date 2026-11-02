@@ -242,6 +242,13 @@ export type DirectorState =
       unit: GeneratedUnit
     }
 
+/** A price the user saw before generating: on the Generate or Retry button, or confirmed in the cost dialog. */
+export interface SeenPrice {
+  usd: number
+  /** Paid requests. */
+  count: number
+}
+
 const DEFAULT_POLICY: SpendPolicy = { alwaysConfirmPaid: false, confirmAboveUsd: 1, monthlyReminderUsd: 0 }
 
 function plural(n: number, word: string): string {
@@ -553,23 +560,36 @@ export class DirectorSession {
     }
   }
 
+  /** Shows the plan's price as it is now, on the button that generates or retries its shots. */
+  private showPrice(current: DirectorState, plan: EditPlan): void {
+    if (current.status === 'ready') this.set(this.readyState(current.request, plan, current.stopped))
+    else if (current.status === 'applied' || current.status === 'error') {
+      const { cost, confirmRequired } = this.spendFor(plan)
+      this.set({ ...current, cost, confirmRequired })
+    }
+  }
+
   private costOf(plan: EditPlan, done: Map<string, Asset>): PlanCost | null {
     if (shotsToGenerate(plan).length === 0) return null
     const provider = this.deps.provider?.()
     if (!provider) return null
-    const cost = estimatePlanCost(plan, provider, this.deps.editor.getProject(), new Set(done.keys()))
+    const cost = estimatePlanCost(plan, provider, this.deps.editor.getProject(), done)
     return cost.count > 0 || cost.reused > 0 ? cost : null
   }
 
   /**
    * Generates any AI shots, then applies the plan as one undo step. Throws DirectorError('needs-confirmation')
-   * when the cost needs the user's OK and `confirmSpend` is not set, so nothing is ever spent silently.
-   * With `skipGeneration`, AI shots that are not generated yet become placeholders. `beforeApply` runs with the plan
-   * just before its edits are dispatched.
+   * when the cost needs the user's OK and `confirmSpend` is not set, so nothing is ever spent silently, and
+   * DirectorError('price-changed') when generating now costs more than the price the user saw (`confirmSpend` or
+   * `shownPrice`), after showing the new one. With `skipGeneration`, AI shots that are not generated yet become
+   * placeholders. `beforeApply` runs with the plan just before its edits are dispatched.
    */
   async apply(
     options: {
-      confirmSpend?: boolean
+      /** The price confirmed in the cost dialog. */
+      confirmSpend?: SeenPrice
+      /** The price the button showed, when the spend policy didn't ask. */
+      shownPrice?: SeenPrice
       skipGeneration?: boolean
       beforeApply?: (plan: EditPlan) => void
     } = {},
@@ -590,6 +610,18 @@ export class DirectorSession {
       throw new DirectorError(
         'no-provider',
         `Connect fal.ai in Settings to generate ${unit}s, or apply with placeholders.`,
+      )
+    }
+    const seen = options.confirmSpend ?? options.shownPrice
+    if (cost && seen && (cost.usd > seen.usd || cost.count > seen.count)) {
+      // Media a shot would have reused was deleted since the price showed, say.
+      this.showPrice(current, plan)
+      const costs = `${plural(cost.count, unit)} now ${cost.count === 1 ? 'costs' : 'cost'} ${formatEstimate({ usd })}`
+      throw new DirectorError(
+        'price-changed',
+        options.confirmSpend
+          ? `The price went up since you confirmed it: ${costs}. Confirm the new price to go on.`
+          : `The price went up: ${costs}. Check it and generate again.`,
       )
     }
     if (

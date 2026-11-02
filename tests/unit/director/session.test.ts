@@ -70,6 +70,9 @@ const providerDown = () =>
     status: 500,
   })
 
+/** The price the panel shows for the state, as the Generate button and the cost dialog pass it to apply(). */
+const priceOf = (state: DirectorState) =>
+  'cost' in state && state.cost ? { usd: state.cost.usd, count: state.cost.count } : { usd: 0, count: 0 }
 function ready(state: DirectorState) {
   if (state.status !== 'ready') throw new Error(`expected ready, got ${state.status}`)
   return state
@@ -141,7 +144,7 @@ describe('DirectorSession', () => {
     expect((refused as DirectorError).reason).toBe('needs-confirmation')
     expect(provider.calls).toHaveLength(0)
 
-    const applied = await session.apply({ confirmSpend: true })
+    const applied = await session.apply({ confirmSpend: priceOf(session.getState()) })
     expect(applied.status).toBe('applied')
     expect(provider.calls).toHaveLength(planned.cost!.count)
     expect(ledger.monthTotal()).toBeCloseTo(planned.cost!.usd, 4)
@@ -186,7 +189,7 @@ describe('DirectorSession', () => {
 
     provider.gate = undefined
     const callsBefore = provider.calls.length
-    expect((await session.apply({ confirmSpend: true })).status).toBe('applied')
+    expect((await session.apply({ confirmSpend: priceOf(session.getState()) })).status).toBe('applied')
     expect(provider.calls.length - callsBefore).toBe(total - kept)
   })
 
@@ -211,7 +214,7 @@ describe('DirectorSession', () => {
     })
     const s = setup({ provider, videos: 0, planner: repeatingPrompts, ...o })
     ready(await s.session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
-    const applying = s.session.apply({ confirmSpend: true })
+    const applying = s.session.apply({ confirmSpend: priceOf(s.session.getState()) })
     for (let i = 0; i < 500 && provider.calls.length < made + 2; i++)
       await new Promise((r) => setTimeout(r, 0))
     s.session.cancel()
@@ -228,7 +231,7 @@ describe('DirectorSession', () => {
     expect(after.actionLabel).toMatch(new RegExp(`^Generate ${left} shots · `))
     expect(after.preview.summary).toContain(`, ${left} to generate`)
     const before = provider.calls.length
-    expect((await session.apply({ confirmSpend: true })).status).toBe('applied')
+    expect((await session.apply({ confirmSpend: priceOf(session.getState()) })).status).toBe('applied')
     expect(provider.calls.length - before).toBe(left)
   })
 
@@ -242,30 +245,29 @@ describe('DirectorSession', () => {
     expect(provider.calls).toHaveLength(before)
   })
 
+  /** Images an earlier draft made from the same requests as the plan's first `n` AI shots, `earlier-0` onwards. */
+  const earlierImages = (plan: EditPlan, n: number) =>
+    shotsToGenerate(plan)
+      .slice(0, n)
+      .map((s, i) => ({
+        type: 'asset.add' as const,
+        asset: {
+          id: `earlier-${i}`,
+          kind: 'image' as const,
+          name: `earlier-${i}.jpg`,
+          mimeType: 'image/jpeg',
+          byteSize: 1000,
+          storageKey: `media/earlier-${i}`,
+          origin: { type: 'generated' as const, provider: s.source.modelId, prompt: s.source.prompt },
+          createdAt: new Date(0).toISOString(),
+        },
+      }))
   it('counts in the plan’s summary only the shots Generate pays for, without those media made earlier covers', async () => {
     const provider = fakeProvider()
     const { session, editor } = setup({ provider, videos: 0 })
     const planned = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
     const total = shotsToGenerate(planned.plan).length
-    // Images an earlier draft made from the same requests as three of the plan's shots.
-    editor.dispatch(
-      shotsToGenerate(planned.plan)
-        .slice(0, 3)
-        .map((s, i) => ({
-          type: 'asset.add' as const,
-          asset: {
-            id: `earlier-${i}`,
-            kind: 'image' as const,
-            name: `earlier-${i}.jpg`,
-            mimeType: 'image/jpeg',
-            byteSize: 1000,
-            storageKey: `media/earlier-${i}`,
-            origin: { type: 'generated' as const, provider: s.source.modelId, prompt: s.source.prompt },
-            createdAt: new Date(0).toISOString(),
-          },
-        })),
-      { history: 'skip' },
-    )
+    editor.dispatch(earlierImages(planned.plan, 3), { history: 'skip' })
     const again = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
     expect(again.cost).toMatchObject({ count: total - 3, reused: 3 })
     expect(again.actionLabel).toMatch(new RegExp(`^Generate ${total - 3} shots · `))
@@ -275,6 +277,61 @@ describe('DirectorSession', () => {
     )
   })
 
+  it('generates a failed shot afresh on Retry, rather than giving it the picture of a made shot with its prompt', async () => {
+    // The 4th shot fails; the 1st, 7th and 10th share its prompt and are made.
+    const provider = fakeProvider({ failOn: (i) => (i === 3 ? providerDown() : undefined) })
+    const { session, store } = setup({ provider, videos: 0, confirmAboveUsd: 5, planner: repeatingPrompts })
+    ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    const applied = await session.apply({ confirmSpend: priceOf(session.getState()) })
+    expect(applied).toMatchObject({ status: 'applied', failedShots: 1, cost: { count: 1, reused: 0 } })
+    const calls = provider.calls.length
+    const stored = store.stored.length
+    expect((await session.apply({ confirmSpend: priceOf(applied) })).status).toBe('applied')
+    expect(provider.calls.length - calls).toBe(1)
+    expect(store.stored.length - stored).toBe(1)
+  })
+
+  it('generates nothing when the price went up after the user confirmed it, and shows the new price to confirm', async () => {
+    const provider = fakeProvider()
+    const { session, editor } = setup({ provider, videos: 0, confirmAboveUsd: 0.001 })
+    const first = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    const total = shotsToGenerate(first.plan).length
+    editor.dispatch(earlierImages(first.plan, 3), { history: 'skip' })
+    const planned = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    expect(planned).toMatchObject({ confirmRequired: true, cost: { count: total - 3 } })
+    // An image the plan reuses is deleted before the user confirms its price.
+    editor.dispatch({ type: 'asset.remove', assetId: 'earlier-0' })
+    const refused = await session.apply({ confirmSpend: priceOf(planned) }).catch((e: unknown) => e)
+    expect(refused).toBeInstanceOf(DirectorError)
+    expect((refused as DirectorError).reason).toBe('price-changed')
+    expect((refused as DirectorError).message).toMatch(
+      new RegExp(
+        String.raw`^The price went up since you confirmed it: ${total - 2} shots now cost about \$\d+\.\d\d\. Confirm the new price to go on\.$`,
+      ),
+    )
+    expect(provider.calls).toHaveLength(0)
+    const shown = ready(session.getState())
+    expect(shown.actionLabel).toMatch(new RegExp(`^Generate ${total - 2} shots · `))
+    expect(shown.confirmRequired).toBe(true)
+    expect((await session.apply({ confirmSpend: priceOf(shown) })).status).toBe('applied')
+    expect(provider.calls).toHaveLength(total - 2)
+  })
+
+  it('generates nothing when Make video would now pay for a shot, though the spend policy wouldn’t ask', async () => {
+    const provider = fakeProvider()
+    const { session, editor } = setup({ provider, videos: 0, confirmAboveUsd: 5 })
+    const first = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    editor.dispatch(earlierImages(first.plan, shotsToGenerate(first.plan).length), { history: 'skip' })
+    const planned = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    expect(planned.actionLabel).toBe('Make video')
+    editor.dispatch({ type: 'asset.remove', assetId: 'earlier-0' })
+    await expect(session.apply({ shownPrice: priceOf(planned) })).rejects.toMatchObject({
+      reason: 'price-changed',
+      message: 'The price went up: 1 shot now costs under $0.01. Check it and generate again.',
+    })
+    expect(provider.calls).toHaveLength(0)
+    expect(ready(session.getState()).actionLabel).toBe('Generate 1 shot · under $0.01')
+  })
   it('shows what the run has spent so far, against its estimate, and where each shot stands', async () => {
     // The first two requests finish; the next two stay underway until the user cancels.
     const provider = fakeProvider({
@@ -387,7 +444,7 @@ describe('DirectorSession', () => {
     const provider = fakeProvider({ failOn: (i) => (i < 2 ? providerDown() : undefined) })
     const { session } = setup({ provider, videos: 0, confirmAboveUsd: 0.001 })
     ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
-    const applied = await session.apply({ confirmSpend: true })
+    const applied = await session.apply({ confirmSpend: priceOf(session.getState()) })
     if (applied.status !== 'applied') throw new Error(`expected applied, got ${applied.status}`)
     expect(applied.failedShots).toBe(2)
     expect(applied.cost?.count).toBe(2)
@@ -414,7 +471,7 @@ describe('DirectorSession', () => {
     const provider = fakeProvider({ failOn: () => providerDown() })
     const { session } = setup({ provider, videos: 0, confirmAboveUsd: 0.001 })
     const planned = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
-    const failed = await session.apply({ confirmSpend: true })
+    const failed = await session.apply({ confirmSpend: priceOf(session.getState()) })
     if (failed.status !== 'error') throw new Error(`expected error, got ${failed.status}`)
     expect(failed.cost?.count).toBe(planned.cost!.count)
     expect(failed.confirmRequired).toBe(true)
