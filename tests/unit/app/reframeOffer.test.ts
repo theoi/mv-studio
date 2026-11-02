@@ -1,7 +1,15 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
-import { changeAspect, lastingOffer, reframeProject } from '../../../src/app/state/reframe.ts'
+import { changeAspect, framingHint, lastingOffer, reframeProject } from '../../../src/app/state/reframe.ts'
 import { get, set } from '../../../src/app/state/ui.ts'
+import type { VisualClip } from '../../../src/model/index.ts'
+import type * as Capabilities from '../../../src/shared/capabilities.ts'
+
+const gpu = vi.hoisted(() => ({ webgl2: true }))
+vi.mock('../../../src/shared/capabilities.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof Capabilities>()),
+  webgl2Available: () => gpu.webgl2,
+}))
 
 beforeAll(() => {
   // Toasts time out through window.setTimeout.
@@ -11,6 +19,10 @@ beforeAll(() => {
 beforeEach(() => {
   loadDemoProject()
   set({ toasts: [] })
+})
+
+afterEach(() => {
+  gpu.webgl2 = true
 })
 
 const offers = () =>
@@ -46,5 +58,51 @@ describe('the offer to reframe after a frame change', () => {
       note: 'The clips can go back to their 16:9 layout.',
       label: 'Restore layout',
     })
+  })
+})
+
+describe('footage kept centered for lack of subject analysis', () => {
+  // The sample's footage has no subject analysis.
+  const footage = () => {
+    const clips = Object.values(editor.getProject().clips)
+    const id = clips.find((c) => c.type === 'video')!.id
+    return () => editor.getProject().clips[id] as VisualClip
+  }
+  const results = () =>
+    get()
+      .toasts.filter((t) => t.action?.label === 'Undo')
+      .map((t) => t.message)
+
+  it('says the analysis is still to come where it can run', () => {
+    const clip = footage()
+    expect(framingHint(editor.getProject(), clip())).toBe(
+      'Other aspect ratios keep it centered: it has no subject analysis yet.',
+    )
+    changeAspect('9:16')
+    reframeProject()
+    expect(results()).toEqual([
+      expect.stringMatching(/ · \d+ clips stay centered \(no subject analysis yet\)$/),
+    ])
+    expect(framingHint(editor.getProject(), clip())).toBe(
+      'Reframed from 16:9 and kept centered: it has no subject analysis yet.',
+    )
+  })
+
+  it('says following subjects needs graphics acceleration where WebGL 2 is missing, since no analysis will come', () => {
+    gpu.webgl2 = false
+    const clip = footage()
+    expect(framingHint(editor.getProject(), clip())).toBe(
+      'Other aspect ratios keep it centered: following its subject needs graphics acceleration (WebGL 2).',
+    )
+    changeAspect('9:16')
+    reframeProject()
+    expect(results()).toEqual([
+      expect.stringMatching(
+        / · \d+ clips stay centered, since following subjects needs graphics acceleration \(WebGL 2\)$/,
+      ),
+    ])
+    expect(framingHint(editor.getProject(), clip())).toBe(
+      'Reframed from 16:9 and kept centered: following its subject needs graphics acceleration (WebGL 2).',
+    )
   })
 })

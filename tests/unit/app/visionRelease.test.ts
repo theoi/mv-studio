@@ -24,8 +24,8 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-/** A job of `kind` that runs until `finish()` or a cancel. */
-function job(kind: string) {
+/** A job of `kind` that runs until `finish()` or, unless `stubborn`, a cancel. */
+function job(kind: string, { stubborn = false } = {}) {
   let finish = () => {}
   const handle = jobs.run({
     kind,
@@ -33,7 +33,8 @@ function job(kind: string) {
     run: (ctx: JobContext) =>
       new Promise<void>((resolve, reject) => {
         finish = resolve
-        ctx.signal.addEventListener('abort', () => reject(new JobError('cancelled', 'Cancelled')))
+        if (!stubborn)
+          ctx.signal.addEventListener('abort', () => reject(new JobError('cancelled', 'Cancelled')))
       }),
   })
   return { handle, finish: () => finish() }
@@ -95,6 +96,58 @@ it('frees them on opening another project once its cancelled vision jobs have st
   expect(now()).toBe(1)
 })
 
+it.each(['vision.new-tool', JOB_KINDS.autocut, JOB_KINDS.director, JOB_KINDS.ask])(
+  'counts %s jobs as using the workers, like any vision job',
+  async (kind) => {
+    release.mockClear()
+    const tool = job(kind)
+    await settle()
+    const stems = job(JOB_KINDS.stems)
+    await settle()
+    expect(now()).toBe(0)
+    tool.finish()
+    await settle()
+    expect(now()).toBe(1)
+    stems.finish()
+    await settle()
+  },
+)
+
+it('leaves a release for another project opening to the idle timer once that project starts its own vision job', async () => {
+  vi.useFakeTimers()
+  release.mockClear()
+  // The last project's cutout takes a while to stop; the next project's analysis starts meanwhile.
+  const cutout = job(JOB_KINDS.cutout, { stubborn: true })
+  await vi.advanceTimersByTimeAsync(0)
+  leaveProjectJobs()
+  const index = job(JOB_KINDS.footage)
+  await vi.advanceTimersByTimeAsync(0)
+  cutout.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  index.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(0)
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(release.mock.calls).toEqual([[{ idleMs: 60_000 }]])
+
+  // Stem separation still frees them as soon as the analysis running when it started, and any after it, end.
+  release.mockClear()
+  const first = job(JOB_KINDS.footage)
+  await vi.advanceTimersByTimeAsync(0)
+  const stems = job(JOB_KINDS.stems)
+  await vi.advanceTimersByTimeAsync(0)
+  const second = job(JOB_KINDS.suitability)
+  await vi.advanceTimersByTimeAsync(0)
+  first.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(0)
+  second.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(1)
+  stems.finish()
+  await vi.advanceTimersByTimeAsync(0)
+})
+
 it('tries again while a call outside any job keeps a worker', async () => {
   release.mockClear()
   release.mockReturnValueOnce(false)
@@ -132,4 +185,36 @@ it('frees workers idle for a minute once no vision job has run for a minute', as
   expect(release.mock.calls).toEqual([[{ idleMs: 60_000 }], [{ idleMs: 60_000 }]])
   await vi.advanceTimersByTimeAsync(120_000)
   expect(release).toHaveBeenCalledTimes(2)
+})
+
+it('forgets a release a search held off once the idle timer has freed the workers', async () => {
+  vi.useFakeTimers()
+  const camera = job(JOB_KINDS.camera)
+  await vi.advanceTimersByTimeAsync(0)
+  release.mockClear()
+  // A search has a call pending when the last vision job before stem separation ends, so the workers are kept.
+  const stems = job(JOB_KINDS.stems)
+  await vi.advanceTimersByTimeAsync(0)
+  release.mockReturnValueOnce(false)
+  camera.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(1)
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(release).toHaveBeenLastCalledWith({ idleMs: 60_000 })
+  // The idle timer freed them, so the next change doesn't end a worker a later search started.
+  stems.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(1)
+
+  // Likewise for another project opening.
+  release.mockReturnValueOnce(false)
+  releaseVisionWorkers()
+  expect(now()).toBe(2)
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(release).toHaveBeenLastCalledWith({ idleMs: 60_000 })
+  const other = job('test.other')
+  await vi.advanceTimersByTimeAsync(0)
+  other.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(2)
 })

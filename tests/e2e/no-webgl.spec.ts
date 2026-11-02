@@ -159,3 +159,86 @@ test('without WebGL 2 the inspector offers no 3D camera move on a still, and non
   })
   expect(kinds.filter((k: string) => k === 'vision.camera')).toEqual([])
 })
+
+test('without WebGL 2 Cut my clips matches the clips without looking for their subjects, and reframing says why they stay centered', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    const w = window as unknown as { segmentationCalls: string[] }
+    w.segmentationCalls = []
+    // Model-free matching, and the person models as they fail without WebGL.
+    const onnx = {
+      async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        for (const b of bitmaps) b.close()
+        return { dim: 2, data: new Float32Array(bitmaps.flatMap(() => [0.6, 0.8])) }
+      },
+      async embedTexts({ texts }: { texts: string[] }) {
+        return { dim: 2, data: new Float32Array(texts.flatMap(() => [0.6, 0.8])) }
+      },
+    }
+    const segmentation = new Proxy(
+      {},
+      {
+        get: (_target, method) =>
+          typeof method !== 'string' || method === 'then'
+            ? undefined
+            : async () => {
+                w.segmentationCalls.push(method)
+                throw new Error('Failed to create WebGL canvas context when passing video frame.')
+              },
+      },
+    )
+    window.mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => onnx,
+      segmentation: () => segmentation,
+    })
+  })
+  await page.getByRole('button', { name: /^Beat-cut footage/ }).click()
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.getByLabel('Clip files').setInputFiles(path.resolve('tests/fixtures/.cache/clip.mp4'))
+  await expect(page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')).toHaveCount(1, {
+    timeout: 30_000,
+  })
+  await page.getByRole('button', { name: 'Cut my clips' }).click()
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(assist.getByText(/^On the Video track\./)).toBeVisible({ timeout: 60_000 })
+  // Matched: no note that the clip couldn't be analyzed and was picked for variety.
+  await expect(assist.getByText(/couldn’t be analyzed|picked for variety/)).toHaveCount(0)
+  const analysis = await page.evaluate(() => {
+    const { app } = window.mvStudio
+    const project = app.project.editor.getProject()
+    const clip = Object.values(project.assets as Record<string, { id: string; name: string }>).find(
+      (a) => a.name === 'clip.mp4',
+    )!
+    return {
+      matched: !!project.analysis.visual[clip.id]?.data?.embedding,
+      failed: app.footage.useFootage.getState().indexing?.failed ?? null,
+      segmentationCalls: (window as unknown as { segmentationCalls: string[] }).segmentationCalls,
+    }
+  })
+  expect(analysis).toEqual({ matched: true, failed: [], segmentationCalls: [] })
+
+  // Reframing keeps the clips centered and says why, instead of waiting for an analysis that won't come.
+  const block = page.getByRole('button', { name: /^clip\.mp4, 0:00\.0 to / })
+  await block.focus()
+  await page.keyboard.press('Enter')
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  await inspector.getByRole('button', { name: 'Framing', exact: true }).click()
+  await expect(
+    inspector.getByText(
+      'Other aspect ratios keep it centered: following its subject needs graphics acceleration (WebGL 2).',
+      { exact: true },
+    ),
+  ).toBeVisible()
+  await page.getByRole('button', { name: '16:9', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^9:16/ }).click()
+  const toasts = page.getByRole('status')
+  await toasts.getByRole('button', { name: 'Reframe automatically' }).click()
+  await expect(
+    toasts.getByText(
+      /^Reframed for 9:16 · .*\d+ clips? stays? centered, since following subjects needs graphics acceleration \(WebGL 2\)$/,
+    ),
+  ).toBeVisible()
+})
