@@ -77,9 +77,9 @@ import { usePick } from '../../state/pick.ts'
 import { changeAspect } from '../../state/reframe.ts'
 import { clearVjReturnFrame, SHOWN_AFTER_MS, subscribeVjReturnFrame, vjReturnFrame } from '../../state/vj.ts'
 import { PickOverlay } from './PickOverlay.tsx'
-import type { Rect } from './handles.ts'
+import { visibleFrame, type Rect } from './handles.ts'
 import { SelectionOverlay } from './SelectionOverlay.tsx'
-import { connectPreview, fitStage } from './stage.ts'
+import { connectPreview, fitStage, stageUpdating, subscribeStill } from './stage.ts'
 import styles from './Preview.module.css'
 
 const aspects: { value: AspectPreset; desc: string; icon: ReactNode; ratio: number }[] = [
@@ -139,6 +139,7 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
   const returnFrame = useSyncExternalStore(subscribeVjReturnFrame, vjReturnFrame)
   const returnBitmap = returnFrame === 'pending' ? null : returnFrame
   const [returnFading, setReturnFading] = useState(false)
+  const updating = useSyncExternalStore(subscribeStill, stageUpdating)
   const drawReturn = useCallback(
     (canvas: HTMLCanvasElement | null) => {
       if (!canvas || !returnBitmap) return
@@ -280,6 +281,9 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
             aria-hidden
           />
         )}
+        {status === 'ready' && updating && (
+          <UpdatingNote visible={visibleFrame(size.width, size.height, view)} />
+        )}
         {status === 'loading' && !returnBitmap && (
           <div className={styles.stageNote}>
             <Spinner /> Preparing the preview
@@ -301,6 +305,28 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
             </Button>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+/** Narrower than this, the "Updating…" note is its spinner alone: at 9:16 its label would cover half the bottom edge. */
+const UPDATING_LABEL_MIN_WIDTH = 300
+
+/** In the bottom-right corner of the part of the frame on screen, so a zoomed-in stage shows it too. */
+function UpdatingNote({ visible }: { visible: Rect }) {
+  const compact = visible.width < UPDATING_LABEL_MIN_WIDTH
+  return (
+    <div
+      className={styles.updatingRegion}
+      style={{ left: visible.x, top: visible.y, width: visible.width, height: visible.height }}
+    >
+      <div
+        className={[styles.updating, compact && styles.updatingCompact].filter(Boolean).join(' ')}
+        role="status"
+      >
+        <Spinner size={10} />
+        <span className={compact ? 'sr-only' : undefined}>Updating…</span>
       </div>
     </div>
   )

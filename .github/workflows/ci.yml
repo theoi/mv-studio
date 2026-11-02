@@ -46,7 +46,7 @@ jobs:
           - { preview: worker, half: 2 }
           - { preview: main }
     env:
-      MAIN_THREAD_SPECS: playback vj editor-engine export-dialog design-preview preview-worker
+      MAIN_THREAD_SPECS: playback vj editor-engine export-dialog design-preview preview-worker preview-updating
     steps:
       - uses: actions/checkout@v7
         with:

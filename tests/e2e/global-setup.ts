@@ -10,6 +10,7 @@ const REQUIRED = [
   'tagged.m4a',
   'clip.mp4',
   'clip1080.mp4',
+  'clip4k.mp4',
   'clip-rotated.mp4',
   'clear.webm',
   'frames.mp4',

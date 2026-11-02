@@ -20,6 +20,8 @@ ffmpeg $q -f lavfi -i "color=c=black:s=320x180:r=30:d=4,format=gray,geq=lum='if(
 ffmpeg $q -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" -c:a libopus -b:a 64k voice.webm
 # 4 s 1920x1080 30 fps H.264 clip without audio (performance benchmarks)
 ffmpeg $q -f lavfi -i "testsrc2=size=1920x1080:rate=30" -t 4 -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -movflags +faststart clip1080.mp4
+# 6 s 3840x2160 60 fps H.264 clip with one key frame, so a paused frame near its end decodes over 300 frames first
+ffmpeg $q -f lavfi -i "testsrc2=size=3840x2160:rate=60" -t 6 -c:v libx264 -preset ultrafast -crf 40 -pix_fmt yuv420p -g 360 -keyint_min 360 -sc_threshold 0 -movflags +faststart clip4k.mp4
 ffmpeg $q -f lavfi -i "testsrc2=size=640x360:rate=1" -frames:v 1 image.png
 # 3 s VP9 WebM over a test pattern whose alpha channel is 0 everywhere: it decodes, but shows nothing. It is the size of
 # clip.mp4, so its frames are drawn at the same sizes as the clip analyzed before it.

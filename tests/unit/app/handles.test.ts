@@ -12,6 +12,7 @@ import {
   startDrag,
   transformCommands,
   turn,
+  visibleFrame,
   type Point,
 } from '../../../src/app/screens/editor/handles.ts'
 import { loopRange } from '../../../src/app/state/previewControls.ts'
@@ -132,6 +133,32 @@ describe('handles on the visible stage', () => {
     expect(placed.knob[0]).toBeCloseTo(400, 6)
     expect(placed.knob[1]).toBeCloseTo(0, 6)
     expect(placed.stem).toBeNull()
+  })
+})
+
+describe('the part of the frame on the visible stage', () => {
+  it('is the whole frame at Fit, or before the stage is measured', () => {
+    expect(visibleFrame(800, 450, { x: -12, y: -12, width: 824, height: 474 })).toEqual({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 450,
+    })
+    expect(visibleFrame(800, 450, null)).toEqual({ x: 0, y: 0, width: 800, height: 450 })
+  })
+
+  it('is the stage itself when zoomed in on the middle of a larger frame', () => {
+    const view = { x: 436, y: 291, width: 728, height: 318 }
+    expect(visibleFrame(1600, 900, view)).toEqual(view)
+  })
+
+  it('ends at the frame’s edge when scrolled to its corner, past which the stage shows only its margin', () => {
+    expect(visibleFrame(1600, 900, { x: 884, y: 594, width: 728, height: 318 })).toEqual({
+      x: 884,
+      y: 594,
+      width: 716,
+      height: 306,
+    })
   })
 })
 

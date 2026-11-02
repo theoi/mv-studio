@@ -60,6 +60,12 @@ export interface PreviewSnapshot {
   /** Current render resolution relative to full (1 when paused; below 1 while playback runs at reduced quality). */
   scale: number
   /**
+   * Paused, and the frame on screen isn't the current state yet: a still is asked for or drawing (a slow seek, a
+   * drag's next step), or was drawn without a seek it stopped waiting for, which draws it again once it ends. False
+   * while playing and once the preview can no longer draw.
+   */
+  pending: boolean
+  /**
    * Set once the preview can no longer draw: its render worker died ('worker-crashed', 'out-of-memory') or, while
    * starting, failed or stopped answering ('timeout'), taking the canvas with it. A new preview on a new canvas draws
    * again.
@@ -429,7 +435,14 @@ export class PreviewController {
   /** The project and full-size frame auto quality last measured, as `checkAutoBasis()` writes it. */
   private autoBasis = ''
   private scale = 1
-  private snapshot: PreviewSnapshot = { state: 'stopped', time: 0, duration: 0, quality: 'auto', scale: 1 }
+  private snapshot: PreviewSnapshot = {
+    state: 'stopped',
+    time: 0,
+    duration: 0,
+    quality: 'auto',
+    scale: 1,
+    pending: false,
+  }
   private readonly listeners = new Set<() => void>()
   private readonly frameListeners = new Set<(time: Seconds) => void>()
   /**
@@ -786,6 +799,7 @@ export class PreviewController {
       duration: this.project ? projectDuration(this.project) : 0,
       quality: this.quality,
       scale: this.scale,
+      pending: this.stillToCome(),
       ...(this.failure ? { error: this.failure.toJSON() } : {}),
     }
     const s = this.snapshot
@@ -795,10 +809,25 @@ export class PreviewController {
       s.duration === next.duration &&
       s.quality === next.quality &&
       s.scale === next.scale &&
+      s.pending === next.pending &&
       s.error?.code === next.error?.code
     )
       return
     this.snapshot = next
+    for (const listener of this.listeners) listener()
+  }
+
+  /** PreviewSnapshot.pending. */
+  private stillToCome(): boolean {
+    if (this.clock.state === 'playing' || this.failure || this.disposed || !this.project) return false
+    return this.stillPending || this.inFlight !== null || this.frames.lateSeekPending()
+  }
+
+  /** Only `pending`: the snapshot's time would change with every frame drawn while playing. */
+  private updatePending(): void {
+    const pending = this.stillToCome()
+    if (pending === this.snapshot.pending) return
+    this.snapshot = { ...this.snapshot, pending }
     for (const listener of this.listeners) listener()
   }
 
@@ -958,6 +987,7 @@ export class PreviewController {
         if (this.stillPending) this.requestStill()
         // Caught up, unless a scrub on the main-thread renderer waits for more steps.
         else if (this.settleTimer === undefined) this.settle()
+        this.updatePending()
       })
     this.inFlight = run
     return run
