@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { Page } from '@playwright/test'
+import { FIXTURE_DIR } from './global-setup.ts'
 import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
 
 // The harness exposes untyped modules to page.evaluate callbacks.
@@ -66,6 +67,69 @@ async function importAndSelect(page: Page, file: string, name: string) {
   await expect(block).toHaveCount(1)
   await block.focus()
   await page.keyboard.press('Enter')
+}
+
+/**
+ * Model-free vision backends whose person segmenter counts the frames it is given (`window.personFrames`) and finds a
+ * large person in each.
+ */
+async function countPersonFrames(page: Page) {
+  await page.evaluate(() => {
+    const w = window as Untyped
+    w.personFrames = 0
+    const unit = (n: number) => ({ dim: 2, data: new Float32Array(n * 2).map((_, i) => (i % 2 ? 0.8 : 0.6)) })
+    const box = { x: 0.3, y: 0.1, width: 0.4, height: 0.9 }
+    w.mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => ({
+        async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+          for (const b of bitmaps) b.close()
+          return unit(bitmaps.length)
+        },
+        async embedTexts({ texts }: { texts: string[] }) {
+          return unit(texts.length)
+        },
+      }),
+      segmentation: () => ({
+        async configure() {},
+        async resetStream() {},
+        async analyze(req: Untyped) {
+          w.personFrames++
+          const frame = { width: req.bitmap.width as number, height: req.bitmap.height as number }
+          const { width, height } = req.maskSize ?? frame
+          req.bitmap.close()
+          const data = new Uint8Array(width * height)
+          const [x0, x1] = [Math.round(width * box.x), Math.round(width * (box.x + box.width))]
+          for (let y = Math.round(height * box.y); y < height; y++)
+            data.fill(255, y * width + x0, y * width + x1)
+          return {
+            ...(req.mask ? { mask: { width, height, data } } : {}),
+            ...(req.people ? { people: [{ box, score: 0.9 }], animals: [] } : {}),
+            ...(req.faces ? { faces: [] } : {}),
+            ...(req.gray ? { gray: { ...frame, data: new Uint8Array(frame.width * frame.height) } } : {}),
+          }
+        },
+      }),
+    })
+  })
+}
+
+const personFrames = (page: Page) => page.evaluate(() => (window as Untyped).personFrames as number)
+
+/** The statuses of the person checks the app has run. */
+const personChecks = (page: Page) =>
+  page.evaluate(() =>
+    (window.mvStudio.shared.jobs.list() as Untyped[])
+      .filter((j) => j.kind === 'vision.suitability')
+      .map((j) => j.status as string),
+  )
+
+/** Holds analysis until `window.endHold()` is called. */
+async function holdAnalysis(page: Page) {
+  await page.evaluate(() => {
+    const w = window as Untyped
+    w.endHold = () => {}
+    w.mvStudio.app.footage.holdAnalysisUntil(new Promise<void>((resolve) => (w.endHold = resolve)), 100_000)
+  })
 }
 
 test('Assist › Behind the subject explains each shot and cuts the people out of the suitable ones', async ({
@@ -544,6 +608,63 @@ test('while clips are being checked, the top bar opens Behind the subject, not E
     .click()
   await expect(assist.getByText('Text sits between the person and the background')).toBeVisible()
   await expect(page.getByRole('dialog', { name: 'Export' })).toBeHidden()
+})
+
+test('the inspector’s person check decodes no frame while analysis is held, and goes on once the hold ends', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem('mv-studio.background-analysis', 'on')
+  })
+  await countPersonFrames(page)
+  await holdAnalysis(page)
+  await page.evaluate(() => (window.location.hash = '#/editor?t=10'))
+  await waitForPreview(page)
+  await importAndSelect(page, path.resolve('tests/fixtures/people-interview.webm'), 'people-interview')
+  await page.getByRole('tab', { name: 'Inspector' }).click()
+  await expect.poll(() => personChecks(page)).toEqual(['running'])
+  await page.waitForTimeout(1500)
+  expect(await personFrames(page)).toBe(0)
+  expect(await personChecks(page)).toEqual(['running'])
+  await page.evaluate(() => (window as Untyped).endHold())
+  await expect.poll(() => personChecks(page), { timeout: 30_000 }).toEqual(['succeeded'])
+  expect(await personFrames(page)).toBeGreaterThan(0)
+})
+
+test('Behind the subject’s person check waits while the stage waits for a paused frame, with background analysis off', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await openHarness(page)
+  await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
+  await countPersonFrames(page)
+  await holdAnalysis(page)
+  await page.evaluate(() => (window.location.hash = '#/editor?t=10'))
+  await waitForPreview(page)
+  await importAndSelect(page, path.join(FIXTURE_DIR, 'clip4k.mp4'), 'clip4k')
+  const stillPending = () => page.evaluate(() => window.mvStudio.app.stillPending() as boolean)
+  await expect.poll(stillPending, { timeout: 30_000 }).toBe(false)
+  await page.evaluate(() => (window.location.hash = '#/editor?tab=assist&assist=behind&t=10'))
+  await expect.poll(() => personChecks(page)).toEqual(['running'])
+  await page.evaluate(() => window.mvStudio.app.footage.visionService())
+  await expect.poll(stillPending, { timeout: 30_000 }).toBe(false)
+  // 5.5 s into the clip is 330 frames past its only key frame: the stage waits for that frame a while.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 15.5 }))
+  await expect.poll(stillPending).toBe(true)
+  await page.evaluate(() => (window as Untyped).endHold())
+  const seen: { pending: boolean; frames: number }[] = []
+  const started = Date.now()
+  while (Date.now() - started < 1500) {
+    const [pending, frames] = await Promise.all([stillPending(), personFrames(page)])
+    seen.push({ pending, frames })
+    if (!pending) break
+    await page.waitForTimeout(100)
+  }
+  expect(seen.filter((s) => s.pending).length).toBeGreaterThan(3)
+  expect(seen.filter((s) => s.pending && s.frames > 0)).toEqual([])
+  await expect.poll(() => personFrames(page), { timeout: 30_000 }).toBeGreaterThan(0)
 })
 
 test('a clip name cut short in Behind the subject’s list shows in full on hover', async ({ page }) => {
