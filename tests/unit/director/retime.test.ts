@@ -7,10 +7,11 @@ import {
   planLocally,
   retimeDirectorLyricCommands,
 } from '../../../src/director/index.ts'
-import { rowWidth, textWidth } from '../../../src/director/typography.ts'
+import { frameWidth, layoutLine, rowWidth, textWidth, TITLE_SAFE } from '../../../src/director/typography.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
-import type { LyricLine, LyricsDoc, Project, TextClip } from '../../../src/model/types.ts'
-import { LYRICS, makeProject } from './fixtures.ts'
+import { settingsForAspect } from '../../../src/model/factory.ts'
+import type { AspectPreset, LyricLine, LyricsDoc, Project, TextClip } from '../../../src/model/types.ts'
+import { LYRICS, makeProject, timedLine } from './fixtures.ts'
 
 /** A line sung fast: a word every `step` seconds. */
 function fastLine(id: string, text: string, start: number, step = 0.2): LyricLine {
@@ -36,8 +37,9 @@ const shift = (line: LyricLine, by: number): LyricLine => ({
   words: line.words.map((w) => ({ ...w, start: w.start + by, end: w.end + by })),
 })
 
-async function drafted(): Promise<Project> {
-  const project = makeProject({ lyrics: SONG })
+async function drafted(aspect: AspectPreset = '16:9', lyrics = SONG): Promise<Project> {
+  const fixture = makeProject({ lyrics })
+  const project = { ...fixture, settings: { ...fixture.settings, ...settingsForAspect(aspect) } }
   const plan = await planLocally(await buildPlannerInput(project, { kind: 'lyric', seed: 1 }))
   const editor = new ProjectEditor(project)
   editor.dispatch(compilePlan(plan, project).commands)
@@ -161,7 +163,7 @@ describe('lyricTextCommands', () => {
     expect((after.clips[head!.id] as TextClip).text).toBe('We are burning slow')
   })
 
-  it('retypes whole-line clips and next-line previews, keeping their rows, and leaves hand-edited and locked clips', async () => {
+  it('retypes whole-line clips and next-line previews, and leaves hand-edited and locked clips', async () => {
     const drafted_ = await drafted()
     const [preview] = director(drafted_, 'preview', 'f2')
     const [line] = lineClips(drafted_, 'f2')
@@ -186,23 +188,112 @@ describe('lyricTextCommands', () => {
     expect(kept.clips[preview!.id]).toEqual(p.clips[preview!.id])
   })
 
-  it('fits a longer line in the rows the director laid it out in, in smaller type, and keeps the size for a shorter one', async () => {
+  const LONG =
+    'Every light is flashing by so fast and every sign burns out before the morning comes around again tonight while we keep driving on'
+  const styleOf = (clip: TextClip, fontSize = clip.style.fontSize) => ({
+    ...clip.style,
+    fontSize,
+    uppercase: clip.style.textTransform === 'uppercase',
+  })
+  const settled = (a: { value: number; keyframes?: { value: number }[] }) =>
+    a.keyframes?.at(-1)?.value ?? a.value
+  /** Where a clip's rows are once it has rolled into place, as fractions of the frame height. */
+  const box = (clip: TextClip) => {
+    const half =
+      (clip.text.split('\n').length *
+        (clip.style.lineHeight ?? 1.15) *
+        clip.style.fontSize *
+        settled(clip.transform.scaleY)) /
+      1080 /
+      2
+    return { top: settled(clip.transform.y) - half, bottom: settled(clip.transform.y) + half }
+  }
+
+  it('lays a retyped line out again as a draft would: in more rows when much longer, back at its size when shorter', async () => {
     const p = await drafted()
     const [line] = lineClips(p, 'f2')
     const [preview] = director(p, 'preview', 'f2')
-    const long = 'Every light is flashing by so fast and every sign burns out before the morning comes around'
-    const after = retype(p, 'f2', long)
+    const after = retype(p, 'f2', LONG)
     for (const clip of [line!, preview!]) {
       const now = after.clips[clip.id] as TextClip
-      expect(now.text.replace(/\s+/g, ' ')).toBe(long)
-      expect(now.text.split('\n')).toHaveLength(clip.text.split('\n').length)
-      expect(now.style.fontSize).toBeLessThan(clip.style.fontSize)
-      const style = { ...now.style, uppercase: now.style.textTransform === 'uppercase' }
+      const laid = layoutLine(LONG, styleOf(clip), '16:9')
+      expect(now.text).toBe(laid.text)
+      expect(now.style.fontSize).toBe(laid.fontSize)
+      expect(now.text.split('\n').length).toBeGreaterThan(clip.text.split('\n').length)
       for (const row of now.text.split('\n'))
-        expect(textWidth(row, style, now.style.fontSize)).toBeLessThanOrEqual(rowWidth(style, '16:9'))
+        expect(textWidth(row, styleOf(now))).toBeLessThanOrEqual(rowWidth(styleOf(now), '16:9'))
     }
-    const short = retype(p, 'f2', 'Every light')
+    const short = retype(after, 'f2', 'Every light')
     expect((short.clips[line!.id] as TextClip).style.fontSize).toBe(line!.style.fontSize)
+    // Back to its words, it is as it was drafted.
+    const back = retype(after, 'f2', p.lyrics!.lines.find((l) => l.id === 'f2')!.text)
+    for (const clip of [line!, preview!]) {
+      const now = back.clips[clip.id] as TextClip
+      expect({ text: now.text, style: now.style, meta: now.meta }).toEqual({
+        text: clip.text,
+        style: clip.style,
+        meta: clip.meta,
+      })
+      expect(settled(now.transform.y)).toBeCloseTo(settled(clip.transform.y), 5)
+    }
+  })
+
+  it('grows a retyped clip away from the text beside it, clear of all text shown with it and inside the title-safe area', async () => {
+    const p = await drafted('9:16')
+    const [line] = lineClips(p, 'f2')
+    const [preview] = director(p, 'preview', 'f2')
+    const after = retype(p, 'f2', LONG)
+    const texts = Object.values(after.clips).filter((c): c is TextClip => c.type === 'text')
+    for (const clip of [line!, preview!]) {
+      const now = after.clips[clip.id] as TextClip
+      expect(now.text.split('\n').length).toBeGreaterThan(clip.text.split('\n').length)
+      expect(now.style.fontSize).toBeGreaterThan(8)
+      const b = box(now)
+      expect(b.top).toBeGreaterThanOrEqual(TITLE_SAFE.top)
+      expect(b.bottom).toBeLessThanOrEqual(TITLE_SAFE.bottom)
+      for (const other of texts) {
+        if (
+          other.id === now.id ||
+          other.start >= now.start + now.duration ||
+          now.start >= other.start + other.duration
+        )
+          continue
+        const o = box(other)
+        expect(o.bottom <= b.top || b.bottom <= o.top).toBe(true)
+      }
+    }
+    // The line keeps its bottom edge over the next line waiting below it, and rolls up from where its preview now is.
+    const now = after.clips[line!.id] as TextClip
+    expect(box(now).bottom).toBeCloseTo(box(line!).bottom, 5)
+    expect(now.transform.y.keyframes?.[0]?.value).toBe(
+      settled((after.clips[preview!.id] as TextClip).transform.y),
+    )
+    // Its preview keeps its top edge under the line before it.
+    expect(box(after.clips[preview!.id] as TextClip).top).toBeCloseTo(box(preview!).top, 5)
+  })
+
+  it('keeps the words before an emphasized ending no bigger than the ending, above it where they were', async () => {
+    const lyrics = SONG.map((l) => (l.id === 'l3' ? timedLine('l3', 'Hold on to me unbreakable me', 25) : l))
+    const p = await drafted('9:16', lyrics)
+    const [word] = director(p, 'emphasis', 'l3')
+    const [head] = lineClips(p, 'l3')
+    expect(word?.text).toBe('unbreakable me')
+    expect(head!.style.fontSize).toBeLessThanOrEqual(word!.style.fontSize)
+    const after = retype(p, 'l3', 'Hold me close and never let me go unbreakable me')
+    const now = after.clips[head!.id] as TextClip
+    expect(now.text.replace(/\s+/g, ' ')).toBe('Hold me close and never let me go')
+    expect(now.style.fontSize).toBeLessThanOrEqual(word!.style.fontSize)
+    expect(box(now).bottom).toBeCloseTo(box(head!).bottom, 5)
+    expect(after.clips[word!.id]).toEqual(word)
+  })
+
+  it('lays out a line with no row break allowed on one row, within the frame', async () => {
+    const p = await drafted()
+    const [line] = lineClips(p, 'f2')
+    expect(line!.text.split('\n')).toHaveLength(2)
+    const now = retype(p, 'f2', '(The Supercalifragilisticexpialidocious)').clips[line!.id] as TextClip
+    expect(now.text).toBe('(The Supercalifragilisticexpialidocious)')
+    expect(textWidth(now.text, styleOf(now))).toBeLessThanOrEqual(0.9 * frameWidth('16:9'))
   })
 
   it('changes nothing for the same text or a line that is not in the lyrics', async () => {
