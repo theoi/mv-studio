@@ -234,7 +234,10 @@ export function peakStyle(type: LyricTypography, brief?: TypographyBrief): TextS
   }
 }
 
-/** The emphasized word: much bigger, in the accent color and in capitals unless the style is script or lowercase. */
+/**
+ * The emphasized word: much bigger, in the accent color and in capitals unless the style is script or lowercase, and
+ * smaller where it needs to be to fit its row.
+ */
 export function emphasisStyle(type: LyricTypography, line: TextStyleSpec, text: string): TextStyleSpec {
   const script = bundledFont(line.fontFamily ?? '')?.category === 'handwriting' || !!line.italic
   const style: TextStyleSpec = {
@@ -245,7 +248,7 @@ export function emphasisStyle(type: LyricTypography, line: TextStyleSpec, text: 
     uppercase: line.textTransform !== 'lowercase' && (!!line.uppercase || !script),
   }
   const fit = rowWidth(style, type.aspect) / textWidth(text, style)
-  if (fit < 1) style.fontSize = Math.max(type.lineSize, Math.floor((style.fontSize as number) * fit))
+  if (fit < 1) style.fontSize = Math.floor((style.fontSize as number) * fit)
   return style
 }
 
@@ -347,6 +350,12 @@ export function rowWidth(style: TextStyleSpec, aspect: AspectPreset): number {
 /** A word that opens a bracket it does not close, such as "(feat.": it stays on a row with the word after it. */
 const opensBracket = (word: string | undefined) => !!word && /^[([]/.test(word) && !/[)\]]/.test(word)
 
+/** An article opening a bracket, such as "(The": no row ends on it. */
+const opensWithArticle = (word: string | undefined) => !!word && /^[([](the|a|an)$/i.test(word)
+
+/** A word that closes a bracket it did not open, such as "Edit)". */
+const closesBracket = (word: string | undefined) => !!word && /[)\]]/.test(word) && !/^[([]/.test(word)
+
 /** No row ends on a word that opens a bracket while that keeps the type at this share of the size it could have. */
 const BRACKET_KEEP = 0.9
 
@@ -354,19 +363,22 @@ type Split = { rows: string[]; widest: number }
 
 /**
  * The split of `words` into `rows` rows with the narrowest widest row, `width` measuring each row, and of those the
- * one with the earliest breaks. No row ends on a word that opens a bracket, unless that leaves the type more than 10%
- * smaller than it could be in rows `limit` wide.
+ * one with the earliest breaks. No row ends on an article opening a bracket ("(The"), nor, when `hold`, starts on a
+ * word closing one ("Edit)"). No row ends on another word that opens a bracket, unless that leaves the type more than
+ * 10% smaller than it could be in rows `limit` wide.
  */
 export function bestSplit(
   words: string[],
   rows: number,
   width: RunWidth,
   limit = Infinity,
+  hold = false,
 ): Split | undefined {
   const n = words.length
   if (rows < 1 || n < rows) return undefined
+  const allowed = (i: number) => !opensWithArticle(words[i - 1]) && !(hold && closesBracket(words[i]))
   const search = (together: boolean): Split | undefined => {
-    const breaks = (i: number) => !together || !opensBracket(words[i - 1])
+    const breaks = (i: number) => allowed(i) && (!together || !opensBracket(words[i - 1]))
     // narrowest[left - 1][from]: the narrowest widest row of words[from..] split into `left` rows (Infinity: none).
     const narrowest = [
       Float64Array.from({ length: n + 1 }, (_, from) => (from < n ? width(from, n) : Infinity)),
@@ -403,14 +415,21 @@ export function bestSplit(
   return scale(kept) >= BRACKET_KEEP * scale(free) ? kept : free
 }
 
-/** `words` in `rows` rows of about equal length (one row per line of text), or on one row when there are fewer words. */
+/**
+ * `words` in `rows` rows of about equal length (one row per line of text), or in fewer where no row may end where they
+ * would need to; on one row when there are fewer words.
+ */
 export function balancedRows(words: string[], rows: number): string {
   // Characters before each word, its space included, so a row's length is a difference of two.
   const before = [0]
   for (const word of words) before.push((before.at(-1) as number) + word.length + 1)
   const length: RunWidth = (from, to) => (before[to] as number) - (before[from] as number) - 1
-  const split = rows > 1 ? bestSplit(words, rows, length) : undefined
-  return split ? split.rows.join('\n') : words.join(' ')
+  if (words.length >= rows)
+    for (let fewer = rows; fewer > 1; fewer--) {
+      const split = bestSplit(words, fewer, length)
+      if (split) return split.rows.join('\n')
+    }
+  return words.join(' ')
 }
 
 /** Smallest share of its size laid-out text shrinks to in the rows allowed. */
@@ -431,11 +450,33 @@ function fitScale(rows: string[], width: (s: string) => number, limit: number, f
 }
 
 /**
+ * The smallest share of its size at which a bracket keeps its closing word with the word before it. Rows are laid out
+ * to 90% of the clip's wrap width from letter widths estimated a little wide, so at 60% of the size they still fit
+ * the whole width at about 70%.
+ */
+const HOLD_SHRINK = 0.6
+
+/**
+ * Laid out with the closing word of each bracket held to the word before it ("(Radio Edit)", "(feat. Mara Lane)")
+ * while that keeps the type at HOLD_SHRINK of `size`, or within 10% of the size it has without.
+ */
+function holdingBrackets<T extends { fontSize: number }>(
+  words: string[],
+  size: number,
+  lay: (hold: boolean) => T,
+): T {
+  const loose = lay(false)
+  if (!words.some((word, i) => i > 0 && closesBracket(word))) return loose
+  const held = lay(true)
+  return held.fontSize >= Math.min(BRACKET_KEEP * loose.fontSize, HOLD_SHRINK * size) ? held : loose
+}
+
+/**
  * Text laid out in balanced rows (explicit line breaks, so wrapping never leaves one word alone on a row), each row
- * within the clip's wrap width: as few rows as fit, up to `maxRows`; else the most rows in type shrunk to 70% at
- * most; else one more row, in type as much smaller as it needs, since rows wider than the clip would wrap again when
- * drawn, over the text laid out below them. A word too long for the clip on its own shrinks to half the size, and
- * further only to stay within the frame.
+ * within the clip's wrap width: as few rows as fit, up to `maxRows`; else the fewest rows that come out as large as
+ * the most rows do, in type shrunk to 70% at most; else one more row, in type as much smaller as it needs, since rows
+ * wider than the clip would wrap again when drawn, over the text laid out below them. A word too long for the clip on
+ * its own shrinks to half the size, and further only to stay within the frame.
  */
 export function layoutLine(
   text: string,
@@ -449,24 +490,34 @@ export function layoutLine(
   const width = (s: string) => textWidth(s, style, size)
   const run = runWidths(words, style, size)
   const laid = (rows: string[], fontSize: number) => ({ text: rows.join('\n'), fontSize, rows: rows.length })
-  let last: Split | undefined
-  for (let rows = 1; rows <= Math.min(maxRows, words.length); rows++) {
-    const split = bestSplit(words, rows, run, limit)
-    if (!split) break
-    last = split
-    if (split.widest <= limit) return laid(split.rows, size)
-  }
-  if (!last) return { text, fontSize: size, rows: 1 }
-  if (limit / last.widest >= MIN_SHRINK) return laid(last.rows, Math.round((size * limit) / last.widest))
-  const more = bestSplit(words, Math.min(last.rows.length + 1, words.length), run, limit)
-  // A word too long for the clip on its own stays the widest row, so a row more would only break up the others.
-  const rows = (more && more.widest < last.widest ? more : last).rows
-  return laid(rows, Math.max(8, Math.floor(size * fitScale(rows, width, limit, frameWidth(aspect)))))
+  return holdingBrackets(words, size, (hold) => {
+    const splits: Split[] = []
+    for (let rows = 1; rows <= Math.min(maxRows, words.length); rows++) {
+      const split = bestSplit(words, rows, run, limit, hold)
+      if (!split) break
+      splits.push(split)
+      if (split.widest <= limit) return laid(split.rows, size)
+    }
+    const last = splits.at(-1)
+    if (!last) return { text, fontSize: size, rows: 1 }
+    const shrunk = (split: Split) => Math.round((size * limit) / split.widest)
+    const fitted = (split: Split) =>
+      Math.max(8, Math.floor(size * fitScale(split.rows, width, limit, frameWidth(aspect))))
+    // Fewer rows at the same size read better: "We are / invincible", not "We / are / invincible".
+    const fewest = (fontSize: number, sizeOf: (split: Split) => number) =>
+      laid((splits.find((split) => sizeOf(split) === fontSize) ?? last).rows, fontSize)
+    if (limit / last.widest >= MIN_SHRINK) return fewest(shrunk(last), shrunk)
+    const more = bestSplit(words, Math.min(last.rows.length + 1, words.length), run, limit, hold)
+    // A word too long for the clip on its own stays the widest row, so a row more would only break up the others.
+    if (more && more.widest < last.widest) return laid(more.rows, fitted(more))
+    return fewest(fitted(last), fitted)
+  })
 }
 
 /**
- * `words` again in `rows` rows (fewer when there are fewer words) for text drawn in `style`, with the size at which
- * each row fits as in layoutLine: the style's own or smaller, so the text never grows taller than it was laid out.
+ * `words` again in `rows` rows (fewer when there are fewer words, or where no row may end where they would need to)
+ * for text drawn in `style`, with the size at which each row fits as in layoutLine: the style's own or smaller, so the
+ * text never grows taller than it was laid out.
  */
 export function refitRows(
   words: string[],
@@ -477,10 +528,15 @@ export function refitRows(
   const size = style.fontSize ?? LINE_SIZE[aspect]
   const limit = rowWidth(style, aspect)
   const width = (s: string) => textWidth(s, style, size)
-  const split = bestSplit(words, Math.min(rows, words.length), runWidths(words, style, size), limit)
-  if (!split) return { text: words.join(' '), fontSize: size }
-  const scale = fitScale(split.rows, width, limit, frameWidth(aspect))
-  return { text: split.rows.join('\n'), fontSize: Math.max(8, Math.floor(size * scale)) }
+  const run = runWidths(words, style, size)
+  return holdingBrackets(words, size, (hold) => {
+    let split: Split | undefined
+    for (let fewer = Math.min(rows, words.length); !split && fewer >= 1; fewer--)
+      split = bestSplit(words, fewer, run, limit, hold)
+    if (!split) return { text: words.join(' '), fontSize: size }
+    const scale = fitScale(split.rows, width, limit, frameWidth(aspect))
+    return { text: split.rows.join('\n'), fontSize: Math.max(8, Math.floor(size * scale)) }
+  })
 }
 
 /** Height of laid-out text as a fraction of the frame. */

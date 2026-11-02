@@ -3,7 +3,9 @@ import {
   buildPlannerInput,
   compilePlan,
   DEFAULT_CATALOG,
+  expandBrief,
   planLocally,
+  ruleBrief,
   type BrightnessProbe,
   type BrightnessRequest,
   type EditPlan,
@@ -14,6 +16,7 @@ import {
   frameWidth,
   layoutLine,
   lyricTypography,
+  peakStyle,
   rowWidth,
   textWidth,
 } from '../../../src/director/typography.ts'
@@ -157,22 +160,54 @@ describe('lyric typography', () => {
     },
   )
 
-  it('keeps a chorus line whole when its stressed ending is too wide for the clip at the line’s size', async () => {
-    const lyrics = LYRICS.map((l) =>
-      l.id === 'l3' ? timedLine('l3', 'Hold on to me unbreakable me', 25) : l,
-    )
-    const draft = async (aspect: AspectPreset) => {
-      const project = makeProject({ lyrics })
+  it('shrinks a stressed ending too wide for the clip to fit its row, unless that takes it under half the line’s size', async () => {
+    const draft = async (text: string, aspect: AspectPreset) => {
+      const project = makeProject({
+        lyrics: LYRICS.map((l) => (l.id === 'l3' ? timedLine('l3', text, 25) : l)),
+      })
       project.settings = { ...project.settings, aspect }
       return (await lyricDraft(project)).texts.filter((t) => t.lyricLineId === 'l3')
     }
-    expect((await draft('16:9')).map((t) => [t.role, t.text])).toEqual([
-      ['lyric', 'Hold on to me'],
-      ['emphasis', 'unbreakable me'],
-    ])
-    const tall = await draft('9:16')
-    expect(tall.map((t) => t.role)).toEqual(['lyric'])
-    expect(tall[0]!.text.replace(/\s+/g, ' ')).toBe('Hold on to me unbreakable me')
+    const wide = await draft('Hold on to me unbreakable me', '16:9')
+    const tall = await draft('Hold on to me unbreakable me', '9:16')
+    for (const texts of [wide, tall])
+      expect(texts.map((t) => [t.role, t.text.replace(/\s+/g, ' ')])).toEqual([
+        ['lyric', 'Hold on to me'],
+        ['emphasis', 'unbreakable me'],
+      ])
+    const [line, ending] = tall as [PlanText, PlanText]
+    const style = { ...ending.style, uppercase: ending.style.uppercase ?? true }
+    expect(textWidth('unbreakable me', style)).toBeLessThanOrEqual(rowWidth(style, '9:16'))
+    expect(ending.style.fontSize).toBeLessThan(wide[1]!.style.fontSize as number)
+    expect(ending.style.fontSize).toBeGreaterThanOrEqual((line.style.fontSize as number) / 2)
+    // In Syne's wide capitals the ending would fit its row only under half the line's size: the line stays whole.
+    const project = makeProject({
+      lyrics: LYRICS.map((l) => (l.id === 'l3' ? timedLine('l3', 'Hold on to me unbreakable me', 25) : l)),
+    })
+    project.settings = { ...project.settings, aspect: '9:16' }
+    const input = await buildPlannerInput(project, { kind: 'lyric', seed: 1 })
+    const brief = ruleBrief(input)
+    const wideFont = await expandBrief(
+      { ...brief, text: { show: true, ...brief.text, fontFamily: 'Syne' } },
+      input,
+      {
+        planner: 'local',
+      },
+    )
+    expect(wideFont.texts.filter((t) => t.lyricLineId === 'l3').map((t) => t.role)).toEqual(['lyric'])
+  })
+
+  it('lays a line out in the fewest rows that come out as large', () => {
+    const type = lyricTypography({ aspect: '9:16', busy: false, catalog: DEFAULT_CATALOG })
+    expect(layoutLine('We are invincible', peakStyle(type), '9:16').text).toBe('We are\ninvincible')
+  })
+
+  it.each(['verse', 'chorus'])('keeps a name in brackets on one row in a %s line at 1:1', (kind) => {
+    const type = lyricTypography({ aspect: '1:1', busy: false, catalog: DEFAULT_CATALOG })
+    const style = kind === 'verse' ? type.style : peakStyle(type)
+    const text = 'Every window flickers like a flame (feat. Mara Lane) and I keep holding on'
+    const rows = layoutLine(text, style, '1:1').text.split('\n')
+    expect(rows.some((row) => row.includes('(feat. Mara Lane)'))).toBe(true)
   })
 
   it('keeps each lyric line on one shot', async () => {

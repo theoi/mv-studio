@@ -164,7 +164,11 @@ describe('a retyped title card', () => {
   })
 
   it.each([
-    ['Neon Skyline (The Extended Midnight Club Remix Version)', '9:16'],
+    ...(['16:9', '9:16', '1:1'] as const).map(
+      (aspect) => ['Neon Skyline (The Extended Midnight Club Remix Version)', aspect] as const,
+    ),
+    ['Levitating (A Cappella)', '9:16'],
+    ['Levitating (A Cappella)', '4:5'],
     ...[
       'Midnight Drive (feat. Mara Lane, Joe Doe & The Very Long Band Name)',
       'Blue (feat. Somebody Else Entirely From Far Away)',
@@ -185,14 +189,40 @@ describe('a retyped title card', () => {
     expect(title.text.split('\n')[0]).toBe('Show Me (Acoustic)')
   })
 
-  it('lets a row end on a word that opens a bracket where keeping it with the next word costs over a tenth of the type', async () => {
-    const [title] = card((await drafted('The Night Shift - Go (feat. Mara Lane).mp3', '9:16')).getProject())
-    expect(title.text.split('\n')[0]).toBe('Go (feat.')
+  it('lets a row end on a word that opens a bracket where keeping it with the next words costs over a tenth of the type', async () => {
+    const [title] = card((await drafted('The Night Shift - Go (feat. Mara Lane).mp3', '1:1')).getProject())
+    expect(title.text).toBe('Go (feat.\nMara Lane)')
     const style = { ...title.style, uppercase: true }
     const base = directorMeta(title)!.titleLayout!.base
-    // The largest the type could be with “(feat. Mara” on one row within the clip.
-    const together = (base * rowWidth(style, '9:16')) / textWidth('(feat. Mara', style, base)
+    expect(title.style.fontSize).toBe(base)
+    // The largest the type could be with “(feat. Mara Lane)” on one row within the clip.
+    const together = (base * rowWidth(style, '1:1')) / textWidth('(feat. Mara Lane)', style, base)
     expect(title.style.fontSize).toBeGreaterThan(1.1 * together)
+  })
+
+  it.each([
+    ['Blinding Lights (Radio Edit)', '(Radio Edit)'],
+    ['Neon Skyline (Night Mix)', '(Night Mix)'],
+  ])(
+    'keeps “%s” at 9:16 with its phrase in brackets on one row, in type 60% of its size or more',
+    async (name, phrase) => {
+      const [title] = card((await drafted(`The Night Shift - ${name}.mp3`, '9:16')).getProject())
+      expect(title.text.split('\n').at(-1)).toBe(phrase)
+      expect(title.style.fontSize).toBeGreaterThanOrEqual(0.6 * directorMeta(title)!.titleLayout!.base)
+    },
+  )
+
+  it('breaks a phrase in brackets that would need type under 60% of its size on one row', async () => {
+    const [title] = card(
+      (await drafted('The Night Shift - Good Days (Acoustic Version).mp3', '1:1')).getProject(),
+    )
+    expect(title.text).toBe('Good Days\n(Acoustic\nVersion)')
+    expect(title.style.fontSize).toBe(directorMeta(title)!.titleLayout!.base)
+  })
+
+  it('lays a title out in the fewest rows that come out as large', async () => {
+    const [title] = card((await drafted('The Night Shift - Show Me (Acoustic).mp3', '9:16')).getProject())
+    expect(title.text).toBe('Show Me\n(Acoustic)')
   })
 
   it('shrinks a title with a word too long for the clip to half its size while it fits the frame', async () => {

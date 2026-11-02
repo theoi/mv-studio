@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CATALOG } from '../../../src/director/index.ts'
 import {
@@ -27,16 +28,22 @@ const BRACKETS = [
   ['(The', 'Extended', 'Midnight', 'Club', 'Remix', 'Version)'],
   ['(Acoustic)'],
   ['(Night', 'Mix)'],
+  ['(Radio', 'Edit)'],
+  ['(A', 'Cappella)'],
 ]
 const LONG = ['unbreakable', 'everlasting', 'heartbreaker', 'Supercalifragilisticexpialidocious']
 
 /**
  * The reference: every split of `words` into `rows` rows, tried in order of their breaks, keeping the first with the
- * narrowest widest row; no row ending on a word that opens a bracket unless that costs the type over 10% of the size
- * it could have in rows `limit` wide. Also how many splits tie for the narrowest.
+ * narrowest widest row. No row ends on an article opening a bracket ("(The"), nor, when `hold`, starts on a word closing
+ * one ("Edit)"); no row ends on another word that opens a bracket unless that costs the type over 10% of the size it
+ * could have in rows `limit` wide. Also how many splits tie for the narrowest.
  */
-function everySplit(words: string[], rows: number, width: (s: string) => number) {
+function everySplit(words: string[], rows: number, width: (s: string) => number, hold = false) {
   const opens = (word: string | undefined) => !!word && /^[([]/.test(word) && !/[)\]]/.test(word)
+  const article = (word: string | undefined) => !!word && /^[([](the|a|an)$/i.test(word)
+  const closes = (word: string | undefined) => !!word && /[)\]]/.test(word) && !/^[([]/.test(word)
+  const never = (i: number) => article(words[i - 1]) || (hold && closes(words[i]))
   let ties = 0
   const search = (together: boolean) => {
     let best: { rows: string[]; widest: number } | undefined
@@ -49,7 +56,8 @@ function everySplit(words: string[], rows: number, width: (s: string) => number)
         return
       }
       for (let i = from + 1; i <= words.length - (left - 1); i++)
-        if (!together || !opens(words[i - 1])) visit(i, left - 1, [...acc, words.slice(from, i).join(' ')])
+        if (!never(i) && (!together || !opens(words[i - 1])))
+          visit(i, left - 1, [...acc, words.slice(from, i).join(' ')])
     }
     if (words.length >= rows && rows >= 1) visit(0, rows, [])
     return best
@@ -91,6 +99,7 @@ describe('row splits', () => {
     let cases = 0
     let tied = 0
     let openers = 0
+    let held = 0
     for (const [i, words] of generatedLines(320).entries()) {
       const aspect = ASPECTS[i % ASPECTS.length] as AspectPreset
       const fontFamily = FONTS[Math.floor(i / ASPECTS.length) % FONTS.length]
@@ -104,25 +113,35 @@ describe('row splits', () => {
       const size = style.fontSize as number
       const width = (s: string) => textWidth(s, style, size)
       const run = runWidths(words, style, size)
+      const closing = words.some((word) => /\w[)\]]$/.test(word))
       for (let rows = 1; rows <= Math.min(5, words.length); rows++) {
-        const expected = everySplit(words, rows, width)
-        for (const limit of [rowWidth(style, aspect), Infinity]) {
-          const split = expected.choose(limit)
-          expect(bestSplit(words, rows, run, limit)).toEqual(split)
-          cases++
-          if (split !== expected.kept) openers++
+        for (const hold of closing ? [false, true] : [false]) {
+          const expected = everySplit(words, rows, width, hold)
+          for (const limit of [rowWidth(style, aspect), Infinity]) {
+            const split = expected.choose(limit)
+            expect(bestSplit(words, rows, run, limit, hold)).toEqual(split)
+            cases++
+            if (split !== expected.kept) openers++
+            if (hold && !isDeepStrictEqual(split, everySplit(words, rows, width).choose(limit))) held++
+          }
+          if (expected.ties) tied++
         }
-        if (expected.ties) tied++
-        const byLength = everySplit(words, rows, (s) => s.length)
-        const rowsByLength = byLength.choose(Infinity)!.rows
-        expect(balancedRows(words, rows)).toBe(rows > 1 ? rowsByLength.join('\n') : words.join(' '))
-        if (byLength.ties) tied++
+        // By length, in as many of the rows as some split allows.
+        let byLength: string[] | undefined
+        for (let fewer = rows; !byLength && fewer > 1; fewer--) {
+          const expected = everySplit(words, fewer, (s) => s.length)
+          byLength = expected.choose(Infinity)?.rows
+          if (expected.ties) tied++
+        }
+        expect(balancedRows(words, rows)).toBe((byLength ?? words).join(byLength ? '\n' : ' '))
       }
     }
     expect(cases).toBeGreaterThan(1000)
-    // Equal widest rows, where the earliest breaks must win, and rows ending on an opener both occur.
+    // Equal widest rows, where the earliest breaks must win, rows ending on an opener, and rows a closing word holds
+    // together all occur.
     expect(tied).toBeGreaterThan(100)
     expect(openers).toBeGreaterThan(5)
+    expect(held).toBeGreaterThan(5)
   })
 
   it('lay out a 150-word line at 9:16 in 4 balanced rows, and refit it into 4 rows', () => {

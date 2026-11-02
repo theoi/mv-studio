@@ -80,7 +80,6 @@ import {
   layoutLine,
   lyricTypography,
   peakStyle,
-  rowWidth,
   stackTitleCard,
   textWidth,
   titleStyle,
@@ -1096,8 +1095,8 @@ function lineTexts(
     const placed = clearOfFaces(o.anchor, total, width, faces)
     const top = placed.y - total / 2
     const emphasis = type.emphasisAnimation
-    // An emphasized word too wide for the clip even at the line's size would wrap under itself: the line stays whole.
-    const tailFits = textWidth(tailText, tailStyle) <= rowWidth(tailStyle, aspect)
+    // An emphasized ending shrunk under half the line's size to fit its row reads as fine print: the line stays whole.
+    const tailFits = (tailStyle.fontSize as number) >= (lineStyle.fontSize ?? type.lineSize) / 2
     // The split block is taller: when no place for it clears the faces, the whole line may.
     if (tailFits && placed.hits <= whole.hits)
       return [

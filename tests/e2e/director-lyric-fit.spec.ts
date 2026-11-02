@@ -5,7 +5,8 @@ import { expect, openHarness, test } from './fixtures.ts'
 /*
  * Long lyric lines sung back to back in portrait and square drafts: drawn with the real fonts, every text clip keeps
  * the rows the director laid it out in, so the next line waiting below stays clear of the current one, and a word too
- * long to wrap stays within the frame.
+ * long to wrap stays within the frame. Rows keep a short phrase in brackets and a name in brackets whole, and none
+ * ends on an article opening one.
  */
 
 const LINES = [
@@ -20,8 +21,14 @@ const LINES = [
   'Oh supercalifragilisticexpialidocious',
 ]
 
-/** The sample's lyrics replaced by 32 long lines, 2.4 s each, then a lyric draft at `aspect`. */
-async function draftLongLines(page: Page, aspect: string) {
+/** A song title whose rows used to break inside its brackets, per aspect ratio. */
+const TITLES: Record<string, string> = {
+  '9:16': 'Blinding Lights (Radio Edit)',
+  '1:1': 'Neon Skyline (The Extended Midnight Club Remix Version)',
+}
+
+/** The sample's lyrics replaced by 32 long lines, 2.4 s each, and its song named `title`, then a lyric draft. */
+async function draftLongLines(page: Page, aspect: string, title: string) {
   await openHarness(page)
   await page.evaluate(() => localStorage.setItem('mv-studio.guide-seen', '1'))
   await page.evaluate(() => {
@@ -29,7 +36,7 @@ async function draftLongLines(page: Page, aspect: string) {
   })
   await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
   await page.evaluate(
-    ({ aspect, texts }) => {
+    ({ aspect, texts, title }) => {
       const { model, app } = window.mvStudio
       const editor = app.project.editor
       const lines = Array.from({ length: 32 }, (_, i) => {
@@ -47,8 +54,10 @@ async function draftLongLines(page: Page, aspect: string) {
       })
       editor.dispatch({ type: 'project.updateSettings', settings: model.settingsForAspect(aspect) })
       editor.dispatch({ type: 'lyrics.set', lyrics: { ...editor.getProject().lyrics, lines } })
+      const song = editor.getProject().songAssetId as string
+      editor.dispatch({ type: 'asset.rename', assetId: song, name: `The Weekend Band - ${title}.mp3` })
     },
-    { aspect, texts: LINES },
+    { aspect, texts: LINES, title },
   )
   await page.getByRole('button', { name: 'Draft video' }).click()
   await expect(page.getByText(/^Placed \d+ shots, \d+ lyric lines/)).toBeVisible({ timeout: 60_000 })
@@ -58,7 +67,7 @@ for (const aspect of ['9:16', '1:1']) {
   test(`at ${aspect}, long lyric lines keep their rows, stay clear of the next line below and within the frame`, async ({
     page,
   }, testInfo) => {
-    await draftLongLines(page, aspect)
+    await draftLongLines(page, aspect, TITLES[aspect] as string)
     const result = await page.evaluate(async () => {
       const { app, engine, testing } = window.mvStudio
       const project = app.project.editor.getProject()
@@ -127,6 +136,20 @@ for (const aspect of ['9:16', '1:1']) {
         .filter((c) => drawn.get(c.id)!.widest > W)
         .map((c) => `${JSON.stringify(c.text)} ${Math.round(drawn.get(c.id)!.widest)} px wide`)
       const longWord = texts.filter((c) => /supercali/i.test(c.text)).length
+      // A row starting on the word that closes a bracket ("Edit)", "Lane)"), or ending on an article opening one.
+      const badBreaks = texts.flatMap((c) =>
+        c.text.split('\n').flatMap((row, k, rows) => {
+          const words = row.split(/\s+/).filter(Boolean)
+          const first = words[0] ?? ''
+          const last = words.at(-1) ?? ''
+          const closes = k > 0 && /[)\]]/.test(first) && !/^[([]/.test(first)
+          const article = k < rows.length - 1 && /^[([](the|a|an)$/i.test(last)
+          return closes || article ? [JSON.stringify(c.text)] : []
+        }),
+      )
+      const titles = texts
+        .filter((c) => c.meta!.director!.textRole === 'title')
+        .map((c) => c.text.replace(/\s+/g, ' '))
       // Each next line waiting below and the current line above it, once the current one has rolled into place.
       const box = (c: Clip, t: number) => {
         const y = engine.animation.evaluate(c.transform.y, t - c.start) as number
@@ -172,6 +195,8 @@ for (const aspect of ['9:16', '1:1']) {
         overlaps,
         tooWide,
         longWord,
+        badBreaks,
+        titles,
         frames: btoa(frames),
       }
     })
@@ -184,5 +209,7 @@ for (const aspect of ['9:16', '1:1']) {
     expect(result.overlaps).toEqual([])
     expect(result.longWord).toBeGreaterThan(0)
     expect(result.tooWide).toEqual([])
+    expect(result.titles).toContain(TITLES[aspect])
+    expect(result.badBreaks).toEqual([])
   })
 }
