@@ -223,6 +223,36 @@
   flex-direction: column;
 }
 
+.updatingRegion {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* A paused frame on its way (a slow seek): the frame shown is the one before. Bottom right, as toasts come in at the top right. */
+.updating {
+  position: absolute;
+  bottom: var(--space-2);
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-0) var(--space-2);
+  border-radius: var(--radius-full);
+  background: rgb(14 14 18 / 0.72);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 18px;
+  animation: note-in var(--dur) var(--ease-out) both;
+}
+
+/* The label is out of the flow here, so the line box no longer sets the height. */
+.updatingCompact {
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+}
+
 @keyframes note-in {
   from {
     opacity: 0;

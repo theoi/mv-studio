@@ -22,6 +22,7 @@ const frames = vi.hoisted(() => ({
   dispose: vi.fn(),
   beginFrame: vi.fn(),
   endFrame: vi.fn(),
+  lateSeekPending: vi.fn(() => false),
 }))
 /**
  * The stub render worker. Like the real one, it draws a frame once the GPU has finished the frame before, and replies
@@ -449,6 +450,48 @@ describe('a seek that a paused frame stopped waiting for, once it ends', () => {
     await preview.rendered()
     expect(lateFrame()).toBeDefined()
     expect(compositor.render).toHaveBeenCalledTimes(1)
+    preview.dispose()
+  })
+})
+
+describe('saying a paused frame is still to come (snapshot pending)', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+    frames.lateSeekPending.mockReturnValue(false)
+  })
+
+  const lateFrame = () => vi.mocked(VideoElementFrameProvider).mock.calls.at(-1)?.[1]?.onLateFrame
+
+  it('is pending from the still asked for until it is drawn, and tells subscribers', async () => {
+    let finish = () => {}
+    compositor.render.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve
+      }),
+    )
+    compositor.render.mockResolvedValue(undefined)
+    const preview = open()
+    expect(preview.getSnapshot().pending).toBe(true)
+    const seen: boolean[] = []
+    preview.subscribe(() => seen.push(preview.getSnapshot().pending))
+    finish()
+    await preview.rendered()
+    expect(preview.getSnapshot().pending).toBe(false)
+    expect(seen.at(-1)).toBe(false)
+    preview.dispose()
+  })
+
+  it('stays pending after a frame drawn without its seek, until that seek ends and the frame is drawn again', async () => {
+    compositor.render.mockResolvedValue(undefined)
+    frames.lateSeekPending.mockReturnValue(true)
+    const preview = open()
+    await preview.rendered()
+    expect(preview.getSnapshot().pending).toBe(true)
+    frames.lateSeekPending.mockReturnValue(false)
+    lateFrame()?.()
+    await preview.rendered()
+    expect(compositor.render).toHaveBeenCalledTimes(2)
+    expect(preview.getSnapshot().pending).toBe(false)
     preview.dispose()
   })
 })
