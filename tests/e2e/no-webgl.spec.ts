@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { Project } from '../../src/model/index.ts'
 import { expect, openApp, openHarness, test } from './fixtures.ts'
 
 // Chrome without a usable GPU (a virtual machine, a remote desktop, graphics acceleration turned off) offers no WebGL.
@@ -54,8 +55,15 @@ test('without WebGL 2 the start screen says so, the stage says why it shows noth
   await page.keyboard.press('Control+K')
   await page.keyboard.type('export')
   const exports = page.getByRole('option', { name: /^Export/ })
-  await expect(exports).toHaveCount(5)
+  await expect(exports).toHaveCount(8)
   for (const option of await exports.all()) await expect(option).toContainText(NO_GRAPHICS_REASON)
+  // So is every way into VJ mode.
+  await page.getByRole('combobox').fill('vj')
+  const vjEntries = page.getByRole('option', {
+    name: /^(Open VJ mode|Record a VJ performance|Map keys and MIDI pads)/,
+  })
+  await expect(vjEntries).toHaveCount(3)
+  for (const option of await vjEntries.all()) await expect(option).toContainText(NO_GRAPHICS_REASON)
   await page.keyboard.press('Escape')
 
   // Tools whose models or results need WebGL 2 give the short reason in their panel, next to the stage's message.
@@ -241,4 +249,45 @@ test('without WebGL 2 Cut my clips matches the clips without looking for their s
       /^Reframed for 9:16 · .*\d+ clips? stays? centered, since following subjects needs graphics acceleration \(WebGL 2\)$/,
     ),
   ).toBeVisible()
+})
+
+test('without WebGL 2 the spots where a picked object was lost say why they can’t be fixed', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?t=10'
+  })
+  // A project whose object cutout was made in another browser, with the object lost 1.5 s into the footage.
+  await page.evaluate(() => {
+    const { app } = window.mvStudio
+    const videos = Object.values((app.project.editor.getProject() as Project).clips)
+      .filter((c) => c.type === 'video')
+      .sort((a, b) => a.start - b.start)
+    const [host, cut] = videos
+    app.project.dispatch({
+      type: 'clip.set',
+      clipId: cut!.id,
+      path: ['meta'],
+      value: {
+        behindSubjectOf: host!.id,
+        object: {
+          click: { t: 0.5, points: [{ x: 0.5, y: 0.5 }] },
+          corrections: [],
+          tracked: 0.8,
+          fix: [1.5],
+        },
+      },
+    })
+    app.ui.select({ type: 'clip', id: host!.id })
+  })
+  const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+  const layering = inspector.getByRole('button', { name: 'Layering' })
+  if ((await layering.getAttribute('aria-expanded')) === 'false') await layering.click()
+  await expect(inspector.getByText(/Lost in 1 place\./)).toHaveText(
+    `Followed through 80% of the clip. Lost in 1 place. ${NO_GRAPHICS_REASON}.`,
+  )
+  await expect(inspector.getByRole('button', { name: /^Fix at / })).toBeDisabled()
+  await expect(inspector.getByRole('button', { name: 'Pick another object in the preview' })).toBeDisabled()
 })

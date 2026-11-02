@@ -25,6 +25,7 @@ import {
   availableReactions,
   canReact,
   describeReaction,
+  reactionAmountCommands,
   reactionCommands,
   removeReactionCommands,
 } from '../../../plugins/reactions.ts'
@@ -81,9 +82,17 @@ import {
   reactionTarget,
   type ClipProperty,
 } from '../editor/inspector/animatable.ts'
+import { VALUE_PAGES } from './inspectorActions.tsx'
 
-/** A page of choices, or the reactions for one property (opened from React to music…). */
-export type PageState = { id: PageId } | { id: 'reactions'; property: ClipProperty }
+/**
+ * A page of choices; the reactions for one property (opened from React to music…) or their amount; or the choices of
+ * an action in ./inspectorActions.tsx, kept by its id.
+ */
+export type PageState =
+  | { id: PageId }
+  | { id: 'reactions'; property: ClipProperty }
+  | { id: 'amount'; property: ClipProperty }
+  | { id: 'values'; action: string }
 
 export interface PageItem {
   /** Unique in its page. */
@@ -110,7 +119,7 @@ export interface PageGroup {
 }
 
 interface PageDef {
-  placeholder: string
+  placeholder: string | ((state: PageState) => string)
   /** The note for a search that matches nothing. */
   empty: (search: string) => string
   groups: (state: PageState) => PageGroup[]
@@ -329,6 +338,18 @@ function reactionItems(property: ClipProperty): PageItem[] {
   const p = project()
   const active = describeReaction(p, target)
   const reacting = active?.kind === 'reaction' ? active : undefined
+  const amount: PageItem[] = reacting
+    ? [
+        {
+          value: 'amount',
+          label: 'Reaction amount…',
+          icon: <AudioWaveform />,
+          keywords: ['Reaction amount', 'strength how much'],
+          detail: `${Math.round(reacting.amount * 100)}%`,
+          open: { id: 'amount', property },
+        },
+      ]
+    : []
   const stop: PageItem[] = active
     ? [
         {
@@ -345,6 +366,7 @@ function reactionItems(property: ClipProperty): PageItem[] {
       ]
     : []
   return [
+    ...amount,
     ...stop,
     ...availableReactions(p, clip, reacting?.reaction.id).map((c) => {
       const current = reacting?.reaction.id === c.reaction.id
@@ -366,6 +388,41 @@ function reactionItems(property: ClipProperty): PageItem[] {
       }
     }),
   ]
+}
+
+const AMOUNTS = [25, 50, 75, 100]
+
+/**
+ * A page of values: picking the one in use changes nothing, as the Inspector's controls don't fire for an unchanged
+ * value. Run anyway, it would add an empty undo step and say so, since every dispatch stamps the project's updatedAt.
+ */
+function valueChoices(groups: PageGroup[]): PageGroup[] {
+  return groups.map((g) => ({
+    ...g,
+    items: g.items.map((item) => (item.current && item.run ? { ...item, run: () => undefined } : item)),
+  }))
+}
+
+/** How strongly a property reacts to the music, as the React panel's Amount sets it. */
+function amountItems(property: ClipProperty): PageItem[] {
+  const clip = selectedClip()
+  const target = clip && reactionTarget(clip, property.path)
+  const active = target ? describeReaction(project(), target) : null
+  if (!target || active?.kind !== 'reaction') return []
+  const now = Math.round(active.amount * 100)
+  return AMOUNTS.map((v) => ({
+    value: String(v),
+    label: `${v}%`,
+    icon: <AudioWaveform />,
+    keywords: [`${v}%`, v === 100 ? 'full max strongest' : v === 25 ? 'subtle little' : ''],
+    current: now === v,
+    run: () => {
+      const commands = reactionAmountCommands(project(), [target], v / 100)
+      if (!commands.length) return void toast(LOCKED)
+      const label = 'Change reaction amount'
+      if (dispatch(commands, { label })) toast(`${property.name} reacts at ${v}%`, undoAction(label))
+    },
+  }))
 }
 
 export const PAGES: Record<PageState['id'], PageDef> = {
@@ -564,6 +621,25 @@ export const PAGES: Record<PageState['id'], PageDef> = {
     placeholder: 'Search properties',
     empty: noMatch('property'),
     groups: () => [{ heading: 'What reacts to the music', items: reactItems() }],
+  },
+  amount: {
+    placeholder: 'Search amounts',
+    empty: () => 'No matching amount.',
+    groups: (state) =>
+      state.id === 'amount'
+        ? valueChoices([
+            {
+              heading: `How much ${lowerFirst(state.property.name)} reacts`,
+              items: amountItems(state.property),
+            },
+          ])
+        : [],
+  },
+  values: {
+    placeholder: (state) => (state.id === 'values' && VALUE_PAGES.get(state.action)?.placeholder) || 'Search',
+    empty: noMatch('choice'),
+    groups: (state) =>
+      state.id === 'values' ? valueChoices(VALUE_PAGES.get(state.action)?.groups() ?? []) : [],
   },
   reactions: {
     placeholder: 'Search reactions',

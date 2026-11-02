@@ -375,6 +375,9 @@ const editorUi = {
   paletteOpen: false,
   rightTab: 'inspector',
   assistView: 'home',
+  renamingMarker: null,
+  deletingProject: null,
+  lutFiles: null,
 } as const
 
 /**

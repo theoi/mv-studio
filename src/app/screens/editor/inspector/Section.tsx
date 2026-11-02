@@ -21,23 +21,18 @@ import {
 } from '../../../state/project.ts'
 import { exportSectionTeaser } from '../../../state/exports.ts'
 import { revealSuggestions, useFootage, useFootageResults } from '../../../state/footage.ts'
-import { cutClipsToSection, moveBoundary, sectionEdge } from '../../../state/sections.ts'
+import {
+  cutClipsToSection,
+  moveBoundary,
+  SECTION_COLOR_NAMES,
+  SECTION_KINDS,
+  sectionEdge,
+} from '../../../state/sections.ts'
 import { set } from '../../../state/ui.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import { Header } from './parts.tsx'
 import { ProjectInspector } from './Project.tsx'
 import styles from '../Inspector.module.css'
-
-const colorNames: Record<SectionKind, string> = {
-  intro: 'Intro',
-  verse: 'Verse',
-  pre: 'Pre-chorus',
-  chorus: 'Chorus',
-  bridge: 'Bridge',
-  outro: 'Outro',
-}
-
-const kinds = Object.keys(colorNames) as SectionKind[]
 
 /** "N clips match this chorus" once footage analysis finds two or more strong matches for the section. */
 function SectionMatches({ section }: { section: SongSection }) {
@@ -99,7 +94,7 @@ export function SectionInspector({ id }: { id: string }) {
       />
     )
   }
-  const picked = sec.color && kinds.includes(sec.color as SectionKind) ? sec.color : 'auto'
+  const picked = sec.color && SECTION_KINDS.includes(sec.color as SectionKind) ? sec.color : 'auto'
   return (
     <>
       <Header
@@ -128,19 +123,19 @@ export function SectionInspector({ id }: { id: string }) {
             className={styles.swatches}
           >
             <Tooltip
-              label={`Auto: ${colorNames[sectionKind(sec)]} color`}
+              label={`Auto: ${SECTION_COLOR_NAMES[sectionKind(sec)]} color`}
               description="From the section’s name"
             >
               <ToggleGroup.Item value="auto" className={styles.swatchAuto} aria-label="Auto">
                 Auto
               </ToggleGroup.Item>
             </Tooltip>
-            {kinds.map((k) => (
-              <Tooltip key={k} label={`${colorNames[k]} color`}>
+            {SECTION_KINDS.map((k) => (
+              <Tooltip key={k} label={`${SECTION_COLOR_NAMES[k]} color`}>
                 <ToggleGroup.Item
                   value={k}
                   className={styles.swatchItem}
-                  aria-label={`${colorNames[k]} color`}
+                  aria-label={`${SECTION_COLOR_NAMES[k]} color`}
                 >
                   <span className={styles.swatch} style={{ background: sectionColor[k] }} />
                 </ToggleGroup.Item>

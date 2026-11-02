@@ -14,6 +14,16 @@ import { undoAction } from './library.ts'
 import { dispatch, editor, viewOf } from './project.ts'
 import { get, select, toast, type Selection } from './ui.ts'
 
+export type TransitionEasing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out'
+
+/** The easings a transition offers; a keyframe's Hold would make it a cut. */
+export const TRANSITION_EASINGS: { value: TransitionEasing; label: string }[] = [
+  { value: 'linear', label: 'Linear' },
+  { value: 'ease-in', label: 'Ease in' },
+  { value: 'ease-out', label: 'Ease out' },
+  { value: 'ease-in-out', label: 'Ease in and out' },
+]
+
 export type TransitionEdge = 'in' | 'out'
 
 /** A transition on the timeline: where it sits and, at a cut, the clip it comes from. */

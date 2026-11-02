@@ -5,13 +5,25 @@
 import type { EditCommand, Project, SongSection } from '../../model/index.ts'
 import { setAutoCutChoices } from './autocut.ts'
 import { isSelectableClip } from './clipboard.ts'
-import { dispatch, editor, songAnalysis, timelineDuration } from './project.ts'
+import { dispatch, editor, songAnalysis, timelineDuration, type SectionKind } from './project.ts'
 import { openAssist, set } from './ui.ts'
 
 /** Sections closer than this share a boundary. */
 const TOUCH = 0.05
 /** The shortest a section can be made by moving its edges, in seconds. */
 export const MIN_SECTION = 1
+
+/** The section colors, named after the section kinds they stand for. */
+export const SECTION_COLOR_NAMES: Record<SectionKind, string> = {
+  intro: 'Intro',
+  verse: 'Verse',
+  pre: 'Pre-chorus',
+  chorus: 'Chorus',
+  bridge: 'Bridge',
+  outro: 'Outro',
+}
+
+export const SECTION_KINDS = Object.keys(SECTION_COLOR_NAMES) as SectionKind[]
 
 export interface SectionBoundary {
   t: number

@@ -65,6 +65,14 @@ function setEntryFrame(frame: ImageBitmap | null) {
   for (const listener of entryListeners) listener()
 }
 
+type VjIntent = 'record' | 'mapping' | null
+
+/**
+ * What the entry under way, then the visit it opened, was asked to do (see enterVjTo). It lasts that one visit: Back or
+ * Forward into VJ mode later opens a rehearsal.
+ */
+let intent: VjIntent = null
+
 /**
  * Opens VJ mode, capturing the editor's frame at the playhead on the way (its preview finishes the capture as it
  * closes) for the VJ stage to show while its own preview starts, which takes a second or two. The editor stays on
@@ -72,11 +80,17 @@ function setEntryFrame(frame: ImageBitmap | null) {
  * the code can't load, the editor stays and says so; the next press tries again.
  */
 export function enterVj() {
+  enterVjTo(null)
+}
+
+/** Opens VJ mode like enterVj, with Record already on or mapping keys and pads (the palette's actions). */
+export function enterVjTo(next: VjIntent) {
   if (get().screen === 'vj' || entering) return
   if (!webgl2Available()) {
     toast(NO_GRAPHICS_VJ, undefined, { key: 'no-graphics' })
     return
   }
+  intent = next
   setEntering(true)
   setEntryFrame(null)
   const capture = stagePreview()?.captureFrame()
@@ -91,14 +105,23 @@ export function enterVj() {
     () => {
       setEntering(false)
       if (get().screen === 'editor') set({ screen: 'vj' })
-      else clearVjEntryFrame()
+      else {
+        intent = null
+        clearVjEntryFrame()
+      }
     },
     () => {
       setEntering(false)
+      intent = null
       clearVjEntryFrame()
       if (get().screen === 'editor') toastLoadFailed('VJ mode')
     },
   )
+}
+
+/** What VJ mode was opened to do: read when it opens, and again if React runs its setup twice. */
+export function vjIntent(): VjIntent {
+  return intent
 }
 
 export function subscribeVjEntryFrame(listener: () => void): () => void {
@@ -143,6 +166,7 @@ export function clearVjReturnFrame() {
 // Only for the stage right after leaving: dropped once the editor closes, shown or not.
 useUi.subscribe((s, prev) => {
   if (prev.screen === 'editor' && s.screen !== 'editor') setReturnFrame(null)
+  if (prev.screen === 'vj' && s.screen !== 'vj') intent = null
 })
 
 /** How long leaving VJ mode waits for the live output's last frame before the editor opens without it. */

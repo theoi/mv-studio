@@ -1,6 +1,6 @@
 import { Command } from 'cmdk'
 import { Dialog as RDialog } from 'radix-ui'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Check, Search, Sparkles } from 'lucide-react'
 import type { Asset } from '../../../model/index.ts'
 import { useReturnFocus } from '../../ds/focus.ts'
@@ -94,9 +94,28 @@ function MediaThumb({ asset, icon, current }: { asset: Asset; icon: ReactNode; c
   )
 }
 
-function PageRow({ item, onPick }: { item: PageItem; onPick: (item: PageItem) => void }) {
+function PageRow({
+  item,
+  opensOn,
+  onPick,
+}: {
+  item: PageItem
+  /** The page opens with this row selected, so it is scrolled to once, as the page opens. */
+  opensOn: boolean
+  onPick: (item: PageItem) => void
+}) {
+  const revealed = useRef(false)
   return (
     <Command.Item
+      ref={
+        opensOn
+          ? (el) => {
+              if (!el || revealed.current) return
+              revealed.current = true
+              el.scrollIntoView({ block: 'nearest' })
+            }
+          : undefined
+      }
       value={item.value}
       keywords={item.keywords ?? [item.label]}
       className={classes(styles.item, item.unavailable && styles.unavailable)}
@@ -153,7 +172,7 @@ export function CommandPalette() {
     setMoved(true)
   }
   const pickAction = (a: Action) => {
-    if (a.page) openPage({ id: a.page }, a.pageSearch?.(search))
+    if (a.page) openPage(typeof a.page === 'string' ? { id: a.page } : a.page, a.pageSearch?.(search))
     else if (a.run) run(a.run)
   }
   const pickItem = (item: PageItem) => {
@@ -162,6 +181,9 @@ export function CommandPalette() {
   }
   const sentence = !page && isSentence(search)
   const def = page && PAGES[page.id]
+  const groups = page && def ? def.groups(page) : []
+  // A list of choices opens on the one in use, as a menu of options does, so the arrows step from it.
+  const checked = groups.flatMap((g) => g.items).find((item) => item.current && !item.unavailable)?.value
 
   return (
     <RDialog.Root open={open} onOpenChange={(o) => (o ? set({ paletteOpen: true }) : close())}>
@@ -178,14 +200,21 @@ export function CommandPalette() {
           }}
         >
           <RDialog.Title className="sr-only">Command palette</RDialog.Title>
-          {/* Keyed by page, so a list starts at its top with its first item selected. */}
+          {/* Keyed by page, so a list starts at its top with its first item, or the one in use, selected. */}
           <Command
             key={[
               start ?? '',
-              ...pages.map((p) => ('property' in p ? `${p.id}:${p.property.path.join('.')}` : p.id)),
+              ...pages.map((p) =>
+                'property' in p
+                  ? `${p.id}:${p.property.path.join('.')}`
+                  : 'action' in p
+                    ? `${p.id}:${p.action}`
+                    : p.id,
+              ),
             ].join('/')}
             label="Command palette"
             className={styles.command}
+            defaultValue={checked}
             loop
             filter={rank}
             onKeyDown={(e) => {
@@ -206,7 +235,11 @@ export function CommandPalette() {
                 value={search}
                 onValueChange={setSearch}
                 placeholder={
-                  def ? def.placeholder : 'Search actions, tools and settings, or describe a change'
+                  !def || !page
+                    ? 'Search actions, tools and settings, or describe a change'
+                    : typeof def.placeholder === 'string'
+                      ? def.placeholder
+                      : def.placeholder(page)
                 }
                 className={styles.input}
               />
@@ -216,17 +249,21 @@ export function CommandPalette() {
               <Command.Empty className={styles.empty}>
                 {(def ? def.empty : noMatch('action'))(search)}
               </Command.Empty>
-              {page &&
-                def?.groups(page).map(
-                  (group) =>
-                    group.items.length > 0 && (
-                      <Command.Group key={group.heading} heading={group.heading} className={styles.group}>
-                        {group.items.map((item) => (
-                          <PageRow key={item.value} item={item} onPick={pickItem} />
-                        ))}
-                      </Command.Group>
-                    ),
-                )}
+              {groups.map(
+                (group) =>
+                  group.items.length > 0 && (
+                    <Command.Group key={group.heading} heading={group.heading} className={styles.group}>
+                      {group.items.map((item) => (
+                        <PageRow
+                          key={item.value}
+                          item={item}
+                          opensOn={item.value === checked}
+                          onPick={pickItem}
+                        />
+                      ))}
+                    </Command.Group>
+                  ),
+              )}
               {!page &&
                 sections(search, sentence).map((g) =>
                   g === ASK_GROUP ? (

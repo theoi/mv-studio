@@ -1,17 +1,29 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   actions,
   actionsById,
   actionScore,
+  labelOf,
   paletteResults,
 } from '../../../src/app/screens/palette/actions.tsx'
 import { PAGES } from '../../../src/app/screens/palette/pages.tsx'
 import { SHORTCUTS } from '../../../src/app/state/keymap.ts'
 import { editor, sectionLabels } from '../../../src/app/state/project.ts'
-import { get, select, set } from '../../../src/app/state/ui.ts'
+import { get, select, set, type Selection } from '../../../src/app/state/ui.ts'
 import { settingsForAspect } from '../../../src/model/index.ts'
 import { ASK_SCORE, isSentence } from '../../../src/app/state/paletteScore.ts'
 import { SHORTCUTS_NOT_IN_PALETTE, UI_ACTIONS } from '../../../src/app/state/uiActions.ts'
+import { stillClips } from '../../../src/app/state/camera.ts'
+import { NO_GRAPHICS_REASON } from '../../../src/app/state/graphics.ts'
+import { CAMERA_EFFECT_ID } from '../../../src/vision/render/cameraEffect.ts'
+import type * as Capabilities from '../../../src/shared/capabilities.ts'
+
+// As in a browser that draws with WebGL 2, which Node can't; the test without it turns it off.
+const gpu = vi.hoisted(() => ({ webgl2: true }))
+vi.mock('../../../src/shared/capabilities.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof Capabilities>()),
+  webgl2Available: () => gpu.webgl2,
+}))
 
 const covered = UI_ACTIONS.flatMap((a) =>
   typeof a.palette === 'string' ? [{ ...a, palette: a.palette }] : [],
@@ -19,10 +31,30 @@ const covered = UI_ACTIONS.flatMap((a) =>
 const skipped = UI_ACTIONS.flatMap((a) =>
   typeof a.palette === 'string' ? [] : [{ ...a, reason: a.palette.skipped }],
 )
+const firstVideo = () => Object.values(editor.getProject().clips).find((c) => c.type === 'video')!
+
+/** Runs `check` with a video clip selected, as the palette is mostly opened, then puts the selection back. */
+function withVideoSelected(check: () => void) {
+  const before = get().selection
+  select({ type: 'clip', id: firstVideo().id })
+  try {
+    check()
+  } finally {
+    set({ selection: before })
+  }
+}
+
 const searches = covered.flatMap((a) =>
   a.search.map((query) => [query, a.palette, `${a.area} › ${a.name}`] as const),
 )
 
+const onScreenNames = covered.flatMap((a) =>
+  (a.controls ?? []).flatMap((label) =>
+    typeof label === 'string' && /^\S+( \S+){1,4}$/.test(label) && !/ (on|off)$/.test(label)
+      ? [[label, a.palette, `${a.area} › ${a.name}`] as const]
+      : [],
+  ),
+)
 describe('command palette coverage', () => {
   it('gives every action its own id', () => {
     expect(new Set(actions.map((a) => a.id)).size).toBe(actions.length)
@@ -47,14 +79,44 @@ describe('command palette coverage', () => {
     expect(a.search.length).toBeGreaterThan(0)
   })
 
+  // With a video clip selected, which most actions on the selection can act on: one that can't run ranks lower.
   it.each(searches)('“%s” lists %s in the top three (%s)', (query, id) => {
-    expect(
-      paletteResults(query)
-        .slice(0, 3)
-        .map((a) => a.id),
-    ).toContain(id)
+    withVideoSelected(() =>
+      expect(
+        paletteResults(query)
+          .slice(0, 3)
+          .map((a) => a.id),
+      ).toContain(id),
+    )
   })
 
+  // What a control's name on screen says, typed as is, finds what it does, with a selection that shows the control.
+  // Names of one word are often shared ("Color", "Remove"), a switch's name ends with its state ("Shadow on") and a
+  // card's name runs on into its description, so those are left to the searches above.
+  it.each(onScreenNames)('the on-screen name “%s” lists %s in the top three (%s)', (label, id) => {
+    const before = get().selection
+    const clips = Object.values(editor.getProject().clips)
+    const text = clips.find((c) => c.type === 'text' && !c.lyricLineId)!
+    const line = clips.find((c) => c.type === 'text' && c.lyricLineId)!
+    const found = (selection: Selection) => {
+      set({ selection })
+      return paletteResults(label)
+        .slice(0, 3)
+        .some((a) => a.id === id)
+    }
+    try {
+      expect(
+        [
+          { type: 'clip', id: firstVideo().id },
+          { type: 'clip', id: text.id },
+          { type: 'clip', id: line.id },
+          { type: 'none' },
+        ].some((s) => found(s as Selection)),
+      ).toBe(true)
+    } finally {
+      set({ selection: before })
+    }
+  })
   it.each(SHORTCUTS.map((s) => [s.id] as const))(
     'the %s shortcut is a palette action’s, or the palette says why not',
     (id) => {
@@ -71,19 +133,24 @@ describe('command palette coverage', () => {
   })
 
   it('lists nothing for a search of one or two words that half names an action, as there is no Ask Assist row above it', () => {
-    for (const search of ['dark mode', 'chroma key', 'srt file', 'slow motion', 'bigger font'])
+    for (const search of ['dark mode', 'chroma key', 'srt file'])
       expect(paletteResults(search), search).toEqual([])
   })
 
-  it('finds no action through another sense of a word', () => {
-    expect(paletteResults('speed up')).toEqual([])
-    expect(paletteResults('info')[0]?.id).toBe('about')
-    expect(paletteResults('info').map((a) => a.id)).not.toContain('exportVertical')
-    const music = paletteResults('music').map((a) => a.id)
-    expect(music[0]).toBe('react')
-    expect(music).not.toContain('beatSnap')
-    expect(music).not.toContain('showGrid')
-  })
+  it('finds no action through another sense of a word', () =>
+    withVideoSelected(() => {
+      // "Speed up" is a clip's speed, not the song's tempo.
+      const speed = paletteResults('speed up').map((a) => a.id)
+      expect(speed[0]).toBe('speed')
+      expect(speed).not.toContain('doubleTempo')
+      expect(paletteResults('info')[0]?.id).toBe('about')
+      expect(paletteResults('info').map((a) => a.id)).not.toContain('exportVertical')
+      const music = paletteResults('music').map((a) => a.id)
+      // The new AI music video names it too; the song’s beats don’t.
+      expect(music.slice(0, 2)).toContain('react')
+      expect(music).not.toContain('beatSnap')
+      expect(music).not.toContain('showGrid')
+    }))
 
   it('lists an action other words name below Ask Assist for a sentence, and not for a shorter search', () => {
     expect(paletteResults('enlarge').map((a) => a.id)).not.toContain('zoomIn')
@@ -139,11 +206,12 @@ describe('command palette coverage', () => {
     expect(paletteResults('ctrl+q')).toEqual([])
   })
 
-  it('reads an alias of several words as an action’s name only with all of them: “clip” isn’t Delete', () => {
-    for (const search of ['clip', 'the clip', 'this clip', 'what is a clip'])
-      expect(paletteResults(search)[0]?.id, search).not.toBe('delete')
-    expect(paletteResults('remove the clip')[0]?.id).toBe('delete')
-  })
+  it('reads an alias of several words as an action’s name only with all of them: “clip” isn’t Delete', () =>
+    withVideoSelected(() => {
+      for (const search of ['clip', 'the clip', 'this clip', 'what is a clip'])
+        expect(paletteResults(search)[0]?.id, search).not.toBe('delete')
+      expect(paletteResults('remove the clip')[0]?.id).toBe('delete')
+    }))
 
   it('lists every action below Ask Assist for a question', () => {
     for (const search of ['how do i cut', 'where are my files', 'is it on', 'how export']) {
@@ -170,15 +238,250 @@ describe('command palette coverage', () => {
     expect(paletteResults('start playback')[0]?.id).toBe('play')
   })
 
+  it('ranks an action on the selection below the ones that can run while nothing fits it, and just below an equal match', () => {
+    const before = get()
+    const ids = (search: string) => paletteResults(search).map((a) => a.id)
+    const video = Object.values(editor.getProject().clips).find((c) => c.type === 'video')!
+    try {
+      set({ selection: { type: 'none' }, playhead: video.start + video.duration / 2 })
+      expect(ids('play')[0]).toBe('play')
+      expect(ids('end')[0]).toBe('end')
+      expect(ids('end')).toContain('trimEnd')
+      expect(ids('end').indexOf('trimEnd')).toBeGreaterThan(ids('end').indexOf('sectionEndTime'))
+      // The project's look is there to act on, but the name of the feature still opens it.
+      expect(ids('look')[0]).toBe('looks')
+      expect(ids('look')).toContain('lookIntensity')
+      select({ type: 'clip', id: video.id })
+      expect(ids('end')[0]).toBe('end')
+      expect(ids('end').indexOf('trimEnd')).toBeLessThan(ids('end').indexOf('sectionEndTime'))
+    } finally {
+      set({ selection: before.selection, playhead: before.playhead })
+    }
+  })
+
+  it('opens a page of common speeds for the selected video clip, and the one picked is one undo step', () => {
+    const before = get().selection
+    const video = Object.values(editor.getProject().clips).find((c) => c.type === 'video')!
+    const speed = actionsById.get('speed')!
+    const items = () => PAGES.values.groups({ id: 'values', action: 'speed' }).flatMap((g) => g.items)
+    // Picking says so in a toast, which times itself out.
+    vi.stubGlobal('window', globalThis)
+    try {
+      set({ selection: { type: 'none' } })
+      expect(speed.unavailable?.()).toBe('Select a video clip first')
+      expect(items()).toEqual([])
+      select({ type: 'clip', id: video.id })
+      expect(speed.unavailable?.()).toBeUndefined()
+      expect(items().find((i) => i.current)?.label).toBe('100%')
+      // The speed it has already changes nothing: no undo step, and so no toast.
+      const unchanged = editor.getProject()
+      items()
+        .find((i) => i.current)
+        ?.run?.()
+      expect(editor.getProject()).toBe(unchanged)
+      items()
+        .find((i) => i.label === '50%')
+        ?.run?.()
+      expect(editor.getProject().clips[video.id]).toMatchObject({ playbackRate: 0.5 })
+      expect(editor.undoLabel()).toBe('Change speed')
+      editor.undo()
+      expect(editor.getProject().clips[video.id]).toMatchObject({ playbackRate: 1 })
+    } finally {
+      set({ selection: before })
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('ranks an action that can’t run for the selection below the ones that can, old and new alike', () =>
+    withVideoSelected(() => {
+      // Animate with AI needs an image: with a video clip selected, the director comes first for an AI music video.
+      const ids = paletteResults('ai music video').map((a) => a.id)
+      expect(ids.slice(0, 3)).toContain('director')
+      expect(ids.indexOf('animateImage')).toBeGreaterThan(ids.indexOf('director'))
+    }))
+
   it('lists no action above Ask Assist for a question made of small words', () => {
     expect(paletteResults('how do i')).toEqual([])
   })
 
-  it('ranks Delete first for removing a clip, and finds it for getting rid of one', () => {
-    expect(paletteResults('remove this clip')[0]?.id).toBe('delete')
-    const rid = paletteResults('get rid of the clip').map((a) => a.id)
-    expect(rid).toContain('delete')
-    expect(rid).not.toContain('showGrid')
+  it('ranks Delete first for removing a clip, and finds it for getting rid of one', () =>
+    withVideoSelected(() => {
+      expect(paletteResults('remove this clip')[0]?.id).toBe('delete')
+      const rid = paletteResults('get rid of the clip').map((a) => a.id)
+      expect(rid).toContain('delete')
+      expect(rid).not.toContain('showGrid')
+    }))
+
+  it('lists Delete this project… only for a search that names the project, even with nothing selected', () => {
+    const before = get().selection
+    try {
+      set({ selection: { type: 'none' } })
+      expect(paletteResults('delete').map((a) => a.id)).not.toContain('deleteProject')
+      expect(paletteResults('delete project')[0]?.id).toBe('deleteProject')
+    } finally {
+      set({ selection: before })
+    }
+  })
+
+  describe.each([
+    ['nothing selected', () => set({ selection: { type: 'none' } })],
+    ['a video clip selected', () => select({ type: 'clip', id: firstVideo().id })],
+  ])('with %s', (_, choose) => {
+    const ids = (search: string) => paletteResults(search).map((a) => a.id)
+    const withSelection = (check: () => void) => () => {
+      const before = get().selection
+      choose()
+      try {
+        check()
+      } finally {
+        set({ selection: before })
+      }
+    }
+
+    // Enter runs the first row: one that can't run does nothing and says why, where another would do what the search
+    // didn't ask for.
+    it(
+      'lists every action on the selection first for its own name, whether or not it can run',
+      withSelection(() => {
+        const named = actions.filter((a) => a.idle && typeof a.label === 'string')
+        expect(named.length).toBeGreaterThan(20)
+        for (const a of named) {
+          const first = paletteResults(labelOf(a))[0]
+          expect(first && labelOf(first), a.id).toBe(labelOf(a))
+        }
+      }),
+    )
+
+    it.each([
+      ['delete', 'delete'],
+      ['copy', 'copy'],
+      ['duplicate', 'duplicate'],
+      ['cut', 'cut'],
+      ['close gap', 'closeGap'],
+      ['delete gap', 'closeGap'],
+      ['erase', 'delete'],
+      ['trash', 'delete'],
+      ['make a karaoke video', 'newProject.lyric'],
+    ])('“%s” lists %s first', (search, id) => withSelection(() => expect(ids(search)[0]).toBe(id))())
+
+    it(
+      'lists the director and New AI music video… for “music video”',
+      withSelection(() => expect(ids('music video').slice(0, 2)).toEqual(['director', 'newProject.ai'])),
+    )
+
+    it(
+      'lists Close gap first with no gap to close, and never Delete and close gap for it',
+      withSelection(() => {
+        expect(actionsById.get('closeGap')!.unavailable?.()).toBe(
+          'No gap at the playhead or before the selected clip',
+        )
+        expect(ids('close gap')).toEqual(['closeGap'])
+        expect(ids('gap')).not.toContain('rippleDelete')
+      }),
+    )
+
+    it(
+      'lists an action that deletes only for a search that names it in full',
+      withSelection(() => {
+        for (const search of [
+          'close gap',
+          'gap',
+          'delete gap',
+          'ripple',
+          'clip',
+          'delete',
+          'project',
+          'remove',
+        ])
+          expect(ids(search), search).not.toContain(
+            search === 'delete' || search === 'remove' ? 'deleteProject' : 'rippleDelete',
+          )
+        for (const search of ['erase', 'trash']) expect(ids(search), search).toEqual(['delete'])
+        for (const search of ['clip', 'project']) expect(ids(search), search).not.toContain('delete')
+        expect(ids('ripple delete')[0]).toBe('rippleDelete')
+        expect(ids('delete and close gap')[0]).toBe('rippleDelete')
+        expect(ids('remove this clip')[0]).toBe('delete')
+        expect(ids('delete this project')[0]).toBe('deleteProject')
+      }),
+    )
+  })
+
+  it('lists the track move the search names first on a track that can’t move that way', () => {
+    const before = get().selection
+    const { tracks, clips } = editor.getProject()
+    const clipOn = (track: (typeof tracks)[number]) =>
+      Object.values(clips).find((c) => c.trackId === track.id)!
+    try {
+      select({ type: 'clip', id: clipOn(tracks.at(-1)!).id })
+      expect(actionsById.get('trackDown')!.unavailable?.()).toBeDefined()
+      expect(paletteResults('move track down')[0]?.id).toBe('trackDown')
+      select({ type: 'clip', id: clipOn(tracks[0]!).id })
+      expect(actionsById.get('trackUp')!.unavailable?.()).toBeDefined()
+      expect(paletteResults('move track up')[0]?.id).toBe('trackUp')
+      set({ selection: { type: 'none' } })
+      expect(paletteResults('move track down')[0]?.id).toBe('trackDown')
+    } finally {
+      set({ selection: before })
+    }
+  })
+
+  it('lists New lyric video… first for a karaoke video, even with a lyric line selected, whose karaoke rows can run', () => {
+    const before = get().selection
+    const line = Object.values(editor.getProject().clips).find((c) => c.type === 'text' && c.lyricLineId)!
+    try {
+      select({ type: 'clip', id: line.id })
+      const ids = paletteResults('make a karaoke video').map((a) => a.id)
+      expect(ids[0]).toBe('newProject.lyric')
+      expect(ids.slice(1, 3)).toContain('karaokeFill')
+    } finally {
+      set({ selection: before })
+    }
+  })
+
+  it('without WebGL 2, says so for what draws, and still edits a 3D camera move already on an image', () => {
+    const before = get().selection
+    const reason = (id: string) => actionsById.get(id)!.unavailable?.()
+    const image = stillClips(editor.getProject())[0]!
+    gpu.webgl2 = false
+    try {
+      const drawing = ['export', 'vj', 'vjRecord', 'vjMap', 'saveFrame', 'exportTeaser', 'exportLoop']
+      for (const id of [...drawing, 'exportVertical', 'exportSquare', 'exportPortrait', 'exportLandscape'])
+        expect(reason(id), id).toBe(NO_GRAPHICS_REASON)
+      // Starting a project needs no drawing: its setup screen and the editor say what is missing.
+      for (const id of ['newProject.lyric', 'newProject.blank']) expect(reason(id), id).toBeUndefined()
+
+      select({ type: 'clip', id: image.id })
+      expect(reason('cameraMove')).toBe(NO_GRAPHICS_REASON)
+      expect(reason('behindClip')).toBe(NO_GRAPHICS_REASON)
+      editor.dispatch({
+        type: 'effect.add',
+        clipId: image.id,
+        effect: {
+          id: 'move',
+          effectId: CAMERA_EFFECT_ID,
+          enabled: true,
+          params: { preset: { value: 'dolly-in' }, intensity: { value: 0.4 } },
+        },
+        index: 0,
+      })
+      // A move already on the image is an edit of the project: its choices and strength still change it.
+      expect(reason('cameraMove')).toBeUndefined()
+      expect(reason('cameraStrength')).toBeUndefined()
+      expect(reason('addDepth')).toBe(NO_GRAPHICS_REASON)
+      gpu.webgl2 = true
+      expect(reason('addDepth')).toBeUndefined()
+      editor.undo()
+    } finally {
+      gpu.webgl2 = true
+      set({ selection: before })
+    }
+  })
+
+  it('ranks the director above every new project of a kind for a sentence that names no kind', () => {
+    const ids = paletteResults('make a video for me').map((a) => a.id)
+    expect(ids).toContain('director')
+    expect(ids.slice(0, ids.indexOf('director')).filter((id) => id.startsWith('newProject.'))).toEqual([])
+    expect(paletteResults('new lyric video')[0]?.id).toBe('newProject.lyric')
   })
 
   it('leaves actions that match only some words out of a group whose best match ranks above Ask Assist', () => {

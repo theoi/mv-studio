@@ -93,6 +93,21 @@ export const STEM_LABELS: Record<StemName, string> = {
   other: 'Other',
 }
 
+/** A stem as a source a visual reacts to. */
+export const STEM_SOURCE_LABELS: Record<StemName, string> = {
+  vocals: 'Vocals stem',
+  drums: 'Drums stem',
+  bass: 'Bass stem',
+  other: 'Other instruments stem',
+}
+
+export const STEM_SOURCE_DESCRIPTIONS: Record<StemName, string> = {
+  vocals: 'Only the singing',
+  drums: 'Only the drums',
+  bass: 'Only the bass',
+  other: 'Everything but vocals, drums and bass',
+}
+
 /** The audio track that plays the song: the track of the first audio clip of the song asset. */
 export function songStemTrack(project: Project): Track | undefined {
   const songId = project.songAssetId

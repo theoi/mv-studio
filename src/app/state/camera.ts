@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import type { Clip, EditCommand, Id, ImageClip, Project } from '../../model/index.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
 import { webgl2Available } from '../../shared/capabilities.ts'
-import { jobs, type JobHandle } from '../../shared/jobs.ts'
+import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
 import type { CameraMoveResult, CameraMovesResult, CameraPreset, SafeAmounts } from '../../vision/index.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from '../../vision/render/cameraEffect.ts'
 import { showingDownloads, visionService } from './footage.ts'
@@ -11,7 +11,7 @@ import { JOB_KINDS, isRunning } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { visionDownloadBytes } from './models.ts'
 import { dispatch, editor } from './project.ts'
-import type { Selection } from './ui.ts'
+import { toast, type Selection } from './ui.ts'
 
 /*
  * 3D camera moves on stills (Assist › 3D camera and the image inspector's suggestion) on src/vision's
@@ -384,5 +384,25 @@ export function removeCameraMove(clipId: Id): boolean {
   return dispatch(
     { type: 'effect.remove', clipId, effectInstanceId: fx.id },
     { label: 'Remove 3D camera move' },
+  )
+}
+
+/**
+ * Adds the camera move to the stills like startCameraMoves, and says when it lands, with Undo, or that it failed: for
+ * a start from outside Assist › 3D camera, which shows neither.
+ */
+export function addCameraMoves(clipIds: readonly Id[], preset: CameraPreset, intensity: number | undefined) {
+  startCameraMoves(clipIds, preset, intensity)?.promise.then(
+    (result) => {
+      const risk = addedRiskNote(result)
+      toast(risk ? `3D camera move added. ${risk}` : '3D camera move added', {
+        label: 'Undo',
+        run: () => undoCameraMoves(result),
+      })
+    },
+    (err: unknown) => {
+      if (!(err instanceof JobError && err.code === 'cancelled'))
+        toast('The 3D camera move couldn’t be added. Try again from Assist › 3D camera.')
+    },
   )
 }

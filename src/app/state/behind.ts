@@ -38,6 +38,7 @@ import { analysisReady, showingDownloads, visionService } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { dispatch, editor } from './project.ts'
+import { toast } from './ui.ts'
 
 /*
  * "Behind the subject": the footage clip is duplicated onto a Subject track above the lyrics and restricted to the
@@ -966,6 +967,26 @@ export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> |
     if (!detectorMissing) remakeOfflineMasks()
   })
   return handle
+}
+
+/** Starts the cutout of one clip and says so when it lands, with Undo. */
+export function cutOut(hostId: string) {
+  putBehind([hostId])?.promise.then(
+    (result) => {
+      const done = 'Lyrics now sit behind the person on this clip'
+      const warning = result.warnings?.[0]
+      if (result.count)
+        toast(warning ? `${done}. ${warning.why}` : done, {
+          label: 'Undo',
+          run: () => {
+            if (editor.undoLabel() === result.label) editor.undo()
+            else toast('The project has changed since. Use Undo in the top bar to step back.')
+          },
+        })
+      else if (result.refused?.[0]) toast(result.refused[0].why)
+    },
+    () => undefined,
+  )
 }
 
 /** Encodes a person track as the mask video of an imported asset and stores it. */

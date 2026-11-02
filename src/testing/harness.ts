@@ -39,6 +39,7 @@ import * as appClipboard from '../app/state/clipboard.ts'
 import * as appCloud from '../app/state/cloud.ts'
 import * as appExportEstimate from '../app/state/exportEstimate.ts'
 import * as appFootage from '../app/state/footage.ts'
+import * as appLeaveDraft from '../app/state/leaveDraft.ts'
 import * as appLyrics from '../app/state/lyrics.ts'
 import * as appModels from '../app/state/models.ts'
 import * as appPersistence from '../app/state/persistence.ts'
@@ -121,6 +122,7 @@ export function installHarness(): void {
       cloud: appCloud,
       exportEstimate: appExportEstimate,
       footage: appFootage,
+      leaveDraft: appLeaveDraft,
       lyrics: appLyrics,
       models: appModels,
       persistence: appPersistence,
