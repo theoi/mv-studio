@@ -87,12 +87,17 @@ export function planRequests(plan: EditPlan, project?: Project): ShotRequest[] {
   })
 }
 
+/**
+ * `made`: the plan's shots already generated, left out of the price. They still claim their matching media first, as
+ * in generatePlanShots(), so a shot that shares a prompt with a made one is paid for, not reused.
+ */
 export function estimatePlanCost(
   plan: EditPlan,
   provider: Pick<MediaGenerationProvider, 'estimate'> & Partial<Pick<MediaGenerationProvider, 'getModel'>>,
   project?: Project,
+  made?: ReadonlySet<string>,
 ): PlanCost {
-  const all = planRequests(plan, project)
+  const all = planRequests(plan, project).filter((r) => !made?.has(r.shot.id))
   const requests = all.filter((r) => !r.reuse)
   const items = requests.map((r) => ({
     label: r.shot.label ?? r.request.prompt.slice(0, 40),
