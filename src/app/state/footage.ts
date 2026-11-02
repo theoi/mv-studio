@@ -97,25 +97,22 @@ let releaseVisionSoon: () => void = () => undefined
  * separation or lyric timing starts (it separates stems first when the song has none), which need much memory, or
  * when another project opens, and otherwise after `VISION_IDLE_MS`. Some vision jobs keep state in the workers between
  * calls (a segmenter configured for a clip, a mask track being built), so nothing is released while one is running or
- * queued. The check and the release run in one task, so a job queued after it gets fresh workers.
+ * queued. The check and the release run in one task, so a job queued after it gets fresh workers. A release for
+ * another project opening waits for the last project's vision jobs to stop; once the next project starts one of its
+ * own, the idle timer decides instead, so it doesn't load its models again as soon as that job ends.
  */
 function releaseWhenIdle(backends: VisionServiceOptions['backends']): void {
   const release = backends.release?.bind(backends)
   if (!release) return
-  const vision: ReadonlySet<string> = new Set([
-    JOB_KINDS.footage,
-    JOB_KINDS.suitability,
-    JOB_KINDS.cutout,
-    JOB_KINDS.cutoutRemake,
-    JOB_KINDS.camera,
-    JOB_KINDS.autocut,
-    JOB_KINDS.director,
-    JOB_KINDS.ask,
-  ])
+  // Besides the vision.* jobs, these rank clips on the ONNX worker.
+  const matching: ReadonlySet<string> = new Set([JOB_KINDS.autocut, JOB_KINDS.director, JOB_KINDS.ask])
   const needRoom: ReadonlySet<string> = new Set([JOB_KINDS.stems, JOB_KINDS.lyrics, JOB_KINDS.realign])
   const active = (j: JobSnapshot) => j.status === 'running' || j.status === 'queued'
-  const busy = (list = jobs.list()) => list.some((j) => vision.has(j.kind) && active(j))
+  const visionJobs = (list = jobs.list()) =>
+    list.filter((j) => (j.kind.startsWith('vision.') || matching.has(j.kind)) && active(j))
   let wanted = false
+  /** The vision jobs running when another project opened, while its release waits for them. */
+  let leaving: ReadonlySet<string> | null = null
   let roomFor = new Set<string>()
   let timer: ReturnType<typeof setTimeout> | undefined
   // Any vision job clears the timer. A search uses a worker without a job, so a worker it used lately is kept for
@@ -128,24 +125,30 @@ function releaseWhenIdle(backends: VisionServiceOptions['backends']): void {
     const now = new Set(list.filter((j) => needRoom.has(j.kind) && active(j)).map((j) => j.id))
     if ([...now].some((id) => !roomFor.has(id))) wanted = true
     roomFor = now
-    if (busy(list)) {
+    const running = visionJobs(list)
+    const left = leaving
+    if (left && running.some((j) => !left.has(j.id))) leaving = null
+    if (running.length) {
       clearTimeout(timer)
       timer = undefined
       return
     }
     // A search may have a call pending: the release is then tried again on the next change.
-    if (wanted) wanted = !release()
+    if ((wanted || leaving) && release()) {
+      wanted = false
+      leaving = null
+    }
     timer ??= setTimeout(idle, VISION_IDLE_MS)
   }
   releaseVisionSoon = () => {
-    wanted = true
+    leaving = new Set(visionJobs().map((j) => j.id))
     update()
   }
   jobs.subscribe(update)
   update()
 }
 
-/** Frees the vision workers' memory as soon as no vision job is running or queued, for another project opening. */
+/** Frees the vision workers' memory once the open project's vision jobs have stopped, for another project opening. */
 export function releaseVisionWorkers(): void {
   releaseVisionSoon()
 }
