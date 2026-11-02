@@ -24,7 +24,7 @@ export async function analyzeSubjects(
   source: FrameSource,
   options: SubjectAnalysisOptions = {},
 ): Promise<SubjectTrack> {
-  const { signal } = options
+  const { signal, ready } = options
   const range = options.range ?? { start: 0, end: source.duration }
   const times = sampleTimes(range.start, range.end, options.fps ?? 5)
   if (!times.length) throw new JobError('invalid-input', 'The clip range is empty.')
@@ -38,7 +38,7 @@ export async function analyzeSubjects(
     await segmentation.resetStream(null, { signal })
     const observations: FrameObservation[] = []
     const frames = prefetch(
-      iterateFrames(source, times, { maxSide: options.maxSide ?? 384, signal }),
+      iterateFrames(source, times, { maxSide: options.maxSide ?? 384, signal, ...(ready ? { ready } : {}) }),
       2,
       (f) => f.bitmap.close(),
     )

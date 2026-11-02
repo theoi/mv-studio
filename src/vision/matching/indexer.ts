@@ -41,7 +41,7 @@ export async function indexClip(
   source: FrameSource,
   options: ClipIndexOptions = {},
 ): Promise<ClipVisionIndex> {
-  const { signal } = options
+  const { signal, ready } = options
   const range = options.range ?? { start: 0, end: source.duration }
   const motionFps = options.motionFps ?? 4
   const embedEvery = Math.max(1, Math.round(motionFps / (options.embedFps ?? 1)))
@@ -79,7 +79,11 @@ export async function indexClip(
   try {
     progress(0, 'loading-model')
     let i = 0
-    const frames = prefetch(iterateFrames(source, times, { maxSide, signal }), 2, (f) => f.bitmap.close())
+    const frames = prefetch(
+      iterateFrames(source, times, { maxSide, signal, ...(ready ? { ready } : {}) }),
+      2,
+      (f) => f.bitmap.close(),
+    )
     for await (const { t, bitmap } of frames) {
       motion.push(t, deps.toGray(bitmap, graySize))
       // At the decoded size, not the motion's 64 px, where a small light on black is sampled away.

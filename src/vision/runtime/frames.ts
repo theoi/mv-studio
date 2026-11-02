@@ -22,18 +22,28 @@ export interface FrameSource {
   ): AsyncIterable<{ t: number; bitmap: ImageBitmap }>
 }
 
+/** Frames of `source` at `times`, each decoded once `ready` resolves (see `TaskOptions.ready`). */
 export async function* iterateFrames(
   source: FrameSource,
   times: readonly number[],
-  options: { maxSide?: number; signal?: AbortSignal } = {},
+  options: { maxSide?: number; signal?: AbortSignal; ready?: () => Promise<void> } = {},
 ): AsyncIterable<{ t: number; bitmap: ImageBitmap }> {
+  const { ready, ...rest } = options
   if (source.frames) {
-    yield* source.frames(times, options)
+    if (ready) await ready()
+    if (rest.signal?.aborted) return
+    for await (const frame of source.frames(times, rest)) {
+      yield frame
+      // The source decodes the next frame only when asked for it.
+      if (ready) await ready()
+      if (rest.signal?.aborted) return
+    }
     return
   }
   for (const t of times) {
-    if (options.signal?.aborted) return
-    const bitmap = await source.frameAt(t, options.maxSide !== undefined ? { maxSide: options.maxSide } : {})
+    if (ready) await ready()
+    if (rest.signal?.aborted) return
+    const bitmap = await source.frameAt(t, rest.maxSide !== undefined ? { maxSide: rest.maxSide } : {})
     yield { t, bitmap }
   }
 }

@@ -149,6 +149,103 @@ test('importing a clip starts background analysis without asking', async ({ page
     .toBe('indexed')
 })
 
+/** The clip footage analysis is on, with its step and progress (which goes up with each frame it decodes). */
+function analyzing(page: Page): Promise<{ name: string; step: string; fraction: number } | null> {
+  return page.evaluate(() => window.mvStudio.app.footage.useFootage.getState().indexing?.current ?? null)
+}
+
+function analysisStatus(page: Page, name: string): Promise<string> {
+  return page.evaluate((n) => {
+    const { service } = window.mvStudio.app.footage.useFootage.getState()
+    const project = window.mvStudio.app.project.editor.getProject()
+    const clip = Object.values(project.assets as Record<string, Untyped>).find((a) => a.name === n)
+    return service && clip ? service.indexing.statusOf(clip.id) : 'not started'
+  }, name)
+}
+
+/** Holds footage analysis until `window.endHold()` is called. */
+async function holdAnalysis(page: Page) {
+  await page.evaluate(() => {
+    const w = window as Untyped
+    w.endHold = () => {}
+    w.mvStudio.app.footage.holdAnalysisUntil(new Promise<void>((resolve) => (w.endHold = resolve)), 100_000)
+  })
+}
+
+test('background analysis decodes no frame while a hold lasts, and goes on once it ends', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await openWithAnalysis(page)
+  await holdAnalysis(page)
+  await page.getByLabel('Import media files').setInputFiles(path.join(FIXTURE_DIR, 'clip.mp4'))
+  await expect(page.getByLabel('clip, video')).toBeVisible()
+  await expect.poll(async () => (await analyzing(page))?.step, { timeout: 30_000 }).toBe('matching')
+  await page.waitForTimeout(1500)
+  expect(await analyzing(page)).toMatchObject({ step: 'matching', fraction: 0 })
+  await page.evaluate(() => (window as Untyped).endHold())
+  await expect.poll(() => analysisStatus(page, 'clip.mp4'), { timeout: 90_000 }).toBe('indexed')
+})
+
+test('a draft holds background analysis while it plans and until the preview shows it', async ({ page }) => {
+  test.setTimeout(120_000)
+  await openHarness(page)
+  await page.evaluate(() => {
+    const w = window as Untyped
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem('mv-studio.background-analysis', 'on')
+    const onnx = {
+      async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        for (const b of bitmaps) b.close()
+        return { dim: 2, data: new Float32Array(bitmaps.flatMap(() => [0.6, 0.8])) }
+      },
+      async embedTexts({ texts }: { texts: string[] }) {
+        return { dim: 2, data: new Float32Array(texts.flatMap(() => [0.6, 0.8])) }
+      },
+    }
+    w.mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => onnx,
+      segmentation: () => {
+        throw new Error('unused')
+      },
+    })
+    // While `notShown` is set, the preview shows nothing it is given until `show()` is called.
+    const proto = w.mvStudio.engine.PreviewController.prototype
+    const rendered = proto.rendered
+    w.notShown = null
+    proto.rendered = function (this: unknown) {
+      return w.notShown ? w.notShown.then(() => rendered.call(this)) : rendered.call(this)
+    }
+  })
+  await holdAnalysis(page)
+  await page.getByRole('button', { name: /AI music video/ }).click()
+  await page.getByRole('textbox', { name: 'Describe your video' }).fill('neon night drive')
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.getByLabel('Clip files').setInputFiles(path.join(FIXTURE_DIR, 'clip.mp4'))
+  await expect(page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  await expect(page.getByText(/^Placed \d+ (shots|scenes)/)).toBeVisible({ timeout: 60_000 })
+  await expect.poll(async () => (await analyzing(page))?.step, { timeout: 30_000 }).toBe('matching')
+
+  const clipIds = () =>
+    page.evaluate(() => Object.keys(window.mvStudio.app.project.editor.getProject().clips).sort().join())
+  const first = await clipIds()
+  const before = await analyzing(page)
+  await page.evaluate(() => {
+    const w = window as Untyped
+    w.notShown = new Promise<void>((resolve) => (w.show = resolve))
+  })
+  await page.getByRole('button', { name: 'Try another version' }).click()
+  // The draft holds analysis from the click: with the earlier hold over, no frame is decoded while it plans, nor until
+  // the preview shows it.
+  await page.evaluate(() => (window as Untyped).endHold())
+  await expect.poll(clipIds, { timeout: 60_000 }).not.toBe(first)
+  await page.waitForTimeout(1500)
+  expect(await analyzing(page)).toEqual(before)
+  await page.evaluate(() => (window as Untyped).show())
+  await expect.poll(() => analysisStatus(page, 'clip.mp4'), { timeout: 90_000 }).toBe('indexed')
+})
+
 test('export framing says which clips have no one in them to follow', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {

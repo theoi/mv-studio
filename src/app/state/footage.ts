@@ -93,10 +93,50 @@ export function showingDownloads<T>(
   }
 }
 
+/** The longest one hold keeps footage analysis waiting by default. */
+const ANALYSIS_HOLD_MS = 5000
+const analysisHolds = new Set<Promise<void>>()
+
+/**
+ * Makes background footage analysis wait between frames until `done` settles (resolved or rejected), `maxMs` at most.
+ * It decodes the same files as the preview and runs its models on every core, so a frame the preview is waiting for,
+ * such as a draft's first, comes seconds later while it runs. Browsers give workers no priorities, so it yields.
+ * Analysis waits while any hold lasts, so every hold must end on its own: callers must not hold again and again for
+ * a wait that never ends.
+ */
+export function holdAnalysisUntil(done: Promise<unknown>, maxMs = ANALYSIS_HOLD_MS): void {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const hold: Promise<void> = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, maxMs)
+    void done.then(
+      () => resolve(),
+      () => resolve(),
+    )
+  }).then(() => {
+    clearTimeout(timer)
+    analysisHolds.delete(hold)
+  })
+  analysisHolds.add(hold)
+}
+
+/**
+ * Resolves once no hold is left, holds made while it waits included, so one hold can hand over to the next (a draft's
+ * planning to its first frame) without a frame decoded in between.
+ */
+export async function analysisReady(): Promise<void> {
+  while (analysisHolds.size) await Promise.all(analysisHolds)
+}
+
 export function footageService(): Promise<FootageService> {
   loading ??= Promise.all([import('../../vision/index.ts'), visionService()]).then(([v, vision]) => {
     // The sample's clips are drawn, never blank: checking them would only hold up the first draft people try.
-    const service = v.createFootageService({ editor, vision, media: appMedia, showsSomething: isSampleAsset })
+    const service = v.createFootageService({
+      editor,
+      vision,
+      media: appMedia,
+      showsSomething: isSampleAsset,
+      ready: analysisReady,
+    })
     service.indexing.subscribe((indexing) => useFootage.setState({ indexing }))
     useFootage.setState({ service, indexing: service.indexing.getState(), strongMatch: v.STRONG_MATCH })
     return service

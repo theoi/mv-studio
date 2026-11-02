@@ -351,7 +351,7 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
       )
     },
     async subjects(source, o = {}) {
-      const { signal, onProgress, ...rest } = o
+      const { signal, onProgress, ready, ...rest } = o
       // Only the observations are needed here, so a stale verdict is not judged again.
       const person = await cached(personKey(source, {}), decodeStoredPerson)
       if (person?.observations.length && !person.facesSkipped && !rest.range)
@@ -361,7 +361,12 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
         key,
         json.decode,
         json.encode,
-        (task) => analyzeSubjects(backends.segmentation('background'), source, { ...rest, ...task }),
+        (task) =>
+          analyzeSubjects(backends.segmentation('background'), source, {
+            ...rest,
+            ...task,
+            ...(ready ? { ready } : {}),
+          }),
         { ...(signal ? { signal } : {}), ...(onProgress ? { onProgress } : {}) },
       )
     },
@@ -372,7 +377,7 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
       return planReframes(track, aspects, o)
     },
     indexClip(source, o = {}) {
-      const { signal, onProgress, ...rest } = o
+      const { signal, onProgress, ready, ...rest } = o
       return memo(
         cacheKey('clip-index', source.mediaId, model, CLIP_INDEX_VERSION, JSON.stringify(rest)),
         deserializeClipIndex,
@@ -381,7 +386,7 @@ export function createVisionService(options: VisionServiceOptions): VisionServic
           indexClip(
             { onnx: backends.onnx(), model, toGray, referenceVectors: () => matcher.referenceVectors() },
             source,
-            { ...rest, ...task },
+            { ...rest, ...task, ...(ready ? { ready } : {}) },
           ),
         { ...(signal ? { signal } : {}), ...(onProgress ? { onProgress } : {}) },
       )
