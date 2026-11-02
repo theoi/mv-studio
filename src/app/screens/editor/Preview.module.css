@@ -223,10 +223,10 @@
   flex-direction: column;
 }
 
-/* A paused frame on its way (a slow seek): the frame shown is the one before. In a corner, so the picture stays clear. */
+/* A paused frame on its way (a slow seek): the frame shown is the one before. Bottom right, as toasts come in at the top right. */
 .updating {
   position: absolute;
-  top: var(--space-2);
+  bottom: var(--space-2);
   right: var(--space-2);
   display: inline-flex;
   align-items: center;

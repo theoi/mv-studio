@@ -70,17 +70,28 @@ export const UPDATING_AFTER_MS = 150
 /** Once shown, the note stays up at least this long, so a frame that comes just after doesn't make it flicker. */
 export const UPDATING_MIN_MS = 300
 
+/** What the stage's "Updating…" note goes by (createUpdatingCue). */
+export interface UpdatingInput {
+  /** A paused still is on its way (PreviewSnapshot.pending). */
+  pending: boolean
+  /** The stage shows its first frame, so "Preparing the preview" has gone. */
+  ready: boolean
+  /** Playback runs or is starting. */
+  playing: boolean
+  /** A pointer is down: a drag shows its frames as they come. */
+  pointerDown: boolean
+}
+
 /**
- * When the stage says it's updating: once a pending paused still (PreviewSnapshot.pending) has waited
- * UPDATING_AFTER_MS, and then for UPDATING_MIN_MS at least. Never while a pointer is down, as a drag shows its frames
- * as they come. Calls `onChange` with each change.
+ * When the stage says it's updating: once a pending paused still has waited UPDATING_AFTER_MS on a ready stage, and
+ * then for UPDATING_MIN_MS at least. Never before the stage is ready, while playing or while a pointer is down: it
+ * hides at once then, and a wait starts over. Calls `onChange` with each change.
  */
 export function createUpdatingCue(onChange: (shown: boolean) => void): {
-  update(pending: boolean, pointerDown: boolean): void
+  update(input: UpdatingInput): void
   dispose(): void
 } {
-  let pending = false
-  let pointerDown = false
+  let input: UpdatingInput = { pending: false, ready: false, playing: false, pointerDown: false }
   let shown = false
   let held = false
   let showTimer: ReturnType<typeof setTimeout> | undefined
@@ -91,10 +102,11 @@ export function createUpdatingCue(onChange: (shown: boolean) => void): {
     onChange(next)
   }
   const apply = () => {
-    if (pointerDown || !pending) {
+    const quiet = !input.ready || input.playing || input.pointerDown
+    if (quiet || !input.pending) {
       clearTimeout(showTimer)
       showTimer = undefined
-      if (pointerDown || !held) show(false)
+      if (quiet || !held) show(false)
       return
     }
     if (shown || showTimer !== undefined) return
@@ -110,9 +122,8 @@ export function createUpdatingCue(onChange: (shown: boolean) => void): {
     }, UPDATING_AFTER_MS)
   }
   return {
-    update(nextPending, nextPointerDown) {
-      pending = nextPending
-      pointerDown = nextPointerDown
+    update(next) {
+      input = next
       apply()
     },
     dispose() {
@@ -230,12 +241,17 @@ export function connectPreview(
   if (get().playing) set({ playing: false })
   // Any pointer held down, on the timeline, the stage or a slider, is taken for a drag.
   let pointerDown = false
+  let ready = false
   const cue = createUpdatingCue((updating) => {
     if (current === preview) setStill({ updating })
   })
+  const updateCue = () => {
+    const { pending, state } = preview.getSnapshot()
+    cue.update({ pending, ready, playing: get().playing || state === 'playing', pointerDown })
+  }
   const onPointer = (event: Event) => {
     pointerDown = event.type === 'pointerdown'
-    cue.update(preview.getSnapshot().pending, pointerDown)
+    updateCue()
   }
   for (const type of POINTER_EVENTS) window.addEventListener(type, onPointer, true)
   window.addEventListener('blur', onPointer)
@@ -254,6 +270,7 @@ export function connectPreview(
       if (seeked || s.loop !== prev.loop) applyLoop(s.playhead)
       if (seeked) preview.seek(s.playhead)
       if (s.playing === prev.playing) return
+      updateCue()
       if (s.playing) {
         if (preview.clock.state !== 'playing') set({ starting: true })
         // Called synchronously from the click or key press, so the browser lets audio start.
@@ -281,9 +298,15 @@ export function connectPreview(
       set({ playhead: time })
     }),
     preview.subscribe(() => {
-      const { pending } = preview.getSnapshot()
-      if (current === preview) setStill({ pending })
-      cue.update(pending, pointerDown)
+      if (current === preview) setStill({ pending: preview.getSnapshot().pending })
+      updateCue()
+    }),
+    // Until its first frame the stage says it's preparing the preview, and a wait for a still started then would end
+    // in a flash of "Updating…" as that note goes.
+    preview.onFrame(() => {
+      if (ready) return
+      ready = true
+      updateCue()
     }),
     () => {
       for (const type of POINTER_EVENTS) window.removeEventListener(type, onPointer, true)
@@ -293,7 +316,7 @@ export function connectPreview(
   ]
   // The preview asked for its first still before this subscribed.
   setStill({ pending: preview.getSnapshot().pending })
-  cue.update(preview.getSnapshot().pending, pointerDown)
+  updateCue()
   return {
     preview,
     dispose() {
