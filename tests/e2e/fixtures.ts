@@ -95,3 +95,23 @@ export async function waitForPreview(page: Page): Promise<void> {
     timeout: 30_000,
   })
 }
+
+/** Keeps a copy of the open project, with its song and media, under another id and `name`. Returns the copy's id. */
+export async function keepCopy(page: Page, name: string): Promise<string> {
+  return page.evaluate(async (n) => {
+    const { app, media } = window.mvStudio
+    const project = structuredClone(app.project.editor.getProject())
+    project.id = crypto.randomUUID()
+    project.name = n
+    await media.projectStore.save(project)
+    await app.persistence.refreshRecents()
+    return project.id as string
+  }, name)
+}
+
+/** Goes Home and opens the kept project called `name` from Recent projects. */
+export async function openFromHome(page: Page, name: string): Promise<void> {
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByText(name, { exact: true }).first().click()
+  await page.waitForFunction((n) => window.mvStudio.app.project.editor.getProject().name === n, name)
+}

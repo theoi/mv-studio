@@ -15,6 +15,8 @@ import { get as getUi, set, toast } from './ui.ts'
 export const useAsk = create<{ state: AskState }>(() => ({ state: { status: 'idle' } }))
 
 let session: Promise<AskSession> | undefined
+/** The session once it has loaded, for the reset when another project opens. */
+let loaded: AskSession | undefined
 
 function askSession(): Promise<AskSession> {
   session ??= Promise.all([import('../../director/index.ts'), cloudServices()]).then(([d, cloud]) => {
@@ -26,10 +28,22 @@ function askSession(): Promise<AskSession> {
       smallModel: () => !!modelHint(cloudSettings.get().llm),
     })
     s.subscribe(() => useAsk.setState({ state: s.getState() }))
+    loaded = s
     return s
   })
   return session
 }
+
+/** The project the request, question or change waiting for Apply belongs to. */
+let openProject = editor.getProject().id
+
+// Another project opened: what Ask was working on or holding for review was for the other project, and Apply would
+// rebuild it on this one.
+editor.subscribe((project, change) => {
+  if (change.source !== 'load' || project.id === openProject) return
+  openProject = project.id
+  loaded?.reset()
+})
 
 function toastApplied(state: AskState) {
   if (state.status !== 'applied') return
@@ -39,7 +53,10 @@ function toastApplied(state: AskState) {
 
 /** Sends a request with the selected clip or song section and the playhead as context. */
 export async function ask(request: string): Promise<void> {
+  const projectId = editor.getProject().id
   const s = await askSession()
+  // Ask loads on first use: the request was typed in the project open before it loaded.
+  if (editor.getProject().id !== projectId) return
   const { selection, playhead } = getUi()
   toastApplied(
     await s.ask(request, {

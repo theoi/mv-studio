@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test'
-import { expect, openHarness, test } from './fixtures.ts'
+import { expect, keepCopy, openFromHome, openHarness, test } from './fixtures.ts'
 
 /*
  * The Ask box in Assist with the real AskSession on the sample project. The language model is answered at the
@@ -355,4 +355,33 @@ test('a sentence typed in the command palette goes to the Ask box', async ({ pag
   await expect(page.getByText('Added a title at the start', { exact: true }).first()).toBeVisible()
   expect(await projectState(page)).toMatchObject({ titles: 1, undo: 'Ask: Added a title at the start' })
   expect(bodies[0]).toContain('Request: add a title at the start')
+})
+
+test('a change waiting for review stays with its project: another project opens without it', async ({
+  page,
+}) => {
+  const dim = {
+    tool: 'edit_project',
+    args: {
+      summary: 'Dimmed the footage',
+      operations: [{ op: 'set', clips: { type: 'video' }, property: 'opacity', value: 0.5 }],
+    },
+  }
+  await model(page, [dim])
+  await openAsk(page)
+  await keepCopy(page, 'Other project')
+  await send(page, 'dim all the footage')
+  await expect(page.getByText(/Ready to apply · Changes \d+ clips\.$/)).toBeVisible()
+
+  await openFromHome(page, 'Other project')
+  await page.getByRole('tab', { name: /Assist/ }).click()
+  const box = page.getByRole('textbox', { name: 'Ask Assist for a change' })
+  await expect(box).toBeVisible()
+  await expect(page.getByText(/Ready to apply/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Apply' })).toHaveCount(0)
+  await expect(box).not.toHaveAttribute(
+    'placeholder',
+    'Apply or discard the change above, or ask for something else',
+  )
+  expect((await projectState(page)).dimmed).toBe(0)
 })

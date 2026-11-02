@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const stored = vi.hoisted(() => new Set<string>())
+/** The project open (as `openId` says) each time the hash sync left the open project's jobs. */
+const left = vi.hoisted(() => ({ ids: [] as string[], openId: (): string => '' }))
 
 vi.mock('../../../src/app/state/persistence.ts', async () => {
   const { create } = await import('zustand')
   const usePersistence = create(() => ({ status: 'idle', restoring: false }))
   return {
     isStored: (id: string) => stored.has(id),
+    leaveProjectJobs: () => left.ids.push(left.openId()),
     // Like the real one, a link to another kept project restores it; the test ends that with `restoring: false`.
     openFromLink: () => usePersistence.setState({ restoring: true }),
     untracked: (run: () => void) => run(),
@@ -178,5 +181,32 @@ describe('the URL hash and the app state', () => {
     stored.add(editor.getProject().id)
     set({ screen: 'vj' })
     expect(page.window.location.hash).toBe(`#/vj?project=${editor.getProject().id}`)
+  })
+  it('keeps results the user put away through a hash change', async () => {
+    const { page, get, set } = await start('#/editor')
+    set({ dismissed: ['job-1'] })
+    page.window.location.hash = '#/editor?lib=text'
+    page.fire('hashchange')
+    expect(get().libraryTab).toBe('text')
+    expect(get().dismissed).toEqual(['job-1'])
+  })
+
+  it('leaves the open project’s jobs before the empty-project link, or the sample after it, replaces the project', async () => {
+    const { page, editor } = await start('#/editor')
+    const sample = editor.getProject().id
+    left.ids.length = 0
+    left.openId = () => editor.getProject().id
+    page.window.location.hash = '#/editor?project=empty'
+    page.fire('hashchange')
+    const empty = editor.getProject()
+    expect(empty.songAssetId).toBeFalsy()
+    page.window.location.hash = '#/editor'
+    page.fire('hashchange')
+    expect(editor.getProject().songAssetId).toBeTruthy()
+    // Each time, the jobs are left while the project being replaced is still open.
+    expect(left.ids).toEqual([sample, empty.id])
+    page.window.location.hash = '#/editor?lib=text'
+    page.fire('hashchange')
+    expect(left.ids).toHaveLength(2)
   })
 })
