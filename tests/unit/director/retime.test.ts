@@ -7,6 +7,7 @@ import {
   planLocally,
   retimeDirectorLyricCommands,
 } from '../../../src/director/index.ts'
+import { rowWidth, textWidth } from '../../../src/director/typography.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import type { LyricLine, LyricsDoc, Project, TextClip } from '../../../src/model/types.ts'
 import { LYRICS, makeProject } from './fixtures.ts'
@@ -183,6 +184,25 @@ describe('lyricTextCommands', () => {
     locked.dispatch({ type: 'track.update', trackId: preview!.trackId, patch: { locked: true } })
     const kept = retype(locked.getProject(), 'f2', 'Every light is racing by so fast')
     expect(kept.clips[preview!.id]).toEqual(p.clips[preview!.id])
+  })
+
+  it('fits a longer line in the rows the director laid it out in, in smaller type, and keeps the size for a shorter one', async () => {
+    const p = await drafted()
+    const [line] = lineClips(p, 'f2')
+    const [preview] = director(p, 'preview', 'f2')
+    const long = 'Every light is flashing by so fast and every sign burns out before the morning comes around'
+    const after = retype(p, 'f2', long)
+    for (const clip of [line!, preview!]) {
+      const now = after.clips[clip.id] as TextClip
+      expect(now.text.replace(/\s+/g, ' ')).toBe(long)
+      expect(now.text.split('\n')).toHaveLength(clip.text.split('\n').length)
+      expect(now.style.fontSize).toBeLessThan(clip.style.fontSize)
+      const style = { ...now.style, uppercase: now.style.textTransform === 'uppercase' }
+      for (const row of now.text.split('\n'))
+        expect(textWidth(row, style, now.style.fontSize)).toBeLessThanOrEqual(rowWidth(style, '16:9'))
+    }
+    const short = retype(p, 'f2', 'Every light')
+    expect((short.clips[line!.id] as TextClip).style.fontSize).toBe(line!.style.fontSize)
   })
 
   it('changes nothing for the same text or a line that is not in the lyrics', async () => {
