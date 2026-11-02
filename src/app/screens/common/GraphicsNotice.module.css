@@ -1,0 +1,20 @@
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--text-1);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  text-align: left;
+}
+
+.icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--warning);
+}

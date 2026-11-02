@@ -6,6 +6,7 @@
  */
 import { useSyncExternalStore, type FocusEvent, type PointerEvent } from 'react'
 import { PreviewController } from '../../engine/preview.ts'
+import { webgl2Available } from '../../shared/capabilities.ts'
 import type { MediaFileSource } from '../../engine/types.ts'
 import type { Asset } from '../../model/index.ts'
 import {
@@ -84,13 +85,16 @@ export function useTilePreviewActive(item: PreviewItem): boolean {
 const reducedMotion = () =>
   prefs().reduceMotion || window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-/** Plays `item` after a short hover, in place of any other preview. Nothing plays when motion is reduced. */
+/**
+ * Plays `item` after a short hover, in place of any other preview. Nothing plays when motion is reduced, or without
+ * WebGL 2, where the tile keeps its still art.
+ */
 export function showTilePreview(item: PreviewItem): void {
   const key = previewKey(item)
   if (key === activeKey || key === pendingKey) return
   window.clearTimeout(hoverTimer)
   pendingKey = null
-  if (reducedMotion()) return
+  if (reducedMotion() || !webgl2Available()) return
   pendingKey = key
   hoverTimer = window.setTimeout(() => {
     pendingKey = null

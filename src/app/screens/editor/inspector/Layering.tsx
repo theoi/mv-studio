@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Check, Crosshair, MousePointerClick } from 'lucide-react'
 import type { VisualClip } from '../../../../model/index.ts'
+import { webgl2Available } from '../../../../shared/capabilities.ts'
 import type { JobSnapshot } from '../../../../shared/jobs.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
@@ -24,6 +25,7 @@ import {
 } from '../../../state/behind.ts'
 import { fixObject, pickObject, timelineTimeOf, trackingText } from '../../../state/behindObject.ts'
 import { backgroundAnalysisOn } from '../../../state/footage.ts'
+import { NO_GRAPHICS_REASON } from '../../../state/graphics.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
 import { toast } from '../../../state/ui.ts'
@@ -163,6 +165,8 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
     suitability.status === 'checked' &&
     (suitability.reasons[0] === 'unstable-mask' || !!suitability.peopleSkipped)
   const unchecked = suitability.status === 'unchecked'
+  // The person models (MediaPipe) and the cutout's drawing both need WebGL 2.
+  const noGraphics = !webgl2Available()
   useEffect(() => {
     if (unchecked && assetId && backgroundAnalysisOn()) checkFootage([assetId])
   }, [unchecked, assetId])
@@ -172,7 +176,7 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
         <Switch
           checked={behind || !!cutting}
           onCheckedChange={(on) => (on ? cutOut(hostId) : bringToFront([hostId]))}
-          disabled={!!cutting || (!behind && !canTryCutout(suitability))}
+          disabled={!!cutting || (!behind && (noGraphics || !canTryCutout(suitability)))}
           ariaLabel="Put text and effects behind the subject"
         />
         {cutting ? (
@@ -187,7 +191,9 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
           <Badge>{text.status}</Badge>
         ) : null}
       </FieldRow>
-      {failure ? (
+      {noGraphics && !behind ? (
+        <p className={styles.note}>{NO_GRAPHICS_REASON}.</p>
+      ) : failure ? (
         <p className={styles.note} role="alert">
           {sentence(failure)} Your project is unchanged.{' '}
           {objectFailure ? 'Pick the object again when you’re ready.' : 'Turn it back on when you’re ready.'}
@@ -206,7 +212,7 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
             variant="ghost"
             icon={<MousePointerClick />}
             className={styles.forwardAction}
-            disabled={busy}
+            disabled={busy || noGraphics}
             onClick={() => pickObject(hostId)}
           >
             Pick another object in the preview

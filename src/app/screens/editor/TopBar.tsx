@@ -44,6 +44,7 @@ import {
   saveNow,
   usePersistence,
 } from '../../state/persistence.ts'
+import { graphicsUnavailable } from '../../state/graphics.ts'
 import { editor, redo, undo, useProject } from '../../state/project.ts'
 import { openDocs, set, useUi } from '../../state/ui.ts'
 import { enterVj, takeVjButtonFocus, useVjEntering } from '../../state/vj.ts'
@@ -179,6 +180,7 @@ export function TopBar() {
   useEffect(() => () => set({ renaming: false }), [])
   const vjButton = useRef<HTMLButtonElement>(null)
   const vjEntering = useVjEntering()
+  const noGraphics = graphicsUnavailable()
   const opening = useIsRunning(JOB_KINDS.projectImport)
   // Back from VJ mode, focus returns to the button that opened it.
   useEffect(() => {
@@ -266,13 +268,14 @@ export function TopBar() {
         <Tooltip
           label="VJ mode"
           shortcut="Shift V"
-          description="Perform live with the keyboard or a MIDI controller"
+          description={noGraphics ?? 'Perform live with the keyboard or a MIDI controller'}
         >
           <Button
             ref={vjButton}
             variant="ghost"
             icon={vjEntering ? <Spinner size={16} /> : <Disc3 />}
             aria-busy={vjEntering || undefined}
+            aria-disabled={noGraphics ? true : undefined}
             onClick={enterVj}
           >
             VJ
@@ -305,10 +308,12 @@ export function TopBar() {
         <IconButton label="Settings" shortcut="Mod ," onClick={() => set({ dialog: 'settings' })}>
           <Settings />
         </IconButton>
-        <Tooltip label="Export video" shortcut="Mod E">
+        <Tooltip label="Export video" shortcut="Mod E" description={noGraphics}>
+          {/* Unavailable without WebGL 2, but it still opens the dialog, which says why. */}
           <Button
             variant="primary"
             icon={<Upload />}
+            aria-disabled={noGraphics ? true : undefined}
             onClick={() => set({ dialog: 'export', exportPhase: 'setup' })}
             className={styles.export}
           >

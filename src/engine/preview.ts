@@ -24,7 +24,7 @@
  */
 import { LAST_FRAME_LEAD, projectDuration } from '../model/queries.ts'
 import type { Asset, Project, Seconds, VideoClip } from '../model/types.ts'
-import type { JobError, SerializedJobError } from '../shared/jobs.ts'
+import { JobError, type SerializedJobError } from '../shared/jobs.ts'
 import { createAudioSampler, type AudioSampler } from './audioFeatures.ts'
 import { videoRequests, visibleLayers, WebGLCompositor } from './compositor.ts'
 import { VideoElementFrameProvider, type BridgedVideo } from './frames.ts'
@@ -68,7 +68,7 @@ export interface PreviewSnapshot {
   /**
    * Set once the preview can no longer draw: its render worker died ('worker-crashed', 'out-of-memory') or, while
    * starting, failed or stopped answering ('timeout'), taking the canvas with it. A new preview on a new canvas draws
-   * again.
+   * again. 'unsupported': neither the render worker nor this thread can draw (no WebGL2), and no preview will.
    */
   error?: SerializedJobError
 }
@@ -503,14 +503,19 @@ export class PreviewController {
       this.renderer = onMainThread()
       return Promise.resolve(this.renderer)
     }
-    return startPreviewWorker(options.canvas, options.media, {
+    const ready = startPreviewWorker(options.canvas, options.media, {
       preserveDrawingBuffer: this.preserveDrawingBuffer,
     })
       .then(
         (worker): FrameRenderer => new WorkerRenderer(worker, this.frames),
         (error: unknown) => {
           console.warn('The preview worker couldn’t start; drawing on the main thread', error)
-          return onMainThread()
+          try {
+            return onMainThread()
+          } catch (mainError) {
+            // A worker that timed out or crashed gets the stage's restart; only one that can't draw makes this final.
+            throw JobError.from(error).code === 'unsupported' ? mainError : error
+          }
         },
       )
       .then((renderer) => {
@@ -518,6 +523,14 @@ export class PreviewController {
         else this.renderer = renderer
         return renderer
       })
+    // The main thread could not draw either. Frames asked for meanwhile would only fail one by one, unseen.
+    ready.catch((error: unknown) => {
+      if (this.disposed || this.failure) return
+      this.failure = JobError.from(error)
+      console.error('The preview can’t draw', this.failure)
+      this.updateSnapshot()
+    })
+    return ready
   }
 
   setProject(project: Project): void {
@@ -973,7 +986,7 @@ export class PreviewController {
         },
         (error: unknown) => {
           if (this.disposed) return
-          const failure = this.renderer?.failure()
+          const failure = this.failure ?? this.renderer?.failure()
           if (!failure) console.error('Preview render failed', error)
           else if (!this.failure) {
             this.failure = failure

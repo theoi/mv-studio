@@ -23,6 +23,7 @@ import {
   useDepthDownload,
   type CameraMotion,
 } from '../../../state/camera.ts'
+import { graphicsUnavailable, NO_GRAPHICS_TOOL } from '../../../state/graphics.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
 import { showClips } from '../../../state/reveal.ts'
@@ -81,13 +82,18 @@ export function CameraView() {
   const result = useCamera((s) => (job ? s.results[job.id] : undefined))
   const preset = useCamera((s) => (job ? s.presets[job.id] : undefined))
   const targets = cameraTargets(project, selection)
-  const download = useDepthDownload(phase === 'idle' && targets.length > 0)
-  const apply = () =>
+  // The move is drawn by the compositor: without WebGL 2 it could be neither seen nor exported.
+  const noGraphics = !!graphicsUnavailable()
+  const noGraphicsId = useId()
+  const download = useDepthDownload(phase === 'idle' && targets.length > 0 && !noGraphics)
+  const apply = () => {
+    if (noGraphics) return
     startCameraMoves(
       targets.map((c) => c.id),
       MOTION_PRESETS[motion],
       chosenIntensity(),
     )
+  }
 
   if (phase === 'running')
     return (
@@ -103,7 +109,14 @@ export function CameraView() {
         title="3D camera"
         subtitle="Stopped"
         footer={
-          <Button variant="primary" block icon={<RotateCcw />} onClick={apply} disabled={!targets.length}>
+          <Button
+            variant="primary"
+            block
+            icon={<RotateCcw />}
+            onClick={apply}
+            disabled={!targets.length}
+            aria-disabled={noGraphics || undefined}
+          >
             Try again
           </Button>
         }
@@ -242,7 +255,19 @@ export function CameraView() {
       subtitle="Depth motion on still images"
       footer={
         <>
-          <Button variant="primary" block onClick={apply} disabled={!targets.length}>
+          {noGraphics && (
+            <p id={noGraphicsId} className={styles.muted}>
+              {NO_GRAPHICS_TOOL}
+            </p>
+          )}
+          <Button
+            variant="primary"
+            block
+            onClick={apply}
+            disabled={!targets.length}
+            aria-disabled={noGraphics || undefined}
+            aria-describedby={noGraphics ? noGraphicsId : undefined}
+          >
             {targets.length ? `Apply to ${plural(targets.length, 'image')}` : 'Apply to images'}
           </Button>
           <div className={styles.costLine}>

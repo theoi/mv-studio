@@ -99,6 +99,7 @@ import {
 } from '../../state/clipboard.ts'
 import { exportSectionTeaser, exportWithOutput } from '../../state/exports.ts'
 import { animateImage } from '../../state/generate.ts'
+import { graphicsUnavailable } from '../../state/graphics.ts'
 import { openImport } from '../../state/importer.ts'
 import { isRunning, JOB_KINDS } from '../../state/jobs.ts'
 import { askAssist, SHORTCUTS, type ShortcutId } from '../../state/keymap.ts'
@@ -348,6 +349,7 @@ function sectionAction(
   icon: ReactNode,
   keywords: string,
   run: (section: NonNullable<ReturnType<typeof sectionHere>>) => void,
+  unavailable?: () => string | undefined,
 ): Action {
   return {
     id,
@@ -359,7 +361,7 @@ function sectionAction(
       const section = sectionHere()
       if (section) run(section)
     },
-    unavailable: () => (sectionHere() ? undefined : 'No song section at the playhead'),
+    unavailable: () => unavailable?.() ?? (sectionHere() ? undefined : 'No song section at the playhead'),
     detail: () => {
       const section = sectionHere()
       return section && sectionName(section)
@@ -495,6 +497,7 @@ export const actions: Action[] = [
     aliases: ['render', 'export in several formats'],
     keywords: 'sizes formats aspect mp4 final',
     shortcut: 'export',
+    unavailable: graphicsUnavailable,
     run: () => set({ dialog: 'export', exportPhase: 'setup' }),
   },
   {
@@ -1005,8 +1008,13 @@ export const actions: Action[] = [
   sectionAction('sectionAutocut', 'Cut clips to the section…', <Scissors />, 'auto-cut beat', (s) =>
     cutClipsToSection(s.id),
   ),
-  sectionAction('sectionTeaser', 'Export the section as a teaser…', <Upload />, 'clip highlight', (s) =>
-    exportSectionTeaser(s.id),
+  sectionAction(
+    'sectionTeaser',
+    'Export the section as a teaser…',
+    <Upload />,
+    'clip highlight',
+    (s) => exportSectionTeaser(s.id),
+    graphicsUnavailable,
   ),
   {
     id: 'generateHere',
@@ -1267,6 +1275,7 @@ export const actions: Action[] = [
     icon: <Disc3 />,
     shortcut: 'vj',
     keywords: 'live perform midi record',
+    unavailable: graphicsUnavailable,
     run: enterVj,
   },
 
@@ -1322,6 +1331,7 @@ export const actions: Action[] = [
     icon: <ImageDown />,
     aliases: ['still', 'screenshot', 'PNG'],
     keywords: 'image picture thumbnail',
+    unavailable: graphicsUnavailable,
     run: () => void saveFrameFromPalette(),
   },
   {
@@ -1359,6 +1369,7 @@ export const actions: Action[] = [
     icon: <Smartphone />,
     aliases: ['tiktok', 'reels', 'shorts', 'youtube shorts'],
     keywords: '9:16 shorts reels tiktok',
+    unavailable: graphicsUnavailable,
     run: () => exportWithOutput('vertical'),
     detail: () => {
       const { aspect } = project().settings
@@ -1371,6 +1382,7 @@ export const actions: Action[] = [
     label: 'Export a chorus teaser…',
     icon: <Upload />,
     keywords: 'highlight clip short preview',
+    unavailable: graphicsUnavailable,
     run: () => exportWithOutput('teaser'),
   },
   {
@@ -1379,6 +1391,7 @@ export const actions: Action[] = [
     label: 'Export a loop for Canvas…',
     icon: <Repeat />,
     keywords: 'spotify canvas loop',
+    unavailable: graphicsUnavailable,
     run: () => exportWithOutput('loop'),
   },
 

@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import type { PreviewController } from '../../../engine/preview.ts'
 import { BARS_NOTES, type AspectPreset, type Project } from '../../../model/index.ts'
+import { webgl2Available } from '../../../shared/capabilities.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { EmptyState, Spinner } from '../../ds/Feedback.tsx'
 import { Slider } from '../../ds/Fields.tsx'
@@ -48,6 +49,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '../../ds/Popover.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
 import { formatTimecode } from '../../format.ts'
+import { NO_GRAPHICS, NO_GRAPHICS_REASON } from '../../state/graphics.ts'
 import { jumpSection } from '../../state/playback.ts'
 import { setPref, usePrefs } from '../../state/prefs.ts'
 import {
@@ -102,7 +104,7 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
   const [size, setSize] = useState({ width: 0, height: 0 })
   const sizeRef = useRef(size)
   const dprRef = useRef(0)
-  const [status, setStatus] = useState<StageStatus>('loading')
+  const [status, setStatus] = useState<StageStatus>(() => (webgl2Available() ? 'loading' : 'failed'))
   // Each preview gets a fresh canvas (the canvas key): a canvas handed to a render worker that died can't draw again.
   const [generation, setGeneration] = useState(0)
   const restarts = useRef<number[]>([])
@@ -183,8 +185,14 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
       offFirstFrame()
     })
     const offStopped = connection.preview.subscribe(() => {
-      if (!connection.preview.getSnapshot().error) return
+      const { error } = connection.preview.getSnapshot()
+      if (!error) return
       offStopped()
+      // No WebGL2: another preview couldn't draw either.
+      if (error.code === 'unsupported') {
+        setStatus('failed')
+        return
+      }
       const now = Date.now()
       restarts.current = [...restarts.current.filter((t) => now - t < RESTART_WINDOW_MS), now]
       if (restarts.current.length > MAX_RESTARTS) {
@@ -283,8 +291,8 @@ function Stage({ ratio, projectWidth }: { ratio: number; projectWidth: number })
           </div>
         )}
         {status === 'failed' && (
-          <div className={styles.stageNote}>
-            The preview needs WebGL 2. Turn on hardware acceleration in your browser settings.
+          <div className={[styles.stageNote, styles.stageNoteWide].join(' ')} role="alert">
+            {NO_GRAPHICS}
           </div>
         )}
         {status === 'stopped' && (
@@ -522,7 +530,8 @@ export function Preview() {
           <ContextMenuContent>
             <ContextMenuItem
               icon={<ImageDown />}
-              description={`PNG · ${width} × ${height}`}
+              description={webgl2Available() ? `PNG · ${width} × ${height}` : NO_GRAPHICS_REASON}
+              disabled={!webgl2Available()}
               onSelect={() => void saveFrame(menuTime.current)}
             >
               Save frame

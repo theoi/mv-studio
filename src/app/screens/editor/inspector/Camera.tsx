@@ -2,6 +2,7 @@ import { useId, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { VisualClip } from '../../../../model/index.ts'
+import { webgl2Available } from '../../../../shared/capabilities.ts'
 import { JobError } from '../../../../shared/jobs.ts'
 import type { CameraPreset } from '../../../../vision/index.ts'
 import { CAMERA_EFFECT_ID } from '../../../../vision/render/cameraEffect.ts'
@@ -26,6 +27,7 @@ import {
   useSafeAmounts,
   type CameraMotion,
 } from '../../../state/camera.ts'
+import { NO_GRAPHICS_REASON } from '../../../state/graphics.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { formatBytes } from '../../../format.ts'
 import { editor } from '../../../state/project.ts'
@@ -37,10 +39,10 @@ import styles from '../Inspector.module.css'
 
 const CAMERA_DESCRIPTION = 'Give this still image depth with a slow 3D camera move'
 
-/** Offers a 3D camera move on a still image that has none. */
+/** Offers a 3D camera move on a still image that has none, where the browser can draw it. */
 export function CameraSuggestion({ clip }: { clip: VisualClip }) {
   const { phase } = useJob(JOB_KINDS.camera)
-  const available = clip.type === 'image' && !hasCameraMove(clip) && phase !== 'running'
+  const available = webgl2Available() && clip.type === 'image' && !hasCameraMove(clip) && phase !== 'running'
   const download = useDepthDownload(available)
   if (!available) return null
   return (
@@ -102,7 +104,10 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
   const asked = !!job && !!requests[job.id]?.includes(clip.id)
   const adding = asked && busy ? job : undefined
   const failure = asked && phase === 'failed' ? job?.error?.message : undefined
-  const download = useDepthDownload((!move || move.flat) && !busy)
+  // Adding a move or depth estimates depth for a move the compositor draws: without WebGL 2 neither is offered. A move
+  // already on the clip can still be changed or removed, as those are edits of the project.
+  const noGraphics = !webgl2Available()
+  const download = useDepthDownload(!noGraphics && (!move || move.flat) && !busy)
   const downloadNote = download ? ` (${formatBytes(download)} download, once)` : ''
   const refocusSelect = (el: HTMLElement | null) => {
     // After Cancel the section is back as before and its Cancel button is gone: focus the select.
@@ -134,6 +139,7 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
         size="sm"
         variant="ghost"
         className={`${styles.forwardAction} ${styles.noteAction}`}
+        disabled={noGraphics}
         onClick={() => startCameraMoves([clip.id], move.preset, move.intensity)}
       >
         Add depth
@@ -151,7 +157,7 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
           onChange={choose}
           options={options}
           ariaLabel="3D camera move"
-          disabled={busy}
+          disabled={busy || (noGraphics && !move)}
         />
       </FieldRow>
       {move && !adding && (
@@ -199,14 +205,14 @@ export function CameraSection({ clip }: { clip: VisualClip }) {
         </>
       ) : !move ? (
         <p className={styles.note} ref={refocusSelect}>
-          {CAMERA_DESCRIPTION}
-          {downloadNote}.
+          {noGraphics ? `${NO_GRAPHICS_REASON}.` : `${CAMERA_DESCRIPTION}${downloadNote}.`}
         </p>
       ) : (
         move.flat && (
           <>
             <p className={styles.note} ref={refocusSelect}>
               The move is flat: this image has no depth yet{downloadNote}.
+              {noGraphics && ` ${NO_GRAPHICS_REASON}.`}
             </p>
             {addDepth}
           </>
