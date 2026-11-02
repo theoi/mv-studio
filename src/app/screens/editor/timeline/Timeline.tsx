@@ -1675,6 +1675,19 @@ function Playhead({ height, head }: { height?: number; head?: boolean }) {
 
 /* ---------- timeline ---------- */
 
+interface View {
+  t0: number
+  t1: number
+}
+
+/** The seconds the scroller shows, as an update that changes the view only once they moved by an eighth of it. */
+function viewUpdate(el: HTMLElement): (v: View) => View {
+  const t0 = el.scrollLeft / get().pxPerSec
+  const t1 = t0 + el.clientWidth / get().pxPerSec
+  const step = Math.max(1, (t1 - t0) / 8)
+  return (v) => (Math.abs(v.t0 - t0) > step || Math.abs(v.t1 - t1) > step ? { t0, t1 } : v)
+}
+
 export function Timeline() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -1708,7 +1721,7 @@ export function Timeline() {
   } | null>(null)
   // Where the pointer is during an insert or swap drag, for the "Insert" or "Swap" pill beside it.
   const [insertPill, setInsertPill] = useState<{ x: number; y: number; label: string } | null>(null)
-  const [view, setView] = useState({ t0: 0, t1: 120 })
+  const [view, setView] = useState<View>({ t0: 0, t1: 120 })
   const [renaming, setRenaming] = useState<string | null>(null)
   // Where the playhead was before a click on a section moved it, so a double-click to rename can put it back.
   const beforeSectionClick = useRef<{ id: string; playhead: number; at: number } | null>(null)
@@ -1811,14 +1824,24 @@ export function Timeline() {
   const updateView = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
-    const t0 = el.scrollLeft / get().pxPerSec
-    const t1 = t0 + el.clientWidth / get().pxPerSec
-    const step = Math.max(1, (t1 - t0) / 8)
+    const next = viewUpdate(el)
     // Clips coming into view mount in the background, so a zoom or scroll step never waits for hundreds of them; the
     // margin around the view (see inView) has them drawn before they reach its edge.
-    startTransition(() =>
-      setView((v) => (Math.abs(v.t0 - t0) > step || Math.abs(v.t1 - t1) > step ? { t0, t1 } : v)),
-    )
+    startTransition(() => setView(next))
+  }, [])
+  const shownView = useRef(view)
+  useLayoutEffect(() => {
+    shownView.current = view
+  }, [view])
+  /**
+   * The same at once, for an edge scroll: a drag re-renders the timeline every frame, which on a slow machine kept
+   * putting off the background update until the view fell behind its margin and the lanes went blank.
+   */
+  const followView = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const next = viewUpdate(el)
+    if (next(shownView.current) !== shownView.current) flushSync(() => setView(next))
   }, [])
 
   useEffect(() => {
@@ -2096,7 +2119,12 @@ export function Timeline() {
       const scroll0 = scroller?.scrollLeft ?? 0
       let last: PointerEvent | null = null
       const edge =
-        scroller && mode === 'move' ? edgeScroll(scroller, HEADER_W, () => last && move(last)) : null
+        scroller && mode === 'move'
+          ? edgeScroll(scroller, HEADER_W, () => {
+              followView()
+              if (last) move(last)
+            })
+          : null
       const move = (ev: PointerEvent) => {
         last = ev
         // The timeline may have scrolled under the pointer since the drag started.
@@ -2377,7 +2405,7 @@ export function Timeline() {
       window.addEventListener('keydown', onKey, true)
       window.addEventListener('keyup', onKey, true)
     },
-    [grid, duration],
+    [grid, duration, followView],
   )
 
   /** Dragging a section boundary: snaps to the beat grid and the playhead, and stops short of the neighbors. */
@@ -2493,7 +2521,12 @@ export function Timeline() {
       shown = key
       selectTimelineClips(p, ids)
     }
-    const edge = scrollRef.current ? edgeScroll(scrollRef.current, HEADER_W, update) : null
+    const edge = scrollRef.current
+      ? edgeScroll(scrollRef.current, HEADER_W, () => {
+          followView()
+          update()
+        })
+      : null
     const move = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return
       moved = true

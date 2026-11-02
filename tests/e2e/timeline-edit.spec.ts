@@ -436,6 +436,87 @@ test('a marquee or a dragged clip held at the timeline’s edge scrolls it, and 
   expect(moved.start).toBeCloseTo(64 + (right - grab + extra) / pps, 1)
   expect(moved.start - 64).toBeGreaterThan((right - grab) / pps + 4)
 })
+
+test('on a slow machine, a clip held at the timeline’s edge stays drawn, and so do the clips it scrolls past', async ({
+  page,
+}) => {
+  await openEditor(page, '#/editor?t=67')
+  await page.keyboard.press('n')
+  const scroller = page.locator('[data-timeline-scroller]')
+  await page.evaluate(() => window.mvStudio.app.ui.set({ pxPerSec: 40 }))
+  await expect.poll(() => scroller.evaluate((el) => el.scrollWidth)).toBeGreaterThan(8000)
+  await scroller.evaluate((el) => (el.scrollLeft = 2400))
+  await expect.poll(() => scroller.evaluate((el) => el.scrollLeft)).toBe(2400)
+  // The Overlay track empty after Spectrum bars, so the drag never turns into a swap or meets no room.
+  const later = (await clipsOn(page, ['t-overlay'])).filter((c) => c.start > 70).map((c) => c.id)
+  await page.evaluate((ids) => window.mvStudio.app.ui.selectClips(ids), later)
+  await page.keyboard.press('Delete')
+  const spectrum = page.getByRole('button', { name: 'Spectrum bars, 1:04.0 to 1:36.0' })
+  const dragged = (await spectrum.getAttribute('data-clip-id'))!
+  const row = (await spectrum.boundingBox())!
+  const box = (await scroller.boundingBox())!
+  const laneLeft = box.x + 148
+  const right = box.x + box.width - 4
+  // Every 50 ms: how many Video and Overlay clips are in view in the project, how many of them are drawn there, and
+  // whether the dragged clip is.
+  await page.evaluate(
+    ({ laneLeft, right, dragged }) => {
+      const el = document.querySelector<HTMLElement>('[data-timeline-scroller]')!
+      const shown = (id: string) =>
+        [...document.querySelectorAll(`[data-clip-id="${id}"]`)].some((e) => {
+          const r = e.getBoundingClientRect()
+          return r.right > laneLeft + 8 && r.left < right - 8
+        })
+      const samples: { scroll: number; inView: number; drawn: number; dragged: boolean }[] = []
+      const timer = setInterval(() => {
+        const t0 = el.scrollLeft / 40
+        const t1 = t0 + (right - laneLeft) / 40
+        const clips = Object.values(window.mvStudio.app.project.editor.getProject().clips) as {
+          id: string
+          trackId: string
+          start: number
+          duration: number
+        }[]
+        const inView = clips.filter(
+          (c) =>
+            (c.trackId === 't-video' || c.trackId === 't-overlay') &&
+            c.start < t1 - 0.2 &&
+            c.start + c.duration > t0 + 0.2,
+        )
+        samples.push({
+          scroll: el.scrollLeft,
+          inView: inView.length,
+          drawn: inView.filter((c) => shown(c.id)).length,
+          dragged: shown(dragged),
+        })
+      }, 50)
+      Object.assign(window, { edgeSamples: () => (clearInterval(timer), samples) })
+    },
+    { laneLeft, right, dragged },
+  )
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+  try {
+    await page.mouse.move(laneLeft + 840, row.y + row.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(right, row.y + row.height / 2, { steps: 10 })
+    await page.waitForTimeout(2000)
+    await page.mouse.up()
+  } finally {
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 })
+  }
+  const samples = await page.evaluate(() =>
+    (
+      window as unknown as {
+        edgeSamples: () => { scroll: number; inView: number; drawn: number; dragged: boolean }[]
+      }
+    ).edgeSamples(),
+  )
+  const scrolling = samples.filter((s, i) => i > 0 && s.scroll !== samples[i - 1]!.scroll)
+  expect(scrolling.length).toBeGreaterThan(5)
+  expect(scrolling.filter((s) => !s.dragged)).toEqual([])
+  expect(scrolling.filter((s) => s.drawn < s.inView)).toEqual([])
+})
 test('pasted and duplicated clips are scrolled into view, on a numbered track when theirs is taken; the palette runs them', async ({
   page,
 }) => {
