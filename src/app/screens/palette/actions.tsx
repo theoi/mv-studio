@@ -99,6 +99,7 @@ import {
 } from '../../state/clipboard.ts'
 import { exportSectionTeaser, exportWithOutput } from '../../state/exports.ts'
 import { animateImage } from '../../state/generate.ts'
+import { graphicsUnavailable } from '../../state/graphics.ts'
 import { openImport } from '../../state/importer.ts'
 import { isRunning, JOB_KINDS } from '../../state/jobs.ts'
 import { askAssist, SHORTCUTS, type ShortcutId } from '../../state/keymap.ts'
@@ -495,6 +496,7 @@ export const actions: Action[] = [
     aliases: ['render', 'export in several formats'],
     keywords: 'sizes formats aspect mp4 final',
     shortcut: 'export',
+    unavailable: graphicsUnavailable,
     run: () => set({ dialog: 'export', exportPhase: 'setup' }),
   },
   {
@@ -1267,6 +1269,7 @@ export const actions: Action[] = [
     icon: <Disc3 />,
     shortcut: 'vj',
     keywords: 'live perform midi record',
+    unavailable: graphicsUnavailable,
     run: enterVj,
   },
 
@@ -1322,6 +1325,7 @@ export const actions: Action[] = [
     icon: <ImageDown />,
     aliases: ['still', 'screenshot', 'PNG'],
     keywords: 'image picture thumbnail',
+    unavailable: graphicsUnavailable,
     run: () => void saveFrameFromPalette(),
   },
   {

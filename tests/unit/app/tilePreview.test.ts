@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import type * as Capabilities from '../../../src/shared/capabilities.ts'
 import {
   activeTilePreview,
   playTilePreview,
@@ -23,6 +24,12 @@ vi.mock('../../../src/engine/preview.ts', () => ({
     controllers.push(controller)
     return controller
   }),
+}))
+
+const gpu = vi.hoisted(() => ({ webgl2: true }))
+vi.mock('../../../src/shared/capabilities.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof Capabilities>()),
+  webgl2Available: () => gpu.webgl2,
 }))
 
 interface FakeNode {
@@ -67,7 +74,10 @@ describe('tile previews', () => {
 })
 
 describe('which tile previews', () => {
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    gpu.webgl2 = true
+  })
 
   const focusEvent = { currentTarget: { matches: () => true } } as never
   const pointerAt = (clientX: number) => ({ clientX, clientY: 200 }) as never
@@ -94,5 +104,20 @@ describe('which tile previews', () => {
     expect(activeTilePreview()).toBe('plugin:glitch-cut')
     previewHandlers(under).onPointerLeave()
     expect(activeTilePreview()).toBeNull()
+  })
+
+  it('plays none where the browser can’t draw, so tiles keep their still art', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    gpu.webgl2 = false
+    const tile: PreviewItem = { kind: 'plugin', id: 'fade' }
+    previewHandlers(tile).onPointerMove(pointerAt(100))
+    vi.advanceTimersByTime(500)
+    expect(activeTilePreview()).toBeNull()
+    gpu.webgl2 = true
+    previewHandlers(tile).onPointerMove(pointerAt(101))
+    vi.advanceTimersByTime(500)
+    expect(activeTilePreview()).toBe('plugin:fade')
+    previewHandlers(tile).onPointerLeave()
   })
 })

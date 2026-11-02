@@ -22,6 +22,8 @@ import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
 import { set, toast } from '../../../state/ui.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
+import { webgl2Available } from '../../../../shared/capabilities.ts'
+import { GraphicsNotice } from '../../common/GraphicsNotice.tsx'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -88,6 +90,14 @@ export function BehindView() {
   }, [unchecked])
   const targets = suitableClips(project, checks).filter((id) => !hasCutout(project, id))
   const apply = () => putBehind(targets)
+
+  // The person models (MediaPipe) need WebGL 2, as does drawing the cutout.
+  if (!webgl2Available())
+    return (
+      <ToolView title="Behind the subject" subtitle="Text sits between the person and the background">
+        <GraphicsNotice />
+      </ToolView>
+    )
 
   if (phase === 'running')
     return (

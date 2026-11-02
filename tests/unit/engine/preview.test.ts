@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as Compositor from '../../../src/engine/compositor.ts'
 import type * as Frames from '../../../src/engine/frames.ts'
 import type * as RenderHost from '../../../src/engine/renderHost.ts'
+import { WebGLCompositor } from '../../../src/engine/compositor.ts'
 import { VideoElementFrameProvider } from '../../../src/engine/frames.ts'
 import { PreviewController } from '../../../src/engine/preview.ts'
+import { startPreviewWorker } from '../../../src/engine/renderHost.ts'
+import { JobError } from '../../../src/shared/jobs.ts'
 import { createProject, createVideoClip } from '../../../src/model/factory.ts'
 import type { Asset } from '../../../src/model/types.ts'
 
@@ -201,6 +204,45 @@ describe('reporting drawn frames', () => {
       preview.dispose()
     },
   )
+})
+
+describe('a preview nothing can draw for', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+  })
+
+  it('says so once neither its render worker nor this thread can draw, and asks for no more frames', async () => {
+    vi.stubGlobal('Worker', class {})
+    vi.stubGlobal('VideoFrame', class {})
+    vi.mocked(startPreviewWorker).mockRejectedValueOnce(
+      new JobError('unsupported', 'WebGL2 is not available in workers'),
+    )
+    vi.mocked(WebGLCompositor).mockImplementationOnce(function WebGLCompositor() {
+      throw new JobError('unsupported', 'WebGL2 is not available in this browser')
+    })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const preview = new PreviewController({
+      canvas: { transferControlToOffscreen: () => ({}) } as unknown as HTMLCanvasElement,
+      media: { getFile: async () => new Blob() },
+      renderer: 'worker',
+    })
+    const told = vi.fn()
+    preview.subscribe(told)
+    preview.setViewport(320, 180, 1)
+    preview.setProject(createProject())
+    await vi.waitFor(() => expect(preview.getSnapshot().error?.code).toBe('unsupported'))
+    expect(told).toHaveBeenCalled()
+    expect(preview.getSnapshot().pending).toBe(false)
+    await expect(preview.rendered()).rejects.toMatchObject({ code: 'unsupported' })
+    preview.seek(1)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(compositor.render).not.toHaveBeenCalled()
+    expect(logged.mock.calls.filter(([message]) => message === 'Preview render failed')).toEqual([])
+    preview.dispose()
+  })
 })
 
 describe('scrubbing on the render worker', () => {

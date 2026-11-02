@@ -11,6 +11,7 @@ import type {
   Track,
 } from '../../model/index.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
+import { webgl2Available } from '../../shared/capabilities.ts'
 import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
 import type {
@@ -794,6 +795,8 @@ export function cutoutCommands(
  * (`analysisReady`): a paused frame the stage waits for decodes the same files.
  */
 export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefined {
+  // MediaPipe needs WebGL even on its CPU delegate: every check would fail.
+  if (!webgl2Available()) return undefined
   const { checks } = useBehind.getState()
   const project = editor.getProject()
   const pending = [...new Set(assetIds)].filter((id) => {

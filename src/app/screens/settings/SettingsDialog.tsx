@@ -51,6 +51,7 @@ import {
   useFalKeyEntry,
   type LlmChoice,
 } from '../../state/cloud.ts'
+import { NO_GRAPHICS_FIX } from '../../state/graphics.ts'
 import { GESTURES, SHORTCUTS, SHORTCUT_GROUPS } from '../../state/keymap.ts'
 import {
   clearModels,
@@ -739,6 +740,16 @@ function LocalPage() {
           caps
             ? `AI and analysis use ${used} of ${caps.hardwareConcurrency} CPU threads.`
             : 'Lets AI and analysis use several CPU threads.'
+        }
+      />
+      <Capability
+        id="webgl2"
+        ok={caps?.webgl2}
+        title="Graphics acceleration (WebGL 2)"
+        desc={
+          caps && !caps.webgl2
+            ? `Needed to show and export videos. ${NO_GRAPHICS_FIX}`
+            : 'Shows and exports your video.'
         }
       />
       <Capability

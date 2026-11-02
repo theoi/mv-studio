@@ -33,6 +33,7 @@ import {
 } from '../../../export/index.ts'
 import type { ExportResolution } from '../../../engine/export.ts'
 import type { AspectPreset, Project } from '../../../model/index.ts'
+import { webgl2Available } from '../../../shared/capabilities.ts'
 import { jobs, type JobSnapshot } from '../../../shared/jobs.ts'
 import { Button, IconButton } from '../../ds/Button.tsx'
 import { Dialog } from '../../ds/Dialog.tsx'
@@ -46,6 +47,7 @@ import { sectionName, sectionsOf, sectionTint, timelineDuration, useProject } fr
 import { useExportEstimate } from '../../state/exportEstimate.ts'
 import { releaseStills, useStill, versionOf } from '../../state/stills.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
+import { GraphicsNotice } from '../common/GraphicsNotice.tsx'
 import { stagePreview } from '../editor/stage.ts'
 import {
   RATIO,
@@ -1010,7 +1012,30 @@ function ExportDialogBody() {
   )
 }
 
+/** Every way into export ends here without WebGL 2: its outputs, frames and time trials all draw with it. */
+function NoGraphicsDialog() {
+  const close = () => set({ dialog: null, exportPhase: 'setup' })
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && close()}
+      title="Export"
+      description="Make one or more videos from this project."
+      width={480}
+      footer={
+        <Button variant="primary" onClick={close} className={styles.noGraphicsDone}>
+          Done
+        </Button>
+      }
+    >
+      <GraphicsNotice className={styles.noGraphics} />
+    </Dialog>
+  )
+}
+
 export function ExportDialog() {
   const open = useUi((s) => s.dialog === 'export')
-  return open ? <ExportDialogBody /> : null
+  const setup = useUi((s) => s.exportPhase === 'setup')
+  if (!open) return null
+  return setup && !webgl2Available() ? <NoGraphicsDialog /> : <ExportDialogBody />
 }

@@ -110,14 +110,32 @@ async function detectWebGpu(): Promise<WebGpuInfo> {
   }
 }
 
-function detectWebgl2(): boolean {
+function drawsWebgl2(canvas: () => OffscreenCanvas | HTMLCanvasElement): boolean {
   try {
-    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(1, 1).getContext('webgl2') !== null
-    if (typeof document !== 'undefined') return document.createElement('canvas').getContext('webgl2') !== null
+    const gl = canvas().getContext('webgl2') as WebGL2RenderingContext | null
+    if (!gl) return false
+    // Browsers keep only a few contexts alive at once; this one has answered.
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    return true
   } catch {
     return false
   }
-  return false
+}
+
+let webgl2: boolean | undefined
+
+/**
+ * Whether this page or worker can draw with WebGL2, which the preview, exports, VJ mode and the 3D camera need: on an
+ * OffscreenCanvas (the render worker's) or a page canvas (the main-thread fallback). Chrome without a usable GPU (a
+ * virtual machine, a remote desktop, graphics acceleration turned off, a blocklisted driver) offers neither, unless
+ * started with --enable-unsafe-swiftshader, which Playwright adds to every launch. Checked once, as each check makes a
+ * context.
+ */
+export function webgl2Available(): boolean {
+  webgl2 ??=
+    (typeof OffscreenCanvas !== 'undefined' && drawsWebgl2(() => new OffscreenCanvas(1, 1))) ||
+    (typeof document !== 'undefined' && drawsWebgl2(() => document.createElement('canvas')))
+  return webgl2
 }
 
 let cached: Promise<RuntimeCapabilities> | undefined
@@ -134,7 +152,7 @@ export function detectCapabilities(): Promise<RuntimeCapabilities> {
       wasmThreads: wasmThreadCount(isolated, cores, await loadThreadLimit()),
       autoWasmThreads: wasmThreadCount(isolated, cores),
       webCodecs: typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined',
-      webgl2: detectWebgl2(),
+      webgl2: webgl2Available(),
       webgpu: await detectWebGpu(),
       opfs: typeof navigator !== 'undefined' && typeof navigator.storage?.getDirectory === 'function',
     }

@@ -38,6 +38,7 @@ import {
   type SetupSong,
 } from '../../state/setup.ts'
 import { set, useUi, type Kind } from '../../state/ui.ts'
+import { GraphicsNotice } from '../common/GraphicsNotice.tsx'
 import { Logo } from '../common/Logo.tsx'
 import styles from './Start.module.css'
 
@@ -354,6 +355,7 @@ export function SetupScreen() {
         </Button>
         <h1 className={styles.setupTitle}>{t.title}</h1>
         <p className={styles.subtitle}>{t.lede}</p>
+        <GraphicsNotice className={styles.setupGraphics} />
 
         <div className={styles.step}>
           <div className={styles.stepLabel}>

@@ -12,9 +12,11 @@ import {
   type VjSettings,
 } from '../../vj/index.ts'
 import type { PreviewController } from '../../engine/preview.ts'
+import { webgl2Available } from '../../shared/capabilities.ts'
 import { loadVjMode } from '../preload.ts'
 import { stagePreview } from '../screens/editor/stage.ts'
-import { get, set, toastLoadFailed, useUi } from './ui.ts'
+import { NO_GRAPHICS } from './graphics.ts'
+import { get, set, toast, toastLoadFailed, useUi } from './ui.ts'
 
 /** The VJ session while VJ mode is open, so Settings › VJ and MIDI changes reach it as well as the saved settings. */
 let active: VjSession | null = null
@@ -71,6 +73,10 @@ function setEntryFrame(frame: ImageBitmap | null) {
  */
 export function enterVj() {
   if (get().screen === 'vj' || entering) return
+  if (!webgl2Available()) {
+    toast(NO_GRAPHICS, undefined, { key: 'no-graphics' })
+    return
+  }
   setEntering(true)
   setEntryFrame(null)
   const capture = stagePreview()?.captureFrame()
