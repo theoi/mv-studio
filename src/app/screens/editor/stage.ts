@@ -72,7 +72,7 @@ export const UPDATING_MIN_MS = 300
 
 /** What the stage's "Updating…" note goes by (createUpdatingCue). */
 export interface UpdatingInput {
-  /** A paused still is on its way (PreviewSnapshot.pending). */
+  /** A paused still a user action asked for is on its way (PreviewSnapshot.pending). */
   pending: boolean
   /** The stage shows its first frame, so "Preparing the preview" has gone. */
   ready: boolean
@@ -146,8 +146,8 @@ function setStill(next: { pending?: boolean; updating?: boolean }): void {
 }
 
 /**
- * Whether the stage preview waits to show a paused frame (PreviewSnapshot.pending): a slow seek, a drag's next step.
- * Work that can wait, such as footage analysis, can hold off meanwhile.
+ * Whether the stage preview waits to show a paused frame (PreviewSnapshot.pending): a slow seek, a drag's next step, a
+ * redraw after a background write. Work that can wait, such as footage analysis, can hold off meanwhile.
  */
 export function stillPending(): boolean {
   return still.pending
@@ -243,12 +243,20 @@ export function connectPreview(
   // Any pointer held down, on the timeline, the stage or a slider, is taken for a drag.
   let pointerDown = false
   let ready = false
+  // Results written in the background (derived edits, such as footage analysis) redraw the paused frame too, nearly
+  // always unchanged: a still only they asked for doesn't make the stage say it's updating. A seek or an edit does.
+  let unasked = false
   const cue = createUpdatingCue((updating) => {
     if (current === preview) setStill({ updating })
   })
   const updateCue = () => {
     const { pending, state } = preview.getSnapshot()
-    cue.update({ pending, ready, playing: get().playing || state === 'playing', pointerDown })
+    cue.update({
+      pending: pending && !unasked,
+      ready,
+      playing: get().playing || state === 'playing',
+      pointerDown,
+    })
   }
   const onPointer = (event: Event) => {
     pointerDown = event.type === 'pointerdown'
@@ -258,9 +266,15 @@ export function connectPreview(
   window.addEventListener('blur', onPointer)
   const unsubscribe = [
     offAudioError,
-    editor.subscribe((project) => {
+    editor.subscribe((project, change) => {
+      const waiting = preview.getSnapshot().pending
       showProject(project)
       applyLoop(get().playhead)
+      // Only a still the write started is unasked: none starts during playback, for one.
+      if (change.source !== 'derived' || !preview.getSnapshot().pending) unasked = false
+      else if (!waiting) unasked = true
+      // With a still already on its way the snapshot may not change, and nothing else would tell the cue.
+      updateCue()
     }),
     usePrefs.subscribe((p, prev) => {
       if (p.previewVolume !== prev.previewVolume) preview.setVolume(p.previewVolume)
@@ -269,7 +283,11 @@ export function connectPreview(
       const seeked = s.playhead !== prev.playhead && s.playhead !== fromClock
       // A seek into another section moves the loop there.
       if (seeked || s.loop !== prev.loop) applyLoop(s.playhead)
-      if (seeked) preview.seek(s.playhead)
+      if (seeked) {
+        unasked = false
+        preview.seek(s.playhead)
+        updateCue()
+      }
       if (s.playing === prev.playing) return
       updateCue()
       if (s.playing) {
@@ -299,7 +317,9 @@ export function connectPreview(
       set({ playhead: time })
     }),
     preview.subscribe(() => {
-      if (current === preview) setStill({ pending: preview.getSnapshot().pending })
+      const { pending } = preview.getSnapshot()
+      if (current === preview) setStill({ pending })
+      if (!pending) unasked = false
       updateCue()
     }),
     // Until its first frame the stage says it's preparing the preview, and a wait for a still started then would end
