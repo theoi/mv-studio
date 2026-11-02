@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
+import { expect, keepCopy, openFromHome, openHarness, test, waitForPreview } from './fixtures.ts'
 
 // The harness exposes untyped modules to page.evaluate callbacks.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -798,4 +798,23 @@ test('one inline suggestion at a time: a selected still’s suggestion takes the
   await expect(camera).toHaveCount(0)
   await expect(inspector.locator(':focus')).toHaveCount(1)
   await expect(hint).toBeVisible()
+})
+
+test('a finished 3D camera run stays with its project: another project opens on Apply', async ({ page }) => {
+  await openWithFakeDepth(page, '#/editor?tab=assist&assist=camera&t=28')
+  const otherId = await keepCopy(page, 'Other project')
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const before = await stills(page)
+  const apply = assist.getByRole('button', { name: `Apply to ${before.clips.length} images` })
+  const added = assist.getByText(`Added a 3D camera move to ${before.clips.length} images`)
+  await apply.click()
+  await expect(added).toBeVisible()
+
+  await openFromHome(page, 'Other project')
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?project=${id}&tab=assist&assist=camera`
+  }, otherId)
+  await expect(apply).toBeVisible()
+  await expect(added).toHaveCount(0)
+  expect((await stills(page)).clips.every((c) => !c.camera)).toBe(true)
 })

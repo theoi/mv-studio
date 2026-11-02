@@ -4,10 +4,12 @@ import {
   chooseSameProject,
   duplicateProject,
   importProjectFile,
+  leaveProjectJobs,
   refreshRecents,
   usePersistence,
 } from '../../../src/app/state/persistence.ts'
-import { toast } from '../../../src/app/state/ui.ts'
+import { set, toast } from '../../../src/app/state/ui.ts'
+import { jobs } from '../../../src/shared/jobs.ts'
 import { editor } from '../../../src/app/state/project.ts'
 
 const store = vi.hoisted(() => ({
@@ -139,4 +141,41 @@ it('says the project is already open when the one here is the one being edited',
   await opening
   expect(toast).toHaveBeenCalledWith('“Portable” is already open')
   expect(store.opened).toEqual([])
+})
+
+it('cancels the open project’s running jobs and puts away its finished results when another project opens, but not exports', async () => {
+  const project = createProject({ name: 'Open' })
+  editor.load(project)
+  const settle = (p: Promise<unknown>) => p.catch(() => undefined)
+  const cut = jobs.run({ kind: 'edit.autocut', title: 'Cut', run: async () => 1 })
+  const failed = jobs.run({
+    kind: 'vision.camera',
+    title: 'Camera',
+    run: async () => {
+      throw new Error('no depth')
+    },
+  })
+  const exported = jobs.run({ kind: 'export.outputs', title: 'Export', run: async () => 1 })
+  await Promise.all([cut.promise, settle(failed.promise), exported.promise])
+  const running = jobs.run({
+    kind: 'analysis.stems',
+    title: 'Stems',
+    run: (ctx) =>
+      new Promise((_, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason))),
+  })
+  const dismissedAfter = () => {
+    const update = vi.mocked(set).mock.calls.at(-1)?.[0] as
+      ((s: { dismissed: string[] }) => { dismissed: string[] }) | undefined
+    return update?.({ dismissed: ['earlier'] }).dismissed
+  }
+
+  vi.mocked(set).mockClear()
+  // The same project opening again keeps its results; its running jobs still stop.
+  leaveProjectJobs({ next: project.id })
+  expect(vi.mocked(set)).not.toHaveBeenCalled()
+  await settle(running.promise)
+  expect(jobs.list().find((j) => j.id === running.id)?.status).toBe('cancelled')
+
+  leaveProjectJobs({ next: 'another' })
+  expect(dismissedAfter()).toEqual(['earlier', cut.id, failed.id])
 })

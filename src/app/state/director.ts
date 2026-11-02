@@ -7,6 +7,7 @@ import type {
   PlanDescription,
   VideoKind,
 } from '../../director/index.ts'
+import type { EditChange } from '../../model/editor.ts'
 import type { Id } from '../../model/types.ts'
 import { pluginRegistry } from '../../engine/registry.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
@@ -74,6 +75,8 @@ export const useDirector = create<DirectorUi>(() => ({
 let autoApply = false
 
 let session: Promise<DirectorSession> | undefined
+/** The session once it has loaded, for the reset when another project opens (leaveProject()). */
+let loaded: DirectorSession | undefined
 
 function directorSession(): Promise<DirectorSession> {
   session ??= Promise.all([
@@ -124,10 +127,40 @@ function directorSession(): Promise<DirectorSession> {
       })
     })
     useDirector.setState({ cancelNotice: fal.FAL_CANCEL_NOTICE })
+    loaded = s
     return s
   })
   return session
 }
+
+/** The project the Director's plan, draft and running job belong to. */
+let openProject = editor.getProject().id
+
+/**
+ * Another project opened: the Director starts over there, so nothing planned, priced or drafted for the other project
+ * can be applied or paid for in this one. It keeps the user's preferences (where shots come from, images or video). A
+ * paid run stops as Cancel stops it, and what fal.ai has already billed stays recorded. Synchronous: the setup screen
+ * starts a draft right after opening its new project.
+ */
+function leaveProject(project: Project, change: EditChange): void {
+  if (change.source !== 'load' || project.id === openProject) return
+  openProject = project.id
+  autoApply = false
+  loaded?.reset()
+  useDirector.setState({
+    state: { status: 'idle' },
+    description: null,
+    idea: '',
+    applying: false,
+    planJobId: undefined,
+    clipsAtDraft: undefined,
+  })
+}
+
+editor.subscribe(leaveProject)
+
+/** False once another project has opened since `projectId` was the open one. */
+const stillOpen = (projectId: Id) => editor.getProject().id === projectId
 
 /** Waits for the song analysis still running (a draft right after the setup screen), with its job's progress. */
 async function waitForSong({
@@ -218,10 +251,7 @@ function userClips(project: Project): Asset[] {
   )
 }
 
-/**
- * Clips and images imported after the applied draft was planned, when the draft takes the user's media. None in
- * another project: the director's result stays on screen when one opens, but its request is the other project's.
- */
+/** Clips and images imported after the applied draft was planned, when the draft takes the user's media. */
 export function clipsSinceDraft(project: Project, ui: Pick<DirectorUi, 'state' | 'clipsAtDraft'>): Asset[] {
   const at = ui.clipsAtDraft
   if (ui.state.status !== 'applied' || !ui.state.request.useMedia || at?.projectId !== project.id) return []
@@ -262,7 +292,10 @@ async function applyIfFreeOnceDone(plan: Promise<DirectorState>): Promise<void> 
 
 /** Plans a draft; one that costs nothing goes on the timeline right away. */
 export async function draftVideo(request: DirectorRequest): Promise<void> {
+  const projectId = editor.getProject().id
   const s = await directorSession()
+  // The director loads on first use: the request was made for the project open before it loaded.
+  if (!stillOpen(projectId)) return
   autoApply = true
   useDirector.setState({ clipsAtDraft: clipsNow() })
   await applyIfFreeOnceDone(s.plan(request))
@@ -319,10 +352,13 @@ export async function draftLocally(): Promise<void> {
 
 /** Applies the plan: generates AI shots first unless skipped (the panel has asked about the cost). */
 export async function applyDraft(options: { confirmSpend?: boolean; skipGeneration?: boolean } = {}) {
+  const projectId = editor.getProject().id
   const s = await directorSession()
   try {
     // Loaded with the session already.
     const { openingFrame } = await import('../../director/index.ts')
+    // Another project opened meanwhile, which reset the plan: there is nothing to apply.
+    if (!stillOpen(projectId)) return
     // Where beforeApply moved the playhead from and to (-1 while it hasn't).
     const moved = { from: 0, to: -1 }
     const state = await s.apply({

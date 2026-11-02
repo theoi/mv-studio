@@ -4,7 +4,7 @@ import type { Project } from '../../model/index.ts'
 import { startAutoCut } from './autocut.ts'
 import { isRunning, JOB_KINDS } from './jobs.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
-import { isStored, openFromLink, untracked, usePersistence } from './persistence.ts'
+import { isStored, leaveProjectJobs, openFromLink, untracked, usePersistence } from './persistence.ts'
 import { clampToLastFrame, editor, loadDemoProject, loadEmptyProject } from './project.ts'
 import { setupFromLink } from './setup.ts'
 import {
@@ -121,6 +121,7 @@ function applyHash(hash: string, navigated = false) {
     ...next,
     playhead: opening ? time : clampToLastFrame(editor.getProject(), time),
     toasts: get().toasts,
+    dismissed: get().dismissed,
     libraryOpen: get().libraryOpen,
     playing: false,
   })
@@ -130,6 +131,7 @@ function applyHash(hash: string, navigated = false) {
 function applyPreviewProject(q: URLSearchParams, wantEmpty: boolean) {
   const isEmpty = !editor.getProject().songAssetId
   if (wantEmpty !== isEmpty) {
+    leaveProjectJobs()
     if (wantEmpty) loadEmptyProject()
     else loadDemoProject()
   }

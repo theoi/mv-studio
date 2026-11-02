@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, openHarness, test, waitForPreview } from './fixtures.ts'
+import { expect, keepCopy, openFromHome, openHarness, test, waitForPreview } from './fixtures.ts'
 
 // The harness exposes untyped modules to page.evaluate callbacks.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -486,4 +486,41 @@ test('a cut that analyzes first waits for footage analysis and matches every cli
     }
   })
   expect(analyzed.matched).toBe(analyzed.clips)
+})
+
+test('a finished cut stays with its project, and a cut put away stays away when a link changes the view', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor?kind=footage&tab=assist&assist=autocut'
+  })
+  await waitForPreview(page)
+  const otherId = await keepCopy(page, 'Other project')
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  const cut = assist.getByRole('button', { name: 'Cut to the beat' })
+  const keep = assist.getByRole('button', { name: /^Keep \d+ cuts$/ })
+  await assist.getByRole('switch', { name: 'Match clips to the mood' }).click()
+  await cut.click()
+  await expect(keep).toBeVisible()
+  await keep.click()
+  await expect(cut).toBeVisible()
+  await page.evaluate(() => {
+    window.location.hash = '#/editor?kind=footage&tab=assist&assist=autocut&lib=text'
+  })
+  await expect(page.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true')
+  await expect(cut).toBeVisible()
+  await expect(keep).toHaveCount(0)
+
+  await cut.click()
+  await expect(keep).toBeVisible()
+  await openFromHome(page, 'Other project')
+  await page.evaluate((id) => {
+    window.location.hash = `#/editor?project=${id}&kind=footage&tab=assist&assist=autocut`
+  }, otherId)
+  await expect(cut).toBeVisible()
+  await expect(keep).toHaveCount(0)
+  expect((await autoCutTrack(page)).clips).toHaveLength(0)
 })

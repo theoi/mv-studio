@@ -339,22 +339,25 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
   e.preventDefault()
 }
 
-/** Jobs working on the open project; their results would land in the next one. Exports render a snapshot. */
-function cancelProjectJobs(keep: readonly string[] = []) {
+/**
+ * Before a project opens in place of the open one: its running jobs are cancelled, or their results would land in the
+ * next project, and unless `next` is the open project itself, its finished ones are dismissed, so tool views don't show
+ * its results in another project. Exports render a snapshot and keep going; `keep` lists other kinds whose jobs move
+ * over to the next project.
+ */
+export function leaveProjectJobs({ keep = [], next }: { keep?: readonly string[]; next?: Id } = {}) {
+  const dismiss = next !== editor.getProject().id
+  const done: string[] = []
   for (const job of jobs.list()) {
-    const active = job.status === 'running' || job.status === 'queued'
-    if (
-      active &&
-      job.kind !== JOB_KINDS.export &&
-      !job.kind.startsWith('project.') &&
-      !keep.includes(job.kind)
-    )
-      jobs.cancel(job.id)
+    if (job.kind === JOB_KINDS.export || job.kind.startsWith('project.') || keep.includes(job.kind)) continue
+    if (job.status === 'running' || job.status === 'queued') jobs.cancel(job.id)
+    else if (dismiss && (job.status === 'succeeded' || job.status === 'failed')) done.push(job.id)
   }
+  if (done.length) set((s) => ({ dismissed: [...new Set([...s.dismissed, ...done])] }))
 }
 
 function show(project: Project, history?: SavedHistory) {
-  cancelProjectJobs()
+  leaveProjectJobs({ next: project.id })
   storedIds.add(project.id)
   editor.load(project, history)
   rememberLast(project.id)
@@ -377,7 +380,7 @@ const editorUi = {
  */
 export async function loadSetupDraft(project: Project): Promise<void> {
   await autosave?.flush()
-  cancelProjectJobs([JOB_KINDS.import])
+  leaveProjectJobs({ keep: [JOB_KINDS.import] })
   editor.load(project)
 }
 
@@ -387,7 +390,7 @@ export async function loadSetupDraft(project: Project): Promise<void> {
  */
 export async function startProject(project: Project, options: { keep: boolean; fromDraft: boolean }) {
   await autosave?.flush()
-  if (!options.fromDraft) cancelProjectJobs()
+  if (!options.fromDraft) leaveProjectJobs({ next: project.id })
   if (options.keep) {
     try {
       await writeProject(project)
@@ -549,7 +552,10 @@ export async function deleteProject(id: Id): Promise<void> {
   storedIds.delete(id)
   storedNames.delete(id)
   if (lastProjectId() === id) forgetLast()
-  if (editor.getProject().id === id) loadEmptyProject()
+  if (editor.getProject().id === id) {
+    leaveProjectJobs()
+    loadEmptyProject()
+  }
   try {
     await store.remove(id)
   } catch (error) {

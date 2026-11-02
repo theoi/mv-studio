@@ -173,3 +173,44 @@ describe('clips imported after a draft', () => {
     expect(offers()).toEqual([])
   })
 })
+
+describe('another project opening', () => {
+  const applied = { status: 'applied', request: { kind: 'ai', useMedia: true } } as unknown as DirectorState
+
+  beforeEach(() => {
+    vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => undefined })
+    loadDemoProject()
+    useDirector.setState({
+      state: applied,
+      idea: 'neon night drive',
+      shots: 'mix',
+      aiShots: 'video',
+      planJobId: 'plan-1',
+      clipsAtDraft: { projectId: editor.getProject().id, ids: [] },
+    })
+  })
+
+  it('starts the Director over at once, keeping where shots come from and whether AI shots are images or video', () => {
+    editor.load(createProject({ name: 'Other', fps: 30 }))
+    const ui = useDirector.getState()
+    expect(ui).toMatchObject({
+      state: { status: 'idle' },
+      description: null,
+      idea: '',
+      applying: false,
+      shots: 'mix',
+      aiShots: 'video',
+    })
+    expect(ui.planJobId).toBeUndefined()
+    expect(ui.clipsAtDraft).toBeUndefined()
+  })
+
+  it('keeps everything when the same project loads again', () => {
+    editor.load(structuredClone(editor.getProject()))
+    expect(useDirector.getState()).toMatchObject({
+      state: applied,
+      idea: 'neon night drive',
+      planJobId: 'plan-1',
+    })
+  })
+})
