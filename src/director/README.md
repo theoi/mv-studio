@@ -96,9 +96,15 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   pairs with (`LOOK_TEXT_STYLE`: Clean → Karaoke, Neon night → Neon sign, Cinematic → Poster, ...; other looks match
   by tags), with its kinetic preset and karaoke, and the look's colors. Lines are about 9% of the frame height in
   landscape (capitals 6–7%), broken into balanced rows from per-font width estimates (measured advances by weight),
-  laid out to 90% of the clip's wrap width so the renderer never pushes a word onto a row of its own. Chorus lines
+  laid out to 90% of the clip's wrap width so the renderer never pushes a word onto a row of its own. A line too long
+  for the rows allowed (two in landscape and square frames, three in portrait ones) even in type shrunk to 70% gets one
+  more row, in type as much smaller as it needs, so no row wraps again over the line shown below it; a word too long
+  for the clip on its own shrinks to half the size, and further only to stay within the frame. A row ends on a word
+  that opens a bracket ("(feat.") only where keeping the two together would make the type over 10% smaller. A lyric
+  retyped after the draft keeps its rows, in smaller type where they would no longer fit. Chorus lines
   are a little bigger and heavier. The stressed last word of chorus lines (and of other lines when it is long or a hook from the title or chorus) is shown 1.6×
-  bigger in the accent color below the rest of the line, entering as it is sung (`role: 'emphasis'`).
+  bigger in the accent color below the rest of the line, entering as it is sung (`role: 'emphasis'`), unless it is too
+  wide for the clip even at the line's size; the line then stays whole.
 - **Contrast and placement**: over footage every line has a dark outline, plus a dark halo unless the style has its
   own glow. With `media` the director measures the frames under each text box and gives text over bright footage
   (mean luma ≥ 0.5) a soft dark scrim. Lines move to the lower or upper third when a tracked face would be under
@@ -114,8 +120,8 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   another song, or drafted before cards recorded their song, counts for nothing. Only each row's first card counts:
   what the user types on a duplicated or pasted copy (which keeps the tag) is new text, not a correction. The title
   is laid out like a lyric line, the artist under it shrinks on one row before it breaks and is never larger than the
-  title (unless laid out from a larger size), and the rows stack about the middle (`stackTitleCard`). A title whose rows would still be wider than the clip at 70% gets one more row and
-  type as much smaller as it needs, so the renderer never wraps a row again over the artist; a phrase in brackets
+  title (unless laid out from a larger size), and the rows stack about the middle (`stackTitleCard`). Its rows fit the clip as a lyric line's do, so the
+  renderer never wraps a row again over the artist; a phrase in brackets
   ("(feat. …)", "[… Remix]") starts a row of its own when the type stays as large. A title or artist the user retypes
   (on leaving the Inspector's text field, or through Ask) lays the card out again the same way about where it is
   (`titleCardCommands` in `titleCard.ts`), growing the text back toward the size it was laid out from
