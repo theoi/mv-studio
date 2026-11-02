@@ -16,7 +16,13 @@ import { JobError, jobs, type JobSnapshot } from '../../shared/jobs.ts'
 import { isBlankClip } from '../../vision/analysisData.ts'
 import { cloudServices, cloudSettings, spendLedger } from './cloud.ts'
 import { unanalyzedWarning } from './autocut.ts'
-import { checkClipsForBlank, directorFootage, footageAnalysisRuns, useFootage } from './footage.ts'
+import {
+  checkClipsForBlank,
+  directorFootage,
+  footageAnalysisRuns,
+  holdAnalysisUntil,
+  useFootage,
+} from './footage.ts'
 import { appMedia } from './media.ts'
 import { songAnalysisRunning } from './importer.ts'
 import { JOB_KINDS } from './jobs.ts'
@@ -237,12 +243,29 @@ export function clipsNoun(assets: Asset[]): string {
     .join(' and ')
 }
 
+/**
+ * The longest a draft's planning holds footage analysis. Planning ranks the clips on the model worker that analysis
+ * keeps busy, so a draft took about twice as long while analysis ran, but a slow AI model's plan mustn't stop it for
+ * long.
+ */
+const PLAN_ANALYSIS_HOLD_MS = 60_000
+
+/**
+ * Footage analysis waits while `plan` is made and until a free draft is on the timeline, where applyDraft holds it
+ * until the preview shows the draft. It goes on when the plan fails, is cancelled or waits for its cost to be accepted.
+ */
+async function applyIfFreeOnceDone(plan: Promise<DirectorState>): Promise<void> {
+  const done = plan.then(applyIfFree)
+  holdAnalysisUntil(done, PLAN_ANALYSIS_HOLD_MS)
+  await done
+}
+
 /** Plans a draft; one that costs nothing goes on the timeline right away. */
 export async function draftVideo(request: DirectorRequest): Promise<void> {
   const s = await directorSession()
   autoApply = true
   useDirector.setState({ clipsAtDraft: clipsNow() })
-  await applyIfFree(await s.plan(request))
+  await applyIfFreeOnceDone(s.plan(request))
 }
 
 /** Plans again with another seed: different clips, prompts and camera moves. */
@@ -250,7 +273,7 @@ export async function tryAnotherVersion(): Promise<void> {
   const s = await directorSession()
   autoApply = true
   useDirector.setState({ clipsAtDraft: clipsNow() })
-  await applyIfFree(await s.tryAnother())
+  await applyIfFreeOnceDone(s.tryAnother())
 }
 
 let clipsOffered = 0
@@ -291,7 +314,7 @@ editor.subscribe(offerNewClips)
 export async function draftLocally(): Promise<void> {
   const s = await directorSession()
   autoApply = true
-  await applyIfFree(await s.useLocalDraft())
+  await applyIfFreeOnceDone(s.useLocalDraft())
 }
 
 /** Applies the plan: generates AI shots first unless skipped (the panel has asked about the cost). */
@@ -319,8 +342,9 @@ export async function applyDraft(options: { confirmSpend?: boolean; skipGenerati
       if (getUi().playhead === moved.to) setUi({ playhead: moved.from })
       return
     }
-    // Straight after the dispatch, before the timeline's frame thumbnails of the draft's clips start decoding.
-    holdThumbnailsForDraft()
+    // Straight after the dispatch, before the timeline's frame thumbnails of the draft's clips start decoding, and before
+    // footage analysis decodes its next frame of the same files.
+    holdAnalysisUntil(holdThumbnailsForDraft())
     toast('Your draft is on the timeline', { label: 'Undo', run: () => void undoDraft() })
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error))

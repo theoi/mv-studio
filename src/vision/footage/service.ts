@@ -134,6 +134,12 @@ export interface FootageServiceDeps {
   blankCheckStallMs?: number
   /** Media known to show something, which the fast blank check leaves out (the app's built-in sample). */
   showsSomething?: (asset: Asset) => boolean
+  /**
+   * Awaited before each frame background analysis decodes for matching and subject tracking (`TaskOptions.ready`), so
+   * the app can make it wait while the preview needs the decoder and the cores. Not the fast blank check: drafts and
+   * cuts wait for that.
+   */
+  ready?: () => Promise<void>
 }
 
 /** A clip's check takes a few seconds at most; one still running after this has hung (a decoder that never answers). */
@@ -429,6 +435,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
               report()
               emit()
             },
+            ...(deps.ready ? { ready: deps.ready } : {}),
           }
           try {
             if (step === 'tags') {
