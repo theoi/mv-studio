@@ -5,11 +5,20 @@
  * they were.
  */
 import type { EditCommand } from '../model/commands.ts'
-import type { Id, LyricLine, LyricsDoc, Project, Seconds, TextClip } from '../model/types.ts'
+import type {
+  Animatable,
+  AspectPreset,
+  Id,
+  LyricLine,
+  LyricsDoc,
+  Project,
+  Seconds,
+  TextClip,
+} from '../model/types.ts'
 import { assetTimeToTimeline } from '../engine/text.ts'
-import { directorMeta } from './meta.ts'
+import { DIRECTOR_META_KEY, directorMeta } from './meta.ts'
 import { wordTime } from './timing.ts'
-import { balancedRows, refitRows } from './typography.ts'
+import { balancedRows, blockHeight, frameWidth, layoutLine, textWidth, TITLE_SAFE } from './typography.ts'
 
 const words = (text: string) => text.split(/\s+/).filter(Boolean)
 const key = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '')
@@ -94,13 +103,81 @@ export function retimeDirectorLyricCommands(project: Project, doc: LyricsDoc): E
   return [...(removed.length ? [{ type: 'clip.remove' as const, clipIds: removed }] : []), ...moves]
 }
 
+/** Space a retyped clip keeps from the text next to it, as drafts leave, as a fraction of the frame height. */
+const TEXT_GAP = 0.012
+/** Text this close to a retyped clip (a fraction of the frame height) is beside it: the clip grows away from it. */
+const BESIDE = 0.05
+
+const settled = (a: Animatable) => a.keyframes?.at(-1)?.value ?? a.value
+// Finer than a draft's 0.001: a clip retyped and then retyped back keeps the edge it grew from, so it comes back to
+// the very place it had.
+const roundPlace = (v: number) => Math.round(v * 1e6) / 1e6
+
+/** Where a text clip's rows are once its entrance has settled, as fractions of the frame. */
+function textBox(clip: TextClip, text: string, fontSize: number, aspect: AspectPreset) {
+  const style = { ...clip.style, fontSize, uppercase: clip.style.textTransform === 'uppercase' }
+  const [x, y] = [settled(clip.transform.x), settled(clip.transform.y)]
+  const rows = text.split('\n')
+  const height = blockHeight(rows.length, style) * settled(clip.transform.scaleY)
+  const widest = Math.max(...rows.map((row) => textWidth(row, style))) / frameWidth(aspect)
+  // The renderer centers the widest row on the clip's place.
+  const width = Math.min(style.maxWidth ?? 1, widest) * settled(clip.transform.scaleX)
+  return { top: y - height / 2, bottom: y + height / 2, left: x - width / 2, right: x + width / 2 }
+}
+
+/**
+ * Where `clip` goes with `text` at `fontSize` in place of its own: about where it was, keeping its edge facing the
+ * nearest text on screen beside it (so it grows away from that text, and back when retyped shorter), clear of text
+ * on screen above and below it and inside the title-safe area, in smaller type where that leaves too little room. The
+ * space it had stays its own.
+ */
+function placeRetyped(
+  project: Project,
+  clip: TextClip,
+  text: string,
+  fontSize: number,
+  skip: ReadonlySet<Id>,
+): { fontSize: number; y: number } {
+  const aspect = project.settings.aspect
+  const old = textBox(clip, clip.text, clip.style.fontSize, aspect)
+  const next = textBox(clip, text, fontSize, aspect)
+  const [left, right] = [Math.min(old.left, next.left), Math.max(old.right, next.right)]
+  let top = TITLE_SAFE.top
+  let bottom = TITLE_SAFE.bottom
+  let beside: { gap: number; above: boolean } | undefined
+  const end = clip.start + clip.duration
+  for (const other of Object.values(project.clips)) {
+    if (other.type !== 'text' || other.id === clip.id || skip.has(other.id)) continue
+    if (other.start >= end || clip.start >= other.start + other.duration) continue
+    const box = textBox(other, other.text, other.style.fontSize, aspect)
+    if (box.right <= left || right <= box.left) continue
+    const above = box.top + box.bottom < old.top + old.bottom
+    if (above) top = Math.max(top, box.bottom + TEXT_GAP)
+    else bottom = Math.min(bottom, box.top - TEXT_GAP)
+    const gap = above ? old.top - box.bottom : box.top - old.bottom
+    if (gap < BESIDE && (!beside || gap < beside.gap)) beside = { gap, above }
+  }
+  top = Math.min(top, old.top)
+  bottom = Math.max(bottom, old.bottom)
+  const tall = next.bottom - next.top
+  const size = tall > bottom - top ? Math.max(8, Math.floor((fontSize * (bottom - top)) / tall)) : fontSize
+  const height = (tall * size) / fontSize
+  const y = !beside
+    ? (old.top + old.bottom) / 2
+    : beside.above
+      ? old.top + height / 2
+      : old.bottom - height / 2
+  return { fontSize: size, y: roundPlace(Math.min(bottom - height / 2, Math.max(top + height / 2, y))) }
+}
+
 /**
  * Commands that put a lyric line's new words (`text`) in the text clips that show its words before the edit (`from`,
- * by default its current text), to dispatch with the `lyrics.updateLine` that retypes it: clips draw their own text, so retyping the line alone changes nothing on
- * screen. A clip with the whole line gets the new one in as many rows. The director's line clip whose last words are
- * emphasized below it keeps that split while the line still ends with those words; otherwise it shows the whole line
- * and the emphasized clip is removed. Timing is left alone. Clips whose words were changed by hand, and clips on
- * locked tracks, stay as they are.
+ * by default its current text), to dispatch with the `lyrics.updateLine` that retypes it: clips draw their own text, so
+ * retyping the line alone changes nothing on screen. A clip with the whole line gets the new one in as many rows; the
+ * director's clips are laid out again as a draft lays out a line (see placeRetyped for where they go). The director's
+ * line clip whose last words are emphasized below it keeps that split while the line still ends with those words, no
+ * bigger than they are; otherwise it shows the whole line and the emphasized clip is removed. Timing is left alone.
+ * Clips whose words were changed by hand, and clips on locked tracks, stay as they are.
  */
 export function lyricTextCommands(
   project: Project,
@@ -125,15 +202,45 @@ export function lyricTextCommands(
   const setText = (clip: TextClip, value: string) => {
     if (value !== clip.text) sets.push({ type: 'clip.set', clipId: clip.id, path: ['text'], value })
   }
-  // The director's clips are laid out to fit beside the text around them: a longer line keeps its rows, in type as
-  // much smaller as they need to fit the clip, so it never reaches the next line shown below it.
-  const reflow = (clip: TextClip, shownWords: string[]) => {
-    const rows = clip.text.split('\n').length
-    if (!directorMeta(clip)) return balancedRows(shownWords, rows)
-    const style = { ...clip.style, uppercase: clip.style.textTransform === 'uppercase' }
-    const laid = refitRows(shownWords, rows, style, project.settings.aspect)
-    if (laid.fontSize !== clip.style.fontSize)
-      sets.push({ type: 'clip.set', clipId: clip.id, path: ['style', 'fontSize'], value: laid.fontSize })
+  // The settled place of the line's preview before and after: the line rolls up into place from there.
+  let previewMoved: { from: number; to: number } | undefined
+  // Laid out from the size the draft laid the clip out from (or the size the user has set since), and from no
+  // bigger than `most`.
+  const reflow = (clip: TextClip, shownWords: string[], most = Infinity) => {
+    const meta = directorMeta(clip)
+    if (!meta) return balancedRows(shownWords, clip.text.split('\n').length)
+    const size = clip.style.fontSize
+    const base = meta.lineLayout?.fitted === size ? meta.lineLayout.base : size
+    const style = {
+      ...clip.style,
+      fontSize: Math.min(base, most),
+      uppercase: clip.style.textTransform === 'uppercase',
+    }
+    const laid = layoutLine(shownWords.join(' '), style, project.settings.aspect)
+    const placed = placeRetyped(project, clip, laid.text, laid.fontSize, new Set(removed))
+    const set = (path: string[], value: unknown) =>
+      sets.push({ type: 'clip.set', clipId: clip.id, path, value })
+    if (placed.fontSize !== size) set(['style', 'fontSize'], placed.fontSize)
+    const y = clip.transform.y
+    const by = placed.y - settled(y)
+    if (meta.textRole === 'preview') previewMoved = { from: settled(y), to: placed.y }
+    const keyframes = y.keyframes?.map((k, i) =>
+      i > 0
+        ? { ...k, value: roundPlace(k.value + by) }
+        : previewMoved && Math.abs(k.value - previewMoved.from) < 0.002
+          ? { ...k, value: previewMoved.to }
+          : k,
+    )
+    if (keyframes?.length) {
+      if (keyframes.some((k, i) => k.value !== y.keyframes?.[i]?.value))
+        set(['transform', 'y'], {
+          ...y,
+          value: (keyframes[0] as (typeof keyframes)[number]).value,
+          keyframes,
+        })
+    } else if (by !== 0) set(['transform', 'y', 'value'], placed.y)
+    if (meta.lineLayout?.base !== base || meta.lineLayout.fitted !== placed.fontSize)
+      set(['meta', DIRECTOR_META_KEY, 'lineLayout'], { base, fitted: placed.fontSize })
     return laid.text
   }
 
@@ -147,7 +254,9 @@ export function lyricTextCommands(
       setText(e, newWords.slice(at).join(' '))
     } else removed.push(e.id)
   }
-  for (const clip of shown) {
+  // Previews first: a line that rolls up from its preview starts from where the preview now is.
+  const isPreview = (c: TextClip) => directorMeta(c)?.textRole === 'preview'
+  for (const clip of [...shown.filter(isPreview), ...shown.filter((c) => !isPreview(c))]) {
     if (isEmphasis(clip)) continue
     const clipWords = words(clip.text)
     if (sameWords(clipWords, oldWords)) {
@@ -160,7 +269,8 @@ export function lyricTextCommands(
       : undefined
     if (!split) continue
     const at = kept.get(split.id)
-    setText(clip, reflow(clip, at === undefined ? newWords : newWords.slice(0, at)))
+    if (at === undefined) setText(clip, reflow(clip, newWords))
+    else setText(clip, reflow(clip, newWords.slice(0, at), split.style.fontSize))
   }
   return [...sets, ...(removed.length ? [{ type: 'clip.remove' as const, clipIds: removed }] : [])]
 }

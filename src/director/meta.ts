@@ -29,6 +29,11 @@ export interface DirectorClipMeta {
    * restacks the rows only while they are where the layout put them or moved together.
    */
   titleLayout?: { base: number; fitted: number; y: number }
+  /**
+   * Lyric lines and previews: the font size the text was laid out from and the size it fit at. A retyped line is laid
+   * out again from that size, unless the user has since set another.
+   */
+  lineLayout?: { base: number; fitted: number }
   /** Set on placeholders for AI shots that have not been generated yet. */
   pending?: { task: GenerateSource['task']; prompt: string; modelId: string; duration?: number }
 }

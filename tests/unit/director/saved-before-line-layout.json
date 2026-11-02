@@ -1,0 +1,1527 @@
+{
+  "schemaVersion": 2,
+  "id": "213da096-5637-4fe5-a3f4-d16edcb062e1",
+  "name": "Test",
+  "createdAt": "1970-01-01T00:00:00.000Z",
+  "updatedAt": "2026-11-02T02:59:35.351Z",
+  "settings": {
+    "aspect": "9:16",
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "backgroundColor": "#000000"
+  },
+  "assets": {
+    "song": {
+      "id": "song",
+      "kind": "audio",
+      "name": "song.mp3",
+      "mimeType": "audio/mpeg",
+      "byteSize": 1000,
+      "storageKey": "media/song",
+      "origin": {
+        "type": "import"
+      },
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "duration": 64
+    }
+  },
+  "tracks": [
+    {
+      "id": "e78c4464-7003-41f7-aa4f-63fc3c3a121b",
+      "kind": "visual",
+      "name": "Titles",
+      "muted": false,
+      "solo": false,
+      "locked": false,
+      "hidden": false
+    },
+    {
+      "id": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "kind": "visual",
+      "name": "Text",
+      "muted": false,
+      "solo": false,
+      "locked": false,
+      "hidden": false
+    }
+  ],
+  "clips": {
+    "98372d21-2e7c-4fa7-a7b2-ae3a48953b77": {
+      "id": "98372d21-2e7c-4fa7-a7b2-ae3a48953b77",
+      "trackId": "e78c4464-7003-41f7-aa4f-63fc3c3a121b",
+      "start": 0.5,
+      "duration": 4,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.5
+        },
+        "scaleX": {
+          "value": 1
+        },
+        "scaleY": {
+          "value": 1
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 1
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "title",
+          "sectionId": "s-intro",
+          "textRole": "title",
+          "songId": "song",
+          "titleLayout": {
+            "base": 91,
+            "fitted": 91,
+            "y": 0.5
+          }
+        }
+      },
+      "type": "text",
+      "text": "Song",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 91,
+        "fontWeight": 800,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0.12,
+        "maxWidth": 0.94,
+        "textTransform": "uppercase",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "transitionIn": {
+        "kind": "fade",
+        "duration": 0.6,
+        "easing": "ease-in-out"
+      },
+      "transitionOut": {
+        "kind": "fade",
+        "duration": 0.6,
+        "easing": "ease-in-out"
+      }
+    },
+    "02cc97b8-80e6-4ee5-b068-f96749adc4a5": {
+      "id": "02cc97b8-80e6-4ee5-b068-f96749adc4a5",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 7.5,
+      "duration": 2.735,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.412
+        },
+        "scaleX": {
+          "value": 1
+        },
+        "scaleY": {
+          "value": 1
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 1
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-verse",
+          "textRole": "lyric",
+          "lyricLineId": "f1"
+        }
+      },
+      "type": "text",
+      "text": "Running down\nthe empty\nroad tonight",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 70,
+        "fontWeight": 800,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "none",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "lyricLineId": "f1",
+      "animation": {
+        "presetId": "sweep",
+        "params": {}
+      },
+      "karaoke": {
+        "highlightColor": "#facc15",
+        "mode": "word"
+      },
+      "transitionOut": {
+        "kind": "fade",
+        "duration": 0.12,
+        "easing": "ease-in-out"
+      }
+    },
+    "626d8151-2d62-4133-8fc3-49b2ae15feab": {
+      "id": "626d8151-2d62-4133-8fc3-49b2ae15feab",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 7.5,
+      "duration": 2.735,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.619
+        },
+        "scaleX": {
+          "value": 0.72
+        },
+        "scaleY": {
+          "value": 0.72
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 0.5
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-verse",
+          "textRole": "preview",
+          "lyricLineId": "f2"
+        }
+      },
+      "type": "text",
+      "text": "Every light\nis flashing\nby so fast",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 70,
+        "fontWeight": 800,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "none",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "transitionIn": {
+        "kind": "fade",
+        "duration": 0.15,
+        "easing": "ease-in-out"
+      }
+    },
+    "e2b6060c-079d-415b-9bdf-b5514359fa69": {
+      "id": "e2b6060c-079d-415b-9bdf-b5514359fa69",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 10.235,
+      "duration": 1.5,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.619,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.619,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 0.412,
+              "easing": "linear"
+            }
+          ]
+        },
+        "scaleX": {
+          "value": 0.72,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.72,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 1,
+              "easing": "linear"
+            }
+          ]
+        },
+        "scaleY": {
+          "value": 0.72,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.72,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 1,
+              "easing": "linear"
+            }
+          ]
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 0.5,
+        "keyframes": [
+          {
+            "time": 0,
+            "value": 0.5,
+            "easing": "ease-out"
+          },
+          {
+            "time": 0.2,
+            "value": 1,
+            "easing": "linear"
+          }
+        ]
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-verse",
+          "textRole": "lyric",
+          "lyricLineId": "f2"
+        }
+      },
+      "type": "text",
+      "text": "Every light\nis flashing\nby so fast",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 70,
+        "fontWeight": 800,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "none",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "lyricLineId": "f2",
+      "karaoke": {
+        "highlightColor": "#facc15",
+        "mode": "word"
+      },
+      "transitionOut": {
+        "kind": "fade",
+        "duration": 0.12,
+        "easing": "ease-in-out"
+      }
+    },
+    "d8f5464c-6467-4738-a8d4-6d3fbf823b78": {
+      "id": "d8f5464c-6467-4738-a8d4-6d3fbf823b78",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 10.235,
+      "duration": 1.5,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.619
+        },
+        "scaleX": {
+          "value": 0.72
+        },
+        "scaleY": {
+          "value": 0.72
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 0.5
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-verse",
+          "textRole": "preview",
+          "lyricLineId": "f3"
+        }
+      },
+      "type": "text",
+      "text": "Holding\non to every\nword you say",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 70,
+        "fontWeight": 800,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "none",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "transitionIn": {
+        "kind": "fade",
+        "duration": 0.15,
+        "easing": "ease-in-out"
+      }
+    },
+    "ef8bca4e-e026-4fb7-b7ad-c673c0a4f3e4": {
+      "id": "ef8bca4e-e026-4fb7-b7ad-c673c0a4f3e4",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 11.735,
+      "duration": 1.5,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.619,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.619,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 0.417,
+              "easing": "linear"
+            }
+          ]
+        },
+        "scaleX": {
+          "value": 0.72,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.72,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 1,
+              "easing": "linear"
+            }
+          ]
+        },
+        "scaleY": {
+          "value": 0.72,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.72,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 1,
+              "easing": "linear"
+            }
+          ]
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 0.5,
+        "keyframes": [
+          {
+            "time": 0,
+            "value": 0.5,
+            "easing": "ease-out"
+          },
+          {
+            "time": 0.2,
+            "value": 1,
+            "easing": "linear"
+          }
+        ]
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-verse",
+          "textRole": "lyric",
+          "lyricLineId": "f3"
+        }
+      },
+      "type": "text",
+      "text": "Holding\non to every\nword you say",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 70,
+        "fontWeight": 800,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "none",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "lyricLineId": "f3",
+      "karaoke": {
+        "highlightColor": "#facc15",
+        "mode": "word"
+      },
+      "transitionOut": {
+        "kind": "fade",
+        "duration": 0.12,
+        "easing": "ease-in-out"
+      }
+    },
+    "bc63f572-f693-4e2f-bf34-e4e4396ea3b7": {
+      "id": "bc63f572-f693-4e2f-bf34-e4e4396ea3b7",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 11.735,
+      "duration": 1.5,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.619
+        },
+        "scaleX": {
+          "value": 0.72
+        },
+        "scaleY": {
+          "value": 0.72
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 0.5
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-verse",
+          "textRole": "preview",
+          "lyricLineId": "f4"
+        }
+      },
+      "type": "text",
+      "text": "Never\nlooking back\nagain tonight",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 66,
+        "fontWeight": 800,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "none",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "transitionIn": {
+        "kind": "fade",
+        "duration": 0.15,
+        "easing": "ease-in-out"
+      }
+    },
+    "cf0d1924-3744-4c0d-a8d0-7f3a95855ef4": {
+      "id": "cf0d1924-3744-4c0d-a8d0-7f3a95855ef4",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 13.235,
+      "duration": 2.035,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.619,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.619,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 0.5,
+              "easing": "linear"
+            }
+          ]
+        },
+        "scaleX": {
+          "value": 0.72,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.72,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 1,
+              "easing": "linear"
+            }
+          ]
+        },
+        "scaleY": {
+          "value": 0.72,
+          "keyframes": [
+            {
+              "time": 0,
+              "value": 0.72,
+              "easing": "ease-out"
+            },
+            {
+              "time": 0.2,
+              "value": 1,
+              "easing": "linear"
+            }
+          ]
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 0.5,
+        "keyframes": [
+          {
+            "time": 0,
+            "value": 0.5,
+            "easing": "ease-out"
+          },
+          {
+            "time": 0.2,
+            "value": 1,
+            "easing": "linear"
+          }
+        ]
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-verse",
+          "textRole": "lyric",
+          "lyricLineId": "f4"
+        }
+      },
+      "type": "text",
+      "text": "Never\nlooking back\nagain tonight",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 66,
+        "fontWeight": 800,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "none",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "lyricLineId": "f4",
+      "karaoke": {
+        "highlightColor": "#facc15",
+        "mode": "word"
+      },
+      "transitionOut": {
+        "kind": "fade",
+        "duration": 0.15,
+        "easing": "ease-in-out"
+      }
+    },
+    "cc128676-a961-4344-942d-73d997ddcc13": {
+      "id": "cc128676-a961-4344-942d-73d997ddcc13",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 24.7,
+      "duration": 3.25,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.442
+        },
+        "scaleX": {
+          "value": 1
+        },
+        "scaleY": {
+          "value": 1
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 1
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-chorus1",
+          "textRole": "lyric",
+          "lyricLineId": "l3"
+        }
+      },
+      "type": "text",
+      "text": "Hold on\nhold on",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 76,
+        "fontWeight": 900,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "uppercase",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "lyricLineId": "l3",
+      "animation": {
+        "presetId": "sweep",
+        "params": {}
+      },
+      "karaoke": {
+        "highlightColor": "#facc15",
+        "mode": "word"
+      }
+    },
+    "5558cffc-7973-4c51-8c0c-76af06b65c27": {
+      "id": "5558cffc-7973-4c51-8c0c-76af06b65c27",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 26.54,
+      "duration": 1.41,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.587
+        },
+        "scaleX": {
+          "value": 1,
+          "modulation": [
+            {
+              "source": {
+                "kind": "beat"
+              },
+              "amount": 0.03,
+              "mode": "multiply",
+              "smoothing": 0.3
+            }
+          ]
+        },
+        "scaleY": {
+          "value": 1,
+          "modulation": [
+            {
+              "source": {
+                "kind": "beat"
+              },
+              "amount": 0.03,
+              "mode": "multiply",
+              "smoothing": 0.3
+            }
+          ]
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 1
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-chorus1",
+          "textRole": "emphasis",
+          "lyricLineId": "l3"
+        }
+      },
+      "type": "text",
+      "text": "tonight",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 97,
+        "fontWeight": 900,
+        "italic": false,
+        "color": "#facc15",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "uppercase",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "animation": {
+        "presetId": "zoom-in",
+        "params": {}
+      }
+    },
+    "43921521-6e9e-4a5e-81c0-ee41574d576a": {
+      "id": "43921521-6e9e-4a5e-81c0-ee41574d576a",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 28.7,
+      "duration": 2.85,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.434
+        },
+        "scaleX": {
+          "value": 1
+        },
+        "scaleY": {
+          "value": 1
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 1
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-chorus1",
+          "textRole": "lyric",
+          "lyricLineId": "l4"
+        }
+      },
+      "type": "text",
+      "text": "We are\nburning",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 76,
+        "fontWeight": 900,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "uppercase",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "lyricLineId": "l4",
+      "animation": {
+        "presetId": "sweep",
+        "params": {}
+      },
+      "karaoke": {
+        "highlightColor": "#facc15",
+        "mode": "word"
+      }
+    },
+    "451354e3-9825-4486-998a-fb5f6e57741e": {
+      "id": "451354e3-9825-4486-998a-fb5f6e57741e",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 30.14,
+      "duration": 1.41,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.587
+        },
+        "scaleX": {
+          "value": 1,
+          "modulation": [
+            {
+              "source": {
+                "kind": "beat"
+              },
+              "amount": 0.03,
+              "mode": "multiply",
+              "smoothing": 0.3
+            }
+          ]
+        },
+        "scaleY": {
+          "value": 1,
+          "modulation": [
+            {
+              "source": {
+                "kind": "beat"
+              },
+              "amount": 0.03,
+              "mode": "multiply",
+              "smoothing": 0.3
+            }
+          ]
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 1
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-chorus1",
+          "textRole": "emphasis",
+          "lyricLineId": "l4"
+        }
+      },
+      "type": "text",
+      "text": "bright",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 112,
+        "fontWeight": 900,
+        "italic": false,
+        "color": "#facc15",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "uppercase",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "animation": {
+        "presetId": "zoom-in",
+        "params": {}
+      }
+    },
+    "c9740219-afae-4499-9b05-db658fe6a2ef": {
+      "id": "c9740219-afae-4499-9b05-db658fe6a2ef",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 48.7,
+      "duration": 3.25,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.442
+        },
+        "scaleX": {
+          "value": 1
+        },
+        "scaleY": {
+          "value": 1
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 1
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-chorus2",
+          "textRole": "lyric",
+          "lyricLineId": "l5"
+        }
+      },
+      "type": "text",
+      "text": "Hold on\nhold on",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 76,
+        "fontWeight": 900,
+        "italic": false,
+        "color": "#ffffff",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "uppercase",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "lyricLineId": "l5",
+      "animation": {
+        "presetId": "sweep",
+        "params": {}
+      },
+      "karaoke": {
+        "highlightColor": "#facc15",
+        "mode": "word"
+      }
+    },
+    "78136f97-5a9e-4ec0-9ac4-1bcb9ee7b197": {
+      "id": "78136f97-5a9e-4ec0-9ac4-1bcb9ee7b197",
+      "trackId": "48e885c6-72f6-4fd3-b2ea-f4adb01d9556",
+      "start": 50.54,
+      "duration": 1.41,
+      "enabled": true,
+      "transform": {
+        "x": {
+          "value": 0.5
+        },
+        "y": {
+          "value": 0.587
+        },
+        "scaleX": {
+          "value": 1,
+          "modulation": [
+            {
+              "source": {
+                "kind": "beat"
+              },
+              "amount": 0.03,
+              "mode": "multiply",
+              "smoothing": 0.3
+            }
+          ]
+        },
+        "scaleY": {
+          "value": 1,
+          "modulation": [
+            {
+              "source": {
+                "kind": "beat"
+              },
+              "amount": 0.03,
+              "mode": "multiply",
+              "smoothing": 0.3
+            }
+          ]
+        },
+        "rotation": {
+          "value": 0
+        },
+        "anchorX": 0.5,
+        "anchorY": 0.5
+      },
+      "opacity": {
+        "value": 1
+      },
+      "blendMode": "normal",
+      "effects": [],
+      "meta": {
+        "director": {
+          "planId": "84422056-1c18-400f-93d7-7eac1432f0cd",
+          "role": "text",
+          "sectionId": "s-chorus2",
+          "textRole": "emphasis",
+          "lyricLineId": "l5"
+        }
+      },
+      "type": "text",
+      "text": "tonight",
+      "style": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": 97,
+        "fontWeight": 900,
+        "italic": false,
+        "color": "#facc15",
+        "align": "center",
+        "lineHeight": 1.15,
+        "letterSpacing": 0,
+        "maxWidth": 0.94,
+        "textTransform": "uppercase",
+        "stroke": {
+          "color": "#000000",
+          "width": 5
+        },
+        "shadow": {
+          "color": "#000000b3",
+          "blur": 21,
+          "offsetX": 0,
+          "offsetY": 2
+        }
+      },
+      "animation": {
+        "presetId": "zoom-in",
+        "params": {}
+      }
+    }
+  },
+  "markers": [],
+  "analysis": {
+    "audio": {},
+    "visual": {}
+  },
+  "songAssetId": "song",
+  "lyrics": {
+    "audioAssetId": "song",
+    "source": "pasted",
+    "lines": [
+      {
+        "id": "f1",
+        "text": "Running down the empty road tonight",
+        "start": 9,
+        "end": 10.17,
+        "words": [
+          {
+            "text": "Running",
+            "start": 9,
+            "end": 9.17
+          },
+          {
+            "text": "down",
+            "start": 9.2,
+            "end": 9.37
+          },
+          {
+            "text": "the",
+            "start": 9.4,
+            "end": 9.57
+          },
+          {
+            "text": "empty",
+            "start": 9.6,
+            "end": 9.77
+          },
+          {
+            "text": "road",
+            "start": 9.8,
+            "end": 9.97
+          },
+          {
+            "text": "tonight",
+            "start": 10,
+            "end": 10.17
+          }
+        ]
+      },
+      {
+        "id": "f2",
+        "text": "Every light is flashing by so fast",
+        "start": 10.3,
+        "end": 11.67,
+        "words": [
+          {
+            "text": "Every",
+            "start": 10.3,
+            "end": 10.47
+          },
+          {
+            "text": "light",
+            "start": 10.5,
+            "end": 10.67
+          },
+          {
+            "text": "is",
+            "start": 10.700000000000001,
+            "end": 10.870000000000001
+          },
+          {
+            "text": "flashing",
+            "start": 10.9,
+            "end": 11.07
+          },
+          {
+            "text": "by",
+            "start": 11.100000000000001,
+            "end": 11.270000000000001
+          },
+          {
+            "text": "so",
+            "start": 11.3,
+            "end": 11.47
+          },
+          {
+            "text": "fast",
+            "start": 11.5,
+            "end": 11.67
+          }
+        ]
+      },
+      {
+        "id": "f3",
+        "text": "Holding on to every word you say",
+        "start": 11.8,
+        "end": 13.17,
+        "words": [
+          {
+            "text": "Holding",
+            "start": 11.8,
+            "end": 11.97
+          },
+          {
+            "text": "on",
+            "start": 12,
+            "end": 12.17
+          },
+          {
+            "text": "to",
+            "start": 12.200000000000001,
+            "end": 12.370000000000001
+          },
+          {
+            "text": "every",
+            "start": 12.4,
+            "end": 12.57
+          },
+          {
+            "text": "word",
+            "start": 12.600000000000001,
+            "end": 12.770000000000001
+          },
+          {
+            "text": "you",
+            "start": 12.8,
+            "end": 12.97
+          },
+          {
+            "text": "say",
+            "start": 13,
+            "end": 13.17
+          }
+        ]
+      },
+      {
+        "id": "f4",
+        "text": "Never looking back again tonight",
+        "start": 13.3,
+        "end": 14.270000000000001,
+        "words": [
+          {
+            "text": "Never",
+            "start": 13.3,
+            "end": 13.47
+          },
+          {
+            "text": "looking",
+            "start": 13.5,
+            "end": 13.67
+          },
+          {
+            "text": "back",
+            "start": 13.700000000000001,
+            "end": 13.870000000000001
+          },
+          {
+            "text": "again",
+            "start": 13.9,
+            "end": 14.07
+          },
+          {
+            "text": "tonight",
+            "start": 14.100000000000001,
+            "end": 14.270000000000001
+          }
+        ]
+      },
+      {
+        "id": "l3",
+        "text": "Hold on hold on tonight",
+        "start": 25,
+        "end": 26.950000000000003,
+        "words": [
+          {
+            "text": "Hold",
+            "start": 25,
+            "end": 25.35
+          },
+          {
+            "text": "on",
+            "start": 25.4,
+            "end": 25.75
+          },
+          {
+            "text": "hold",
+            "start": 25.8,
+            "end": 26.150000000000002
+          },
+          {
+            "text": "on",
+            "start": 26.2,
+            "end": 26.55
+          },
+          {
+            "text": "tonight",
+            "start": 26.6,
+            "end": 26.950000000000003
+          }
+        ]
+      },
+      {
+        "id": "l4",
+        "text": "We are burning bright",
+        "start": 29,
+        "end": 30.55,
+        "words": [
+          {
+            "text": "We",
+            "start": 29,
+            "end": 29.35
+          },
+          {
+            "text": "are",
+            "start": 29.4,
+            "end": 29.75
+          },
+          {
+            "text": "burning",
+            "start": 29.8,
+            "end": 30.150000000000002
+          },
+          {
+            "text": "bright",
+            "start": 30.2,
+            "end": 30.55
+          }
+        ]
+      },
+      {
+        "id": "l5",
+        "text": "Hold on hold on tonight",
+        "start": 49,
+        "end": 50.95,
+        "words": [
+          {
+            "text": "Hold",
+            "start": 49,
+            "end": 49.35
+          },
+          {
+            "text": "on",
+            "start": 49.4,
+            "end": 49.75
+          },
+          {
+            "text": "hold",
+            "start": 49.8,
+            "end": 50.15
+          },
+          {
+            "text": "on",
+            "start": 50.2,
+            "end": 50.550000000000004
+          },
+          {
+            "text": "tonight",
+            "start": 50.6,
+            "end": 50.95
+          }
+        ]
+      }
+    ]
+  }
+}
