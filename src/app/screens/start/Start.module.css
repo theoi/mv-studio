@@ -33,6 +33,10 @@
   margin-bottom: clamp(16px, 3.4vh, 32px);
 }
 
+.graphics {
+  margin-bottom: var(--space-4);
+}
+
 .title {
   font-size: var(--text-3xl);
   line-height: var(--lh-3xl);
@@ -483,6 +487,10 @@
   align-self: flex-start;
   margin-left: -8px;
   margin-bottom: var(--space-4);
+}
+
+.setupGraphics {
+  margin-top: var(--space-4);
 }
 
 .setupTitle {

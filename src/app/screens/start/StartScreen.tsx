@@ -34,6 +34,7 @@ import {
 import { JOB_KINDS, runningJobs, useIsRunning, useJobs } from '../../state/jobs.ts'
 import { openBlankProject, startSetup } from '../../state/setup.ts'
 import { set, toast, type Kind } from '../../state/ui.ts'
+import { GraphicsNotice } from '../common/GraphicsNotice.tsx'
 import { Logo } from '../common/Logo.tsx'
 import { CancelButton, RunCard } from '../editor/assist/ToolView.tsx'
 import styles from './Start.module.css'
@@ -353,6 +354,7 @@ export function StartScreen() {
           <h1 className={styles.title}>What are you making?</h1>
           <p className={styles.subtitle}>Pick a starting point. You can mix everything later.</p>
         </div>
+        <GraphicsNotice className={styles.graphics} />
 
         <div className={styles.kinds}>
           {kinds.map((k) => (

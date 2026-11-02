@@ -11,6 +11,7 @@ import type {
   Track,
 } from '../../model/index.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
+import { webgl2Available } from '../../shared/capabilities.ts'
 import { JobError, jobs, type JobHandle } from '../../shared/jobs.ts'
 import { modelCache } from '../../shared/models.ts'
 import type {
@@ -794,6 +795,8 @@ export function cutoutCommands(
  * (`analysisReady`): a paused frame the stage waits for decodes the same files.
  */
 export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefined {
+  // MediaPipe needs WebGL even on its CPU delegate: every check would fail.
+  if (!webgl2Available()) return undefined
   const { checks } = useBehind.getState()
   const project = editor.getProject()
   const pending = [...new Set(assetIds)].filter((id) => {
@@ -843,7 +846,8 @@ export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefin
  * (cached per clip media); a clip whose part of the footage has no one to cut out is left as it is.
  */
 export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> | undefined {
-  if (isRunning(JOB_KINDS.cutout)) return undefined
+  // The person models (MediaPipe) need WebGL even on their CPU delegate, and the cutout is drawn with it.
+  if (!webgl2Available() || isRunning(JOB_KINDS.cutout)) return undefined
   // Two person tracks of the same footage at once could each make a mask. The re-make runs again after the cutout.
   const stopped = remake
   stopped?.cancel()

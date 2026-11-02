@@ -51,6 +51,7 @@ import {
   useFalKeyEntry,
   type LlmChoice,
 } from '../../state/cloud.ts'
+import { NO_GRAPHICS_FIX } from '../../state/graphics.ts'
 import { GESTURES, SHORTCUTS, SHORTCUT_GROUPS } from '../../state/keymap.ts'
 import {
   clearModels,
@@ -742,10 +743,24 @@ function LocalPage() {
         }
       />
       <Capability
+        id="webgl2"
+        ok={caps?.webgl2}
+        title="Graphics acceleration (WebGL 2)"
+        desc={
+          caps && !caps.webgl2
+            ? `Needed to preview and export videos. ${NO_GRAPHICS_FIX}`
+            : 'Previews and exports your video.'
+        }
+      />
+      <Capability
         id="webgpu"
         ok={caps?.webgpu.available}
-        title="GPU acceleration"
-        desc={caps?.webgpu.adapter ? `WebGPU on ${caps.webgpu.adapter}.` : 'Speeds up AI models with WebGPU.'}
+        title="WebGPU for AI models"
+        desc={
+          caps?.webgpu.adapter
+            ? `WebGPU on ${caps.webgpu.adapter}.`
+            : 'Speeds up the AI models that support it.'
+        }
       />
       <Capability
         id="webcodecs"
