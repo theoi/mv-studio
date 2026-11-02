@@ -1458,7 +1458,10 @@ function clipLengths(shots: PlanShot[]): PlanShot[] {
 
 const toGenerate = (count: number) => `${count} to generate`
 
-/** The plan's summary counting only the AI shots still to generate, once some are made (kept after a Cancel). */
+/**
+ * The plan's summary counting only the AI shots still to generate, once some are made (kept after a Cancel) or media
+ * made earlier covers them.
+ */
 export function summaryLeft(plan: Pick<EditPlan, 'summary' | 'shots'>, left: number): string {
   const total = shotsToGenerate(plan).length
   if (left >= total) return plan.summary

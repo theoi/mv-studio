@@ -12,7 +12,7 @@ import {
   type Planner,
 } from '../../../src/director/index.ts'
 import { summaryLeft } from '../../../src/director/expand.ts'
-import type { EditPlan } from '../../../src/director/plan.ts'
+import { shotsToGenerate, type EditPlan } from '../../../src/director/plan.ts'
 import type { DirectorDeps } from '../../../src/director/session.ts'
 import { BARS_NOTES } from '../../../src/model/queries.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
@@ -32,7 +32,9 @@ import {
   type FakeProvider,
 } from './fixtures.ts'
 
-function setup(o: { provider?: FakeProvider; videos?: number; confirmAboveUsd?: number } = {}) {
+function setup(
+  o: { provider?: FakeProvider; videos?: number; confirmAboveUsd?: number; planner?: Planner } = {},
+) {
   const project = makeProject({ videos: o.videos ?? 4 })
   const editor = new ProjectEditor(project)
   const ledger = new SpendLedger({ storage: new MemoryStorage(), now: () => new Date(0) })
@@ -41,6 +43,7 @@ function setup(o: { provider?: FakeProvider; videos?: number; confirmAboveUsd?: 
     editor,
     jobs: new JobRunner(),
     provider: o.provider ? () => o.provider : undefined,
+    ...(o.planner ? { planner: o.planner } : {}),
     store,
     ledger,
     spendPolicy: () => ({
@@ -185,6 +188,91 @@ describe('DirectorSession', () => {
     const callsBefore = provider.calls.length
     expect((await session.apply({ confirmSpend: true })).status).toBe('applied')
     expect(provider.calls.length - callsBefore).toBe(total - kept)
+  })
+
+  /** The built-in plan with three prompts taking turns: separate shots may share a prompt, each with its own seed. */
+  const repeatingPrompts: Planner = async (input) => {
+    const plan = await planLocally(input)
+    let i = 0
+    return {
+      ...plan,
+      shots: plan.shots.map((s) =>
+        s.source.type === 'generate' && !s.source.sameAs
+          ? { ...s, source: { ...s.source, prompt: `scene ${i++ % 3}` } }
+          : s,
+      ),
+    }
+  }
+
+  /** Generates until `made` shots are done, then cancels; the shots left are generated at once from then on. */
+  async function cancelAfter(made: number, o: { confirmAboveUsd?: number } = {}) {
+    const provider = fakeProvider({
+      gate: (i) => (i < made ? Promise.resolve() : new Promise<void>(() => undefined)),
+    })
+    const s = setup({ provider, videos: 0, planner: repeatingPrompts, ...o })
+    ready(await s.session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    const applying = s.session.apply({ confirmSpend: true })
+    for (let i = 0; i < 500 && provider.calls.length < made + 2; i++)
+      await new Promise((r) => setTimeout(r, 0))
+    s.session.cancel()
+    const after = ready(await applying)
+    expect(after.generatedShots).toBe(made)
+    provider.gate = undefined
+    return { ...s, provider, after, left: shotsToGenerate(after.plan).length - made }
+  }
+
+  it('prices the shots left after a cancel that share a prompt with made ones, as Generate makes them', async () => {
+    const { session, provider, after, left } = await cancelAfter(4)
+    // A made shot's image is its own: generating pays for each shot left, its twins included.
+    expect(after.cost).toMatchObject({ count: left, reused: 0 })
+    expect(after.actionLabel).toMatch(new RegExp(`^Generate ${left} shots · `))
+    expect(after.preview.summary).toContain(`, ${left} to generate`)
+    const before = provider.calls.length
+    expect((await session.apply({ confirmSpend: true })).status).toBe('applied')
+    expect(provider.calls.length - before).toBe(left)
+  })
+
+  it('never offers Make video while the shots left need paid requests, and asks before paying for them', async () => {
+    // Each shot left shares its prompt with a made one.
+    const { session, provider, after, left } = await cancelAfter(6, { confirmAboveUsd: 0.001 })
+    expect(after.actionLabel).toMatch(new RegExp(`^Generate ${left} shots · `))
+    expect(after.confirmRequired).toBe(true)
+    const before = provider.calls.length
+    await expect(session.apply()).rejects.toMatchObject({ reason: 'needs-confirmation' })
+    expect(provider.calls).toHaveLength(before)
+  })
+
+  it('counts in the plan’s summary only the shots Generate pays for, without those media made earlier covers', async () => {
+    const provider = fakeProvider()
+    const { session, editor } = setup({ provider, videos: 0 })
+    const planned = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    const total = shotsToGenerate(planned.plan).length
+    // Images an earlier draft made from the same requests as three of the plan's shots.
+    editor.dispatch(
+      shotsToGenerate(planned.plan)
+        .slice(0, 3)
+        .map((s, i) => ({
+          type: 'asset.add' as const,
+          asset: {
+            id: `earlier-${i}`,
+            kind: 'image' as const,
+            name: `earlier-${i}.jpg`,
+            mimeType: 'image/jpeg',
+            byteSize: 1000,
+            storageKey: `media/earlier-${i}`,
+            origin: { type: 'generated' as const, provider: s.source.modelId, prompt: s.source.prompt },
+            createdAt: new Date(0).toISOString(),
+          },
+        })),
+      { history: 'skip' },
+    )
+    const again = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    expect(again.cost).toMatchObject({ count: total - 3, reused: 3 })
+    expect(again.actionLabel).toMatch(new RegExp(`^Generate ${total - 3} shots · `))
+    expect(planned.preview.summary).toContain(`, ${total} to generate`)
+    expect(again.preview.summary).toBe(
+      planned.preview.summary.replace(`, ${total} to generate`, `, ${total - 3} to generate`),
+    )
   })
 
   it('shows what the run has spent so far, against its estimate, and where each shot stands', async () => {
