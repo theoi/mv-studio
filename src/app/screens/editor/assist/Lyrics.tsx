@@ -4,7 +4,7 @@ import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Segmented, Select, TextArea } from '../../../ds/Fields.tsx'
 import { plural } from '../../../format.ts'
-import { JOB_KINDS } from '../../../state/jobs.ts'
+import { JOB_KINDS, useJobs } from '../../../state/jobs.ts'
 import {
   DRAFT_LANGUAGES,
   draftLooksUnreliable,
@@ -27,6 +27,8 @@ import {
 } from '../../../state/project.ts'
 import { get, select, set, useUi, type LyricsMode } from '../../../state/ui.ts'
 import { dismiss, pct, useFocusOnFailure, useJob } from './jobState.ts'
+import { reloadBlockers, type RetryTask } from '../../../state/reloadRetry.ts'
+import { OutOfMemoryTips, ReloadAndRetryButton } from './MemoryHelp.tsx'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -211,6 +213,7 @@ export function LyricsView() {
     }) ?? withClip[0]
   const timed = lines.some((l) => l.start !== undefined)
   const tryAgain = useFocusOnFailure(phase)
+  const reloadBlocked = reloadBlockers(useJobs()).length > 0
 
   if (phase === 'running') {
     return (
@@ -229,24 +232,33 @@ export function LyricsView() {
     )
   }
   if (phase === 'failed') {
+    const memory = job?.error?.code === 'out-of-memory'
+    const retry: RetryTask | null = lastLyricsRequest && { kind: 'lyrics', request: lastLyricsRequest }
+    // A failed run focuses its main action (useFocusOnFailure): the reload when it can run.
+    const reloadFocus = memory && !!retry && !reloadBlocked
     return (
       <ToolView
         title="Lyrics"
         subtitle="Stopped"
         footer={
-          <div className={styles.footerRow}>
-            <Button variant="secondary" onClick={() => dismiss(job)}>
-              Edit lyrics
-            </Button>
-            <Button
-              ref={tryAgain}
-              variant="primary"
-              icon={<RotateCcw />}
-              className={styles.grow}
-              onClick={() => lastLyricsRequest && void startLyrics(lastLyricsRequest)}
-            >
-              Try again
-            </Button>
+          <div className={styles.footerStack}>
+            {memory && retry && (
+              <ReloadAndRetryButton task={retry} ref={reloadFocus ? tryAgain : undefined} />
+            )}
+            <div className={styles.footerRow}>
+              <Button variant="secondary" onClick={() => dismiss(job)}>
+                Edit lyrics
+              </Button>
+              <Button
+                ref={reloadFocus ? undefined : tryAgain}
+                variant={memory && retry ? 'secondary' : 'primary'}
+                icon={<RotateCcw />}
+                className={styles.grow}
+                onClick={() => lastLyricsRequest && void startLyrics(lastLyricsRequest)}
+              >
+                Try again
+              </Button>
+            </div>
           </div>
         }
       >
@@ -262,6 +274,7 @@ export function LyricsView() {
             </div>
           </div>
         </div>
+        {memory && <OutOfMemoryTips reload={!!retry} />}
       </ToolView>
     )
   }

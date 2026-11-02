@@ -24,15 +24,19 @@ export function jobLabel(job: JobSnapshot): string {
   return job.stopping ? 'Stopping…' : job.title
 }
 
+/** A job's title up to the details it gives after " · " (a price estimate), for where a short name fits. */
+export function jobTitleOnly(title: string): string {
+  const details = title.indexOf(' · ')
+  return details < 0 ? title : title.slice(0, details)
+}
+
 /**
- * jobLabel() up to the details a title gives after " · " (a price estimate), for the top bar's narrow chip. An export
- * is "Exporting" whatever it makes, so its percentage and time left fit beside it in a 1280 px window.
+ * jobLabel() without its details (jobTitleOnly), for the top bar's narrow chip. An export is "Exporting" whatever it
+ * makes, so its percentage and time left fit beside it in a 1280 px window.
  */
 export function jobChipLabel(job: JobSnapshot): string {
   if (job.kind === JOB_KINDS.export && !job.stopping) return 'Exporting'
-  const label = jobLabel(job)
-  const details = label.indexOf(' · ')
-  return details < 0 ? label : label.slice(0, details)
+  return jobTitleOnly(jobLabel(job))
 }
 
 /**

@@ -209,6 +209,8 @@ test('Assist › Stems shows progress, cancels, and explains an out-of-memory fa
   await expect(alert).toContainText('This computer ran out of memory while separating stems.')
   await expect(alert).toContainText('Your project is unchanged. Trying again starts from the beginning.')
   await expect(panel.getByText('Close other browser tabs that play video')).toBeVisible()
+  // Focus goes to the main action, which the running view's Cancel had.
+  await expect(panel.getByRole('button', { name: 'Reload and try again' })).toBeFocused()
   await shot(page, 'stems-failed')
   expect(
     await page.evaluate(() => {
@@ -217,7 +219,7 @@ test('Assist › Stems shows progress, cancels, and explains an out-of-memory fa
     }),
   ).toBeNull()
 
-  await panel.getByRole('button', { name: 'Try again' }).click()
+  await panel.getByRole('button', { name: 'Try again', exact: true }).click()
   await expect(panel.getByRole('progressbar', { name: 'Stem separation progress' })).toBeVisible()
   expect(await page.evaluate(() => (window as unknown as { starts: number }).starts)).toBe(3)
 
@@ -233,4 +235,108 @@ test('Assist › Stems shows progress, cancels, and explains an out-of-memory fa
   })
   expect(songBytes[0]).toBeGreaterThan(100_000)
   expect(songBytes[1]).toBe(songBytes[0])
+})
+
+test('an out-of-memory stop offers a reload that keeps the project and separates the stems again', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    const { app, shared } = window.mvStudio
+    app.stems.setStemsServiceForTests({
+      async estimate() {
+        return { downloadBytes: 0, seconds: 230, memoryBytes: 4e9, device: 'wasm' }
+      },
+      separateSong() {
+        return shared.jobs.run({
+          kind: 'analysis.stems',
+          title: 'Separating stems',
+          run: () =>
+            Promise.reject(
+              new shared.JobError(
+                'out-of-memory',
+                'This computer ran out of memory while separating stems.',
+                {
+                  retryable: true,
+                },
+              ),
+            ),
+        })
+      },
+    })
+    window.location.hash = '#/editor?tab=assist&assist=stems'
+  })
+  await waitForPreview(page)
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  await panel.getByRole('button', { name: 'Separate stems' }).click()
+  await expect(panel.getByRole('alert')).toContainText(
+    'This computer ran out of memory while separating stems.',
+  )
+  await expect(
+    panel.getByText(
+      'Reload and try again: your project is saved first, and the reload frees memory held by earlier work in this tab',
+    ),
+  ).toBeVisible()
+  await expect(panel.getByText('Close other browser tabs that play video')).toBeVisible()
+  const reload = panel.getByRole('button', { name: 'Reload and try again' })
+
+  // A reload would stop an export for good, so it waits for the export.
+  await page.evaluate(() => {
+    const { shared } = window.mvStudio
+    const job = shared.jobs.run({
+      kind: 'export.outputs',
+      title: 'Exporting 1 video · 2 min left',
+      run: (ctx: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) =>
+          ctx.signal.addEventListener('abort', () => reject(new shared.JobError('cancelled', 'Cancelled'))),
+        ),
+    })
+    job.promise.catch(() => undefined)
+    ;(window as unknown as { exportJob: { cancel: () => void } }).exportJob = job
+  })
+  await expect(reload).toBeDisabled()
+  await expect(
+    panel.getByText('Wait for “Exporting 1 video” to finish: a reload would stop it.'),
+  ).toBeVisible()
+  await page.evaluate(() => (window as unknown as { exportJob: { cancel: () => void } }).exportJob.cancel())
+  await expect(reload).toBeEnabled()
+
+  // The model download never answers, so the separation started after the reload keeps running.
+  await page.route(/huggingface\.co/, () => undefined)
+  const projectId = await page.evaluate(() => {
+    const { app } = window.mvStudio
+    // An edit the autosave hasn't written yet.
+    app.project.dispatch(
+      { type: 'project.rename', name: 'Kept across the reload' },
+      { label: 'Rename project' },
+    )
+    ;(window as unknown as { beforeReload: boolean }).beforeReload = true
+    return app.project.editor.getProject().id
+  })
+  await reload.click()
+  await page.waitForFunction(
+    () => !(window as unknown as { beforeReload?: boolean }).beforeReload && window.mvStudio?.ready === true,
+  )
+  await expect(panel.getByRole('progressbar', { name: 'Stem separation progress' })).toBeVisible()
+  expect(page.url()).toContain(`project=${projectId}`)
+  expect(
+    await page.evaluate(() => {
+      const project = window.mvStudio.app.project.editor.getProject()
+      return { id: project.id, name: project.name }
+    }),
+  ).toEqual({ id: projectId, name: 'Kept across the reload' })
+  await panel.getByRole('button', { name: 'Cancel' }).click()
+  await expect(panel.getByRole('button', { name: 'Separate stems' })).toBeVisible()
+
+  // The retry runs once: another reload opens the project without separating again.
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await waitForPreview(page)
+  await expect(panel.getByRole('button', { name: 'Separate stems' })).toBeVisible()
+  expect(
+    await page.evaluate(() =>
+      window.mvStudio.shared.jobs.list().some((j: { kind: string }) => j.kind === 'analysis.stems'),
+    ),
+  ).toBe(false)
 })
