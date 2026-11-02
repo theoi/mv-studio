@@ -172,6 +172,13 @@ await director.apply() // or apply({ confirmSpend: true }) after the cost dialog
 director.undo()
 ```
 
+The app (`src/app/state/director.ts`) keeps one session and resets it when another project opens. While the draft
+holds AI shots that would be lost then (made for a draft that is not on the timeline, or failed shots waiting for
+Retry: `heldDraftOf()`), opening another project, closing or reloading the page asks first
+(`src/app/state/leaveDraft.ts`), and offers to apply the draft without generating more. A new draft plans with the
+project's last seed (`lastSeed()`), so after a reload the same request plans the same prompts and reuses the AI shots
+already in Media.
+
 Director text clips carry `meta.director.textRole` (`lyric`, `title`, `emphasis`, `preview`) and
 `meta.director.lyricLineId`. Emphasized words and previews are not linked to their line (`clip.lyricLineId` unset), so
 when the lyrics are re-timed, move them with the line clips in the same step:

@@ -6,13 +6,17 @@ import {
   directorRequest,
   draftProgress,
   draftVideo,
+  heldDraftOf,
+  lastSeed,
+  rememberSeed,
   useDirector,
   videoKindFor,
 } from '../../../src/app/state/director.ts'
 import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
+import { heldDraft } from '../../../src/app/state/leaveDraft.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import { dismissToast, get as getUi, set as setUi } from '../../../src/app/state/ui.ts'
-import type { DirectorState } from '../../../src/director/index.ts'
+import type { DirectorState, PlanCost } from '../../../src/director/index.ts'
 import { createProject } from '../../../src/model/factory.ts'
 import type { Asset, AssetOrigin, Project } from '../../../src/model/types.ts'
 import { createFromTemplate } from '../../../src/plugins/templates.ts'
@@ -225,5 +229,72 @@ describe('another project opening', () => {
     openAnother()
     await applying
     expect(getUi().toasts.map((t) => t.message)).toEqual([])
+  })
+})
+
+describe('a draft that leaving the project would lose', () => {
+  const state = (s: Record<string, unknown>) => s as unknown as DirectorState
+  const cost = (count: number, reused: number) => ({ count, reused }) as unknown as PlanCost
+
+  it('holds the AI shots made for a draft not on the timeline, after Stop or a failed generation', () => {
+    const stopped = state({ status: 'ready', plan: {}, generatedShots: 2, unit: 'clip', cost: cost(3, 1) })
+    expect(heldDraftOf(stopped)).toEqual({ kind: 'unapplied', unit: 'clip', made: 2, missing: 4 })
+    const failed = state({ status: 'error', plan: {}, generatedShots: 1, unit: 'shot', cost: null })
+    expect(heldDraftOf(failed)).toEqual({ kind: 'unapplied', unit: 'shot', made: 1, missing: 0 })
+  })
+
+  it('holds the failed shots of a draft on the timeline, waiting for Retry', () => {
+    const applied = state({ status: 'applied', plan: {}, failedShots: 2, unit: 'clip' })
+    expect(heldDraftOf(applied)).toEqual({ kind: 'failed', unit: 'clip', failed: 2 })
+  })
+
+  it('holds nothing before any shot is made, once the draft is complete, or while it is planned or generated', () => {
+    expect(
+      heldDraftOf(state({ status: 'ready', plan: {}, generatedShots: 0, unit: 'shot', cost: cost(4, 0) })),
+    ).toBeNull()
+    expect(heldDraftOf(state({ status: 'applied', plan: {}, failedShots: 0, unit: 'shot' }))).toBeNull()
+    expect(heldDraftOf(state({ status: 'error', generatedShots: 0, unit: 'shot', cost: null }))).toBeNull()
+    expect(heldDraftOf(state({ status: 'generating', plan: {}, done: 2, unit: 'clip' }))).toBeNull()
+    expect(heldDraftOf({ status: 'idle' })).toBeNull()
+  })
+
+  it('is what the question before leaving asks about', () => {
+    useDirector.setState({ state: state({ status: 'applied', plan: {}, failedShots: 1, unit: 'shot' }) })
+    expect(heldDraft()).toEqual({ kind: 'failed', unit: 'shot', failed: 1 })
+    useDirector.setState({ state: { status: 'idle' } })
+    expect(heldDraft()).toBeNull()
+  })
+})
+
+describe('the seed of a project’s last plan', () => {
+  beforeEach(() => {
+    const kept = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => kept.get(key) ?? null,
+      setItem: (key: string, value: string) => void kept.set(key, value),
+    })
+    vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => undefined })
+    loadDemoProject()
+    useDirector.setState({ state: { status: 'idle' } })
+  })
+
+  it('is kept per project, for the 50 projects planned in last', () => {
+    rememberSeed('first', 3)
+    rememberSeed('second', 2)
+    expect([lastSeed('first'), lastSeed('second'), lastSeed('other')]).toEqual([3, 2, undefined])
+    rememberSeed('first', 4)
+    for (let i = 0; i < 49; i++) rememberSeed(`p${i}`, 2)
+    // "second" is the oldest now; "first" planned again after it.
+    expect([lastSeed('second'), lastSeed('first'), lastSeed('p0')]).toEqual([undefined, 4, 2])
+  })
+
+  it('is what a new draft in the project plans with, and a plan keeps its own', async () => {
+    const id = editor.getProject().id
+    rememberSeed(id, 3)
+    await draftVideo(directorRequest('', 'mine'))
+    const first = useDirector.getState().state
+    expect('request' in first && first.request?.seed).toBe(3)
+    await draftVideo({ ...directorRequest('', 'mine'), seed: 5 })
+    expect(lastSeed(id)).toBe(5)
   })
 })

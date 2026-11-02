@@ -4,6 +4,7 @@ import { TooltipProvider } from './ds/Tooltip.tsx'
 import { Editor, SettingsDialog, SetupScreen, VjMode } from './lazy.ts'
 import { preloadDeferred } from './preload.ts'
 import { initHashSync } from './state/hash.ts'
+import { initLeaveDraft } from './state/leaveDraft.ts'
 import { initPersistence, usePersistence } from './state/persistence.ts'
 import { initRetryAfterReload } from './state/reloadRetry.ts'
 import { reportStoppedExport } from './state/stoppedExport.ts'
@@ -13,6 +14,7 @@ import { StartScreen } from './screens/start/StartScreen.tsx'
 import { Deferred } from './screens/common/Deferred.tsx'
 import { LoadBoundary, ScreenLoadFailed } from './screens/common/LoadBoundary.tsx'
 import { Toaster } from './screens/common/Toaster.tsx'
+import { LeaveDraftDialog } from './screens/common/LeaveDraftDialog.tsx'
 import { RestoringScreen } from './screens/common/RestoringScreen.tsx'
 import { ReviewNav } from './screens/common/ReviewNav.tsx'
 import { SameProjectDialog } from './screens/common/SameProjectDialog.tsx'
@@ -28,6 +30,7 @@ export function App() {
   useEffect(initHashSync, [])
   // After initHashSync, which starts reopening the project the reload's link names.
   useEffect(initRetryAfterReload, [])
+  useEffect(initLeaveDraft, [])
   useEffect(preloadWhenIdle, [])
   useEffect(initUpdateCheck, [])
   useEffect(() => void reportStoppedExport(), [])
@@ -54,6 +57,7 @@ export function App() {
         <SettingsDialog />
       </Deferred>
       <SameProjectDialog />
+      <LeaveDraftDialog />
       <Toaster />
       {import.meta.env.DEV && review && <ReviewNav />}
     </TooltipProvider>

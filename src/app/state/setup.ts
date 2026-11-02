@@ -18,6 +18,7 @@ import { sampleSong } from '../mock/demoProject.ts'
 import { autoCutOptions, startAutoCut, useAutoCut } from './autocut.ts'
 import { draftFromSetup } from './director.ts'
 import { analyzeSong, storeFiles } from './importer.ts'
+import { leaveDraftOk, leaveDraftThen } from './leaveDraft.ts'
 import { startLyrics } from './lyrics.ts'
 import { loadSetupDraft, startProject, unusedProjectName } from './persistence.ts'
 import { editor } from './project.ts'
@@ -79,11 +80,14 @@ export function setupFromLink(sample: boolean): void {
  * the idea) is kept when they go back and pick another kind, unless another project was opened since.
  */
 export function startSetup(kind: Kind): void {
-  const s = useSetup.getState()
-  const id = s.song?.asset?.id
-  const draftKept = !id || id === loadingDraft || editor.getProject().assets[id] !== undefined
-  useSetup.setState(draftKept ? { ...s, songError: null, footageError: null } : blank, true)
-  setUi({ screen: 'setup', kind })
+  // The setup screen's project replaces the open one once a song is chosen.
+  leaveDraftThen(() => {
+    const s = useSetup.getState()
+    const id = s.song?.asset?.id
+    const draftKept = !id || id === loadingDraft || editor.getProject().assets[id] !== undefined
+    useSetup.setState(draftKept ? { ...s, songError: null, footageError: null } : blank, true)
+    setUi({ screen: 'setup', kind })
+  })
 }
 
 const AUDIO_NAME = /\.(mp3|wav|flac|m4a|aac|ogg|oga|opus|weba)$/i
@@ -307,6 +311,7 @@ export async function openFromSetup(withSong = true): Promise<void> {
 
 /** The start screen's "Blank project". */
 export async function openBlankProject(): Promise<void> {
+  if (!(await leaveDraftOk())) return
   useSetup.setState(blank, true)
   setUi({ kind: 'blank' })
   await openFromSetup(false)

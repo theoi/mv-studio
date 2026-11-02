@@ -3,6 +3,7 @@ import { directorRequest, draftVideo, useDirector } from './director.ts'
 import type { Project } from '../../model/index.ts'
 import { startAutoCut } from './autocut.ts'
 import { isRunning, JOB_KINDS } from './jobs.ts'
+import { leaveDraftThen } from './leaveDraft.ts'
 import { bringToFront, putBehind, suitableClips } from './behind.ts'
 import { isStored, leaveProjectJobs, openFromLink, untracked, usePersistence } from './persistence.ts'
 import { clampToLastFrame, editor, loadDemoProject, loadEmptyProject } from './project.ts'
@@ -157,6 +158,18 @@ function startReviewJobs(q: URLSearchParams) {
   if (q.get('export') === 'exporting') startMockExport(0.31)
 }
 
+/** Whether following `hash` opens another project in place of the open one, or the setup screen for a new one. */
+function opensAnother(hash: string): boolean {
+  const [path = '', qs = ''] = hash.replace(/^#\/?/, '').split('?')
+  if (path === 'setup') return get().screen !== 'setup'
+  const project = new URLSearchParams(qs).get('project')
+  const open = editor.getProject()
+  // As applyHash: without a project the sample replaces an empty project, and 'empty' replaces one with a song.
+  if (project === null) return !open.songAssetId
+  if (project === 'empty') return Boolean(open.songAssetId)
+  return project !== open.id
+}
+
 let started = false
 
 export function initHashSync() {
@@ -183,10 +196,20 @@ export function initHashSync() {
     synced = window.location.hash
   }
   window.addEventListener('hashchange', () => {
-    applyHash(window.location.hash, true)
-    synced = window.location.hash
-    navigated = true
-    write()
+    const hash = window.location.hash
+    const follow = () => {
+      applyHash(hash, true)
+      synced = window.location.hash
+      navigated = true
+      write()
+    }
+    if (!opensAnother(hash)) return follow()
+    leaveDraftThen(follow, () => {
+      // Staying: the address goes back to the open project's.
+      window.history.replaceState(null, '', last)
+      synced = window.location.hash
+      write()
+    })
   })
   useUi.subscribe(write)
   editor.subscribe(write)
