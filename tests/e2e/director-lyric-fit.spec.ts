@@ -213,3 +213,98 @@ for (const aspect of ['9:16', '1:1']) {
     expect(result.badBreaks).toEqual([])
   })
 }
+
+test('a lyric clip keeps the size it was laid out from through a reload, a copy of the project, a project file and a duplicated clip', async ({
+  page,
+}) => {
+  test.setTimeout(180_000)
+  await draftLongLines(page, '9:16', TITLES['9:16'] as string)
+  type Layouts = Record<string, { base: number; fitted: number }>
+  /** meta.director.lineLayout of each clip that has one, by clip id. */
+  const layouts = () =>
+    page.evaluate(() => {
+      const p = window.mvStudio.app.project.editor.getProject()
+      type C = { id: string; meta?: { director?: { lineLayout?: { base: number; fitted: number } } } }
+      return {
+        id: p.id as string,
+        layouts: Object.fromEntries(
+          (Object.values(p.clips) as C[]).flatMap((c) =>
+            c.meta?.director?.lineLayout ? [[c.id, c.meta.director.lineLayout]] : [],
+          ),
+        ),
+      }
+    })
+  const before = await layouts()
+  const shrunk = Object.entries(before.layouts as Layouts).filter(([, l]) => l.base > l.fitted)
+  expect(Object.keys(before.layouts).length).toBeGreaterThan(10)
+  expect(shrunk.length).toBeGreaterThan(0)
+  await page.evaluate(() => window.mvStudio.app.persistence.saveNow())
+
+  const elsewhere = await page.evaluate(async (id) => {
+    const { app, media } = window.mvStudio
+    type C = { id: string; meta?: { director?: { lineLayout?: unknown } } }
+    const layoutsOf = (p: { clips: Record<string, C> }) =>
+      Object.fromEntries(
+        Object.values(p.clips).flatMap((c) =>
+          c.meta?.director?.lineLayout ? [[c.id, c.meta.director.lineLayout]] : [],
+        ),
+      )
+    const copy = await app.persistence.duplicateProject(id)
+    // The sample's media is bundled with the app, not kept in browser storage: the file carries the project alone.
+    const kept = await media.projectStore.load(id)
+    const file = new File([await media.projectStore.exportPortable({ ...kept, assets: {} })], 'lyrics.mvs')
+    const opened = await media.projectStore.importPortable(file)
+    return {
+      copy: layoutsOf(await media.projectStore.load(copy.id)),
+      file: layoutsOf(await media.projectStore.load(opened.id)),
+      ids: [copy.id, opened.id],
+    }
+  }, before.id)
+  expect(elsewhere.ids).not.toContain(before.id)
+  expect(elsewhere.copy).toEqual(before.layouts)
+  expect(elsewhere.file).toEqual(before.layouts)
+
+  await page.reload()
+  await page.waitForFunction((id) => window.mvStudio?.app.project.editor.getProject().id === id, before.id)
+  expect(await layouts()).toEqual(before)
+
+  // After the reload, a shrunk line retyped shorter grows back to the size it was laid out from, and a duplicated
+  // clip keeps the size too.
+  const [clipId, layout] = shrunk[0] as [string, { base: number; fitted: number }]
+  const after = await page.evaluate((clipId) => {
+    const { app, director } = window.mvStudio
+    const editor = app.project.editor
+    const project = editor.getProject()
+    const clip = project.clips[clipId] as { text: string; meta: { director: { lyricLineId: string } } }
+    const lineId = clip.meta.director.lyricLineId
+    const text = (project.lyrics.lines as { id: string; text: string }[])
+      .find((l) => l.id === lineId)!
+      .text.split(' ')
+      .slice(0, 2)
+      .join(' ')
+    editor.dispatch([
+      ...director.lyricTextCommands(project, lineId, text),
+      { type: 'lyrics.updateLine', lineId, patch: { text } },
+    ])
+    const existing = new Set(Object.keys(editor.getProject().clips))
+    // As a clip, not its lyric line (which a click on a lyric chip selects).
+    app.ui.selectClips([clipId])
+    app.clipboard.duplicateSelection()
+    const clips = Object.values(editor.getProject().clips) as {
+      id: string
+      text: string
+      style: { fontSize: number }
+      meta?: { director?: { lineLayout?: unknown } }
+    }[]
+    const retyped = clips.find((c) => c.id === clipId)!
+    const copy = clips.find((c) => !existing.has(c.id))
+    return {
+      size: retyped.style.fontSize,
+      layout: retyped.meta?.director?.lineLayout,
+      copy: copy?.meta?.director?.lineLayout,
+    }
+  }, clipId)
+  expect(after.size).toBe(layout.base)
+  expect(after.layout).toEqual({ base: layout.base, fitted: layout.base })
+  expect(after.copy).toEqual(after.layout)
+})

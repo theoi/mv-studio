@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildPlannerInput,
@@ -10,6 +12,7 @@ import {
 import { frameWidth, layoutLine, rowWidth, textWidth, TITLE_SAFE } from '../../../src/director/typography.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
 import { settingsForAspect } from '../../../src/model/factory.ts'
+import { parseProject } from '../../../src/model/migrations.ts'
 import type { AspectPreset, LyricLine, LyricsDoc, Project, TextClip } from '../../../src/model/types.ts'
 import { LYRICS, makeProject, timedLine } from './fixtures.ts'
 
@@ -294,6 +297,50 @@ describe('lyricTextCommands', () => {
     const now = retype(p, 'f2', '(The Supercalifragilisticexpialidocious)').clips[line!.id] as TextClip
     expect(now.text).toBe('(The Supercalifragilisticexpialidocious)')
     expect(textWidth(now.text, styleOf(now))).toBeLessThanOrEqual(0.9 * frameWidth('16:9'))
+  })
+
+  it('retypes a lyric of a project saved before clips recorded the size they were laid out from', () => {
+    // Text clips of the drafted SONG lyrics at 9:16, as the build before lineLayout saved them.
+    const saved = parseProject(
+      JSON.parse(readFileSync(path.join(import.meta.dirname, 'saved-before-line-layout.json'), 'utf8')),
+    )
+    const [line] = lineClips(saved, 'f2')
+    const [preview] = director(saved, 'preview', 'f2')
+    expect(directorMeta(line!)?.lineLayout).toBeUndefined()
+    const after = retype(saved, 'f2', LONG)
+    const texts = Object.values(after.clips).filter((c): c is TextClip => c.type === 'text')
+    for (const clip of [line!, preview!]) {
+      const now = after.clips[clip.id] as TextClip
+      // Laid out from the size it has, never larger: the size it was laid out from is not known.
+      expect(now.text).toBe(layoutLine(LONG, styleOf(clip), '9:16').text)
+      expect(now.text.split('\n').length).toBeGreaterThan(clip.text.split('\n').length)
+      for (const row of now.text.split('\n'))
+        expect(textWidth(row, styleOf(now))).toBeLessThanOrEqual(rowWidth(styleOf(now), '9:16'))
+      const b = box(now)
+      expect(b.top).toBeGreaterThanOrEqual(TITLE_SAFE.top)
+      expect(b.bottom).toBeLessThanOrEqual(TITLE_SAFE.bottom)
+      for (const other of texts) {
+        if (
+          other.id === now.id ||
+          other.start >= now.start + now.duration ||
+          now.start >= other.start + other.duration
+        )
+          continue
+        const o = box(other)
+        expect(o.bottom <= b.top || b.bottom <= o.top).toBe(true)
+      }
+      // From its first retype on, it records that size, and later retypes grow back to it.
+      expect(directorMeta(now)?.lineLayout).toEqual({ base: clip.style.fontSize, fitted: now.style.fontSize })
+    }
+    expect((retype(saved, 'f2', 'Every light').clips[line!.id] as TextClip).style.fontSize).toBe(
+      line!.style.fontSize,
+    )
+    const back = retype(after, 'f2', saved.lyrics!.lines.find((l) => l.id === 'f2')!.text)
+    for (const clip of [line!, preview!]) {
+      const now = back.clips[clip.id] as TextClip
+      expect({ text: now.text, style: now.style }).toEqual({ text: clip.text, style: clip.style })
+      expect(settled(now.transform.y)).toBeCloseTo(settled(clip.transform.y), 5)
+    }
   })
 
   it('changes nothing for the same text or a line that is not in the lyrics', async () => {
