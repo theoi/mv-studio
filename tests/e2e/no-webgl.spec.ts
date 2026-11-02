@@ -54,8 +54,15 @@ test('without WebGL 2 the start screen says so, the stage says why it shows noth
   await page.keyboard.press('Control+K')
   await page.keyboard.type('export')
   const exports = page.getByRole('option', { name: /^Export/ })
-  await expect(exports).toHaveCount(5)
+  await expect(exports).toHaveCount(8)
   for (const option of await exports.all()) await expect(option).toContainText(NO_GRAPHICS_REASON)
+  // So is every way into VJ mode.
+  await page.getByRole('combobox').fill('vj')
+  const vjEntries = page.getByRole('option', {
+    name: /^(Open VJ mode|Record a VJ performance|Map keys and MIDI pads)/,
+  })
+  await expect(vjEntries).toHaveCount(3)
+  for (const option of await vjEntries.all()) await expect(option).toContainText(NO_GRAPHICS_REASON)
   await page.keyboard.press('Escape')
 
   // Tools whose models or results need WebGL 2 give the short reason in their panel, next to the stage's message.

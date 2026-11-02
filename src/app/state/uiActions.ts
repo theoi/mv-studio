@@ -1483,6 +1483,12 @@ export const UI_ACTIONS: readonly UiAction[] = [
   },
   {
     area: 'Assist',
+    name: 'Back to the draft (Reload and try again waiting for a draft)',
+    palette: 'director',
+    search: ['back to the draft', 'go to the draft'],
+  },
+  {
+    area: 'Assist',
     name: 'Ask result: Apply, Discard, Show where, Undo, Try again, Dismiss',
     palette: { skipped: 'Answers to the request in view; Ask Assist in the palette asks a new one' },
     search: [],
@@ -2195,6 +2201,16 @@ export const UI_ACTIONS: readonly UiAction[] = [
     name: 'Already in this browser: Keep a copy, Open the one here',
     palette: { skipped: 'A question about the project file being opened, answered in its dialog' },
     search: [],
+  },
+  {
+    area: 'Editor',
+    name: 'Leaving a draft: Back to the draft, Leave anyway, Apply and leave',
+    palette: {
+      skipped:
+        'Answers to the question asked before another project opens over a Director draft that holds AI shots; it answers an open already under way',
+    },
+    search: [],
+    controls: ['Back to the draft', 'Leave anyway', 'Apply and leave', 'Applying…'],
   },
 ]
 

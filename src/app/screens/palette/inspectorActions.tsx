@@ -100,6 +100,7 @@ import {
 } from '../../state/camera.ts'
 import { cloudSettings, llmLabel } from '../../state/cloud.ts'
 import { tryAnotherVersion, undoDraft, useDirector } from '../../state/director.ts'
+import { graphicsUnavailable } from '../../state/graphics.ts'
 import { openImport } from '../../state/importer.ts'
 import { isRunning, JOB_KINDS, jobLabel, openJob, runningJobs } from '../../state/jobs.ts'
 import {
@@ -1344,7 +1345,10 @@ export const inspectorActions: Action[] = [
     icon: <Box />,
     aliases: ['push in', 'orbit', 'drift', 'ken burns'],
     keywords: '3d camera move motion parallax depth still image',
-    check: () => (isRunning(JOB_KINDS.camera) ? 'A 3D camera move is being added' : undefined),
+    // Adding a move estimates depth for the compositor to draw; one already on the clip can still be changed or removed.
+    check: (clip) =>
+      (cameraMoveOf(clip) ? undefined : graphicsUnavailable()) ??
+      (isRunning(JOB_KINDS.camera) ? 'A 3D camera move is being added' : undefined),
     detail: (clip) => {
       const move = cameraMoveOf(clip)
       const motion = move && motionOf(move.preset)
@@ -1415,7 +1419,8 @@ export const inspectorActions: Action[] = [
     label: 'Add depth to the 3D camera move',
     icon: <Box />,
     keywords: '3d camera flat parallax depth map',
-    check: () => (isRunning(JOB_KINDS.camera) ? 'A 3D camera move is being added' : undefined),
+    check: () =>
+      graphicsUnavailable() ?? (isRunning(JOB_KINDS.camera) ? 'A 3D camera move is being added' : undefined),
     run: ({ clip, move }) => addCameraMoves([clip.id], move.preset, move.intensity),
   }),
   on({
@@ -1433,6 +1438,8 @@ export const inspectorActions: Action[] = [
     keywords: 'cutout person subject mask front behind layering',
     check: ({ clip, hostId }) => {
       if (clip.meta?.behindSubjectOf || hasCutout(project(), clip.id)) return undefined
+      const noGraphics = graphicsUnavailable()
+      if (noGraphics) return noGraphics
       if (isRunning(JOB_KINDS.cutout)) return 'A cutout is being made'
       return canTryCutout(suitabilityOf(project(), project().clips[hostId], useBehind.getState().checks))
         ? undefined
@@ -1453,7 +1460,8 @@ export const inspectorActions: Action[] = [
     icon: <MousePointerClick />,
     aliases: ['pick object', 'select object in preview'],
     keywords: 'object cutout behind click preview track',
-    check: () => (isRunning(JOB_KINDS.cutout) ? 'A cutout is being made' : undefined),
+    check: () =>
+      graphicsUnavailable() ?? (isRunning(JOB_KINDS.cutout) ? 'A cutout is being made' : undefined),
     run: ({ hostId }) => pickObject(hostId),
   }),
   on({
@@ -1470,7 +1478,8 @@ export const inspectorActions: Action[] = [
     icon: <Crosshair />,
     aliases: ['fix tracking', 'object lost'],
     keywords: 'object cutout behind tracking lost fix',
-    check: () => (isRunning(JOB_KINDS.cutout) ? 'A cutout is being made' : undefined),
+    check: () =>
+      graphicsUnavailable() ?? (isRunning(JOB_KINDS.cutout) ? 'A cutout is being made' : undefined),
     values: {
       placeholder: 'Search lost spots',
       groups: ({ host, pick }) =>
@@ -2592,6 +2601,7 @@ export const inspectorActions: Action[] = [
     icon: <Disc3 />,
     aliases: ['record live', 'record performance', 'vj record'],
     keywords: 'vj live perform record take midi',
+    unavailable: graphicsUnavailable,
     run: () => enterVjTo('record'),
   },
   {
@@ -2601,6 +2611,7 @@ export const inspectorActions: Action[] = [
     icon: <Keyboard />,
     aliases: ['midi mapping', 'map pads', 'learn midi'],
     keywords: 'vj midi map mapping learn keys pads controller bindings',
+    unavailable: graphicsUnavailable,
     run: () => enterVjTo('mapping'),
   },
   {

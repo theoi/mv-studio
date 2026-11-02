@@ -235,6 +235,37 @@ async function contentOf(page: Page): Promise<Content> {
   })
 }
 
+/** Notes the controls on screen that no row names, state by state; `check` fails with each one and where it was. */
+function census(page: Page) {
+  const uncovered = new Map<string, Set<string>>()
+  let seen = 0
+  return {
+    collect: async (state: string) => {
+      const content = await contentOf(page)
+      for (const control of controlsIn(await page.locator('body').ariaSnapshot())) {
+        seen++
+        if (covered(control, content, state)) continue
+        const key = control.name ? `${control.role} "${control.name}"` : `${control.role} (no name)`
+        uncovered.set(key, (uncovered.get(key) ?? new Set()).add(state))
+      }
+    },
+    check: (atLeast: number) => {
+      // A snapshot format the parser no longer reads would otherwise pass with nothing seen.
+      expect(seen).toBeGreaterThan(atLeast)
+      const report = [...uncovered]
+        .map(([control, states]) => {
+          const list = [...states]
+          return `${control}  (${list.slice(0, 3).join('; ')}${list.length > 3 ? `; +${list.length - 3} more` : ''})`
+        })
+        .join('\n')
+      expect(
+        uncovered.size,
+        `Controls with no UI_ACTIONS row (add a row, or the name to a row’s \`controls\`), and where they are:\n${report}\n`,
+      ).toBe(0)
+    },
+  }
+}
+
 test('every control on screen has a UI_ACTIONS row, so the palette has it or says why not', async ({
   page,
 }) => {
@@ -245,17 +276,7 @@ test('every control on screen has a UI_ACTIONS row, so the palette has it or say
     'CONTENT rows missing from UI_ACTIONS',
   ).toEqual([])
 
-  const uncovered = new Map<string, Set<string>>()
-  let seen = 0
-  const collect = async (state: string) => {
-    const content = await contentOf(page)
-    for (const control of controlsIn(await page.locator('body').ariaSnapshot())) {
-      seen++
-      if (covered(control, content, state)) continue
-      const key = control.name ? `${control.role} "${control.name}"` : `${control.role} (no name)`
-      uncovered.set(key, (uncovered.get(key) ?? new Set()).add(state))
-    }
-  }
+  const { collect, check } = census(page)
   const ui = (patch: object) => page.evaluate((p) => window.mvStudio.app.ui.set(p), patch)
   const clipId = (find: string) =>
     page.evaluate((find) => {
@@ -494,6 +515,25 @@ test('every control on screen has a UI_ACTIONS row, so the palette has it or say
   await page.keyboard.press('Escape')
   await expect(settings).toBeHidden()
 
+  // The question before another project opens over a Director draft holding AI shots, in both its forms. Escape
+  // answers Stay.
+  for (const held of [
+    { kind: 'unapplied', unit: 'shot', made: 2, missing: 1 },
+    { kind: 'failed', unit: 'clip', failed: 1 },
+  ]) {
+    await page.evaluate(
+      (held) =>
+        window.mvStudio.app.leaveDraft.useLeaveDraft.setState({
+          ask: { held, leave: () => undefined, stay: () => undefined },
+        }),
+      held,
+    )
+    await expect(page.getByRole('button', { name: 'Leave anyway' })).toBeVisible()
+    await collect(`Leaving a draft (${held.kind})`)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('button', { name: 'Leave anyway' })).toHaveCount(0)
+  }
+
   await keepCopy(page, 'Census copy')
   await page.evaluate(() => (window.location.hash = '#/start'))
   const card = page.getByRole('button', { name: 'More actions for Census copy' })
@@ -518,16 +558,52 @@ test('every control on screen has a UI_ACTIONS row, so the palette has it or say
     page.getByRole('button', { name: 'Night city' }).click({ button: 'right' }),
   )
 
-  // A snapshot format the parser no longer reads would otherwise pass with nothing seen.
-  expect(seen).toBeGreaterThan(500)
-  const report = [...uncovered]
-    .map(([control, states]) => {
-      const list = [...states]
-      return `${control}  (${list.slice(0, 3).join('; ')}${list.length > 3 ? `; +${list.length - 3} more` : ''})`
+  check(500)
+})
+
+test.describe('without WebGL 2', () => {
+  // Chrome without a usable GPU: what can't draw is unavailable with the reason, and says so in its place.
+  test.use({ webgl: false })
+
+  test('every control on screen has a UI_ACTIONS row there too', async ({ page }) => {
+    test.setTimeout(120_000)
+    const { collect, check } = census(page)
+    const ui = (patch: object) => page.evaluate((p) => window.mvStudio.app.ui.set(p), patch)
+    const inspector = page.getByRole('tabpanel', { name: 'Inspector' })
+    await openHarness(page)
+    page.setDefaultTimeout(10_000)
+    await page.evaluate(() => {
+      localStorage.setItem('mv-studio.guide-seen', '1')
+      window.location.hash = '#/editor?kind=lyric&t=73'
     })
-    .join('\n')
-  expect(
-    uncovered.size,
-    `Controls with no UI_ACTIONS row (add a row, or the name to a row’s \`controls\`), and where they are:\n${report}\n`,
-  ).toBe(0)
+    await expect(
+      page.getByRole('alert').filter({ hasText: 'needs graphics acceleration' }).first(),
+    ).toBeVisible()
+    await collect('No WebGL 2 › editor')
+    for (const type of ['image', 'video']) {
+      const id = await page.evaluate(
+        (type) =>
+          Object.values((window.mvStudio.app.project.editor.getProject() as Project).clips).find(
+            (c) => c.type === type,
+          )!.id,
+        type,
+      )
+      await ui({ selection: { type: 'clip', id }, rightTab: 'inspector' })
+      const folded = inspector.locator('[data-section-toggle][aria-expanded="false"]')
+      for (let i = 0; i < 40 && (await folded.count()); i++) await folded.first().click()
+      await collect(`No WebGL 2 › Inspector › ${type} clip`)
+    }
+    for (const view of ['camera', 'behind']) {
+      await page.evaluate((v) => window.mvStudio.app.ui.openAssist(v), view)
+      await collect(`No WebGL 2 › Assist › ${view}`)
+    }
+    await ui({ selection: { type: 'none' }, dialog: 'export', exportPhase: 'setup' })
+    await expect(page.getByRole('dialog', { name: 'Export' })).toBeVisible()
+    await collect('No WebGL 2 › Export')
+    await page.keyboard.press('Escape')
+    await page.evaluate(() => (window.location.hash = '#/start'))
+    await expect(page.getByRole('heading', { name: 'What are you making?' })).toBeVisible()
+    await collect('No WebGL 2 › Start')
+    check(100)
+  })
 })

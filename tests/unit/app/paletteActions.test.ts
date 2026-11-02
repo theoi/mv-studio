@@ -13,6 +13,17 @@ import { get, select, set, type Selection } from '../../../src/app/state/ui.ts'
 import { settingsForAspect } from '../../../src/model/index.ts'
 import { ASK_SCORE, isSentence } from '../../../src/app/state/paletteScore.ts'
 import { SHORTCUTS_NOT_IN_PALETTE, UI_ACTIONS } from '../../../src/app/state/uiActions.ts'
+import { stillClips } from '../../../src/app/state/camera.ts'
+import { NO_GRAPHICS_REASON } from '../../../src/app/state/graphics.ts'
+import { CAMERA_EFFECT_ID } from '../../../src/vision/render/cameraEffect.ts'
+import type * as Capabilities from '../../../src/shared/capabilities.ts'
+
+// As in a browser that draws with WebGL 2, which Node can't; the test without it turns it off.
+const gpu = vi.hoisted(() => ({ webgl2: true }))
+vi.mock('../../../src/shared/capabilities.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof Capabilities>()),
+  webgl2Available: () => gpu.webgl2,
+}))
 
 const covered = UI_ACTIONS.flatMap((a) =>
   typeof a.palette === 'string' ? [{ ...a, palette: a.palette }] : [],
@@ -423,6 +434,45 @@ describe('command palette coverage', () => {
       expect(ids[0]).toBe('newProject.lyric')
       expect(ids.slice(1, 3)).toContain('karaokeFill')
     } finally {
+      set({ selection: before })
+    }
+  })
+
+  it('without WebGL 2, says so for what draws, and still edits a 3D camera move already on an image', () => {
+    const before = get().selection
+    const reason = (id: string) => actionsById.get(id)!.unavailable?.()
+    const image = stillClips(editor.getProject())[0]!
+    gpu.webgl2 = false
+    try {
+      const drawing = ['export', 'vj', 'vjRecord', 'vjMap', 'saveFrame', 'exportTeaser', 'exportLoop']
+      for (const id of [...drawing, 'exportVertical', 'exportSquare', 'exportPortrait', 'exportLandscape'])
+        expect(reason(id), id).toBe(NO_GRAPHICS_REASON)
+      // Starting a project needs no drawing: its setup screen and the editor say what is missing.
+      for (const id of ['newProject.lyric', 'newProject.blank']) expect(reason(id), id).toBeUndefined()
+
+      select({ type: 'clip', id: image.id })
+      expect(reason('cameraMove')).toBe(NO_GRAPHICS_REASON)
+      expect(reason('behindClip')).toBe(NO_GRAPHICS_REASON)
+      editor.dispatch({
+        type: 'effect.add',
+        clipId: image.id,
+        effect: {
+          id: 'move',
+          effectId: CAMERA_EFFECT_ID,
+          enabled: true,
+          params: { preset: { value: 'dolly-in' }, intensity: { value: 0.4 } },
+        },
+        index: 0,
+      })
+      // A move already on the image is an edit of the project: its choices and strength still change it.
+      expect(reason('cameraMove')).toBeUndefined()
+      expect(reason('cameraStrength')).toBeUndefined()
+      expect(reason('addDepth')).toBe(NO_GRAPHICS_REASON)
+      gpu.webgl2 = true
+      expect(reason('addDepth')).toBeUndefined()
+      editor.undo()
+    } finally {
+      gpu.webgl2 = true
       set({ selection: before })
     }
   })
