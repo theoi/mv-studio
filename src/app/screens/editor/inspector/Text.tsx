@@ -364,13 +364,14 @@ export function PresetSettings({
 }
 
 export function TextInspector({ clip }: { clip: Extract<Clip, { type: 'text' }> }) {
-  const typedIn = useRef<Id | undefined>(undefined)
+  const typedIn = useRef<{ id: Id; before: string } | undefined>(undefined)
   // Leaving the field lays out a retyped director title card again, in the same undo step as the typing.
   const leaveText = () => {
-    const id = typedIn.current
+    const typed = typedIn.current
     typedIn.current = undefined
-    const relaid = id ? titleCardCommands(editor.getProject(), id) : []
-    if (relaid.length) dispatch(relaid, { label: 'Edit text', coalesceKey: `inspector:${id}:text` })
+    const relaid = typed ? titleCardCommands(editor.getProject(), typed.id, typed.before) : []
+    if (typed && relaid.length)
+      dispatch(relaid, { label: 'Edit text', coalesceKey: `inspector:${typed.id}:text` })
     editor.endGesture()
   }
   return (
@@ -385,7 +386,7 @@ export function TextInspector({ clip }: { clip: Extract<Clip, { type: 'text' }> 
           <TextArea
             value={clip.text}
             onChange={(e) => {
-              typedIn.current = clip.id
+              if (typedIn.current?.id !== clip.id) typedIn.current = { id: clip.id, before: clip.text }
               dispatch(
                 { type: 'clip.set', clipId: clip.id, path: ['text'], value: e.target.value },
                 { label: 'Edit text', coalesceKey: `inspector:${clip.id}:text` },

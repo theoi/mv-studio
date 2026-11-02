@@ -34,6 +34,25 @@ function run(project: Project, ops: Operation[], ids = summarizeProject(project)
 }
 
 const texts = (p: Project) => Object.values(p.clips).filter((c): c is TextClip => c.type === 'text')
+
+/** A lyric draft of a song whose file name gives its title card the title "Show Me" and the artist "Josh Woodward". */
+async function titled() {
+  const base = makeProject()
+  base.assets[SONG_ID] = { ...base.assets[SONG_ID]!, name: 'Josh Woodward - Show Me.mp3' }
+  const plan = await planLocally(await buildPlannerInput(base, { kind: 'lyric', seed: 5 }))
+  const editor = new ProjectEditor(base)
+  editor.dispatch(compilePlan(plan, base).commands)
+  const project = editor.getProject()
+  const title = texts(project).find((t) => t.text === 'Show Me')!
+  const artist = texts(project).find((t) => t.text === 'Josh Woodward')!
+  return { project, title, artist }
+}
+
+/** Ask retypes the title card's title. */
+function retitle(project: Project, title: TextClip, value: string) {
+  const ids = summarizeProject(project).ids
+  return run(project, [{ op: 'set', clips: [ids.toShort.get(title.id)!], property: 'text', value }], ids)
+}
 const videos = (p: Project) => Object.values(p.clips).filter((c): c is VideoClip => c.type === 'video')
 
 describe('compileOperations', () => {
@@ -51,31 +70,31 @@ describe('compileOperations', () => {
   })
 
   it('lays a retyped director title card out again, so a longer title clears the artist', async () => {
-    const base = makeProject()
-    base.assets[SONG_ID] = { ...base.assets[SONG_ID]!, name: 'Josh Woodward - Show Me.mp3' }
-    const plan = await planLocally(await buildPlannerInput(base, { kind: 'lyric', seed: 5 }))
-    const editor = new ProjectEditor(base)
-    editor.dispatch(compilePlan(plan, base).commands)
-    const project = editor.getProject()
-    const summary = summarizeProject(project)
-    const title = texts(project).find((t) => t.text === 'Show Me')!
-    const artist = texts(project).find((t) => t.text === 'Josh Woodward')!
-    const { after } = run(
-      project,
-      [
-        {
-          op: 'set',
-          clips: [summary.ids.toShort.get(title.id)!],
-          property: 'text',
-          value: 'Show Me Where The Long Road Ends Tonight',
-        },
-      ],
-      summary.ids,
-    )
+    const { project, title, artist } = await titled()
+    const { after } = retitle(project, title, 'Show Me Where The Long Road Ends Tonight')
     expect((after.clips[title.id] as TextClip).text).toContain('\n')
     expect((after.clips[artist.id] as TextClip).transform.y.value).toBeGreaterThan(artist.transform.y.value)
     // The change list says where the artist went, not a number on the canvas.
     expect(describeChanges(project, after).find((i) => i.id === artist.id)?.details).toEqual(['moved down'])
+  })
+
+  it('lays a retyped title out from the rows it had, keeping its edge facing an artist the user moved apart', async () => {
+    const { project, title, artist } = await titled()
+    const editor = new ProjectEditor(retitle(project, title, 'Neon Skyline (Night Mix)').after)
+    const moved = (editor.getProject().clips[artist.id] as TextClip).transform.y.value + 0.03
+    editor.dispatch({ type: 'clip.set', clipId: artist.id, path: ['transform', 'y', 'value'], value: moved })
+    const before = editor.getProject()
+    expect((before.clips[title.id] as TextClip).text).toContain('\n')
+    const { after } = retitle(before, title, 'Show Me')
+    const bottom = (p: Project) => {
+      const c = p.clips[title.id] as TextClip
+      return (
+        c.transform.y.value + (c.text.split('\n').length * c.style.lineHeight * c.style.fontSize) / 1080 / 2
+      )
+    }
+    expect((after.clips[title.id] as TextClip).text).toBe('Show Me')
+    expect(bottom(after)).toBeCloseTo(bottom(before), 2)
+    expect((after.clips[artist.id] as TextClip).transform.y.value).toBe(moved)
   })
 
   it('limits a selector to a song section', async () => {

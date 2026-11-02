@@ -305,7 +305,10 @@ export function rowWidth(style: TextStyleSpec, aspect: AspectPreset): number {
   return (style.maxWidth ?? MAX_WIDTH[aspect]) * LAYOUT_FILL * frameWidth(aspect)
 }
 
-/** The split of `words` into `rows` rows with the narrowest widest row. */
+/** A word that opens a bracket it does not close, such as "(feat.": it stays on a row with the word after it. */
+const opensBracket = (word: string | undefined) => !!word && /^[([]/.test(word) && !/[)\]]/.test(word)
+
+/** The split of `words` into `rows` rows with the narrowest widest row, no row ending on a word opening a bracket. */
 function bestSplit(words: string[], rows: number, width: (s: string) => number) {
   let best: { rows: string[]; widest: number } | undefined
   const visit = (from: number, left: number, acc: string[]) => {
@@ -316,7 +319,7 @@ function bestSplit(words: string[], rows: number, width: (s: string) => number) 
       return
     }
     for (let i = from + 1; i <= words.length - (left - 1); i++)
-      visit(i, left - 1, [...acc, words.slice(from, i).join(' ')])
+      if (!opensBracket(words[i - 1])) visit(i, left - 1, [...acc, words.slice(from, i).join(' ')])
   }
   if (words.length >= rows) visit(0, rows, [])
   return best
@@ -330,6 +333,9 @@ export function balancedRows(words: string[], rows: number): string {
 
 /** Smallest share of its size laid-out text shrinks to. */
 const MIN_SHRINK = 0.7
+
+/** Smallest share of its size a title row too long for the clip shrinks to for a word that cannot break. */
+const MIN_WORD_SHRINK = 0.5
 
 /**
  * A lyric line laid out in balanced rows (explicit line breaks, so wrapping never leaves one word alone on a row):
@@ -387,7 +393,7 @@ function bracketSplit(words: string[], rows: number, width: (s: string) => numbe
  * - rows typed with line breaks stay when each fits at 70% of the size or more;
  * - the artist and other rows under the title shrink on one row first, as far as a lyric line would;
  * - else balanced rows like a lyric line, and one whose rows would still be wider than the clip at 70% gets one more
- *   row and type as much smaller as it needs;
+ *   row and type as much smaller as it needs (half the size at most for a row of one word, which cannot wrap);
  * - phrases in brackets ("(feat. …)", "[… Remix]") start a row of their own when that keeps the type as large, with
  *   one more row at most when the type had to shrink.
  */
@@ -409,10 +415,15 @@ function fitTitleRow(text: string, style: TextStyleSpec, aspect: AspectPreset, u
   if (typed.length > 1 && fill(typed) >= MIN_SHRINK) return laid(typed)
   if (under && fill([typed.join(' ')]) >= MIN_SHRINK) return laid([typed.join(' ')])
   let best = layoutLine(text, style, aspect)
-  // Rows wider than the clip even at 70% would wrap again, over the next row of the card.
+  // Rows wider than the clip even at 70% would wrap again, over the next row of the card. A single word wider than
+  // that cannot wrap, so it shrinks no further than half the size and runs past the clip's edges instead.
   if (fill(best.text.split('\n')) * (size / best.fontSize) < LAYOUT_FILL) {
     const split = bestSplit(words, Math.min(most, words.length), (s) => textWidth(s, style, size))
-    if (split) best = laid(split.rows, Math.max(8, Math.round(size * Math.min(1, fill(split.rows)))))
+    if (split) {
+      const phrases = split.rows.filter((row) => row.includes(' '))
+      const scale = Math.max(fill(split.rows), Math.min(MIN_WORD_SHRINK, phrases.length ? fill(phrases) : 1))
+      best = laid(split.rows, Math.max(8, Math.round(size * Math.min(1, scale))))
+    }
   }
   // The largest type, then the fewest rows.
   const bracketed = (best.fontSize < size ? [best.rows, best.rows + 1] : [best.rows])
@@ -426,16 +437,21 @@ function fitTitleRow(text: string, style: TextStyleSpec, aspect: AspectPreset, u
 /**
  * A title card's rows (the title, then the artist) each laid out from its style's size and stacked about `center` (a
  * fraction of the frame height): each row's text, font size and center. Rows `under` the title (by default all but
- * the first) shrink on one row before they break.
+ * the first) shrink on one row before they break, and are no larger than the title unless laid out from a larger size.
  */
 export function stackTitleCard(
   rows: readonly { text: string; style: TextStyleSpec; under?: boolean }[],
   aspect: AspectPreset,
   center = 0.5,
 ): { text: string; fontSize: number; y: number }[] {
-  const laid = rows.map(({ text, style, under }, i) => {
-    const fit = fitTitleRow(text, style, aspect, under ?? i > 0)
-    return { ...fit, height: blockHeight(fit.rows, { ...style, fontSize: fit.fontSize }) }
+  const fits = rows.map(({ text, style, under }, i) => fitTitleRow(text, style, aspect, under ?? i > 0))
+  const title = rows.findIndex(({ under }, i) => !(under ?? i > 0))
+  const laid = fits.map((fit, i) => {
+    const { style, under } = rows[i] as (typeof rows)[number]
+    const capped =
+      title >= 0 && (under ?? i > 0) && (style.fontSize ?? 0) <= (rows[title]?.style.fontSize ?? 0)
+    const fontSize = capped ? Math.min(fit.fontSize, fits[title]?.fontSize ?? fit.fontSize) : fit.fontSize
+    return { ...fit, fontSize, height: blockHeight(fit.rows, { ...style, fontSize }) }
   })
   const total = laid.reduce((sum, l, i) => sum + (i > 0 ? TITLE_GAP + l.height : l.height), 0)
   let top = center - total / 2

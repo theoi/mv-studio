@@ -113,15 +113,16 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   out again for it. It is read from the card each time: a card put back to the song's own name ends it, and one of
   another song, or drafted before cards recorded their song, counts for nothing. Only each row's first card counts:
   what the user types on a duplicated or pasted copy (which keeps the tag) is new text, not a correction. The title
-  is laid out like a lyric line, the artist under it shrinks on one row before it breaks, and the rows stack about
-  the middle (`stackTitleCard`). A title whose rows would still be wider than the clip at 70% gets one more row and
+  is laid out like a lyric line, the artist under it shrinks on one row before it breaks and is never larger than the
+  title (unless laid out from a larger size), and the rows stack about the middle (`stackTitleCard`). A title whose rows would still be wider than the clip at 70% gets one more row and
   type as much smaller as it needs, so the renderer never wraps a row again over the artist; a phrase in brackets
   ("(feat. …)", "[… Remix]") starts a row of its own when the type stays as large. A title or artist the user retypes
   (on leaving the Inspector's text field, or through Ask) lays the card out again the same way about where it is
   (`titleCardCommands` in `titleCard.ts`), growing the text back toward the size it was laid out from
   (`meta.director.titleLayout`) unless the user set another size, and keeping line breaks the user typed where each
   row fits at 70% or more. The rows are stacked again only while they are where the last layout put them or moved
-  together; a row the user placed apart stays there, and only the retyped row is laid out, about its own center.
+  together; a row the user placed apart stays there, and only the retyped row is laid out, keeping its edge facing the
+  nearest other row and growing away from it. If it would still reach another row, the card is stacked again.
 - **Opening and ending**: the first shot fades in from black and the last fades out, ending when the music does
   when the song has a silent tail (`musicEnd`).
 - **Clip choice** (`chooseFootage`): footage and stills come from src/vision's `chooseClips`, the chooser auto-cut

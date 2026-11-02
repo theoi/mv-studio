@@ -1076,6 +1076,25 @@ test('a tagged song names the project, and the title card shows its title and ar
   await page.keyboard.press('ControlOrMeta+z')
   expect(await card()).toEqual(relaid)
 
+  // Moved further down on its own, the artist stays where the user put it: the retyped title keeps its bottom edge
+  // and grows away from the artist.
+  await page.evaluate((id) => {
+    const { editor } = window.mvStudio.app.project
+    const y = (editor.getProject().clips[id] as { transform: { y: { value: number } } }).transform.y.value
+    editor.dispatch({ type: 'clip.set', clipId: id, path: ['transform', 'y', 'value'], value: y + 0.03 })
+  }, titles[1]!.id)
+  const apart = await card()
+  await page.locator(`[data-clip-id="${titles[0]!.id}"]`).click()
+  await field.fill('Neon Skyline (The Extended Midnight Club Remix Version)')
+  await field.blur()
+  const grown = await card()
+  expect(grown[0]!.text.split('\n')).toHaveLength(3)
+  expect(grown[0]!.bottom).toBeCloseTo(apart[0]!.bottom, 2)
+  expect(grown[1]).toEqual(apart[1])
+  await page.keyboard.press('ControlOrMeta+z')
+  await page.keyboard.press('ControlOrMeta+z')
+  expect(await card()).toEqual(relaid)
+
   // Another version keeps the correction.
   await page.evaluate(() => {
     window.location.hash = '#/editor?tab=assist&assist=director'

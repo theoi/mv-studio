@@ -526,7 +526,8 @@ function setOp(ctx: OpCtx, op: Extract<Operation, { op: 'set' }>) {
   // A retyped director title or artist lays its title card out again, as leaving the Inspector's text field does.
   if (op.property === 'text') {
     for (const { clip } of pairs)
-      commands.push(...apply(ctx, titleCardCommands(ctx.scratch.getProject(), clip.id)))
+      if (clip.type === 'text')
+        commands.push(...apply(ctx, titleCardCommands(ctx.scratch.getProject(), clip.id, clip.text)))
   }
   return commands
 }
