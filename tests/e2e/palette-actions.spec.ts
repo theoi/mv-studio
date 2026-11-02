@@ -311,3 +311,88 @@ test('Go to a section… finds a section by name: “go to the chorus” lists t
   await expect(dialog).toBeHidden()
   expect(await playhead()).toBe(96)
 })
+
+test('Enter on the start of “delete” deletes nothing, and on the whole word deletes the selected clip in one undo step', async ({
+  page,
+}) => {
+  await openEditor(page)
+  const { dialog, input, selected, open } = palette(page)
+  await selectClip(page, 'video')
+  const state = () =>
+    page.evaluate(() => {
+      const { editor } = window.mvStudio.app.project
+      const project: Project = editor.getProject()
+      return { clips: Object.keys(project.clips).length, undo: editor.history().undo.length }
+    })
+  const before = await state()
+  const deleteRows = dialog.getByRole('option', { name: /^Delete/ })
+
+  for (const search of ['del', 'delet']) {
+    await open()
+    await expect(input).toBeFocused()
+    await page.keyboard.type(search)
+    await expect(input).toHaveValue(search)
+    await expect(deleteRows).toHaveCount(0)
+    await page.keyboard.press('Enter')
+    expect(await state(), search).toEqual(before)
+    // The palette, or whatever its first row opened.
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+  }
+
+  await open()
+  await expect(input).toBeFocused()
+  await page.keyboard.type('delete')
+  await expect(deleteRows).toHaveCount(1)
+  await expect(selected).toHaveText(/^Delete/)
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('status').getByText('Deleted 1 clip', { exact: true })).toBeVisible()
+  expect(await state()).toEqual({ clips: before.clips - 1, undo: before.undo + 1 })
+})
+
+test('with a background on the selected text, Enter on “box” or “text box” keeps it, and on “remove background” removes it in one undo step', async ({
+  page,
+}) => {
+  await openEditor(page)
+  const { dialog, input, selected, open } = palette(page)
+  await selectClip(page, 'text')
+  const state = () =>
+    page.evaluate(() => {
+      const { app } = window.mvStudio
+      const clip = app.project.editor.getProject().clips[app.ui.get().selection.id]
+      return {
+        background: clip?.type === 'text' ? !!clip.style.background : null,
+        undo: app.project.editor.history().undo.length,
+      }
+    })
+  const search = async (text: string) => {
+    await open()
+    await expect(input).toBeFocused()
+    await page.keyboard.type(text)
+    await expect(input).toHaveValue(text)
+  }
+
+  await search('add text background')
+  await expect(selected).toHaveText(/^Add a background to the text/)
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeHidden()
+  const added = await state()
+  expect(added.background).toBe(true)
+
+  for (const text of ['box', 'text box']) {
+    await search(text)
+    await expect(dialog.getByRole('option', { name: /^Remove the text background/ })).toHaveCount(0)
+    await page.keyboard.press('Enter')
+    expect(await state(), text).toEqual(added)
+    // The palette, or the page of values its first row opened.
+    for (let i = 0; i < 3 && (await dialog.isVisible()); i++) await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+  }
+
+  await search('remove background')
+  await expect(selected).toHaveText(/^Remove the text background/)
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeHidden()
+  expect(await state()).toEqual({ background: false, undo: added.undo + 1 })
+})
