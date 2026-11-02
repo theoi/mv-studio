@@ -515,7 +515,7 @@ export class DirectorSession {
       this.deps.spendPolicy?.() ?? DEFAULT_POLICY,
       this.deps.ledger,
     )
-    const toMake = cost?.requests.filter((r) => !done.has(r.shot.id)).length ?? 0
+    const toMake = cost?.requests.length ?? 0
     return { cost, confirmRequired, toMake }
   }
 
@@ -531,7 +531,8 @@ export class DirectorSession {
     const { cost, confirmRequired, toMake } = this.spendFor(plan)
     const usd = cost?.usd ?? 0
     const unit = generatedUnit(plan)
-    const left = shotsToGenerate(plan).filter((s) => !done.has(s.id)).length
+    // As Generate counts them, without the shots media made earlier covers; without fal.ai, every shot not made yet.
+    const left = cost ? toMake : shotsToGenerate(plan).filter((s) => !done.has(s.id)).length
     return {
       status: 'ready',
       request,
@@ -556,8 +557,7 @@ export class DirectorSession {
     if (shotsToGenerate(plan).length === 0) return null
     const provider = this.deps.provider?.()
     if (!provider) return null
-    const remaining: EditPlan = { ...plan, shots: plan.shots.filter((s) => !done.has(s.id)) }
-    const cost = estimatePlanCost(remaining, provider, this.deps.editor.getProject())
+    const cost = estimatePlanCost(plan, provider, this.deps.editor.getProject(), new Set(done.keys()))
     return cost.count > 0 || cost.reused > 0 ? cost : null
   }
 
