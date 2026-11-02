@@ -127,9 +127,9 @@ function textBox(clip: TextClip, text: string, fontSize: number, aspect: AspectP
 
 /**
  * Where `clip` goes with `text` at `fontSize` in place of its own: about where it was, keeping its edge facing the
- * nearest text on screen beside it (so it grows away from that text, and back when retyped shorter), clear of all
- * text on screen with it and inside the title-safe area, in smaller type where that leaves too little room. The space
- * it had stays its own.
+ * nearest text on screen beside it (so it grows away from that text, and back when retyped shorter), clear of text
+ * on screen above and below it and inside the title-safe area, in smaller type where that leaves too little room. The
+ * space it had stays its own.
  */
 function placeRetyped(
   project: Project,

@@ -11,7 +11,7 @@ import {
 } from '../../../src/director/index.ts'
 import { frameWidth, layoutLine, rowWidth, textWidth, TITLE_SAFE } from '../../../src/director/typography.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
-import { settingsForAspect } from '../../../src/model/factory.ts'
+import { createTextClip, createTrack, settingsForAspect } from '../../../src/model/factory.ts'
 import { parseProject } from '../../../src/model/migrations.ts'
 import type { AspectPreset, LyricLine, LyricsDoc, Project, TextClip } from '../../../src/model/types.ts'
 import { LYRICS, makeProject, timedLine } from './fixtures.ts'
@@ -211,6 +211,34 @@ describe('lyricTextCommands', () => {
       2
     return { top: settled(clip.transform.y) - half, bottom: settled(clip.transform.y) + half }
   }
+  const expectClearOfTexts = (p: Project, clip: TextClip) => {
+    const b = box(clip)
+    for (const other of Object.values(p.clips)) {
+      if (other.type !== 'text' || other.id === clip.id) continue
+      if (other.start >= clip.start + clip.duration || clip.start >= other.start + other.duration) continue
+      const o = box(other)
+      expect(o.bottom <= b.top || b.bottom <= o.top).toBe(true)
+    }
+  }
+  /** A text of the user's on a track of its own, shown with `clip`, with its top or bottom edge at `edge`. */
+  const withUserText = (p: Project, clip: TextClip, edge: { top: number } | { bottom: number }) => {
+    const track = createTrack('visual', 'Text')
+    const text = createTextClip({
+      trackId: track.id,
+      text: 'Not the lyrics',
+      start: clip.start,
+      duration: clip.duration,
+      style: { fontSize: 40 },
+    })
+    const half = (box(text).bottom - box(text).top) / 2
+    const y = 'top' in edge ? edge.top + half : edge.bottom - half
+    const editor = new ProjectEditor(p)
+    editor.dispatch([
+      { type: 'track.add', track },
+      { type: 'clip.add', clip: { ...text, transform: { ...text.transform, y: { value: y } } } },
+    ])
+    return editor.getProject()
+  }
 
   it('lays a retyped line out again as a draft would: in more rows when much longer, back at its size when shorter', async () => {
     const p = await drafted()
@@ -246,7 +274,6 @@ describe('lyricTextCommands', () => {
     const [line] = lineClips(p, 'f2')
     const [preview] = director(p, 'preview', 'f2')
     const after = retype(p, 'f2', LONG)
-    const texts = Object.values(after.clips).filter((c): c is TextClip => c.type === 'text')
     for (const clip of [line!, preview!]) {
       const now = after.clips[clip.id] as TextClip
       expect(now.text.split('\n').length).toBeGreaterThan(clip.text.split('\n').length)
@@ -254,16 +281,7 @@ describe('lyricTextCommands', () => {
       const b = box(now)
       expect(b.top).toBeGreaterThanOrEqual(TITLE_SAFE.top)
       expect(b.bottom).toBeLessThanOrEqual(TITLE_SAFE.bottom)
-      for (const other of texts) {
-        if (
-          other.id === now.id ||
-          other.start >= now.start + now.duration ||
-          now.start >= other.start + other.duration
-        )
-          continue
-        const o = box(other)
-        expect(o.bottom <= b.top || b.bottom <= o.top).toBe(true)
-      }
+      expectClearOfTexts(after, now)
     }
     // The line keeps its bottom edge over the next line waiting below it, and rolls up from where its preview now is.
     const now = after.clips[line!.id] as TextClip
@@ -275,6 +293,81 @@ describe('lyricTextCommands', () => {
     expect(box(after.clips[preview!.id] as TextClip).top).toBeCloseTo(box(preview!).top, 5)
   })
 
+  const GROWN = 'We are burning bright and the night is so young'
+
+  it('fits a retyped line between the texts above and below it, in smaller type when the room is short', async () => {
+    const p = await drafted('9:16', LYRICS)
+    const [line] = lineClips(p, 'l4')
+    const was = box(line!)
+    const between = withUserText(withUserText(p, line!, { bottom: was.top - 0.03 }), line!, {
+      top: was.bottom + 0.035,
+    })
+    const after = retype(between, 'l4', GROWN)
+    const now = after.clips[line!.id] as TextClip
+    expect(now.text.replace(/\s+/g, ' ')).toBe(GROWN)
+    expect(now.style.fontSize).toBeLessThan(layoutLine(GROWN, styleOf(line!), '9:16').fontSize)
+    expectClearOfTexts(after, now)
+  })
+
+  it('keeps a retyped line inside the title-safe area when it was near its edge', async () => {
+    const p = await drafted('9:16', LYRICS)
+    const [line] = lineClips(p, 'l4')
+    const half = (box(line!).bottom - box(line!).top) / 2
+    const editor = new ProjectEditor(p)
+    editor.dispatch({
+      type: 'clip.set',
+      clipId: line!.id,
+      path: ['transform', 'y', 'value'],
+      value: TITLE_SAFE.top + 0.001 + half,
+    })
+    const now = retype(editor.getProject(), 'l4', GROWN).clips[line!.id] as TextClip
+    expect(now.text.split('\n').length).toBeGreaterThan(line!.text.split('\n').length)
+    // It stops at the edge rather than growing past it.
+    expect(box(now).top).toBeCloseTo(TITLE_SAFE.top, 5)
+  })
+
+  it('keeps the size the user set on a retyped line', async () => {
+    const p = await drafted('9:16', LYRICS)
+    const [line] = lineClips(p, 'l1')
+    const drafted_ = line!.style.fontSize
+    expect(directorMeta(line!)?.lineLayout).toEqual({ base: drafted_, fitted: drafted_ })
+    const editor = new ProjectEditor(p)
+    editor.dispatch({ type: 'clip.set', clipId: line!.id, path: ['style', 'fontSize'], value: drafted_ - 20 })
+    const now = retype(editor.getProject(), 'l1', 'Walking through').clips[line!.id] as TextClip
+    expect(now.style.fontSize).toBe(drafted_ - 20)
+    expect(directorMeta(now)?.lineLayout).toEqual({ base: drafted_ - 20, fitted: drafted_ - 20 })
+  })
+
+  it('rolls a retyped line up from where its preview now is, also when the preview is stored after it', async () => {
+    const p = await drafted('9:16')
+    const [line] = lineClips(p, 'f2')
+    const [preview] = director(p, 'preview', 'f2')
+    const editor = new ProjectEditor(p)
+    editor.dispatch([
+      { type: 'clip.remove', clipIds: [preview!.id] },
+      { type: 'clip.add', clip: preview! },
+    ])
+    const reordered = editor.getProject()
+    const ids = Object.keys(reordered.clips)
+    expect(ids.indexOf(preview!.id)).toBeGreaterThan(ids.indexOf(line!.id))
+    const after = retype(reordered, 'f2', LONG)
+    const moved = settled((after.clips[preview!.id] as TextClip).transform.y)
+    expect(moved).not.toBeCloseTo(settled(preview!.transform.y), 3)
+    expect((after.clips[line!.id] as TextClip).transform.y.keyframes?.[0]?.value).toBe(moved)
+  })
+
+  it('keeps the edge facing the nearest text beside a retyped line, not the first one found', async () => {
+    const p = await drafted('9:16', LYRICS)
+    const [line] = lineClips(p, 'l4')
+    const was = box(line!)
+    // The farther text is added first.
+    const beside = withUserText(withUserText(p, line!, { bottom: was.top - 0.04 }), line!, {
+      top: was.bottom + 0.02,
+    })
+    const now = retype(beside, 'l4', 'We burn').clips[line!.id] as TextClip
+    expect(now.text.split('\n')).toHaveLength(1)
+    expect(box(now).bottom).toBeCloseTo(was.bottom, 5)
+  })
   it('keeps the words before an emphasized ending no bigger than the ending, above it where they were', async () => {
     const lyrics = SONG.map((l) => (l.id === 'l3' ? timedLine('l3', 'Hold on to me unbreakable me', 25) : l))
     const p = await drafted('9:16', lyrics)
@@ -308,7 +401,6 @@ describe('lyricTextCommands', () => {
     const [preview] = director(saved, 'preview', 'f2')
     expect(directorMeta(line!)?.lineLayout).toBeUndefined()
     const after = retype(saved, 'f2', LONG)
-    const texts = Object.values(after.clips).filter((c): c is TextClip => c.type === 'text')
     for (const clip of [line!, preview!]) {
       const now = after.clips[clip.id] as TextClip
       // Laid out from the size it has, never larger: the size it was laid out from is not known.
@@ -319,16 +411,7 @@ describe('lyricTextCommands', () => {
       const b = box(now)
       expect(b.top).toBeGreaterThanOrEqual(TITLE_SAFE.top)
       expect(b.bottom).toBeLessThanOrEqual(TITLE_SAFE.bottom)
-      for (const other of texts) {
-        if (
-          other.id === now.id ||
-          other.start >= now.start + now.duration ||
-          now.start >= other.start + other.duration
-        )
-          continue
-        const o = box(other)
-        expect(o.bottom <= b.top || b.bottom <= o.top).toBe(true)
-      }
+      expectClearOfTexts(after, now)
       // From its first retype on, it records that size, and later retypes grow back to it.
       expect(directorMeta(now)?.lineLayout).toEqual({ base: clip.style.fontSize, fitted: now.style.fontSize })
     }

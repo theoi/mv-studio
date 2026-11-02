@@ -107,7 +107,7 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   has otherwise. A lyric retyped after the draft (`lyricTextCommands` in `retime.ts`) is laid out again as a draft
   lays out a line, from the size it was laid out from (`meta.director.lineLayout`) unless the user has set another:
   in more rows when it is longer, back at its size when it is shorter. It keeps its edge facing the nearest text beside
-  it (the next line waiting below, its emphasized ending) and grows away from it, clear of all text shown with it and
+  it (the next line waiting below, its emphasized ending) and grows away from it, clear of text above and below it and
   inside the title-safe area, in smaller type where that leaves too little room. Chorus lines are a little bigger and
   heavier. The stressed last word of chorus lines (and of other lines when it is long or a hook from the title or
   chorus) is shown 1.6× bigger in the accent color below the rest of the line, entering as it is sung
