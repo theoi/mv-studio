@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Page, Route, TestInfo } from '@playwright/test'
-import { expect, openHarness, test } from './fixtures.ts'
+import { expect, keepCopy, openFromHome, openHarness, test } from './fixtures.ts'
 import { FIXTURE_DIR } from './global-setup.ts'
 
 /*
@@ -1317,4 +1317,193 @@ test('a lyric chip takes clicks where the director’s emphasized word sits over
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
   await expect(clip).toBeVisible()
   expect(await lines()).toContain(word.lineId)
+})
+
+/*
+ * Another project opening: the Director starts over there, so nothing planned, priced or drafted for one project can be
+ * applied to or paid for in another.
+ */
+
+/** The ways to open another project: from Home, from a link to it, and the empty-project link then the sample. */
+const OPEN_ANOTHER: Record<string, (page: Page, otherId: string) => Promise<void>> = {
+  'from Home': (page) => openFromHome(page, 'Other project'),
+  'from a link': async (page, otherId) => {
+    await page.evaluate((id) => {
+      window.location.hash = `#/editor?project=${id}&tab=assist&assist=director`
+    }, otherId)
+    await page.waitForFunction(() => window.mvStudio.app.project.editor.getProject().name === 'Other project')
+  },
+  'from the empty-project link and back to the sample': async (page) => {
+    await page.evaluate(() => {
+      window.location.hash = '#/editor?project=empty&kind=blank'
+    })
+    await page.waitForFunction(() => !window.mvStudio.app.project.editor.getProject().songAssetId)
+    await page.evaluate(() => {
+      window.location.hash = '#/editor?kind=ai&tab=assist&assist=director'
+    })
+    await page.waitForFunction(() => Boolean(window.mvStudio.app.project.editor.getProject().songAssetId))
+  },
+}
+
+/** Shows Assist's list of tools, or the Director. */
+const showAssist = (page: Page, view: 'home' | 'director') =>
+  page.evaluate((v) => window.mvStudio.app.ui.set({ rightTab: 'assist', assistView: v }), view)
+
+for (const [how, openAnother] of Object.entries(OPEN_ANOTHER)) {
+  test(`a plan waiting on its price stays with its project when another opens ${how}`, async ({ page }) => {
+    await page
+      .context()
+      .route(/https:\/\/(queue\.)?fal\.run\/.*/, (route) =>
+        route.fulfill({ status: 500, headers: CORS, body: '{}' }),
+      )
+    await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+    const otherId = await keepCopy(page, 'Other project')
+    await page.getByRole('radio', { name: 'Mix' }).click()
+    await page.getByRole('button', { name: 'Draft video' }).click()
+    await expect(page.getByRole('button', { name: /^Generate \d+ shots? · about/ })).toBeVisible({
+      timeout: 30_000,
+    })
+
+    await openAnother(page, otherId)
+    const assist = page.getByRole('tabpanel', { name: 'Assist' })
+    await showAssist(page, 'home')
+    await expect(assist.getByRole('button', { name: /^Director/ })).toBeVisible()
+    await expect(assist.getByText('Plan ready', { exact: true })).toHaveCount(0)
+    await showAssist(page, 'director')
+    await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Apply without AI shots' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /^Generate \d+ shots?/ })).toHaveCount(0)
+    // Where shots come from is the user's choice, so it stays.
+    await expect(page.getByRole('radio', { name: 'Mix' })).toBeChecked()
+    expect((await draftState(page)).director).toBe(0)
+  })
+}
+
+test('a draft on the timeline stays with its project: an empty project, then the sample, show the Director’s start', async ({
+  page,
+}) => {
+  await openDirector(page)
+  await page.getByRole('textbox', { name: 'Idea for the video' }).fill('neon night drive')
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+
+  await page.evaluate(() => {
+    window.location.hash = '#/editor?project=empty&kind=blank&tab=assist'
+  })
+  await page.waitForFunction(() => !window.mvStudio.app.project.editor.getProject().songAssetId)
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+  await expect(assist.getByRole('button', { name: /^Director/ })).toBeVisible()
+  await expect(assist.getByText('Done', { exact: true })).toHaveCount(0)
+
+  await page.evaluate(() => {
+    window.location.hash = '#/editor?kind=ai&tab=assist&assist=director'
+  })
+  await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
+  await expect(page.getByText('Draft ready')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Undo draft' })).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: 'Idea for the video' })).toHaveValue('')
+  expect((await draftState(page)).director).toBe(0)
+})
+
+for (const [how, openAnother] of Object.entries(OPEN_ANOTHER)) {
+  test(`a draft still being planned stops at once when another project opens ${how}, and never lands there`, async ({
+    page,
+  }) => {
+    // The model's answer waits until released, and can't be used: without the cancel, the built-in planner would then
+    // finish the draft, and a free draft goes on the timeline of whatever project is open.
+    let asked = false
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    await page.context().route('http://localhost:11434/v1/chat/completions', async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
+      asked = true
+      await held
+      const answer = { index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Sorry.' } }
+      await route
+        .fulfill({
+          status: 200,
+          headers: CORS,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'chatcmpl-1',
+            object: 'chat.completion',
+            model: OLLAMA.model,
+            choices: [answer],
+          }),
+        })
+        .catch(() => undefined)
+    })
+    await openDirector(page, { llm: OLLAMA })
+    const otherId = await keepCopy(page, 'Other project')
+    await page.getByRole('button', { name: 'Draft video' }).click()
+    await expect.poll(() => asked, { timeout: 30_000 }).toBe(true)
+    const topBar = page.getByRole('banner')
+    await expect(topBar.getByText('Drafting your video')).toBeVisible()
+
+    await openAnother(page, otherId)
+    const plans = () =>
+      page.evaluate(() =>
+        (window.mvStudio.shared.jobs.list() as { kind: string; status: string }[])
+          .filter((j) => j.kind === 'director.plan')
+          .map((j) => j.status),
+      )
+    await expect.poll(plans, { timeout: 2_000 }).toEqual(['cancelled'])
+    release()
+    await expect(topBar.getByText('Drafting your video')).toHaveCount(0)
+    await showAssist(page, 'director')
+    await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Use the local draft instead' })).toHaveCount(0)
+    await page.waitForTimeout(2_000)
+    expect(await plans()).toEqual(['cancelled'])
+    expect((await draftState(page)).director).toBe(0)
+  })
+}
+test('opening another project while AI clips generate stops the run as Cancel does: what fal.ai billed is recorded once', async ({
+  page,
+}) => {
+  // The third clip's download stalls until released; the fourth stays in progress at fal.ai.
+  const fal = await mockFalVideo(page, { heldDownload: 3, held: 4 })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  await keepCopy(page, 'Other project')
+  await draftVideoClips(page)
+  await expect.poll(() => fal.downloads, { timeout: 60_000 }).toContain('req-3')
+  await expect.poll(() => fal.submits.length, { timeout: 30_000 }).toBe(4)
+
+  await openFromHome(page, 'Other project')
+  await expect.poll(() => fal.cancels).toEqual(['req-4'])
+  fal.release()
+  const job = () =>
+    page.evaluate(
+      () =>
+        (window.mvStudio.shared.jobs.list() as { kind: string; status: string }[]).find(
+          (j) => j.kind === 'director.generate',
+        )?.status,
+    )
+  await expect.poll(job, { timeout: 30_000 }).toBe('cancelled')
+  // fal.ai billed the three clips it finished, the one downloading included; each is recorded once.
+  const spend = await page.evaluate(
+    () => JSON.parse(localStorage.getItem('mv-studio.cloud.spend.v1') ?? '[]') as { label: string }[],
+  )
+  expect(spend.filter((e) => e.label.startsWith('Director: '))).toHaveLength(3)
+  await showAssist(page, 'director')
+  await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
+  await expect(page.getByText(/^Generation stopped\./)).toHaveCount(0)
+  expect((await draftState(page)).director).toBe(0)
+  expect(fal.submits).toHaveLength(4)
+})
+
+test('a draft from the setup screen goes on the timeline after the Director was used in another project', async ({
+  page,
+}) => {
+  await openDirector(page)
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByRole('button', { name: /^AI music video/ }).click()
+  await page.getByRole('textbox', { name: 'Describe your video' }).fill('a rainy city at dawn')
+  await page.getByRole('button', { name: 'Use a sample song' }).click()
+  await page.getByRole('button', { name: 'Draft my video' }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  expect((await draftState(page)).undo).toBe('Director: a rainy city at dawn')
 })

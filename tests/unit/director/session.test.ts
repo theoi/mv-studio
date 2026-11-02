@@ -239,7 +239,31 @@ describe('DirectorSession', () => {
     expect(store.stored).toHaveLength(1)
     expect(ledger.monthTotal()).toBeCloseTo(provider.estimate(provider.calls[0]!).usd, 6)
   })
-
+  it('a reset during a paid run, as another project opening does, records what fal.ai billed once and applies nothing', async () => {
+    const downloading: (() => void)[] = []
+    const provider = fakeProvider({
+      gate: (i, ctx) => {
+        if (i > 0) return new Promise<void>(() => undefined)
+        ctx.progress({ stage: 'download', fraction: 0.92, message: 'Downloading the video' })
+        return new Promise<void>((resolve) => downloading.push(resolve))
+      },
+    })
+    const { session, ledger, store, editor } = setup({ provider, videos: 0, confirmAboveUsd: 100 })
+    ready(await session.plan({ kind: 'ai', seed: 2, generate: { mode: 'video', tier: 'draft' } }))
+    const applying = session.apply()
+    for (let i = 0; i < 50 && provider.calls.length < 2; i++) await new Promise((r) => setTimeout(r, 0))
+    expect(downloading).toHaveLength(1)
+    session.reset()
+    expect(session.getState().status).toBe('idle')
+    downloading[0]!()
+    expect((await applying).status).toBe('idle')
+    expect(session.getState().status).toBe('idle')
+    expect(store.stored).toHaveLength(1)
+    const billed = provider.estimate(provider.calls[0]!).usd
+    expect(billed).toBeGreaterThan(0)
+    expect(ledger.monthTotal()).toBeCloseTo(billed, 6)
+    expect(Object.values(editor.getProject().clips).filter((c) => directorMeta(c))).toEqual([])
+  })
   it('keeps paid shots in the project after undo, and reuses them instead of paying again', async () => {
     const provider = fakeProvider()
     const { session, editor } = setup({ provider, videos: 0, confirmAboveUsd: 5 })

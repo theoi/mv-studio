@@ -25,7 +25,7 @@ import { followStems } from '../../plugins/reactions.ts'
 import { plural } from '../format.ts'
 import { TRACK_IDS, buildDemoProject } from '../mock/demoProject.ts'
 import { barsToSeconds, prefs } from './prefs.ts'
-import { get, select, set, toast } from './ui.ts'
+import { get, select, toast } from './ui.ts'
 
 /** The app's single editor. The design preview starts it with the demo project. */
 export const editor = new ProjectEditor(buildDemoProject())
@@ -41,13 +41,6 @@ export function loadDemoProject() {
 
 export function loadEmptyProject() {
   editor.load(createProject({ name: 'Untitled video', fps: prefs().defaultFps }))
-}
-
-/** Replaces an empty project with the sample project, keeping the current workspace. */
-export function loadSample() {
-  loadDemoProject()
-  set({ playhead: 0, playing: false, selection: { type: 'none' } })
-  toast(`Sample project loaded: “${editor.getProject().name}”`)
 }
 
 /**
