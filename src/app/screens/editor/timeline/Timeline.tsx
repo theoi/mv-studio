@@ -207,6 +207,7 @@ import {
 } from '../../../state/mediaDrag.ts'
 import { MAX_PPS, MIN_PPS, registerFit, registerZoom, zoomTo } from '../../../state/zoom.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
+import { edgeScroll } from './edgeScroll.ts'
 import { energySampler } from './energy.ts'
 import { LaneMenu } from './LaneMenu.tsx'
 import { openLaneMenu } from './laneMenu.ts'
@@ -1074,57 +1075,6 @@ function KeyframeMarks({
       </Menu>
     </span>
   )
-}
-/** How close to the timeline's left or right edge a drag scrolls it, and how fast at the edge (px per second). */
-const EDGE_ZONE = 40
-const EDGE_SPEED = 1000
-
-/**
- * Scrolls the timeline while a drag holds the pointer near its left or right edge, and calls `onScroll` after each
- * step so the drag follows the content that moved under the pointer. A drag that starts in the zone scrolls only once
- * the pointer has left it, so pressing near an edge doesn't scroll by itself.
- */
-function edgeScroll(el: HTMLElement, onScroll: () => void) {
-  let x = 0
-  let armed = false
-  let frame = 0
-  let then = 0
-  const speed = () => {
-    const r = el.getBoundingClientRect()
-    const left = r.left + HEADER_W + EDGE_ZONE
-    const right = r.left + el.clientWidth - EDGE_ZONE
-    if (x < left) return -EDGE_SPEED * Math.min(1, (left - x) / EDGE_ZONE)
-    if (x > right) return EDGE_SPEED * Math.min(1, (x - right) / EDGE_ZONE)
-    return 0
-  }
-  const step = (now: number) => {
-    frame = 0
-    const v = speed()
-    if (!armed || !v) return
-    // By the time since the last step, not per frame: frame rates differ between displays.
-    const dt = then ? Math.min(0.05, (now - then) / 1000) : 1 / 60
-    then = now
-    const before = el.scrollLeft
-    el.scrollLeft = before + v * dt
-    if (el.scrollLeft === before) return
-    // Before onScroll, which may call follow() again and must not start a second loop.
-    frame = requestAnimationFrame(step)
-    onScroll()
-  }
-  return {
-    follow(clientX: number) {
-      x = clientX
-      armed ||= speed() === 0
-      if (!frame) {
-        then = 0
-        frame = requestAnimationFrame(step)
-      }
-    },
-    stop() {
-      cancelAnimationFrame(frame)
-      frame = 0
-    },
-  }
 }
 
 interface ClipBlockProps {
@@ -2145,7 +2095,8 @@ export function Timeline() {
       const scroller = scrollRef.current
       const scroll0 = scroller?.scrollLeft ?? 0
       let last: PointerEvent | null = null
-      const edge = scroller && mode === 'move' ? edgeScroll(scroller, () => last && move(last)) : null
+      const edge =
+        scroller && mode === 'move' ? edgeScroll(scroller, HEADER_W, () => last && move(last)) : null
       const move = (ev: PointerEvent) => {
         last = ev
         // The timeline may have scrolled under the pointer since the drag started.
@@ -2542,7 +2493,7 @@ export function Timeline() {
       shown = key
       selectTimelineClips(p, ids)
     }
-    const edge = scrollRef.current ? edgeScroll(scrollRef.current, update) : null
+    const edge = scrollRef.current ? edgeScroll(scrollRef.current, HEADER_W, update) : null
     const move = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 3) return
       moved = true
