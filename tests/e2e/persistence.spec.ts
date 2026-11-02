@@ -288,9 +288,14 @@ test('an edit made right before a reload or closing the tab is kept, and the pro
   context,
 }) => {
   test.setTimeout(120_000)
-  // Leaving with a change not saved yet asks first; the user leaves anyway.
+  // Leaving with a change not saved yet asks first; the user reads the prompt, then leaves anyway. Chrome aborts a
+  // pending commit of a large value (stored as a blob file) if the page goes away within about 0.1 s of the prompt,
+  // and a person never confirms that fast.
   const leaveAnyway = (p: Page) =>
-    p.on('dialog', (d) => void (d.type() === 'beforeunload' ? d.accept() : d.dismiss()))
+    p.on('dialog', (d) => {
+      if (d.type() === 'beforeunload') setTimeout(() => void d.accept(), 500)
+      else void d.dismiss()
+    })
   const status = (p: Page) =>
     p.evaluate(() => window.mvStudio.app.persistence.usePersistence.getState().status as string)
   leaveAnyway(page)

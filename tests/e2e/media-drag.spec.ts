@@ -77,6 +77,8 @@ test('a file dropped on a track is imported and lands at the drop point, as one 
 }) => {
   await openEmptyEditor(page)
   await importFiles(page, ['song.mp3'])
+  // The song's import is an undo step of its own; one landing after the drop would be what Mod Z takes back.
+  await expect(page.getByRole('button', { name: 'Undo import song.mp3' })).toBeVisible()
   const lane = laneOf(page, 'Video 1')
   await expect(lane).toBeVisible()
   const box = (await lane.boundingBox())!
