@@ -245,7 +245,6 @@ export function connectPreview(
   // Results written in the background (derived edits, such as footage analysis) redraw the paused frame too, nearly
   // always unchanged: a still only they asked for doesn't make the stage say it's updating. A seek or an edit does.
   let unasked = false
-  let wasPending = preview.getSnapshot().pending
   const cue = createUpdatingCue((updating) => {
     if (current === preview) setStill({ updating })
   })
@@ -267,10 +266,12 @@ export function connectPreview(
   const unsubscribe = [
     offAudioError,
     editor.subscribe((project, change) => {
-      if (change.source !== 'derived') unasked = false
-      else if (!preview.getSnapshot().pending) unasked = true
+      const waiting = preview.getSnapshot().pending
       showProject(project)
       applyLoop(get().playhead)
+      // Only a still the write started is unasked: none starts during playback, for one.
+      if (change.source !== 'derived' || !preview.getSnapshot().pending) unasked = false
+      else if (!waiting) unasked = true
       // With a still already on its way the snapshot may not change, and nothing else would tell the cue.
       updateCue()
     }),
@@ -317,9 +318,7 @@ export function connectPreview(
     preview.subscribe(() => {
       const { pending } = preview.getSnapshot()
       if (current === preview) setStill({ pending })
-      // Once the stills on their way are drawn. Not on any snapshot without one: setProject can send one before it asks.
-      if (wasPending && !pending) unasked = false
-      wasPending = pending
+      if (!pending) unasked = false
       updateCue()
     }),
     // Until its first frame the stage says it's preparing the preview, and a wait for a still started then would end

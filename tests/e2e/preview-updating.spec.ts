@@ -198,4 +198,20 @@ test('“Updating…” is for what the user asked for: a background write alone
   })
   await expect(updating).toBeVisible({ timeout: 3_000 })
   await settle()
+
+  // A background write during playback leaves the slow still after Pause saying so. The write moves the clip 1 s
+  // later, so the decoder starts again from the key frame and is still on its way when Pause asks for the frame.
+  const state = () => page.evaluate(() => window.mvStudio.app.stagePreview()?.getSnapshot().state as string)
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 4.4 }))
+  await settle()
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await page.keyboard.press('Space')
+  await expect.poll(state).toBe('playing')
+  await page.waitForTimeout(500)
+  await move(1, 'skip')
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Space')
+  await expect(updating).toBeVisible({ timeout: 3_000 })
+  expect(await state()).toBe('paused')
+  await settle()
 })
