@@ -1810,6 +1810,16 @@ export function groupOrder(search: string): Group[] {
 }
 
 /**
+ * Whether the palette offers to ask Assist: for a sentence, ranked with the actions, and for any other search that no
+ * action matches, so the list never ends empty ("rename chorus" with no chorus at the playhead). Not for typed keys.
+ */
+export function offersAsk(search: string): boolean {
+  const query = search.trim()
+  if (isSentence(query)) return true
+  return !!query && !keyCombo(query) && GROUPS.every((g) => groupScore(g, query) === 0)
+}
+
+/**
  * A group's actions in the order to list them: as listed, or best match first while searching, ties keeping the list's
  * order. Sorted here because cmdk leaves the items of a group in the order they render.
  */

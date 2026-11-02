@@ -131,6 +131,7 @@ import {
   sectionAt,
   sectionColor,
   sectionKind,
+  sectionLabels,
   sectionName,
   sectionsOf,
   songAnalysis,
@@ -2312,7 +2313,14 @@ export const inspectorActions: Action[] = [
     group: 'Timeline',
     label: 'Rename the section',
     icon: <PencilLine />,
-    aliases: ['rename section', 'name the section'],
+    // By its name as the song map shows it too: "rename chorus" with the playhead in a chorus.
+    aliases: () => {
+      const s = songSection()
+      if (isWhy(s)) return ['rename section', 'name the section']
+      const shown = sectionLabels(project())[sectionsOf(project()).findIndex((x) => x.id === s.id)]
+      const names = new Set([sectionName(s), shown ?? sectionName(s)])
+      return ['rename section', 'name the section', ...[...names].map((name) => `rename ${name}`)]
+    },
     keywords: 'section part name label song',
     detail: (s) => sectionName(s),
     run: (s) => focusSection(s, 'Section name'),

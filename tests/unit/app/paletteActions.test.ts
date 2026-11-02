@@ -5,12 +5,19 @@ import {
   actionScore,
   destructiveNow,
   labelOf,
+  offersAsk,
   paletteResults,
   type Action,
 } from '../../../src/app/screens/palette/actions.tsx'
 import { PAGES } from '../../../src/app/screens/palette/pages.tsx'
 import { SHORTCUTS } from '../../../src/app/state/keymap.ts'
-import { editor, sectionLabels } from '../../../src/app/state/project.ts'
+import {
+  editor,
+  sectionKind,
+  sectionLabels,
+  sectionsOf,
+  type SectionKind,
+} from '../../../src/app/state/project.ts'
 import { dismissToast, get, select, set, type Selection } from '../../../src/app/state/ui.ts'
 import { settingsForAspect } from '../../../src/model/index.ts'
 import { ASK_SCORE, isSentence } from '../../../src/app/state/paletteScore.ts'
@@ -341,6 +348,58 @@ describe('command palette coverage', () => {
 
   it('lists no action above Ask Assist for a question made of small words', () => {
     expect(paletteResults('how do i')).toEqual([])
+  })
+
+  describe('with nothing selected and the playhead in a chorus or a verse', () => {
+    const at = (kind: SectionKind, check: () => void) => () => {
+      const before = { selection: get().selection, playhead: get().playhead }
+      const section = sectionsOf(editor.getProject()).find((s) => sectionKind(s) === kind)!
+      try {
+        set({ selection: { type: 'none' }, playhead: section.start + 1 })
+        check()
+      } finally {
+        set(before)
+      }
+    }
+    const ids = (search: string) => paletteResults(search).map((a) => a.id)
+    const rename = actionsById.get('renameSection')!
+    // First, above Ask Assist where a sentence has it, so Enter renames.
+    const renames = (search: string) =>
+      ids(search)[0] === 'renameSection' && actionScore(rename, search) > ASK_SCORE
+
+    it(
+      'offers to ask Assist for every search no action matches, so the list never ends empty',
+      at('verse', () => {
+        for (const search of ['rename chorus', 'paste chorus', 'zebra', 'zebra stripes']) {
+          expect(ids(search), search).toEqual([])
+          expect(offersAsk(search), search).toBe(true)
+        }
+        // A short search an action matches runs it with Enter, with no Ask Assist row above it.
+        for (const search of ['rename section', 'rename verse', 'rename', 'cut'])
+          expect(offersAsk(search), search).toBe(false)
+        expect(offersAsk('rename the chorus')).toBe(true)
+        expect(offersAsk('ctrl+q')).toBe(false)
+        expect(offersAsk('  ')).toBe(false)
+      }),
+    )
+
+    it(
+      'finds Rename the section by the name of the section it renames, numbered or not',
+      at('chorus', () => {
+        for (const search of ['rename chorus', 'rename the chorus', 'rename chorus 1'])
+          expect(renames(search), search).toBe(true)
+        for (const search of ['rename verse', 'rename chorus 2', 'rename pre chorus'])
+          expect(renames(search), search).toBe(false)
+      }),
+    )
+
+    it(
+      'finds Rename the section for “rename verse” in a verse, and not for “rename chorus” there',
+      at('verse', () => {
+        expect(renames('rename verse')).toBe(true)
+        expect(renames('rename chorus')).toBe(false)
+      }),
+    )
   })
 
   it('ranks Delete first for removing a clip, and finds it for getting rid of one', () =>
