@@ -1,30 +1,17 @@
 import { AudioWaveform } from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
-import { STEM_NAMES, type Clip, type StemName } from '../../../../model/index.ts'
+import { STEM_NAMES, type Clip } from '../../../../model/index.ts'
 import { Button } from '../../../ds/Button.tsx'
 import { FieldRow, Section, Select } from '../../../ds/Fields.tsx'
 import { formatSpan } from '../../../format.ts'
 import { dispatch, songAnalysis, useProject } from '../../../state/project.ts'
+import { STEM_SOURCE_DESCRIPTIONS, STEM_SOURCE_LABELS } from '../../../state/stems.ts'
 import { openAssist } from '../../../state/ui.ts'
 import { CompositingSection, Header } from './parts.tsx'
 import { PluginParams } from './PluginParams.tsx'
 import styles from '../Inspector.module.css'
 
 const MIX = 'mix'
-
-const STEM_LABEL: Record<StemName, string> = {
-  vocals: 'Vocals stem',
-  drums: 'Drums stem',
-  bass: 'Bass stem',
-  other: 'Other instruments stem',
-}
-
-const STEM_DESCRIPTION: Record<StemName, string> = {
-  vocals: 'Only the singing',
-  drums: 'Only the drums',
-  bass: 'Only the bass',
-  other: 'Everything but vocals, drums and bass',
-}
 
 /** Visualizers and shader visuals: what they react to, their own settings, and compositing. */
 export function GeneratorInspector({ clip }: { clip: Extract<Clip, { type: 'generator' }> }) {
@@ -36,8 +23,8 @@ export function GeneratorInspector({ clip }: { clip: Extract<Clip, { type: 'gene
     { value: MIX, label: 'Whole song', description: 'The full mix' },
     ...STEM_NAMES.map((s) => ({
       value: s,
-      label: STEM_LABEL[s],
-      description: stems[s] ? STEM_DESCRIPTION[s] : 'Separate stems first',
+      label: STEM_SOURCE_LABELS[s],
+      description: stems[s] ? STEM_SOURCE_DESCRIPTIONS[s] : 'Separate stems first',
       disabled: !stems[s],
     })),
   ]
@@ -46,7 +33,7 @@ export function GeneratorInspector({ clip }: { clip: Extract<Clip, { type: 'gene
     if ((clip.audio?.stem ?? MIX) === value) return
     dispatch(
       { type: 'clip.setAudioSource', clipId: clip.id, source: stem ? { stem } : null },
-      { label: stem ? `React to the ${STEM_LABEL[stem].toLowerCase()}` : 'React to the whole song' },
+      { label: stem ? `React to the ${STEM_SOURCE_LABELS[stem].toLowerCase()}` : 'React to the whole song' },
     )
   }
   const params = def?.params ?? []

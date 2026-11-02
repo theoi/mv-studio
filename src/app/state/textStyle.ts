@@ -11,6 +11,9 @@ import { plural } from '../format.ts'
 import { dispatch, editor } from './project.ts'
 import { toast } from './ui.ts'
 
+/** The karaoke highlight a lyric line gets when it is turned on. */
+export const KARAOKE = { highlightColor: '#ffd27a', mode: 'word' } as const
+
 const CATEGORY: Record<FontCategory, string> = {
   sans: 'Sans serif',
   serif: 'Serif',

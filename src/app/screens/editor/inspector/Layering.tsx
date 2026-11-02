@@ -12,11 +12,11 @@ import {
   canTryCutout,
   checkFootage,
   cutoutNote,
+  cutOut,
   cutoutRemaking,
   cutoutsOf,
   hasCutout,
   objectOf,
-  putBehind,
   suitabilityOf,
   suitabilityText,
   useBehind,
@@ -27,8 +27,7 @@ import { fixObject, pickObject, timelineTimeOf, trackingText } from '../../../st
 import { backgroundAnalysisOn } from '../../../state/footage.ts'
 import { NO_GRAPHICS_REASON } from '../../../state/graphics.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
-import { editor, useProject } from '../../../state/project.ts'
-import { toast } from '../../../state/ui.ts'
+import { useProject } from '../../../state/project.ts'
 import { downloadPct, pct, useJob } from '../assist/jobState.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import styles from '../Inspector.module.css'
@@ -75,26 +74,6 @@ function progressBadge(doing: string, job: JobSnapshot): string {
   return download === undefined ? `${doing}… ${pct(job)}%` : `Downloading… ${download}%`
 }
 
-/** Starts the cutout and says so when it lands, with Undo. */
-function cutOut(hostId: string) {
-  putBehind([hostId])?.promise.then(
-    (result) => {
-      const done = 'Lyrics now sit behind the person on this clip'
-      const warning = result.warnings?.[0]
-      if (result.count)
-        toast(warning ? `${done}. ${warning.why}` : done, {
-          label: 'Undo',
-          run: () => {
-            if (editor.undoLabel() === result.label) editor.undo()
-            else toast('The project has changed since. Use Undo in the top bar to step back.')
-          },
-        })
-      else if (result.refused?.[0]) toast(result.refused[0].why)
-    },
-    () => undefined,
-  )
-}
-
 /** Offers to put the lyrics behind the person when the shot has one and they are not behind yet. */
 export function BehindSuggestion({ clip }: { clip: MediaClip }) {
   const { hostId, behind, suitability, cutting } = useBehindState(clip)
@@ -111,8 +90,21 @@ export function BehindSuggestion({ clip }: { clip: MediaClip }) {
   )
 }
 
-/** How well the picked object was followed, with a button for each spot where it was lost. */
-function ObjectTracking({ host, pick, disabled }: { host: VideoClip; pick: ObjectPick; disabled: boolean }) {
+/**
+ * How well the picked object was followed, with a button for each spot where it was lost. `blocked` says why fixing
+ * can't start, in place of how to fix.
+ */
+function ObjectTracking({
+  host,
+  pick,
+  disabled,
+  blocked,
+}: {
+  host: VideoClip
+  pick: ObjectPick
+  disabled: boolean
+  blocked?: string
+}) {
   const fixes = pick.fix.slice(0, MAX_FIXES)
   // formatTime floors the tenths, so 11.2 computed as 11.1999… would read 0:11.1.
   const timeLabel = (t: number) => formatTime(timelineTimeOf(host, t) + 1e-6, true)
@@ -120,7 +112,7 @@ function ObjectTracking({ host, pick, disabled }: { host: VideoClip; pick: Objec
     <>
       <p className={styles.note}>
         {trackingText(pick)}
-        {pick.fix.length ? ' Click the object there to fix it.' : ''}
+        {pick.fix.length ? (blocked ? ` ${blocked}.` : ' Click the object there to fix it.') : ''}
       </p>
       {fixes.length > 0 && (
         <div className={styles.inlineActions}>
@@ -131,7 +123,7 @@ function ObjectTracking({ host, pick, disabled }: { host: VideoClip; pick: Objec
               variant="ghost"
               icon={<Crosshair />}
               className={styles.forwardAction}
-              disabled={disabled}
+              disabled={disabled || !!blocked}
               onClick={() => fixObject(host.id, t)}
             >
               Fix at {timeLabel(t)}
@@ -199,7 +191,13 @@ export function LayeringSection({ clip }: { clip: MediaClip }) {
           {objectFailure ? 'Pick the object again when you’re ready.' : 'Turn it back on when you’re ready.'}
         </p>
       ) : behind && object && host ? (
-        <ObjectTracking host={host} pick={object} disabled={busy} />
+        // A fix is picked in the preview and cut out like the first pick: both need WebGL 2.
+        <ObjectTracking
+          host={host}
+          pick={object}
+          disabled={busy}
+          blocked={noGraphics ? NO_GRAPHICS_REASON : undefined}
+        />
       ) : (!behind || warns) && text.why ? (
         <p className={styles.note}>{text.why}</p>
       ) : (

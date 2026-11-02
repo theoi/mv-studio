@@ -69,6 +69,7 @@ import {
   SHOWN_AFTER_MS,
   subscribeVjEntryFrame,
   vjEntryFrame,
+  vjIntent,
   vjMidi,
 } from '../../state/vj.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
@@ -177,8 +178,8 @@ function useEngine(
     preview.seek(get().playhead)
     preview.setProject(project)
     const session = new VjSession({ editor, preview, midi: vjMidi(), onExit: () => exitEvent(session) })
-    // Each visit starts as a rehearsal: nothing lands on the timeline until Record is on.
-    session.setArmed(false)
+    // Each visit starts as a rehearsal: nothing lands on the timeline until Record is on (or it opened to record).
+    session.setArmed(vjIntent() === 'record')
     const detach = session.attachKeyboard(window)
     let shownTimer = 0
     const offFirstFrame = preview.onFrame(() => {
@@ -484,7 +485,7 @@ export function VjMode() {
   const playhead = useUi((s) => s.playhead)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
-  const [mapping, setMapping] = useState(false)
+  const [mapping, setMapping] = useState(() => vjIntent() === 'mapping')
   const closed = useRef(false)
 
   /** Esc (or a control mapped to exit) leaves mapping mode first; Back to editor always leaves. */

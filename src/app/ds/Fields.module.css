@@ -129,6 +129,17 @@
   padding: 0 var(--space-3) 0 var(--space-4);
 }
 
+/* A row the command palette went to lights up briefly so the eye finds it; a color fade, not movement. */
+.row[data-flash] {
+  animation: rowFlash 1.2s ease-out;
+}
+
+@keyframes rowFlash {
+  from {
+    background: var(--accent-soft);
+  }
+}
+
 .row:hover .reactBtn,
 .row:focus-within .reactBtn {
   opacity: 1;

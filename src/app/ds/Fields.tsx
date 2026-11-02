@@ -199,7 +199,7 @@ export function Section({
   return (
     <Collapsible.Root open={open} onOpenChange={setOpen} className={styles.section}>
       <div className={styles.sectionHeader}>
-        <Collapsible.Trigger className={styles.sectionTrigger}>
+        <Collapsible.Trigger className={styles.sectionTrigger} data-section-toggle>
           <ChevronRight className={[styles.chevron, open && styles.chevronOpen].filter(Boolean).join(' ')} />
           <span>{title}</span>
           {badge}

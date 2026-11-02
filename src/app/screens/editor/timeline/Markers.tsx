@@ -1,8 +1,8 @@
 import {
   memo,
+  useEffect,
   useMemo,
   useRef,
-  useState,
   type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
@@ -25,7 +25,7 @@ import {
   snapMarkerTime,
 } from '../../../state/markers.ts'
 import { editor } from '../../../state/project.ts'
-import { get, set } from '../../../state/ui.ts'
+import { get, set, useUi } from '../../../state/ui.ts'
 import styles from './Markers.module.css'
 
 /** Narrower than this, a marker shows its flag without its name. */
@@ -39,7 +39,15 @@ const focusAddMarker = () => document.querySelector<HTMLElement>('[data-add-mark
  * goes to, renames or removes it. Arrow keys nudge a focused marker, Delete removes it.
  */
 export const Markers = memo(function Markers({ markers, pps }: { markers: readonly Marker[]; pps: number }) {
-  const [renaming, setRenaming] = useState<string | null>(null)
+  const renaming = useUi((s) => s.renamingMarker)
+  const setRenaming = (id: string | null) => set({ renamingMarker: id })
+  // A rename ends with the ruler, which goes without a blur: a marker with that id later (after Undo) isn't renamed.
+  useEffect(
+    () => () => {
+      if (get().renamingMarker !== null) set({ renamingMarker: null })
+    },
+    [],
+  )
   // The marker to focus when it next renders: after a rename ends with Enter or Esc, or a neighbor is deleted.
   const focusNextRef = useRef<string | null>(null)
   const sorted = useMemo(() => [...markers].sort((a, b) => a.time - b.time), [markers])

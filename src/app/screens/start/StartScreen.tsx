@@ -33,7 +33,7 @@ import {
 } from '../../state/persistence.ts'
 import { JOB_KINDS, runningJobs, useIsRunning, useJobs } from '../../state/jobs.ts'
 import { openBlankProject, startSetup } from '../../state/setup.ts'
-import { set, toast, type Kind } from '../../state/ui.ts'
+import { set, toast, useUi, type Kind } from '../../state/ui.ts'
 import { GraphicsNotice } from '../common/GraphicsNotice.tsx'
 import { Logo } from '../common/Logo.tsx'
 import { CancelButton, RunCard } from '../editor/assist/ToolView.tsx'
@@ -121,6 +121,50 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
         <span>dreamy city under the aurora</span>
       </div>
     </div>
+  )
+}
+
+/** Asks before deleting a kept project, which can’t be undone. Escape and a click outside cancel too. */
+function DeleteProjectDialog({
+  project,
+  open,
+  onCancel,
+  onDelete,
+}: {
+  project: RecentProject
+  open: boolean
+  onCancel: () => void
+  onDelete: () => void
+}) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => !o && onCancel()}
+      title={`Delete “${project.name}”?`}
+      width={440}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            icon={<Trash2 />}
+            onClick={() => {
+              onDelete()
+              void deleteProject(project.id)
+            }}
+          >
+            Delete project
+          </Button>
+        </>
+      }
+    >
+      <p className={styles.confirmText}>
+        The project and its media files are removed from this browser. Media another project uses is kept. You
+        can’t undo this, so download the project file first if you might want it back.
+      </p>
+    </Dialog>
   )
 }
 
@@ -230,34 +274,12 @@ function RecentCard({ project }: { project: RecentProject }) {
           </MenuItem>
         </MenuContent>
       </Menu>
-      <Dialog
+      <DeleteProjectDialog
+        project={project}
         open={confirming}
-        onOpenChange={setConfirming}
-        title={`Delete “${project.name}”?`}
-        width={440}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              icon={<Trash2 />}
-              onClick={() => {
-                setConfirming(false)
-                void deleteProject(project.id)
-              }}
-            >
-              Delete project
-            </Button>
-          </>
-        }
-      >
-        <p className={styles.confirmText}>
-          The project and its media files are removed from this browser. Media another project uses is kept.
-          You can’t undo this, so download the project file first if you might want it back.
-        </p>
-      </Dialog>
+        onCancel={() => setConfirming(false)}
+        onDelete={() => setConfirming(false)}
+      />
     </div>
   )
 }
@@ -266,6 +288,10 @@ function RecentCard({ project }: { project: RecentProject }) {
 function RecentProjects() {
   const recents = usePersistence((s) => s.recents)
   const [all, setAll] = useState(false)
+  // Asked from the palette's Delete this project…, whose card may be beyond the ones shown. Cancel goes back to the
+  // project in the editor, which the palette was open over.
+  const deleting = useUi((s) => s.deletingProject)
+  const asked = recents?.find((p) => p.id === deleting)
   if (!recents?.length) return null
   const shown = all ? recents : recents.slice(0, RECENT_LIMIT)
   return (
@@ -285,6 +311,14 @@ function RecentProjects() {
           <RecentCard key={p.id} project={p} />
         ))}
       </div>
+      {asked && (
+        <DeleteProjectDialog
+          project={asked}
+          open
+          onCancel={() => set({ screen: 'editor', deletingProject: null })}
+          onDelete={() => set({ deletingProject: null })}
+        />
+      )}
     </section>
   )
 }

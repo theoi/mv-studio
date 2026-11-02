@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { ParamSpec } from '../../../../engine/types.ts'
 import type { Clip, Project, PropertyPath } from '../../../../model/index.ts'
 import {
@@ -13,11 +12,11 @@ import {
 } from '../../../ds/Fields.tsx'
 import { formatParam } from '../../../format.ts'
 import { BUILT_IN_LUTS, isLutAsset } from '../../../../plugins/lut.ts'
-import { LUT_FILE_TYPES, loadLut, lutFiles, pickFile } from '../../../state/luts.ts'
+import { builtInName, LUT_FILE_TYPES, loadLut, lutFiles, pickFile } from '../../../state/luts.ts'
 import { valueAtCommands } from '../../../state/keyframes.ts'
 import { editor, useProject } from '../../../state/project.ts'
+import { set } from '../../../state/ui.ts'
 import { settingName, useAnimatable } from './animatable.ts'
-import { LutFilesDialog } from './LutFiles.tsx'
 import styles from '../Inspector.module.css'
 
 const spacer = <span className={styles.trailSpacer} />
@@ -31,15 +30,6 @@ const NONE = 'none'
 /** The LUT choice's actions: ask for a LUT file, and open the project's LUT files. */
 const LOAD_LUT = 'load-lut'
 const MANAGE_LUTS = 'manage-luts'
-
-/** A built-in file's name as a choice: "bundled:luts/neutral.png" reads "Neutral". */
-function builtInName(value: string): string {
-  const file = value
-    .replace(/^bundled:/, '')
-    .replace(/^.*\//, '')
-    .replace(/\.[^.]+$/, '')
-  return file.charAt(0).toUpperCase() + file.slice(1).replace(/[-_]/g, ' ')
-}
 
 type Option = { value: string; label: string; description?: string; disabled?: boolean }
 
@@ -100,7 +90,6 @@ function ImageRow({
   choose: (value: string) => void
 }) {
   const project = useProject()
-  const [managing, setManaging] = useState(false)
   const focusChoice = () =>
     document.querySelector<HTMLElement>(`[role="combobox"][aria-label="${CSS.escape(name)}"]`)?.focus()
   const load = async () => {
@@ -117,21 +106,15 @@ function ImageRow({
       <Select
         value={value}
         onChange={(v) =>
-          v === LOAD_LUT ? void load() : v === MANAGE_LUTS ? setManaging(true) : choose(v === NONE ? '' : v)
+          v === LOAD_LUT
+            ? void load()
+            : v === MANAGE_LUTS
+              ? set({ lutFiles: { returnTo: name } })
+              : choose(v === NONE ? '' : v)
         }
         ariaLabel={name}
         options={imageOptions(project, value, spec.role)}
       />
-      {spec.role === 'lut' && (
-        <LutFilesDialog
-          open={managing}
-          onOpenChange={(open) => {
-            setManaging(open)
-            // The dialog opened from an option of this choice, which is gone by then, so it has nothing to go back to.
-            if (!open) requestAnimationFrame(focusChoice)
-          }}
-        />
-      )}
     </FieldRow>
   )
 }

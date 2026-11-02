@@ -48,7 +48,17 @@ export function useReturnFocus() {
       const active = document.activeElement
       if (!el?.isConnected || (active && active !== document.body)) return
       e.preventDefault()
-      el.focus({ preventScroll: true })
+      backTo(el).focus({ preventScroll: true })
     },
   }
+}
+
+/**
+ * A tab shows its panel when it gets focus, so when what ran in the dialog showed another tab of its list (a palette
+ * action that opens Assist from the Inspector tab), focus goes to the tab now showing instead of switching back.
+ */
+function backTo(el: HTMLElement): HTMLElement {
+  if (el.getAttribute('role') !== 'tab' || el.getAttribute('aria-selected') === 'true') return el
+  const shown = el.closest('[role="tablist"]')?.querySelector('[role="tab"][aria-selected="true"]')
+  return shown instanceof HTMLElement ? shown : el
 }

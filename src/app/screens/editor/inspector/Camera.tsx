@@ -3,7 +3,6 @@ import { AlertTriangle } from 'lucide-react'
 import { pluginRegistry } from '../../../../engine/registry.ts'
 import type { VisualClip } from '../../../../model/index.ts'
 import { webgl2Available } from '../../../../shared/capabilities.ts'
-import { JobError } from '../../../../shared/jobs.ts'
 import type { CameraPreset } from '../../../../vision/index.ts'
 import { CAMERA_EFFECT_ID } from '../../../../vision/render/cameraEffect.ts'
 import { Button } from '../../../ds/Button.tsx'
@@ -11,7 +10,7 @@ import { FieldRow, Section, Select, Slider } from '../../../ds/Fields.tsx'
 import {
   MOTION_LABELS,
   MOTION_PRESETS,
-  addedRiskNote,
+  addCameraMoves,
   cameraMoveOf,
   cameraRisks,
   chosenIntensity,
@@ -21,7 +20,6 @@ import {
   riskFacts,
   setCameraMove,
   startCameraMoves,
-  undoCameraMoves,
   useCamera,
   useDepthDownload,
   useSafeAmounts,
@@ -31,7 +29,6 @@ import { NO_GRAPHICS_REASON } from '../../../state/graphics.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { formatBytes } from '../../../format.ts'
 import { editor } from '../../../state/project.ts'
-import { toast } from '../../../state/ui.ts'
 import { downloadPct, pct, useJob } from '../assist/jobState.ts'
 import { CancelButton } from '../assist/ToolView.tsx'
 import { InlineSuggestion } from '../Suggestion.tsx'
@@ -50,24 +47,7 @@ export function CameraSuggestion({ clip }: { clip: VisualClip }) {
       id={`camera-${clip.id}`}
       action="Add 3D camera"
       onAction={() => {
-        const handle = startCameraMoves(
-          [clip.id],
-          MOTION_PRESETS[useCamera.getState().motion],
-          chosenIntensity(),
-        )
-        handle?.promise.then(
-          (result) => {
-            const risk = addedRiskNote(result)
-            toast(risk ? `3D camera move added. ${risk}` : '3D camera move added', {
-              label: 'Undo',
-              run: () => undoCameraMoves(result),
-            })
-          },
-          (err: unknown) => {
-            if (!(err instanceof JobError && err.code === 'cancelled'))
-              toast('The 3D camera move couldn’t be added. Try again from Assist › 3D camera.')
-          },
-        )
+        addCameraMoves([clip.id], MOTION_PRESETS[useCamera.getState().motion], chosenIntensity())
       }}
     >
       {CAMERA_DESCRIPTION}

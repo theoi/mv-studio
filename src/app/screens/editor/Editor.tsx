@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Upload } from 'lucide-react'
-import { closeWithToast, guideLoadFailed, set, useUi } from '../../state/ui.ts'
+import { closeWithToast, get, guideLoadFailed, set, useUi } from '../../state/ui.ts'
 import { TopBar } from './TopBar.tsx'
 import { Library, LibraryRail } from './Library.tsx'
 import { Preview } from './Preview.tsx'
@@ -12,9 +12,23 @@ import { Splitter } from './Splitter.tsx'
 import { analyzeImportsInBackground } from '../../state/footage.ts'
 import { findBarsInBackground } from '../../state/songAnalysis.ts'
 import { importFiles, registerImportInput } from '../../state/importer.ts'
+import { LutFilesDialog } from './inspector/LutFiles.tsx'
 import styles from './Editor.module.css'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
+
+/**
+ * Closes the LUT files dialog. Opened from an option of an Inspector choice, which is gone by then, it gives focus back
+ * to that choice, as it has nothing else to go back to.
+ */
+function closeLutFiles() {
+  const from = get().lutFiles?.returnTo
+  set({ lutFiles: null })
+  if (from)
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(`[role="combobox"][aria-label="${CSS.escape(from)}"]`)?.focus(),
+    )
+}
 
 type PanelSizes = { lib?: number; right?: number; tl?: number }
 const SIZES_KEY = 'mv-studio.panel-sizes'
@@ -92,6 +106,7 @@ export function Editor() {
   const exportOpen = useUi((s) => s.dialog === 'export')
   const paletteOpen = useUi((s) => s.paletteOpen)
   const guideOn = useUi((s) => s.guideStep !== null)
+  const lutFilesOpen = useUi((s) => s.lutFiles !== null)
   const libRef = useRef<HTMLDivElement>(null)
   const rightRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -183,6 +198,7 @@ export function Editor() {
       <Deferred when={guideOn} onFail={guideLoadFailed}>
         <FirstRunGuide />
       </Deferred>
+      <LutFilesDialog open={lutFilesOpen} onOpenChange={(open) => !open && closeLutFiles()} />
       <DropImport />
     </div>
   )

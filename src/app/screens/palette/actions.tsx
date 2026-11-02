@@ -97,7 +97,7 @@ import {
   rippleDeleteSelection,
   selectAll,
 } from '../../state/clipboard.ts'
-import { exportSectionTeaser, exportWithOutput } from '../../state/exports.ts'
+import { EXPORT_VERSIONS, exportSectionTeaser, exportWithOutput } from '../../state/exports.ts'
 import { animateImage } from '../../state/generate.ts'
 import { graphicsUnavailable } from '../../state/graphics.ts'
 import { openImport } from '../../state/importer.ts'
@@ -107,7 +107,15 @@ import { effectTarget, libraryAssets, textTargets, transitionTarget } from '../.
 import { retimeLine } from '../../state/lyricTiming.ts'
 import { addMarkerAtPlayhead } from '../../state/markers.ts'
 import { insertSpot, insertTarget } from '../../state/mediaDrag.ts'
-import { ASK_SCORE, isSentence, keyCombo, paletteScore, wordMatches } from '../../state/paletteScore.ts'
+import {
+  ASK_SCORE,
+  isSentence,
+  keyCombo,
+  namesInFull,
+  namesOneOf,
+  paletteScore,
+  wordMatches,
+} from '../../state/paletteScore.ts'
 import { downloadProjectFile, duplicateCurrent, openProjectFile, saveNow } from '../../state/persistence.ts'
 import { jumpSection } from '../../state/playback.ts'
 import { prefs } from '../../state/prefs.ts'
@@ -158,14 +166,19 @@ import {
   selectedClipIds,
   set,
   setSnap,
+  type Kind,
   type PageId,
+  type Selection,
   type SettingsPage,
   type SnapKey,
 } from '../../state/ui.ts'
+import { openBlankProject, startSetup } from '../../state/setup.ts'
 import { enterVj } from '../../state/vj.ts'
 import { fitTimeline, zoomBy } from '../../state/zoom.ts'
 import { clipProperties, reactionTarget } from '../editor/inspector/animatable.ts'
 import { generateShotAt, generateSpotAt } from '../editor/timeline/laneMenu.ts'
+import { inspectorActions, onSelection } from './inspectorActions.tsx'
+import type { PageState } from './pages.tsx'
 
 export const GROUPS = [
   'Suggested',
@@ -213,7 +226,7 @@ export interface Action {
   /** Other names people search for it by; they rank like its own name. A function for names that follow the project. */
   aliases?: string[] | (() => string[])
   run?: () => void
-  page?: PageId
+  page?: PageId | PageState
   /** The search its page opens with, from the search that found the action: "go to verse 2" opens on "verse 2". */
   pageSearch?: (search: string) => string
   /**
@@ -223,6 +236,21 @@ export interface Action {
   unavailable?: () => string | undefined
   /** What the action would act on, shown in its row: the track, the song section, the tempo it sets. */
   detail?: () => string | undefined
+  /**
+   * For an action on the selection (or what is at the playhead): whether there is nothing there for it to act on. It
+   * ranks below the actions that can run then, and just below an equal match otherwise.
+   */
+  idle?: () => boolean
+  /**
+   * Words the search must have one of, for an action told apart from its neighbors by what it makes: "make a video
+   * for me" isn't New lyric video….
+   */
+  needs?: readonly string[]
+  /**
+   * Deletes something, so it is listed only for a search that names it in full: Enter must not delete what a search
+   * only half names ("close gap" isn't Delete and close gap).
+   */
+  destructive?: boolean
 }
 
 const settingsPage = (page: SettingsPage) => () => set({ dialog: 'settings', settingsPage: page })
@@ -300,12 +328,12 @@ function trackToggle(
       const track = selectedTrack()
       if (fits(track)) toggleTrack(track.id, key)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const track = selectedTrack()
       if (fits(track)) return undefined
       if (!track || kind === 'any') return NO_TRACK
       return kind === 'audio' ? 'Select a clip on an audio track' : 'Select a clip on a video track'
-    },
+    }),
     detail: () => selectedTrack()?.name,
   }
 }
@@ -321,7 +349,7 @@ function moveTrack(step: -1 | 1): Action {
       const track = selectedTrack()
       if (track) moveTrackBy(track.id, step)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const track = selectedTrack()
       if (!track) return NO_TRACK
       const p = project()
@@ -330,7 +358,7 @@ function moveTrack(step: -1 | 1): Action {
       if (step < 0 && index <= min) return 'Already at the top'
       if (step > 0 && index >= max) return 'Already at the bottom'
       return undefined
-    },
+    }),
     detail: () => selectedTrack()?.name,
   }
 }
@@ -362,6 +390,7 @@ function sectionAction(
       if (section) run(section)
     },
     unavailable: () => unavailable?.() ?? (sectionHere() ? undefined : 'No song section at the playhead'),
+    idle: () => !sectionHere(),
     detail: () => {
       const section = sectionHere()
       return section && sectionName(section)
@@ -384,6 +413,55 @@ function snapTo(
     keywords: 'snapping magnet',
     run: () => setSnap(id, !get()[id]),
     unavailable: () => (get().snap ? unavailable?.() : 'Snapping is off'),
+  }
+}
+
+/**
+ * Starts a project of a kind, as its card on the Start screen does: on the setup screen, or as an empty timeline. Only
+ * a search that names the kind lists it, so "make a video for me" is the director, not five new projects.
+ */
+function newProjectOf(
+  kind: Kind,
+  label: string,
+  needs: string[],
+  keywords: string,
+  aliases?: string[],
+): Action {
+  return {
+    id: `newProject.${kind}`,
+    group: 'Project',
+    label,
+    icon: <FilePlus2 />,
+    aliases,
+    keywords: `new project start ${needs.join(' ')} ${keywords}`,
+    needs,
+    run: () => (kind === 'blank' ? void openBlankProject() : startSetup(kind)),
+    unavailable: () => (isRunning(JOB_KINDS.projectImport) ? 'A project file is being opened' : undefined),
+  }
+}
+
+/** Opens Export with a video in another frame added and selected; the project keeps its own frame. */
+function exportVersion(
+  preset: keyof typeof EXPORT_VERSIONS,
+  label: string,
+  icon: ReactNode,
+  aliases: string[],
+  keywords: string,
+): Action {
+  const aspect = EXPORT_VERSIONS[preset]
+  return {
+    id: `export${preset.charAt(0).toUpperCase()}${preset.slice(1)}`,
+    group: 'Export',
+    label,
+    icon,
+    aliases,
+    keywords: `${aspect} ${keywords}`,
+    unavailable: graphicsUnavailable,
+    run: () => exportWithOutput(preset),
+    detail: () => {
+      const current = project().settings.aspect
+      return current === aspect ? undefined : `Keeps the project ${current}`
+    },
   }
 }
 
@@ -495,7 +573,8 @@ export const actions: Action[] = [
     label: 'Export video…',
     icon: <Upload />,
     aliases: ['render', 'export in several formats'],
-    keywords: 'sizes formats aspect mp4 final',
+    keywords:
+      'sizes formats aspect mp4 final resolution 720p 1080p 1440p 4k quality fps frame rate framing file name',
     shortcut: 'export',
     unavailable: graphicsUnavailable,
     run: () => set({ dialog: 'export', exportPhase: 'setup' }),
@@ -505,6 +584,7 @@ export const actions: Action[] = [
     group: 'Suggested',
     label: 'Time lyrics to the vocals',
     icon: <Mic2 />,
+    aliases: ['add lyrics', 'lyrics source'],
     keywords: 'karaoke words align sync',
     run: () => openAssist('lyrics'),
   },
@@ -531,6 +611,7 @@ export const actions: Action[] = [
     group: 'Assist',
     label: 'Draft a video with the director',
     icon: <Clapperboard />,
+    aliases: ['describe your video', 'music video'],
     keywords: 'ai auto generate whole',
     run: () => openAssist('director'),
   },
@@ -580,7 +661,7 @@ export const actions: Action[] = [
     group: 'Assist',
     label: 'Find matching footage',
     icon: <Search />,
-    aliases: ['find similar clips'],
+    aliases: ['find similar clips', 'analyze footage'],
     keywords: 'tags search clips similar like related',
     run: () => openAssist('match'),
   },
@@ -690,7 +771,7 @@ export const actions: Action[] = [
     shortcut: 'copy',
     keywords: 'selected selection',
     run: () => void copySelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'cut',
@@ -700,7 +781,7 @@ export const actions: Action[] = [
     shortcut: 'cut',
     keywords: 'selected selection',
     run: () => void cutSelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'paste',
@@ -720,7 +801,7 @@ export const actions: Action[] = [
     shortcut: 'duplicate',
     keywords: 'clip',
     run: () => void duplicateSelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'delete',
@@ -728,10 +809,11 @@ export const actions: Action[] = [
     label: 'Delete',
     icon: <Trash2 />,
     shortcut: 'delete',
-    aliases: ['remove clip'],
+    aliases: ['remove clip', 'erase', 'trash'],
     keywords: 'remove clip',
+    destructive: true,
     run: () => void deleteSelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'rippleDelete',
@@ -739,24 +821,28 @@ export const actions: Action[] = [
     label: 'Delete and close gap',
     icon: <Trash2 />,
     shortcut: 'rippleDelete',
+    aliases: ['ripple delete'],
     keywords: 'ripple remove clip later clips move left',
+    destructive: true,
     run: () => void rippleDeleteSelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'closeGap',
     group: 'Edit',
     label: 'Close gap',
     icon: <FoldHorizontal />,
+    aliases: ['delete gap'],
     keywords: 'ripple remove empty space before clip later clips move left',
     run: () => {
       const gap = gapForPalette(project(), get().selection, get().playhead)
       if (gap) closeGap(gap)
     },
-    unavailable: () =>
+    ...onSelection(() =>
       gapForPalette(project(), get().selection, get().playhead)
         ? undefined
         : 'No gap at the playhead or before the selected clip',
+    ),
     detail: () => {
       const gap = gapForPalette(project(), get().selection, get().playhead)
       const track = gap && project().tracks.find((t) => t.id === gap.trackId)
@@ -792,13 +878,13 @@ export const actions: Action[] = [
       const clip = selectedClip()
       if (clip) resetTransform(clip.id)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const clip = selectedClip()
       if (!clip) return 'Select a clip first'
       const moves =
         clip.type === 'video' || clip.type === 'image' || (clip.type === 'text' && !clip.lyricLineId)
       return moves ? undefined : 'Select a video, image or text clip'
-    },
+    }),
   },
   {
     id: 'replaceMedia',
@@ -808,13 +894,13 @@ export const actions: Action[] = [
     aliases: ['replace clip', 'replace selected clip', 'replace footage'],
     keywords: 'swap change footage shot clip video image media library',
     page: 'replaceMedia',
-    unavailable: () => {
+    ...onSelection(() => {
       const target = replaceTarget(project(), get().selection)
       if ('why' in target) return target.why
       return replacementAssets(project()).some((a) => a.id !== target.clip.assetId)
         ? undefined
         : 'Import other media first'
-    },
+    }),
     detail: () => {
       const target = replaceTarget(project(), get().selection)
       return 'clip' in target ? viewOf(project(), target.clip).name : undefined
@@ -845,7 +931,7 @@ export const actions: Action[] = [
         shots.every((c) => !c.muted),
       )
     },
-    unavailable: needsShots,
+    ...onSelection(needsShots),
     detail: shotsDetail,
   },
   {
@@ -856,7 +942,7 @@ export const actions: Action[] = [
     aliases: ['clip volume'],
     keywords: 'sound audio louder quieter level mute own video footage',
     page: 'shotVolume',
-    unavailable: needsShots,
+    ...onSelection(needsShots),
     detail: shotsDetail,
   },
   {
@@ -866,7 +952,7 @@ export const actions: Action[] = [
     icon: <Diamond />,
     keywords: 'animate keyframes property playhead',
     page: 'keyframe',
-    unavailable: () => clipWithProperties(false),
+    ...onSelection(() => clipWithProperties(false)),
   },
   {
     id: 'react',
@@ -875,7 +961,7 @@ export const actions: Action[] = [
     icon: <AudioWaveform />,
     keywords: 'audio reactive beat pulse kick modulate',
     page: 'react',
-    unavailable: () => clipWithProperties(true),
+    ...onSelection(() => clipWithProperties(true)),
   },
   {
     id: 'retimeLine',
@@ -887,7 +973,7 @@ export const actions: Action[] = [
       const line = selectedLine()
       if (line) void retimeLine(line.id)
     },
-    unavailable: retimeReason,
+    ...onSelection(retimeReason),
   },
   {
     id: 'styleAllLines',
@@ -900,11 +986,11 @@ export const actions: Action[] = [
       const clip = line && lineClip(line.id)
       if (clip) applyStyleToAllLines(clip)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const line = selectedLine()
       if (!line) return 'Select a lyric line first'
       return lineClip(line.id) ? undefined : 'The line is not on the timeline'
-    },
+    }),
   },
   {
     id: 'animateImage',
@@ -917,7 +1003,7 @@ export const actions: Action[] = [
       const clip = selectedClip()
       if (clip?.type === 'image') animateImage(clip)
     },
-    unavailable: () => (selectedClip()?.type === 'image' ? undefined : 'Select an image first'),
+    ...onSelection(() => (selectedClip()?.type === 'image' ? undefined : 'Select an image first')),
   },
 
   tool('selectTool', 'select', <MousePointer2 />, 'pointer arrow'),
@@ -1026,10 +1112,10 @@ export const actions: Action[] = [
       const spot = generateSpotAt(project(), get().playhead, selectedTrack()?.id)
       if (!('why' in spot)) generateShotAt(spot)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const spot = generateSpotAt(project(), get().playhead, selectedTrack()?.id)
       return 'why' in spot ? spot.why : undefined
-    },
+    }),
     detail: () => {
       const spot = generateSpotAt(project(), get().playhead, selectedTrack()?.id)
       return 'why' in spot ? undefined : project().tracks.find((t) => t.id === spot.trackId)?.name
@@ -1041,6 +1127,7 @@ export const actions: Action[] = [
     group: 'Library',
     label: 'Import media…',
     icon: <Film />,
+    aliases: ['choose files'],
     shortcut: 'import',
     keywords: 'add files video images',
     run: () => openImport(),
@@ -1062,13 +1149,13 @@ export const actions: Action[] = [
     aliases: ['insert', 'insert clip', 'insert between shots', 'ripple insert'],
     keywords: 'push later clips cut shot video image library timeline',
     page: 'insertMedia',
-    unavailable: () => {
+    ...onSelection(() => {
       if (!replacementAssets(project()).length) return 'Import a video or image first'
       const point = insertTarget(project(), get().playhead)
       if (!point) return 'Add a video or image to the timeline first'
       const track = project().tracks.find((t) => t.id === point.trackId)
       return track?.locked ? 'Its track is locked' : track?.hidden ? 'Its track is hidden' : undefined
-    },
+    }),
     detail: () => {
       const point = insertTarget(project(), get().playhead)
       if (!point) return undefined
@@ -1092,10 +1179,10 @@ export const actions: Action[] = [
     icon: <Type />,
     keywords: 'karaoke font lyrics look',
     page: 'textStyle',
-    unavailable: () => {
+    ...onSelection(() => {
       const targets = textTargets(project(), get().selection)
       return 'why' in targets ? targets.why : undefined
-    },
+    }),
   },
   {
     id: 'kinetic',
@@ -1104,16 +1191,17 @@ export const actions: Action[] = [
     icon: <Type />,
     keywords: 'text animation motion typography lyrics',
     page: 'kinetic',
-    unavailable: () => {
+    ...onSelection(() => {
       const targets = textTargets(project(), get().selection)
       return 'why' in targets ? targets.why : undefined
-    },
+    }),
   },
   {
     id: 'visualizer',
     group: 'Library',
     label: 'Add a visualizer…',
     icon: <ChartNoAxesColumn />,
+    aliases: ['starting style'],
     keywords: 'audio bars spectrum waveform shader visual background particles browse',
     page: 'visualizer',
   },
@@ -1124,8 +1212,9 @@ export const actions: Action[] = [
     icon: <Wand2 />,
     keywords: 'filter glitch blur glow color browse',
     page: 'effect',
-    unavailable: () =>
+    ...onSelection(() =>
       effectTarget(project(), get().selection, get().playhead) ? undefined : 'Select a clip first',
+    ),
     detail: () => {
       const clip = effectTarget(project(), get().selection, get().playhead)
       return clip && viewOf(project(), clip).name
@@ -1138,8 +1227,9 @@ export const actions: Action[] = [
     icon: <Repeat />,
     keywords: 'crossfade dissolve wipe cut fade browse',
     page: 'transition',
-    unavailable: () =>
+    ...onSelection(() =>
       transitionTarget(project(), get().selection, get().playhead) ? undefined : 'Select a clip first',
+    ),
   },
   {
     id: 'looks',
@@ -1155,8 +1245,9 @@ export const actions: Action[] = [
     group: 'Library',
     label: 'Show or hide the library',
     icon: <PanelLeft />,
+    aliases: ['collapse library', 'expand library'],
     shortcut: 'library',
-    keywords: 'panel media sidebar',
+    keywords: 'panel media sidebar tab tabs text visuals effects',
     run: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
   },
 
@@ -1273,6 +1364,7 @@ export const actions: Action[] = [
     group: 'Playback',
     label: 'Open VJ mode',
     icon: <Disc3 />,
+    aliases: ['vj'],
     shortcut: 'vj',
     keywords: 'live perform midi record',
     unavailable: graphicsUnavailable,
@@ -1312,12 +1404,26 @@ export const actions: Action[] = [
     keywords: 'start video',
     run: () => set({ screen: 'start' }),
   },
+  newProjectOf('lyric', 'New lyric video…', ['lyric', 'karaoke'], 'kinetic type words timed vocals', [
+    'karaoke video',
+  ]),
+  newProjectOf(
+    'visualizer',
+    'New visualizer…',
+    ['visualizer', 'visualiser'],
+    'video beat bass vocals reactive',
+  ),
+  newProjectOf('footage', 'New beat-cut video…', ['beat', 'cut', 'footage', 'clips', 'montage'], 'sections', [
+    'beat-cut footage',
+  ]),
+  newProjectOf('ai', 'New AI music video…', ['ai', 'director', 'idea', 'music'], 'draft'),
+  newProjectOf('blank', 'New blank project', ['blank', 'empty', 'scratch'], 'timeline'),
   {
     id: 'openRecent',
     group: 'Project',
     label: 'Open a recent project…',
     icon: <FolderClock />,
-    keywords: 'projects earlier previous last old past before',
+    keywords: 'projects earlier previous last old past before show all fewer',
     run: () => set({ screen: 'start' }),
   },
   aspect('16:9', 'Switch to landscape 16:9', <RectangleHorizontal />, 'widescreen youtube horizontal'),
@@ -1358,30 +1464,38 @@ export const actions: Action[] = [
     icon: <Save />,
     shortcut: 'save',
     aliases: ['save project'],
-    keywords: 'store browser work changes',
+    keywords: 'store browser work changes retry',
     run: () => void saveNow(),
   },
 
-  {
-    id: 'exportVertical',
-    group: 'Export',
-    label: 'Export a vertical version…',
-    icon: <Smartphone />,
-    aliases: ['tiktok', 'reels', 'shorts', 'youtube shorts'],
-    keywords: '9:16 shorts reels tiktok',
-    unavailable: graphicsUnavailable,
-    run: () => exportWithOutput('vertical'),
-    detail: () => {
-      const { aspect } = project().settings
-      return aspect === '9:16' ? undefined : `Keeps the project ${aspect}`
-    },
-  },
+  exportVersion(
+    'vertical',
+    'Export a vertical version…',
+    <Smartphone />,
+    ['tiktok', 'reels', 'shorts', 'youtube shorts'],
+    'shorts reels tiktok',
+  ),
+  exportVersion('square', 'Export a square version…', <Square />, ['instagram post'], 'instagram feed post'),
+  exportVersion(
+    'portrait',
+    'Export a portrait version…',
+    <RectangleVertical />,
+    ['instagram portrait'],
+    'instagram feed',
+  ),
+  exportVersion(
+    'landscape',
+    'Export a landscape version…',
+    <RectangleHorizontal />,
+    ['youtube video'],
+    'widescreen youtube horizontal',
+  ),
   {
     id: 'exportTeaser',
     group: 'Export',
     label: 'Export a chorus teaser…',
     icon: <Upload />,
-    keywords: 'highlight clip short preview',
+    keywords: 'highlight clip short preview length',
     unavailable: graphicsUnavailable,
     run: () => exportWithOutput('teaser'),
   },
@@ -1390,7 +1504,7 @@ export const actions: Action[] = [
     group: 'Export',
     label: 'Export a loop for Canvas…',
     icon: <Repeat />,
-    keywords: 'spotify canvas loop',
+    keywords: 'spotify canvas loop length',
     unavailable: graphicsUnavailable,
     run: () => exportWithOutput('loop'),
   },
@@ -1400,7 +1514,9 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Connect fal.ai',
     icon: <KeyRound />,
-    keywords: 'api key cloud settings',
+    aliases: ['ask before every paid generation', 'spending reminder'],
+    keywords:
+      'api key cloud settings spending reminder ask before paid generation remove confirm warn paying money cost',
     run: settingsPage('ai'),
   },
   {
@@ -1408,7 +1524,9 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Set up an LLM (Ollama, LM Studio, OpenAI)',
     icon: <Wand2 />,
-    keywords: 'api key local model connect settings',
+    aliases: ['endpoint url', 'answer time limit', 'remove this connection'],
+    keywords:
+      'api key local model language connect settings provider endpoint openrouter time limit timeout test connection',
     run: settingsPage('ai'),
   },
   {
@@ -1416,9 +1534,9 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Open settings',
     icon: <Settings />,
-    aliases: ['preferences', 'options'],
+    aliases: ['preferences', 'options', 'autosave interval'],
     shortcut: 'settings',
-    keywords: 'general autosave suggestions motion frame rate',
+    keywords: 'general autosave interval every minutes often suggestions motion default frame rate',
     run: settingsPage('general'),
   },
   {
@@ -1426,7 +1544,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Editing settings: snapping and durations',
     icon: <Pencil />,
-    keywords: 'still text default',
+    keywords: 'still image text default duration length bars',
     run: settingsPage('editing'),
   },
   {
@@ -1434,7 +1552,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'This device: AI models and capabilities',
     icon: <Cpu />,
-    keywords: 'threads webgpu local download settings',
+    keywords: 'threads cpu webgpu local download settings remove model',
     run: settingsPage('local'),
   },
   {
@@ -1442,7 +1560,8 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'VJ and MIDI settings',
     icon: <Disc3 />,
-    keywords: 'controller quantize devices',
+    aliases: ['quantize triggers'],
+    keywords: 'controller quantize devices mapping preset nearest beat bar',
     run: settingsPage('vj'),
   },
   {
@@ -1458,7 +1577,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Storage used in this browser',
     icon: <HardDrive />,
-    keywords: 'space disk quota cache delete settings',
+    keywords: 'space disk quota cache delete settings clear models',
     run: settingsPage('storage'),
   },
   {
@@ -1466,7 +1585,8 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'About MV Studio',
     icon: <Info />,
-    keywords: 'version info licenses notices settings',
+    aliases: ['version', 'view third-party notices', 'view open-source licenses'],
+    keywords: 'info licenses notices settings open source third party',
     run: settingsPage('about'),
   },
 
@@ -1475,7 +1595,8 @@ export const actions: Action[] = [
     group: 'Help',
     label: 'Keyboard shortcuts',
     icon: <Keyboard />,
-    aliases: ['hotkeys', 'key bindings', 'keymap'],
+    aliases: ['hotkeys', 'key bindings', 'keymap', 'search shortcuts'],
+    keywords: 'keys next previous frame beat step shuttle',
     shortcut: 'shortcuts',
     run: settingsPage('shortcuts'),
   },
@@ -1495,6 +1616,7 @@ export const actions: Action[] = [
     keywords: 'docs manual readme help',
     run: openDocs,
   },
+  ...inspectorActions,
 ]
 
 export const labelOf = (a: Action): string => (typeof a.label === 'function' ? a.label() : a.label)
@@ -1569,17 +1691,29 @@ function wordWeight(word: string): number {
 
 /**
  * The scores for the last search: ordering the groups and their actions asks for each one many times per keystroke.
- * Kept while the project stays the same (sections can arrive while the palette is open), and keyed by the name too,
- * which can follow the state.
+ * Kept while the project, the selection and the playhead stay the same (sections can arrive while the palette is open,
+ * and what an action acts on follows the other two), and keyed by the name too, which can follow the state.
  */
-let last: { search: string; project?: Project; scores: Map<string, number> } = {
+let last: {
+  search: string
+  project?: Project
+  selection?: Selection
+  playhead?: number
+  scores: Map<string, number>
+} = {
   search: '',
   scores: new Map(),
 }
 
 function remember(key: string, search: string, score: () => number): number {
-  if (last.search !== search || last.project !== project())
-    last = { search, project: project(), scores: new Map() }
+  const { selection, playhead } = get()
+  if (
+    last.search !== search ||
+    last.project !== project() ||
+    last.selection !== selection ||
+    last.playhead !== playhead
+  )
+    last = { search, project: project(), selection, playhead, scores: new Map() }
   let value = last.scores.get(key)
   if (value === undefined) {
     value = score()
@@ -1600,6 +1734,12 @@ function fullScore(a: Action, search: string): number {
   )
 }
 
+/** Whether the search has every word of the action's name or of one of its other names. */
+const namedInFull = (a: Action, search: string): boolean =>
+  remember(`${a.id}\n${labelOf(a)}\nnamed`, search, () =>
+    Number(namesInFull(labelOf(a), aliasesOf(a), search)),
+  ) === 1
+
 const aboveAsk = (group: Group, search: string): boolean =>
   remember(group, search, () =>
     Number(actions.some((a) => a.group === group && fullScore(a, search) > ASK_SCORE)),
@@ -1610,9 +1750,11 @@ const aboveAsk = (group: Group, search: string): boolean =>
  * Assist row to come first, so it lists none ("dark mode" isn't Open VJ mode). It is left out of a group that has an
  * action ranked above Ask Assist, where it would come first: "add an effect" listed every Add action of the Library.
  */
-export function actionScore(a: Action, search: string): number {
+function matchScore(a: Action, search: string): number {
   const keys = keyCombo(search)
   if (keys) return a.shortcut && shortcutKeys(a.shortcut).some((k) => keyCombo(k) === keys) ? 1 : 0
+  if (a.needs && !namesOneOf(a.needs, search)) return 0
+  if (a.destructive && !namedInFull(a, search)) return 0
   const full = fullScore(a, search)
   if (full > 0 || !isSentence(search) || aboveAsk(a.group, search)) return full
   const label = labelOf(a)
@@ -1624,6 +1766,27 @@ export function actionScore(a: Action, search: string): number {
       context: contextOf(a),
     }),
   )
+}
+
+/**
+ * An action on the selection ranks just below another one the search names as well: with a clip selected, "end" is
+ * still Go to the end before Trim the end to the playhead.
+ */
+const SELECTION_FACTOR = 0.99
+/**
+ * One with nothing to act on ranks below the actions that can run, even those only its keywords name: "version" lists
+ * About MV Studio before Try another version when there is no draft. Not when the search names it in full: it stays
+ * first, saying why it can't run, so Enter does nothing rather than run another action ("close gap" with no gap isn't
+ * Delete and close gap, "move track down" on the bottom track isn't Move track up).
+ */
+const IDLE_FACTOR = 0.6
+
+/** How well the search names the action, 0 when it doesn't: the order the palette lists actions in. */
+export function actionScore(a: Action, search: string): number {
+  const score = matchScore(a, search)
+  if (!score || !a.idle) return score
+  const idle = remember(`${a.id}\nidle`, search, () => Number(a.idle!() && !namedInFull(a, search))) === 1
+  return score * (idle ? IDLE_FACTOR : SELECTION_FACTOR)
 }
 
 /** A group's best score for a search: where cmdk would show the group. */

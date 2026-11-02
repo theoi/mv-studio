@@ -32,11 +32,19 @@ interface ExportsState {
   files: Record<string, File>
   /** The song section the export dialog opens with a teaser of (Section › Export as a teaser). */
   teaserSection: string | null
-  /** The output the export dialog opens with, added and selected (the palette's Export a vertical version…). */
+  /** The output the export dialog opens with, added and selected (the palette's Export a vertical version… and others). */
   preset: ExportPreset | null
 }
 
-export type ExportPreset = 'vertical' | 'teaser' | 'loop'
+/** The frames of the palette's Export a … version… actions. */
+export const EXPORT_VERSIONS = {
+  vertical: '9:16',
+  square: '1:1',
+  portrait: '4:5',
+  landscape: '16:9',
+} as const satisfies Record<string, AspectPreset>
+
+export type ExportPreset = keyof typeof EXPORT_VERSIONS | 'teaser' | 'loop'
 
 export const useExports = create<ExportsState>(() => ({
   jobId: null,
