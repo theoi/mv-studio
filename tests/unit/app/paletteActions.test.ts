@@ -477,6 +477,7 @@ describe('command palette coverage', () => {
       'an outline, a shadow and a background on the selected text',
       ['textOutline', 'textShadow', 'textBackground'],
       ['outline', 'shadow', 'background', 'box'],
+      ['stroke', 'text border', 'drop shadow', 'text box', 'background box', 'highlight box'],
       () => {
         const text = Object.values(editor.getProject().clips).find(
           (c) => c.type === 'text' && !c.lyricLineId,
@@ -492,6 +493,7 @@ describe('command palette coverage', () => {
       'the karaoke highlight on the selected lyric line',
       ['karaoke'],
       ['karaoke', 'highlight', 'turn on karaoke'],
+      ['word highlight', 'karaoke highlight'],
       () => {
         const line = Object.values(editor.getProject().clips).find((c) => c.type === 'text' && c.lyricLineId)!
         select({ type: 'clip', id: line.id })
@@ -502,7 +504,8 @@ describe('command palette coverage', () => {
     [
       'text behind the selected clip’s subject',
       ['behindClip'],
-      ['front', 'behind subject', 'text behind this person'],
+      ['front', 'behind subject'],
+      ['text behind this person', 'lyrics behind this clip'],
       () => {
         const [host, cutout] = Object.values(editor.getProject().clips).filter((c) => c.type === 'video')
         editor.dispatch({
@@ -514,7 +517,7 @@ describe('command palette coverage', () => {
         select({ type: 'clip', id: host!.id })
       },
     ],
-  ])('with %s', (_, toggles, partWords, setUp) => {
+  ])('with %s', (_, toggles, partWords, nounNames, setUp) => {
     const inState = (check: () => void) => () => {
       const before = get().selection
       const steps = editor.history().undo.length
@@ -536,18 +539,28 @@ describe('command palette coverage', () => {
       }),
     )
 
-    it(
-      'lists it for no search that only names the part, or asks for the other way',
+    it('lists it for no search that only names the part, or asks for the other way', () => {
+      // The names it has while it adds, with nothing selected: “text box”, “word highlight”, “text behind this person”.
+      const before = get().selection
+      set({ selection: { type: 'none' } })
+      const addNames = toggles.flatMap((id) => {
+        const toggle = actionsById.get(id)!
+        expect(destructiveNow(toggle), id).toBe(false)
+        const aliases = typeof toggle.aliases === 'function' ? toggle.aliases() : (toggle.aliases ?? [])
+        return [labelOf(toggle), ...aliases]
+      })
+      set({ selection: before })
+      expect(addNames).toEqual(expect.arrayContaining(nounNames))
       inState(() => {
-        for (const search of partWords) {
+        for (const search of [...partWords, ...addNames]) {
           const ids = paletteResults(search).map((a) => a.id)
           expect(
             toggles.filter((id) => ids.includes(id)),
             search,
           ).toEqual([])
         }
-      }),
-    )
+      })()
+    })
   })
 
   it('lists a text toggle by the start of a word while it adds, and only by whole names once it would remove', () => {
@@ -563,9 +576,14 @@ describe('command palette coverage', () => {
         expect(ids(search), search).toContain('textBackground')
       background.run?.()
       expect(labelOf(background)).toBe('Remove the text background')
-      for (const search of ['box', 'backgr', 'background', 'remove the text backgr'])
+      for (const search of ['box', 'backgr', 'background', 'text box', 'remove the text backgr'])
         expect(ids(search), search).not.toContain('textBackground')
-      for (const search of ['text box', 'remove background', 'background off', 'remove the text background'])
+      for (const search of [
+        'remove text box',
+        'remove background',
+        'background off',
+        'remove the text background',
+      ])
         expect(ids(search), search).toContain('textBackground')
     } finally {
       while (editor.history().undo.length > steps) editor.undo()
