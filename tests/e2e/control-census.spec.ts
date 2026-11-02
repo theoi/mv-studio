@@ -461,7 +461,7 @@ test('every control on screen has a UI_ACTIONS row, so the palette has it or say
   await page.keyboard.press('Escape')
   await ui({ guideStep: 0 })
   await collect('First-run guide')
-  await ui({ guideStep: null, lutFilesOpen: true })
+  await ui({ guideStep: null, lutFiles: { returnTo: null } })
   await expect(page.getByRole('dialog', { name: 'LUT files' })).toBeVisible()
   await collect('LUT files dialog')
   await page.keyboard.press('Escape')

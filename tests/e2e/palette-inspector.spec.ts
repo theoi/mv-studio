@@ -126,3 +126,68 @@ test('the palette opens VJ mode with Record on, and the start screen asking to d
   await expect(confirm).toBeHidden()
   await expect(page.getByText(name, { exact: true }).first()).toBeVisible()
 })
+
+test('Record and the mapping view last the one visit the palette opened: Back into VJ mode later is a rehearsal', async ({
+  page,
+}) => {
+  await openEditor(page)
+  const { run } = palette(page)
+  const live = page.getByRole('img', { name: 'Live output' })
+  const record = page.getByRole('button', { name: /^Record/ })
+  const mapping = page.getByText('Click a pad, then press a key or a MIDI pad to map it.')
+  const shown = () => expect(live).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+  const toEditor = async () => {
+    await page.getByRole('button', { name: 'Back to editor' }).click()
+    await waitForPreview(page)
+  }
+
+  await run('record a vj performance')
+  await shown()
+  await expect(record).toHaveAttribute('aria-pressed', 'true')
+  await toEditor()
+  await page.goBack()
+  await shown()
+  await expect(record).toHaveAttribute('aria-pressed', 'false')
+  await page.goForward()
+  await waitForPreview(page)
+  await page.goBack()
+  await shown()
+  await expect(record).toHaveAttribute('aria-pressed', 'false')
+  await toEditor()
+
+  await run('map keys and midi pads')
+  await shown()
+  await expect(mapping).toBeVisible()
+  await toEditor()
+  await page.goBack()
+  await shown()
+  await expect(record).toHaveAttribute('aria-pressed', 'false')
+  await expect(mapping).toHaveCount(0)
+})
+
+test('Delete this project… asks even when the project’s card is beyond the ones the start screen shows, and once', async ({
+  page,
+}) => {
+  await openEditor(page)
+  const { run } = palette(page)
+  const name = await page.evaluate(() => window.mvStudio.app.project.editor.getProject().name as string)
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.getByRole('banner').getByText('Saved')).toBeVisible()
+  // Six newer copies put this project's card after the six recent ones shown.
+  await page.evaluate(async () => {
+    const { app } = window.mvStudio
+    const id: string = app.project.editor.getProject().id
+    for (let i = 0; i < 6; i++) await app.persistence.duplicateProject(id)
+  })
+  const card = page.getByRole('button', { name: `More actions for ${name}`, exact: true })
+
+  await run('delete this project')
+  const confirm = page.getByRole('dialog', { name: `Delete “${name}”?` })
+  await expect(confirm).toBeVisible()
+  await expect(card).toHaveCount(0)
+  await confirm.getByRole('button', { name: 'Cancel' }).click()
+  await expect(confirm).toBeHidden()
+  await page.getByRole('button', { name: /^Show all \d+$/ }).click()
+  await expect(card).toBeVisible()
+  await expect(confirm).toHaveCount(0)
+})

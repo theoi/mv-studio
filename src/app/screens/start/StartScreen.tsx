@@ -124,17 +124,53 @@ export function KindArt({ kind }: { kind: Exclude<Kind, 'blank'> }) {
   )
 }
 
+/** Asks before deleting a kept project, which can’t be undone. */
+function DeleteProjectDialog({
+  project,
+  open,
+  onOpenChange,
+}: {
+  project: RecentProject
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Delete “${project.name}”?`}
+      width={440}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            icon={<Trash2 />}
+            onClick={() => {
+              onOpenChange(false)
+              void deleteProject(project.id)
+            }}
+          >
+            Delete project
+          </Button>
+        </>
+      }
+    >
+      <p className={styles.confirmText}>
+        The project and its media files are removed from this browser. Media another project uses is kept. You
+        can’t undo this, so download the project file first if you might want it back.
+      </p>
+    </Dialog>
+  )
+}
+
 function RecentCard({ project }: { project: RecentProject }) {
   // Opening a kept project while a project file opens would be replaced by the file's project when it is in.
   const opening = useIsRunning(JOB_KINDS.projectImport)
   const [renaming, setRenaming] = useState(false)
-  const [confirmingHere, setConfirmingHere] = useState(false)
-  const asked = useUi((s) => s.deletingProject === project.id)
-  const confirming = confirmingHere || asked
-  const setConfirming = (open: boolean) => {
-    setConfirmingHere(open)
-    if (!open && asked) set({ deletingProject: null })
-  }
+  const [confirming, setConfirming] = useState(false)
   // The menu traps focus while open and gives it back to its button as it closes, so the rename field takes focus
   // only once the menu has closed.
   const keepFocus = useRef(false)
@@ -236,34 +272,7 @@ function RecentCard({ project }: { project: RecentProject }) {
           </MenuItem>
         </MenuContent>
       </Menu>
-      <Dialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title={`Delete “${project.name}”?`}
-        width={440}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              icon={<Trash2 />}
-              onClick={() => {
-                setConfirming(false)
-                void deleteProject(project.id)
-              }}
-            >
-              Delete project
-            </Button>
-          </>
-        }
-      >
-        <p className={styles.confirmText}>
-          The project and its media files are removed from this browser. Media another project uses is kept.
-          You can’t undo this, so download the project file first if you might want it back.
-        </p>
-      </Dialog>
+      <DeleteProjectDialog project={project} open={confirming} onOpenChange={setConfirming} />
     </div>
   )
 }
@@ -272,6 +281,9 @@ function RecentCard({ project }: { project: RecentProject }) {
 function RecentProjects() {
   const recents = usePersistence((s) => s.recents)
   const [all, setAll] = useState(false)
+  // Asked from the palette's Delete this project…, whose card may be beyond the ones shown.
+  const deleting = useUi((s) => s.deletingProject)
+  const asked = recents?.find((p) => p.id === deleting)
   if (!recents?.length) return null
   const shown = all ? recents : recents.slice(0, RECENT_LIMIT)
   return (
@@ -291,6 +303,13 @@ function RecentProjects() {
           <RecentCard key={p.id} project={p} />
         ))}
       </div>
+      {asked && (
+        <DeleteProjectDialog
+          project={asked}
+          open
+          onOpenChange={(open) => !open && set({ deletingProject: null })}
+        />
+      )}
     </section>
   )
 }

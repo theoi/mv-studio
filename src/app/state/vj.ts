@@ -67,7 +67,10 @@ function setEntryFrame(frame: ImageBitmap | null) {
 
 type VjIntent = 'record' | 'mapping' | null
 
-/** What the last entry opened VJ mode to do (see enterVjTo). */
+/**
+ * What the entry under way, then the visit it opened, was asked to do (see enterVjTo). It lasts that one visit: Back or
+ * Forward into VJ mode later opens a rehearsal.
+ */
 let intent: VjIntent = null
 
 /**
@@ -102,10 +105,14 @@ export function enterVjTo(next: VjIntent) {
     () => {
       setEntering(false)
       if (get().screen === 'editor') set({ screen: 'vj' })
-      else clearVjEntryFrame()
+      else {
+        intent = null
+        clearVjEntryFrame()
+      }
     },
     () => {
       setEntering(false)
+      intent = null
       clearVjEntryFrame()
       if (get().screen === 'editor') toastLoadFailed('VJ mode')
     },
@@ -159,6 +166,7 @@ export function clearVjReturnFrame() {
 // Only for the stage right after leaving: dropped once the editor closes, shown or not.
 useUi.subscribe((s, prev) => {
   if (prev.screen === 'editor' && s.screen !== 'editor') setReturnFrame(null)
+  if (prev.screen === 'vj' && s.screen !== 'vj') intent = null
 })
 
 /** How long leaving VJ mode waits for the live output's last frame before the editor opens without it. */

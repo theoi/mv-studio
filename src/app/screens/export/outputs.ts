@@ -26,6 +26,7 @@ import {
   showExport,
   toastExportEnd,
   useExports,
+  EXPORT_VERSIONS,
   type ExportPreset,
   type ExportRow,
 } from '../../state/exports.ts'
@@ -113,15 +114,16 @@ function withPreset(
   items: OutputItem[],
   preset: ExportPreset,
 ): { items: OutputItem[]; selectedId: string | undefined } {
-  const kind = preset === 'vertical' ? 'video' : preset
-  const fits = (spec: OutputSpec) => spec.kind === kind && (kind !== 'video' || spec.aspect === '9:16')
+  const aspect = preset === 'teaser' || preset === 'loop' ? undefined : EXPORT_VERSIONS[preset]
+  const kind = preset === 'teaser' || preset === 'loop' ? preset : 'video'
+  const fits = (spec: OutputSpec) => spec.kind === kind && (!aspect || spec.aspect === aspect)
   const existing = items.find((i) => fits(i.spec))
   if (existing)
     return {
       items: items.map((i) => (i === existing ? { ...i, on: true } : i)),
       selectedId: existing.spec.id,
     }
-  const spec = newOutput(project, kind, kind === 'video' ? { aspect: '9:16' } : {})
+  const spec = newOutput(project, kind, aspect ? { aspect } : {})
   return { items: [...items, { spec, on: true }], selectedId: spec.id }
 }
 

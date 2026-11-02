@@ -95,8 +95,11 @@ export interface UiState {
   renamingMarker: string | null
   /** The kept project the start screen asks to confirm deleting, as the palette's Delete this project… asks. */
   deletingProject: string | null
-  /** The project's LUT files dialog, opened from the palette's Manage LUT files…. */
-  lutFilesOpen: boolean
+  /**
+   * The project's LUT files dialog while open, with the Inspector choice it opened from (its aria-label) to give focus
+   * back to, or null from the palette.
+   */
+  lutFiles: { returnTo: string | null } | null
   lyricsMode: LyricsMode
   guideStep: number | null
   libraryTab: LibraryTab
@@ -152,7 +155,7 @@ export const initialUi: UiState = {
   renaming: false,
   renamingMarker: null,
   deletingProject: null,
-  lutFilesOpen: false,
+  lutFiles: null,
   lyricsMode: 'paste',
   guideStep: null,
   libraryTab: 'media',

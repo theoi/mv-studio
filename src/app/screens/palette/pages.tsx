@@ -392,6 +392,17 @@ function reactionItems(property: ClipProperty): PageItem[] {
 
 const AMOUNTS = [25, 50, 75, 100]
 
+/**
+ * A page of values: picking the one in use changes nothing, as the Inspector's controls don't fire for an unchanged
+ * value. Run anyway, it would add an empty undo step and say so, since every dispatch stamps the project's updatedAt.
+ */
+function valueChoices(groups: PageGroup[]): PageGroup[] {
+  return groups.map((g) => ({
+    ...g,
+    items: g.items.map((item) => (item.current && item.run ? { ...item, run: () => undefined } : item)),
+  }))
+}
+
 /** How strongly a property reacts to the music, as the React panel's Amount sets it. */
 function amountItems(property: ClipProperty): PageItem[] {
   const clip = selectedClip()
@@ -616,18 +627,19 @@ export const PAGES: Record<PageState['id'], PageDef> = {
     empty: () => 'No matching amount.',
     groups: (state) =>
       state.id === 'amount'
-        ? [
+        ? valueChoices([
             {
               heading: `How much ${lowerFirst(state.property.name)} reacts`,
               items: amountItems(state.property),
             },
-          ]
+          ])
         : [],
   },
   values: {
     placeholder: (state) => (state.id === 'values' && VALUE_PAGES.get(state.action)?.placeholder) || 'Search',
     empty: noMatch('choice'),
-    groups: (state) => (state.id === 'values' ? (VALUE_PAGES.get(state.action)?.groups() ?? []) : []),
+    groups: (state) =>
+      state.id === 'values' ? valueChoices(VALUE_PAGES.get(state.action)?.groups() ?? []) : [],
   },
   reactions: {
     placeholder: 'Search reactions',

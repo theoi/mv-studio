@@ -97,7 +97,7 @@ import {
   rippleDeleteSelection,
   selectAll,
 } from '../../state/clipboard.ts'
-import { exportSectionTeaser, exportWithOutput } from '../../state/exports.ts'
+import { EXPORT_VERSIONS, exportSectionTeaser, exportWithOutput } from '../../state/exports.ts'
 import { animateImage } from '../../state/generate.ts'
 import { graphicsUnavailable } from '../../state/graphics.ts'
 import { openImport } from '../../state/importer.ts'
@@ -158,16 +158,18 @@ import {
   selectedClipIds,
   set,
   setSnap,
+  type Kind,
   type PageId,
   type Selection,
   type SettingsPage,
   type SnapKey,
 } from '../../state/ui.ts'
+import { openBlankProject, startSetup } from '../../state/setup.ts'
 import { enterVj } from '../../state/vj.ts'
 import { fitTimeline, zoomBy } from '../../state/zoom.ts'
 import { clipProperties, reactionTarget } from '../editor/inspector/animatable.ts'
 import { generateShotAt, generateSpotAt } from '../editor/timeline/laneMenu.ts'
-import { inspectorActions } from './inspectorActions.tsx'
+import { inspectorActions, onSelection } from './inspectorActions.tsx'
 import type { PageState } from './pages.tsx'
 
 export const GROUPS = [
@@ -308,12 +310,12 @@ function trackToggle(
       const track = selectedTrack()
       if (fits(track)) toggleTrack(track.id, key)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const track = selectedTrack()
       if (fits(track)) return undefined
       if (!track || kind === 'any') return NO_TRACK
       return kind === 'audio' ? 'Select a clip on an audio track' : 'Select a clip on a video track'
-    },
+    }),
     detail: () => selectedTrack()?.name,
   }
 }
@@ -329,7 +331,7 @@ function moveTrack(step: -1 | 1): Action {
       const track = selectedTrack()
       if (track) moveTrackBy(track.id, step)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const track = selectedTrack()
       if (!track) return NO_TRACK
       const p = project()
@@ -338,7 +340,7 @@ function moveTrack(step: -1 | 1): Action {
       if (step < 0 && index <= min) return 'Already at the top'
       if (step > 0 && index >= max) return 'Already at the bottom'
       return undefined
-    },
+    }),
     detail: () => selectedTrack()?.name,
   }
 }
@@ -370,6 +372,7 @@ function sectionAction(
       if (section) run(section)
     },
     unavailable: () => unavailable?.() ?? (sectionHere() ? undefined : 'No song section at the playhead'),
+    idle: () => !sectionHere(),
     detail: () => {
       const section = sectionHere()
       return section && sectionName(section)
@@ -392,6 +395,44 @@ function snapTo(
     keywords: 'snapping magnet',
     run: () => setSnap(id, !get()[id]),
     unavailable: () => (get().snap ? unavailable?.() : 'Snapping is off'),
+  }
+}
+
+/** Starts a project of a kind, as its card on the Start screen does: on the setup screen, or as an empty timeline. */
+function newProjectOf(kind: Kind, label: string, keywords: string): Action {
+  return {
+    id: `newProject.${kind}`,
+    group: 'Project',
+    label,
+    icon: <FilePlus2 />,
+    keywords: `new project start ${keywords}`,
+    run: () => (kind === 'blank' ? void openBlankProject() : startSetup(kind)),
+    unavailable: () => (isRunning(JOB_KINDS.projectImport) ? 'A project file is being opened' : undefined),
+  }
+}
+
+/** Opens Export with a video in another frame added and selected; the project keeps its own frame. */
+function exportVersion(
+  preset: keyof typeof EXPORT_VERSIONS,
+  label: string,
+  icon: ReactNode,
+  aliases: string[],
+  keywords: string,
+): Action {
+  const aspect = EXPORT_VERSIONS[preset]
+  return {
+    id: `export${preset.charAt(0).toUpperCase()}${preset.slice(1)}`,
+    group: 'Export',
+    label,
+    icon,
+    aliases,
+    keywords: `${aspect} ${keywords}`,
+    unavailable: graphicsUnavailable,
+    run: () => exportWithOutput(preset),
+    detail: () => {
+      const current = project().settings.aspect
+      return current === aspect ? undefined : `Keeps the project ${current}`
+    },
   }
 }
 
@@ -514,7 +555,7 @@ export const actions: Action[] = [
     group: 'Suggested',
     label: 'Time lyrics to the vocals',
     icon: <Mic2 />,
-    aliases: ['add lyrics'],
+    aliases: ['add lyrics', 'lyrics source'],
     keywords: 'karaoke words align sync',
     run: () => openAssist('lyrics'),
   },
@@ -541,6 +582,7 @@ export const actions: Action[] = [
     group: 'Assist',
     label: 'Draft a video with the director',
     icon: <Clapperboard />,
+    aliases: ['describe your video'],
     keywords: 'ai auto generate whole',
     run: () => openAssist('director'),
   },
@@ -590,7 +632,7 @@ export const actions: Action[] = [
     group: 'Assist',
     label: 'Find matching footage',
     icon: <Search />,
-    aliases: ['find similar clips'],
+    aliases: ['find similar clips', 'analyze footage'],
     keywords: 'tags search clips similar like related',
     run: () => openAssist('match'),
   },
@@ -700,7 +742,7 @@ export const actions: Action[] = [
     shortcut: 'copy',
     keywords: 'selected selection',
     run: () => void copySelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'cut',
@@ -710,7 +752,7 @@ export const actions: Action[] = [
     shortcut: 'cut',
     keywords: 'selected selection',
     run: () => void cutSelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'paste',
@@ -730,7 +772,7 @@ export const actions: Action[] = [
     shortcut: 'duplicate',
     keywords: 'clip',
     run: () => void duplicateSelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'delete',
@@ -741,7 +783,7 @@ export const actions: Action[] = [
     aliases: ['remove clip'],
     keywords: 'remove clip',
     run: () => void deleteSelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'rippleDelete',
@@ -751,7 +793,7 @@ export const actions: Action[] = [
     shortcut: 'rippleDelete',
     keywords: 'ripple remove clip later clips move left',
     run: () => void rippleDeleteSelection(),
-    unavailable: needsClips,
+    ...onSelection(needsClips),
   },
   {
     id: 'closeGap',
@@ -763,10 +805,11 @@ export const actions: Action[] = [
       const gap = gapForPalette(project(), get().selection, get().playhead)
       if (gap) closeGap(gap)
     },
-    unavailable: () =>
+    ...onSelection(() =>
       gapForPalette(project(), get().selection, get().playhead)
         ? undefined
         : 'No gap at the playhead or before the selected clip',
+    ),
     detail: () => {
       const gap = gapForPalette(project(), get().selection, get().playhead)
       const track = gap && project().tracks.find((t) => t.id === gap.trackId)
@@ -802,13 +845,13 @@ export const actions: Action[] = [
       const clip = selectedClip()
       if (clip) resetTransform(clip.id)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const clip = selectedClip()
       if (!clip) return 'Select a clip first'
       const moves =
         clip.type === 'video' || clip.type === 'image' || (clip.type === 'text' && !clip.lyricLineId)
       return moves ? undefined : 'Select a video, image or text clip'
-    },
+    }),
   },
   {
     id: 'replaceMedia',
@@ -818,13 +861,13 @@ export const actions: Action[] = [
     aliases: ['replace clip', 'replace selected clip', 'replace footage'],
     keywords: 'swap change footage shot clip video image media library',
     page: 'replaceMedia',
-    unavailable: () => {
+    ...onSelection(() => {
       const target = replaceTarget(project(), get().selection)
       if ('why' in target) return target.why
       return replacementAssets(project()).some((a) => a.id !== target.clip.assetId)
         ? undefined
         : 'Import other media first'
-    },
+    }),
     detail: () => {
       const target = replaceTarget(project(), get().selection)
       return 'clip' in target ? viewOf(project(), target.clip).name : undefined
@@ -855,7 +898,7 @@ export const actions: Action[] = [
         shots.every((c) => !c.muted),
       )
     },
-    unavailable: needsShots,
+    ...onSelection(needsShots),
     detail: shotsDetail,
   },
   {
@@ -866,7 +909,7 @@ export const actions: Action[] = [
     aliases: ['clip volume'],
     keywords: 'sound audio louder quieter level mute own video footage',
     page: 'shotVolume',
-    unavailable: needsShots,
+    ...onSelection(needsShots),
     detail: shotsDetail,
   },
   {
@@ -876,7 +919,7 @@ export const actions: Action[] = [
     icon: <Diamond />,
     keywords: 'animate keyframes property playhead',
     page: 'keyframe',
-    unavailable: () => clipWithProperties(false),
+    ...onSelection(() => clipWithProperties(false)),
   },
   {
     id: 'react',
@@ -885,7 +928,7 @@ export const actions: Action[] = [
     icon: <AudioWaveform />,
     keywords: 'audio reactive beat pulse kick modulate',
     page: 'react',
-    unavailable: () => clipWithProperties(true),
+    ...onSelection(() => clipWithProperties(true)),
   },
   {
     id: 'retimeLine',
@@ -897,7 +940,7 @@ export const actions: Action[] = [
       const line = selectedLine()
       if (line) void retimeLine(line.id)
     },
-    unavailable: retimeReason,
+    ...onSelection(retimeReason),
   },
   {
     id: 'styleAllLines',
@@ -910,11 +953,11 @@ export const actions: Action[] = [
       const clip = line && lineClip(line.id)
       if (clip) applyStyleToAllLines(clip)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const line = selectedLine()
       if (!line) return 'Select a lyric line first'
       return lineClip(line.id) ? undefined : 'The line is not on the timeline'
-    },
+    }),
   },
   {
     id: 'animateImage',
@@ -927,7 +970,7 @@ export const actions: Action[] = [
       const clip = selectedClip()
       if (clip?.type === 'image') animateImage(clip)
     },
-    unavailable: () => (selectedClip()?.type === 'image' ? undefined : 'Select an image first'),
+    ...onSelection(() => (selectedClip()?.type === 'image' ? undefined : 'Select an image first')),
   },
 
   tool('selectTool', 'select', <MousePointer2 />, 'pointer arrow'),
@@ -1036,10 +1079,10 @@ export const actions: Action[] = [
       const spot = generateSpotAt(project(), get().playhead, selectedTrack()?.id)
       if (!('why' in spot)) generateShotAt(spot)
     },
-    unavailable: () => {
+    ...onSelection(() => {
       const spot = generateSpotAt(project(), get().playhead, selectedTrack()?.id)
       return 'why' in spot ? spot.why : undefined
-    },
+    }),
     detail: () => {
       const spot = generateSpotAt(project(), get().playhead, selectedTrack()?.id)
       return 'why' in spot ? undefined : project().tracks.find((t) => t.id === spot.trackId)?.name
@@ -1051,6 +1094,7 @@ export const actions: Action[] = [
     group: 'Library',
     label: 'Import media…',
     icon: <Film />,
+    aliases: ['choose files'],
     shortcut: 'import',
     keywords: 'add files video images',
     run: () => openImport(),
@@ -1072,13 +1116,13 @@ export const actions: Action[] = [
     aliases: ['insert', 'insert clip', 'insert between shots', 'ripple insert'],
     keywords: 'push later clips cut shot video image library timeline',
     page: 'insertMedia',
-    unavailable: () => {
+    ...onSelection(() => {
       if (!replacementAssets(project()).length) return 'Import a video or image first'
       const point = insertTarget(project(), get().playhead)
       if (!point) return 'Add a video or image to the timeline first'
       const track = project().tracks.find((t) => t.id === point.trackId)
       return track?.locked ? 'Its track is locked' : track?.hidden ? 'Its track is hidden' : undefined
-    },
+    }),
     detail: () => {
       const point = insertTarget(project(), get().playhead)
       if (!point) return undefined
@@ -1102,10 +1146,10 @@ export const actions: Action[] = [
     icon: <Type />,
     keywords: 'karaoke font lyrics look',
     page: 'textStyle',
-    unavailable: () => {
+    ...onSelection(() => {
       const targets = textTargets(project(), get().selection)
       return 'why' in targets ? targets.why : undefined
-    },
+    }),
   },
   {
     id: 'kinetic',
@@ -1114,16 +1158,17 @@ export const actions: Action[] = [
     icon: <Type />,
     keywords: 'text animation motion typography lyrics',
     page: 'kinetic',
-    unavailable: () => {
+    ...onSelection(() => {
       const targets = textTargets(project(), get().selection)
       return 'why' in targets ? targets.why : undefined
-    },
+    }),
   },
   {
     id: 'visualizer',
     group: 'Library',
     label: 'Add a visualizer…',
     icon: <ChartNoAxesColumn />,
+    aliases: ['starting style'],
     keywords: 'audio bars spectrum waveform shader visual background particles browse',
     page: 'visualizer',
   },
@@ -1134,8 +1179,9 @@ export const actions: Action[] = [
     icon: <Wand2 />,
     keywords: 'filter glitch blur glow color browse',
     page: 'effect',
-    unavailable: () =>
+    ...onSelection(() =>
       effectTarget(project(), get().selection, get().playhead) ? undefined : 'Select a clip first',
+    ),
     detail: () => {
       const clip = effectTarget(project(), get().selection, get().playhead)
       return clip && viewOf(project(), clip).name
@@ -1148,8 +1194,9 @@ export const actions: Action[] = [
     icon: <Repeat />,
     keywords: 'crossfade dissolve wipe cut fade browse',
     page: 'transition',
-    unavailable: () =>
+    ...onSelection(() =>
       transitionTarget(project(), get().selection, get().playhead) ? undefined : 'Select a clip first',
+    ),
   },
   {
     id: 'looks',
@@ -1165,8 +1212,9 @@ export const actions: Action[] = [
     group: 'Library',
     label: 'Show or hide the library',
     icon: <PanelLeft />,
+    aliases: ['collapse library', 'expand library'],
     shortcut: 'library',
-    keywords: 'panel media sidebar',
+    keywords: 'panel media sidebar tab tabs text visuals effects',
     run: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
   },
 
@@ -1283,6 +1331,7 @@ export const actions: Action[] = [
     group: 'Playback',
     label: 'Open VJ mode',
     icon: <Disc3 />,
+    aliases: ['vj'],
     shortcut: 'vj',
     keywords: 'live perform midi record',
     unavailable: graphicsUnavailable,
@@ -1319,16 +1368,20 @@ export const actions: Action[] = [
     group: 'Project',
     label: 'New project',
     icon: <FilePlus2 />,
-    aliases: ['lyric video', 'visualizer video', 'beat-cut footage', 'ai music video', 'blank project'],
     keywords: 'start video',
     run: () => set({ screen: 'start' }),
   },
+  newProjectOf('lyric', 'New lyric video…', 'karaoke kinetic type words timed vocals'),
+  newProjectOf('visualizer', 'New visualizer…', 'visualizer video beat bass vocals reactive visuals'),
+  newProjectOf('footage', 'New beat-cut footage…', 'clips cut to the beat sections montage'),
+  newProjectOf('ai', 'New AI music video…', 'director draft idea'),
+  newProjectOf('blank', 'New blank project', 'empty timeline scratch'),
   {
     id: 'openRecent',
     group: 'Project',
     label: 'Open a recent project…',
     icon: <FolderClock />,
-    keywords: 'projects earlier previous last old past before',
+    keywords: 'projects earlier previous last old past before show all fewer',
     run: () => set({ screen: 'start' }),
   },
   aspect('16:9', 'Switch to landscape 16:9', <RectangleHorizontal />, 'widescreen youtube horizontal'),
@@ -1373,20 +1426,28 @@ export const actions: Action[] = [
     run: () => void saveNow(),
   },
 
-  {
-    id: 'exportVertical',
-    group: 'Export',
-    label: 'Export a vertical version…',
-    icon: <Smartphone />,
-    aliases: ['tiktok', 'reels', 'shorts', 'youtube shorts'],
-    keywords: '9:16 shorts reels tiktok',
-    unavailable: graphicsUnavailable,
-    run: () => exportWithOutput('vertical'),
-    detail: () => {
-      const { aspect } = project().settings
-      return aspect === '9:16' ? undefined : `Keeps the project ${aspect}`
-    },
-  },
+  exportVersion(
+    'vertical',
+    'Export a vertical version…',
+    <Smartphone />,
+    ['tiktok', 'reels', 'shorts', 'youtube shorts'],
+    'shorts reels tiktok',
+  ),
+  exportVersion('square', 'Export a square version…', <Square />, ['instagram post'], 'instagram feed post'),
+  exportVersion(
+    'portrait',
+    'Export a portrait version…',
+    <RectangleVertical />,
+    ['instagram portrait'],
+    'instagram feed',
+  ),
+  exportVersion(
+    'landscape',
+    'Export a landscape version…',
+    <RectangleHorizontal />,
+    ['youtube video'],
+    'widescreen youtube horizontal',
+  ),
   {
     id: 'exportTeaser',
     group: 'Export',
@@ -1411,6 +1472,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Connect fal.ai',
     icon: <KeyRound />,
+    aliases: ['ask before every paid generation', 'spending reminder'],
     keywords: 'api key cloud settings spending reminder ask before paid generation remove',
     run: settingsPage('ai'),
   },
@@ -1419,6 +1481,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Set up an LLM (Ollama, LM Studio, OpenAI)',
     icon: <Wand2 />,
+    aliases: ['endpoint url', 'answer time limit', 'remove this connection'],
     keywords:
       'api key local model language connect settings provider endpoint openrouter time limit timeout test connection',
     run: settingsPage('ai'),
@@ -1428,7 +1491,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Open settings',
     icon: <Settings />,
-    aliases: ['preferences', 'options'],
+    aliases: ['preferences', 'options', 'autosave interval'],
     shortcut: 'settings',
     keywords: 'general autosave suggestions motion default frame rate',
     run: settingsPage('general'),
@@ -1454,6 +1517,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'VJ and MIDI settings',
     icon: <Disc3 />,
+    aliases: ['quantize triggers'],
     keywords: 'controller quantize devices mapping preset nearest beat bar',
     run: settingsPage('vj'),
   },
@@ -1478,7 +1542,8 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'About MV Studio',
     icon: <Info />,
-    keywords: 'version info licenses notices settings open source third party',
+    aliases: ['version', 'view third-party notices', 'view open-source licenses'],
+    keywords: 'info licenses notices settings open source third party',
     run: settingsPage('about'),
   },
 
@@ -1487,7 +1552,8 @@ export const actions: Action[] = [
     group: 'Help',
     label: 'Keyboard shortcuts',
     icon: <Keyboard />,
-    aliases: ['hotkeys', 'key bindings', 'keymap'],
+    aliases: ['hotkeys', 'key bindings', 'keymap', 'search shortcuts'],
+    keywords: 'keys next previous frame beat step shuttle',
     shortcut: 'shortcuts',
     run: settingsPage('shortcuts'),
   },

@@ -292,6 +292,14 @@ interface Spec<T extends object> extends Omit<Action, 'run' | 'unavailable' | 'd
   focus?: (t: T) => Field
 }
 
+/**
+ * For an action on the selection, or on what is at the playhead: `reason` says what to select while it can't run, and
+ * the action then ranks below the ones that can (see actionScore).
+ */
+export const onSelection = (reason: () => string | undefined): Pick<Action, 'unavailable' | 'idle'> => ({
+  unavailable: reason,
+  idle: () => reason() !== undefined,
+})
 function on<T extends object>({ target, check, detail, run, values, focus, ...rest }: Spec<T>): Action {
   const ready = (): T | undefined => {
     const t = target()
@@ -333,7 +341,10 @@ function on<T extends object>({ target, check, detail, run, values, focus, ...re
 /** Runs an edit picked from a page and says so, with Undo, when it changed the project. */
 function picked(message: string, change: () => unknown) {
   const before = project()
+  // Its own undo step, never merged into a drag or slider gesture of the Inspector's that is still open.
+  editor.endGesture()
   change()
+  editor.endGesture()
   const label = editor.undoLabel()
   if (project() !== before && label) toast(message, undoAction(label))
 }
@@ -624,6 +635,7 @@ function withEffects(): VisualClip | Why {
 
 interface LutSetting {
   clip: VisualClip
+  effectId: string
   path: PropertyPath
   spec: ParamSpec
   owner: string
@@ -639,6 +651,7 @@ function lutSetting(): LutSetting | Why {
     if (def && spec)
       return {
         clip,
+        effectId: fx.id,
         path: ['effects', index, 'params', spec.key],
         spec,
         owner: def.name,
@@ -652,8 +665,14 @@ async function loadLutFile(setting: LutSetting | undefined) {
   const file = await pickFile(LUT_FILE_TYPES)
   if (!file) return
   await loadLut(file, (assetId) => {
+    // Looked up again once the file is in: the clip's effects may have been removed or reordered meanwhile.
     const now = setting && project().clips[setting.clip.id]
-    return now && assetId !== setting.value ? valueAtCommands(now, setting.path, assetId, 0) : []
+    if (!now || !('effects' in now)) return []
+    const index = now.effects.findIndex((fx) => fx.id === setting.effectId)
+    const key = setting.spec.key
+    return index >= 0 && now.effects[index]!.params[key]?.value !== assetId
+      ? valueAtCommands(now, ['effects', index, 'params', key], assetId, 0)
+      : []
   })
 }
 
@@ -693,7 +712,7 @@ function lutItems(setting: LutSetting): PageItem[] {
             label: 'Manage LUT files…',
             icon: <SlidersHorizontal />,
             keywords: ['Manage LUT files', 'remove delete usage'],
-            run: () => set({ lutFilesOpen: true }),
+            run: () => set({ lutFiles: { returnTo: null } }),
           },
         ]
       : []),
@@ -1159,7 +1178,7 @@ export const inspectorActions: Action[] = [
     aliases: ['select none', 'clear the selection', 'unselect'],
     keywords: 'deselect unselect nothing',
     run: () => set({ selection: { type: 'none' } }),
-    unavailable: () => (get().selection.type === 'none' ? 'Nothing is selected' : undefined),
+    ...onSelection(() => (get().selection.type === 'none' ? 'Nothing is selected' : undefined)),
   },
   {
     id: 'inspector',
@@ -1312,7 +1331,7 @@ export const inspectorActions: Action[] = [
     icon: <SlidersHorizontal />,
     aliases: ['remove lut', 'lut files'],
     keywords: 'lut cube delete usage',
-    run: () => set({ lutFilesOpen: true }),
+    run: () => set({ lutFiles: { returnTo: null } }),
     unavailable: () => (lutFiles(project()).length ? undefined : 'No LUT files in the project'),
   },
 
@@ -1583,7 +1602,7 @@ export const inspectorActions: Action[] = [
     group: 'Clip',
     label: 'Edit the text',
     icon: <PencilLine />,
-    aliases: ['change the words', 'fix a typo', 'retype', 'edit lyric'],
+    aliases: ['change the words', 'fix a typo', 'retype', 'edit lyric', 'text content', 'lyric text'],
     keywords: 'text words type write rewrite typo spelling lyric line caption title',
     focus: ({ line }) =>
       line ? { name: 'Lyric text', section: 'Words' } : { name: 'Text content', section: 'Text' },
@@ -1847,7 +1866,7 @@ export const inspectorActions: Action[] = [
     label: 'Line start time…',
     icon: <Clock />,
     aliases: ['lyric start', 'when the line starts'],
-    keywords: 'lyric line start begin time timing',
+    keywords: 'lyric line start begin time timing nudge earlier later',
     detail: (line) => (line.start === undefined ? 'Not timed' : formatTime(line.start, true)),
     focus: () => ({ name: 'Start time', section: 'Words' }),
   }),
@@ -2151,10 +2170,9 @@ export const inspectorActions: Action[] = [
               ? { unavailable: `Longer than the clip allows (${transitionSeconds(max)})` }
               : {}),
             run: () =>
-              picked(`Transition length: ${transitionSeconds(v)}`, () => {
-                setTransitionDuration(t.clip.id, t.edge, v)
-                editor.endGesture()
-              }),
+              picked(`Transition length: ${transitionSeconds(v)}`, () =>
+                setTransitionDuration(t.clip.id, t.edge, v),
+              ),
           })),
           exactItem({ name: 'Transition duration', section: 'Transition' }, false, () =>
             select({ type: 'transition', id: t.clip.id, edge: t.edge }),
@@ -2490,7 +2508,7 @@ export const inspectorActions: Action[] = [
     group: 'Assist',
     label: 'Cancel a running task…',
     icon: <Ban />,
-    aliases: ['stop task', 'cancel export', 'cancel job'],
+    aliases: ['stop task', 'cancel export', 'cancel job', 'cancel all'],
     keywords: 'cancel stop abort running job task analysis export render',
     values: {
       placeholder: 'Search tasks',
@@ -2586,7 +2604,7 @@ export const inspectorActions: Action[] = [
   },
   {
     id: 'vjResetMappings',
-    group: 'Settings',
+    group: 'Playback',
     label: 'Reset VJ mappings',
     icon: <RotateCcw />,
     aliases: ['reset midi mapping', 'default mappings'],

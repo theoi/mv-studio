@@ -46,4 +46,26 @@ describe('the export dialog’s starting outputs', () => {
     ])
     expect(selectedId).toBe(items[1]?.spec.id)
   })
+
+  it('add a square or portrait version, on and selected, and use the full video for the project’s own frame', () => {
+    const project = createProject({ name: 'Song' })
+    for (const [preset, title] of [
+      ['square', 'Square'],
+      ['portrait', 'Portrait'],
+    ] as const) {
+      const { items, selectedId } = initialItems(project, null, preset)
+      expect(listed(project, items)).toEqual([
+        ['Full video', true],
+        ['Vertical', false],
+        [title, true],
+      ])
+      expect(selectedId).toBe(items[2]?.spec.id)
+    }
+    const landscape = initialItems(project, null, 'landscape')
+    expect(listed(project, landscape.items)).toEqual([
+      ['Full video', true],
+      ['Vertical', false],
+    ])
+    expect(landscape.selectedId).toBe(landscape.items[0]?.spec.id)
+  })
 })

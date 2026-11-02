@@ -1,4 +1,12 @@
-import { memo, useMemo, useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react'
 import type { Marker } from '../../../../model/index.ts'
 import {
   ContextMenu,
@@ -33,6 +41,13 @@ const focusAddMarker = () => document.querySelector<HTMLElement>('[data-add-mark
 export const Markers = memo(function Markers({ markers, pps }: { markers: readonly Marker[]; pps: number }) {
   const renaming = useUi((s) => s.renamingMarker)
   const setRenaming = (id: string | null) => set({ renamingMarker: id })
+  // A rename ends with the ruler, which goes without a blur: a marker with that id later (after Undo) isn't renamed.
+  useEffect(
+    () => () => {
+      if (get().renamingMarker !== null) set({ renamingMarker: null })
+    },
+    [],
+  )
   // The marker to focus when it next renders: after a rename ends with Enter or Esc, or a neighbor is deleted.
   const focusNextRef = useRef<string | null>(null)
   const sorted = useMemo(() => [...markers].sort((a, b) => a.time - b.time), [markers])
