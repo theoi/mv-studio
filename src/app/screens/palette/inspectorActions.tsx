@@ -2124,6 +2124,7 @@ export const inspectorActions: Action[] = [
     icon: <Diamond />,
     aliases: ['remove keyframe', 'delete keyframe'],
     keywords: 'keyframe diamond delete remove animation',
+    destructive: true,
     detail: (k) => plural(k.count, 'property', 'properties'),
     run: (k) => removeKeyframes(k.clip.id, [k.time]),
   }),
@@ -2224,6 +2225,7 @@ export const inspectorActions: Action[] = [
     icon: <Trash2 />,
     aliases: ['delete transition', 'hard cut'],
     keywords: 'transition remove delete cut',
+    destructive: true,
     detail: (t) => transitionName(t.transition),
     run: (t) => removeTransition(t.clip.id, t.edge),
   }),
@@ -2619,8 +2621,9 @@ export const inspectorActions: Action[] = [
     group: 'Playback',
     label: 'Reset VJ mappings',
     icon: <RotateCcw />,
-    aliases: ['reset midi mapping', 'default mappings'],
+    aliases: ['reset mappings', 'reset midi mapping', 'default mappings'],
     keywords: 'vj midi mapping keys pads bindings default reset',
+    destructive: true,
     run: () => {
       const previous = vjBindings()
       setVjBindings(defaultBindings())

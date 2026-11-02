@@ -247,8 +247,9 @@ export interface Action {
    */
   needs?: readonly string[]
   /**
-   * Deletes something, so it is listed only for a search that names it in full: Enter must not delete what a search
-   * only half names ("close gap" isn't Delete and close gap).
+   * Deletes something, or resets what the editor can't undo, so it is listed only for a search that names it in full,
+   * with whole words: Enter must not delete what a search only half names ("close gap" isn't Delete and close gap, "del"
+   * isn't Delete yet).
    */
   destructive?: boolean
 }
@@ -1734,10 +1735,10 @@ function fullScore(a: Action, search: string): number {
   )
 }
 
-/** Whether the search has every word of the action's name or of one of its other names. */
+/** Whether the search has every word of the action's name or of one of its other names, whole for one that deletes. */
 const namedInFull = (a: Action, search: string): boolean =>
   remember(`${a.id}\n${labelOf(a)}\nnamed`, search, () =>
-    Number(namesInFull(labelOf(a), aliasesOf(a), search)),
+    Number(namesInFull(labelOf(a), aliasesOf(a), search, { whole: a.destructive })),
   ) === 1
 
 const aboveAsk = (group: Group, search: string): boolean =>

@@ -585,12 +585,19 @@ export function namesOneOf(needed: readonly string[], search: string): boolean {
 
 /**
  * Whether the search has every word of `label`, or of one of `aliases`, itself or as another word for it: "remove this
- * clip" names Delete, "close gap" doesn't name Delete and close gap.
+ * clip" names Delete, "close gap" doesn't name Delete and close gap. With `whole`, the start of a word doesn't name it:
+ * "del" is on its way to Delete without naming it yet.
  */
-export function namesInFull(label: string, aliases: readonly string[], search: string): boolean {
+export function namesInFull(
+  label: string,
+  aliases: readonly string[],
+  search: string,
+  { whole = false }: { whole?: boolean } = {},
+): boolean {
   if (keyCombo(search)) return false
   const { typed, match } = searchWords(search)
-  return [label, ...aliases].some((name) => coverage(words(name), typed, match) === 1)
+  const named: Match = whole ? (w, t) => sameWord(w, t) || sameForm(w, t) || inflected(w, t) : match
+  return [label, ...aliases].some((name) => coverage(words(name), typed, named) === 1)
 }
 
 /** Whether a typed word matches an action at all (its name, other names or keywords, or another word for it). */

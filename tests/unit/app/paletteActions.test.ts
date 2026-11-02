@@ -9,7 +9,7 @@ import {
 import { PAGES } from '../../../src/app/screens/palette/pages.tsx'
 import { SHORTCUTS } from '../../../src/app/state/keymap.ts'
 import { editor, sectionLabels } from '../../../src/app/state/project.ts'
-import { get, select, set, type Selection } from '../../../src/app/state/ui.ts'
+import { dismissToast, get, select, set, type Selection } from '../../../src/app/state/ui.ts'
 import { settingsForAspect } from '../../../src/model/index.ts'
 import { ASK_SCORE, isSentence } from '../../../src/app/state/paletteScore.ts'
 import { SHORTCUTS_NOT_IN_PALETTE, UI_ACTIONS } from '../../../src/app/state/uiActions.ts'
@@ -288,6 +288,8 @@ describe('command palette coverage', () => {
       expect(editor.getProject().clips[video.id]).toMatchObject({ playbackRate: 1 })
     } finally {
       set({ selection: before })
+      // Before window goes: a toast's timer that fires later, while other tests run, would find no window.
+      for (const t of get().toasts) dismissToast(t.id)
       vi.unstubAllGlobals()
     }
   })
@@ -404,7 +406,60 @@ describe('command palette coverage', () => {
         expect(ids('delete this project')[0]).toBe('deleteProject')
       }),
     )
+
+    // Enter runs the first row, so the start of a word must not list what it is on its way to.
+    it(
+      'lists no action that deletes for “de”, “del”, “dele” or “delet”, and Delete first for “delete”',
+      withSelection(() => {
+        for (const search of ['de', 'del', 'dele', 'delet'])
+          expect(
+            ids(search).filter((id) => actionsById.get(id)?.destructive),
+            search,
+          ).toEqual([])
+        expect(ids('delete')[0]).toBe('delete')
+      }),
+    )
   })
+
+  it('lists no action that deletes for a search that stops partway through a word of one of its names', () =>
+    withVideoSelected(() => {
+      const listed = new Map<string, string[]>()
+      const ids = (search: string) => {
+        if (!listed.has(search))
+          listed.set(
+            search,
+            paletteResults(search).map((a) => a.id),
+          )
+        return listed.get(search)!
+      }
+      const destructive = actions.filter((a) => a.destructive)
+      expect(destructive.map((a) => a.id).sort()).toEqual([
+        'delete',
+        'deleteProject',
+        'removeKeyframes',
+        'removeTransition',
+        'rippleDelete',
+        'vjResetMappings',
+      ])
+      for (const a of destructive) {
+        const aliases = typeof a.aliases === 'function' ? a.aliases() : (a.aliases ?? [])
+        for (const name of [labelOf(a), ...aliases]) {
+          const text = name.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '')
+          expect(ids(text), name).toContain(a.id)
+          for (let end = 1; end < text.length; end++) {
+            if (text[end] === ' ' || text[end - 1] === ' ') continue
+            const start = text.lastIndexOf(' ', end) + 1
+            const word = text.slice(start).split(' ')[0]!
+            // A plural's singular is a whole word: "reset vj mapping" names Reset VJ mappings.
+            if (word === `${text.slice(start, end)}s`) continue
+            // The whole words before may name it already: "remove" names Delete, so "remove c" lists it.
+            const before = text.slice(0, start).trim()
+            if (before && ids(before).includes(a.id)) continue
+            expect(ids(text.slice(0, end)), `${a.id}: “${text.slice(0, end)}”`).not.toContain(a.id)
+          }
+        }
+      }
+    }))
 
   it('lists the track move the search names first on a track that can’t move that way', () => {
     const before = get().selection
