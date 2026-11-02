@@ -331,7 +331,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
   let scheduled = false
   let state: IndexingState = { status: 'idle', total: 0, done: 0, failed: [] }
 
-  const stepsFor = (project: Project, asset: Asset): IndexStep[] => {
+  const stepsFor = (project: Project, asset: Asset, trackable = canTrackSubjects()): IndexStep[] => {
     if (!analyzableMedia(asset)) return []
     const steps: IndexStep[] = []
     const indexed = !!indexOf(project, asset.id)
@@ -342,19 +342,18 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       !readClipTags(project.analysis.visual[asset.id])
     )
       steps.push('tags')
-    if (
-      canTrackSubjects() &&
-      !failedSubjects.has(asset.id) &&
-      !readSubjectTrack(project.analysis.visual[asset.id])
-    )
+    if (trackable && !failedSubjects.has(asset.id) && !readSubjectTrack(project.analysis.visual[asset.id]))
       steps.push('subjects')
     return steps
   }
 
-  const pending = (project: Project) =>
-    Object.values(project.assets)
-      .filter((a) => stepsFor(project, a).length > 0 || needsBlankCheck(project, a))
+  const pending = (project: Project) => {
+    // Without WebGL 2 the check makes a canvas each time, so it runs once per pass, not once per clip.
+    const trackable = canTrackSubjects()
+    return Object.values(project.assets)
+      .filter((a) => stepsFor(project, a, trackable).length > 0 || needsBlankCheck(project, a))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  }
 
   const emit = () => {
     const assets = editor.getProject().assets

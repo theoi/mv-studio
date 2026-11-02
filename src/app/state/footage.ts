@@ -118,7 +118,14 @@ function releaseWhenIdle(backends: VisionServiceOptions['backends']): void {
   // Any vision job clears the timer. A search uses a worker without a job, so a worker it used lately is kept for
   // another while.
   const idle = () => {
-    timer = release({ idleMs: VISION_IDLE_MS }) ? undefined : setTimeout(idle, VISION_IDLE_MS)
+    if (!release({ idleMs: VISION_IDLE_MS })) {
+      timer = setTimeout(idle, VISION_IDLE_MS)
+      return
+    }
+    timer = undefined
+    // A release a search held off is done now, so it can't end a worker a later search starts.
+    wanted = false
+    leaving = null
   }
   const update = () => {
     const list = jobs.list()

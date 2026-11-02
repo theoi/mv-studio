@@ -34,15 +34,15 @@ function message(aspect: AspectPreset, reframe: ProjectReframe): string {
   const locked = reframe.locked.length
   // Without WebGL 2, footage analysis can't find subjects (its models need it), so analysis won't come.
   const why = webgl2Available()
-    ? 'no subject analysis yet'
-    : 'following subjects needs graphics acceleration (WebGL 2)'
+    ? ' (no subject analysis yet)'
+    : ', since following subjects needs graphics acceleration (WebGL 2)'
   const parts = [
     followed
       ? `${plural(followed, 'clip')} ${followed === 1 ? 'follows its subject' : 'follow their subjects'}`
       : '',
     moved ? `${plural(moved, 'title or overlay', 'titles and overlays')} moved into the safe area` : '',
     other ? `${plural(other, 'clip')} reframed` : '',
-    centred ? `${plural(centred, 'clip')} ${centred === 1 ? 'stays' : 'stay'} centered (${why})` : '',
+    centred ? `${plural(centred, 'clip')} ${centred === 1 ? 'stays' : 'stay'} centered${why}` : '',
     locked ? `${plural(locked, 'clip')} on locked tracks left as ${locked === 1 ? 'it is' : 'they are'}` : '',
   ].filter(Boolean)
   return parts.length

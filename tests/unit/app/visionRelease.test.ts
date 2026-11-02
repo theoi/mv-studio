@@ -186,3 +186,35 @@ it('frees workers idle for a minute once no vision job has run for a minute', as
   await vi.advanceTimersByTimeAsync(120_000)
   expect(release).toHaveBeenCalledTimes(2)
 })
+
+it('forgets a release a search held off once the idle timer has freed the workers', async () => {
+  vi.useFakeTimers()
+  const camera = job(JOB_KINDS.camera)
+  await vi.advanceTimersByTimeAsync(0)
+  release.mockClear()
+  // A search has a call pending when the last vision job before stem separation ends, so the workers are kept.
+  const stems = job(JOB_KINDS.stems)
+  await vi.advanceTimersByTimeAsync(0)
+  release.mockReturnValueOnce(false)
+  camera.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(1)
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(release).toHaveBeenLastCalledWith({ idleMs: 60_000 })
+  // The idle timer freed them, so the next change doesn't end a worker a later search started.
+  stems.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(1)
+
+  // Likewise for another project opening.
+  release.mockReturnValueOnce(false)
+  releaseVisionWorkers()
+  expect(now()).toBe(2)
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(release).toHaveBeenLastCalledWith({ idleMs: 60_000 })
+  const other = job('test.other')
+  await vi.advanceTimersByTimeAsync(0)
+  other.finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(now()).toBe(2)
+})

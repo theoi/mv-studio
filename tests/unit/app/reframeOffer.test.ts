@@ -98,7 +98,7 @@ describe('footage kept centered for lack of subject analysis', () => {
     reframeProject()
     expect(results()).toEqual([
       expect.stringMatching(
-        / · \d+ clips stay centered \(following subjects needs graphics acceleration \(WebGL 2\)\)$/,
+        / · \d+ clips stay centered, since following subjects needs graphics acceleration \(WebGL 2\)$/,
       ),
     ])
     expect(framingHint(editor.getProject(), clip())).toBe(

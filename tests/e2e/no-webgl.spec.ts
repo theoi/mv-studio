@@ -238,7 +238,7 @@ test('without WebGL 2 Cut my clips matches the clips without looking for their s
   await toasts.getByRole('button', { name: 'Reframe automatically' }).click()
   await expect(
     toasts.getByText(
-      /^Reframed for 9:16 · .*\d+ clips? stays? centered \(following subjects needs graphics acceleration \(WebGL 2\)\)$/,
+      /^Reframed for 9:16 · .*\d+ clips? stays? centered, since following subjects needs graphics acceleration \(WebGL 2\)$/,
     ),
   ).toBeVisible()
 })
