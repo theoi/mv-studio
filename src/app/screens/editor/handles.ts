@@ -137,6 +137,19 @@ export function placeHandles(
   return { corners: placed, knob: anchored ? exitPoint(pivot, far, r) : clampTo(knob, r), stem: null }
 }
 
+/** The part of a width × height frame on the visible stage (`view`, in frame pixels; null when unknown). */
+export function visibleFrame(width: number, height: number, view: Rect | null): Rect {
+  if (!view) return { x: 0, y: 0, width, height }
+  const x = Math.min(Math.max(view.x, 0), width)
+  const y = Math.min(Math.max(view.y, 0), height)
+  return {
+    x,
+    y,
+    width: Math.max(0, Math.min(width, view.x + view.width) - x),
+    height: Math.max(0, Math.min(height, view.y + view.height) - y),
+  }
+}
+
 /**
  * The resize cursor for corner i of an outline: along the corner's diagonal as the clip is turned (top-left is
  * nwse-resize upright), whatever the box's proportions, since a corner scales both axes.
