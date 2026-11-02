@@ -202,7 +202,7 @@ test('an out-of-memory stop offers a reload that times the pasted lyrics again',
   )
   await expect(
     page.getByText(
-      'Reload and try again: your project is saved, then the reload frees memory that earlier work in this tab still holds',
+      'Reload and try again: your project is saved first, and the reload frees memory held by earlier work in this tab',
     ),
   ).toBeVisible()
 

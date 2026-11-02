@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, type Ref } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '../../../ds/Button.tsx'
-import { useJobs } from '../../../state/jobs.ts'
+import { jobTitleOnly, useJobs } from '../../../state/jobs.ts'
 import { reloadAndRetry, reloadBlockers, type RetryTask } from '../../../state/reloadRetry.ts'
 import styles from './Assist.module.css'
 
@@ -13,8 +13,8 @@ export function OutOfMemoryTips({ reload }: { reload: boolean }) {
       <ul className={styles.tips}>
         <li>
           {reload
-            ? 'Reload and try again: your project is saved, then the reload frees memory that earlier work in this tab still holds'
-            : 'Reload the page to free memory that earlier work in this tab still holds'}
+            ? 'Reload and try again: your project is saved first, and the reload frees memory held by earlier work in this tab'
+            : 'Reload the page to free memory held by earlier work in this tab'}
         </li>
         <li>Close other browser tabs that play video</li>
       </ul>
@@ -22,16 +22,22 @@ export function OutOfMemoryTips({ reload }: { reload: boolean }) {
   )
 }
 
-/** The footer's Reload and try again, held back while a job a reload would stop is running. */
-export function ReloadAndRetryButton({ task }: { task: RetryTask }) {
+/**
+ * The footer's Reload and try again, held back while a job a reload would stop is running. `ref` takes the focus a
+ * failed run gives its tool (useFocusOnFailure) while the button can be used.
+ */
+export function ReloadAndRetryButton({ task, ref }: { task: RetryTask; ref?: Ref<HTMLButtonElement> }) {
   const blocker = reloadBlockers(useJobs())[0]
   const [saving, setSaving] = useState(false)
   return (
     <>
       {blocker && (
-        <p className={styles.footerNote}>Wait for “{blocker.title}” to finish: a reload would stop it.</p>
+        <p className={styles.footerNote}>
+          Wait for “{jobTitleOnly(blocker.title)}” to finish: a reload would stop it.
+        </p>
       )}
       <Button
+        ref={ref}
         variant="primary"
         block
         icon={<RefreshCw />}

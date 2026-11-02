@@ -7,7 +7,7 @@ import { startLyrics } from './lyrics.ts'
 import { keepNow, saveBeforeReload, usePersistence } from './persistence.ts'
 import { editor } from './project.ts'
 import { startStems } from './stems.ts'
-import { get, set } from './ui.ts'
+import { get, set, useUi } from './ui.ts'
 
 /*
  * "Reload and try again" after stem separation or lyric timing ran out of memory. Earlier work in a long session can
@@ -105,23 +105,27 @@ export function initRetryAfterReload(): void {
   if (!pending) return
   const { projectId, task } = pending
   let done = false
-  const check = () => {
-    if (done || usePersistence.getState().restoring) return
+  const stop = () => {
     done = true
     stopPersistence()
     stopEditor()
-    window.clearTimeout(timer)
+    stopUi()
+    clearTimeout(timer)
+  }
+  const check = () => {
+    if (done) return
+    // Leaving the editor before the project has reopened (Home, Back) gives up the retry.
+    if (get().screen !== 'editor') return stop()
+    if (usePersistence.getState().restoring) return
+    stop()
     if (editor.getProject().id !== projectId) return
-    set({ screen: 'editor', rightTab: 'assist', assistView: task.kind })
+    set({ rightTab: 'assist', assistView: task.kind })
     if (task.kind === 'stems') void startStems()
     else void startLyrics(task.request)
   }
   const stopPersistence = usePersistence.subscribe(check)
   const stopEditor = editor.subscribe(check)
-  const timer = window.setTimeout(() => {
-    done = true
-    stopPersistence()
-    stopEditor()
-  }, FRESH_MS)
+  const stopUi = useUi.subscribe(check)
+  const timer = setTimeout(stop, FRESH_MS)
   check()
 }

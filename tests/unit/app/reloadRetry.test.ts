@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
 import { reloadBlockers, takePendingRetry } from '../../../src/app/state/reloadRetry.ts'
+import type * as Stems from '../../../src/app/state/stems.ts'
 import type { JobSnapshot, JobStatus } from '../../../src/shared/jobs.ts'
+
+vi.mock('../../../src/app/state/stems.ts', async (original) => ({
+  ...(await original<typeof Stems>()),
+  startStems: vi.fn(),
+}))
 
 const KEY = 'mv-studio.retry-after-reload'
 const NOW = Date.UTC(2026, 10, 2, 12)
@@ -74,5 +80,47 @@ describe('jobs a reload would stop', () => {
       job(JOB_KINDS.export, 'succeeded'),
     ]
     expect(reloadBlockers(list)).toEqual([])
+  })
+})
+
+describe('starting the retry once the project has reopened', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  async function reloaded() {
+    const stems = await import('../../../src/app/state/stems.ts')
+    const { usePersistence } = await import('../../../src/app/state/persistence.ts')
+    const ui = await import('../../../src/app/state/ui.ts')
+    const { editor } = await import('../../../src/app/state/project.ts')
+    const { initRetryAfterReload } = await import('../../../src/app/state/reloadRetry.ts')
+    vi.stubGlobal(
+      'sessionStorage',
+      storage({ projectId: editor.getProject().id, task: { kind: 'stems' }, at: Date.now() }),
+    )
+    ui.set({ screen: 'editor', rightTab: 'inspector', assistView: 'home' })
+    usePersistence.setState({ restoring: true })
+    initRetryAfterReload()
+    return { startStems: vi.mocked(stems.startStems), usePersistence, ui }
+  }
+
+  it('starts the task in its Assist view after the restore', async () => {
+    const { startStems, usePersistence, ui } = await reloaded()
+    expect(startStems).not.toHaveBeenCalled()
+    usePersistence.setState({ restoring: false })
+    expect(startStems).toHaveBeenCalledTimes(1)
+    expect(ui.get()).toMatchObject({ screen: 'editor', rightTab: 'assist', assistView: 'stems' })
+  })
+
+  it('gives it up when the user leaves the editor before the restore ends', async () => {
+    const { startStems, usePersistence, ui } = await reloaded()
+    ui.set({ screen: 'start' })
+    usePersistence.setState({ restoring: false })
+    ui.set({ screen: 'editor' })
+    expect(startStems).not.toHaveBeenCalled()
+    expect(ui.get().screen).toBe('editor')
   })
 })

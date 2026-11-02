@@ -209,6 +209,8 @@ test('Assist › Stems shows progress, cancels, and explains an out-of-memory fa
   await expect(alert).toContainText('This computer ran out of memory while separating stems.')
   await expect(alert).toContainText('Your project is unchanged. Trying again starts from the beginning.')
   await expect(panel.getByText('Close other browser tabs that play video')).toBeVisible()
+  // Focus goes to the main action, which the running view's Cancel had.
+  await expect(panel.getByRole('button', { name: 'Reload and try again' })).toBeFocused()
   await shot(page, 'stems-failed')
   expect(
     await page.evaluate(() => {
@@ -273,7 +275,7 @@ test('an out-of-memory stop offers a reload that keeps the project and separates
   )
   await expect(
     panel.getByText(
-      'Reload and try again: your project is saved, then the reload frees memory that earlier work in this tab still holds',
+      'Reload and try again: your project is saved first, and the reload frees memory held by earlier work in this tab',
     ),
   ).toBeVisible()
   await expect(panel.getByText('Close other browser tabs that play video')).toBeVisible()
@@ -284,7 +286,7 @@ test('an out-of-memory stop offers a reload that keeps the project and separates
     const { shared } = window.mvStudio
     const job = shared.jobs.run({
       kind: 'export.outputs',
-      title: 'Exporting 1 video',
+      title: 'Exporting 1 video · 2 min left',
       run: (ctx: { signal: AbortSignal }) =>
         new Promise((_resolve, reject) =>
           ctx.signal.addEventListener('abort', () => reject(new shared.JobError('cancelled', 'Cancelled'))),
