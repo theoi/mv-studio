@@ -66,6 +66,17 @@ function done(tx: IDBTransaction): Promise<void> {
   })
 }
 
+const closedListeners = new Set<() => void>()
+
+/**
+ * Calls `listener` when the browser closes the database, as it does when it clears the site's storage (a nearly full
+ * disk). The next use opens it again. Returns the unsubscribe.
+ */
+export function onDatabaseClosed(listener: () => void): () => void {
+  closedListeners.add(listener)
+  return () => void closedListeners.delete(listener)
+}
+
 let dbPromise: Promise<IDBDatabase> | undefined
 function openDb(): Promise<IDBDatabase> {
   dbPromise ??= new Promise((resolve, reject) => {
@@ -75,7 +86,14 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(PROJECTS)) db.createObjectStore(PROJECTS, { keyPath: 'id' })
       if (!db.objectStoreNames.contains(SUMMARIES)) db.createObjectStore(SUMMARIES, { keyPath: 'id' })
     }
-    req.onsuccess = () => resolve(req.result)
+    req.onsuccess = () => {
+      // A connection the browser closed refuses every transaction, so the next use must open a new one.
+      req.result.onclose = () => {
+        dbPromise = undefined
+        for (const listener of closedListeners) listener()
+      }
+      resolve(req.result)
+    }
     req.onerror = () => {
       dbPromise = undefined
       reject(req.error)
@@ -107,6 +125,8 @@ export class IdbProjectStore implements ProjectStore {
 
   constructor(media: OpfsMediaStore = mediaStore) {
     this.media = media
+    // Thumbnails read from the database are Blobs it holds, which can't be written again once the browser clears it.
+    onDatabaseClosed(() => this.thumbnails.clear())
   }
 
   async list(): Promise<ProjectSummary[]> {

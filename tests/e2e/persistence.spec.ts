@@ -850,6 +850,265 @@ test('opening a project file of a project already here asks whether to open that
   await expect(page.getByRole('button', { name: 'Project: Portable (4)' })).toBeVisible({ timeout: 30_000 })
   expect(await keptCount(page)).toBe(4)
 })
+/** How many clips the open project's stored record has, or null when it has none. */
+function storedClipCount(page: Page): Promise<number | null> {
+  return page.evaluate(async () => {
+    const { app, media } = window.mvStudio
+    const id = app.project.editor.getProject().id
+    const project = await media.projectStore.load(id).catch(() => null)
+    return project ? Object.keys(project.clips).length : null
+  })
+}
+
+test('when the browser clears the site’s storage during an export, the export says why it failed, the open project is saved again, a note says what went, and a later export fails up front', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await openBlank(page)
+  await importFiles(page, ['song.mp3', 'image.png'])
+  await expect(page.getByText(/0:08 · 1[12]\d BPM · \d+ sections?/)).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  await expect(saved(page)).toBeVisible()
+  // Another kept project, which goes with the rest.
+  await page.evaluate(async () => {
+    const { app, media, model } = window.mvStudio
+    await media.projectStore.save(model.createProject({ name: 'Other project' }))
+    await app.persistence.refreshRecents()
+  })
+  expect(await keptCount(page)).toBe(2)
+  const before = await snapshot(page)
+
+  await page.keyboard.press(`${mod}+e`)
+  const dialog = page.getByRole('dialog', { name: 'Export' })
+  await dialog.getByRole('button', { name: /^Export \d+ files?$/ }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.mvStudio.shared.jobs
+            .list()
+            .find(
+              (j: { kind: string; status: string }) => j.kind === 'export.outputs' && j.status === 'running',
+            )?.progress.stage,
+      ),
+    )
+    .toBe('render')
+  // What the browser does when the disk is nearly full and the site's storage isn't persistent.
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Storage.clearDataForOrigin', {
+    origin: new URL(page.url()).origin,
+    storageTypes: 'indexeddb,file_systems,cache_storage',
+  })
+  const cause =
+    'The browser cleared this project’s media file, as it does when the disk is nearly full. Import it again and put it back in the timeline.'
+  await expect(page.getByText(`Export failed: ${cause}`)).toBeVisible({ timeout: 60_000 })
+  await expect(dialog.getByText(cause, { exact: true })).toBeVisible()
+  // The reason wraps beside the output's name, which stays on one line, with space between them.
+  const name = dialog.getByText('Full video', { exact: true })
+  const nameLines = await name.evaluate((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size
+  })
+  expect(nameLines).toBe(1)
+  const space = await name.evaluate(
+    (el) => el.nextElementSibling!.getBoundingClientRect().left - el.getBoundingClientRect().right,
+  )
+  expect(space).toBeGreaterThanOrEqual(8)
+  const note = page.getByText('The browser cleared MV Studio’s storage', { exact: false })
+  await expect(note).toHaveText(
+    'The browser cleared MV Studio’s storage, as it does when the disk is nearly full. This project’s edits are kept, but its 2 media files are gone. Your other project in this browser was cleared too. Free some disk space, then import the files again and put them back in the timeline.',
+  )
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  expect(await keptCount(page)).toBe(1)
+  expect(await storedClipCount(page)).toBe(before.clips)
+  await expect(saved(page)).toBeVisible()
+  await page.waitForTimeout(6000)
+  await expect(note).toBeVisible()
+
+  // Later edits save too.
+  await page.keyboard.press('t')
+  await expect.poll(() => storedClipCount(page)).toBe(before.clips + 1)
+  await expect(saved(page)).toBeVisible()
+
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect(page.getByRole('button', { name: 'Project: Song' })).toBeVisible()
+  expect(await snapshot(page)).toEqual({ ...before, clips: before.clips + 1 })
+
+  // An export started without its media fails at once, instead of saving a file of blank frames and silence.
+  let downloads = 0
+  page.on('download', () => downloads++)
+  await page.keyboard.press(`${mod}+e`)
+  await dialog.getByRole('button', { name: /^Export \d+ files?$/ }).click()
+  await expect(page.getByText(`Export failed: ${cause}`)).toBeVisible()
+  await expect(dialog.getByText(cause, { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Nothing was saved.')).toBeVisible()
+  expect(downloads).toBe(0)
+})
+
+test('a project reopened from browser storage is saved again when the browser clears it', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await openBlank(page)
+  await importFiles(page, ['image.png'])
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  // A clip on the timeline gives the project a thumbnail, which the database keeps as a Blob.
+  await page.evaluate(() => {
+    const { app, model } = window.mvStudio
+    const { editor } = app.project
+    const p = editor.getProject()
+    const image = Object.values(p.assets as Record<string, { id: string; kind: string }>).find(
+      (a) => a.kind === 'image',
+    )!
+    const visual = p.tracks.find((t: { kind: string }) => t.kind === 'visual')
+    editor.dispatch({
+      type: 'clip.add',
+      clip: model.createImageClip({ trackId: visual.id, assetId: image.id, start: 0, duration: 4 }),
+    })
+  })
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const [summary] = await window.mvStudio.media.projectStore.list()
+        return summary?.thumbnail instanceof Blob
+      }),
+    )
+    .toBe(true)
+  const before = await snapshot(page)
+  const openProjectId = () => page.evaluate(() => window.mvStudio.app.project.editor.getProject().id)
+
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect.poll(openProjectId).toBe(before.id)
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Storage.clearDataForOrigin', {
+    origin: new URL(page.url()).origin,
+    storageTypes: 'indexeddb,file_systems,cache_storage',
+  })
+  await expect(page.getByText('The browser cleared MV Studio’s storage', { exact: false })).toHaveText(
+    'The browser cleared MV Studio’s storage, as it does when the disk is nearly full. This project’s edits are kept, but its 1 media file is gone. Free some disk space, then import the file again and put it back in the timeline.',
+  )
+  expect(await keptCount(page)).toBe(1)
+  expect(await storedClipCount(page)).toBe(before.clips)
+  await expect(saved(page)).toBeVisible()
+
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect.poll(openProjectId).toBe(before.id)
+  expect(await snapshot(page)).toEqual(before)
+})
+
+test('an edit saved while the database reopens after the browser cleared it is not written over', async ({
+  page,
+}) => {
+  await openBlank(page)
+  await importFiles(page, ['image.png'])
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  await expect(saved(page)).toBeVisible()
+  const storedName = () =>
+    page.evaluate(async () => {
+      const { app, media } = window.mvStudio
+      const project = await media.projectStore.load(app.project.editor.getProject().id).catch(() => null)
+      return project?.name ?? null
+    })
+  // The first try to write the project again fails as the database reopens, and meanwhile an edit lands and autosave
+  // writes it.
+  await page.evaluate(() => {
+    const { app, media } = window.mvStudio
+    const proto = Object.getPrototypeOf(media.projectStore) as { save: (...args: unknown[]) => Promise<void> }
+    const save = proto.save
+    let armed = true
+    proto.save = async function (this: unknown, ...args: unknown[]) {
+      if (!armed) return save.apply(this, args)
+      armed = false
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      app.project.editor.dispatch({ type: 'project.rename', name: 'Edited meanwhile' })
+      await app.persistence.saveBeforeReload()
+      throw new DOMException('The connection was closed.', 'AbortError')
+    }
+  })
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Storage.clearDataForOrigin', {
+    origin: new URL(page.url()).origin,
+    storageTypes: 'indexeddb,file_systems,cache_storage',
+  })
+  await expect(page.getByText('The browser cleared MV Studio’s storage', { exact: false })).toHaveText(
+    'The browser cleared MV Studio’s storage, as it does when the disk is nearly full. This project’s edits are kept, but its 1 media file is gone. Free some disk space, then import the file again and put it back in the timeline.',
+  )
+  expect(await storedName()).toBe('Edited meanwhile')
+  await expect(saved(page)).toBeVisible()
+
+  await page.reload()
+  await page.waitForFunction(() => window.mvStudio?.ready === true)
+  await expect(page.getByRole('button', { name: 'Project: Edited meanwhile' })).toBeVisible()
+})
+
+test('a project switched away from while the database reopens after the browser cleared it counts as cleared', async ({
+  page,
+}) => {
+  await openBlank(page)
+  await importFiles(page, ['image.png'])
+  await expect(page.getByLabel('image, image')).toBeVisible()
+  await expect(saved(page)).toBeVisible()
+  // The first try to write the project again fails as the database reopens, and meanwhile another project opens.
+  await page.evaluate(() => {
+    const { app, media, model } = window.mvStudio
+    const proto = Object.getPrototypeOf(media.projectStore) as { save: (...args: unknown[]) => Promise<void> }
+    const save = proto.save
+    let armed = true
+    proto.save = async function (this: unknown, ...args: unknown[]) {
+      if (!armed) return save.apply(this, args)
+      armed = false
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      app.project.editor.load(model.createProject({ name: 'Another' }))
+      throw new DOMException('The connection was closed.', 'AbortError')
+    }
+  })
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Storage.clearDataForOrigin', {
+    origin: new URL(page.url()).origin,
+    storageTypes: 'indexeddb,file_systems,cache_storage',
+  })
+  await expect(page.getByText('The browser cleared MV Studio’s storage', { exact: false })).toHaveText(
+    'The browser cleared MV Studio’s storage, as it does when the disk is nearly full. Your project in this browser was cleared. Free some disk space before you go on.',
+  )
+  expect(await keptCount(page)).toBe(0)
+})
+
+test('a sample project saved again after the browser clears its storage keeps a thumbnail, with no note when nothing was lost', async ({
+  page,
+}) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    window.location.hash = '#/editor'
+  })
+  await waitForPreview(page)
+  await page.keyboard.press('t')
+  const thumbnailKept = () =>
+    page.evaluate(async () => {
+      const [summary] = await window.mvStudio.media.projectStore.list()
+      return summary?.thumbnail instanceof Blob
+    })
+  await expect.poll(thumbnailKept).toBe(true)
+  // Listing the kept projects reads their thumbnails, Blobs the database holds.
+  await page.evaluate(() => window.mvStudio.app.persistence.refreshRecents())
+
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Storage.clearDataForOrigin', {
+    origin: new URL(page.url()).origin,
+    storageTypes: 'indexeddb,file_systems,cache_storage',
+  })
+  // A read that starts as the browser closes the database fails, and the next one opens it again.
+  await expect.poll(() => keptCount(page).catch(() => -1)).toBe(1)
+  await expect.poll(thumbnailKept).toBe(true)
+  await expect(saved(page)).toBeVisible()
+  await expect(page.getByText('The browser cleared', { exact: false })).toHaveCount(0)
+})
+
 test('a failed save says so, and saving again works', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {
