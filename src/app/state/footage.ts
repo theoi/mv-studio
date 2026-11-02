@@ -16,6 +16,7 @@ import type {
 } from '../../vision/index.ts'
 import { hasUncheckedMedia, readClipTags } from '../../vision/analysisData.ts'
 import { mediaById } from '../mock/media.ts'
+import { stillPending, subscribeStill } from '../screens/editor/stage.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
 import { appMedia } from './media.ts'
 import { editor } from './project.ts'
@@ -120,6 +121,33 @@ export function holdAnalysisUntil(done: Promise<unknown>, maxMs = ANALYSIS_HOLD_
 }
 
 /**
+ * Holds footage analysis while `pending()` is true, `maxMs` at most each time it turns true. After that it holds again
+ * only once `pending()` has been false: a seek that never ends (and is sent again) must not stop analysis. Returns stop.
+ */
+export function holdAnalysisWhile(
+  pending: () => boolean,
+  subscribe: (listener: () => void) => () => void,
+  maxMs = ANALYSIS_HOLD_MS,
+): () => void {
+  // Set from the moment pending() turns true until it turns false, also once the hold's time is up.
+  let release: (() => void) | undefined
+  const end = () => {
+    release?.()
+    release = undefined
+  }
+  const update = () => {
+    if (!pending()) end()
+    else if (!release) holdAnalysisUntil(new Promise<void>((resolve) => (release = resolve)), maxMs)
+  }
+  const unsubscribe = subscribe(update)
+  update()
+  return () => {
+    unsubscribe()
+    end()
+  }
+}
+
+/**
  * Resolves once no hold is left, holds made while it waits included, so one hold can hand over to the next (a draft's
  * planning to its first frame) without a frame decoded in between.
  */
@@ -137,6 +165,8 @@ export function footageService(): Promise<FootageService> {
       showsSomething: isSampleAsset,
       ready: analysisReady,
     })
+    // A paused frame the stage waits for decodes the same files: a ruler click, a draft's first frame.
+    holdAnalysisWhile(stillPending, subscribeStill)
     service.indexing.subscribe((indexing) => useFootage.setState({ indexing }))
     useFootage.setState({ service, indexing: service.indexing.getState(), strongMatch: v.STRONG_MATCH })
     return service

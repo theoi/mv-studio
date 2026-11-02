@@ -246,6 +246,62 @@ test('a draft holds background analysis while it plans and until the preview sho
   await expect.poll(() => analysisStatus(page, 'clip.mp4'), { timeout: 90_000 }).toBe('indexed')
 })
 
+test('background analysis waits while the stage waits for a paused frame', async ({ page }) => {
+  test.setTimeout(120_000)
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    localStorage.setItem('mv-studio.background-analysis', 'on')
+    const onnx = {
+      async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        for (const b of bitmaps) b.close()
+        return { dim: 2, data: new Float32Array(bitmaps.flatMap(() => [0.6, 0.8])) }
+      },
+      async embedTexts({ texts }: { texts: string[] }) {
+        return { dim: 2, data: new Float32Array(texts.flatMap(() => [0.6, 0.8])) }
+      },
+    }
+    ;(window as Untyped).mvStudio.app.footage.setVisionBackendsForTests({
+      onnx: () => onnx,
+      segmentation: () => {
+        throw new Error('unused')
+      },
+    })
+    window.location.hash = '#/editor?project=empty&kind=blank'
+  })
+  await expect(page.getByText('Start with a song')).toBeVisible()
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Import a song' }).click()
+  await (await chooser).setFiles(path.join(FIXTURE_DIR, 'song.mp3'))
+  await holdAnalysis(page)
+  await page.getByLabel('Import media files').setInputFiles(path.join(FIXTURE_DIR, 'clip4k.mp4'))
+  const card = page.getByRole('tabpanel', { name: 'Media' }).getByLabel('clip4k, video')
+  await card.hover({ timeout: 30_000 })
+  await card.getByRole('button', { name: 'Add at playhead' }).click()
+  await expect(page.getByRole('button', { name: /^clip4k, 0:00/ })).toHaveCount(1)
+  await expect.poll(async () => (await analyzing(page))?.step, { timeout: 30_000 }).toBe('matching')
+
+  const stillPending = () => page.evaluate(() => window.mvStudio.app.stillPending() as boolean)
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 0.2 }))
+  await expect.poll(stillPending, { timeout: 30_000 }).toBe(false)
+  const before = await analyzing(page)
+  // 5.5 s is 330 frames past the clip's only key frame: the stage waits for that frame a while.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 5.5 }))
+  await expect.poll(stillPending).toBe(true)
+  await page.evaluate(() => (window as Untyped).endHold())
+  const seen: { pending: boolean; same: boolean }[] = []
+  const started = Date.now()
+  while (Date.now() - started < 1500) {
+    const [pending, now] = await Promise.all([stillPending(), analyzing(page)])
+    seen.push({ pending, same: JSON.stringify(now) === JSON.stringify(before) })
+    if (!pending) break
+    await page.waitForTimeout(100)
+  }
+  expect(seen.filter((s) => s.pending).length).toBeGreaterThan(3)
+  expect(seen.filter((s) => s.pending && !s.same)).toEqual([])
+  await expect.poll(() => analysisStatus(page, 'clip4k.mp4'), { timeout: 90_000 }).toBe('indexed')
+})
+
 test('export framing says which clips have no one in them to follow', async ({ page }) => {
   await openHarness(page)
   await page.evaluate(() => {

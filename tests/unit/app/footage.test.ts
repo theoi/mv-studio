@@ -5,6 +5,7 @@ import {
   clipTags,
   footageDownloadNote,
   holdAnalysisUntil,
+  holdAnalysisWhile,
   waitForMatching,
 } from '../../../src/app/state/footage.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
@@ -175,6 +176,51 @@ describe('holding footage analysis', () => {
     expect(await settled(waiting)).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
     expect(await settled(waiting)).toBe(true)
+    expect(await settled(analysisReady())).toBe(true)
+  })
+
+  it('holds while a still is pending, 5 s at most each time, and not again until it is no longer pending', async () => {
+    vi.useFakeTimers()
+    let pending = false
+    const listeners = new Set<() => void>()
+    const setPending = (next: boolean) => {
+      pending = next
+      for (const listener of listeners) listener()
+    }
+    const stop = holdAnalysisWhile(
+      () => pending,
+      (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    )
+    expect(await settled(analysisReady())).toBe(true)
+    setPending(true)
+    const waiting = analysisReady()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(await settled(waiting)).toBe(false)
+    setPending(false)
+    expect(await settled(waiting)).toBe(true)
+
+    // A seek that never ends: held for 5 s, then not while it stays pending, though the stage says so again.
+    setPending(true)
+    const long = analysisReady()
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(await settled(long)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await settled(long)).toBe(true)
+    setPending(true)
+    expect(await settled(analysisReady())).toBe(true)
+
+    // The next still pending after it is held again, until stop.
+    setPending(false)
+    setPending(true)
+    const next = analysisReady()
+    expect(await settled(next)).toBe(false)
+    stop()
+    expect(await settled(next)).toBe(true)
+    setPending(false)
+    setPending(true)
     expect(await settled(analysisReady())).toBe(true)
   })
 })
