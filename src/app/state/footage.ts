@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import type { Id, Project } from '../../model/index.ts'
+import { webgl2Available } from '../../shared/capabilities.ts'
 import { JobError, jobs, type JobContext, type JobSnapshot } from '../../shared/jobs.ts'
 import type {
   AssetIndexStatus,
@@ -237,6 +238,7 @@ export function footageService(): Promise<FootageService> {
       media: appMedia,
       showsSomething: isSampleAsset,
       ready: analysisReady,
+      canTrackSubjects: webgl2Available,
     })
     service.indexing.subscribe((indexing) => useFootage.setState({ indexing }))
     useFootage.setState({ service, indexing: service.indexing.getState(), strongMatch: v.STRONG_MATCH })

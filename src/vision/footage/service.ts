@@ -140,6 +140,12 @@ export interface FootageServiceDeps {
    * cuts wait for that.
    */
   ready?: () => Promise<void>
+  /**
+   * Whether subject tracking can run in this browser (default yes). Its models (MediaPipe) need WebGL 2 even on the
+   * CPU, so the app passes `webgl2Available`. Without it the step is left out, not failed: clips are matched and
+   * tagged, and `subjectStatusOf` says `unsupported` for clips with no stored subject track.
+   */
+  canTrackSubjects?: () => boolean
 }
 
 /** A clip's check takes a few seconds at most; one still running after this has hung (a decoder that never answers). */
@@ -312,6 +318,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
   const failedMatching = new Map<Id, string>()
   const failedSubjects = new Map<Id, string>()
   const failedTags = new Set<Id>()
+  const canTrackSubjects = deps.canTrackSubjects ?? (() => true)
   const listeners = new Set<(state: IndexingState) => void>()
   let watching = false
   let paused = false
@@ -335,7 +342,11 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       !readClipTags(project.analysis.visual[asset.id])
     )
       steps.push('tags')
-    if (!failedSubjects.has(asset.id) && !readSubjectTrack(project.analysis.visual[asset.id]))
+    if (
+      canTrackSubjects() &&
+      !failedSubjects.has(asset.id) &&
+      !readSubjectTrack(project.analysis.visual[asset.id])
+    )
       steps.push('subjects')
     return steps
   }
@@ -586,6 +597,7 @@ export function createFootageService(deps: FootageServiceDeps): FootageService {
       if (!asset || !analyzableMedia(asset)) return 'unsupported'
       const track = readSubjectTrack(project.analysis.visual[assetId])
       if (track) return track.samples.some((s) => s.source !== 'none') ? 'analyzed' : 'no-subject'
+      if (!canTrackSubjects()) return 'unsupported'
       if (current?.assetId === assetId && running) return 'analyzing'
       if (failedSubjects.has(assetId)) return 'failed'
       return paused || error ? 'paused' : 'queued'

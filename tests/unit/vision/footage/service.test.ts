@@ -3,6 +3,7 @@ import { ProjectEditor } from '../../../../src/model/editor.ts'
 import type { Asset, Project } from '../../../../src/model/types.ts'
 import { JobError, JobRunner } from '../../../../src/shared/jobs.ts'
 import {
+  buildVisualAnalysis,
   hasBlankVerdict,
   isBlankClip,
   readClipIndex,
@@ -78,6 +79,7 @@ function setup(
     ready?: () => Promise<void>
     /** Called when a clip's frame source is let go. */
     onDispose?: (id: string) => void
+    canTrackSubjects?: () => boolean
   } = {},
 ) {
   const editor = new ProjectEditor(project)
@@ -145,6 +147,7 @@ function setup(
     ...(options.blankCheckStallMs ? { blankCheckStallMs: options.blankCheckStallMs } : {}),
     ...(options.showsSomething ? { showsSomething: (a: Asset) => options.showsSomething!(a.id) } : {}),
     ...(options.ready ? { ready: options.ready } : {}),
+    ...(options.canTrackSubjects ? { canTrackSubjects: options.canTrackSubjects } : {}),
   })
   const tick = () => new Promise((r) => setTimeout(r, 0))
   const release = async (id: string, error?: unknown) => {
@@ -336,6 +339,28 @@ describe('background footage analysis', () => {
       failed: [{ assetId: 'city', message: 'Broken frame' }],
     })
     expect(service.indexing.subjectStatusOf('ocean')).toBe('paused')
+  })
+
+  it('leaves subject tracking out where it can’t run, matching and tagging every clip with nothing failed', async () => {
+    const project = makeProject({ clips: CLIPS.map((c) => ({ ...c, indexed: false })) })
+    const tracked = CLIPS[0]!.id
+    project.analysis.visual[tracked] = buildVisualAnalysis({
+      assetId: tracked,
+      sourceSize: { width: 1, height: 1 },
+      duration: 10,
+      subjects: subjectTrack({ mediaId: tracked, width: 1, height: 1 } as FrameSource),
+    })
+    const { service, release, subjects, tick } = setup(project, { canTrackSubjects: () => false })
+    service.indexing.start()
+    for (const c of CLIPS) await release(c.id)
+    for (let i = 0; i < 10; i++) await tick()
+    expect(subjects).not.toHaveBeenCalled()
+    expect(service.indexing.getState()).toMatchObject({ status: 'idle', failed: [] })
+    expect(CLIPS.map((c) => service.indexing.statusOf(c.id))).toEqual(CLIPS.map(() => 'indexed'))
+    // A track stored where it could run still frames its clip.
+    expect(CLIPS.map((c) => service.indexing.subjectStatusOf(c.id))).toEqual(
+      CLIPS.map((c) => (c.id === tracked ? 'analyzed' : 'unsupported')),
+    )
   })
 
   it('tags each clip from its index after matching, and tags clips matched before without decoding them', async () => {

@@ -18,6 +18,7 @@ import {
   type Project,
   type VisualClip,
 } from '../../model/index.ts'
+import { webgl2Available } from '../../shared/capabilities.ts'
 import { readSubjectTrack } from '../../vision/analysisData.ts'
 import { plural } from '../format.ts'
 import { dispatch, editor } from './project.ts'
@@ -31,15 +32,17 @@ function message(aspect: AspectPreset, reframe: ProjectReframe): string {
   const other = kinds.length - followed - moved
   const centred = reframe.centred.length
   const locked = reframe.locked.length
+  // Without WebGL 2, footage analysis can't find subjects (its models need it), so analysis won't come.
+  const why = webgl2Available()
+    ? 'no subject analysis yet'
+    : 'following subjects needs graphics acceleration (WebGL 2)'
   const parts = [
     followed
       ? `${plural(followed, 'clip')} ${followed === 1 ? 'follows its subject' : 'follow their subjects'}`
       : '',
     moved ? `${plural(moved, 'title or overlay', 'titles and overlays')} moved into the safe area` : '',
     other ? `${plural(other, 'clip')} reframed` : '',
-    centred
-      ? `${plural(centred, 'clip')} ${centred === 1 ? 'stays' : 'stay'} centered (no subject analysis yet)`
-      : '',
+    centred ? `${plural(centred, 'clip')} ${centred === 1 ? 'stays' : 'stay'} centered (${why})` : '',
     locked ? `${plural(locked, 'clip')} on locked tracks left as ${locked === 1 ? 'it is' : 'they are'}` : '',
   ].filter(Boolean)
   return parts.length
@@ -177,12 +180,14 @@ export function framingHint(project: Project, clip: VisualClip): string {
   const mode = clipReframeMode(project, clip.id)
   const asset = 'assetId' in clip ? project.assets[clip.assetId] : undefined
   const centred = mode === 'auto' && asset && readSubjectTrack(project.analysis.visual[asset.id]) === null
-  if (from && centred)
-    return `Reframed from ${from.aspect} and kept centered: it has no subject analysis yet.`
+  const why = webgl2Available()
+    ? 'it has no subject analysis yet'
+    : 'following its subject needs graphics acceleration (WebGL 2)'
+  if (from && centred) return `Reframed from ${from.aspect} and kept centered: ${why}.`
   if (from)
     return mode === 'auto'
       ? `Reframed from ${from.aspect} around its subject.`
       : `Reframed from ${from.aspect}.`
-  if (centred) return 'Other aspect ratios keep it centered: it has no subject analysis yet.'
+  if (centred) return `Other aspect ratios keep it centered: ${why}.`
   return 'Used in Export and when you change the aspect ratio.'
 }
