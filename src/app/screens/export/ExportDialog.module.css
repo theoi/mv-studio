@@ -477,3 +477,11 @@
   margin-top: auto;
   padding-top: var(--space-6);
 }
+
+.noGraphics {
+  margin: var(--space-1) var(--space-4) var(--space-4) var(--space-5);
+}
+
+.noGraphicsClose {
+  margin-left: auto;
+}

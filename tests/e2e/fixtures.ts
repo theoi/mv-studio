@@ -4,14 +4,24 @@ import { test as base, chromium, type BrowserContext, type Page } from '@playwri
  * Tests run in a persistent (on-disk) profile. Playwright's default contexts keep OPFS/IndexedDB in memory with a
  * much lower real quota, which the runtime pilot found makes 200 MB media writes fail.
  */
-export async function launchProfile(dir: string, baseURL: string | undefined): Promise<BrowserContext> {
+export async function launchProfile(
+  dir: string,
+  baseURL: string | undefined,
+  { webgl = true }: { webgl?: boolean } = {},
+): Promise<BrowserContext> {
   const context = await chromium.launchPersistentContext(dir, {
     headless: true,
     baseURL,
     acceptDownloads: true,
     viewport: { width: 1440, height: 900 },
     // page.evaluate is not a user gesture, so playback tests could not start an AudioContext otherwise.
-    args: ['--autoplay-policy=no-user-gesture-required'],
+    args: [
+      '--autoplay-policy=no-user-gesture-required',
+      // Chrome on a computer without a usable GPU: no WebGL at all. Headless Chrome otherwise draws with SwiftShader.
+      ...(webgl ? [] : ['--disable-gpu', '--disable-software-rasterizer']),
+    ],
+    // Playwright adds this to every launch, which gives WebGL where a user's Chrome has none.
+    ...(webgl ? {} : { ignoreDefaultArgs: ['--enable-unsafe-swiftshader'] }),
   })
   // Desktop Chrome and Edge define window.chrome; headless Chromium does not. Code that sniffs it (upstream
   // coi-serviceworker picks require-corp when it exists) must see what real users' browsers expose.
@@ -21,9 +31,11 @@ export async function launchProfile(dir: string, baseURL: string | undefined): P
   return context
 }
 
-export const test = base.extend<{ context: BrowserContext; page: Page }>({
-  context: async ({ baseURL }, use, testInfo) => {
-    const context = await launchProfile(testInfo.outputPath('profile'), baseURL)
+export const test = base.extend<{ webgl: boolean; context: BrowserContext; page: Page }>({
+  /** `test.use({ webgl: false })` runs in a browser that can't draw, like Chrome without a usable GPU. */
+  webgl: [true, { option: true }],
+  context: async ({ baseURL, webgl }, use, testInfo) => {
+    const context = await launchProfile(testInfo.outputPath('profile'), baseURL, { webgl })
     await use(context)
     await context.close()
   },

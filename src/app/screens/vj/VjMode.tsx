@@ -12,6 +12,7 @@ import { ArrowLeft, AudioWaveform, Circle, Film, Pause, Play, Square, Usb } from
 import { PreviewController } from '../../../engine/preview.ts'
 import { pluginRegistry } from '../../../engine/registry.ts'
 import type { Asset } from '../../../model/index.ts'
+import { webgl2Available } from '../../../shared/capabilities.ts'
 import {
   VjSession,
   clipPadForAsset,
@@ -46,6 +47,7 @@ import {
 } from '../../ds/Menu.tsx'
 import { Tooltip } from '../../ds/Tooltip.tsx'
 import { formatTime, plural } from '../../format.ts'
+import { NO_GRAPHICS } from '../../state/graphics.ts'
 import { appMedia } from '../../state/media.ts'
 import {
   editor,
@@ -147,6 +149,7 @@ function useEngine(
   const [drawn, setDrawn] = useState(false)
   // A little after the first frame: with a software GPU it reaches the screen a few hundred ms after it is drawn.
   const [shown, setShown] = useState(false)
+  const [failed, setFailed] = useState(() => !webgl2Available())
   const exitEvent = useEffectEvent(onExit)
 
   useEffect(() => {
@@ -165,7 +168,7 @@ function useEngine(
       preview = new PreviewController({ canvas, media: appMedia })
     } catch (error) {
       console.error('The VJ preview couldn’t start', error)
-      toast('The live preview needs WebGL 2. Turn on hardware acceleration in your browser settings.')
+      void Promise.resolve().then(() => setFailed(true))
       return
     }
     const first = fit()
@@ -190,7 +193,8 @@ function useEngine(
       if (preview.clock.state === 'playing') set({ playhead: time })
     })
     const offState = preview.subscribe(() => {
-      const { state, time } = preview.getSnapshot()
+      const { state, time, error } = preview.getSnapshot()
+      if (error?.code === 'unsupported') setFailed(true)
       if (state !== 'playing' && get().playhead !== time) set({ playhead: time })
     })
     const ro = new ResizeObserver(() => {
@@ -217,7 +221,7 @@ function useEngine(
     }
   }, [canvasRef, stageRef])
 
-  return { engine, size, drawn, shown }
+  return { engine, size, drawn, shown, failed }
 }
 
 type PadButtonProps = Omit<ComponentProps<'button'>, 'className'> & {
@@ -503,7 +507,7 @@ export function VjMode() {
     })
   }
 
-  const { engine, size, drawn, shown } = useEngine(canvasRef, stageRef, (s) => exit(s, true))
+  const { engine, size, drawn, shown, failed } = useEngine(canvasRef, stageRef, (s) => exit(s, true))
   // The editor's frame from when VJ mode opened, shown until the live output shows its own.
   const entryFrame = useSyncExternalStore(subscribeVjEntryFrame, vjEntryFrame)
   const entry = shown ? null : entryFrame
@@ -687,10 +691,17 @@ export function VjMode() {
             aria-hidden
           />
         )}
-        {!drawn && !entry && (
-          <div className={styles.stageNote} role="status">
-            <Spinner /> Preparing the live output
+        {failed ? (
+          <div className={[styles.stageNote, styles.stageNoteWide].join(' ')} role="alert">
+            {NO_GRAPHICS}
           </div>
+        ) : (
+          !drawn &&
+          !entry && (
+            <div className={styles.stageNote} role="status">
+              <Spinner /> Preparing the live output
+            </div>
+          )
         )}
         {mapping ? (
           <div className={styles.playHint} role="status">

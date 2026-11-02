@@ -223,6 +223,12 @@
   flex-direction: column;
 }
 
+/* A paragraph rather than a line: kept to a readable measure in the middle of a wide stage. */
+.stageNoteWide {
+  padding-inline: max(var(--space-4), calc(50% - 220px));
+  line-height: var(--lh-sm);
+}
+
 .updatingRegion {
   position: absolute;
   pointer-events: none;

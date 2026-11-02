@@ -141,6 +141,12 @@
   animation: note-in var(--dur) var(--ease-out) 300ms both;
 }
 
+.stageNoteWide {
+  padding-inline: max(var(--space-4), calc(50% - 220px));
+  line-height: var(--lh-sm);
+  text-align: center;
+}
+
 @keyframes note-in {
   from {
     opacity: 0;

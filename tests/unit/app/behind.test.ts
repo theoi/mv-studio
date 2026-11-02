@@ -26,6 +26,13 @@ import {
 } from '../../../src/app/state/behind.ts'
 import { PERSON_TRACK_VERSION } from '../../../src/vision/segmentation/personTrack.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
+import type * as Capabilities from '../../../src/shared/capabilities.ts'
+
+// A cutout starts only where the browser can draw with WebGL 2, which Node can't.
+vi.mock('../../../src/shared/capabilities.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof Capabilities>()),
+  webgl2Available: () => true,
+}))
 
 beforeEach(() => loadDemoProject())
 
