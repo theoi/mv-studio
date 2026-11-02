@@ -24,13 +24,18 @@ type Methods<Api extends WorkerApi> = {
  * be read, or the browser stopping it) is replaced on the next call; calls pending at that moment reject with
  * `worker-crashed` or `out-of-memory`. State the dead worker held (loaded models, unfinished tracks) is lost, so
  * running jobs fail and the user's retry starts fresh. Model downloads a call starts go to `downloads` instead of
- * the call's progress (`routeDownloads`).
+ * the call's progress (`routeDownloads`). `release(idleMs)` ends the worker if none of its calls is pending or ended in
+ * the last `idleMs`; the next call starts a fresh one.
  */
 function lazyWorker<Api extends WorkerApi>(
   create: () => Worker,
   downloads: (d: ModelDownload) => void,
-): { client: Methods<Api>; terminate(): void } {
+): { client: Methods<Api>; terminate(): void; release(idleMs: number): boolean } {
   const worker = createWorkerClient<Api>(create)
+  let used = -Infinity
+  const touch = () => {
+    used = performance.now()
+  }
   const client = new Proxy({} as Methods<Api>, {
     get(_target, method) {
       if (typeof method !== 'string' || method === 'then') return undefined
@@ -40,12 +45,17 @@ function lazyWorker<Api extends WorkerApi>(
             worker.call(method as keyof Api & string, args as never, { ...options, onProgress }),
           options?.onProgress,
           downloads,
-        )
+        ).finally(touch)
     },
   })
-  return { client, terminate: () => worker.terminate() }
+  return {
+    client,
+    terminate: () => worker.terminate(),
+    release: (idleMs) => performance.now() - used >= idleMs && worker.release(),
+  }
 }
 export interface WorkerBackends extends VisionBackends {
+  release(options?: { idleMs?: number }): boolean
   dispose(): void
 }
 
@@ -85,6 +95,12 @@ export function createWorkerBackends(): WorkerBackends {
       return () => {
         listeners.delete(listener)
       }
+    },
+    release({ idleMs = 0 } = {}) {
+      let none = true
+      for (const w of [...segmentation.values(), ...(onnx ? [onnx] : [])])
+        if (!w.release(idleMs)) none = false
+      return none
     },
     dispose() {
       for (const w of segmentation.values()) w.terminate()

@@ -33,6 +33,7 @@ afterEach(() => {
   backends?.dispose()
   closeFakeWorkers()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 const embed = (b: WorkerBackends, texts: string[]) =>
@@ -78,5 +79,46 @@ describe('vision worker backends', () => {
     expect(made[0]?.worker.terminated).toBe(true)
     expect(await embed(backends, ['ab'])).toEqual([[2]])
     expect(made).toHaveLength(2)
+  })
+
+  it('release idle workers but stay usable through the clients already handed out', async () => {
+    backends = createWorkerBackends()
+    // The vision service keeps the clients it got when it was made.
+    const onnx = backends.onnx()
+    const segmentation = backends.segmentation('background')
+    expect(await onnx.embedTexts({ texts: ['abc'], model: 'clip' } as never)).toEqual([[3]])
+    await segmentation.resetStream(null).catch(() => undefined)
+    expect(made.map((m) => m.name)).toEqual(['vision-onnx', 'vision-segmentation-background'])
+    // Used a moment ago: kept when only workers idle for a minute may go.
+    expect(backends.release({ idleMs: 60_000 })).toBe(false)
+    expect(made.some((m) => m.worker.terminated)).toBe(false)
+    const stop = new AbortController()
+    const pending = (onnx.depth({} as never, { signal: stop.signal }) as Promise<unknown>).catch(
+      (e: unknown) => e,
+    )
+    expect(backends.release()).toBe(false)
+    expect(made[0]?.worker.terminated).toBe(false)
+    expect(made[1]?.worker.terminated).toBe(true)
+    stop.abort()
+    expect(await pending).toMatchObject({ code: 'cancelled' })
+    expect(backends.release()).toBe(true)
+    expect(made[0]?.worker.terminated).toBe(true)
+    expect(await onnx.embedTexts({ texts: ['hello'], model: 'clip' } as never)).toEqual([[5]])
+    expect(made.map((m) => m.name)).toEqual(['vision-onnx', 'vision-segmentation-background', 'vision-onnx'])
+  })
+
+  it('count a worker as idle from when its last call ended, not began', async () => {
+    let clock = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    backends = createWorkerBackends()
+    const call = embed(backends, ['abc'])
+    clock = 120_000
+    expect(await call).toEqual([[3]])
+    clock = 150_000
+    expect(backends.release({ idleMs: 60_000 })).toBe(false)
+    expect(made[0]?.worker.terminated).toBe(false)
+    clock = 180_000
+    expect(backends.release({ idleMs: 60_000 })).toBe(true)
+    expect(made[0]?.worker.terminated).toBe(true)
   })
 })

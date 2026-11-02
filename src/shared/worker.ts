@@ -11,7 +11,8 @@
  *
  * A worker that dies (an uncaught error, a message that cannot be read, or the browser stopping it, which fires no
  * event) fails its pending calls with JobError 'out-of-memory' when its error says so, else 'worker-crashed'. A client
- * created with a function that makes the worker starts a fresh one on the next call.
+ * created with a function that makes the worker starts a fresh one on the next call, also after `release()` ended an
+ * idle one to free its memory.
  */
 import {
   isOutOfMemoryMessage,
@@ -157,6 +158,12 @@ export interface WorkerClient<Api extends WorkerApi> {
   ): Promise<Result<Api[M]>>
   /** Rejects pending calls with 'cancelled', terminates the worker if the endpoint is a Worker, and ends the client. */
   terminate(): void
+  /**
+   * Ends the worker while no call is pending, keeping the client: the next call starts a fresh worker, which loads
+   * again whatever the old one held. Returns whether no worker is left running, so false while a call is pending (the
+   * worker stays), and always false for a client given its worker, which it can't replace.
+   */
+  release(): boolean
   /**
    * The error the worker died with, or null while it runs. A client that makes its workers clears it when the next
    * call starts a fresh worker; any other client stays dead and rejects every call with it.
@@ -357,6 +364,16 @@ export function createWorkerClient<Api extends WorkerApi>(
       }
       conn.pending.clear()
       conn.worker?.terminate()
+    },
+    release() {
+      if (!make) return false
+      const conn = current
+      if (!conn) return true
+      if (conn.pending.size) return false
+      current = null
+      conn.close()
+      conn.worker?.terminate()
+      return true
     },
     failure: () => lastFailure,
   }
