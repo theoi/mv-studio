@@ -3,8 +3,10 @@ import {
   actions,
   actionsById,
   actionScore,
+  destructiveNow,
   labelOf,
   paletteResults,
+  type Action,
 } from '../../../src/app/screens/palette/actions.tsx'
 import { PAGES } from '../../../src/app/screens/palette/pages.tsx'
 import { SHORTCUTS } from '../../../src/app/state/keymap.ts'
@@ -41,6 +43,41 @@ function withVideoSelected(check: () => void) {
     check()
   } finally {
     set({ selection: before })
+  }
+}
+
+/**
+ * Each of `entries`, which delete, is listed for its whole names, and for no search that stops partway through a word
+ * of one of them, unless the whole words before already name it.
+ */
+function expectWholeNamesOnly(entries: Action[]) {
+  expect(entries.length).toBeGreaterThan(0)
+  const listed = new Map<string, string[]>()
+  const ids = (search: string) => {
+    if (!listed.has(search))
+      listed.set(
+        search,
+        paletteResults(search).map((a) => a.id),
+      )
+    return listed.get(search)!
+  }
+  for (const a of entries) {
+    const aliases = typeof a.aliases === 'function' ? a.aliases() : (a.aliases ?? [])
+    for (const name of [labelOf(a), ...aliases]) {
+      const text = name.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '')
+      expect(ids(text), name).toContain(a.id)
+      for (let end = 1; end < text.length; end++) {
+        if (text[end] === ' ' || text[end - 1] === ' ') continue
+        const start = text.lastIndexOf(' ', end) + 1
+        const word = text.slice(start).split(' ')[0]!
+        // A plural's singular is a whole word: "reset vj mapping" names Reset VJ mappings.
+        if (word === `${text.slice(start, end)}s`) continue
+        // The whole words before may name it already: "remove" names Delete, so "remove c" lists it.
+        const before = text.slice(0, start).trim()
+        if (before && ids(before).includes(a.id)) continue
+        expect(ids(text.slice(0, end)), `${a.id}: “${text.slice(0, end)}”`).not.toContain(a.id)
+      }
+    }
   }
 }
 
@@ -413,7 +450,7 @@ describe('command palette coverage', () => {
       withSelection(() => {
         for (const search of ['de', 'del', 'dele', 'delet'])
           expect(
-            ids(search).filter((id) => actionsById.get(id)?.destructive),
+            ids(search).filter((id) => destructiveNow(actionsById.get(id)!)),
             search,
           ).toEqual([])
         expect(ids('delete')[0]).toBe('delete')
@@ -423,16 +460,7 @@ describe('command palette coverage', () => {
 
   it('lists no action that deletes for a search that stops partway through a word of one of its names', () =>
     withVideoSelected(() => {
-      const listed = new Map<string, string[]>()
-      const ids = (search: string) => {
-        if (!listed.has(search))
-          listed.set(
-            search,
-            paletteResults(search).map((a) => a.id),
-          )
-        return listed.get(search)!
-      }
-      const destructive = actions.filter((a) => a.destructive)
+      const destructive = actions.filter(destructiveNow)
       expect(destructive.map((a) => a.id).sort()).toEqual([
         'delete',
         'deleteProject',
@@ -441,25 +469,131 @@ describe('command palette coverage', () => {
         'rippleDelete',
         'vjResetMappings',
       ])
-      for (const a of destructive) {
-        const aliases = typeof a.aliases === 'function' ? a.aliases() : (a.aliases ?? [])
-        for (const name of [labelOf(a), ...aliases]) {
-          const text = name.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '')
-          expect(ids(text), name).toContain(a.id)
-          for (let end = 1; end < text.length; end++) {
-            if (text[end] === ' ' || text[end - 1] === ' ') continue
-            const start = text.lastIndexOf(' ', end) + 1
-            const word = text.slice(start).split(' ')[0]!
-            // A plural's singular is a whole word: "reset vj mapping" names Reset VJ mappings.
-            if (word === `${text.slice(start, end)}s`) continue
-            // The whole words before may name it already: "remove" names Delete, so "remove c" lists it.
-            const before = text.slice(0, start).trim()
-            if (before && ids(before).includes(a.id)) continue
-            expect(ids(text.slice(0, end)), `${a.id}: “${text.slice(0, end)}”`).not.toContain(a.id)
-          }
-        }
-      }
+      expectWholeNamesOnly(destructive)
     }))
+
+  describe.each([
+    [
+      'an outline, a shadow and a background on the selected text',
+      ['textOutline', 'textShadow', 'textBackground'],
+      ['outline', 'shadow', 'background', 'box'],
+      () => {
+        const text = Object.values(editor.getProject().clips).find(
+          (c) => c.type === 'text' && !c.lyricLineId,
+        )!
+        select({ type: 'clip', id: text.id })
+        for (const id of ['textOutline', 'textShadow', 'textBackground']) {
+          const toggle = actionsById.get(id)!
+          if (labelOf(toggle).startsWith('Add')) toggle.run?.()
+        }
+      },
+    ],
+    [
+      'the karaoke highlight on the selected lyric line',
+      ['karaoke'],
+      ['karaoke', 'highlight', 'turn on karaoke'],
+      () => {
+        const line = Object.values(editor.getProject().clips).find((c) => c.type === 'text' && c.lyricLineId)!
+        select({ type: 'clip', id: line.id })
+        const toggle = actionsById.get('karaoke')!
+        if (labelOf(toggle).startsWith('Turn on')) toggle.run?.()
+      },
+    ],
+    [
+      'text behind the selected clip’s subject',
+      ['behindClip'],
+      ['front', 'behind subject', 'text behind this person'],
+      () => {
+        const [host, cutout] = Object.values(editor.getProject().clips).filter((c) => c.type === 'video')
+        editor.dispatch({
+          type: 'clip.set',
+          clipId: cutout!.id,
+          path: ['meta'],
+          value: { behindSubjectOf: host!.id },
+        })
+        select({ type: 'clip', id: host!.id })
+      },
+    ],
+  ])('with %s', (_, toggles, partWords, setUp) => {
+    const inState = (check: () => void) => () => {
+      const before = get().selection
+      const steps = editor.history().undo.length
+      try {
+        setUp()
+        check()
+      } finally {
+        while (editor.history().undo.length > steps) editor.undo()
+        set({ selection: before })
+      }
+    }
+
+    it(
+      'lists the toggle that would remove it, which deletes then, only for whole names',
+      inState(() => {
+        const now = actions.filter((a) => typeof a.destructive === 'function' && destructiveNow(a))
+        expect(now.map((a) => a.id)).toEqual(expect.arrayContaining(toggles))
+        expectWholeNamesOnly(now)
+      }),
+    )
+
+    it(
+      'lists it for no search that only names the part, or asks for the other way',
+      inState(() => {
+        for (const search of partWords) {
+          const ids = paletteResults(search).map((a) => a.id)
+          expect(
+            toggles.filter((id) => ids.includes(id)),
+            search,
+          ).toEqual([])
+        }
+      }),
+    )
+  })
+
+  it('lists a text toggle by the start of a word while it adds, and only by whole names once it would remove', () => {
+    const before = get().selection
+    const steps = editor.history().undo.length
+    const text = Object.values(editor.getProject().clips).find((c) => c.type === 'text' && !c.lyricLineId)!
+    const background = actionsById.get('textBackground')!
+    const ids = (search: string) => paletteResults(search).map((a) => a.id)
+    try {
+      select({ type: 'clip', id: text.id })
+      expect(labelOf(background)).toBe('Add a background to the text')
+      for (const search of ['box', 'backgr', 'text box'])
+        expect(ids(search), search).toContain('textBackground')
+      background.run?.()
+      expect(labelOf(background)).toBe('Remove the text background')
+      for (const search of ['box', 'backgr', 'background', 'remove the text backgr'])
+        expect(ids(search), search).not.toContain('textBackground')
+      for (const search of ['text box', 'remove background', 'background off', 'remove the text background'])
+        expect(ids(search), search).toContain('textBackground')
+    } finally {
+      while (editor.history().undo.length > steps) editor.undo()
+      set({ selection: before })
+    }
+  })
+
+  it('lists Reset VJ mappings for the names people give it, but not for “reset”, “default”, “mappings” or “reset vj”', () => {
+    const ids = (search: string) => paletteResults(search).map((a) => a.id)
+    for (const search of [
+      'reset mappings',
+      'reset midi',
+      'midi reset',
+      'reset midi mapping',
+      'reset keys',
+      'reset pads',
+      'reset bindings',
+      'reset keys and pads',
+      'default mappings',
+      'default bindings',
+      'clear midi mappings',
+      'clear vj mappings',
+    ])
+      expect(ids(search), search).toContain('vjResetMappings')
+    // “reset vj” may mean VJ settings, and “vj reset” has the same words.
+    for (const search of ['reset', 'default', 'mappings', 'reset vj', 'vj reset'])
+      expect(ids(search), search).not.toContain('vjResetMappings')
+  })
 
   it('lists the track move the search names first on a track that can’t move that way', () => {
     const before = get().selection

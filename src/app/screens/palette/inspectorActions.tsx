@@ -516,6 +516,12 @@ function placedLyric(): TextClip | Why {
   return lineClip(line.id) ?? why('The line is not on the timeline yet')
 }
 
+/** Whether the selected lyric line has the karaoke highlight, whose colors and fill turning it off loses. */
+function karaokeOn(): boolean {
+  const clip = placedLyric()
+  return !isWhy(clip) && !!clip.karaoke
+}
+
 /** The song section selected, else the one at the playhead. */
 function songSection(): SongSection | Why {
   const { selection, playhead } = get()
@@ -767,19 +773,20 @@ function decorationToggle(part: TextDecoration, icon: ReactNode): Action {
   const words = DECORATION_WORDS[part]
   const noun = name.toLowerCase()
   const target = () => styledText()
+  // Removing it loses its color and sizes.
+  const removes = () => {
+    const clip = target()
+    return !isWhy(clip) && !!clip.style[part]
+  }
   return on({
     target,
     id: `text${name}`,
     group: 'Clip',
-    label: () => {
-      const clip = target()
-      return !isWhy(clip) && clip.style[part]
-        ? `Remove the text ${noun}`
-        : `Add ${words.article} ${noun} to the text`
-    },
+    label: () => (removes() ? `Remove the text ${noun}` : `Add ${words.article} ${noun} to the text`),
     icon,
-    aliases: words.aliases,
+    aliases: () => (removes() ? [...words.aliases, `remove ${noun}`, `${noun} off`] : words.aliases),
     keywords: `text lyrics ${words.keywords} on off`,
+    destructive: removes,
     run: (clip) => setDecoration(clip, part, !clip.style[part]),
   })
 }
@@ -936,6 +943,12 @@ function behindHost(): { clip: VisualClip; hostId: string } | Why {
   if (isWhy(clip)) return clip
   const of = clip.meta?.behindSubjectOf
   return { clip, hostId: typeof of === 'string' ? of : clip.id }
+}
+
+/** Whether text and effects are behind the selected clip's subject: bringing them in front removes the cutouts. */
+function behindNow(): boolean {
+  const t = behindHost()
+  return !isWhy(t) && !!(t.clip.meta?.behindSubjectOf || hasCutout(project(), t.clip.id))
 }
 
 function directorDone() {
@@ -1427,15 +1440,17 @@ export const inspectorActions: Action[] = [
     target: behindHost,
     id: 'behindClip',
     group: 'Clip',
-    label: () => {
-      const t = behindHost()
-      return !isWhy(t) && (t.clip.meta?.behindSubjectOf || hasCutout(project(), t.clip.id))
+    label: () =>
+      behindNow()
         ? 'Bring text and effects in front of the subject'
-        : 'Put text and effects behind this clip’s subject'
-    },
+        : 'Put text and effects behind this clip’s subject',
     icon: <Layers />,
-    aliases: ['text behind this person', 'lyrics behind this clip'],
+    aliases: () =>
+      behindNow()
+        ? ['bring to front', 'text in front', 'remove cutout']
+        : ['text behind this person', 'lyrics behind this clip'],
     keywords: 'cutout person subject mask front behind layering',
+    destructive: behindNow,
     check: ({ clip, hostId }) => {
       if (clip.meta?.behindSubjectOf || hasCutout(project(), clip.id)) return undefined
       const noGraphics = graphicsUnavailable()
@@ -1938,13 +1953,14 @@ export const inspectorActions: Action[] = [
     target: placedLyric,
     id: 'karaoke',
     group: 'Clip',
-    label: () => {
-      const clip = placedLyric()
-      return !isWhy(clip) && clip.karaoke ? 'Turn off the karaoke highlight' : 'Turn on the karaoke highlight'
-    },
+    label: () => (karaokeOn() ? 'Turn off the karaoke highlight' : 'Turn on the karaoke highlight'),
     icon: <Highlighter />,
-    aliases: ['karaoke highlight', 'word highlight'],
+    aliases: () =>
+      karaokeOn()
+        ? ['karaoke highlight', 'word highlight', 'karaoke off', 'highlight off', 'remove karaoke']
+        : ['karaoke highlight', 'word highlight'],
     keywords: 'karaoke highlight words sing along lyrics',
+    destructive: karaokeOn,
     run: (clip) =>
       dispatch(
         {
@@ -2621,7 +2637,17 @@ export const inspectorActions: Action[] = [
     group: 'Playback',
     label: 'Reset VJ mappings',
     icon: <RotateCcw />,
-    aliases: ['reset mappings', 'reset midi mapping', 'default mappings'],
+    // Not "reset vj", which may mean VJ settings.
+    aliases: [
+      'reset mappings',
+      'reset midi',
+      'reset keys',
+      'reset pads',
+      'reset bindings',
+      'default mappings',
+      'default bindings',
+      'clear mappings',
+    ],
     keywords: 'vj midi mapping keys pads bindings default reset',
     destructive: true,
     run: () => {
