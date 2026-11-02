@@ -475,15 +475,18 @@ export async function refreshRecents(): Promise<void> {
   syncCurrent()
 }
 
-/** Mod S: writes the open project now, keeping it even when nothing changed since it opened. */
-export async function saveNow(): Promise<void> {
+/**
+ * Writes the open project now, keeping it even when nothing changed since it opened, and says whether it was written.
+ * A failed save says why in a toast.
+ */
+export async function keepNow(): Promise<boolean> {
   const project = editor.getProject()
   edited = true
   syncCurrent()
-  if (!autosave) return
+  if (!autosave) return false
   if (storedIds.has(project.id)) {
     await autosave.flush()
-    if (autosave.getState().status === 'error') return
+    if (autosave.getState().status === 'error') return false
   } else {
     try {
       usePersistence.setState({ status: 'saving' })
@@ -493,11 +496,16 @@ export async function saveNow(): Promise<void> {
       const message = saveErrorMessage(error)
       usePersistence.setState({ status: 'error', error: message })
       toast(message)
-      return
+      return false
     }
   }
   rememberLast(project.id)
-  toast('Saved in this browser')
+  return true
+}
+
+/** Mod S: writes the open project now, keeping it even when nothing changed since it opened. */
+export async function saveNow(): Promise<void> {
+  if (await keepNow()) toast('Saved in this browser')
 }
 
 export async function renameProject(id: Id, name: string): Promise<void> {

@@ -27,6 +27,8 @@ import {
 } from '../../../state/project.ts'
 import { get, select, set, useUi, type LyricsMode } from '../../../state/ui.ts'
 import { dismiss, pct, useFocusOnFailure, useJob } from './jobState.ts'
+import type { RetryTask } from '../../../state/reloadRetry.ts'
+import { OutOfMemoryTips, ReloadAndRetryButton } from './MemoryHelp.tsx'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -229,24 +231,29 @@ export function LyricsView() {
     )
   }
   if (phase === 'failed') {
+    const memory = job?.error?.code === 'out-of-memory'
+    const retry: RetryTask | null = lastLyricsRequest && { kind: 'lyrics', request: lastLyricsRequest }
     return (
       <ToolView
         title="Lyrics"
         subtitle="Stopped"
         footer={
-          <div className={styles.footerRow}>
-            <Button variant="secondary" onClick={() => dismiss(job)}>
-              Edit lyrics
-            </Button>
-            <Button
-              ref={tryAgain}
-              variant="primary"
-              icon={<RotateCcw />}
-              className={styles.grow}
-              onClick={() => lastLyricsRequest && void startLyrics(lastLyricsRequest)}
-            >
-              Try again
-            </Button>
+          <div className={styles.footerStack}>
+            {memory && retry && <ReloadAndRetryButton task={retry} />}
+            <div className={styles.footerRow}>
+              <Button variant="secondary" onClick={() => dismiss(job)}>
+                Edit lyrics
+              </Button>
+              <Button
+                ref={tryAgain}
+                variant={memory && retry ? 'secondary' : 'primary'}
+                icon={<RotateCcw />}
+                className={styles.grow}
+                onClick={() => lastLyricsRequest && void startLyrics(lastLyricsRequest)}
+              >
+                Try again
+              </Button>
+            </div>
           </div>
         }
       >
@@ -262,6 +269,7 @@ export function LyricsView() {
             </div>
           </div>
         </div>
+        {memory && <OutOfMemoryTips reload={!!retry} />}
       </ToolView>
     )
   }

@@ -164,3 +164,60 @@ test('while the estimate for drafting is still being worked out, the cost line s
   await page.evaluate(() => (window as unknown as { finishEstimate: () => void }).finishEstimate())
   await expect(page.getByText('347 MB download, once · about 3 min on this device')).toBeVisible()
 })
+
+test('an out-of-memory stop offers a reload that times the pasted lyrics again', async ({ page }) => {
+  await openHarness(page)
+  await page.evaluate(() => {
+    localStorage.setItem('mv-studio.guide-seen', '1')
+    const { app, shared } = window.mvStudio
+    app.lyrics.setLyricsServiceForTests({
+      async estimate() {
+        return { separatesStems: true, downloads: [], downloadBytes: 0, seconds: 230 }
+      },
+      run() {
+        return shared.jobs.run({
+          kind: 'analysis.lyrics',
+          title: 'Timing lyrics',
+          run: () =>
+            Promise.reject(
+              new shared.JobError(
+                'out-of-memory',
+                'This computer ran out of memory while separating stems.',
+                {
+                  retryable: true,
+                },
+              ),
+            ),
+        })
+      },
+    })
+    window.location.hash = '#/editor?tab=assist&assist=lyrics'
+  })
+  await waitForPreview(page)
+  const text = 'Neon lights are calling\nWe run until the morning'
+  await page.getByRole('textbox', { name: 'Lyrics' }).fill(text)
+  await page.getByRole('button', { name: 'Time words to the vocals' }).click()
+  await expect(page.getByRole('alert')).toContainText(
+    'This computer ran out of memory while separating stems.',
+  )
+  await expect(
+    page.getByText(
+      'Reload and try again: your project is saved, then the reload frees memory that earlier work in this tab still holds',
+    ),
+  ).toBeVisible()
+
+  // The model downloads never answer, so the timing started after the reload keeps running.
+  await page.route(/huggingface\.co/, () => undefined)
+  await page.evaluate(() => ((window as unknown as { beforeReload: boolean }).beforeReload = true))
+  await page.getByRole('button', { name: 'Reload and try again' }).click()
+  await page.waitForFunction(
+    () => !(window as unknown as { beforeReload?: boolean }).beforeReload && window.mvStudio?.ready === true,
+  )
+  await expect(page.getByRole('progressbar', { name: 'Lyrics progress' })).toBeVisible()
+  expect(await page.evaluate(() => window.mvStudio.app.lyrics.lastLyricsRequest)).toEqual({
+    kind: 'time',
+    text,
+  })
+  await page.getByRole('tabpanel', { name: 'Assist' }).getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByRole('button', { name: 'Time words to the vocals' })).toBeVisible()
+})

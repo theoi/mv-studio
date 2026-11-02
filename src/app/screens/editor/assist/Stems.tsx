@@ -19,6 +19,7 @@ import {
   useUnplayableStem,
 } from '../../../state/stems.ts'
 import { pct, useFocusOnFailure, useJob } from './jobState.ts'
+import { OutOfMemoryTips, ReloadAndRetryButton } from './MemoryHelp.tsx'
 import { CancelButton, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
 
@@ -105,15 +106,18 @@ export function StemsView() {
         title="Stems"
         subtitle="Separation stopped"
         footer={
-          <Button
-            ref={tryAgain}
-            variant="primary"
-            block
-            icon={<RotateCcw />}
-            onClick={() => void startStems()}
-          >
-            Try again
-          </Button>
+          <div className={styles.footerStack}>
+            {memory && <ReloadAndRetryButton task={{ kind: 'stems' }} />}
+            <Button
+              ref={tryAgain}
+              variant={memory ? 'secondary' : 'primary'}
+              block
+              icon={<RotateCcw />}
+              onClick={() => void startStems()}
+            >
+              Try again
+            </Button>
+          </div>
         }
       >
         <div className={styles.failure} role="alert">
@@ -127,14 +131,7 @@ export function StemsView() {
             </div>
           </div>
         </div>
-        {memory && (
-          <>
-            <div className={styles.groupLabelInset}>Things that help</div>
-            <ul className={styles.tips}>
-              <li>Close other browser tabs that play video</li>
-            </ul>
-          </>
-        )}
+        {memory && <OutOfMemoryTips reload />}
       </ToolView>
     )
   }
