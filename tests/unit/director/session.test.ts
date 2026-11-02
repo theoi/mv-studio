@@ -332,6 +332,30 @@ describe('DirectorSession', () => {
     expect(provider.calls).toHaveLength(0)
     expect(ready(session.getState()).actionLabel).toBe('Generate 1 shot · under $0.01')
   })
+
+  it('shows the new price on Retry after a failed generation when it went up, so that price can be confirmed', async () => {
+    const provider = fakeProvider({ failOn: () => providerDown() })
+    const { session, editor } = setup({ provider, videos: 0, confirmAboveUsd: 0.001 })
+    const first = ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    editor.dispatch(earlierImages(first.plan, 3), { history: 'skip' })
+    ready(await session.plan({ kind: 'ai', generate: { mode: 'images', tier: 'draft' } }))
+    const failed = await session.apply({ confirmSpend: priceOf(session.getState()) })
+    if (failed.status !== 'error') throw new Error(`expected error, got ${failed.status}`)
+    expect(failed.cost?.reused).toBe(3)
+    const count = failed.cost!.count
+    const calls = provider.calls.length
+    // An image Retry would reuse is deleted before Retry is pressed.
+    editor.dispatch({ type: 'asset.remove', assetId: 'earlier-0' })
+    await expect(session.apply({ confirmSpend: priceOf(failed) })).rejects.toMatchObject({
+      reason: 'price-changed',
+    })
+    expect(provider.calls).toHaveLength(calls)
+    const shown = session.getState()
+    expect(shown).toMatchObject({ status: 'error', cost: { count: count + 1, reused: 2 } })
+    provider.failOn = undefined
+    expect((await session.apply({ confirmSpend: priceOf(shown) })).status).toBe('applied')
+    expect(provider.calls.length - calls).toBe(count + 1)
+  })
   it('shows what the run has spent so far, against its estimate, and where each shot stands', async () => {
     // The first two requests finish; the next two stay underway until the user cancels.
     const provider = fakeProvider({
