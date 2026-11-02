@@ -80,6 +80,7 @@ import {
   layoutLine,
   lyricTypography,
   peakStyle,
+  rowWidth,
   stackTitleCard,
   textWidth,
   titleStyle,
@@ -1083,11 +1084,13 @@ function lineTexts(
     split === undefined
       ? undefined
       : round3(Math.max(item.shownStart + 0.1, wordTime(item, words, split) - 0.06))
-  if (split !== undefined && tailAt !== undefined && item.shownEnd - tailAt >= 0.5) {
+  const tailText = split === undefined ? '' : words.slice(split).join(' ')
+  const tailStyle = emphasisStyle(type, lineStyle, tailText)
+  // An emphasized word too wide for the clip even at the line's size would wrap under itself: the line stays whole.
+  const tailFits = textWidth(tailText, tailStyle) <= rowWidth(tailStyle, aspect)
+  if (split !== undefined && tailAt !== undefined && item.shownEnd - tailAt >= 0.5 && tailFits) {
     const head = layoutLine(words.slice(0, split).join(' '), lineStyle, aspect)
     const headStyle = { ...lineStyle, fontSize: head.fontSize }
-    const tailText = words.slice(split).join(' ')
-    const tailStyle = emphasisStyle(type, lineStyle, tailText)
     const headH = blockHeight(head.rows, headStyle)
     const tailH = blockHeight(1, tailStyle)
     const total = headH + 0.012 + tailH

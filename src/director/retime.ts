@@ -9,7 +9,7 @@ import type { Id, LyricLine, LyricsDoc, Project, Seconds, TextClip } from '../mo
 import { assetTimeToTimeline } from '../engine/text.ts'
 import { directorMeta } from './meta.ts'
 import { wordTime } from './timing.ts'
-import { balancedRows } from './typography.ts'
+import { balancedRows, refitRows } from './typography.ts'
 
 const words = (text: string) => text.split(/\s+/).filter(Boolean)
 const key = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '')
@@ -125,8 +125,17 @@ export function lyricTextCommands(
   const setText = (clip: TextClip, value: string) => {
     if (value !== clip.text) sets.push({ type: 'clip.set', clipId: clip.id, path: ['text'], value })
   }
-  const reflow = (clip: TextClip, shownWords: string[]) =>
-    balancedRows(shownWords, clip.text.split('\n').length)
+  // The director's clips are laid out to fit beside the text around them: a longer line keeps its rows, in type as
+  // much smaller as they need to fit the clip, so it never reaches the next line shown below it.
+  const reflow = (clip: TextClip, shownWords: string[]) => {
+    const rows = clip.text.split('\n').length
+    if (!directorMeta(clip)) return balancedRows(shownWords, rows)
+    const style = { ...clip.style, uppercase: clip.style.textTransform === 'uppercase' }
+    const laid = refitRows(shownWords, rows, style, project.settings.aspect)
+    if (laid.fontSize !== clip.style.fontSize)
+      sets.push({ type: 'clip.set', clipId: clip.id, path: ['style', 'fontSize'], value: laid.fontSize })
+    return laid.text
+  }
 
   // Where each kept emphasized clip's words start in the new line.
   const kept = new Map<Id, number>()

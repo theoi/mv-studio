@@ -308,21 +308,37 @@ export function rowWidth(style: TextStyleSpec, aspect: AspectPreset): number {
 /** A word that opens a bracket it does not close, such as "(feat.": it stays on a row with the word after it. */
 const opensBracket = (word: string | undefined) => !!word && /^[([]/.test(word) && !/[)\]]/.test(word)
 
-/** The split of `words` into `rows` rows with the narrowest widest row, no row ending on a word opening a bracket. */
-function bestSplit(words: string[], rows: number, width: (s: string) => number) {
-  let best: { rows: string[]; widest: number } | undefined
-  const visit = (from: number, left: number, acc: string[]) => {
-    if (left === 1) {
-      const out = [...acc, words.slice(from).join(' ')]
-      const widest = Math.max(...out.map(width))
-      if (!best || widest < best.widest) best = { rows: out, widest }
-      return
+/** No row ends on a word that opens a bracket while that keeps the type at this share of the size it could have. */
+const BRACKET_KEEP = 0.9
+
+type Split = { rows: string[]; widest: number }
+
+/**
+ * The split of `words` into `rows` rows with the narrowest widest row. No row ends on a word that opens a bracket,
+ * unless that leaves the type more than 10% smaller than it could be in rows `limit` wide.
+ */
+function bestSplit(words: string[], rows: number, width: (s: string) => number, limit = Infinity) {
+  const search = (together: boolean) => {
+    let best: Split | undefined
+    const visit = (from: number, left: number, acc: string[]) => {
+      if (left === 1) {
+        const out = [...acc, words.slice(from).join(' ')]
+        const widest = Math.max(...out.map(width))
+        if (!best || widest < best.widest) best = { rows: out, widest }
+        return
+      }
+      for (let i = from + 1; i <= words.length - (left - 1); i++)
+        if (!together || !opensBracket(words[i - 1]))
+          visit(i, left - 1, [...acc, words.slice(from, i).join(' ')])
     }
-    for (let i = from + 1; i <= words.length - (left - 1); i++)
-      if (!opensBracket(words[i - 1])) visit(i, left - 1, [...acc, words.slice(from, i).join(' ')])
+    if (words.length >= rows && rows >= 1) visit(0, rows, [])
+    return best
   }
-  if (words.length >= rows) visit(0, rows, [])
-  return best
+  const kept = search(true)
+  const free = words.some(opensBracket) ? search(false) : kept
+  if (!kept || !free) return kept ?? free
+  const scale = (split: Split) => Math.min(1, limit / split.widest)
+  return scale(kept) >= BRACKET_KEEP * scale(free) ? kept : free
 }
 
 /** `words` in `rows` rows of about equal length (one row per line of text), or on one row when there are fewer words. */
@@ -331,15 +347,29 @@ export function balancedRows(words: string[], rows: number): string {
   return split ? split.rows.join('\n') : words.join(' ')
 }
 
-/** Smallest share of its size laid-out text shrinks to. */
+/** Smallest share of its size laid-out text shrinks to in the rows allowed. */
 const MIN_SHRINK = 0.7
 
-/** Smallest share of its size a title row too long for the clip shrinks to for a word that cannot break. */
+/** Smallest share of its size a row of one word too long for the clip shrinks to, unless it is wider than the frame. */
 const MIN_WORD_SHRINK = 0.5
 
 /**
- * A lyric line laid out in balanced rows (explicit line breaks, so wrapping never leaves one word alone on a row):
- * as few rows as fit, shrinking the type (to 70% at most) when even the most rows allowed do not.
+ * The share of their size at which `rows` fit: rows of words within `limit`, and a row of one word, which cannot wrap,
+ * within `limit` down to half the size, then within the frame (90% of `frame`) however small that makes it.
+ */
+function fitScale(rows: string[], width: (s: string) => number, limit: number, frame: number): number {
+  const fill = (list: string[], room = limit) => (list.length ? room / Math.max(...list.map(width)) : 1)
+  const phrases = rows.filter((row) => row.includes(' '))
+  const words = rows.filter((row) => !row.includes(' '))
+  return Math.min(1, fill(phrases), Math.max(fill(rows), MIN_WORD_SHRINK), fill(words, LAYOUT_FILL * frame))
+}
+
+/**
+ * Text laid out in balanced rows (explicit line breaks, so wrapping never leaves one word alone on a row), each row
+ * within the clip's wrap width: as few rows as fit, up to `maxRows`; else the most rows in type shrunk to 70% at
+ * most; else one more row, in type as much smaller as it needs, since rows wider than the clip would wrap again when
+ * drawn, over the text laid out below them. A word too long for the clip on its own shrinks to half the size, and
+ * further only to stay within the frame.
  */
 export function layoutLine(
   text: string,
@@ -351,16 +381,39 @@ export function layoutLine(
   const size = style.fontSize ?? LINE_SIZE[aspect]
   const limit = rowWidth(style, aspect)
   const width = (s: string) => textWidth(s, style, size)
-  let last: { rows: string[]; widest: number } | undefined
+  const laid = (rows: string[], fontSize: number) => ({ text: rows.join('\n'), fontSize, rows: rows.length })
+  let last: Split | undefined
   for (let rows = 1; rows <= Math.min(maxRows, words.length); rows++) {
-    const split = bestSplit(words, rows, width)
+    const split = bestSplit(words, rows, width, limit)
     if (!split) break
     last = split
-    if (split.widest <= limit) return { text: split.rows.join('\n'), fontSize: size, rows }
+    if (split.widest <= limit) return laid(split.rows, size)
   }
   if (!last) return { text, fontSize: size, rows: 1 }
-  const fontSize = Math.round(size * Math.max(MIN_SHRINK, limit / last.widest))
-  return { text: last.rows.join('\n'), fontSize, rows: last.rows.length }
+  if (limit / last.widest >= MIN_SHRINK) return laid(last.rows, Math.round((size * limit) / last.widest))
+  const more = bestSplit(words, Math.min(last.rows.length + 1, words.length), width, limit)
+  // A word too long for the clip on its own stays the widest row, so a row more would only break up the others.
+  const rows = (more && more.widest < last.widest ? more : last).rows
+  return laid(rows, Math.max(8, Math.floor(size * fitScale(rows, width, limit, frameWidth(aspect)))))
+}
+
+/**
+ * `words` again in `rows` rows (fewer when there are fewer words) for text drawn in `style`, with the size at which
+ * each row fits as in layoutLine: the style's own or smaller, so the text never grows taller than it was laid out.
+ */
+export function refitRows(
+  words: string[],
+  rows: number,
+  style: TextStyleSpec,
+  aspect: AspectPreset,
+): { text: string; fontSize: number } {
+  const size = style.fontSize ?? LINE_SIZE[aspect]
+  const limit = rowWidth(style, aspect)
+  const width = (s: string) => textWidth(s, style, size)
+  const split = bestSplit(words, Math.min(rows, words.length), width, limit)
+  if (!split) return { text: words.join(' '), fontSize: size }
+  const scale = fitScale(split.rows, width, limit, frameWidth(aspect))
+  return { text: split.rows.join('\n'), fontSize: Math.max(8, Math.floor(size * scale)) }
 }
 
 /** Height of laid-out text as a fraction of the frame. */
@@ -392,8 +445,7 @@ function bracketSplit(words: string[], rows: number, width: (s: string) => numbe
  * A title card row at its style's size, its every row within the clip's width:
  * - rows typed with line breaks stay when each fits at 70% of the size or more;
  * - the artist and other rows under the title shrink on one row first, as far as a lyric line would;
- * - else balanced rows like a lyric line, and one whose rows would still be wider than the clip at 70% gets one more
- *   row and type as much smaller as it needs (half the size at most for a row of one word, which cannot wrap);
+ * - else balanced rows like a lyric line (layoutLine);
  * - phrases in brackets ("(feat. …)", "[… Remix]") start a row of their own when that keeps the type as large, with
  *   one more row at most when the type had to shrink.
  */
@@ -414,17 +466,7 @@ function fitTitleRow(text: string, style: TextStyleSpec, aspect: AspectPreset, u
   })
   if (typed.length > 1 && fill(typed) >= MIN_SHRINK) return laid(typed)
   if (under && fill([typed.join(' ')]) >= MIN_SHRINK) return laid([typed.join(' ')])
-  let best = layoutLine(text, style, aspect)
-  // Rows wider than the clip even at 70% would wrap again, over the next row of the card. A single word wider than
-  // that cannot wrap, so it shrinks no further than half the size and runs past the clip's edges instead.
-  if (fill(best.text.split('\n')) * (size / best.fontSize) < LAYOUT_FILL) {
-    const split = bestSplit(words, Math.min(most, words.length), (s) => textWidth(s, style, size))
-    if (split) {
-      const phrases = split.rows.filter((row) => row.includes(' '))
-      const scale = Math.max(fill(split.rows), Math.min(MIN_WORD_SHRINK, phrases.length ? fill(phrases) : 1))
-      best = laid(split.rows, Math.max(8, Math.round(size * Math.min(1, scale))))
-    }
-  }
+  const best = layoutLine(text, style, aspect)
   // The largest type, then the fewest rows.
   const bracketed = (best.fontSize < size ? [best.rows, best.rows + 1] : [best.rows])
     .filter((rows) => rows <= most)

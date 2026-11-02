@@ -10,11 +10,17 @@ import {
   type PlanShot,
   type PlanText,
 } from '../../../src/director/index.ts'
-import { layoutLine, lyricTypography, rowWidth, textWidth } from '../../../src/director/typography.ts'
+import {
+  frameWidth,
+  layoutLine,
+  lyricTypography,
+  rowWidth,
+  textWidth,
+} from '../../../src/director/typography.ts'
 import { ProjectEditor } from '../../../src/model/editor.ts'
-import type { Project, TextClip } from '../../../src/model/types.ts'
+import type { AspectPreset, Project, TextClip } from '../../../src/model/types.ts'
 import { buildVisualAnalysis } from '../../../src/vision/index.ts'
-import { LYRICS, makeProject, SECTIONS } from './fixtures.ts'
+import { LYRICS, makeProject, SECTIONS, timedLine } from './fixtures.ts'
 
 const VIDEOS = ['video1', 'video2', 'video3', 'video4']
 
@@ -114,11 +120,59 @@ describe('lyric typography', () => {
     // estimate never makes the renderer wrap a word onto a row of its own.
     const long = layoutLine("maybe you're just playing games a game i don't wanna play", wide, '16:9')
     expect(long.fontSize).toBeLessThan(wide.fontSize as number)
+    // It fits the rows allowed at 70% or more, so it keeps them.
+    expect(long.rows).toBe(2)
     for (const row of long.text.split('\n'))
       expect(textWidth(row, wide, long.fontSize)).toBeLessThanOrEqual(0.92 * (wide.maxWidth as number) * 1920)
     expect(Math.min(...widths) / Math.max(...widths)).toBeGreaterThan(0.75)
     const tall = lyricTypography({ aspect: '9:16', busy: false, catalog: DEFAULT_CATALOG }).style
     expect(layoutLine(text, tall, '9:16').text.split('\n').length).toBeGreaterThan(2)
+  })
+
+  it.each([
+    ['9:16', 4],
+    ['1:1', 3],
+  ] as const)(
+    'at %s, lays a line too long for the rows allowed even in smaller type out in %i rows, each within the clip',
+    (aspect, rows) => {
+      const style = lyricTypography({ aspect, busy: false, catalog: DEFAULT_CATALOG }).style
+      const text = 'Counting heartbeats as the trains roll by until the morning comes around again'
+      const laid = layoutLine(text, style, aspect)
+      expect(laid.rows).toBe(rows)
+      expect(laid.text.replace(/\n/g, ' ')).toBe(text)
+      for (const row of laid.text.split('\n'))
+        expect(textWidth(row, style, laid.fontSize)).toBeLessThanOrEqual(rowWidth(style, aspect))
+    },
+  )
+
+  it.each(['9:16', '4:5'] as const)(
+    'shrinks a word too long for the frame even at half the size until it fits the frame, at %s',
+    (aspect) => {
+      const style = lyricTypography({ aspect, busy: false, catalog: DEFAULT_CATALOG }).style
+      const laid = layoutLine('Supercalifragilisticexpialidocious', style, aspect)
+      expect(laid.fontSize).toBeLessThan((style.fontSize as number) / 2)
+      expect(textWidth('Supercalifragilisticexpialidocious', style, laid.fontSize)).toBeLessThanOrEqual(
+        frameWidth(aspect),
+      )
+    },
+  )
+
+  it('keeps a chorus line whole when its stressed ending is too wide for the clip at the line’s size', async () => {
+    const lyrics = LYRICS.map((l) =>
+      l.id === 'l3' ? timedLine('l3', 'Hold on to me unbreakable me', 25) : l,
+    )
+    const draft = async (aspect: AspectPreset) => {
+      const project = makeProject({ lyrics })
+      project.settings = { ...project.settings, aspect }
+      return (await lyricDraft(project)).texts.filter((t) => t.lyricLineId === 'l3')
+    }
+    expect((await draft('16:9')).map((t) => [t.role, t.text])).toEqual([
+      ['lyric', 'Hold on to me'],
+      ['emphasis', 'unbreakable me'],
+    ])
+    const tall = await draft('9:16')
+    expect(tall.map((t) => t.role)).toEqual(['lyric'])
+    expect(tall[0]!.text.replace(/\s+/g, ' ')).toBe('Hold on to me unbreakable me')
   })
 
   it('keeps each lyric line on one shot', async () => {
