@@ -139,6 +139,13 @@ export interface VisionBackends {
   onnx(): OnnxBackend
   /** First-time model downloads in any worker, whichever call started them (see `downloadLines`). Returns stop. */
   watchDownloads?: WatchDownloads
+  /**
+   * Ends the segmentation and ONNX workers that have no call pending and have had none for `idleMs` (default 0), to
+   * free their models' memory. The backends stay usable: the next call starts a fresh worker, which loads its model
+   * again. Workers keep state between some calls (a segmenter configured for a clip, a mask track being built), so
+   * only call it while no task that uses them is running. Returns whether none of them is left running.
+   */
+  release?(options?: { idleMs?: number }): boolean
 }
 
 export type { Size }

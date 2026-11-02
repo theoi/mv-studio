@@ -169,3 +169,50 @@ describe('worker client', () => {
     await expect(client.call('double', { values: [1] })).rejects.toMatchObject({ code: 'cancelled' })
   })
 })
+
+describe('release', () => {
+  afterEach(() => closeFakeWorkers())
+
+  const making = () => {
+    const made: FakeWorker[] = []
+    const client = createWorkerClient<typeof api>(() => {
+      const worker = new FakeWorker(api)
+      made.push(worker)
+      return worker.asWorker()
+    })
+    return { client, made }
+  }
+
+  it('ends an idle worker but keeps the client, whose next call starts a fresh worker', async () => {
+    const { client, made } = making()
+    expect(client.release()).toBe(true)
+    expect(made).toHaveLength(0)
+    expect(await client.call('double', { values: [1] })).toEqual([2])
+    expect(client.release()).toBe(true)
+    expect(made[0]?.terminated).toBe(true)
+    expect(client.failure()).toBeNull()
+    expect(await client.call('double', { values: [3] })).toEqual([6])
+    expect(made).toHaveLength(2)
+    expect(made[1]?.terminated).toBe(false)
+  })
+
+  it('keeps a worker while a call is pending, and the call still gets its answer', async () => {
+    const { client, made } = making()
+    const pending = client.call('double', { values: [2] })
+    expect(client.release()).toBe(false)
+    expect(made[0]?.terminated).toBe(false)
+    expect(await pending).toEqual([4])
+    expect(client.release()).toBe(true)
+    expect(made[0]?.terminated).toBe(true)
+    expect(made).toHaveLength(1)
+  })
+
+  it('never ends a worker it was given, which it could not replace', async () => {
+    const worker = new FakeWorker(api)
+    const client = createWorkerClient<typeof api>(worker.asWorker())
+    expect(await client.call('double', { values: [1] })).toEqual([2])
+    expect(client.release()).toBe(false)
+    expect(worker.terminated).toBe(false)
+    expect(await client.call('double', { values: [5] })).toEqual([10])
+  })
+})

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import type { Id, Project } from '../../model/index.ts'
-import { JobError, type JobContext } from '../../shared/jobs.ts'
+import { JobError, jobs, type JobContext, type JobSnapshot } from '../../shared/jobs.ts'
 import type {
   AssetIndexStatus,
   DirectorFootageMatcher,
@@ -18,6 +18,7 @@ import { hasUncheckedMedia, readClipTags } from '../../vision/analysisData.ts'
 import { mediaById } from '../mock/media.ts'
 import { stillPending, subscribeStill } from '../screens/editor/stage.ts'
 import { isSampleAsset } from '../mock/sampleMedia.ts'
+import { JOB_KINDS } from './jobs.ts'
 import { appMedia } from './media.ts'
 import { editor } from './project.ts'
 
@@ -64,10 +65,12 @@ export function directorFootage() {
 /** The app's vision service, shared by footage analysis and the vision tools (auto-cut, 3D camera, cutouts). */
 export function visionService(): Promise<VisionService> {
   visionLoading ??= import('../../vision/index.ts').then((v) => {
+    const backends = testBackends ?? v.createWorkerBackends()
     const vision = v.createVisionService({
-      backends: testBackends ?? v.createWorkerBackends(),
+      backends,
       cache: testBackends ? v.createMemoryCache() : v.createOpfsCache(),
     })
+    releaseWhenIdle(backends)
     // A paused frame the stage waits for decodes the same files: a ruler click, a draft's first frame. Held here, not
     // with footage analysis, because the person check also waits for it where background analysis is off.
     holdAnalysisWhile(stillPending, subscribeStill)
@@ -81,6 +84,69 @@ export function visionService(): Promise<VisionService> {
     return vision
   })
   return visionLoading
+}
+
+/** How long the vision workers keep their models once nothing uses them: a model loads again in a few seconds. */
+const VISION_IDLE_MS = 60_000
+
+let releaseVisionSoon: () => void = () => undefined
+
+/**
+ * Frees the vision workers' memory (0.4–0.5 GB after an auto-cut) once no vision job runs: at once when stem
+ * separation or lyric timing starts (it separates stems first when the song has none), which need much memory, or
+ * when another project opens, and otherwise after `VISION_IDLE_MS`. Some vision jobs keep state in the workers between
+ * calls (a segmenter configured for a clip, a mask track being built), so nothing is released while one is running or
+ * queued. The check and the release run in one task, so a job queued after it gets fresh workers.
+ */
+function releaseWhenIdle(backends: VisionServiceOptions['backends']): void {
+  const release = backends.release?.bind(backends)
+  if (!release) return
+  const vision: ReadonlySet<string> = new Set([
+    JOB_KINDS.footage,
+    JOB_KINDS.suitability,
+    JOB_KINDS.cutout,
+    JOB_KINDS.cutoutRemake,
+    JOB_KINDS.camera,
+    JOB_KINDS.autocut,
+    JOB_KINDS.director,
+    JOB_KINDS.ask,
+  ])
+  const needRoom: ReadonlySet<string> = new Set([JOB_KINDS.stems, JOB_KINDS.lyrics, JOB_KINDS.realign])
+  const active = (j: JobSnapshot) => j.status === 'running' || j.status === 'queued'
+  const busy = (list = jobs.list()) => list.some((j) => vision.has(j.kind) && active(j))
+  let wanted = false
+  let roomFor = new Set<string>()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  // Any vision job clears the timer. A search uses a worker without a job, so a worker it used lately is kept for
+  // another while.
+  const idle = () => {
+    timer = release({ idleMs: VISION_IDLE_MS }) ? undefined : setTimeout(idle, VISION_IDLE_MS)
+  }
+  const update = () => {
+    const list = jobs.list()
+    const now = new Set(list.filter((j) => needRoom.has(j.kind) && active(j)).map((j) => j.id))
+    if ([...now].some((id) => !roomFor.has(id))) wanted = true
+    roomFor = now
+    if (busy(list)) {
+      clearTimeout(timer)
+      timer = undefined
+      return
+    }
+    // A search may have a call pending: the release is then tried again on the next change.
+    if (wanted) wanted = !release()
+    timer ??= setTimeout(idle, VISION_IDLE_MS)
+  }
+  releaseVisionSoon = () => {
+    wanted = true
+    update()
+  }
+  jobs.subscribe(update)
+  update()
+}
+
+/** Frees the vision workers' memory as soon as no vision job is running or queued, for another project opening. */
+export function releaseVisionWorkers(): void {
+  releaseVisionSoon()
 }
 
 /**

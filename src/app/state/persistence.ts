@@ -24,6 +24,7 @@ import { templateState } from '../../plugins/templates.ts'
 import { JobError, jobs, type JobErrorCode } from '../../shared/jobs.ts'
 import { distinctName } from '../format.ts'
 import { isSampleAsset, sampleFile } from '../mock/sampleMedia.ts'
+import { releaseVisionWorkers } from './footage.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { leaveDraftOk, leaveDraftThen } from './leaveDraft.ts'
 import { usePrefs } from './prefs.ts'
@@ -344,7 +345,7 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
  * Before a project opens in place of the open one: its running jobs are cancelled, or their results would land in the
  * next project, and unless `next` is the open project itself, its finished ones are dismissed, so tool views don't show
  * its results in another project. Exports render a snapshot and keep going; `keep` lists other kinds whose jobs move
- * over to the next project.
+ * over to the next project. The vision workers' models are freed once the cancelled vision jobs have stopped.
  */
 export function leaveProjectJobs({ keep = [], next }: { keep?: readonly string[]; next?: Id } = {}) {
   const dismiss = next !== editor.getProject().id
@@ -355,6 +356,7 @@ export function leaveProjectJobs({ keep = [], next }: { keep?: readonly string[]
     else if (dismiss && (job.status === 'succeeded' || job.status === 'failed')) done.push(job.id)
   }
   if (done.length) set((s) => ({ dismissed: [...new Set([...s.dismissed, ...done])] }))
+  releaseVisionWorkers()
 }
 
 function show(project: Project, history?: SavedHistory) {
