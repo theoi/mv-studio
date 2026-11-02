@@ -13,7 +13,7 @@ import {
   videoKindFor,
 } from '../../../src/app/state/director.ts'
 import { JOB_KINDS } from '../../../src/app/state/jobs.ts'
-import { heldDraft } from '../../../src/app/state/leaveDraft.ts'
+import { heldDraft, initLeaveDraft } from '../../../src/app/state/leaveDraft.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
 import { dismissToast, get as getUi, set as setUi } from '../../../src/app/state/ui.ts'
 import type { DirectorState, PlanCost } from '../../../src/director/index.ts'
@@ -263,6 +263,29 @@ describe('a draft that leaving the project would lose', () => {
     expect(heldDraft()).toEqual({ kind: 'failed', unit: 'shot', failed: 1 })
     useDirector.setState({ state: { status: 'idle' } })
     expect(heldDraft()).toBeNull()
+  })
+
+  it('makes closing or reloading the page ask while AI shots are being made, which the page would drop', () => {
+    const listeners = new Map<string, (e: { preventDefault(): void }) => void>()
+    vi.stubGlobal('window', {
+      addEventListener: (type: string, listener: (e: { preventDefault(): void }) => void) =>
+        listeners.set(type, listener),
+      removeEventListener: () => undefined,
+    })
+    const stop = initLeaveDraft()
+    const asks = () => {
+      const preventDefault = vi.fn()
+      listeners.get('beforeunload')?.({ preventDefault })
+      return preventDefault.mock.calls.length > 0
+    }
+    useDirector.setState({ state: state({ status: 'generating', plan: {}, done: 1, unit: 'shot' }) })
+    expect(asks()).toBe(true)
+    useDirector.setState({ state: state({ status: 'applied', plan: {}, failedShots: 1, unit: 'shot' }) })
+    expect(asks()).toBe(true)
+    useDirector.setState({ state: state({ status: 'applied', plan: {}, failedShots: 0, unit: 'shot' }) })
+    expect(asks()).toBe(false)
+    stop()
+    vi.unstubAllGlobals()
   })
 })
 

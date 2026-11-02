@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 import { plural } from '../format.ts'
+import { withdrawUndo } from './ui.ts'
 
 /*
  * Leaving a project the Director's draft still needs: one holding AI shots that is not on the timeline yet (after Stop,
  * a failed generation, or Undo draft), or one on the timeline with failed shots waiting for Retry. Leaving drops the
  * draft (see leaveProject() in director.ts); its AI shots stay in Media, but drafting again may mean paying for new
- * ones. So opening another project asks first, and so does closing or reloading the page.
+ * ones. So opening another project asks first, and so does closing or reloading the page. Closing or reloading also
+ * asks while AI shots are being made: fal.ai bills the ones it makes, and the page would drop those not downloaded yet.
  */
 
 export type HeldDraft =
@@ -21,6 +23,8 @@ export type HeldDraft =
 
 interface DraftHolder {
   held(): HeldDraft | null
+  /** Whether AI shots are being made. Opening another project stops the run as Cancel does, so it doesn't ask. */
+  generating(): boolean
   /** Puts the draft on the timeline without paying for more; true once it is there. */
   apply(): Promise<boolean>
   /** Shows the draft where it can be applied or retried: the editor on Assist › Director. */
@@ -54,16 +58,25 @@ export const useLeaveDraft = create<{ ask: Ask | null; applying: boolean }>(() =
   applying: false,
 }))
 
-/** Runs `leave` now when no draft would be lost; otherwise asks first, then runs `leave` or `stay`. */
+/**
+ * Runs `leave` now when no draft would be lost; otherwise asks first, then runs `leave` or `stay`. Leaving takes back
+ * toasts' Undo.
+ */
 export function leaveDraftThen(leave: () => void, stay?: () => void): void {
+  // Toasts' Undo would undo in the project being left, which stays open behind the setup screen until a song is chosen.
+  // Undoing a draft there would hold its AI shots again, and the setup's project would drop them without asking.
+  const go = () => {
+    withdrawUndo()
+    leave()
+  }
   const held = heldDraft()
   if (!held) {
-    leave()
+    go()
     return
   }
   // A question still open (another link followed meanwhile) is answered with Stay, so whatever waits on it goes on.
   const earlier = useLeaveDraft.getState().ask
-  useLeaveDraft.setState({ ask: { held, leave, ...(stay ? { stay } : {}) }, applying: false })
+  useLeaveDraft.setState({ ask: { held, leave: go, ...(stay ? { stay } : {}) }, applying: false })
   earlier?.stay?.()
 }
 
@@ -131,10 +144,10 @@ export function reloadDraftNote(held: HeldDraft): string {
   return `${plural(held.failed, `AI ${held.unit}`)} in your Director draft still need${one ? 's' : ''} a retry, and after a reload you can’t retry ${one ? 'it' : 'them'}.`
 }
 
-/** Closing or reloading the page asks first while a draft would be lost. */
+/** Closing or reloading the page asks first while a draft would be lost or AI shots are being made. */
 export function initLeaveDraft(): () => void {
   const onBeforeUnload = (e: BeforeUnloadEvent) => {
-    if (heldDraft()) e.preventDefault()
+    if (heldDraft() || holder?.generating()) e.preventDefault()
   }
   window.addEventListener('beforeunload', onBeforeUnload)
   return () => window.removeEventListener('beforeunload', onBeforeUnload)

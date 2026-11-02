@@ -471,6 +471,7 @@ export function heldDraftOf(state: DirectorState): HeldDraft | null {
 
 holdDrafts({
   held: () => heldDraftOf(useDirector.getState().state),
+  generating: () => useDirector.getState().state.status === 'generating',
   apply: async () => {
     await applyDraft({ skipGeneration: true })
     return useDirector.getState().state.status === 'applied'

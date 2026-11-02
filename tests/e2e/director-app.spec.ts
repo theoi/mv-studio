@@ -1650,6 +1650,44 @@ test('Apply and leave puts the draft on the timeline, with placeholders for the 
   expect(fal.submits).toHaveLength(submits)
 })
 
+test('Apply and leave for a new video takes back the draft’s Undo, which would undo it in the project still open behind the setup screen', async ({
+  page,
+}) => {
+  await stopAfterTwoShots(page)
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByRole('button', { name: /^AI music video/ }).click()
+  await leaveQuestion(page).getByRole('button', { name: 'Apply and leave' }).click()
+  await expect(page.getByRole('textbox', { name: 'Describe your video' })).toBeVisible()
+  const applied = await page.evaluate(() => {
+    type C = { meta?: { director?: unknown } }
+    const clips = window.mvStudio.app.project.editor.getProject().clips as Record<string, C>
+    return Object.values(clips).some((c) => c.meta?.director)
+  })
+  expect(applied).toBe(true)
+  // Undo there would hold the draft's AI shots again, and the setup's project would drop them without asking.
+  await expect(page.getByRole('button', { name: 'Undo' })).toHaveCount(0)
+})
+
+test('a reload while AI shots are being made asks first, since the page would drop the ones fal.ai made but not sent yet', async ({
+  page,
+}) => {
+  const fal = await mockFalVideo(page, { images: true, held: [3, 4] })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await generateShots(page)
+  await expect.poll(() => fal.downloads, { timeout: 30_000 }).toEqual(['req-1', 'req-2'])
+  await allSaved(page)
+  const dialogs: string[] = []
+  page.once('dialog', (dialog) => {
+    dialogs.push(dialog.type())
+    void dialog.dismiss()
+  })
+  await page.evaluate(() => window.location.reload())
+  expect(dialogs).toEqual(['beforeunload'])
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
+})
+
 test('failed AI shots waiting for Retry ask before another project opens, with no apply', async ({
   page,
 }, testInfo) => {

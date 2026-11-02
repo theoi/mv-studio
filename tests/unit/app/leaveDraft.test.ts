@@ -10,6 +10,7 @@ import {
   useLeaveDraft,
   type HeldDraft,
 } from '../../../src/app/state/leaveDraft.ts'
+import { get as getUi, set as setUi, toast } from '../../../src/app/state/ui.ts'
 
 const unapplied: HeldDraft = { kind: 'unapplied', unit: 'clip', made: 3, missing: 5 }
 
@@ -22,7 +23,7 @@ describe('leaving a project the Director’s draft still needs', () => {
     held = null
     apply = () => Promise.resolve(true)
     shown = 0
-    holdDrafts({ held: () => held, apply: () => apply(), show: () => void shown++ })
+    holdDrafts({ held: () => held, generating: () => false, apply: () => apply(), show: () => void shown++ })
     useLeaveDraft.setState({ ask: null, applying: false })
   })
 
@@ -89,6 +90,34 @@ describe('leaving a project the Director’s draft still needs', () => {
     await expect(first).resolves.toBe(false)
     await answerLeaveDraft('leave')
     await expect(second).resolves.toBe(true)
+  })
+
+  it('takes back toasts’ Undo on leaving, which would undo in the project being left', async () => {
+    vi.stubGlobal('window', { setTimeout: () => 0, clearTimeout: () => undefined })
+    setUi({ toasts: [] })
+    const undos = () =>
+      getUi()
+        .toasts.filter((t) => t.action?.label === 'Undo')
+        .map((t) => t.message)
+    // What Apply and leave shows before the other project opens.
+    apply = () => {
+      toast('Your draft is on the timeline', { label: 'Undo', run: () => undefined })
+      return Promise.resolve(true)
+    }
+    held = unapplied
+    leaveDraftThen(() => undefined)
+    await answerLeaveDraft('apply')
+    expect(undos()).toEqual([])
+
+    toast('Clip deleted', { label: 'Undo', run: () => undefined })
+    // Back to the draft stays in the project, where Undo still undoes.
+    leaveDraftThen(() => undefined)
+    await answerLeaveDraft('back')
+    expect(undos()).toEqual(['Clip deleted'])
+    held = null
+    leaveDraftThen(() => undefined)
+    expect(undos()).toEqual([])
+    vi.unstubAllGlobals()
   })
 })
 

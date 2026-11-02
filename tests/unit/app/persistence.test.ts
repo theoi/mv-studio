@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createProject, type Project } from '../../../src/model/index.ts'
 import {
   chooseSameProject,
@@ -9,6 +9,7 @@ import {
   refreshRecents,
   usePersistence,
 } from '../../../src/app/state/persistence.ts'
+import { answerLeaveDraft, holdDrafts, useLeaveDraft } from '../../../src/app/state/leaveDraft.ts'
 import { set, toast } from '../../../src/app/state/ui.ts'
 import { jobs } from '../../../src/shared/jobs.ts'
 import { editor } from '../../../src/app/state/project.ts'
@@ -28,6 +29,7 @@ vi.mock('../../../src/app/state/ui.ts', () => ({
   set: vi.fn(),
   toast: vi.fn(),
   useUi: { subscribe: vi.fn() },
+  withdrawUndo: vi.fn(),
 }))
 
 vi.mock('../../../src/media/mediaStore.ts', () => ({
@@ -204,4 +206,46 @@ it('leaves the open project’s jobs before Use a sample replaces it with the sa
     .find((arg) => typeof arg === 'function') as
     ((s: { dismissed: string[] }) => { dismissed: string[] }) | undefined
   expect(update?.({ dismissed: [] }).dismissed).toContain(indexed.id)
+})
+
+describe('with a Director draft that leaving the project would lose', () => {
+  const holding = (held: boolean) =>
+    holdDrafts({
+      held: () => (held ? { kind: 'unapplied', unit: 'shot', made: 2, missing: 1 } : null),
+      generating: () => false,
+      apply: async () => false,
+      show: () => undefined,
+    })
+  beforeEach(() => holding(true))
+  afterEach(() => {
+    holding(false)
+    useLeaveDraft.setState({ ask: null, applying: false })
+  })
+
+  it('asks before Use a sample replaces the open project, and replaces it on Leave anyway', async () => {
+    editor.load(createProject({ name: 'Untitled video' }))
+    loadSample()
+    expect(useLeaveDraft.getState().ask).not.toBeNull()
+    expect(editor.getProject().name).toBe('Untitled video')
+    await answerLeaveDraft('leave')
+    expect(editor.getProject().songAssetId).toBeTruthy()
+  })
+
+  it('asks before a project file opens, and opens nothing when the user stays', async () => {
+    editor.load(createProject({ name: 'Open' }))
+    store.incoming = createProject({ name: 'Portable' })
+    const staying = importProjectFile(projectFile)
+    await vi.waitFor(() => expect(useLeaveDraft.getState().ask).not.toBeNull())
+    await answerLeaveDraft('stay')
+    await staying
+    expect(store.opened).toEqual([])
+    expect(editor.getProject().name).toBe('Open')
+
+    const leaving = importProjectFile(projectFile)
+    await vi.waitFor(() => expect(useLeaveDraft.getState().ask).not.toBeNull())
+    await answerLeaveDraft('leave')
+    await leaving
+    expect(store.opened).toEqual(['Portable'])
+    expect(editor.getProject().name).toBe('Portable')
+  })
 })

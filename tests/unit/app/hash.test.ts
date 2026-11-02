@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DirectorState } from '../../../src/director/index.ts'
 
 const stored = vi.hoisted(() => new Set<string>())
 /** The project open (as `openId` says) each time the hash sync left the open project's jobs. */
@@ -208,5 +209,35 @@ describe('the URL hash and the app state', () => {
     page.window.location.hash = '#/editor?lib=text'
     page.fire('hashchange')
     expect(left.ids).toHaveLength(2)
+  })
+
+  it('asks before a link opens another project while the Director’s draft holds AI shots, but not on Back or Forward within the open one', async () => {
+    const { page, editor, get, set, usePersistence } = await start('#/editor')
+    const { useDirector } = await import('../../../src/app/state/director.ts')
+    const { useLeaveDraft } = await import('../../../src/app/state/leaveDraft.ts')
+    const id = editor.getProject().id
+    stored.add(id)
+    useDirector.setState({
+      state: { status: 'applied', plan: {}, failedShots: 1, unit: 'shot' } as unknown as DirectorState,
+    })
+    set({ libraryTab: 'text' })
+    set({ screen: 'start' })
+    set({ screen: 'editor' })
+    expect(page.window.location.hash).toBe(`#/editor?project=${id}&lib=text`)
+
+    page.window.history.back()
+    page.fire('hashchange')
+    expect(get().screen).toBe('start')
+    page.window.history.forward()
+    page.fire('hashchange')
+    expect(get()).toMatchObject({ screen: 'editor', libraryTab: 'text' })
+    expect(useLeaveDraft.getState().ask).toBeNull()
+    // The real openFromLink does nothing for the open project; the stand-in starts a restore.
+    usePersistence.setState({ restoring: false })
+
+    page.window.location.hash = '#/editor?project=empty'
+    page.fire('hashchange')
+    expect(useLeaveDraft.getState().ask).not.toBeNull()
+    expect(editor.getProject().id).toBe(id)
   })
 })
