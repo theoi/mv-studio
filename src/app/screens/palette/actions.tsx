@@ -111,6 +111,7 @@ import {
   ASK_SCORE,
   isSentence,
   keyCombo,
+  namesAll,
   namesInFull,
   namesOneOf,
   paletteScore,
@@ -225,6 +226,11 @@ export interface Action {
   keywords?: string
   /** Other names people search for it by; they rank like its own name. A function for names that follow the project. */
   aliases?: string[] | (() => string[])
+  /**
+   * Other names that count only once a search has every one of their words, the last perhaps still being typed: no
+   * word of one finds the action alone, so "rename chorus" isn't Rename the section in a Pre-chorus.
+   */
+  exactAliases?: () => string[]
   run?: () => void
   page?: PageId | PageState
   /** The search its page opens with, from the search that found the action: "go to verse 2" opens on "verse 2". */
@@ -1629,6 +1635,12 @@ const keywordsOf = (a: Action): string[] => (a.keywords ? [a.keywords] : [])
 
 const aliasesOf = (a: Action): string[] => (typeof a.aliases === 'function' ? a.aliases() : (a.aliases ?? []))
 
+/** Its other names for the search, with the exact ones it names in full. */
+function aliasesFor(a: Action, search: string): string[] {
+  const exact = a.exactAliases?.().filter((name) => namesAll(name, search)) ?? []
+  return exact.length ? [...aliasesOf(a), ...exact] : aliasesOf(a)
+}
+
 /** The words of section kinds, which name sections whatever other actions use them ("Export a chorus teaser…"). */
 const SECTION_WORDS = new Set(['intro', 'verse', 'pre', 'chorus', 'bridge', 'outro'])
 
@@ -1728,7 +1740,7 @@ function remember(key: string, search: string, score: () => number): number {
 function fullScore(a: Action, search: string): number {
   const label = labelOf(a)
   return remember(`${a.id}\n${label}`, search, () =>
-    paletteScore(label, keywordsOf(a), search, aliasesOf(a), {
+    paletteScore(label, keywordsOf(a), search, aliasesFor(a, search), {
       weight: wordWeight,
       strict: true,
       context: contextOf(a),
@@ -1743,7 +1755,7 @@ export const destructiveNow = (a: Action): boolean =>
 /** Whether the search has every word of the action's name or of one of its other names, whole for one that deletes. */
 const namedInFull = (a: Action, search: string): boolean =>
   remember(`${a.id}\n${labelOf(a)}\nnamed`, search, () =>
-    Number(namesInFull(labelOf(a), aliasesOf(a), search, { whole: destructiveNow(a) })),
+    Number(namesInFull(labelOf(a), aliasesFor(a, search), search, { whole: destructiveNow(a) })),
   ) === 1
 
 const aboveAsk = (group: Group, search: string): boolean =>
@@ -1765,7 +1777,7 @@ function matchScore(a: Action, search: string): number {
   if (full > 0 || !isSentence(search) || aboveAsk(a.group, search)) return full
   const label = labelOf(a)
   return remember(`${a.id}\n${label}\npartial`, search, () =>
-    paletteScore(label, keywordsOf(a), search, aliasesOf(a), {
+    paletteScore(label, keywordsOf(a), search, aliasesFor(a, search), {
       weight: wordWeight,
       partial: true,
       strict: true,
@@ -1807,6 +1819,16 @@ export function groupOrder(search: string): Group[] {
   return [...GROUPS].sort(
     (a, b) => groupScore(b, query) - groupScore(a, query) || TIE_ORDER.indexOf(a) - TIE_ORDER.indexOf(b),
   )
+}
+
+/**
+ * Whether the palette offers to ask Assist: for a sentence, ranked with the actions, and for any other search that no
+ * action matches, so the list never ends empty ("rename chorus" with no chorus at the playhead). Not for typed keys.
+ */
+export function offersAsk(search: string): boolean {
+  const query = search.trim()
+  if (isSentence(query)) return true
+  return !!query && !keyCombo(query) && GROUPS.every((g) => groupScore(g, query) === 0)
 }
 
 /**

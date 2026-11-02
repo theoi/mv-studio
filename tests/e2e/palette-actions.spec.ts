@@ -243,7 +243,7 @@ test('the palette renames the project, switches the aspect ratio, drafts lyrics 
   await expect(exportDialog.getByLabel('Include Loop for Canvas')).toBeChecked()
 })
 
-test('the palette tells a vertical version from switching the project to vertical, and words its empty note by the number of words', async ({
+test('the palette tells a vertical version from switching the project to vertical, and offers Ask Assist for a search no action matches', async ({
   page,
 }) => {
   await openEditor(page)
@@ -256,10 +256,17 @@ test('the palette tells a vertical version from switching the project to vertica
     /Changes the project to 9:16$/,
   )
 
-  await input.fill('zebra')
+  // The playhead (1:13) is in Chorus 1, which “rename chorus” renames; no action renames a verse there.
+  await input.fill('rename chorus')
+  await expect(selected).toHaveText(/^Rename the section\s*Chorus$/)
+  for (const search of ['rename verse', 'zebra', 'zebra stripes']) {
+    await input.fill(search)
+    await expect(dialog.getByRole('option')).toHaveCount(1)
+    await expect(selected).toHaveText(new RegExp(`^Ask Assist: “${search}”`))
+  }
+  // Keys no shortcut has aren't a question.
+  await input.fill('ctrl+q')
   await expect(dialog.getByText('No matching action. Try another word.')).toBeVisible()
-  await input.fill('zebra stripes')
-  await expect(dialog.getByText('No matching action. Try fewer words.')).toBeVisible()
 })
 
 test('Ask Assist shows the Enter key only while it is the highlighted row, since Enter runs the highlighted row', async ({

@@ -8,7 +8,7 @@ import { Kbd } from '../../ds/Kbd.tsx'
 import { noMatch } from '../../format.ts'
 import { ask } from '../../state/ask.ts'
 import { keysOf } from '../../state/keymap.ts'
-import { ASK_SCORE, isSentence, paletteScore } from '../../state/paletteScore.ts'
+import { ASK_SCORE, paletteScore } from '../../state/paletteScore.ts'
 import { useThumbnail } from '../../state/thumbs.ts'
 import { openAssist, set, useUi } from '../../state/ui.ts'
 import {
@@ -18,6 +18,7 @@ import {
   GROUPS,
   groupScore,
   labelOf,
+  offersAsk,
   TIE_ORDER,
   type Action,
   type Group,
@@ -40,12 +41,12 @@ const ASK_GROUP = 'ask'
 type Section = Group | typeof ASK_GROUP
 
 /**
- * The groups in the order to show: as listed, or best match first while searching, with "Ask Assist" for a sentence
- * ranked by ASK_SCORE. Ordered here because cmdk leaves groups in the order they render.
+ * The groups in the order to show: as listed, or best match first while searching, with "Ask Assist" where it is
+ * offered ranked by ASK_SCORE. Ordered here because cmdk leaves groups in the order they render.
  */
-function sections(search: string, sentence: boolean): Section[] {
+function sections(search: string, ask: boolean): Section[] {
   const query = search.trim()
-  const all: Section[] = sentence ? [ASK_GROUP, ...GROUPS] : [...GROUPS]
+  const all: Section[] = ask ? [ASK_GROUP, ...GROUPS] : [...GROUPS]
   if (!query) return all
   const best = (g: Section) => (g === ASK_GROUP ? ASK_SCORE : groupScore(g, query))
   const tie = (g: Section) => (g === ASK_GROUP ? -1 : TIE_ORDER.indexOf(g))
@@ -179,7 +180,7 @@ export function CommandPalette() {
     if (item.open) openPage(item.open)
     else if (item.run) run(item.run)
   }
-  const sentence = !page && isSentence(search)
+  const askRow = !page && offersAsk(search)
   const def = page && PAGES[page.id]
   const groups = page && def ? def.groups(page) : []
   // A list of choices opens on the one in use, as a menu of options does, so the arrows step from it.
@@ -265,7 +266,7 @@ export function CommandPalette() {
                   ),
               )}
               {!page &&
-                sections(search, sentence).map((g) =>
+                sections(search, askRow).map((g) =>
                   g === ASK_GROUP ? (
                     <Command.Group key={g} heading="Ask Assist" className={styles.group}>
                       <Command.Item
