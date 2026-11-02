@@ -26,7 +26,7 @@ import { distinctName } from '../format.ts'
 import { isSampleAsset, sampleFile } from '../mock/sampleMedia.ts'
 import { JOB_KINDS, isRunning } from './jobs.ts'
 import { usePrefs } from './prefs.ts'
-import { clampToLastFrame, dispatch, editor, loadEmptyProject } from './project.ts'
+import { clampToLastFrame, dispatch, editor, loadDemoProject, loadEmptyProject } from './project.ts'
 import {
   lostMedia,
   storageClearedMessage,
@@ -544,6 +544,14 @@ export async function duplicateCurrent(): Promise<void> {
   } catch (error) {
     toast(saveErrorMessage(error))
   }
+}
+
+/** Replaces an empty project with the sample project, keeping the current workspace. */
+export function loadSample(): void {
+  leaveProjectJobs()
+  loadDemoProject()
+  set({ playhead: 0, playing: false, selection: { type: 'none' } })
+  toast(`Sample project loaded: “${editor.getProject().name}”`)
 }
 
 /** Deletes a kept project, and its media unless another kept project uses it. */

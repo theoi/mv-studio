@@ -61,15 +61,8 @@ import {
   zoomLabel,
 } from '../../state/previewControls.ts'
 import { saveFrame } from '../../state/stills.ts'
-import {
-  editor,
-  hasSong,
-  loadSample,
-  sectionAt,
-  sectionName,
-  timelineDuration,
-  useProject,
-} from '../../state/project.ts'
+import { loadSample } from '../../state/persistence.ts'
+import { editor, hasSong, sectionAt, sectionName, timelineDuration, useProject } from '../../state/project.ts'
 import { barPosition, songBeatsOnTimeline, useBars, type BarsState } from '../../state/songAnalysis.ts'
 import { get, set, toast, useUi } from '../../state/ui.ts'
 import { openImport } from '../../state/importer.ts'

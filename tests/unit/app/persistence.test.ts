@@ -5,6 +5,7 @@ import {
   duplicateProject,
   importProjectFile,
   leaveProjectJobs,
+  loadSample,
   refreshRecents,
   usePersistence,
 } from '../../../src/app/state/persistence.ts'
@@ -178,4 +179,29 @@ it('cancels the open project’s running jobs and puts away its finished results
 
   leaveProjectJobs({ next: 'another' })
   expect(dismissedAfter()).toEqual(['earlier', cut.id, failed.id])
+})
+
+it('leaves the open project’s jobs before Use a sample replaces it with the sample', async () => {
+  editor.load(createProject({ name: 'Untitled video' }))
+  const indexed = jobs.run({ kind: 'vision.index', title: 'Index', run: async () => 1 })
+  await indexed.promise
+  const cutout = jobs.run({
+    kind: 'vision.cutout',
+    title: 'Cutout',
+    run: (ctx) =>
+      new Promise((_, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason))),
+  })
+  vi.mocked(set).mockClear()
+  loadSample()
+  expect(editor.getProject().songAssetId).toBeTruthy()
+  // Cancelled before the sample replaced the project: the job is stopping at once.
+  expect(jobs.list().find((j) => j.id === cutout.id)?.stopping).toBe(true)
+  await cutout.promise.catch(() => undefined)
+  expect(jobs.list().find((j) => j.id === cutout.id)?.status).toBe('cancelled')
+  const update = vi
+    .mocked(set)
+    .mock.calls.map(([arg]) => arg)
+    .find((arg) => typeof arg === 'function') as
+    ((s: { dismissed: string[] }) => { dismissed: string[] }) | undefined
+  expect(update?.({ dismissed: [] }).dismissed).toContain(indexed.id)
 })
