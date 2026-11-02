@@ -4,7 +4,8 @@ import { expect, openHarness, test } from './fixtures.ts'
 
 /*
  * Long lyric lines sung back to back in portrait and square drafts: drawn with the real fonts, every text clip keeps
- * the rows the director laid it out in, so the next line waiting below stays clear of the current one.
+ * the rows the director laid it out in, so the next line waiting below stays clear of the current one, and a word too
+ * long to wrap stays within the frame.
  */
 
 const LINES = [
@@ -16,6 +17,7 @@ const LINES = [
   'Every echo burning like a fire',
   'Strangers singing on the overpass tonight with nothing left to lose',
   'Holding on to every borrowed light we ever found along the way',
+  'Oh supercalifragilisticexpialidocious',
 ]
 
 /** The sample's lyrics replaced by 32 long lines, 2.4 s each, then a lyric draft at `aspect`. */
@@ -53,7 +55,7 @@ async function draftLongLines(page: Page, aspect: string) {
 }
 
 for (const aspect of ['9:16', '1:1']) {
-  test(`at ${aspect}, long lyric lines keep their rows and stay clear of the next line below`, async ({
+  test(`at ${aspect}, long lyric lines keep their rows, stay clear of the next line below and within the frame`, async ({
     page,
   }, testInfo) => {
     await draftLongLines(page, aspect)
@@ -87,7 +89,7 @@ for (const aspect of ['9:16', '1:1']) {
       )
       const families = new Set<string>()
       // Rows as the text renderer wraps them: greedy, at the clip's wrap width, with the font it draws in.
-      const drawn = new Map<string, { rows: number; lineHeight: number }>()
+      const drawn = new Map<string, { rows: number; lineHeight: number; widest: number }>()
       for (const c of texts) {
         const s = c.style
         const px = (s.fontSize * H) / 1080
@@ -99,24 +101,32 @@ for (const aspect of ['9:16', '1:1']) {
         const max = Math.max(s.maxWidth * W, px)
         const space = ctx.measureText(' ').width
         let rows = 0
+        let widest = 0
         for (const row of text.split('\n')) {
           let width = -1
           for (const word of row.split(/\s+/).filter(Boolean)) {
             const w = ctx.measureText(word).width
             if (width >= 0 && width + space + w > max) {
               rows++
+              widest = Math.max(widest, width)
               width = w
             } else width = width < 0 ? w : width + space + w
           }
           rows++
+          widest = Math.max(widest, width)
         }
-        drawn.set(c.id, { rows, lineHeight: (s.lineHeight * px) / H })
+        drawn.set(c.id, { rows, lineHeight: (s.lineHeight * px) / H, widest })
       }
       const wrapped = texts
         .filter((c) => drawn.get(c.id)!.rows !== c.text.split('\n').length)
         .map(
           (c) => `${c.meta!.director!.textRole}: ${JSON.stringify(c.text)} in ${drawn.get(c.id)!.rows} rows`,
         )
+      // A word too long to wrap is drawn on a row of its own, however wide: no row may be wider than the frame.
+      const tooWide = texts
+        .filter((c) => drawn.get(c.id)!.widest > W)
+        .map((c) => `${JSON.stringify(c.text)} ${Math.round(drawn.get(c.id)!.widest)} px wide`)
+      const longWord = texts.filter((c) => /supercali/i.test(c.text)).length
       // Each next line waiting below and the current line above it, once the current one has rolled into place.
       const box = (c: Clip, t: number) => {
         const y = engine.animation.evaluate(c.transform.y, t - c.start) as number
@@ -160,6 +170,8 @@ for (const aspect of ['9:16', '1:1']) {
         pairs: pairs.length,
         wrapped,
         overlaps,
+        tooWide,
+        longWord,
         frames: btoa(frames),
       }
     })
@@ -170,5 +182,7 @@ for (const aspect of ['9:16', '1:1']) {
     expect(result.pairs).toBeGreaterThan(10)
     expect(result.wrapped).toEqual([])
     expect(result.overlaps).toEqual([])
+    expect(result.longWord).toBeGreaterThan(0)
+    expect(result.tooWide).toEqual([])
   })
 }

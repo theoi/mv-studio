@@ -285,19 +285,58 @@ function advances(style: TextStyleSpec): Advances {
   return byWeight[nearest] as Advances
 }
 
+/** Estimated advance of a character in em, in `style`. */
+function advanceOf(style: TextStyleSpec): (ch: string) => number {
+  const [lower, upper, space] = advances(style)
+  return (ch) => {
+    if (ch === ' ') return space
+    if (/[\p{Lu}]/u.test(ch) || (style.uppercase && /\p{L}/u.test(ch))) return upper
+    if (/[\p{L}\p{N}]/u.test(ch)) return lower
+    return 0.3
+  }
+}
+
 /** Estimated width of a text in px at a 1080-px-tall canvas. */
 export function textWidth(text: string, style: TextStyleSpec, fontSize = style.fontSize ?? 80): number {
-  const [lower, upper, space] = advances(style)
+  const advance = advanceOf(style)
   const spacing = style.letterSpacing ?? 0
   let em = 0
   for (const ch of text) {
-    if (ch === ' ') em += space
-    else if (/[\p{Lu}]/u.test(ch) || (style.uppercase && /\p{L}/u.test(ch))) em += upper
-    else if (/[\p{L}\p{N}]/u.test(ch)) em += lower
-    else em += 0.3
+    em += advance(ch)
     em += spacing
   }
   return em * fontSize
+}
+
+/** The width of `words.slice(from, to).join(' ')` on one row. */
+type RunWidth = (from: number, to: number) => number
+
+/**
+ * textWidth of every run of `words` on one row. Each run adds up its characters in the order textWidth does, so it
+ * measures exactly what textWidth would (a difference of running sums can round differently and flip a tie).
+ */
+export function runWidths(words: string[], style: TextStyleSpec, fontSize: number): RunWidth {
+  const advance = advanceOf(style)
+  const spacing = style.letterSpacing ?? 0
+  const space = advance(' ')
+  const letters = words.map((word) => Array.from(word, advance))
+  const n = words.length
+  const widths = new Float64Array(n * (n + 1))
+  for (let from = 0; from < n; from++) {
+    let em = 0
+    for (let to = from; to < n; to++) {
+      if (to > from) {
+        em += space
+        em += spacing
+      }
+      for (const a of letters[to] as number[]) {
+        em += a
+        em += spacing
+      }
+      widths[from * (n + 1) + to + 1] = em * fontSize
+    }
+  }
+  return (from, to) => widths[from * (n + 1) + to] as number
 }
 
 /** Width rows are laid out to, in px at a 1080-px-tall canvas. */
@@ -314,25 +353,48 @@ const BRACKET_KEEP = 0.9
 type Split = { rows: string[]; widest: number }
 
 /**
- * The split of `words` into `rows` rows with the narrowest widest row. No row ends on a word that opens a bracket,
- * unless that leaves the type more than 10% smaller than it could be in rows `limit` wide.
+ * The split of `words` into `rows` rows with the narrowest widest row, `width` measuring each row, and of those the
+ * one with the earliest breaks. No row ends on a word that opens a bracket, unless that leaves the type more than 10%
+ * smaller than it could be in rows `limit` wide.
  */
-function bestSplit(words: string[], rows: number, width: (s: string) => number, limit = Infinity) {
-  const search = (together: boolean) => {
-    let best: Split | undefined
-    const visit = (from: number, left: number, acc: string[]) => {
-      if (left === 1) {
-        const out = [...acc, words.slice(from).join(' ')]
-        const widest = Math.max(...out.map(width))
-        if (!best || widest < best.widest) best = { rows: out, widest }
-        return
-      }
-      for (let i = from + 1; i <= words.length - (left - 1); i++)
-        if (!together || !opensBracket(words[i - 1]))
-          visit(i, left - 1, [...acc, words.slice(from, i).join(' ')])
+export function bestSplit(
+  words: string[],
+  rows: number,
+  width: RunWidth,
+  limit = Infinity,
+): Split | undefined {
+  const n = words.length
+  if (rows < 1 || n < rows) return undefined
+  const search = (together: boolean): Split | undefined => {
+    const breaks = (i: number) => !together || !opensBracket(words[i - 1])
+    // narrowest[left - 1][from]: the narrowest widest row of words[from..] split into `left` rows (Infinity: none).
+    const narrowest = [
+      Float64Array.from({ length: n + 1 }, (_, from) => (from < n ? width(from, n) : Infinity)),
+    ]
+    for (let left = 2; left <= rows; left++) {
+      const after = narrowest[left - 2] as Float64Array
+      const best = new Float64Array(n + 1).fill(Infinity)
+      for (let from = 0; from <= n - left; from++)
+        for (let i = from + 1; i <= n - (left - 1); i++)
+          if (breaks(i))
+            best[from] = Math.min(best[from] as number, Math.max(width(from, i), after[i] as number))
+      narrowest.push(best)
     }
-    if (words.length >= rows && rows >= 1) visit(0, rows, [])
-    return best
+    const widest = (narrowest[rows - 1] as Float64Array)[0] as number
+    if (widest === Infinity) return undefined
+    // The earliest break at each row that still leaves a split no wider than the narrowest.
+    const out: string[] = []
+    let from = 0
+    for (let left = rows; left > 1; left--) {
+      const after = narrowest[left - 2] as Float64Array
+      let i = from + 1
+      while (i < n - (left - 1) && (!breaks(i) || width(from, i) > widest || (after[i] as number) > widest))
+        i++
+      out.push(words.slice(from, i).join(' '))
+      from = i
+    }
+    out.push(words.slice(from).join(' '))
+    return { rows: out, widest }
   }
   const kept = search(true)
   const free = words.some(opensBracket) ? search(false) : kept
@@ -343,7 +405,11 @@ function bestSplit(words: string[], rows: number, width: (s: string) => number, 
 
 /** `words` in `rows` rows of about equal length (one row per line of text), or on one row when there are fewer words. */
 export function balancedRows(words: string[], rows: number): string {
-  const split = rows > 1 ? bestSplit(words, rows, (s) => s.length) : undefined
+  // Characters before each word, its space included, so a row's length is a difference of two.
+  const before = [0]
+  for (const word of words) before.push((before.at(-1) as number) + word.length + 1)
+  const length: RunWidth = (from, to) => (before[to] as number) - (before[from] as number) - 1
+  const split = rows > 1 ? bestSplit(words, rows, length) : undefined
   return split ? split.rows.join('\n') : words.join(' ')
 }
 
@@ -381,17 +447,18 @@ export function layoutLine(
   const size = style.fontSize ?? LINE_SIZE[aspect]
   const limit = rowWidth(style, aspect)
   const width = (s: string) => textWidth(s, style, size)
+  const run = runWidths(words, style, size)
   const laid = (rows: string[], fontSize: number) => ({ text: rows.join('\n'), fontSize, rows: rows.length })
   let last: Split | undefined
   for (let rows = 1; rows <= Math.min(maxRows, words.length); rows++) {
-    const split = bestSplit(words, rows, width, limit)
+    const split = bestSplit(words, rows, run, limit)
     if (!split) break
     last = split
     if (split.widest <= limit) return laid(split.rows, size)
   }
   if (!last) return { text, fontSize: size, rows: 1 }
   if (limit / last.widest >= MIN_SHRINK) return laid(last.rows, Math.round((size * limit) / last.widest))
-  const more = bestSplit(words, Math.min(last.rows.length + 1, words.length), width, limit)
+  const more = bestSplit(words, Math.min(last.rows.length + 1, words.length), run, limit)
   // A word too long for the clip on its own stays the widest row, so a row more would only break up the others.
   const rows = (more && more.widest < last.widest ? more : last).rows
   return laid(rows, Math.max(8, Math.floor(size * fitScale(rows, width, limit, frameWidth(aspect)))))
@@ -410,7 +477,7 @@ export function refitRows(
   const size = style.fontSize ?? LINE_SIZE[aspect]
   const limit = rowWidth(style, aspect)
   const width = (s: string) => textWidth(s, style, size)
-  const split = bestSplit(words, Math.min(rows, words.length), width, limit)
+  const split = bestSplit(words, Math.min(rows, words.length), runWidths(words, style, size), limit)
   if (!split) return { text: words.join(' '), fontSize: size }
   const scale = fitScale(split.rows, width, limit, frameWidth(aspect))
   return { text: split.rows.join('\n'), fontSize: Math.max(8, Math.floor(size * scale)) }

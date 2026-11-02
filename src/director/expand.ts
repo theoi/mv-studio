@@ -1084,13 +1084,11 @@ function lineTexts(
     split === undefined
       ? undefined
       : round3(Math.max(item.shownStart + 0.1, wordTime(item, words, split) - 0.06))
-  const tailText = split === undefined ? '' : words.slice(split).join(' ')
-  const tailStyle = emphasisStyle(type, lineStyle, tailText)
-  // An emphasized word too wide for the clip even at the line's size would wrap under itself: the line stays whole.
-  const tailFits = textWidth(tailText, tailStyle) <= rowWidth(tailStyle, aspect)
-  if (split !== undefined && tailAt !== undefined && item.shownEnd - tailAt >= 0.5 && tailFits) {
+  if (split !== undefined && tailAt !== undefined && item.shownEnd - tailAt >= 0.5) {
     const head = layoutLine(words.slice(0, split).join(' '), lineStyle, aspect)
     const headStyle = { ...lineStyle, fontSize: head.fontSize }
+    const tailText = words.slice(split).join(' ')
+    const tailStyle = emphasisStyle(type, lineStyle, tailText)
     const headH = blockHeight(head.rows, headStyle)
     const tailH = blockHeight(1, tailStyle)
     const total = headH + 0.012 + tailH
@@ -1098,8 +1096,10 @@ function lineTexts(
     const placed = clearOfFaces(o.anchor, total, width, faces)
     const top = placed.y - total / 2
     const emphasis = type.emphasisAnimation
+    // An emphasized word too wide for the clip even at the line's size would wrap under itself: the line stays whole.
+    const tailFits = textWidth(tailText, tailStyle) <= rowWidth(tailStyle, aspect)
     // The split block is taller: when no place for it clears the faces, the whole line may.
-    if (placed.hits <= whole.hits)
+    if (tailFits && placed.hits <= whole.hits)
       return [
         line(head.text, headStyle, top + headH / 2),
         {
