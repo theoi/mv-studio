@@ -316,6 +316,130 @@ test('beat-cut footage keeps the chosen clips, one can be removed first, and the
   expect(placed).toEqual({ offVideo: 0, autoCutTrack: false })
 })
 
+test('Cut my clips frees the clip analysis models when another project opens, and before stems separate once no analysis runs', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await startKind(page, /^Beat-cut footage/)
+  // Stand-ins for the vision workers and stem separation. A call loads the model unless it is loaded, and a release
+  // frees it as the workers do, noting how many vision jobs were running or queued then.
+  await page.evaluate(() => {
+    const { app, shared } = window.mvStudio
+    interface Job {
+      kind: string
+      status: string
+    }
+    const w = window as unknown as Record<string, unknown> & { __embedGate: Promise<void> }
+    Object.assign(w, { __loads: 0, __loaded: false, __frees: [] })
+    w.__embedGate = new Promise((resolve) => (w.__releaseEmbed = resolve))
+    const use = async () => {
+      if (!w.__loaded) w.__loads = (w.__loads as number) + 1
+      w.__loaded = true
+      await w.__embedGate
+    }
+    const onnx = {
+      async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+        await use()
+        for (const b of bitmaps) b.close()
+        return { dim: 2, data: new Float32Array(bitmaps.flatMap(() => [0.6, 0.8])) }
+      },
+      async embedTexts({ texts }: { texts: string[] }) {
+        await use()
+        return { dim: 2, data: new Float32Array(texts.flatMap(() => [0.6, 0.8])) }
+      },
+    }
+    app.footage.setVisionBackendsForTests({
+      onnx: () => onnx,
+      segmentation: () => {
+        throw new Error('unused')
+      },
+      release(options?: { idleMs?: number }) {
+        const running = (shared.jobs.list() as Job[]).filter(
+          (j) =>
+            /^(vision|edit|director)\./.test(j.kind) && (j.status === 'running' || j.status === 'queued'),
+        )
+        ;(w.__frees as object[]).push({ idleMs: options?.idleMs ?? 0, visionJobs: running.length })
+        w.__loaded = false
+        return true
+      },
+    })
+    app.stems.setStemsServiceForTests({
+      async estimate() {
+        return { downloadBytes: 180_534_758, seconds: 230, memoryBytes: 4e9, device: 'wasm' }
+      },
+      separateSong() {
+        return shared.jobs.run({
+          kind: 'analysis.stems',
+          title: 'Separating stems',
+          run: (ctx: { signal: AbortSignal }) =>
+            new Promise((_resolve, reject) =>
+              ctx.signal.addEventListener('abort', () =>
+                reject(new shared.JobError('cancelled', 'Cancelled')),
+              ),
+            ),
+        })
+      },
+    })
+  })
+  const state = () =>
+    page.evaluate(() => {
+      const w = window as unknown as { __loads: number; __loaded: boolean; __frees: { idleMs: number }[] }
+      return { loads: w.__loads, loaded: w.__loaded, frees: w.__frees.filter((f) => !f.idleMs) }
+    })
+  const holdEmbeds = () =>
+    page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>
+      w.__embedGate = new Promise((resolve) => (w.__releaseEmbed = resolve))
+    })
+  const releaseEmbeds = () =>
+    page.evaluate(() => (window as unknown as { __releaseEmbed: () => void }).__releaseEmbed())
+  const cutMyClips = async (file: string) => {
+    await page.getByRole('button', { name: 'Use a sample song' }).click()
+    await page.getByLabel('Clip files').setInputFiles(fixture(file))
+    await expect(page.getByRole('list', { name: 'Your clips' }).getByRole('listitem')).toHaveCount(1, {
+      timeout: 30_000,
+    })
+    await page.getByRole('button', { name: 'Cut my clips' }).click()
+    await waitForPreview(page)
+  }
+  const assist = page.getByRole('tabpanel', { name: 'Assist' })
+
+  await cutMyClips('clip.mp4')
+  await expect(assist.getByText('Analyzing your footage… 0 of 1 clip')).toBeVisible()
+  await releaseEmbeds()
+  await expect(assist.getByText(/^On the Video track\./)).toBeVisible({ timeout: 60_000 })
+  // Kept after the cut: they are freed when something needs the room, or after a minute unused.
+  const cut = await state()
+  expect(cut).toMatchObject({ loads: 1, loaded: true })
+
+  await holdEmbeds()
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByRole('button', { name: /^Beat-cut footage/ }).click()
+  await cutMyClips('image.png')
+  await expect(assist.getByText('Analyzing your footage… 0 of 1 clip')).toBeVisible()
+  // Freed when the other project opened, with no vision job running, so its analysis loads the model again.
+  await expect.poll(async () => (await state()).loads).toBe(2)
+  const opened = await state()
+  expect(opened.frees.slice(cut.frees.length)).toEqual([{ idleMs: 0, visionJobs: 0 }])
+  expect(opened.loaded).toBe(true)
+
+  // Stem separation starts while the analysis runs: the model is freed once the analysis and the cut are done.
+  await page.keyboard.press('ControlOrMeta+k')
+  await page.getByRole('dialog', { name: 'Command palette' }).getByRole('combobox').fill('Separate stems')
+  await page.keyboard.press('Enter')
+  await assist.getByRole('button', { name: 'Separate stems' }).click()
+  await expect(assist.getByRole('progressbar', { name: 'Stem separation progress' })).toBeVisible()
+  expect(await state()).toEqual(opened)
+  await releaseEmbeds()
+  await expect
+    .poll(async () => (await state()).frees.length, { timeout: 60_000 })
+    .toBe(opened.frees.length + 1)
+  const separating = await state()
+  expect(separating.frees.at(-1)).toEqual({ idleMs: 0, visionJobs: 0 })
+  expect(separating).toMatchObject({ loads: 2, loaded: false })
+  await expect(assist.getByRole('progressbar', { name: 'Stem separation progress' })).toBeVisible()
+})
+
 test('a tagged song names the project and the beat cut’s title; another project of it is numbered, and Recent projects says the kind', async ({
   page,
 }, testInfo) => {
