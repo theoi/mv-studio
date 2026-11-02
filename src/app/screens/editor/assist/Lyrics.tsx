@@ -4,7 +4,7 @@ import { Button } from '../../../ds/Button.tsx'
 import { Badge } from '../../../ds/Feedback.tsx'
 import { Segmented, Select, TextArea } from '../../../ds/Fields.tsx'
 import { plural } from '../../../format.ts'
-import { JOB_KINDS, useJobs } from '../../../state/jobs.ts'
+import { JOB_KINDS } from '../../../state/jobs.ts'
 import {
   DRAFT_LANGUAGES,
   draftLooksUnreliable,
@@ -27,7 +27,7 @@ import {
 } from '../../../state/project.ts'
 import { get, select, set, useUi, type LyricsMode } from '../../../state/ui.ts'
 import { dismiss, pct, useFocusOnFailure, useJob } from './jobState.ts'
-import { reloadBlockers, type RetryTask } from '../../../state/reloadRetry.ts'
+import { useReloadHeldBack, type RetryTask } from '../../../state/reloadRetry.ts'
 import { OutOfMemoryTips, ReloadAndRetryButton } from './MemoryHelp.tsx'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -213,7 +213,7 @@ export function LyricsView() {
     }) ?? withClip[0]
   const timed = lines.some((l) => l.start !== undefined)
   const tryAgain = useFocusOnFailure(phase)
-  const reloadBlocked = reloadBlockers(useJobs()).length > 0
+  const reloadBlocked = useReloadHeldBack()
 
   if (phase === 'running') {
     return (

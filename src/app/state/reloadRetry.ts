@@ -2,7 +2,9 @@ import type { LyricsRequest } from '../../analysis/lyrics/client.ts'
 import type { Id } from '../../model/index.ts'
 import { jobs, type JobSnapshot } from '../../shared/jobs.ts'
 import { stateToHash } from './hash.ts'
-import { JOB_KINDS, runningJobs } from './jobs.ts'
+import { heldDraftOf, useDirector } from './director.ts'
+import { JOB_KINDS, runningJobs, useJobs } from './jobs.ts'
+import { heldDraft, reloadDraftNote } from './leaveDraft.ts'
 import { startLyrics } from './lyrics.ts'
 import { keepNow, saveBeforeReload, usePersistence } from './persistence.ts'
 import { editor } from './project.ts'
@@ -32,6 +34,28 @@ const RESTARTS: ReadonlySet<string> = new Set([JOB_KINDS.downbeats, JOB_KINDS.fo
 /** Running jobs that a reload would stop for good, such as an export. */
 export function reloadBlockers(list: readonly JobSnapshot[] = jobs.list()): JobSnapshot[] {
   return runningJobs([...list]).filter((j) => !RESTARTS.has(j.kind))
+}
+
+/**
+ * Whether the reload has to wait: for a job it would stop, or for the Director's draft holding AI shots
+ * (leaveDraft.ts), which it would drop. Waiting says so in the footer, where the browser would only ask "Leave site?".
+ */
+export function reloadHeldBack(list: readonly JobSnapshot[] = jobs.list()): boolean {
+  return reloadBlockers(list).length > 0 || heldDraft() !== null
+}
+
+/** Why the Director's draft holds the reload back, or null (a string, so the store selector stays stable). */
+export const useReloadDraftNote = (): string | null =>
+  useDirector((s) => {
+    const held = heldDraftOf(s.state)
+    return held ? reloadDraftNote(held) : null
+  })
+
+/** reloadHeldBack() for components, which show and focus Reload and try again only when it can run. */
+export function useReloadHeldBack(): boolean {
+  const job = reloadBlockers(useJobs()).length > 0
+  const draft = useReloadDraftNote() !== null
+  return job || draft
 }
 
 function isTask(task: unknown): task is RetryTask {
@@ -69,14 +93,14 @@ export function takePendingRetry(
 
 /**
  * Keeps the open project with every change written, then reloads the page into the same project and Assist view,
- * where `task` starts again. Does nothing while a job a reload would stop is running, or when the project can't be
- * saved (its toast says why).
+ * where `task` starts again. Does nothing while the reload is held back (reloadHeldBack), or when the project can't
+ * be saved (its toast says why).
  */
 export async function reloadAndRetry(task: RetryTask): Promise<void> {
-  if (reloadBlockers().length) return
+  if (reloadHeldBack()) return
   const projectId = editor.getProject().id
   if (!(await keepNow()) || !(await saveBeforeReload())) return
-  if (editor.getProject().id !== projectId || reloadBlockers().length) return
+  if (editor.getProject().id !== projectId || reloadHeldBack()) return
   try {
     sessionStorage.setItem(KEY, JSON.stringify({ projectId, task, at: Date.now() } satisfies PendingRetry))
   } catch {
