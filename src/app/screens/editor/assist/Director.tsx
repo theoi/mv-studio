@@ -46,6 +46,7 @@ import {
   draftWithAiShots,
   paidCost,
   resetDirector,
+  seenPrice,
   showTracks,
   tryAnotherVersion,
   undoDraft,
@@ -199,7 +200,8 @@ function PlanList({ description }: { description: PlanDescription | null }) {
 function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: string, unit: GeneratedUnit) {
   const [confirming, setConfirming] = useState(false)
   const paid = paidCost(cost)
-  const start = () => (paid && confirmRequired ? setConfirming(true) : void applyDraft())
+  const start = () =>
+    paid && confirmRequired ? setConfirming(true) : void applyDraft({ shownPrice: seenPrice(cost) })
   const dialog = paid ? (
     <Dialog
       open={confirming}
@@ -216,7 +218,7 @@ function useSpend(cost: PlanCost | null, confirmRequired: boolean, actionLabel: 
             variant="primary"
             onClick={() => {
               setConfirming(false)
-              void applyDraft({ confirmSpend: true })
+              void applyDraft({ confirmSpend: seenPrice(paid) })
             }}
           >
             {actionLabel}

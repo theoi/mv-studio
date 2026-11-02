@@ -88,7 +88,7 @@ import {
 } from './typography.ts'
 
 export type DirectorErrorReason =
-  'no-song' | 'invalid-plan' | 'needs-confirmation' | 'no-plan' | 'no-provider'
+  'no-song' | 'invalid-plan' | 'needs-confirmation' | 'price-changed' | 'no-plan' | 'no-provider'
 
 export class DirectorError extends JobError {
   readonly reason: DirectorErrorReason

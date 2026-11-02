@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import type { Page, Route, TestInfo } from '@playwright/test'
+import type { Locator, Page, Route, TestInfo } from '@playwright/test'
 import { expect, keepCopy, openFromHome, openHarness, test } from './fixtures.ts'
 import { FIXTURE_DIR } from './global-setup.ts'
 
@@ -1788,4 +1788,71 @@ test('Reload and try again after stems run out of memory waits for a draft holdi
   await page.evaluate(() => window.mvStudio.app.ui.set({ rightTab: 'assist', assistView: 'stems' }))
   await expect(reload).toBeEnabled()
   await expect(panel.getByRole('button', { name: 'Back to the draft' })).toHaveCount(0)
+})
+
+/** Deletes every AI image from the project's media, as the user can from the Media panel. */
+const deleteAiImages = (page: Page) =>
+  page.evaluate(() => {
+    const { editor } = window.mvStudio.app.project
+    type A = { id: string; origin: { type: string } }
+    const ids = (Object.values(editor.getProject().assets) as A[])
+      .filter((a) => a.origin.type === 'generated')
+      .map((a) => a.id)
+    editor.dispatch(ids.map((assetId) => ({ type: 'asset.remove', assetId })))
+    return ids.length
+  })
+
+const shotCount = async (button: Locator) => Number(/\d+/.exec((await button.textContent()) ?? '')?.[0])
+
+/** A version drafted after one whose AI images were all made: it reuses most of them and pays for the rest. */
+async function anotherVersion(page: Page, confirm: boolean) {
+  await page.getByRole('radio', { name: 'Generate' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  if (confirm) await generateShots(page)
+  else await page.getByRole('button', { name: /^Generate \d+ shots · / }).click()
+  await expect(placed(page)).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Try another version' }).click()
+  const generate = page.getByRole('button', { name: /^Generate \d+ shots · / })
+  await expect(generate).toBeVisible({ timeout: 30_000 })
+  return { generate, priced: await shotCount(generate) }
+}
+
+test('a price that went up after it was confirmed generates nothing, and the button shows the new price', async ({
+  page,
+}) => {
+  const fal = await mockFalVideo(page, { images: true })
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  const { generate, priced } = await anotherVersion(page, true)
+  await generate.click()
+  const dialog = page.getByRole('dialog', { name: /^Generate \d+ shots\?$/ })
+  await expect(dialog).toBeVisible()
+  // The images the version would reuse go before the price is confirmed.
+  expect(await deleteAiImages(page)).toBeGreaterThan(0)
+  const submits = fal.submits.length
+  await dialog.getByRole('button', { name: /^Generate \d+ shots · / }).click()
+  await expect(
+    page.getByText(
+      /^The price went up since you confirmed it: \d+ shots now cost about \$\d+\.\d\d\. Confirm the new price to go on\.$/,
+    ),
+  ).toBeVisible()
+  expect(fal.submits).toHaveLength(submits)
+  expect(await shotCount(generate)).toBeGreaterThan(priced)
+})
+
+test('a price that went up after the button showed it generates nothing, though the spend policy wouldn’t ask', async ({
+  page,
+}) => {
+  const fal = await mockFalVideo(page, { images: true })
+  await openDirector(page, { falKey: 'key-id:key-secret' })
+  const { generate, priced } = await anotherVersion(page, false)
+  expect(await deleteAiImages(page)).toBeGreaterThan(0)
+  const submits = fal.submits.length
+  await generate.click()
+  await expect(
+    page.getByText(
+      /^The price went up: \d+ shots now cost about \$\d+\.\d\d\. Check it and generate again\.$/,
+    ),
+  ).toBeVisible()
+  expect(fal.submits).toHaveLength(submits)
+  expect(await shotCount(generate)).toBeGreaterThan(priced)
 })
