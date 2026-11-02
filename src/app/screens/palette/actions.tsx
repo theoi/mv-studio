@@ -247,10 +247,12 @@ export interface Action {
    */
   needs?: readonly string[]
   /**
-   * Deletes something, so it is listed only for a search that names it in full: Enter must not delete what a search
-   * only half names ("close gap" isn't Delete and close gap).
+   * Deletes something, or resets what the editor can't undo, so it is listed only for a search that names it in full,
+   * with whole words: Enter must not delete what a search only half names ("close gap" isn't Delete and close gap, "del"
+   * isn't Delete yet). A function for a toggle that deletes only one way: Remove the text outline loses its color and
+   * width, Add an outline to the text loses nothing.
    */
-  destructive?: boolean
+  destructive?: boolean | (() => boolean)
 }
 
 const settingsPage = (page: SettingsPage) => () => set({ dialog: 'settings', settingsPage: page })
@@ -1734,10 +1736,14 @@ function fullScore(a: Action, search: string): number {
   )
 }
 
-/** Whether the search has every word of the action's name or of one of its other names. */
+/** Whether running the action now deletes something (see Action.destructive). */
+export const destructiveNow = (a: Action): boolean =>
+  typeof a.destructive === 'function' ? a.destructive() : !!a.destructive
+
+/** Whether the search has every word of the action's name or of one of its other names, whole for one that deletes. */
 const namedInFull = (a: Action, search: string): boolean =>
   remember(`${a.id}\n${labelOf(a)}\nnamed`, search, () =>
-    Number(namesInFull(labelOf(a), aliasesOf(a), search)),
+    Number(namesInFull(labelOf(a), aliasesOf(a), search, { whole: destructiveNow(a) })),
   ) === 1
 
 const aboveAsk = (group: Group, search: string): boolean =>
@@ -1754,7 +1760,7 @@ function matchScore(a: Action, search: string): number {
   const keys = keyCombo(search)
   if (keys) return a.shortcut && shortcutKeys(a.shortcut).some((k) => keyCombo(k) === keys) ? 1 : 0
   if (a.needs && !namesOneOf(a.needs, search)) return 0
-  if (a.destructive && !namedInFull(a, search)) return 0
+  if (destructiveNow(a) && !namedInFull(a, search)) return 0
   const full = fullScore(a, search)
   if (full > 0 || !isSentence(search) || aboveAsk(a.group, search)) return full
   const label = labelOf(a)
