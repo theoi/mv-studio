@@ -5,6 +5,8 @@ import {
   leaveDraftOk,
   leaveDraftText,
   leaveDraftThen,
+  reloadDraftNote,
+  showDraft,
   useLeaveDraft,
   type HeldDraft,
 } from '../../../src/app/state/leaveDraft.ts'
@@ -75,6 +77,11 @@ describe('leaving a project the Director’s draft still needs', () => {
     expect(useLeaveDraft.getState()).toEqual({ ask: null, applying: false })
   })
 
+  it('shows the draft when asked to, as Reload and try again does', () => {
+    showDraft()
+    expect(shown).toBe(1)
+  })
+
   it('a second question answers the first with Stay', async () => {
     held = unapplied
     const first = leaveDraftOk()
@@ -106,5 +113,19 @@ describe('what the question says', () => {
       title: '1 AI shot still needs a retry',
       text: expect.stringMatching(/^If you leave, you can’t retry it later: making it then means/),
     })
+  })
+})
+
+describe('why Reload and try again waits for the draft', () => {
+  it('says what a reload would drop, in the words of the question before leaving', () => {
+    expect(reloadDraftNote(unapplied)).toBe(
+      'Your Director draft isn’t on the timeline yet, and a reload would drop it.',
+    )
+    expect(reloadDraftNote({ kind: 'failed', unit: 'shot', failed: 1 })).toBe(
+      '1 AI shot in your Director draft still needs a retry, and after a reload you can’t retry it.',
+    )
+    expect(reloadDraftNote({ kind: 'failed', unit: 'clip', failed: 2 })).toBe(
+      '2 AI clips in your Director draft still need a retry, and after a reload you can’t retry them.',
+    )
   })
 })

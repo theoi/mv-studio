@@ -175,8 +175,9 @@ director.undo()
 The app (`src/app/state/director.ts`) keeps one session and resets it when another project opens. While the draft
 holds AI shots that would be lost then (made for a draft that is not on the timeline, or failed shots waiting for
 Retry: `heldDraftOf()`), opening another project, closing or reloading the page asks first
-(`src/app/state/leaveDraft.ts`), and offers to apply the draft without generating more. A new draft plans with the
-project's last seed (`lastSeed()`), so after a reload the same request plans the same prompts and reuses the AI shots
+(`src/app/state/leaveDraft.ts`), and offers to apply the draft without generating more or to go back to it. Reload
+and try again (after stems or lyric timing ran out of memory) waits for it (`reloadHeldBack()` in
+`src/app/state/reloadRetry.ts`). A new draft plans with the project's last seed (`lastSeed()`), so after a reload the same request plans the same prompts and reuses the AI shots
 already in Media.
 
 Director text clips carry `meta.director.textRole` (`lyric`, `title`, `emphasis`, `preview`) and

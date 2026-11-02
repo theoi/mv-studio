@@ -1703,3 +1703,51 @@ test('a new draft after a reload plans the version drafted last, so its AI shots
   await expect(page.getByText('Your draft is on the timeline')).toBeVisible({ timeout: 30_000 })
   expect(fal.submits).toHaveLength(paid)
 })
+
+test('Reload and try again after stems run out of memory waits for a draft holding AI shots, and Back to the draft leads to it', async ({
+  page,
+}) => {
+  await stopAfterTwoShots(page)
+  await page.evaluate(() => {
+    const { app, shared } = window.mvStudio
+    app.stems.setStemsServiceForTests({
+      async estimate() {
+        return { downloadBytes: 0, seconds: 230, memoryBytes: 4e9, device: 'wasm' }
+      },
+      separateSong() {
+        return shared.jobs.run({
+          kind: 'analysis.stems',
+          title: 'Separating stems',
+          run: () =>
+            Promise.reject(
+              new shared.JobError(
+                'out-of-memory',
+                'This computer ran out of memory while separating stems.',
+                {
+                  retryable: true,
+                },
+              ),
+            ),
+        })
+      },
+    })
+    app.ui.set({ rightTab: 'assist', assistView: 'stems' })
+  })
+  const panel = page.getByRole('tabpanel', { name: 'Assist' })
+  await panel.getByRole('button', { name: 'Separate stems' }).click()
+  await expect(panel.getByRole('alert')).toContainText('ran out of memory')
+  // The reload would drop the draft, so it waits, saying why, instead of the browser asking "Leave site?".
+  const reload = panel.getByRole('button', { name: 'Reload and try again' })
+  await expect(reload).toBeDisabled()
+  await expect(
+    panel.getByText('Your Director draft isn’t on the timeline yet, and a reload would drop it.'),
+  ).toBeVisible()
+
+  await panel.getByRole('button', { name: 'Back to the draft' }).click()
+  await expect(page.getByText('Generation stopped. 2 shots made so far are kept.')).toBeVisible()
+  await page.getByRole('button', { name: 'Apply without AI shots' }).click()
+  await expect(page.getByText('Your draft is on the timeline')).toBeVisible()
+  await page.evaluate(() => window.mvStudio.app.ui.set({ rightTab: 'assist', assistView: 'stems' }))
+  await expect(reload).toBeEnabled()
+  await expect(panel.getByRole('button', { name: 'Back to the draft' })).toHaveCount(0)
+})

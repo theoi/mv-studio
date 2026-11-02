@@ -38,6 +38,11 @@ export function heldDraft(): HeldDraft | null {
   return holder?.held() ?? null
 }
 
+/** Opens the editor on Assist › Director, where the draft can be applied or retried. */
+export function showDraft(): void {
+  holder?.show()
+}
+
 interface Ask {
   held: HeldDraft
   leave: () => void
@@ -116,6 +121,14 @@ export function leaveDraftText(held: HeldDraft): { title: string; text: string; 
     text: `If you leave, the Director’s draft is gone. Its ${plural(held.made, ai)} ${held.made === 1 ? 'stays' : 'stay'} in Media, but drafting again may mean paying for new ones. Apply and leave puts it on the timeline${placeholders}.`,
     apply: 'Apply and leave',
   }
+}
+
+/** Why Reload and try again waits for the draft (reloadRetry.ts), in the words of the question above. */
+export function reloadDraftNote(held: HeldDraft): string {
+  if (held.kind === 'unapplied')
+    return 'Your Director draft isn’t on the timeline yet, and a reload would drop it.'
+  const one = held.failed === 1
+  return `${plural(held.failed, `AI ${held.unit}`)} in your Director draft still need${one ? 's' : ''} a retry, and after a reload you can’t retry ${one ? 'it' : 'them'}.`
 }
 
 /** Closing or reloading the page asks first while a draft would be lost. */

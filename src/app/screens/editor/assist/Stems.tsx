@@ -19,7 +19,7 @@ import {
   useUnplayableStem,
 } from '../../../state/stems.ts'
 import { pct, useFocusOnFailure, useJob } from './jobState.ts'
-import { reloadBlockers } from '../../../state/reloadRetry.ts'
+import { useReloadHeldBack } from '../../../state/reloadRetry.ts'
 import { OutOfMemoryTips, ReloadAndRetryButton } from './MemoryHelp.tsx'
 import { CancelButton, RunCard, Steps, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -73,6 +73,7 @@ export function StemsView() {
   }, [project.songAssetId, ready, phase])
   const download = estimate?.downloadBytes ?? 0
   const tryAgain = useFocusOnFailure(phase)
+  const reloadHeld = useReloadHeldBack()
 
   if (phase === 'running') {
     // The progress card says what is happening; the subtitle names the song, as Song analysis does.
@@ -103,7 +104,7 @@ export function StemsView() {
   if (phase === 'failed') {
     const memory = job?.error?.code === 'out-of-memory'
     // A failed run focuses its main action (useFocusOnFailure): the reload when it can run.
-    const reloadFocus = memory && reloadBlockers(jobs).length === 0
+    const reloadFocus = memory && !reloadHeld
     return (
       <ToolView
         title="Stems"
