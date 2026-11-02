@@ -784,7 +784,11 @@ function decorationToggle(part: TextDecoration, icon: ReactNode): Action {
     group: 'Clip',
     label: () => (removes() ? `Remove the text ${noun}` : `Add ${words.article} ${noun} to the text`),
     icon,
-    aliases: () => (removes() ? [...words.aliases, `remove ${noun}`, `${noun} off`] : words.aliases),
+    // Its names alone only name the part: removing it takes a word that says so.
+    aliases: () =>
+      removes()
+        ? [`remove ${noun}`, `${noun} off`, ...words.aliases.map((alias) => `remove ${alias}`)]
+        : words.aliases,
     keywords: `text lyrics ${words.keywords} on off`,
     destructive: removes,
     run: (clip) => setDecoration(clip, part, !clip.style[part]),
@@ -1957,7 +1961,7 @@ export const inspectorActions: Action[] = [
     icon: <Highlighter />,
     aliases: () =>
       karaokeOn()
-        ? ['karaoke highlight', 'word highlight', 'karaoke off', 'highlight off', 'remove karaoke']
+        ? ['remove karaoke', 'karaoke off', 'highlight off', 'remove word highlight']
         : ['karaoke highlight', 'word highlight'],
     keywords: 'karaoke highlight words sing along lyrics',
     destructive: karaokeOn,

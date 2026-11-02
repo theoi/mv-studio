@@ -351,7 +351,7 @@ test('Enter on the start of “delete” deletes nothing, and on the whole word 
   expect(await state()).toEqual({ clips: before.clips - 1, undo: before.undo + 1 })
 })
 
-test('with a background on the selected text, Enter on “box” keeps it, and on “remove background” removes it in one undo step', async ({
+test('with a background on the selected text, Enter on “box” or “text box” keeps it, and on “remove background” removes it in one undo step', async ({
   page,
 }) => {
   await openEditor(page)
@@ -380,13 +380,15 @@ test('with a background on the selected text, Enter on “box” keeps it, and o
   const added = await state()
   expect(added.background).toBe(true)
 
-  await search('box')
-  await expect(dialog.getByRole('option', { name: /^Remove the text background/ })).toHaveCount(0)
-  await page.keyboard.press('Enter')
-  expect(await state()).toEqual(added)
-  // The palette, or the page of values its first row opened.
-  for (let i = 0; i < 3 && (await dialog.isVisible()); i++) await page.keyboard.press('Escape')
-  await expect(dialog).toBeHidden()
+  for (const text of ['box', 'text box']) {
+    await search(text)
+    await expect(dialog.getByRole('option', { name: /^Remove the text background/ })).toHaveCount(0)
+    await page.keyboard.press('Enter')
+    expect(await state(), text).toEqual(added)
+    // The palette, or the page of values its first row opened.
+    for (let i = 0; i < 3 && (await dialog.isVisible()); i++) await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+  }
 
   await search('remove background')
   await expect(selected).toHaveText(/^Remove the text background/)
