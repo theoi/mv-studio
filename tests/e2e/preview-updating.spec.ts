@@ -44,4 +44,43 @@ test('the stage says “Updating…” while a slow paused frame decodes, and st
   expect(await stillPending()).toBe(false)
   const time = await page.evaluate(() => window.mvStudio.app.stagePreview()?.getSnapshot().time)
   expect(time).toBeCloseTo(5.5, 2)
+
+  /** Shows 0.2 s, then 5.5 s again, and returns the note's box once it shows. */
+  const slowSeek = async () => {
+    await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 0.2 }))
+    await expect.poll(stillPending, { timeout: 30_000 }).toBe(false)
+    await expect(updating).toHaveCount(0, { timeout: 5_000 })
+    await page.evaluate(() => window.mvStudio.app.ui.set({ playhead: 5.5 }))
+    await expect(updating).toBeVisible({ timeout: 3_000 })
+    const box = await updating.boundingBox()
+    if (!box) throw new Error('The note has no box')
+    return box
+  }
+  const canvas = page.getByRole('img', { name: 'Video preview' })
+
+  // At 200% the frame is larger than the stage: the note is in the stage's visible bottom-right corner, not the
+  // frame's, which is off screen.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ previewZoom: 2 }))
+  const zoomed = await slowSeek()
+  const stage = await canvas.locator('xpath=../..').boundingBox()
+  const frame = await canvas.boundingBox()
+  if (!stage || !frame) throw new Error('No stage')
+  expect(frame.width).toBeGreaterThan(stage.width)
+  expect(zoomed.x).toBeGreaterThanOrEqual(stage.x)
+  expect(zoomed.y).toBeGreaterThanOrEqual(stage.y)
+  // Within the stage, its scroll bars aside.
+  expect(stage.x + stage.width - (zoomed.x + zoomed.width)).toBeGreaterThan(0)
+  expect(stage.x + stage.width - (zoomed.x + zoomed.width)).toBeLessThan(40)
+  expect(stage.y + stage.height - (zoomed.y + zoomed.height)).toBeGreaterThan(0)
+  expect(stage.y + stage.height - (zoomed.y + zoomed.height)).toBeLessThan(40)
+  await expect(updating).toBeHidden({ timeout: 60_000 })
+
+  // In a narrow 9:16 frame the note is its spinner alone, still named for screen readers.
+  await page.evaluate(() => window.mvStudio.app.ui.set({ previewZoom: 'fit' }))
+  await page.getByRole('button', { name: '16:9', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^9:16/ }).click()
+  await expect.poll(async () => (await canvas.boundingBox())?.width ?? 0).toBeLessThan(300)
+  const narrow = await slowSeek()
+  expect(narrow.width).toBeLessThan(30)
+  expect(narrow.height).toBeCloseTo(zoomed.height, 0)
 })
