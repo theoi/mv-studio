@@ -547,6 +547,9 @@ function textClip(t: PlanText, trackId: Id, ctx: Ctx, titleRow = 0): TextClip | 
     ...(t.role === 'title' && t.baseFontSize
       ? { titleLayout: { base: t.baseFontSize, fitted: style.fontSize, y: t.position.y } }
       : {}),
+    ...((t.role === 'lyric' || t.role === 'preview') && t.baseFontSize
+      ? { lineLayout: { base: t.baseFontSize, fitted: style.fontSize } }
+      : {}),
   }
   const clip: TextClip = {
     ...visualBase(trackId, t.start, duration, meta),

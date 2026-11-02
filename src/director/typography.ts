@@ -269,6 +269,9 @@ export function titleStyle(
   }
 }
 
+/** The title-safe area's top and bottom edges, as fractions of the frame height: text stays between them. */
+export const TITLE_SAFE = { top: 0.08, bottom: 0.92 }
+
 /** Frame width in px at a 1080-px-tall canvas. */
 export function frameWidth(aspect: AspectPreset): number {
   return 1080 * ASPECT_RATIO[aspect]
@@ -378,7 +381,11 @@ export function bestSplit(
   if (rows < 1 || n < rows) return undefined
   const allowed = (i: number) => !opensWithArticle(words[i - 1]) && !(hold && closesBracket(words[i]))
   const search = (together: boolean): Split | undefined => {
-    const breaks = (i: number) => allowed(i) && (!together || !opensBracket(words[i - 1]))
+    // Decided once per word: the table asks rows·n² times, and each check runs regular expressions.
+    const ok = Uint8Array.from({ length: n + 1 }, (_, i) =>
+      i > 0 && i < n && allowed(i) && (!together || !opensBracket(words[i - 1])) ? 1 : 0,
+    )
+    const breaks = (i: number) => ok[i] === 1
     // narrowest[left - 1][from]: the narrowest widest row of words[from..] split into `left` rows (Infinity: none).
     const narrowest = [
       Float64Array.from({ length: n + 1 }, (_, from) => (from < n ? width(from, n) : Infinity)),
@@ -511,31 +518,6 @@ export function layoutLine(
     // A word too long for the clip on its own stays the widest row, so a row more would only break up the others.
     if (more && more.widest < last.widest) return laid(more.rows, fitted(more))
     return fewest(fitted(last), fitted)
-  })
-}
-
-/**
- * `words` again in `rows` rows (fewer when there are fewer words, or where no row may end where they would need to)
- * for text drawn in `style`, with the size at which each row fits as in layoutLine: the style's own or smaller, so the
- * text never grows taller than it was laid out.
- */
-export function refitRows(
-  words: string[],
-  rows: number,
-  style: TextStyleSpec,
-  aspect: AspectPreset,
-): { text: string; fontSize: number } {
-  const size = style.fontSize ?? LINE_SIZE[aspect]
-  const limit = rowWidth(style, aspect)
-  const width = (s: string) => textWidth(s, style, size)
-  const run = runWidths(words, style, size)
-  return holdingBrackets(words, size, (hold) => {
-    let split: Split | undefined
-    for (let fewer = Math.min(rows, words.length); !split && fewer >= 1; fewer--)
-      split = bestSplit(words, fewer, run, limit, hold)
-    if (!split) return { text: words.join(' '), fontSize: size }
-    const scale = fitScale(split.rows, width, limit, frameWidth(aspect))
-    return { text: split.rows.join('\n'), fontSize: Math.max(8, Math.floor(size * scale)) }
   })
 }
 

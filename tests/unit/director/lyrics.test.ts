@@ -160,7 +160,7 @@ describe('lyric typography', () => {
     },
   )
 
-  it('shrinks a stressed ending too wide for the clip to fit its row, unless that takes it under half the line’s size', async () => {
+  it('shrinks a stressed ending too wide for the clip to fit its row, the line above it no bigger, unless that takes it under half the line’s size', async () => {
     const draft = async (text: string, aspect: AspectPreset) => {
       const project = makeProject({
         lyrics: LYRICS.map((l) => (l.id === 'l3' ? timedLine('l3', text, 25) : l)),
@@ -179,7 +179,10 @@ describe('lyric typography', () => {
     const style = { ...ending.style, uppercase: ending.style.uppercase ?? true }
     expect(textWidth('unbreakable me', style)).toBeLessThanOrEqual(rowWidth(style, '9:16'))
     expect(ending.style.fontSize).toBeLessThan(wide[1]!.style.fontSize as number)
-    expect(ending.style.fontSize).toBeGreaterThanOrEqual((line.style.fontSize as number) / 2)
+    expect(ending.style.fontSize).toBeGreaterThanOrEqual((line.baseFontSize as number) / 2)
+    // In a still frame the stressed word must not read as the smaller text. A retyped line grows back to its own size.
+    expect(line.style.fontSize).toBeLessThanOrEqual(ending.style.fontSize as number)
+    expect(line.baseFontSize).toBeGreaterThan(ending.style.fontSize as number)
     // In Syne's wide capitals the ending would fit its row only under half the line's size: the line stays whole.
     const project = makeProject({
       lyrics: LYRICS.map((l) => (l.id === 'l3' ? timedLine('l3', 'Hold on to me unbreakable me', 25) : l)),
