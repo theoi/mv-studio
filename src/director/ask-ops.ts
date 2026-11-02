@@ -31,6 +31,7 @@ import {
 import { AUDIO_SOURCES, COLOR_KEYS } from './plan.ts'
 import type { IdMap } from './project-summary.ts'
 import { lyricTextCommands } from './retime.ts'
+import { titleCardCommands } from './titleCard.ts'
 
 export const PROPERTIES = [
   'opacity',
@@ -505,7 +506,8 @@ function applicable(ctx: OpCtx, clips: Clip[], property: Property) {
 function setOp(ctx: OpCtx, op: Extract<Operation, { op: 'set' }>) {
   const value = coerceValue(ctx, op.property, op.value)
   const commands: EditCommand[] = []
-  for (const { clip, target } of applicable(ctx, resolveClips(ctx, op.clips), op.property)) {
+  const pairs = applicable(ctx, resolveClips(ctx, op.clips), op.property)
+  for (const { clip, target } of pairs) {
     if (target.adjustment) commands.push(...ensureAdjustment(clip as VisualClip, target.adjustment))
     for (const path of target.paths) {
       if (target.kind === 'animatable') {
@@ -520,7 +522,14 @@ function setOp(ctx: OpCtx, op: Extract<Operation, { op: 'set' }>) {
       }
     }
   }
-  return apply(ctx, commands)
+  apply(ctx, commands)
+  // A retyped director title or artist lays its title card out again, as leaving the Inspector's text field does.
+  if (op.property === 'text') {
+    for (const { clip } of pairs)
+      if (clip.type === 'text')
+        commands.push(...apply(ctx, titleCardCommands(ctx.scratch.getProject(), clip.id, clip.text)))
+  }
+  return commands
 }
 
 function animateOp(ctx: OpCtx, op: Extract<Operation, { op: 'animate' }>) {

@@ -72,6 +72,7 @@ import {
   type BeatGrid,
 } from './timing.ts'
 import {
+  blockHeight,
   emphasisStart,
   emphasisStyle,
   frameWidth,
@@ -79,6 +80,7 @@ import {
   layoutLine,
   lyricTypography,
   peakStyle,
+  stackTitleCard,
   textWidth,
   titleStyle,
   type LyricTypography,
@@ -1005,10 +1007,6 @@ function behindLines(lines: PlacedLine[], sections: SectionInfo[], shots: PlanSh
   return out
 }
 
-/** Height of laid-out text as a fraction of the frame. */
-const blockHeight = (rows: number, style: TextStyleSpec) =>
-  (rows * (style.lineHeight ?? 1.15) * (style.fontSize ?? 80)) / 1080
-
 /** Width of the widest row as a fraction of the frame. */
 function blockWidth(text: string, style: TextStyleSpec, aspect: EditPlan['aspect']): number {
   return Math.max(...text.split('\n').map((row) => textWidth(row, style))) / frameWidth(aspect)
@@ -1401,38 +1399,24 @@ function buildTexts(
       ? { transitionIn: { kind: 'fade', duration: 0.6 }, transitionOut: { kind: 'fade', duration: 0.6 } }
       : {}
     const artist = input.song.title && titleText === input.song.title ? input.song.artist : undefined
-    const titleLaid = layoutLine(titleText, titleStyle(type, 1.3, 800, 0.12), aspect)
-    const bigStyle = { ...titleStyle(type, 1.3, 800, 0.12), fontSize: titleLaid.fontSize }
-    const smallStyle = titleStyle(type, 0.56, type.style.fontWeight ?? 700, 0.3)
-    const titleH = blockHeight(titleLaid.rows, bigStyle)
-    const artistH = artist ? 0.02 + blockHeight(1, smallStyle) : 0
-    const top = 0.5 - (titleH + artistH) / 2
-    const card: PlanText[] = [
-      {
+    const rows = [{ text: titleText, style: titleStyle(type, 1.3, 800, 0.12) }]
+    if (artist) rows.push({ text: artist, style: titleStyle(type, 0.56, type.style.fontWeight ?? 700, 0.3) })
+    const laid = stackTitleCard(rows, aspect)
+    const card = rows.map(({ style }, i): PlanText => {
+      const row = laid[i] as (typeof laid)[number]
+      return {
         id: newId(),
         sectionId: first.id,
-        start: 0.5,
+        start: i === 0 ? 0.5 : 0.8,
         end: round3(titleEnd),
-        text: titleLaid.text,
-        style: bigStyle,
-        position: { x: 0.5, y: round3(top + titleH / 2) },
+        text: row.text,
+        style: { ...style, fontSize: row.fontSize },
+        baseFontSize: style.fontSize,
+        position: { x: 0.5, y: row.y },
         ...fades,
         role: 'title',
-      },
-    ]
-    if (artist) {
-      card.push({
-        id: newId(),
-        sectionId: first.id,
-        start: 0.8,
-        end: round3(titleEnd),
-        text: artist,
-        style: smallStyle,
-        position: { x: 0.5, y: round3(top + titleH + 0.02 + blockHeight(1, smallStyle) / 2) },
-        ...fades,
-        role: 'title',
-      })
-    }
+      }
+    })
     texts.unshift(...card)
   }
   return texts

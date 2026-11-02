@@ -176,6 +176,8 @@ export const textItemSchema = z
      * Neither is linked to the line for karaoke; `lyricLineId` still names it.
      */
     role: z.enum(['lyric', 'title', 'emphasis', 'preview']).optional(),
+    /** Title cards: the font size the text was laid out from, before any shrinking to fit. */
+    baseFontSize: z.number().min(8).max(400).optional(),
     opacity: z.number().min(0).max(1).optional(),
     scale: z.number().min(0.1).max(4).optional(),
     /** Enters from this position, scale and opacity over `duration` (a preview line rolling up into place). */
