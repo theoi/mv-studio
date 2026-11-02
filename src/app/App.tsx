@@ -5,6 +5,7 @@ import { Editor, SettingsDialog, SetupScreen, VjMode } from './lazy.ts'
 import { preloadDeferred } from './preload.ts'
 import { initHashSync } from './state/hash.ts'
 import { initPersistence, usePersistence } from './state/persistence.ts'
+import { initRetryAfterReload } from './state/reloadRetry.ts'
 import { reportStoppedExport } from './state/stoppedExport.ts'
 import { closeWithToast, set, useUi } from './state/ui.ts'
 import { initUpdateCheck } from './state/update.ts'
@@ -25,6 +26,8 @@ function preloadWhenIdle() {
 export function App() {
   useEffect(initPersistence, [])
   useEffect(initHashSync, [])
+  // After initHashSync, which starts reopening the project the reload's link names.
+  useEffect(initRetryAfterReload, [])
   useEffect(preloadWhenIdle, [])
   useEffect(initUpdateCheck, [])
   useEffect(() => void reportStoppedExport(), [])
