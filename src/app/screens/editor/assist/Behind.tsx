@@ -18,12 +18,12 @@ import {
   type FootageRow,
 } from '../../../state/behind.ts'
 import { pickObject, trackingText } from '../../../state/behindObject.ts'
+import { NO_GRAPHICS_TOOL } from '../../../state/graphics.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
 import { set, toast } from '../../../state/ui.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
 import { webgl2Available } from '../../../../shared/capabilities.ts'
-import { GraphicsNotice } from '../../common/GraphicsNotice.tsx'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -95,7 +95,7 @@ export function BehindView() {
   if (!webgl2Available())
     return (
       <ToolView title="Behind the subject" subtitle="Text sits between the person and the background">
-        <GraphicsNotice />
+        <p className={styles.muted}>{NO_GRAPHICS_TOOL}</p>
       </ToolView>
     )
 

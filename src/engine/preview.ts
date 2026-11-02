@@ -510,7 +510,12 @@ export class PreviewController {
         (worker): FrameRenderer => new WorkerRenderer(worker, this.frames),
         (error: unknown) => {
           console.warn('The preview worker couldn’t start; drawing on the main thread', error)
-          return onMainThread()
+          try {
+            return onMainThread()
+          } catch (mainError) {
+            // A worker that timed out or crashed gets the stage's restart; only one that can't draw makes this final.
+            throw JobError.from(error).code === 'unsupported' ? mainError : error
+          }
         },
       )
       .then((renderer) => {

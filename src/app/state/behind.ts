@@ -846,7 +846,8 @@ export function checkFootage(assetIds: readonly Id[]): JobHandle<void> | undefin
  * (cached per clip media); a clip whose part of the footage has no one to cut out is left as it is.
  */
 export function putBehind(clipIds: readonly string[]): JobHandle<CutoutResult> | undefined {
-  if (isRunning(JOB_KINDS.cutout)) return undefined
+  // The person models (MediaPipe) need WebGL even on their CPU delegate, and the cutout is drawn with it.
+  if (!webgl2Available() || isRunning(JOB_KINDS.cutout)) return undefined
   // Two person tracks of the same footage at once could each make a mask. The re-make runs again after the cutout.
   const stopped = remake
   stopped?.cancel()

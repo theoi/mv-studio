@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { create } from 'zustand'
 import type { Clip, EditCommand, Id, ImageClip, Project } from '../../model/index.ts'
 import { mediaStore } from '../../media/mediaStore.ts'
+import { webgl2Available } from '../../shared/capabilities.ts'
 import { jobs, type JobHandle } from '../../shared/jobs.ts'
 import type { CameraMoveResult, CameraMovesResult, CameraPreset, SafeAmounts } from '../../vision/index.ts'
 import { CAMERA_EFFECT_ID, DEFAULT_CAMERA_PRESET } from '../../vision/render/cameraEffect.ts'
@@ -109,7 +110,8 @@ export function startCameraMoves(
   preset: CameraPreset,
   intensity: number | undefined,
 ): JobHandle<CameraMovesResult> | undefined {
-  if (isRunning(JOB_KINDS.camera) || !clipIds.length) return undefined
+  // The move is drawn by the compositor: without WebGL 2 it could be neither seen nor exported.
+  if (!webgl2Available() || isRunning(JOB_KINDS.camera) || !clipIds.length) return undefined
   const project = editor.getProject()
   const names = clipIds.map((id) => {
     const clip = project.clips[id]

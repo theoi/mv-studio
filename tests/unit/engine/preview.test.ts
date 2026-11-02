@@ -243,6 +243,28 @@ describe('a preview nothing can draw for', () => {
     expect(logged.mock.calls.filter(([message]) => message === 'Preview render failed')).toEqual([])
     preview.dispose()
   })
+
+  it('keeps the error of a render worker that timed out, which a new preview may get past, though this thread can’t draw', async () => {
+    vi.stubGlobal('Worker', class {})
+    vi.stubGlobal('VideoFrame', class {})
+    vi.mocked(startPreviewWorker).mockRejectedValueOnce(
+      new JobError('timeout', 'The preview worker stopped responding'),
+    )
+    vi.mocked(WebGLCompositor).mockImplementationOnce(function WebGLCompositor() {
+      throw new JobError('unsupported', 'WebGL2 is not available in this browser')
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const preview = new PreviewController({
+      canvas: { transferControlToOffscreen: () => ({}) } as unknown as HTMLCanvasElement,
+      media: { getFile: async () => new Blob() },
+      renderer: 'worker',
+    })
+    preview.setViewport(320, 180, 1)
+    preview.setProject(createProject())
+    await vi.waitFor(() => expect(preview.getSnapshot().error?.code).toBe('timeout'))
+    preview.dispose()
+  })
 })
 
 describe('scrubbing on the render worker', () => {

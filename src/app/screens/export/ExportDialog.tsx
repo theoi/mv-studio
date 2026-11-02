@@ -1023,8 +1023,8 @@ function NoGraphicsDialog() {
       description="Make one or more videos from this project."
       width={480}
       footer={
-        <Button variant="primary" onClick={close} className={styles.noGraphicsDone}>
-          Done
+        <Button variant="primary" onClick={close} className={styles.noGraphicsClose}>
+          Close
         </Button>
       }
     >

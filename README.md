@@ -82,7 +82,7 @@ The Start screen has a starting point for each kind, plus a blank project and **
 
 MV Studio targets the latest desktop **Google Chrome** and **Microsoft Edge**. It needs WebGL2, WebCodecs (for decoding and MP4 export) and the browser's private file storage (OPFS), which both provide. Other browsers may work but are not tested. Phone and tablet layouts are not planned.
 
-Showing and exporting videos needs graphics acceleration (WebGL2). Chrome and Edge don't offer it without a GPU they can use, as in some virtual machines and remote desktops. See [Performance](#performance).
+Previewing and exporting videos needs graphics acceleration (WebGL2). Chrome and Edge don't offer it without a GPU they can use, as in some virtual machines and remote desktops. See [Performance](#performance).
 
 ## AI models and downloads
 
@@ -142,7 +142,7 @@ Developer notes on the providers, error states and model choice are in [src/clou
 
 ## Performance
 
-- **Graphics acceleration is required.** The preview, every export, VJ mode and 3D camera moves are drawn with WebGL2, and the person models behind Behind the subject run on it too. Chrome and Edge offer WebGL2 only with graphics acceleration on and a GPU they can use (any recent integrated or discrete GPU). Without one, for example in some virtual machines, over some remote desktops, with **Use graphics acceleration when available** turned off in `chrome://settings/system`, or with a graphics driver the browser blocks, they don't fall back to drawing in software: the start screen says so, the preview stays empty, and Export, VJ mode, 3D camera moves and Behind the subject are unavailable. Song analysis, editing and saving still work. To check, open `chrome://gpu`: "WebGL2: Unavailable" under Graphics Feature Status means MV Studio can't draw there.
+- **Graphics acceleration is required.** The preview, every export, VJ mode and 3D camera moves are drawn with WebGL2, and the person models behind Behind the subject run on it too. Chrome and Edge offer WebGL2 only with graphics acceleration on and a GPU they can use (any recent integrated or discrete GPU). Without one, for example in some virtual machines, over some remote desktops, with **Use graphics acceleration when available** turned off in `chrome://settings/system` (`edge://settings/system` in Edge), or with a graphics driver the browser blocks, they don't fall back to drawing in software: the start screen says so, the preview stays empty, and Export, VJ mode, 3D camera moves and Behind the subject are unavailable. Song analysis, editing and saving still work. To check, open `chrome://gpu`: "WebGL2: Unavailable" under Graphics Feature Status means MV Studio can't draw there.
 - **With a GPU**, the preview is drawn on the GPU at full resolution, and AI models use WebGPU where they support it.
 - **Preview and export speeds measured without a GPU** in this documentation were measured with software rendering, the slowest case: Chrome started with `--enable-unsafe-swiftshader`, which the automated tests also use, on a 4-core computer without a graphics card. A user's Chrome doesn't draw in software by default.
 - **The preview adapts.** When your computer can't keep up, the preview lowers its resolution to keep playback smooth, and raises it again when it can. Export always renders at full quality, so the file matches what you designed.
@@ -172,7 +172,7 @@ Developer notes on the providers, error states and model choice are in [src/clou
 
 **Export says the browser can't encode H.264 at this size.** Choose a lower resolution. Use Google Chrome or Microsoft Edge: some Chromium builds ship without the H.264 encoder.
 
-**The preview stays empty, and Export and VJ mode are unavailable.** The browser offers no graphics acceleration (WebGL2), as the start screen says. Turn on **Use graphics acceleration when available** in the browser's System settings and restart the browser. In a virtual machine or over remote desktop, it may not be available at all. See [Performance](#performance).
+**The preview stays empty, and Export and VJ mode are unavailable.** The browser offers no graphics acceleration (WebGL2), as the start screen says. Turn on **Use graphics acceleration when available** at `chrome://settings/system` (`edge://settings/system` in Edge) and restart the browser. In a virtual machine or over remote desktop, it may not be available at all. See [Performance](#performance).
 
 **The preview stutters.** Turn on graphics acceleration (see [Performance](#performance)) and close other heavy tabs. The preview lowers its resolution on its own when needed. The [benchmark page](https://theoi.github.io/mv-studio/?bench=1) shows what your computer manages.
 

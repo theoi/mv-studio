@@ -122,17 +122,18 @@ function drawsWebgl2(canvas: () => OffscreenCanvas | HTMLCanvasElement): boolean
   }
 }
 
-let webgl2: boolean | undefined
+let webgl2 = false
 
 /**
  * Whether this page or worker can draw with WebGL2, which the preview, exports, VJ mode and the 3D camera need: on an
  * OffscreenCanvas (the render worker's) or a page canvas (the main-thread fallback). Chrome without a usable GPU (a
  * virtual machine, a remote desktop, graphics acceleration turned off, a blocklisted driver) offers neither, unless
- * started with --enable-unsafe-swiftshader, which Playwright adds to every launch. Checked once, as each check makes a
- * context.
+ * started with --enable-unsafe-swiftshader, which Playwright adds to every launch. A yes is kept, as each check makes
+ * a context; a no is checked again next time (a failed check holds no context), so a passing failure, such as the GPU
+ * process restarting, doesn't last until a reload.
  */
 export function webgl2Available(): boolean {
-  webgl2 ??=
+  webgl2 ||=
     (typeof OffscreenCanvas !== 'undefined' && drawsWebgl2(() => new OffscreenCanvas(1, 1))) ||
     (typeof document !== 'undefined' && drawsWebgl2(() => document.createElement('canvas')))
   return webgl2

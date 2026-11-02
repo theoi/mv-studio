@@ -748,15 +748,19 @@ function LocalPage() {
         title="Graphics acceleration (WebGL 2)"
         desc={
           caps && !caps.webgl2
-            ? `Needed to show and export videos. ${NO_GRAPHICS_FIX}`
-            : 'Shows and exports your video.'
+            ? `Needed to preview and export videos. ${NO_GRAPHICS_FIX}`
+            : 'Previews and exports your video.'
         }
       />
       <Capability
         id="webgpu"
         ok={caps?.webgpu.available}
-        title="GPU acceleration"
-        desc={caps?.webgpu.adapter ? `WebGPU on ${caps.webgpu.adapter}.` : 'Speeds up AI models with WebGPU.'}
+        title="WebGPU for AI models"
+        desc={
+          caps?.webgpu.adapter
+            ? `WebGPU on ${caps.webgpu.adapter}.`
+            : 'Speeds up the AI models that support it.'
+        }
       />
       <Capability
         id="webcodecs"

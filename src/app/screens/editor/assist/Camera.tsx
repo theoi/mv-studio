@@ -23,13 +23,12 @@ import {
   useDepthDownload,
   type CameraMotion,
 } from '../../../state/camera.ts'
-import { graphicsUnavailable } from '../../../state/graphics.ts'
+import { graphicsUnavailable, NO_GRAPHICS_TOOL } from '../../../state/graphics.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
 import { editor, useProject } from '../../../state/project.ts'
 import { showClips } from '../../../state/reveal.ts'
 import { set, toast, useUi } from '../../../state/ui.ts'
 import { useThumbnail } from '../../../state/thumbs.ts'
-import { GraphicsNotice } from '../../common/GraphicsNotice.tsx'
 import { dismiss, pct, useJob } from './jobState.ts'
 import { CancelButton, Field, RunCard, ToolView } from './ToolView.tsx'
 import styles from './Assist.module.css'
@@ -85,6 +84,7 @@ export function CameraView() {
   const targets = cameraTargets(project, selection)
   // The move is drawn by the compositor: without WebGL 2 it could be neither seen nor exported.
   const noGraphics = !!graphicsUnavailable()
+  const noGraphicsId = useId()
   const download = useDepthDownload(phase === 'idle' && targets.length > 0 && !noGraphics)
   const apply = () => {
     if (noGraphics) return
@@ -255,12 +255,18 @@ export function CameraView() {
       subtitle="Depth motion on still images"
       footer={
         <>
+          {noGraphics && (
+            <p id={noGraphicsId} className={styles.muted}>
+              {NO_GRAPHICS_TOOL}
+            </p>
+          )}
           <Button
             variant="primary"
             block
             onClick={apply}
             disabled={!targets.length}
             aria-disabled={noGraphics || undefined}
+            aria-describedby={noGraphics ? noGraphicsId : undefined}
           >
             {targets.length ? `Apply to ${plural(targets.length, 'image')}` : 'Apply to images'}
           </Button>
@@ -271,7 +277,6 @@ export function CameraView() {
         </>
       }
     >
-      <GraphicsNotice />
       <Field label="Motion">
         <Segmented<CameraMotion>
           block

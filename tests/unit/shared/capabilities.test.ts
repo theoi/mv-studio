@@ -43,4 +43,26 @@ describe('webgl2Available', () => {
     expect(await check(false, false)).toMatchObject({ first: false, second: false })
     expect(await check(null, null)).toMatchObject({ first: false, second: false })
   })
+
+  it('asks again after a no, so a passing failure (the GPU process restarting) doesn’t last until a reload', async () => {
+    vi.resetModules()
+    const gpu = { draws: false, contexts: 0 }
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext() {
+          if (!gpu.draws) return null
+          gpu.contexts++
+          return { getExtension: () => ({ loseContext: () => undefined }) }
+        }
+      },
+    )
+    const { webgl2Available } = await import('../../../src/shared/capabilities.ts')
+    expect(webgl2Available()).toBe(false)
+    gpu.draws = true
+    expect(webgl2Available()).toBe(true)
+    gpu.draws = false
+    expect(webgl2Available()).toBe(true)
+    expect(gpu.contexts).toBe(1)
+  })
 })
