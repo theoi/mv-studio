@@ -611,7 +611,7 @@ export const actions: Action[] = [
     group: 'Assist',
     label: 'Draft a video with the director',
     icon: <Clapperboard />,
-    aliases: ['describe your video'],
+    aliases: ['describe your video', 'music video'],
     keywords: 'ai auto generate whole',
     run: () => openAssist('director'),
   },
@@ -809,7 +809,7 @@ export const actions: Action[] = [
     label: 'Delete',
     icon: <Trash2 />,
     shortcut: 'delete',
-    aliases: ['remove clip'],
+    aliases: ['remove clip', 'erase', 'trash'],
     keywords: 'remove clip',
     destructive: true,
     run: () => void deleteSelection(),
@@ -832,6 +832,7 @@ export const actions: Action[] = [
     group: 'Edit',
     label: 'Close gap',
     icon: <FoldHorizontal />,
+    aliases: ['delete gap'],
     keywords: 'ripple remove empty space before clip later clips move left',
     run: () => {
       const gap = gapForPalette(project(), get().selection, get().playhead)
@@ -1403,7 +1404,9 @@ export const actions: Action[] = [
     keywords: 'start video',
     run: () => set({ screen: 'start' }),
   },
-  newProjectOf('lyric', 'New lyric video…', ['lyric', 'karaoke'], 'kinetic type words timed vocals'),
+  newProjectOf('lyric', 'New lyric video…', ['lyric', 'karaoke'], 'kinetic type words timed vocals', [
+    'karaoke video',
+  ]),
   newProjectOf(
     'visualizer',
     'New visualizer…',
@@ -1413,7 +1416,7 @@ export const actions: Action[] = [
   newProjectOf('footage', 'New beat-cut video…', ['beat', 'cut', 'footage', 'clips', 'montage'], 'sections', [
     'beat-cut footage',
   ]),
-  newProjectOf('ai', 'New AI music video…', ['ai', 'director', 'idea'], 'draft'),
+  newProjectOf('ai', 'New AI music video…', ['ai', 'director', 'idea', 'music'], 'draft'),
   newProjectOf('blank', 'New blank project', ['blank', 'empty', 'scratch'], 'timeline'),
   {
     id: 'openRecent',

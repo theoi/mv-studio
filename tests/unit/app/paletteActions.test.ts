@@ -347,7 +347,16 @@ describe('command palette coverage', () => {
       ['duplicate', 'duplicate'],
       ['cut', 'cut'],
       ['close gap', 'closeGap'],
+      ['delete gap', 'closeGap'],
+      ['erase', 'delete'],
+      ['trash', 'delete'],
+      ['make a karaoke video', 'newProject.lyric'],
     ])('“%s” lists %s first', (search, id) => withSelection(() => expect(ids(search)[0]).toBe(id))())
+
+    it(
+      'lists the director and New AI music video… for “music video”',
+      withSelection(() => expect(ids('music video').slice(0, 2)).toEqual(['director', 'newProject.ai'])),
+    )
 
     it(
       'lists Close gap first with no gap to close, and never Delete and close gap for it',
@@ -363,10 +372,20 @@ describe('command palette coverage', () => {
     it(
       'lists an action that deletes only for a search that names it in full',
       withSelection(() => {
-        for (const search of ['close gap', 'gap', 'ripple', 'clip', 'delete', 'project', 'remove'])
+        for (const search of [
+          'close gap',
+          'gap',
+          'delete gap',
+          'ripple',
+          'clip',
+          'delete',
+          'project',
+          'remove',
+        ])
           expect(ids(search), search).not.toContain(
             search === 'delete' || search === 'remove' ? 'deleteProject' : 'rippleDelete',
           )
+        for (const search of ['erase', 'trash']) expect(ids(search), search).toEqual(['delete'])
         for (const search of ['clip', 'project']) expect(ids(search), search).not.toContain('delete')
         expect(ids('ripple delete')[0]).toBe('rippleDelete')
         expect(ids('delete and close gap')[0]).toBe('rippleDelete')
@@ -390,6 +409,19 @@ describe('command palette coverage', () => {
       expect(paletteResults('move track up')[0]?.id).toBe('trackUp')
       set({ selection: { type: 'none' } })
       expect(paletteResults('move track down')[0]?.id).toBe('trackDown')
+    } finally {
+      set({ selection: before })
+    }
+  })
+
+  it('lists New lyric video… first for a karaoke video, even with a lyric line selected, whose karaoke rows can run', () => {
+    const before = get().selection
+    const line = Object.values(editor.getProject().clips).find((c) => c.type === 'text' && c.lyricLineId)!
+    try {
+      select({ type: 'clip', id: line.id })
+      const ids = paletteResults('make a karaoke video').map((a) => a.id)
+      expect(ids[0]).toBe('newProject.lyric')
+      expect(ids.slice(1, 3)).toContain('karaokeFill')
     } finally {
       set({ selection: before })
     }
