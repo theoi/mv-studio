@@ -1,7 +1,15 @@
 import type { AudioAnalysis, EditCommand, Id } from '../model/index.ts'
 import { hasFoundBars } from '../model/queries.ts'
-import { JobError, jobs, type JobHandle, type JobRunner } from '../shared/jobs.ts'
+import {
+  JobError,
+  jobs,
+  type JobContext,
+  type JobHandle,
+  type JobRunner,
+  type JobSpec,
+} from '../shared/jobs.ts'
 import { createWorkerClient, runWorkerCall, type WorkerClient } from '../shared/worker.ts'
+import type { BeatThisLogits } from './beats/beatThis.ts'
 import type { DecodedAudio } from './beats/fast.ts'
 import { barsOfFour, fitDownbeats } from './beats/grid.ts'
 import { decodeAudioFile } from './decode.ts'
@@ -32,6 +40,12 @@ export class SongAnalysisService {
   private readonly runner: JobRunner
   private readonly createWorker: () => Worker
   private readonly decode: (file: Blob) => Promise<DecodedAudio>
+  /** Jobs started and not ended yet. */
+  private active = 0
+  /** The current worker may have loaded the Beat This! model. */
+  private holdsModel = false
+  /** Beat This! output of recent songs, given to a fresh worker so it doesn't run the network again. */
+  private readonly logits = new Map<Id, BeatThisLogits>()
 
   constructor(options: SongAnalysisOptions = {}) {
     this.runner = options.runner ?? jobs
@@ -51,9 +65,56 @@ export class SongAnalysisService {
     return this.client
   }
 
+  /**
+   * Runs `spec` as a job. Once no job is left and the worker may have loaded the Beat This! model, the worker is let
+   * go: ONNX Runtime's WebAssembly memory (about 0.9 GB after a 4 min song) never shrinks while the worker lives, and
+   * stem separation, which often comes next, needs it. A job started after that gets a fresh worker.
+   */
+  private run<T>(spec: JobSpec<T>): JobHandle<T> {
+    this.active++
+    const handle = this.runner.run(spec)
+    // Attached before any caller can await the job, so a job started in reaction to this one's end counts as running.
+    const ended = () => {
+      this.active--
+      if (this.active === 0 && this.holdsModel) this.dispose()
+    }
+    handle.promise.then(ended, ended)
+    return handle
+  }
+
+  /** Beat This! bars and beats. The model is loaded only for a song whose Beat This! output is not known yet. */
+  private async refineBeats(
+    assetId: Id,
+    audio: DecodedAudio | undefined,
+    ctx: JobContext,
+  ): Promise<RefinedFields> {
+    const logits = this.logits.get(assetId)
+    if (!logits) this.holdsModel = true
+    const refined = await runWorkerCall(
+      this.worker(),
+      'refineBeats',
+      { assetId, audio, logits },
+      ctx,
+      audio?.channels.map((c) => c.buffer),
+    )
+    await this.keepLogits(assetId)
+    return refined
+  }
+
+  /** Keeps the worker's Beat This! output for `assetId` (the 8 most recent songs, as the worker does). */
+  private async keepLogits(assetId: Id): Promise<void> {
+    const logits = await this.worker()
+      .call('logitsOf', { assetId })
+      .catch(() => null)
+    if (!logits) return
+    this.logits.delete(assetId)
+    this.logits.set(assetId, logits)
+    while (this.logits.size > 8) this.logits.delete(this.logits.keys().next().value as Id)
+  }
+
   /** Fast analysis. The audio's channel buffers are transferred to the worker (they become unusable here). */
   analyze(assetId: Id, audio: DecodedAudio): JobHandle<AudioAnalysis> {
-    return this.runner.run({
+    return this.run({
       kind: 'analysis.song',
       title: 'Analyzing the song',
       run: (ctx) =>
@@ -73,7 +134,7 @@ export class SongAnalysisService {
    * hold the song.
    */
   refine(assetId: Id, source?: DecodedAudio | (() => Promise<Blob>)): JobHandle<RefinedFields> {
-    return this.runner.run({
+    return this.run({
       kind: 'analysis.downbeats',
       title: 'Finding bars and refining beats',
       run: async (ctx) => {
@@ -83,13 +144,7 @@ export class SongAnalysisService {
           audio = await this.decode(await source())
           ctx.throwIfCancelled()
         }
-        return runWorkerCall(
-          this.worker(),
-          'refineBeats',
-          { assetId, audio },
-          ctx,
-          audio?.channels.map((c) => c.buffer),
-        )
+        return this.refineBeats(assetId, audio, ctx)
       },
     })
   }
@@ -100,7 +155,7 @@ export class SongAnalysisService {
    * cannot be downloaded), the fast analysis is returned.
    */
   analyzeAgain(assetId: Id, file: () => Promise<Blob>): JobHandle<AudioAnalysis> {
-    return this.runner.run({
+    return this.run({
       kind: 'analysis.song',
       title: 'Analyzing the song',
       run: async (ctx) => {
@@ -116,8 +171,7 @@ export class SongAnalysisService {
           transfer,
         )
         try {
-          const refined = await runWorkerCall(this.worker(), 'refineBeats', { assetId }, part(ctx, 0.25, 1))
-          return { ...fast, ...refined }
+          return { ...fast, ...(await this.refineBeats(assetId, undefined, part(ctx, 0.25, 1))) }
         } catch (error) {
           if (error instanceof JobError && error.code === 'cancelled') throw error
           return fast
@@ -135,7 +189,7 @@ export class SongAnalysisService {
     bpm: number,
     file: () => Promise<Blob>,
   ): JobHandle<Pick<AudioAnalysis, 'tempo' | 'beats' | 'downbeats'>> {
-    return this.runner.run({
+    return this.run({
       kind: 'analysis.tempo',
       title: 'Following your tempo',
       run: async (ctx) => {
@@ -147,12 +201,17 @@ export class SongAnalysisService {
           return runWorkerCall(
             this.worker(),
             'trackAtTempo',
-            { assetId, bpm, audio },
+            { assetId, bpm, audio, logits: this.logits.get(assetId) },
             part(ctx, 0.1, 1),
             transfer,
           )
         }
-        return runWorkerCall(this.worker(), 'trackAtTempo', { assetId, bpm }, ctx)
+        return runWorkerCall(
+          this.worker(),
+          'trackAtTempo',
+          { assetId, bpm, logits: this.logits.get(assetId) },
+          ctx,
+        )
       },
     })
   }
@@ -165,6 +224,7 @@ export class SongAnalysisService {
   dispose(): void {
     this.client?.terminate()
     this.client = undefined
+    this.holdsModel = false
   }
 }
 
