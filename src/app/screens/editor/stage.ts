@@ -28,14 +28,14 @@ let current: PreviewController | null = null
 // The project the preview was last given, so the same one is not drawn twice.
 let shown: Project | null = null
 /** Holds thumbnails until the showing preview shows the draft (see connectPreview). */
-let holdForDraft: (() => void) | null = null
+let holdForDraft: (() => Promise<void>) | null = null
 
 /**
  * Right after a draft is dispatched: thumbnails wait until the stage preview shows it, as they wait for a project's
- * first frame, for DRAFT_THUMBNAIL_HOLD_MS at most.
+ * first frame, for DRAFT_THUMBNAIL_HOLD_MS at most. Resolves when they stop waiting (at once without a preview).
  */
-export function holdThumbnailsForDraft(): void {
-  holdForDraft?.()
+export function holdThumbnailsForDraft(): Promise<void> {
+  return holdForDraft?.() ?? Promise.resolve()
 }
 
 /**
@@ -218,6 +218,7 @@ export function connectPreview(
     const hold = previewShown(preview, ms)
     decodeThumbnailsAfter(hold.shown)
     releaseThumbnails = hold.stop
+    return hold.shown
   }
   holdForDraft = () => holdThumbnails(DRAFT_THUMBNAIL_HOLD_MS)
   const showProject = (project: Project) => {

@@ -342,6 +342,85 @@ test('offers the local draft while a slow model is still planning', async ({ pag
   expect((await draftState(page)).director).toBeGreaterThan(10)
 })
 
+/** The clip footage analysis is on, with its step and progress (which goes up with each frame it decodes). */
+const analyzing = (page: Page) =>
+  page.evaluate(() => window.mvStudio.app.footage.useFootage.getState().indexing?.current ?? null)
+
+/**
+ * Starts footage analysis of the sample's clips with model-free embeddings, held at its first frame until
+ * `window.endHold()` is called. Returns where it waits.
+ */
+async function analyzeHeld(page: Page) {
+  expect(await page.evaluate(() => window.mvStudio.app.footage.useFootage.getState().service)).toBeNull()
+  await page.evaluate(() => {
+    const footage = window.mvStudio.app.footage
+    const vector = (n: number) => ({
+      dim: 2,
+      data: new Float32Array(Array.from({ length: n }, () => [0.6, 0.8]).flat()),
+    })
+    footage.setVisionBackendsForTests({
+      onnx: () => ({
+        async embedImages({ bitmaps }: { bitmaps: ImageBitmap[] }) {
+          for (const b of bitmaps) b.close()
+          return vector(bitmaps.length)
+        },
+        async embedTexts({ texts }: { texts: string[] }) {
+          return vector(texts.length)
+        },
+      }),
+      segmentation: () => {
+        throw new Error('unused')
+      },
+    })
+    const w = window as unknown as { endHold: () => void }
+    footage.holdAnalysisUntil(new Promise<void>((resolve) => (w.endHold = resolve)), 100_000)
+    footage.analyzeFootageNow()
+  })
+  await expect
+    .poll(() => analyzing(page), { timeout: 30_000 })
+    .toMatchObject({ step: 'matching', fraction: 0 })
+  return analyzing(page)
+}
+
+const endHold = (page: Page) => page.evaluate(() => (window as unknown as { endHold: () => void }).endHold())
+
+/** Resolves once footage analysis has decoded a frame since `before`, failing after `ms`. */
+const analysisMovesOn = (page: Page, before: unknown, ms: number) =>
+  expect
+    .poll(async () => JSON.stringify(await analyzing(page)), { timeout: ms })
+    .not.toBe(JSON.stringify(before))
+
+test('a draft cancelled while it plans lets footage analysis go on at once', async ({ page }) => {
+  await recordRequests(page, 'http://localhost:11434/v1/chat/completions', () => new Promise(() => {}))
+  await openDirector(page, { llm: OLLAMA })
+  const before = await analyzeHeld(page)
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
+  // The draft holds analysis while it plans, so the earlier hold ending lets no frame through.
+  await endHold(page)
+  await page.waitForTimeout(1000)
+  expect(await analyzing(page)).toEqual(before)
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
+  // Not when the planning hold's 60 s are up.
+  await analysisMovesOn(page, before, 2_000)
+})
+
+test('a plan waiting for its price to be accepted lets footage analysis go on', async ({ page }) => {
+  await recordRequests(page, /https:\/\/(queue\.)?fal\.run\/.*/, (route) =>
+    route.fulfill({ status: 500, headers: CORS, body: '{}' }),
+  )
+  await openDirector(page, { falKey: 'key-id:key-secret', alwaysConfirmPaid: true })
+  const before = await analyzeHeld(page)
+  await page.getByRole('radio', { name: 'Mix' }).click()
+  await page.getByRole('button', { name: 'Draft video' }).click()
+  await endHold(page)
+  await expect(page.getByRole('button', { name: /^Generate \d+ shots? · about \$\d+\.\d\d$/ })).toBeVisible({
+    timeout: 30_000,
+  })
+  await analysisMovesOn(page, before, 2_000)
+})
+
 test('shows the price of AI shots and asks before spending anything', async ({ page }, testInfo) => {
   const fal = await recordRequests(page, /https:\/\/(queue\.)?fal\.run\/.*/, (route) =>
     route.fulfill({ status: 500, headers: CORS, body: '{}' }),

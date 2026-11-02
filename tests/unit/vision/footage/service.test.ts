@@ -35,7 +35,12 @@ function videoAsset(id: string, duration = 10): Asset {
   }
 }
 
-type TaskArg = { signal?: AbortSignal; onProgress?: (p: { fraction?: number }) => void; fps?: number }
+type TaskArg = {
+  signal?: AbortSignal
+  onProgress?: (p: { fraction?: number }) => void
+  fps?: number
+  ready?: () => Promise<void>
+}
 
 /** Subjects found in a clip: a face, or nobody when the clip id says so. */
 function subjectTrack(source: FrameSource): SubjectTrack {
@@ -70,6 +75,7 @@ function setup(
     gateBlank?: boolean
     blankCheckStallMs?: number
     showsSomething?: (id: string) => boolean
+    ready?: () => Promise<void>
     /** Called when a clip's frame source is let go. */
     onDispose?: (id: string) => void
   } = {},
@@ -138,6 +144,7 @@ function setup(
     }),
     ...(options.blankCheckStallMs ? { blankCheckStallMs: options.blankCheckStallMs } : {}),
     ...(options.showsSomething ? { showsSomething: (a: Asset) => options.showsSomething!(a.id) } : {}),
+    ...(options.ready ? { ready: options.ready } : {}),
   })
   const tick = () => new Promise((r) => setTimeout(r, 0))
   const release = async (id: string, error?: unknown) => {
@@ -353,6 +360,20 @@ describe('background footage analysis', () => {
     expect(disposed).toHaveLength(4)
     expect(indexClip).toHaveBeenCalledTimes(4)
   })
+  it('makes matching and subject tracking wait at the app’s gate, but not the fast blank check', async () => {
+    const ready = async () => undefined
+    const { service, release, indexClip, subjects, peakLuma } = setup(undefined, {
+      ready,
+      peakLuma: () => 120,
+    })
+    service.indexing.start()
+    for (const id of ['city', 'ocean', 'crowd', 'misc']) await release(id)
+    expect(indexClip.mock.calls.map(([, o]) => o?.ready)).toEqual(Array(4).fill(ready))
+    expect(subjects.mock.calls.map(([, o]) => o?.ready)).toEqual(Array(4).fill(ready))
+    expect(peakLuma).toHaveBeenCalledTimes(4)
+    expect(peakLuma.mock.calls.map(([, o]) => o)).toEqual(Array(4).fill({ frames: 8, enough: 16 }))
+  })
+
   it('drops the run of a project that was closed', async () => {
     const { editor, service, tick, indexed } = setup()
     service.indexing.start()

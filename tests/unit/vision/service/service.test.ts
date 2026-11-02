@@ -332,4 +332,21 @@ describe('vision service', () => {
     expect(b).toEqual(a)
     expect(onnx.calls.embedImages.length).toBe(1)
   })
+
+  it('waits at the caller’s gate before each frame it decodes for a clip index or a subject track', async () => {
+    const { service } = setup()
+    let waits = 0
+    const ready = async () => {
+      waits++
+    }
+    const clip = fakeSource({ duration: 2, mediaId: 'gated-index' })
+    await service.indexClip(clip.source, { ready })
+    expect(clip.opened.length).toBeGreaterThan(0)
+    expect(waits).toBe(clip.opened.length)
+    waits = 0
+    const people = fakeSource({ duration: 2, mediaId: 'gated-subjects' })
+    await service.subjects(people.source, { ready })
+    expect(people.opened.length).toBeGreaterThan(0)
+    expect(waits).toBe(people.opened.length)
+  })
 })

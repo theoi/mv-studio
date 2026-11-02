@@ -1,8 +1,11 @@
-import { beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  analysisReady,
   checkClipsForBlank,
   clipTags,
   footageDownloadNote,
+  holdAnalysisUntil,
+  holdAnalysisWhile,
   waitForMatching,
 } from '../../../src/app/state/footage.ts'
 import { editor, loadDemoProject } from '../../../src/app/state/project.ts'
@@ -127,4 +130,97 @@ it('stops waiting on abort, and cancels the analysis only when the wait started 
     expect(indexer.cancelled).toBe(cancelOnAbort ? 1 : 0)
     expect(indexer.listening()).toBe(0)
   }
+})
+
+describe('holding footage analysis', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** Whether `promise` has resolved, once pending callbacks have run. */
+  async function settled(promise: Promise<void>): Promise<boolean> {
+    let done = false
+    void promise.then(() => (done = true))
+    await vi.advanceTimersByTimeAsync(0)
+    return done
+  }
+
+  it('makes its next frame wait until the hold’s work is done, or has failed', async () => {
+    vi.useFakeTimers()
+    expect(await settled(analysisReady())).toBe(true)
+    let finish = () => {}
+    holdAnalysisUntil(new Promise<void>((resolve) => (finish = resolve)))
+    const waiting = analysisReady()
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(await settled(waiting)).toBe(false)
+    finish()
+    expect(await settled(waiting)).toBe(true)
+    let fail = (_error: Error) => {}
+    holdAnalysisUntil(new Promise<void>((_, reject) => (fail = reject)))
+    const failing = analysisReady()
+    expect(await settled(failing)).toBe(false)
+    fail(new Error('The draft failed'))
+    expect(await settled(failing)).toBe(true)
+  })
+
+  it('waits 5 s at most for a hold unless told otherwise, and for holds made while it waits', async () => {
+    vi.useFakeTimers()
+    holdAnalysisUntil(new Promise(() => undefined))
+    const waiting = analysisReady()
+    await vi.advanceTimersByTimeAsync(3_000)
+    holdAnalysisUntil(new Promise(() => undefined), 4_000)
+    // The first hold is over at 5 s; the second goes on until 7 s.
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(await settled(waiting)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(await settled(waiting)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await settled(waiting)).toBe(true)
+    expect(await settled(analysisReady())).toBe(true)
+  })
+
+  it('holds while a still is pending, 5 s at most each time, and not again until it is no longer pending', async () => {
+    vi.useFakeTimers()
+    let pending = false
+    const listeners = new Set<() => void>()
+    const setPending = (next: boolean) => {
+      pending = next
+      for (const listener of listeners) listener()
+    }
+    const stop = holdAnalysisWhile(
+      () => pending,
+      (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    )
+    expect(await settled(analysisReady())).toBe(true)
+    setPending(true)
+    const waiting = analysisReady()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(await settled(waiting)).toBe(false)
+    setPending(false)
+    expect(await settled(waiting)).toBe(true)
+
+    // A seek that never ends: held for 5 s, then not while it stays pending, though the stage says so again.
+    setPending(true)
+    const long = analysisReady()
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(await settled(long)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await settled(long)).toBe(true)
+    setPending(true)
+    expect(await settled(analysisReady())).toBe(true)
+
+    // The next still pending after it is held again, until stop.
+    setPending(false)
+    setPending(true)
+    const next = analysisReady()
+    expect(await settled(next)).toBe(false)
+    stop()
+    expect(await settled(next)).toBe(true)
+    setPending(false)
+    setPending(true)
+    expect(await settled(analysisReady())).toBe(true)
+  })
 })

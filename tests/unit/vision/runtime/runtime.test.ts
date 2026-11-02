@@ -2,8 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { rleDecode, rleEncode } from '../../../../src/vision/mask/rle.ts'
 import { decodeContainer, encodeContainer } from '../../../../src/vision/runtime/container.ts'
 import { cacheKey, createMemoryCache } from '../../../../src/vision/runtime/cache.ts'
-import { fitSize, sampleTimes } from '../../../../src/vision/runtime/frames.ts'
+import {
+  fitSize,
+  iterateFrames,
+  sampleTimes,
+  type FrameSource,
+} from '../../../../src/vision/runtime/frames.ts'
 import { createProgress, subProgress } from '../../../../src/vision/runtime/tasks.ts'
+import { fakeSource } from '../segmentation/fakes.ts'
 
 function softMask(w: number, h: number): Uint8Array {
   const d = new Uint8Array(w * h)
@@ -100,6 +106,44 @@ describe('frames helpers', () => {
     expect(fitSize({ width: 1920, height: 1080 }, 256)).toEqual({ width: 256, height: 144 })
     expect(fitSize({ width: 1080, height: 1920 }, 256)).toEqual({ width: 144, height: 256 })
     expect(fitSize({ width: 200, height: 100 }, 256)).toEqual({ width: 200, height: 100 })
+  })
+
+  it('iterateFrames decodes each frame only once ready() lets it, and stops when cancelled during a wait', async () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+    let open = () => {}
+    const hold = () => new Promise<void>((resolve) => (open = resolve))
+    for (const sequential of [false, true]) {
+      const { source, opened } = fakeSource({ duration: 1, frameRate: 4 })
+      // A source with the sequential fast path decodes a frame when it is asked for the next one.
+      const from: FrameSource = sequential
+        ? {
+            ...source,
+            async *frames(times) {
+              for (const t of times) yield { t, bitmap: await source.frameAt(t) }
+            },
+          }
+        : source
+      const stop = new AbortController()
+      const frames = iterateFrames(from, [0, 0.25, 0.5], { ready: hold, signal: stop.signal })[
+        Symbol.asyncIterator
+      ]()
+      const first = frames.next()
+      await tick()
+      expect(opened).toHaveLength(0)
+      open()
+      expect((await first).value?.t).toBe(0)
+      const second = frames.next()
+      await tick()
+      expect(opened).toHaveLength(1)
+      open()
+      expect((await second).value?.t).toBe(0.25)
+      const third = frames.next()
+      await tick()
+      stop.abort()
+      open()
+      expect((await third).done).toBe(true)
+      expect(opened).toHaveLength(2)
+    }
   })
 })
 

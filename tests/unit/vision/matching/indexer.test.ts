@@ -36,6 +36,25 @@ describe('indexClip', () => {
     expect(opened.every((b) => (b as unknown as { closed: boolean }).closed)).toBe(true)
   })
 
+  it('builds the same index when it waits at a gate before each frame', async () => {
+    const deps = {
+      onnx: fakeOnnx({ dim: DIM, imageVector: (t: number) => basis(t < 5 ? 0 : 1) }),
+      model: 'clipB32' as const,
+      toGray: (_b: ImageBitmap, size: Size) => flatGray(size, 30),
+      referenceVectors: async () => [basis(0)],
+    }
+    const plain = await indexClip(deps, fakeSource({ duration: 10 }).source, { batchSize: 4 })
+    let waits = 0
+    const ready = () => {
+      waits++
+      return new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+    const gated = fakeSource({ duration: 10 })
+    expect(await indexClip(deps, gated.source, { batchSize: 4, ready })).toEqual(plain)
+    expect(waits).toBe(40)
+    expect(gated.opened).toHaveLength(40)
+  })
+
   it('measures the brightest pixel at the decoded size, so a small light on black still counts', async () => {
     const run = (toGray: (b: ImageBitmap, s: Size) => ReturnType<typeof flatGray>) =>
       indexClip(
