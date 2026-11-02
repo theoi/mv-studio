@@ -68,6 +68,9 @@ export function visionService(): Promise<VisionService> {
       backends: testBackends ?? v.createWorkerBackends(),
       cache: testBackends ? v.createMemoryCache() : v.createOpfsCache(),
     })
+    // A paused frame the stage waits for decodes the same files: a ruler click, a draft's first frame. Held here, not
+    // with footage analysis, because the person check also waits for it where background analysis is off.
+    holdAnalysisWhile(stillPending, subscribeStill)
     directorDeps = {
       ranker: vision.matcher,
       matcher: v.createDirectorFootageMatcher({
@@ -99,9 +102,10 @@ const ANALYSIS_HOLD_MS = 5000
 const analysisHolds = new Set<Promise<void>>()
 
 /**
- * Makes background footage analysis wait between frames until `done` settles (resolved or rejected), `maxMs` at most.
- * It decodes the same files as the preview and runs its models on every core, so a frame the preview is waiting for,
- * such as a draft's first, comes seconds later while it runs. Browsers give workers no priorities, so it yields.
+ * Makes background footage analysis and the person check (`checkFootage`) wait between frames until `done` settles
+ * (resolved or rejected), `maxMs` at most. They decode the same files as the preview and run their models on every
+ * core, so a frame the preview is waiting for, such as a draft's first, comes seconds later while they run. Browsers
+ * give workers no priorities, so they yield.
  * Analysis waits while any hold lasts, so every hold must end on its own: callers must not hold again and again for
  * a wait that never ends.
  */
@@ -168,8 +172,6 @@ export function footageService(): Promise<FootageService> {
       showsSomething: isSampleAsset,
       ready: analysisReady,
     })
-    // A paused frame the stage waits for decodes the same files: a ruler click, a draft's first frame.
-    holdAnalysisWhile(stillPending, subscribeStill)
     service.indexing.subscribe((indexing) => useFootage.setState({ indexing }))
     useFootage.setState({ service, indexing: service.indexing.getState(), strongMatch: v.STRONG_MATCH })
     return service

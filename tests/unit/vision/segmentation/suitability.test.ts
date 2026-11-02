@@ -122,6 +122,28 @@ describe('checkSuitability', () => {
     expect((await shot(false)).verdict).toBe('good')
     expect(await shot(true)).toMatchObject({ verdict: 'unsuitable', reasons: ['no-person-found'] })
   })
+
+  it('decodes each frame only once the caller’s gate lets it, and judges the shot as it would without one', async () => {
+    const plain = await checkSuitability(fakeSegmentation(), fakeSource({ duration: 2 }).source)
+    let open = () => {}
+    const gate = new Promise<void>((resolve) => (open = resolve))
+    let waits = 0
+    const ready = () => {
+      waits++
+      return gate
+    }
+    const seg = fakeSegmentation()
+    const { source, opened } = fakeSource({ duration: 2 })
+    const checking = checkSuitability(seg, source, { ready })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(waits).toBeGreaterThan(0)
+    expect(opened).toHaveLength(0)
+    expect(seg.analyzed).toHaveLength(0)
+    open()
+    expect(await checking).toEqual(plain)
+    expect(opened).toHaveLength(10)
+    expect(waits).toBe(opened.length)
+  })
 })
 
 describe('analyzeSubjects', () => {

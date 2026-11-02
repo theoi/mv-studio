@@ -52,7 +52,7 @@ export async function checkSuitability(
   source: FrameSource,
   options: SuitabilityCheckOptions = {},
 ): Promise<SuitabilityReport> {
-  const { signal } = options
+  const { signal, ready } = options
   const range = options.range ?? { start: 0, end: source.duration }
   const duration = range.end - range.start
   if (!(duration > 0)) throw new JobError('invalid-input', 'The clip range is empty.')
@@ -71,8 +71,10 @@ export async function checkSuitability(
     const people: PeopleAt[] = []
     let peopleAvailable = true
     const maskSize = fitSize(source, ANALYSIS_SIDE)
-    const frames = prefetch(iterateFrames(source, times, { maxSide: PEOPLE_SIDE, signal }), 2, (f) =>
-      f.bitmap.close(),
+    const frames = prefetch(
+      iterateFrames(source, times, { maxSide: PEOPLE_SIDE, signal, ...(ready ? { ready } : {}) }),
+      2,
+      (f) => f.bitmap.close(),
     )
     for await (const { t, bitmap } of frames) {
       const res = await segmentation.analyze(
