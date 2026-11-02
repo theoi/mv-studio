@@ -63,6 +63,136 @@ describe('SongAnalysisService', () => {
     expect(reads).toBe(1)
     service.dispose()
   })
+
+  describe('worker lifetime', () => {
+    const logits = { beat: Float32Array.of(1, 2), downbeat: Float32Array.of(3, 4) }
+    const audio = () => ({ sampleRate: 44_100, channels: [new Float32Array(16)] })
+
+    /** Fake workers that hold the songs they analyzed; `gate` makes a song's fast analysis wait for its promise. */
+    function setup(gate: Record<string, Promise<void>> = {}) {
+      const workers: FakeWorker[] = []
+      const calls: { worker: number; method: string; assetId: string; audio: boolean; logits: unknown }[] = []
+      const runner = new JobRunner()
+      const service = new SongAnalysisService({
+        runner,
+        decode: async () => audio(),
+        createWorker: () => {
+          const index = workers.length
+          const held = new Set<string>()
+          const seen = new Map<string, unknown>()
+          type Args = { assetId: string; audio?: unknown; logits?: unknown }
+          const record = (method: string, args: Args) => {
+            calls.push({
+              worker: index,
+              method,
+              assetId: args.assetId,
+              audio: !!args.audio,
+              logits: args.logits,
+            })
+            if (args.audio) held.add(args.assetId)
+            if (args.logits) seen.set(args.assetId, args.logits)
+          }
+          const worker = new FakeWorker({
+            holds: (args: Args) => held.has(args.assetId),
+            analyzeFast: async (args: Args) => {
+              record('analyzeFast', args)
+              await gate[args.assetId]
+              return { assetId: args.assetId }
+            },
+            refineBeats: (args: Args) => {
+              record('refineBeats', args)
+              seen.set(args.assetId, seen.get(args.assetId) ?? logits)
+              return { downbeats: [index] }
+            },
+            trackAtTempo: (args: Args & { bpm: number }) => {
+              record('trackAtTempo', args)
+              return { tempo: { bpm: args.bpm, confidence: 1 }, beats: [], downbeats: seen.get(args.assetId) }
+            },
+            logitsOf: (args: Args) => seen.get(args.assetId) ?? null,
+            release: (args: Args) => held.delete(args.assetId),
+          })
+          workers.push(worker)
+          return worker.asWorker()
+        },
+      })
+      const file = async () => new Blob()
+      return { service, workers, calls, runner, file }
+    }
+
+    it('lets the worker go once no job is left and it may have loaded Beat This!, and gives the next one its output', async () => {
+      const { service, workers, calls, file } = setup()
+      await service.analyze('song', audio()).promise
+      expect(workers[0]?.terminated).toBe(false)
+      await expect(service.refine('song').promise).resolves.toEqual({ downbeats: [0] })
+      expect(workers[0]?.terminated).toBe(true)
+
+      // The fresh worker no longer holds the song: the file is read again, and the bars of the tapped tempo come from
+      // the first worker's Beat This! output.
+      const tracked = await service.trackAtTempo('song', 121, file).promise
+      expect(tracked.downbeats).toEqual(logits)
+      expect(workers).toHaveLength(2)
+      // Given that output, refining the song again does not load the model: the worker and the song it holds stay.
+      await service.refine('song', file).promise
+      await expect(service.analyzeAgain('song', file).promise).resolves.toEqual({
+        assetId: 'song',
+        downbeats: [1],
+      })
+      expect(workers[1]?.terminated).toBe(false)
+      // Another song needs the model.
+      await service.analyzeAgain('other', file).promise
+      expect(workers[1]?.terminated).toBe(true)
+      expect(workers).toHaveLength(2)
+      expect(calls.filter((c) => c.method !== 'analyzeFast')).toEqual([
+        { worker: 0, method: 'refineBeats', assetId: 'song', audio: false, logits: undefined },
+        { worker: 1, method: 'trackAtTempo', assetId: 'song', audio: true, logits },
+        { worker: 1, method: 'refineBeats', assetId: 'song', audio: false, logits },
+        { worker: 1, method: 'refineBeats', assetId: 'song', audio: false, logits },
+        { worker: 1, method: 'refineBeats', assetId: 'other', audio: false, logits: undefined },
+      ])
+    })
+
+    it('keeps the worker while another song analysis is still running', async () => {
+      let finish = () => {}
+      const { service, workers } = setup({ other: new Promise<void>((resolve) => (finish = resolve)) })
+      const other = service.analyze('other', audio())
+      await service.refine('song', audio()).promise
+      expect(workers[0]?.terminated).toBe(false)
+      finish()
+      await expect(other.promise).resolves.toEqual({ assetId: 'other' })
+      expect(workers[0]?.terminated).toBe(true)
+      expect(workers).toHaveLength(1)
+    })
+
+    it('runs a job started as the refinement ends to the end, on the same worker or a fresh one', async () => {
+      const { service, workers, calls, runner, file } = setup()
+      // Started while the refinement's job reports it succeeded, before its promise settles: the same worker, let go
+      // once this job ends too.
+      let tempo: Promise<unknown> | undefined
+      let started = false
+      runner.subscribe((list) => {
+        if (started || !list.some((j) => j.kind === 'analysis.downbeats' && j.status === 'succeeded')) return
+        started = true
+        tempo = service.trackAtTempo('song', 90, file).promise
+      })
+      await service.refine('song', audio()).promise
+      expect(workers[0]?.terminated).toBe(false)
+      await expect(tempo).resolves.toMatchObject({ tempo: { bpm: 90 }, downbeats: logits })
+      expect(workers[0]?.terminated).toBe(true)
+
+      // Started when the refinement's promise settles, right after the worker was let go: a fresh one.
+      const refine = service.refine('two', file)
+      const next = refine.promise.then(() => service.analyze('next', audio()).promise)
+      await expect(next).resolves.toEqual({ assetId: 'next' })
+      expect(calls.map((c) => [c.worker, c.method, c.assetId, c.audio])).toEqual([
+        [0, 'refineBeats', 'song', true],
+        [0, 'trackAtTempo', 'song', false],
+        [1, 'refineBeats', 'two', true],
+        [2, 'analyzeFast', 'next', true],
+      ])
+      expect(workers.map((w) => w.terminated)).toEqual([true, true, false])
+      service.dispose()
+    })
+  })
 })
 
 const beats = Array.from({ length: 16 }, (_, i) => i * 0.5)
