@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { ASK_SCORE, keyCombo, paletteScore, type ScoreOptions } from '../../../src/app/state/paletteScore.ts'
+import {
+  ASK_SCORE,
+  keyCombo,
+  namesInFull,
+  paletteScore,
+  type ScoreOptions,
+} from '../../../src/app/state/paletteScore.ts'
 
 // Labels, keywords and aliases as the palette lists them.
 const actions: [string, string, string[]?][] = [
@@ -241,5 +247,24 @@ describe('palette ranking', () => {
     expect(ranked('spilt')[0]).toBe('Split at playhead')
     expect(paletteScore('Use the select tool', ['pointer arrow'], 'printer')).toBe(0)
     expect(paletteScore('Use the select tool', ['pointer arrow'], 'ponter')).toBeGreaterThan(0)
+  })
+})
+
+describe('naming an action in full', () => {
+  const aliases = ['remove clip', 'erase', 'trash']
+
+  it('takes the start of a word as the word, as the palette lists other actions', () => {
+    expect(namesInFull('Delete', aliases, 'del')).toBe(true)
+    expect(namesInFull('Close gap', [], 'close ga')).toBe(true)
+  })
+
+  it('with whole, takes only whole words, their other forms and other words for them: “del” is on its way to Delete', () => {
+    const whole = (search: string) => namesInFull('Delete', aliases, search, { whole: true })
+    for (const search of ['de', 'del', 'dele', 'delet', 'er', 'eras', 'tra', 'remov'])
+      expect(whole(search), search).toBe(false)
+    for (const search of ['delete', 'Delete', 'deleting', 'erase', 'trash', 'remove', 'remove this clip'])
+      expect(whole(search), search).toBe(true)
+    expect(namesInFull('Reset VJ mappings', [], 'reset vj mapping', { whole: true })).toBe(true)
+    expect(namesInFull('Delete and close gap', [], 'delete and close g', { whole: true })).toBe(false)
   })
 })

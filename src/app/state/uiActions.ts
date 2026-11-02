@@ -1840,7 +1840,12 @@ export const UI_ACTIONS: readonly UiAction[] = [
     },
     search: [],
   },
-  { area: 'VJ', name: 'Reset mappings', palette: 'vjResetMappings', search: ['reset midi mapping'] },
+  {
+    area: 'VJ',
+    name: 'Reset mappings',
+    palette: 'vjResetMappings',
+    search: ['reset mappings', 'reset midi mapping'],
+  },
   {
     area: 'VJ',
     name: 'Play or pause',
