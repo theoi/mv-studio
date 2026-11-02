@@ -168,7 +168,7 @@ const director = new DirectorSession({
 const state = useSyncExternalStore(director.subscribe, director.getState)
 
 await director.plan({ kind: 'beat-cut', prompt: 'neon night drive' })
-await director.apply() // or apply({ confirmSpend: true }) after the cost dialog
+await director.apply({ shownPrice }) // or apply({ confirmSpend: price }) after the cost dialog
 director.undo()
 ```
 
@@ -215,8 +215,10 @@ removes clips whose line is gone or no longer has their words.
   notes, sections with mood and pace, "Try another version" (`tryAnother()`), and the main button labeled
   `actionLabel` ("Make video" or "Generate 12 shots · about $2.40"; in a panel under 288 px wide the price goes on a
   line of its own, without the "·", so it always shows in full). When `confirmRequired` is true the button opens
-  a cost confirmation listing `cost.items`, then calls `apply({ confirmSpend: true })`. "Apply without AI shots"
-  calls `apply({ skipGeneration: true })` and leaves dark placeholders.
+  a cost confirmation listing `cost.items`, then calls `apply({ confirmSpend })` with the price it showed; otherwise
+  the button calls `apply({ shownPrice })`. When generating now costs more than that price (media a shot would reuse
+  was deleted since, say), `apply()` generates nothing, shows the new price and throws `price-changed`, whose message
+  the app shows. "Apply without AI shots" calls `apply({ skipGeneration: true })` and leaves dark placeholders.
 - `generating`: subtitle "Generating the AI clips", and in the card "12 clips · 1 done · 6 failed" with a progress
   bar and Cancel (what is finished of the run the top bar names; shots are made two at a time); `failed` counts
   shots that could not be made while the rest go on. Under the bar, "Spent about $0.51 of an estimated $3.38"

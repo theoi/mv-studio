@@ -173,7 +173,7 @@ function runCount(total: number, made: number, failed: number, unit: string): st
 
 export async function generatePlanShots(o: GeneratePlanOptions): Promise<GeneratedShots> {
   const assets = new Map(o.done ?? [])
-  const all = planRequests(o.plan, o.project)
+  const all = planRequests(o.plan, o.project, o.done)
   for (const r of all) if (r.reuse && !assets.has(r.shot.id)) assets.set(r.shot.id, r.reuse)
   const queue: ShotRequest[] = all.filter((r) => !assets.has(r.shot.id))
   const total = queue.length
