@@ -9,7 +9,7 @@ const baseURL = external ?? 'http://127.0.0.1:4173/mv-studio/'
  * CI runs the suite as two halves on separate machines: E2E_HALF=1 runs the spec files firstHalfSpecs() picks,
  * E2E_HALF=2 everything else, so every spec runs in one of them. Specs are dealt out longest first, each to the half
  * with less time so far, by the seconds tests/e2e/timings.json records for them (`node scripts/e2e-timings.mjs <CI run
- * id>` refreshes it). A spec missing from it counts as a typical one, so new specs spread over both halves.
+ * ids>` refreshes it). A spec missing from it counts as a typical one, so new specs spread over both halves.
  */
 export function firstHalfSpecs(timings: Record<string, unknown>, specs: string[]): string[] {
   const valid = (s: unknown): s is number => typeof s === 'number' && Number.isFinite(s) && s >= 0

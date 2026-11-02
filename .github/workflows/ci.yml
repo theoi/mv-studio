@@ -35,9 +35,10 @@ jobs:
     # without OffscreenCanvas workers (or pages opened with ?preview-worker=0) use.
     name: E2E (Chromium${{ matrix.preview == 'main' && ', main-thread preview' || format(', {0} of 2', matrix.half) }})
     runs-on: ubuntu-latest
-    # A leg takes about 25 minutes. Without a limit, an apt-get that hangs on a stalled mirror holds the job for six
-    # hours, and with it every later push to main, which waits behind the running main run.
-    timeout-minutes: 45
+    # A worker half takes 30 to 43 minutes: runners differ in speed by up to a third. Without a limit, an apt-get that
+    # hangs on a stalled mirror holds the job for six hours, and with it every later push to main, which waits behind
+    # the running main run.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
