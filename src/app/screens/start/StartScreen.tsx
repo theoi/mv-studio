@@ -33,7 +33,7 @@ import {
 } from '../../state/persistence.ts'
 import { JOB_KINDS, runningJobs, useIsRunning, useJobs } from '../../state/jobs.ts'
 import { openBlankProject, startSetup } from '../../state/setup.ts'
-import { set, toast, type Kind } from '../../state/ui.ts'
+import { set, toast, useUi, type Kind } from '../../state/ui.ts'
 import { GraphicsNotice } from '../common/GraphicsNotice.tsx'
 import { Logo } from '../common/Logo.tsx'
 import { CancelButton, RunCard } from '../editor/assist/ToolView.tsx'
@@ -128,7 +128,13 @@ function RecentCard({ project }: { project: RecentProject }) {
   // Opening a kept project while a project file opens would be replaced by the file's project when it is in.
   const opening = useIsRunning(JOB_KINDS.projectImport)
   const [renaming, setRenaming] = useState(false)
-  const [confirming, setConfirming] = useState(false)
+  const [confirmingHere, setConfirmingHere] = useState(false)
+  const asked = useUi((s) => s.deletingProject === project.id)
+  const confirming = confirmingHere || asked
+  const setConfirming = (open: boolean) => {
+    setConfirmingHere(open)
+    if (!open && asked) set({ deletingProject: null })
+  }
   // The menu traps focus while open and gives it back to its button as it closes, so the rename field takes focus
   // only once the menu has closed.
   const keepFocus = useRef(false)

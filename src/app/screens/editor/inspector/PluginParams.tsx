@@ -13,7 +13,7 @@ import {
 } from '../../../ds/Fields.tsx'
 import { formatParam } from '../../../format.ts'
 import { BUILT_IN_LUTS, isLutAsset } from '../../../../plugins/lut.ts'
-import { LUT_FILE_TYPES, loadLut, lutFiles, pickFile } from '../../../state/luts.ts'
+import { builtInName, LUT_FILE_TYPES, loadLut, lutFiles, pickFile } from '../../../state/luts.ts'
 import { valueAtCommands } from '../../../state/keyframes.ts'
 import { editor, useProject } from '../../../state/project.ts'
 import { settingName, useAnimatable } from './animatable.ts'
@@ -31,15 +31,6 @@ const NONE = 'none'
 /** The LUT choice's actions: ask for a LUT file, and open the project's LUT files. */
 const LOAD_LUT = 'load-lut'
 const MANAGE_LUTS = 'manage-luts'
-
-/** A built-in file's name as a choice: "bundled:luts/neutral.png" reads "Neutral". */
-function builtInName(value: string): string {
-  const file = value
-    .replace(/^bundled:/, '')
-    .replace(/^.*\//, '')
-    .replace(/\.[^.]+$/, '')
-  return file.charAt(0).toUpperCase() + file.slice(1).replace(/[-_]/g, ' ')
-}
 
 type Option = { value: string; label: string; description?: string; disabled?: boolean }
 

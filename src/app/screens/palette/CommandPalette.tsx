@@ -153,7 +153,7 @@ export function CommandPalette() {
     setMoved(true)
   }
   const pickAction = (a: Action) => {
-    if (a.page) openPage({ id: a.page }, a.pageSearch?.(search))
+    if (a.page) openPage(typeof a.page === 'string' ? { id: a.page } : a.page, a.pageSearch?.(search))
     else if (a.run) run(a.run)
   }
   const pickItem = (item: PageItem) => {
@@ -182,7 +182,13 @@ export function CommandPalette() {
           <Command
             key={[
               start ?? '',
-              ...pages.map((p) => ('property' in p ? `${p.id}:${p.property.path.join('.')}` : p.id)),
+              ...pages.map((p) =>
+                'property' in p
+                  ? `${p.id}:${p.property.path.join('.')}`
+                  : 'action' in p
+                    ? `${p.id}:${p.action}`
+                    : p.id,
+              ),
             ].join('/')}
             label="Command palette"
             className={styles.command}
@@ -206,7 +212,11 @@ export function CommandPalette() {
                 value={search}
                 onValueChange={setSearch}
                 placeholder={
-                  def ? def.placeholder : 'Search actions, tools and settings, or describe a change'
+                  !def || !page
+                    ? 'Search actions, tools and settings, or describe a change'
+                    : typeof def.placeholder === 'string'
+                      ? def.placeholder
+                      : def.placeholder(page)
                 }
                 className={styles.input}
               />

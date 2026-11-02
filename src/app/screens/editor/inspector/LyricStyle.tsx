@@ -4,6 +4,7 @@ import { FieldRow, Section, Segmented, Switch } from '../../../ds/Fields.tsx'
 import { dispatch } from '../../../state/project.ts'
 import {
   applyStyleToAllLines,
+  KARAOKE,
   linePosition,
   setLinePosition,
   type LinePosition,
@@ -19,8 +20,6 @@ import {
   WeightRow,
 } from './Text.tsx'
 import styles from '../Inspector.module.css'
-
-const KARAOKE = { highlightColor: '#ffd27a', mode: 'word' } as const
 
 type KaraokeMode = NonNullable<TextClip['karaoke']>['mode']
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   actions,
   actionsById,
@@ -71,12 +71,15 @@ describe('command palette coverage', () => {
   })
 
   it('lists nothing for a search of one or two words that half names an action, as there is no Ask Assist row above it', () => {
-    for (const search of ['dark mode', 'chroma key', 'srt file', 'slow motion', 'bigger font'])
+    for (const search of ['dark mode', 'chroma key', 'srt file'])
       expect(paletteResults(search), search).toEqual([])
   })
 
   it('finds no action through another sense of a word', () => {
-    expect(paletteResults('speed up')).toEqual([])
+    // "Speed up" is a clip's speed, not the song's tempo.
+    const speed = paletteResults('speed up').map((a) => a.id)
+    expect(speed[0]).toBe('speed')
+    expect(speed).not.toContain('doubleTempo')
     expect(paletteResults('info')[0]?.id).toBe('about')
     expect(paletteResults('info').map((a) => a.id)).not.toContain('exportVertical')
     const music = paletteResults('music').map((a) => a.id)
@@ -168,6 +171,54 @@ describe('command palette coverage', () => {
     // "portrait" is a keyword of Switch to vertical 9:16, and another word for its "vertical".
     expect(paletteResults('portrait')[0]?.id).toBe('aspect4x5')
     expect(paletteResults('start playback')[0]?.id).toBe('play')
+  })
+
+  it('ranks an action on the selection below the ones that can run while nothing fits it, and just below an equal match', () => {
+    const before = get()
+    const ids = (search: string) => paletteResults(search).map((a) => a.id)
+    const video = Object.values(editor.getProject().clips).find((c) => c.type === 'video')!
+    try {
+      set({ selection: { type: 'none' }, playhead: video.start + video.duration / 2 })
+      expect(ids('play')[0]).toBe('play')
+      expect(ids('end')[0]).toBe('end')
+      expect(ids('end')).toContain('trimEnd')
+      expect(ids('end').indexOf('trimEnd')).toBeGreaterThan(ids('end').indexOf('sectionEndTime'))
+      // The project's look is there to act on, but the name of the feature still opens it.
+      expect(ids('look')[0]).toBe('looks')
+      expect(ids('look')).toContain('lookIntensity')
+      select({ type: 'clip', id: video.id })
+      expect(ids('end')[0]).toBe('end')
+      expect(ids('end').indexOf('trimEnd')).toBeLessThan(ids('end').indexOf('sectionEndTime'))
+    } finally {
+      set({ selection: before.selection, playhead: before.playhead })
+    }
+  })
+
+  it('opens a page of common speeds for the selected video clip, and the one picked is one undo step', () => {
+    const before = get().selection
+    const video = Object.values(editor.getProject().clips).find((c) => c.type === 'video')!
+    const speed = actionsById.get('speed')!
+    const items = () => PAGES.values.groups({ id: 'values', action: 'speed' }).flatMap((g) => g.items)
+    // Picking says so in a toast, which times itself out.
+    vi.stubGlobal('window', globalThis)
+    try {
+      set({ selection: { type: 'none' } })
+      expect(speed.unavailable?.()).toBe('Select a video clip first')
+      expect(items()).toEqual([])
+      select({ type: 'clip', id: video.id })
+      expect(speed.unavailable?.()).toBeUndefined()
+      expect(items().find((i) => i.current)?.label).toBe('100%')
+      items()
+        .find((i) => i.label === '50%')
+        ?.run?.()
+      expect(editor.getProject().clips[video.id]).toMatchObject({ playbackRate: 0.5 })
+      expect(editor.undoLabel()).toBe('Change speed')
+      editor.undo()
+      expect(editor.getProject().clips[video.id]).toMatchObject({ playbackRate: 1 })
+    } finally {
+      set({ selection: before })
+      vi.unstubAllGlobals()
+    }
   })
 
   it('lists no action above Ask Assist for a question made of small words', () => {

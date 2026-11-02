@@ -12,11 +12,11 @@ import {
   canTryCutout,
   checkFootage,
   cutoutNote,
+  cutOut,
   cutoutRemaking,
   cutoutsOf,
   hasCutout,
   objectOf,
-  putBehind,
   suitabilityOf,
   suitabilityText,
   useBehind,
@@ -27,8 +27,7 @@ import { fixObject, pickObject, timelineTimeOf, trackingText } from '../../../st
 import { backgroundAnalysisOn } from '../../../state/footage.ts'
 import { NO_GRAPHICS_REASON } from '../../../state/graphics.ts'
 import { JOB_KINDS } from '../../../state/jobs.ts'
-import { editor, useProject } from '../../../state/project.ts'
-import { toast } from '../../../state/ui.ts'
+import { useProject } from '../../../state/project.ts'
 import { downloadPct, pct, useJob } from '../assist/jobState.ts'
 import { InlineSuggestion } from '../Suggestion.tsx'
 import styles from '../Inspector.module.css'
@@ -73,26 +72,6 @@ function useBehindState(clip: MediaClip) {
 function progressBadge(doing: string, job: JobSnapshot): string {
   const download = downloadPct(job)
   return download === undefined ? `${doing}… ${pct(job)}%` : `Downloading… ${download}%`
-}
-
-/** Starts the cutout and says so when it lands, with Undo. */
-function cutOut(hostId: string) {
-  putBehind([hostId])?.promise.then(
-    (result) => {
-      const done = 'Lyrics now sit behind the person on this clip'
-      const warning = result.warnings?.[0]
-      if (result.count)
-        toast(warning ? `${done}. ${warning.why}` : done, {
-          label: 'Undo',
-          run: () => {
-            if (editor.undoLabel() === result.label) editor.undo()
-            else toast('The project has changed since. Use Undo in the top bar to step back.')
-          },
-        })
-      else if (result.refused?.[0]) toast(result.refused[0].why)
-    },
-    () => undefined,
-  )
 }
 
 /** Offers to put the lyrics behind the person when the shot has one and they are not behind yet. */

@@ -7,6 +7,15 @@ import { undoAction } from './library.ts'
 import { dispatch, editor } from './project.ts'
 import { toast } from './ui.ts'
 
+/** A built-in file's name as a choice: "bundled:luts/neutral.png" reads "Neutral". */
+export function builtInName(value: string): string {
+  const file = value
+    .replace(/^bundled:/, '')
+    .replace(/^.*\//, '')
+    .replace(/\.[^.]+$/, '')
+  return file.charAt(0).toUpperCase() + file.slice(1).replace(/[-_]/g, ' ')
+}
+
 /** The LUT files imported into the project, oldest first (Undo of a removal adds one back last, so not asset order). */
 export function lutFiles(project: Project): Asset[] {
   return Object.values(project.assets)

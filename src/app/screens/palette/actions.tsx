@@ -159,6 +159,7 @@ import {
   set,
   setSnap,
   type PageId,
+  type Selection,
   type SettingsPage,
   type SnapKey,
 } from '../../state/ui.ts'
@@ -166,6 +167,8 @@ import { enterVj } from '../../state/vj.ts'
 import { fitTimeline, zoomBy } from '../../state/zoom.ts'
 import { clipProperties, reactionTarget } from '../editor/inspector/animatable.ts'
 import { generateShotAt, generateSpotAt } from '../editor/timeline/laneMenu.ts'
+import { inspectorActions } from './inspectorActions.tsx'
+import type { PageState } from './pages.tsx'
 
 export const GROUPS = [
   'Suggested',
@@ -213,7 +216,7 @@ export interface Action {
   /** Other names people search for it by; they rank like its own name. A function for names that follow the project. */
   aliases?: string[] | (() => string[])
   run?: () => void
-  page?: PageId
+  page?: PageId | PageState
   /** The search its page opens with, from the search that found the action: "go to verse 2" opens on "verse 2". */
   pageSearch?: (search: string) => string
   /**
@@ -223,6 +226,11 @@ export interface Action {
   unavailable?: () => string | undefined
   /** What the action would act on, shown in its row: the track, the song section, the tempo it sets. */
   detail?: () => string | undefined
+  /**
+   * For an action on the selection (or what is at the playhead): whether there is nothing there for it to act on. It
+   * ranks below the actions that can run then, and just below an equal match otherwise.
+   */
+  idle?: () => boolean
 }
 
 const settingsPage = (page: SettingsPage) => () => set({ dialog: 'settings', settingsPage: page })
@@ -495,7 +503,8 @@ export const actions: Action[] = [
     label: 'Export video…',
     icon: <Upload />,
     aliases: ['render', 'export in several formats'],
-    keywords: 'sizes formats aspect mp4 final',
+    keywords:
+      'sizes formats aspect mp4 final resolution 720p 1080p 1440p 4k quality fps frame rate framing file name',
     shortcut: 'export',
     unavailable: graphicsUnavailable,
     run: () => set({ dialog: 'export', exportPhase: 'setup' }),
@@ -505,6 +514,7 @@ export const actions: Action[] = [
     group: 'Suggested',
     label: 'Time lyrics to the vocals',
     icon: <Mic2 />,
+    aliases: ['add lyrics'],
     keywords: 'karaoke words align sync',
     run: () => openAssist('lyrics'),
   },
@@ -1309,6 +1319,7 @@ export const actions: Action[] = [
     group: 'Project',
     label: 'New project',
     icon: <FilePlus2 />,
+    aliases: ['lyric video', 'visualizer video', 'beat-cut footage', 'ai music video', 'blank project'],
     keywords: 'start video',
     run: () => set({ screen: 'start' }),
   },
@@ -1358,7 +1369,7 @@ export const actions: Action[] = [
     icon: <Save />,
     shortcut: 'save',
     aliases: ['save project'],
-    keywords: 'store browser work changes',
+    keywords: 'store browser work changes retry',
     run: () => void saveNow(),
   },
 
@@ -1381,7 +1392,7 @@ export const actions: Action[] = [
     group: 'Export',
     label: 'Export a chorus teaser…',
     icon: <Upload />,
-    keywords: 'highlight clip short preview',
+    keywords: 'highlight clip short preview length',
     unavailable: graphicsUnavailable,
     run: () => exportWithOutput('teaser'),
   },
@@ -1390,7 +1401,7 @@ export const actions: Action[] = [
     group: 'Export',
     label: 'Export a loop for Canvas…',
     icon: <Repeat />,
-    keywords: 'spotify canvas loop',
+    keywords: 'spotify canvas loop length',
     unavailable: graphicsUnavailable,
     run: () => exportWithOutput('loop'),
   },
@@ -1400,7 +1411,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Connect fal.ai',
     icon: <KeyRound />,
-    keywords: 'api key cloud settings',
+    keywords: 'api key cloud settings spending reminder ask before paid generation remove',
     run: settingsPage('ai'),
   },
   {
@@ -1408,7 +1419,8 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Set up an LLM (Ollama, LM Studio, OpenAI)',
     icon: <Wand2 />,
-    keywords: 'api key local model connect settings',
+    keywords:
+      'api key local model language connect settings provider endpoint openrouter time limit timeout test connection',
     run: settingsPage('ai'),
   },
   {
@@ -1418,7 +1430,7 @@ export const actions: Action[] = [
     icon: <Settings />,
     aliases: ['preferences', 'options'],
     shortcut: 'settings',
-    keywords: 'general autosave suggestions motion frame rate',
+    keywords: 'general autosave suggestions motion default frame rate',
     run: settingsPage('general'),
   },
   {
@@ -1426,7 +1438,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Editing settings: snapping and durations',
     icon: <Pencil />,
-    keywords: 'still text default',
+    keywords: 'still image text default duration bars',
     run: settingsPage('editing'),
   },
   {
@@ -1434,7 +1446,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'This device: AI models and capabilities',
     icon: <Cpu />,
-    keywords: 'threads webgpu local download settings',
+    keywords: 'threads cpu webgpu local download settings remove model',
     run: settingsPage('local'),
   },
   {
@@ -1442,7 +1454,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'VJ and MIDI settings',
     icon: <Disc3 />,
-    keywords: 'controller quantize devices',
+    keywords: 'controller quantize devices mapping preset nearest beat bar',
     run: settingsPage('vj'),
   },
   {
@@ -1458,7 +1470,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'Storage used in this browser',
     icon: <HardDrive />,
-    keywords: 'space disk quota cache delete settings',
+    keywords: 'space disk quota cache delete settings clear models',
     run: settingsPage('storage'),
   },
   {
@@ -1466,7 +1478,7 @@ export const actions: Action[] = [
     group: 'Settings',
     label: 'About MV Studio',
     icon: <Info />,
-    keywords: 'version info licenses notices settings',
+    keywords: 'version info licenses notices settings open source third party',
     run: settingsPage('about'),
   },
 
@@ -1495,6 +1507,7 @@ export const actions: Action[] = [
     keywords: 'docs manual readme help',
     run: openDocs,
   },
+  ...inspectorActions,
 ]
 
 export const labelOf = (a: Action): string => (typeof a.label === 'function' ? a.label() : a.label)
@@ -1569,17 +1582,29 @@ function wordWeight(word: string): number {
 
 /**
  * The scores for the last search: ordering the groups and their actions asks for each one many times per keystroke.
- * Kept while the project stays the same (sections can arrive while the palette is open), and keyed by the name too,
- * which can follow the state.
+ * Kept while the project, the selection and the playhead stay the same (sections can arrive while the palette is open,
+ * and what an action acts on follows the other two), and keyed by the name too, which can follow the state.
  */
-let last: { search: string; project?: Project; scores: Map<string, number> } = {
+let last: {
+  search: string
+  project?: Project
+  selection?: Selection
+  playhead?: number
+  scores: Map<string, number>
+} = {
   search: '',
   scores: new Map(),
 }
 
 function remember(key: string, search: string, score: () => number): number {
-  if (last.search !== search || last.project !== project())
-    last = { search, project: project(), scores: new Map() }
+  const { selection, playhead } = get()
+  if (
+    last.search !== search ||
+    last.project !== project() ||
+    last.selection !== selection ||
+    last.playhead !== playhead
+  )
+    last = { search, project: project(), selection, playhead, scores: new Map() }
   let value = last.scores.get(key)
   if (value === undefined) {
     value = score()
@@ -1610,7 +1635,7 @@ const aboveAsk = (group: Group, search: string): boolean =>
  * Assist row to come first, so it lists none ("dark mode" isn't Open VJ mode). It is left out of a group that has an
  * action ranked above Ask Assist, where it would come first: "add an effect" listed every Add action of the Library.
  */
-export function actionScore(a: Action, search: string): number {
+function matchScore(a: Action, search: string): number {
   const keys = keyCombo(search)
   if (keys) return a.shortcut && shortcutKeys(a.shortcut).some((k) => keyCombo(k) === keys) ? 1 : 0
   const full = fullScore(a, search)
@@ -1624,6 +1649,25 @@ export function actionScore(a: Action, search: string): number {
       context: contextOf(a),
     }),
   )
+}
+
+/**
+ * An action on the selection ranks just below another one the search names as well: with a clip selected, "end" is
+ * still Go to the end before Trim the end to the playhead.
+ */
+const SELECTION_FACTOR = 0.99
+/**
+ * One with nothing to act on ranks below the actions that can run, even those only its keywords name: "version" lists
+ * About MV Studio before Try another version when there is no draft.
+ */
+const IDLE_FACTOR = 0.6
+
+/** How well the search names the action, 0 when it doesn't: the order the palette lists actions in. */
+export function actionScore(a: Action, search: string): number {
+  const score = matchScore(a, search)
+  if (!score || !a.idle) return score
+  const idle = remember(`${a.id}\nidle`, search, () => Number(a.idle!())) === 1
+  return score * (idle ? IDLE_FACTOR : SELECTION_FACTOR)
 }
 
 /** A group's best score for a search: where cmdk would show the group. */

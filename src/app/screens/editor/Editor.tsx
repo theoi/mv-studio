@@ -12,6 +12,7 @@ import { Splitter } from './Splitter.tsx'
 import { analyzeImportsInBackground } from '../../state/footage.ts'
 import { findBarsInBackground } from '../../state/songAnalysis.ts'
 import { importFiles, registerImportInput } from '../../state/importer.ts'
+import { LutFilesDialog } from './inspector/LutFiles.tsx'
 import styles from './Editor.module.css'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -92,6 +93,7 @@ export function Editor() {
   const exportOpen = useUi((s) => s.dialog === 'export')
   const paletteOpen = useUi((s) => s.paletteOpen)
   const guideOn = useUi((s) => s.guideStep !== null)
+  const lutFilesOpen = useUi((s) => s.lutFilesOpen)
   const libRef = useRef<HTMLDivElement>(null)
   const rightRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -183,6 +185,7 @@ export function Editor() {
       <Deferred when={guideOn} onFail={guideLoadFailed}>
         <FirstRunGuide />
       </Deferred>
+      <LutFilesDialog open={lutFilesOpen} onOpenChange={(open) => set({ lutFilesOpen: open })} />
       <DropImport />
     </div>
   )

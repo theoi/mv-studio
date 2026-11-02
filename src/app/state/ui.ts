@@ -91,6 +91,12 @@ export interface UiState {
   insertAt: { trackId: string; time: number } | null
   /** The top bar shows the project name as a field to rename it. */
   renaming: boolean
+  /** The marker the ruler shows as a field to rename it. */
+  renamingMarker: string | null
+  /** The kept project the start screen asks to confirm deleting, as the palette's Delete this project… asks. */
+  deletingProject: string | null
+  /** The project's LUT files dialog, opened from the palette's Manage LUT files…. */
+  lutFilesOpen: boolean
   lyricsMode: LyricsMode
   guideStep: number | null
   libraryTab: LibraryTab
@@ -144,6 +150,9 @@ export const initialUi: UiState = {
   palettePage: null,
   insertAt: null,
   renaming: false,
+  renamingMarker: null,
+  deletingProject: null,
+  lutFilesOpen: false,
   lyricsMode: 'paste',
   guideStep: null,
   libraryTab: 'media',

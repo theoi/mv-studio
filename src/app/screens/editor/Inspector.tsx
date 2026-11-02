@@ -40,6 +40,7 @@ export function Inspector() {
   return (
     <div
       className={`${styles.root} scroll`}
+      data-inspector
       key={
         clipIds.length > 1
           ? 'clips'

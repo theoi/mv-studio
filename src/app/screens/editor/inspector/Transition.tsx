@@ -14,21 +14,14 @@ import {
   transitionOf,
   transitionSeconds,
   transitionSpots,
+  TRANSITION_EASINGS,
+  type TransitionEasing,
   type TransitionEdge,
 } from '../../../state/transitions.ts'
 import { Header } from './parts.tsx'
 import styles from '../Inspector.module.css'
 
-type EasingChoice = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out'
-
-const EASINGS: { value: EasingChoice; label: string }[] = [
-  { value: 'linear', label: 'Linear' },
-  { value: 'ease-in', label: 'Ease in' },
-  { value: 'ease-out', label: 'Ease out' },
-  { value: 'ease-in-out', label: 'Ease in and out' },
-]
-
-const easingChoice = (e: Easing): EasingChoice | 'custom' =>
+const easingChoice = (e: Easing): TransitionEasing | 'custom' =>
   typeof e === 'string' && e !== 'hold' ? e : 'custom'
 
 /** Inspector › Transition: the transition at a cut, or into or out of a clip. */
@@ -81,7 +74,11 @@ export function TransitionInspector({ clipId, edge }: { clipId: string; edge: Tr
           <Select
             value={easing}
             onChange={(v) => v !== 'custom' && setTransitionEasing(clipId, edge, v)}
-            options={easing === 'custom' ? [...EASINGS, { value: 'custom', label: 'Custom' }] : EASINGS}
+            options={
+              easing === 'custom'
+                ? [...TRANSITION_EASINGS, { value: 'custom', label: 'Custom' }]
+                : TRANSITION_EASINGS
+            }
             ariaLabel="Transition easing"
           />
         </FieldRow>
