@@ -123,6 +123,9 @@ export function holdAnalysisUntil(done: Promise<unknown>, maxMs = ANALYSIS_HOLD_
 /**
  * Holds footage analysis while `pending()` is true, `maxMs` at most each time it turns true. After that it holds again
  * only once `pending()` has been false: a seek that never ends (and is sent again) must not stop analysis. Returns stop.
+ * The cap also bounds a drag, whose pending stays true while its steps overlap, only because pending never turns false
+ * and true again within one task: analysis takes its next frame in a later microtask, so such a flip would start a new
+ * hold with no frame in between.
  */
 export function holdAnalysisWhile(
   pending: () => boolean,

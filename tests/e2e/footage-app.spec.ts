@@ -243,6 +243,10 @@ test('a draft holds background analysis while it plans and until the preview sho
   await page.waitForTimeout(1500)
   expect(await analyzing(page)).toEqual(before)
   await page.evaluate(() => (window as Untyped).show())
+  // At once, well before either hold's time is up.
+  await expect
+    .poll(async () => JSON.stringify(await analyzing(page)), { timeout: 2_000 })
+    .not.toBe(JSON.stringify(before))
   await expect.poll(() => analysisStatus(page, 'clip.mp4'), { timeout: 90_000 }).toBe('indexed')
 })
 
