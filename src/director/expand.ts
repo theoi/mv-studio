@@ -82,6 +82,7 @@ import {
   peakStyle,
   stackTitleCard,
   textWidth,
+  TITLE_SAFE,
   titleStyle,
   type LyricTypography,
 } from './typography.ts'
@@ -963,7 +964,8 @@ function clearOfFaces(
   width: number,
   faces: Box[],
 ): { y: number; hits: number } {
-  const safe = (y: number) => Math.min(0.92 - height / 2, Math.max(0.08 + height / 2, y))
+  const safe = (y: number) =>
+    Math.min(TITLE_SAFE.bottom - height / 2, Math.max(TITLE_SAFE.top + height / 2, y))
   const options = [...new Set([preferred, 0.76, 0.26].map((y) => round3(safe(y))))]
   const hits = (y: number) =>
     faces.filter(
@@ -1042,7 +1044,7 @@ function lineTexts(
     peak && (sb?.reactive ?? 0) >= 0.5
       ? { reactive: [{ target: 'scale' as const, source: 'beat' as const, amount: 0.03, smoothing: 0.3 }] }
       : {}
-  const line = (text: string, style: TextStyleSpec, y: number): PlanText => ({
+  const line = (text: string, style: TextStyleSpec, y: number, base = lineStyle.fontSize): PlanText => ({
     id: newId(),
     sectionId: section?.id,
     start: item.shownStart,
@@ -1050,6 +1052,7 @@ function lineTexts(
     text,
     lyricLineId: item.line.id,
     style,
+    ...(base ? { baseFontSize: base } : {}),
     position: { x: 0.5, y: round3(y) },
     ...(animation
       ? { animationPresetId: animation }
@@ -1066,7 +1069,13 @@ function lineTexts(
   if (o.behind) {
     const big = { ...lineStyle, fontSize: Math.round(type.lineSize * 1.35) }
     const laid = layoutLine(item.line.text, big, aspect)
-    return [{ ...line(laid.text, { ...big, fontSize: laid.fontSize }, 0.5), behind: o.behind, ...pulse }]
+    return [
+      {
+        ...line(laid.text, { ...big, fontSize: laid.fontSize }, 0.5, big.fontSize),
+        behind: o.behind,
+        ...pulse,
+      },
+    ]
   }
 
   const laid = layoutLine(item.line.text, lineStyle, aspect)
@@ -1084,10 +1093,12 @@ function lineTexts(
       ? undefined
       : round3(Math.max(item.shownStart + 0.1, wordTime(item, words, split) - 0.06))
   if (split !== undefined && tailAt !== undefined && item.shownEnd - tailAt >= 0.5) {
-    const head = layoutLine(words.slice(0, split).join(' '), lineStyle, aspect)
-    const headStyle = { ...lineStyle, fontSize: head.fontSize }
     const tailText = words.slice(split).join(' ')
     const tailStyle = emphasisStyle(type, lineStyle, tailText)
+    // An ending shrunk to fit its row: the line above it is no bigger, or in a still frame it reads as the stressed text.
+    const headFrom = Math.min(lineStyle.fontSize ?? type.lineSize, tailStyle.fontSize as number)
+    const head = layoutLine(words.slice(0, split).join(' '), { ...lineStyle, fontSize: headFrom }, aspect)
+    const headStyle = { ...lineStyle, fontSize: head.fontSize }
     const headH = blockHeight(head.rows, headStyle)
     const tailH = blockHeight(1, tailStyle)
     const total = headH + 0.012 + tailH
@@ -1155,6 +1166,7 @@ function passageTexts(
     return {
       item,
       section,
+      base: lineStyle.fontSize,
       animation: sb?.textPresetId ?? type.lineAnimation,
       text: laid.text,
       rows: laid.rows,
@@ -1174,6 +1186,7 @@ function passageTexts(
     text: l.text,
     lyricLineId: l.item.line.id,
     style: l.style,
+    ...(l.base ? { baseFontSize: l.base } : {}),
     position: { x: 0.5, y: round3(y) },
     role: 'lyric',
     ...extra,

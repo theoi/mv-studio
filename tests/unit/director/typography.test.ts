@@ -8,7 +8,6 @@ import {
   layoutLine,
   lyricTypography,
   peakStyle,
-  refitRows,
   rowWidth,
   runWidths,
   textWidth,
@@ -144,7 +143,7 @@ describe('row splits', () => {
     expect(held).toBeGreaterThan(5)
   })
 
-  it('lay out a 150-word line at 9:16 in 4 balanced rows, and refit it into 4 rows', () => {
+  it('lay out a 150-word line at 9:16 in 4 balanced rows', () => {
     const style = lyricTypography({ aspect: '9:16', busy: false, catalog: DEFAULT_CATALOG }).style
     const words = Array.from({ length: 150 }, (_, i) => (i === 70 ? '(feat.' : WORDS[i % WORDS.length]!))
     const text = words.join(' ')
@@ -155,6 +154,13 @@ describe('row splits', () => {
     expect(laid.fontSize).toBe(8)
     const widths = laid.text.split('\n').map((row) => textWidth(row, style, laid.fontSize))
     expect(Math.min(...widths) / Math.max(...widths)).toBeGreaterThan(0.95)
-    expect(refitRows(words, 4, style, '9:16')).toEqual({ text: laid.text, fontSize: 8 })
+  })
+
+  it('keep a word too long for the clip on a row of its own, and the rest in as few rows as come out as large', () => {
+    const type = lyricTypography({ aspect: '9:16', busy: false, catalog: DEFAULT_CATALOG })
+    for (const style of [type.style, titleStyle(type, 1.3, 800, 0.12)])
+      expect(layoutLine('Neon Skyline Supercalifragilisticexpialidocious', style, '9:16').text).toBe(
+        'Neon Skyline\nSupercalifragilisticexpialidocious',
+      )
   })
 })

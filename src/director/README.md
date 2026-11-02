@@ -104,10 +104,15 @@ Rules every draft follows (`rules.ts`, `timing.ts`, `expand.ts`), tuned on real 
   article opening a bracket ("(The", "(A"), and a row ends on another word that opens one ("(feat.") only where keeping
   the two together would make the type over 10% smaller. A bracket's closing word stays with the word before it
   ("(Radio Edit)", "(feat. Mara Lane)") while the type stays at 60% of its size or more, or within 10% of the size it
-  has otherwise. A lyric retyped after the draft keeps its rows, in smaller type where they would no longer fit. Chorus lines
-  are a little bigger and heavier. The stressed last word of chorus lines (and of other lines when it is long or a hook from the title or chorus) is shown 1.6×
-  bigger in the accent color below the rest of the line, entering as it is sung (`role: 'emphasis'`), and smaller where
-  it needs to be to fit its row; when that would take it under half the line's size, the line stays whole.
+  has otherwise. A lyric retyped after the draft (`lyricTextCommands` in `retime.ts`) is laid out again as a draft
+  lays out a line, from the size it was laid out from (`meta.director.lineLayout`) unless the user has set another:
+  in more rows when it is longer, back at its size when it is shorter. It keeps its edge facing the nearest text beside
+  it (the next line waiting below, its emphasized ending) and grows away from it, clear of text above and below it and
+  inside the title-safe area, in smaller type where that leaves too little room. Chorus lines are a little bigger and
+  heavier. The stressed last word of chorus lines (and of other lines when it is long or a hook from the title or
+  chorus) is shown 1.6× bigger in the accent color below the rest of the line, entering as it is sung
+  (`role: 'emphasis'`), and smaller where it needs to be to fit its row, with the rest of the line no bigger than it,
+  also when retyped; when that would take it under half the line's size, the line stays whole.
 - **Contrast and placement**: over footage every line has a dark outline, plus a dark halo unless the style has its
   own glow. With `media` the director measures the frames under each text box and gives text over bright footage
   (mean luma ≥ 0.5) a soft dark scrim. Lines move to the lower or upper third when a tracked face would be under
