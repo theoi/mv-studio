@@ -600,6 +600,22 @@ export function namesInFull(
   return [label, ...aliases].some((name) => coverage(words(name), typed, named) === 1)
 }
 
+/**
+ * Whether the search has every word of `name` itself, or one of its forms, the last typed word perhaps still being
+ * typed: "rename the cho" names "rename chorus", but "rename chorus" doesn't name "rename pre-chorus".
+ */
+export function namesAll(name: string, search: string): boolean {
+  const typed = words(search)
+  return words(name)
+    .filter((w) => !FILLER.has(w))
+    .every((w) =>
+      typed.some(
+        (t, i) =>
+          sameWord(w, t) || sameForm(w, t) || inflected(w, t) || (i === typed.length - 1 && w.startsWith(t)),
+      ),
+    )
+}
+
 /** Whether a typed word matches an action at all (its name, other names or keywords, or another word for it). */
 export function wordMatches(
   label: string,

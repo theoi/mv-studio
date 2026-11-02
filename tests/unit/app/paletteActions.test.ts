@@ -11,13 +11,7 @@ import {
 } from '../../../src/app/screens/palette/actions.tsx'
 import { PAGES } from '../../../src/app/screens/palette/pages.tsx'
 import { SHORTCUTS } from '../../../src/app/state/keymap.ts'
-import {
-  editor,
-  sectionKind,
-  sectionLabels,
-  sectionsOf,
-  type SectionKind,
-} from '../../../src/app/state/project.ts'
+import { editor, sectionLabels, sectionsOf } from '../../../src/app/state/project.ts'
 import { dismissToast, get, select, set, type Selection } from '../../../src/app/state/ui.ts'
 import { settingsForAspect } from '../../../src/model/index.ts'
 import { ASK_SCORE, isSentence } from '../../../src/app/state/paletteScore.ts'
@@ -350,10 +344,11 @@ describe('command palette coverage', () => {
     expect(paletteResults('how do i')).toEqual([])
   })
 
-  describe('with nothing selected and the playhead in a chorus or a verse', () => {
-    const at = (kind: SectionKind, check: () => void) => () => {
+  describe('with nothing selected and the playhead in a section of the song', () => {
+    const at = (shown: string, check: () => void) => () => {
       const before = { selection: get().selection, playhead: get().playhead }
-      const section = sectionsOf(editor.getProject()).find((s) => sectionKind(s) === kind)!
+      const p = editor.getProject()
+      const section = sectionsOf(p)[sectionLabels(p).indexOf(shown)]!
       try {
         set({ selection: { type: 'none' }, playhead: section.start + 1 })
         check()
@@ -369,7 +364,7 @@ describe('command palette coverage', () => {
 
     it(
       'offers to ask Assist for every search no action matches, so the list never ends empty',
-      at('verse', () => {
+      at('Verse 1', () => {
         for (const search of ['rename chorus', 'paste chorus', 'zebra', 'zebra stripes']) {
           expect(ids(search), search).toEqual([])
           expect(offersAsk(search), search).toBe(true)
@@ -385,7 +380,7 @@ describe('command palette coverage', () => {
 
     it(
       'finds Rename the section by the name of the section it renames, numbered or not',
-      at('chorus', () => {
+      at('Chorus 1', () => {
         for (const search of ['rename chorus', 'rename the chorus', 'rename chorus 1'])
           expect(renames(search), search).toBe(true)
         for (const search of ['rename verse', 'rename chorus 2', 'rename pre chorus'])
@@ -395,10 +390,59 @@ describe('command palette coverage', () => {
 
     it(
       'finds Rename the section for “rename verse” in a verse, and not for “rename chorus” there',
-      at('verse', () => {
+      at('Verse 1', () => {
         expect(renames('rename verse')).toBe(true)
+        expect(renames('rename verse 1')).toBe(true)
         expect(renames('rename chorus')).toBe(false)
       }),
+    )
+
+    it(
+      'finds Rename the section by the start of the section’s name, as the palette lists other actions',
+      at('Chorus 1', () => {
+        for (const search of ['rename c', 'rename ch', 'rename cho'])
+          expect(ids(search)[0], search).toBe('renameSection')
+      }),
+    )
+
+    it(
+      'finds Rename the section in the Pre-chorus by its whole name only, not for “chorus”, a word of it',
+      at('Pre-chorus', () => {
+        for (const search of [
+          'rename chorus',
+          'name chorus',
+          'chorus name',
+          'rename cho',
+          'rename chor',
+          'rename choru',
+        ])
+          expect(ids(search), search).not.toContain('renameSection')
+        // A sentence lists it below Ask Assist for its word “rename”, as it does any action it names in part.
+        for (const search of ['rename the chorus', 'rename this chorus'])
+          expect(renames(search), search).toBe(false)
+        for (const search of ['rename pre-chorus', 'rename the pre chorus'])
+          expect(renames(search), search).toBe(true)
+      }),
+    )
+
+    // Numbered sections: Verse 1 and Verse 2 are named so, Chorus 1 to 3 are three choruses the song map numbers.
+    it.each([
+      ...['Chorus 1', 'Verse 1'].flatMap((shown) =>
+        ['rename section 1', 'rename song 1', 'rename part 1'].map((s) => [shown, s]),
+      ),
+      ['Verse 2', 'rename section 2'],
+      ['Chorus 2', 'rename section 2'],
+      ['Chorus 3', 'rename section 3'],
+    ])('doesn’t rename %s on Enter for “%s”, its number without its name', (shown, search) =>
+      at(shown, () => expect(renames(search)).toBe(false))(),
+    )
+
+    it.each([
+      ...['Chorus 1', 'Verse 1'].flatMap((shown) => ['section 1', 'part 1'].map((s) => [shown, s])),
+      ['Verse 2', 'song 2'],
+      ['Chorus 2', 'song 2'],
+    ])('lists no Rename the section in %s for “%s”, its number without its name', (shown, search) =>
+      at(shown, () => expect(ids(search)).not.toContain('renameSection'))(),
     )
   })
 

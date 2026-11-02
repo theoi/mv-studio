@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ASK_SCORE,
   keyCombo,
+  namesAll,
   namesInFull,
   paletteScore,
   type ScoreOptions,
@@ -266,5 +267,23 @@ describe('naming an action in full', () => {
       expect(whole(search), search).toBe(true)
     expect(namesInFull('Reset VJ mappings', [], 'reset vj mapping', { whole: true })).toBe(true)
     expect(namesInFull('Delete and close gap', [], 'delete and close g', { whole: true })).toBe(false)
+  })
+})
+
+describe('naming every word of a name', () => {
+  it('needs each word or one of its forms, only the last typed word perhaps still being typed', () => {
+    for (const search of [
+      'rename chorus',
+      'rename the chorus',
+      'Rename choruses',
+      'renaming the cho',
+      'rename c',
+    ])
+      expect(namesAll('rename Chorus', search), search).toBe(true)
+    // A word of the name is not its name, nor is a number without it, nor the start of a word typed before another.
+    expect(namesAll('rename Pre-chorus', 'rename chorus')).toBe(false)
+    expect(namesAll('rename Chorus 1', 'rename section 1')).toBe(false)
+    expect(namesAll('rename Chorus', 'cho rename')).toBe(false)
+    expect(namesAll('rename Chorus', 'chorus')).toBe(false)
   })
 })

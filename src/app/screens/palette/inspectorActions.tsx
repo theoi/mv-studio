@@ -2313,13 +2313,14 @@ export const inspectorActions: Action[] = [
     group: 'Timeline',
     label: 'Rename the section',
     icon: <PencilLine />,
-    // By its name as the song map shows it too: "rename chorus" with the playhead in a chorus.
-    aliases: () => {
+    aliases: ['rename section', 'name the section'],
+    // By its name as the song map shows it too, numbered or not: "rename chorus" or "rename chorus 1" in Chorus 1.
+    exactAliases: () => {
       const s = songSection()
-      if (isWhy(s)) return ['rename section', 'name the section']
+      if (isWhy(s)) return []
       const shown = sectionLabels(project())[sectionsOf(project()).findIndex((x) => x.id === s.id)]
-      const names = new Set([sectionName(s), shown ?? sectionName(s)])
-      return ['rename section', 'name the section', ...[...names].map((name) => `rename ${name}`)]
+      const name = shown ?? sectionName(s)
+      return [...new Set([sectionName(s), name, name.replace(/\s+\d+$/, '')])].map((n) => `rename ${n}`)
     },
     keywords: 'section part name label song',
     detail: (s) => sectionName(s),
