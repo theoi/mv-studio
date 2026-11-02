@@ -475,6 +475,7 @@ holdDrafts({
     await applyDraft({ skipGeneration: true })
     return useDirector.getState().state.status === 'applied'
   },
+  show: () => setUi({ screen: 'editor', rightTab: 'assist', assistView: 'director' }),
 })
 
 /** Back to the start of the panel. AI shots already made stay in the project's media and are reused. */

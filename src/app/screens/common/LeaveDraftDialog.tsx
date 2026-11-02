@@ -8,6 +8,15 @@ export function LeaveDraftDialog() {
   const ask = useLeaveDraft((s) => s.ask)
   const applying = useLeaveDraft((s) => s.applying)
   const text = ask && leaveDraftText(ask.held)
+  const back = (primary: boolean) => (
+    <Button
+      variant={primary ? 'primary' : 'ghost'}
+      disabled={applying}
+      onClick={() => void answerLeaveDraft('back')}
+    >
+      Back to the draft
+    </Button>
+  )
   return (
     <Dialog
       open={ask !== null}
@@ -18,17 +27,18 @@ export function LeaveDraftDialog() {
       width={460}
       footer={
         <>
-          <Button variant="ghost" disabled={applying} onClick={() => void answerLeaveDraft('stay')}>
-            Stay
-          </Button>
+          {text?.apply && back(false)}
           {/* Leaving is never the highlighted choice: it is the one that can cost money. */}
           <Button disabled={applying} onClick={() => void answerLeaveDraft('leave')}>
             Leave anyway
           </Button>
-          {text?.apply && (
+          {text?.apply ? (
             <Button variant="primary" disabled={applying} onClick={() => void answerLeaveDraft('apply')}>
               {applying ? 'Applying…' : text.apply}
             </Button>
+          ) : (
+            // Failed shots: back to the draft, where Retry is, comes first.
+            back(true)
           )}
         </>
       }

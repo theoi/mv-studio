@@ -1547,7 +1547,7 @@ async function stopAfterTwoShots(page: Page) {
 const leaveQuestion = (page: Page) =>
   page.getByRole('dialog', { name: 'Your draft isn’t on the timeline yet' })
 
-test('a draft holding AI shots asks before the page reloads or another project opens: Stay keeps it, Leave anyway drops it', async ({
+test('a draft holding AI shots asks before the page reloads or another project opens: Back to the draft keeps it, Leave anyway drops it', async ({
   page,
 }, testInfo) => {
   const { count, otherId } = await stopAfterTwoShots(page)
@@ -1564,17 +1564,17 @@ test('a draft holding AI shots asks before the page reloads or another project o
   expect(dialogs).toEqual(['beforeunload'])
   await expect(stopped).toBeVisible()
 
-  // A link to another project asks first; Stay keeps the draft and puts the address back.
+  // A link to another project asks first; Back to the draft keeps the draft and puts the address back.
   const here = page.url()
   await page.evaluate((id) => {
     window.location.hash = `#/editor?project=${id}&tab=assist&assist=director`
   }, otherId)
   const ask = leaveQuestion(page)
   await expect(ask).toContainText(
-    `If you leave, the Director’s draft is gone. Its 2 AI shots stay in Media, but drafting again may pay for new ones. Applying keeps it, with placeholders for the ${count - 2} shots not made yet.`,
+    `If you leave, the Director’s draft is gone. Its 2 AI shots stay in Media, but drafting again may mean paying for new ones. Apply and leave puts it on the timeline, with placeholders for the ${count - 2} shots not made yet.`,
   )
   await page.screenshot({ path: testInfo.outputPath('leave-draft-unapplied.png'), animations: 'disabled' })
-  await ask.getByRole('button', { name: 'Stay' }).click()
+  await ask.getByRole('button', { name: 'Back to the draft' }).click()
   await expect(ask).toBeHidden()
   await expect.poll(() => page.url()).toBe(here)
   await expect(stopped).toBeVisible()
@@ -1587,6 +1587,29 @@ test('a draft holding AI shots asks before the page reloads or another project o
   await showAssist(page, 'director')
   await expect(page.getByRole('button', { name: 'Draft video' })).toBeVisible()
   expect((await draftState(page)).director).toBe(0)
+})
+
+test('Back to the draft from Home returns to the editor on the Director, with the draft of a project never kept intact', async ({
+  page,
+}) => {
+  await stopAfterTwoShots(page)
+  const project = () =>
+    page.evaluate(() => {
+      const { app } = window.mvStudio
+      const open = app.project.editor.getProject()
+      return { id: open.id as string, kept: app.persistence.isStored(open.id) as boolean }
+    })
+  const before = await project()
+  // The sample with a stopped draft: not kept yet, so Home's recent projects can't reopen it.
+  expect(before.kept).toBe(false)
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByText('Other project', { exact: true }).first().click()
+  await leaveQuestion(page).getByRole('button', { name: 'Back to the draft' }).click()
+  await expect(leaveQuestion(page)).toBeHidden()
+  await expect(page.getByRole('tabpanel', { name: 'Assist' })).toBeVisible()
+  await expect(page.getByText('Generation stopped. 2 shots made so far are kept.')).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Generate \d+ shots · / })).toBeVisible()
+  expect((await project()).id).toBe(before.id)
 })
 
 test('Apply and leave puts the draft on the timeline, with placeholders for the shots not made, before the other project opens', async ({
@@ -1642,11 +1665,16 @@ test('failed AI shots waiting for Retry ask before another project opens, with n
   await page.getByText('Other project', { exact: true }).first().click()
   const ask = page.getByRole('dialog', { name: '1 AI shot still needs a retry' })
   await expect(ask).toContainText(
-    'If you leave, Retry is gone: making it later means drafting again, which may pay for new shots. The shots already made stay on the timeline and in Media.',
+    'If you leave, you can’t retry it later: making it then means drafting again, which may mean paying for new shots. The shots already made stay on the timeline and in Media.',
   )
-  await expect(ask.getByRole('button', { name: 'Stay' })).toBeVisible()
   await expect(ask.getByRole('button', { name: 'Apply and leave' })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('leave-draft-failed.png'), animations: 'disabled' })
+  // Back to the draft leads to Retry.
+  await ask.getByRole('button', { name: 'Back to the draft' }).click()
+  await expect(page.getByRole('button', { name: /^Retry 1 failed shot/ })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.getByText('Other project', { exact: true }).first().click()
   await ask.getByRole('button', { name: 'Leave anyway' }).click()
   await page.waitForFunction(() => window.mvStudio.app.project.editor.getProject().name === 'Other project')
 })
